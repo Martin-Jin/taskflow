@@ -124,6 +124,37 @@ button {
   cursor: pointer;
 }
 
+a {
+  color: var(--accent-hover);
+}
+
+a:visited {
+  color: var(--accent);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='search'],
+input[type='email'],
+input[type='url'] {
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+input[type='text']:focus,
+input[type='password']:focus,
+input[type='search']:focus,
+input[type='email']:focus,
+input[type='url']:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -160,12 +191,14 @@ select:focus-visible,
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  background: var(--bg-surface);
+  background: var(--bg-surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar {
   grid-area: sidebar;
   background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
@@ -780,7 +813,9 @@ input[type='checkbox']:checked::after {
   box-shadow: var(--shadow-elevated);
   max-width: 360px;
   font-size: 13px;
-  z-index: 200;
+  /* Above .guided-tour-overlay (1000, see tutorial.css) so a background
+     sync/error toast is never hidden behind the tour's dim layer. */
+  z-index: 1100;
   display: flex;
   align-items: flex-start;
   gap: 10px;

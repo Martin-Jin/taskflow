@@ -63,7 +63,7 @@ export default function TaskListPanel() {
           ))}
         </div>
         <SearchBar />
-        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+        <button className="btn btn-primary" data-tour="add-task" onClick={() => setShowAddModal(true)}>
           <Plus size={14} />
           Add task
         </button>

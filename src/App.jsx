@@ -10,7 +10,7 @@
  * ============================================================================
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import CalendarPage from './components/Calendar/CalendarPage';
 import TaskListPanel from './components/TaskListPanel';
@@ -23,7 +23,7 @@ import BottomTabBar from './components/Nav/BottomTabBar';
 import MoreSheet from './components/Nav/MoreSheet';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
-import TutorialModal from './components/Tutorial/TutorialModal';
+import GuidedTour from './components/Tutorial/GuidedTour';
 import { CalendarDays, CheckSquare, LayoutGrid, BarChart3, TrendingUp, Settings, Undo2, Redo2, HelpCircle } from 'lucide-react';
 
 const TABS = [
@@ -38,13 +38,26 @@ const TABS = [
 function AppShell() {
   const [tab, setTab] = useState('calendar');
   const [moreOpen, setMoreOpen] = useState(false);
-  const [showTutorial, setShowTutorial] = useState(false);
+  const [showTour, setShowTour] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = usePersistedState('tutorial-seen', false);
   const isMobile = useIsMobile();
   const { undo, redo, canUndo, canRedo, currentActionLabel, isLoading, notification, clearNotification } = useScheduler();
 
-  function openTutorial() {
-    setShowTutorial(true);
+  // Auto-launch the guided tour for a brand-new visitor, once. Anyone who's
+  // already seen it (or dismissed it) only gets it again via the Help icon
+  // or Settings' "Replay tour" button (see openTour below).
+  useEffect(() => {
+    if (!hasSeenTutorial) setShowTour(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function openTour() {
+    setShowTour(true);
+    setHasSeenTutorial(true);
+  }
+
+  function closeTour() {
+    setShowTour(false);
     setHasSeenTutorial(true);
   }
 
@@ -52,14 +65,19 @@ function AppShell() {
     <div className={`app-shell ${isMobile ? 'is-mobile' : ''}`}>
       {!isMobile && (
         <aside className="sidebar">
-          <div className="brand">
+          <div className="brand" data-tour="brand">
             <span className="brand-mark" />
             TaskFlow
           </div>
           <div className="nav-group">
             <div className="nav-group-label">Workspace</div>
             {TABS.map((t) => (
-              <button key={t.id} className={`nav-item ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+              <button
+                key={t.id}
+                className={`nav-item ${tab === t.id ? 'active' : ''}`}
+                onClick={() => setTab(t.id)}
+                data-tour={`nav-${t.id}`}
+              >
                 <t.icon size={16} strokeWidth={2} />
                 {t.label}
               </button>
@@ -76,7 +94,7 @@ function AppShell() {
           {isLoading ? 'Loading…' : currentActionLabel}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-icon help-icon-btn" onClick={openTutorial} title="Help / tutorial">
+          <button className="btn btn-icon help-icon-btn" onClick={openTour} title="Help / guided tour">
             <HelpCircle size={15} />
             {!hasSeenTutorial && <span className="help-icon-unread-dot" />}
           </button>
@@ -98,7 +116,7 @@ function AppShell() {
           {tab === 'board' && <BoardView />}
           {tab === 'gantt' && <GanttChart />}
           {tab === 'stats' && <StatsDashboard />}
-          {tab === 'settings' && <SettingsPanel />}
+          {tab === 'settings' && <SettingsPanel onOpenTour={openTour} />}
         </div>
       </main>
 
@@ -110,7 +128,7 @@ function AppShell() {
       )}
 
       <Toast notification={notification} onDismiss={clearNotification} />
-      {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
+      {showTour && <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onFinish={closeTour} />}
     </div>
   );
 }

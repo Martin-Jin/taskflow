@@ -1,7 +1,7 @@
 /**
  * useModalA11y — shared keyboard/focus behavior for the app's modals
  * (AddTaskModal, TaskDetailModal, BlockDetailModal, EventDetailModal,
- * SubtaskDetailModal, TutorialModal). None of these trapped focus or
+ * SubtaskDetailModal, GuidedTour). None of these trapped focus or
  * closed on Escape before, so Tab could leak out to the page behind the
  * overlay and screen readers had no dialog context — this centralizes the
  * fix instead of repeating it six times.

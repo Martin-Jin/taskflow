@@ -15,12 +15,18 @@ const today = () => toISODate(new Date());
 /**
  * Mock Projects — Todoist's top-level containers. Used to populate the
  * Board view's project filter dropdown when no Todoist token is configured.
+ * `isDefault: true` marks these as sample data (as opposed to anything the
+ * user created themselves) for anyone inspecting state/localStorage — the
+ * Todoist load effect in SchedulerContext.jsx already drops all of it
+ * unconditionally (a wholesale replace, not a filter) the moment a real
+ * sync succeeds, and SettingsPanel's "Clear all data" button clears
+ * everything rather than filtering by this flag.
  */
 export function getMockProjects() {
   return [
-    { id: 'work', name: 'Work', color: 'blue', order: 1 },
-    { id: 'writing', name: 'Writing', color: 'green', order: 2 },
-    { id: 'personal', name: 'Personal', color: 'grape', order: 3 },
+    { id: 'work', name: 'Work', color: 'blue', order: 1, isDefault: true },
+    { id: 'writing', name: 'Writing', color: 'green', order: 2, isDefault: true },
+    { id: 'personal', name: 'Personal', color: 'grape', order: 3, isDefault: true },
   ];
 }
 
@@ -31,9 +37,9 @@ export function getMockProjects() {
  */
 export function getMockSections() {
   return [
-    { id: 'sec_fsae', name: 'F:SAE', projectId: 'work', order: 1 },
-    { id: 'sec_mecheng211', name: 'MECHENG211', projectId: 'work', order: 2 },
-    { id: 'sec_mecheng222', name: 'MECHENG222', projectId: 'work', order: 3 },
+    { id: 'sec_planning', name: 'Planning', projectId: 'work', order: 1, isDefault: true },
+    { id: 'sec_in_progress', name: 'In Progress', projectId: 'work', order: 2, isDefault: true },
+    { id: 'sec_review', name: 'Review', projectId: 'work', order: 3, isDefault: true },
   ];
 }
 
@@ -60,6 +66,7 @@ export function getMockTasks() {
       maxChunkHours: 3,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [
         { id: 'sub_1_1', title: 'Pull latest growth metrics from BI dashboard', isCompleted: true },
         { id: 'sub_1_2', title: 'Draft competitive landscape slide', isCompleted: false },
@@ -86,6 +93,7 @@ export function getMockTasks() {
       maxChunkHours: 2,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
     {
@@ -99,8 +107,8 @@ export function getMockTasks() {
       isRecurring: false,
       recurrenceString: null,
       projectId: 'work',
-      sectionId: 'sec_mecheng211',
-      sectionName: 'MECHENG211',
+      sectionId: 'sec_in_progress',
+      sectionName: 'In Progress',
       source: 'todoist',
       isLocked: false,
       isCompleted: false,
@@ -108,6 +116,7 @@ export function getMockTasks() {
       maxChunkHours: 4,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [
         { id: 'sub_3_1', title: 'Migrate token model', isCompleted: false },
         { id: 'sub_3_2', title: 'Update integration tests', isCompleted: false },
@@ -133,6 +142,7 @@ export function getMockTasks() {
       maxChunkHours: 1.5,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
     {
@@ -146,8 +156,8 @@ export function getMockTasks() {
       isRecurring: false,
       recurrenceString: null,
       projectId: 'work',
-      sectionId: 'sec_mecheng222',
-      sectionName: 'MECHENG222',
+      sectionId: 'sec_planning',
+      sectionName: 'Planning',
       source: 'todoist',
       isLocked: false,
       isCompleted: false,
@@ -155,6 +165,7 @@ export function getMockTasks() {
       maxChunkHours: 3,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [{ id: 'sub_5_1', title: 'Coordinate with product + design leads', isCompleted: false }],
     },
     {
@@ -177,12 +188,13 @@ export function getMockTasks() {
       maxChunkHours: 2,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
     {
       id: 'task_7',
-      title: 'Research outline for encoder',
-      notes: 'F:SAE — encoder research, 90 minutes',
+      title: 'Review pull requests from the team',
+      notes: 'Focus on the two PRs waiting longest.',
       estimatedHours: 1.5,
       remainingHours: 1.5,
       priority: 'medium',
@@ -190,8 +202,8 @@ export function getMockTasks() {
       isRecurring: false,
       recurrenceString: null,
       projectId: 'work',
-      sectionId: 'sec_fsae',
-      sectionName: 'F:SAE',
+      sectionId: 'sec_review',
+      sectionName: 'Review',
       source: 'todoist',
       isLocked: false,
       isCompleted: false,
@@ -199,12 +211,13 @@ export function getMockTasks() {
       maxChunkHours: 1.5,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
     {
       id: 'task_8',
-      title: 'Safety node update and documentation',
-      notes: 'Write up the safety node changes for future reference, 30 minutes',
+      title: 'Update onboarding documentation',
+      notes: 'Write up recent process changes for future reference.',
       estimatedHours: 0.5,
       remainingHours: 0.5,
       priority: 'low',
@@ -212,8 +225,8 @@ export function getMockTasks() {
       isRecurring: false,
       recurrenceString: null,
       projectId: 'work',
-      sectionId: 'sec_fsae',
-      sectionName: 'F:SAE',
+      sectionId: 'sec_review',
+      sectionName: 'Review',
       source: 'todoist',
       isLocked: false,
       isCompleted: false,
@@ -221,6 +234,7 @@ export function getMockTasks() {
       maxChunkHours: 0.5,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
     {
@@ -243,6 +257,7 @@ export function getMockTasks() {
       maxChunkHours: 2,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
     {
@@ -265,6 +280,7 @@ export function getMockTasks() {
       maxChunkHours: 0.25,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      isDefault: true,
       subtasks: [],
     },
   ];

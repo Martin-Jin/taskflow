@@ -223,7 +223,7 @@ export default function BoardView() {
             </button>
           </div>
         ) : (
-          <button className="btn" onClick={() => setAddingBoard(true)} title="Create a new board (Todoist project)">
+          <button className="btn" data-tour="add-board" onClick={() => setAddingBoard(true)} title="Create a new board (Todoist project)">
             <Plus size={14} />
             Add board
           </button>
