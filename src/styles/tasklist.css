@@ -1,0 +1,174 @@
+/* Task list row layout — extracted from inline styles in TaskListPanel.jsx
+   so mobile media queries can target them (inline styles can't be
+   overridden by @media without !important). */
+
+/* The Tasks page's own List/Board/Gantt switch — an underlined tab bar
+   (distinct from the pill-style .view-switch used for the Active/Completed
+   filter below it) so the two don't read as the same control stacked
+   twice. */
+.taskpage-view-switch {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.taskpage-view-switch::-webkit-scrollbar {
+  display: none;
+}
+
+.taskpage-view-switch button {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.taskpage-view-switch button:hover {
+  color: var(--color-text-primary);
+}
+
+.taskpage-view-switch button.active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.tasklist-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tasklist-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.tasklist-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tasklist-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+}
+
+.tasklist-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.task-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Priority/label pills sit under the "remaining/due" line, left-aligned —
+   previously a right-aligned column with its own delete "X"; the row now
+   opens TaskDetailModal (with its own Delete button) for that instead. */
+.task-row-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.task-row-badges .badge {
+  padding: 1px 7px;
+  font-weight: 500;
+}
+
+@media (max-width: 639px) {
+  /* Centered to match the pill-style .view-switch below it (Active/
+     Completed/All/No due date) instead of sitting left-aligned under its
+     own full-width underline, which read as inconsistent with everything
+     else stacked in this toolbar. */
+  .taskpage-view-switch {
+    justify-content: safe center;
+  }
+
+  .tasklist-toolbar > * {
+    flex: 1 1 100%;
+  }
+
+  /* Tighter rows — the full-height .card padding plus a fat inter-row gap
+     made the list feel oversized on a phone once each row is only
+     checkbox + title + one meta line + one badge line tall. The FAB below
+     also floats on top of the list at rest, so the last row needs the same
+     bottom padding it always did to avoid being covered. */
+  .tasklist-rows {
+    gap: 8px;
+    padding-bottom: 76px;
+  }
+
+  .card.task-row {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  /* Floating "Add task" button — square-block FAB (Todoist/Google Calendar
+     style) anchored to the bottom-right corner, replacing the full-width
+     toolbar row on mobile where horizontal space is tight. The button keeps
+     its normal in-flow toolbar placement above 640px. */
+  .add-task-btn {
+    position: fixed;
+    right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+    bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
+    z-index: 120;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    border-radius: var(--radius-lg);
+    justify-content: center;
+    box-shadow: var(--shadow-elevated);
+  }
+
+  .add-task-btn svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .add-task-btn-label {
+    display: none;
+  }
+}

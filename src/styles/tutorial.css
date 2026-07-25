@@ -1,0 +1,119 @@
+/* ============================================================================
+   GuidedTour — a spotlight overlay + floating tooltip, not a centered
+   modal, so it can point at real on-screen elements as it advances.
+   ============================================================================ */
+
+.guided-tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  animation: tour-fade-in var(--duration-base) var(--ease-standard);
+}
+
+.guided-tour-overlay.is-closing {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+@keyframes tour-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.guided-tour-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 12, 18, 0.72);
+}
+
+/* The "hole" is an illusion: a transparent box whose oversized box-shadow
+   covers everything BUT itself, so the real target element shows through. */
+.guided-tour-spotlight {
+  position: fixed;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--color-accent-border);
+  box-shadow: 0 0 0 9999px rgba(10, 12, 18, 0.72);
+  pointer-events: none;
+  transition: top var(--duration-base) var(--ease-standard), left var(--duration-base) var(--ease-standard),
+    width var(--duration-base) var(--ease-standard), height var(--duration-base) var(--ease-standard);
+}
+
+.guided-tour-tooltip {
+  position: fixed;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 18px;
+  transition: top var(--duration-base) var(--ease-standard), left var(--duration-base) var(--ease-standard);
+}
+
+.guided-tour-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: none;
+  background: transparent;
+}
+
+.guided-tour-step-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
+.guided-tour-page-badge {
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.guided-tour-title {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  margin: 0 0 8px;
+  padding-right: 20px;
+}
+
+.guided-tour-body {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+
+.guided-tour-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.guided-tour-actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.help-icon-btn {
+  position: relative;
+}
+
+.help-icon-unread-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent-border);
+  border: 1.5px solid var(--color-bg-surface);
+}

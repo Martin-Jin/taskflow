@@ -1,0 +1,27 @@
+.stats-cards-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.stats-charts-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.stats-chart-card {
+  min-width: 340px;
+}
+
+.stats-bar-scroll {
+  overflow-x: auto;
+}
+
+@media (max-width: 639px) {
+  .stats-chart-card {
+    min-width: 0;
+    width: 100%;
+  }
+}

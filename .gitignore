@@ -1,0 +1,89 @@
+# ==========================
+# Dependencies
+# ==========================
+node_modules/
+
+# ==========================
+# Build output
+# ==========================
+dist/
+build/
+
+# ==========================
+# Environment variables
+# ==========================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Keep the example template
+!.env.example
+
+# ==========================
+# Logs
+# ==========================
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================
+# Cache
+# ==========================
+.cache/
+.parcel-cache/
+.vite/
+.eslintcache
+
+# ==========================
+# Testing
+# ==========================
+coverage/
+
+# ==========================
+# Editor / IDE
+# ==========================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.code-workspace
+
+# ==========================
+# OS files
+# ==========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================
+# Temporary files
+# ==========================
+tmp/
+temp/
+*.tmp
+
+# ==========================
+# Package manager
+# ==========================
+.pnpm-store/
+.npm/
+.yarn/
+
+# ==========================
+# Developer notes (private, machine-specific)
+# ==========================
+DEV_NOTES.md
+
+# ==========================
+# Claude
+# ==========================
+.claude/
+CLAUDE.local.md

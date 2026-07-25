@@ -1,0 +1,1091 @@
+/* ============================================================================
+   DESIGN TOKENS
+   ----------------------------------------------------------------------------
+   Palette: warm neutral base (cream in light mode, warm charcoal in dark)
+   with a single teal accent used sparingly for primary actions, active
+   states, links, and key data highlights. Full token scale further down
+   (light values here in :root, dark overrides in :root[data-theme='dark']).
+
+   BREAKPOINTS (literal values used verbatim in every @media query in the
+   app — no build-time custom-media plugin is configured, so these are
+   documented here rather than expressed as real CSS variables):
+     mobile:  max-width: 639px
+     tablet:  min-width: 640px and max-width: 1023px  (keeps the desktop
+              sidebar shell; only the bottom-tab-bar mobile nav differs)
+     desktop: min-width: 1024px  (current/original layout, unchanged)
+   Mirrored in JS as useIsMobile()/useIsTablet() (src/hooks/useIsMobile.js)
+   for the few places layout must branch in script rather than pure CSS.
+   ============================================================================ */
+
+:root {
+  color-scheme: light;
+  --font-display: 'Fraunces', 'Georgia', serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 3px 10px rgba(0, 0, 0, 0.4);
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 19px;
+  --text-xl: 24px;
+  --text-display: 28px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --bottom-bar-height: 58px;
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
+
+  /* -------------------------------------------------------------------- */
+  --color-bg-page: #fafaf9;
+  --color-bg-surface: #ffffff;
+  --color-bg-surface-hover: #f2f1ea;
+  /* Elevated chrome (topbar, dropdown popups, tooltips, calendar headers)
+     — distinct from --color-bg-surface (cards) so elevated panels read as
+     a level above cards, not just "another card". */
+  --color-bg-surface-raised: #ffffff;
+
+  --color-border: #e7e5de;
+  --color-border-strong: #d6d3c9;
+  /* Meets WCAG 1.4.11 (3:1) against page/surface — use for borders that
+     are the sole cue of an interactive control's boundary (inputs,
+     checkboxes), not for decorative dividers (use --color-border(-strong)
+     for those, which are intentionally low-contrast). */
+  --color-border-interactive: #8c8a80;
+
+  --color-text-primary: #292824;
+  --color-text-secondary: #78766d;
+  /* ~2.4:1 on white — fails AA for body/UI text. Decorative/disabled use
+     only (placeholder ghost text, disabled labels), never for anything
+     conveying required information. */
+  --color-text-muted: #a8a69c;
+
+  --color-accent-50: #e1f5ee;
+  --color-accent-100: #9fe1cb;
+  --color-accent-200: #5dcaa5;
+  --color-accent-400: #1d9e75;
+  --color-accent-600: #0f6e56;
+  --color-accent-800: #085041;
+  --color-accent-900: #04342c;
+
+  /* Text/link/active-state color — 4.5:1 minimum, safe for small text. */
+  --color-accent: var(--color-accent-600);
+  --color-accent-hover: var(--color-accent-800);
+  /* Border/outline/dashed-border/large-fill use only — 3:1 minimum, not
+     safe for small text (see accessibility note in the token plan). */
+  --color-accent-border: var(--color-accent-400);
+  --color-accent-solid-bg: var(--color-accent-600);
+  --color-accent-solid-bg-hover: var(--color-accent-800);
+  --color-accent-solid-text: #ffffff;
+  --color-accent-soft: var(--color-accent-50);
+
+  --color-priority-urgent: #d64550;
+  --color-priority-high: #c97a2e;
+  --color-priority-medium: #2b8fa8;
+  --color-priority-low: #8a8578;
+
+  --color-success: #3e8f63;
+  --color-warning: #c97a2e;
+  --color-danger: #d64550;
+
+  /* Categorical chart series (StatsDashboard) — distinct hues for
+     side-by-side comparison, not tied to priority/status meaning. */
+  --color-chart-1: #0f6e56;
+  --color-chart-2: #c97a2e;
+  --color-chart-3: #2b6fa8;
+  --color-chart-4: #b0527a;
+  --color-chart-5: #6b8e4e;
+  --color-chart-6: #8a5fb0;
+  --color-chart-7: #a4462f;
+  --color-chart-8: #6b6f7a;
+}
+
+:root[data-theme='dark'] {
+  --color-bg-page: #1c1b17;
+  --color-bg-surface: #242320;
+  --color-bg-surface-hover: #2c2a25;
+  --color-bg-surface-raised: #2a2822;
+
+  --color-border: #38362f;
+  --color-border-strong: #4a473d;
+  --color-border-interactive: #8c8980;
+
+  --color-text-primary: #f2f0ea;
+  --color-text-secondary: #b5b2a7;
+  --color-text-muted: #7d7a6e;
+
+  /* Same teal ramp — dark mode just picks different stops below for
+     contrast against the (much darker) warm charcoal background. */
+  --color-accent: var(--color-accent-200);
+  --color-accent-hover: var(--color-accent-400);
+  --color-accent-border: var(--color-accent-200);
+  --color-accent-solid-bg: var(--color-accent-400);
+  --color-accent-solid-bg-hover: var(--color-accent-200);
+  /* Near-black text reads correctly on the lighter dark-mode accent fill;
+     white text on --color-accent-400 fails 4.5:1. */
+  --color-accent-solid-text: #14130f;
+  --color-accent-soft: var(--color-accent-900);
+
+  --color-priority-urgent: #e8747d;
+  --color-priority-high: #e3a15c;
+  --color-priority-medium: #5cb6cc;
+  --color-priority-low: #a8a69c;
+
+  --color-success: #5fbe8d;
+  --color-warning: #e3a15c;
+  --color-danger: #e8747d;
+
+  --color-chart-1: #5dcaa5;
+  --color-chart-2: #e3a15c;
+  --color-chart-3: #6fb8d9;
+  --color-chart-4: #d98fae;
+  --color-chart-5: #9cc47a;
+  --color-chart-6: #b79ae0;
+  --color-chart-7: #e08669;
+  --color-chart-8: #a3a7b0;
+
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  /* Mobile browsers boost small text's rendered size for readability
+     ("text inflation"), which can shift input text out from under
+     absolutely-positioned decoration (e.g. SearchBar's icon) without
+     changing any of our own font-size rules. Opt out so layout math stays
+     accurate to the CSS we actually wrote. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* The <select> element itself is styled per call site (board filter,
+   detail-field, addtask footer, ...) — but its dropdown popup is drawn by
+   the browser using the OS/browser theme, not those call-site rules. Chromium
+   (and modern Firefox) honor color-scheme + option background/color for that
+   popup, so set them once here rather than per select — without this the
+   popup renders as a plain light-mode list that clashes with the app's dark
+   theme regardless of how the closed control is styled. */
+select option {
+  background-color: var(--color-bg-surface-raised);
+  color: var(--color-text-primary);
+}
+
+a {
+  color: var(--color-accent);
+}
+
+a:visited {
+  color: var(--color-accent-border);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='search'],
+input[type='email'],
+input[type='url'],
+:where(input:not([type])) {
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+input[type='text']:focus,
+input[type='password']:focus,
+input[type='search']:focus,
+input[type='email']:focus,
+input[type='url']:focus,
+:where(input:not([type]):focus) {
+  border-color: var(--color-accent-border);
+  outline: none;
+}
+
+/* Inline-rename inputs (board column title, smart-title, routine label)
+   carry their own permanent border via a dedicated class rather than
+   relying on the base input look above — the class already signals
+   "editing" so the browser's default focus-visible ring below on top of
+   it would just double the border. This needs to out-specificity that
+   generic ring (input:focus-visible, 0-1-1) to actually win, so — unlike
+   the :where()-wrapped base rules above — it deliberately is NOT wrapped
+   in :where(). It only ever touches `outline`, never a class's own
+   border/bg, so it can't fight a component's own styling either way. */
+input:not([type]):focus-visible {
+  outline: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 8px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+  grid-template-areas:
+    'sidebar topbar'
+    'sidebar main';
+}
+
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--color-bg-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--color-bg-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px;
+}
+
+.main-content {
+  grid-area: main;
+  overflow: auto;
+  padding: 20px;
+}
+
+.tab-panel {
+  animation: tab-fade-in var(--duration-fast) var(--ease-standard);
+}
+
+/* Used by tabs (e.g. calendar) that manage their own internal scroll
+   container, so the page-level .main-content scrollbar never doubles up
+   with the tab's own. */
+.tab-panel-fill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+@keyframes tab-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .app-shell.is-mobile {
+    grid-template-columns: 1fr;
+    grid-template-rows: 56px 1fr;
+    grid-template-areas:
+      'topbar'
+      'main';
+  }
+
+  .app-shell.is-mobile .main-content {
+    padding: var(--space-3);
+    padding-bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+  }
+
+  .app-shell.is-mobile .topbar {
+    padding: 0 var(--space-3);
+  }
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 0 6px;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 20px;
+}
+
+.nav-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  padding: 6px 10px 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-size: 13.5px;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.nav-item:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.nav-item:active {
+  transform: scale(0.98);
+}
+
+.nav-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 15px;
+  border-radius: var(--radius-sm);
+  /* A visible border, not just a fill — .btn's background sits so close in
+     tone to the surfaces it's placed on (modals, cards) that fill contrast
+     alone doesn't reliably read as a button boundary. text-tertiary against
+     --bg-surface-raised clears WCAG 1.4.11's 3:1 non-text contrast minimum. */
+  border: 1px solid var(--color-text-secondary);
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--color-border-strong);
+  border-color: var(--color-text-secondary);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-accent-solid-bg);
+  border-color: transparent;
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-solid-bg-hover);
+  border-color: transparent;
+}
+
+.btn-icon {
+  padding: 8px;
+}
+
+/* A close/remove "X" button reads fine from its icon alone and sits right
+   next to whatever it's closing — the border+fill every other .btn now has
+   would just add visual noise here, so this is the one deliberate
+   exception to "every button gets a background". */
+.btn-x {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn-x:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
+@media (max-width: 639px) {
+  /* Every .btn (icon-only or text) gets the same minimum height so a plain
+     text button (e.g. Calendar's "Today") never looks shorter than an
+     icon-only sibling (prev/next arrows) sitting in the same row. */
+  .btn {
+    min-height: 36px;
+  }
+
+  .btn-icon {
+    position: relative;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* A 44px touch target on an icon-only button reads as an oversized
+     bordered square once you add the visible border (see .btn's comment
+     above) — keep the visible box compact and meet the touch-target
+     minimum with an invisible expanded hit area instead. */
+  .btn-icon::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+  }
+
+  .nav-item,
+  .bottom-tab-item {
+    min-height: 44px;
+  }
+}
+
+.card {
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  animation: card-in var(--duration-base) var(--ease-decelerate);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+}
+
+.theme-toggle-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.theme-toggle-option:hover {
+  color: var(--color-text-primary);
+}
+
+.theme-toggle-option.active {
+  background: var(--color-accent-solid-bg);
+  color: var(--color-accent-solid-text);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.task-row {
+  transition: background var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.task-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.task-row:active {
+  transform: scale(0.995);
+}
+
+.priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.priority-dot.urgent {
+  background: var(--color-priority-urgent);
+}
+.priority-dot.high {
+  background: var(--color-priority-high);
+}
+.priority-dot.medium {
+  background: var(--color-priority-medium);
+}
+.priority-dot.low {
+  background: var(--color-priority-low);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.badge.urgent {
+  background: color-mix(in srgb, var(--color-priority-urgent) 15%, transparent);
+  color: var(--color-priority-urgent);
+}
+.badge.high {
+  background: color-mix(in srgb, var(--color-priority-high) 15%, transparent);
+  color: var(--color-priority-high);
+}
+.badge.medium {
+  background: color-mix(in srgb, var(--color-priority-medium) 15%, transparent);
+  color: var(--color-priority-medium);
+}
+.badge.low {
+  background: color-mix(in srgb, var(--color-priority-low) 15%, transparent);
+  color: var(--color-priority-low);
+}
+
+/* Tag/Label pill on a task row — reuses .badge's shape, colored per-Label
+   via inline style (see TaskListPanel.jsx), so it only needs to override
+   the priority badge's bold letter-spacing for a plain label name. */
+.tag-pill {
+  letter-spacing: normal;
+}
+
+/* ----------------------------------------------------------------------
+   SearchBar (src/components/Common/SearchBar.jsx) — shared between the
+   Tasks list and Board toolbars. Sized via classes (not inline styles) so
+   the mobile media query below can drop the desktop max-width instead of
+   fighting an inline style with !important.
+   ---------------------------------------------------------------------- */
+.search-bar {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+  max-width: 320px;
+}
+
+.search-bar-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-secondary);
+  display: flex;
+  pointer-events: none;
+}
+
+/* input[type='text'] (~line 235) carries the same specificity as a single
+   class selector plus the element type — a bare .search-bar-input class
+   loses to it, so its own padding (meant to clear the icon/clear-button)
+   was silently getting overridden by the generic reset's padding. Matching
+   that specificity with `input.search-bar-input` is what makes this rule
+   actually win. */
+input.search-bar-input {
+  width: 100%;
+  padding: 7px 30px 7px 32px;
+  background: var(--color-bg-surface-raised);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.search-bar-clear {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  padding: 4px 7px;
+  border: none;
+  background: transparent;
+}
+
+@media (max-width: 639px) {
+  .search-bar {
+    max-width: none;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.chip-project {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.chip-toggle {
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.chip-toggle:hover {
+  background: var(--color-border-strong);
+}
+
+.chip-toggle.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.chip-clear {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.chip-clear:hover {
+  color: var(--color-text-primary);
+}
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 15, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Above .bottom-tab-bar (z-index: 150, nav.css) so an open modal isn't
+     partially covered by the fixed mobile nav — .select-menu-dropdown (200)
+     still layers above this intentionally. */
+  z-index: 160;
+  animation: modal-overlay-in var(--duration-base) var(--ease-standard);
+}
+
+.modal-overlay.is-closing {
+  animation: modal-overlay-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+.modal {
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+  width: 480px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 24px;
+  animation: modal-in var(--duration-base) var(--ease-decelerate);
+  scrollbar-width: none; /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
+  -ms-overflow-style: none;
+}
+
+.modal::-webkit-scrollbar {
+  display: none;
+}
+
+.modal-overlay.is-closing .modal {
+  animation: modal-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+@keyframes modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes modal-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.form-row label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.form-row input:not([type='checkbox']),
+.form-row select,
+.form-row textarea {
+  background: var(--color-bg-page);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13.5px;
+  overflow: hidden;
+}
+
+.form-row textarea {
+  overflow: auto; /* textareas need scroll/resize, so only clip via border-radius elsewhere */
+}
+
+.form-row input:focus,
+.form-row select:focus,
+.form-row textarea:focus {
+  border-color: var(--color-accent-border);
+  outline: none;
+}
+
+.form-row-split {
+  display: flex;
+  gap: 10px;
+}
+
+.settings-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+@media (max-width: 639px) {
+  /* Anchored near the top (not a bottom sheet) so the title field always
+     lands above where an on-screen keyboard covers the viewport — a bottom
+     sheet's first field sits right where the keyboard appears, requiring
+     an immediate manual scroll to see what you're typing. */
+  .modal-overlay {
+    align-items: flex-start;
+    padding: calc(env(safe-area-inset-top, 0) + var(--space-3)) var(--space-3);
+  }
+
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: var(--radius-lg);
+    /* Reserve room below the last row of content so it clears the phone's
+       home-indicator / gesture area once the modal is drawn above the
+       bottom tab bar (see .modal-overlay's z-index). */
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  }
+
+  .form-row-split {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .modal-actions,
+  .modal-actions-group {
+    flex-wrap: wrap;
+  }
+
+  .settings-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   Number / time input spinner buttons.
+   The raw OS-drawn spinner (light grey box, sharp corners) reads as a
+   foreign widget against the dark theme. We can't recolor the native
+   control directly, so we hide it and draw a matching custom one that
+   sits flush with the field instead.
+   ---------------------------------------------------------------------- */
+input[type='number'] {
+  -moz-appearance: textfield; /* Firefox: drop the native spinner entirely */
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Re-introduce a theme-matched stepper via a wrapper the number/time
+   inputs already sit inside (.form-row), using background-painted arrows
+   so no extra markup is required. */
+.form-row input[type='number'],
+.form-row input[type='time'],
+.form-row input[type='date'] {
+  overflow: hidden; /* clips the native picker-indicator/spinner chrome to
+                        the field's rounded corners — without this Chromium
+                        squares off whichever side that chrome sits on */
+}
+
+input[type='time']::-webkit-calendar-picker-indicator,
+input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px;
+}
+
+input[type='time']::-webkit-calendar-picker-indicator:hover,
+input[type='date']::-webkit-calendar-picker-indicator:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+/* ----------------------------------------------------------------------
+   Custom checkbox skin. The raw browser checkbox (a stark white square)
+   reads as a foreign, unstyled widget against the dark theme — this
+   replaces it with a rounded, accent-colored control (Todoist-style) via
+   `appearance: none` + a hand-drawn checkmark, applied globally so every
+   existing <input type="checkbox"> in the app picks it up with no markup
+   changes.
+   ---------------------------------------------------------------------- */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-border-interactive);
+  background: transparent;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+input[type='checkbox']:hover {
+  border-color: var(--color-accent-border);
+}
+
+input[type='checkbox']:checked {
+  background: var(--color-accent-solid-bg);
+  border-color: var(--color-accent-solid-bg);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  display: block;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1.25px) rotate(45deg);
+}
+
+/* ----------------------------------------------------------------------
+   Todoist-style task-row checkbox (TaskListPanel) — a circular,
+   priority-colored control that doubles as the priority indicator and the
+   "mark complete" action, replacing the old split dot + icon-button.
+   ---------------------------------------------------------------------- */
+.task-checkbox {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--color-priority-medium);
+  background: transparent;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-bg-page);
+  padding: 0;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.task-checkbox.urgent {
+  border-color: var(--color-priority-urgent);
+}
+.task-checkbox.high {
+  border-color: var(--color-priority-high);
+}
+.task-checkbox.medium {
+  border-color: var(--color-priority-medium);
+}
+.task-checkbox.low {
+  border-color: var(--color-priority-low);
+}
+
+.task-checkbox:hover:not(:disabled) {
+  background: var(--color-accent-soft);
+  transform: scale(1.08);
+}
+
+.task-checkbox.urgent.checked {
+  background: var(--color-priority-urgent);
+}
+.task-checkbox.high.checked {
+  background: var(--color-priority-high);
+}
+.task-checkbox.medium.checked {
+  background: var(--color-priority-medium);
+}
+.task-checkbox.low.checked {
+  background: var(--color-priority-low);
+}
+
+.task-checkbox:disabled {
+  cursor: default;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface-raised);
+  box-shadow: var(--shadow-elevated);
+  max-width: 360px;
+  font-size: 13px;
+  /* Above .guided-tour-overlay (1000, see tutorial.css) so a background
+     sync/error toast is never hidden behind the tour's dim layer. */
+  z-index: 1100;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: toast-in var(--duration-base) var(--ease-decelerate);
+}
+
+.toast.is-closing {
+  animation: toast-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.toast.success {
+  border-left: 3px solid var(--color-success);
+}
+.toast.warning {
+  border-left: 3px solid var(--color-warning);
+}
+.toast.error {
+  border-left: 3px solid var(--color-danger);
+}
+.toast.info {
+  border-left: 3px solid var(--color-accent-border);
+}
+
+@media (max-width: 639px) {
+  .toast {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+    max-width: none;
+  }
+}

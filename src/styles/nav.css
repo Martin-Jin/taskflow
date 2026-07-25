@@ -1,0 +1,169 @@
+/* Mobile bottom tab bar — only rendered/used below the mobile breakpoint
+   (see useIsMobile() usage in App.jsx). */
+
+.bottom-tab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 150;
+  display: flex;
+  /* The safe-area inset is added on top of the base height (rather than
+     eaten out of it via padding alone) so the tab items always get the
+     full --bottom-bar-height of room to breathe, even on devices with a
+     tall home-indicator inset. */
+  height: calc(var(--bottom-bar-height) + env(safe-area-inset-bottom, 0));
+  padding-top: 6px;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+.bottom-tab-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  min-height: 44px;
+}
+
+.bottom-tab-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.bottom-tab-label {
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.bottom-tab-item.active {
+  color: var(--color-accent);
+}
+
+/* AccountButton — sign-in entry point / signed-in menu, shown in the
+   desktop sidebar (full-width, name visible) and mobile topbar (icon-only,
+   see .compact). */
+.account-widget {
+  position: relative;
+}
+
+.account-widget.full-width {
+  width: 100%;
+}
+
+.account-avatar-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.account-widget.full-width .account-avatar-btn {
+  width: 100%;
+}
+
+.account-widget.compact .account-avatar-btn {
+  padding: 4px;
+}
+
+.account-avatar-btn:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.account-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.account-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent-solid-bg);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.account-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu {
+  position: absolute;
+  z-index: 200;
+  min-width: 210px;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.account-menu-up {
+  bottom: calc(100% + 6px);
+  left: 0;
+}
+
+.account-menu-down {
+  top: calc(100% + 6px);
+  right: 0;
+}
+
+.account-menu-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.account-menu-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-menu-email {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  color: var(--color-text-primary);
+}
+
+.account-menu-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.account-menu-danger {
+  color: var(--color-danger);
+}

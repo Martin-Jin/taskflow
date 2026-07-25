@@ -1,0 +1,118 @@
+/**
+ * ============================================================================
+ * DATE / TIME UTILITIES
+ * ============================================================================
+ * Small, dependency-free helpers for ISO date math and "HH:MM" time-string
+ * arithmetic. We deliberately avoid pulling in a heavy date library (moment,
+ * luxon) to keep the bundle lean — everything the scheduler needs is basic
+ * calendar arithmetic in the user's local timezone.
+ * ============================================================================
+ */
+
+/** Convert a Date object to an ISO "YYYY-MM-DD" string (local time, not UTC). */
+export function toISODate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Parse an ISO "YYYY-MM-DD" string into a local-time Date at midnight. */
+export function fromISODate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Add N days to an ISO date string, returning a new ISO date string. */
+export function addDays(iso, n) {
+  const date = fromISODate(iso);
+  date.setDate(date.getDate() + n);
+  return toISODate(date);
+}
+
+/** Inclusive day difference between two ISO dates (b - a), in whole days. */
+export function diffDays(isoA, isoB) {
+  const a = fromISODate(isoA);
+  const b = fromISODate(isoB);
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((b.getTime() - a.getTime()) / msPerDay);
+}
+
+/** Convert "HH:MM" -> minutes since midnight. */
+export function timeToMinutes(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/** Convert minutes since midnight -> "HH:MM". */
+export function minutesToTime(mins) {
+  const h = Math.floor(mins / 60)
+    .toString()
+    .padStart(2, '0');
+  const m = Math.floor(mins % 60)
+    .toString()
+    .padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+/** Hours (float) between two "HH:MM" strings. Handles same-day only. */
+export function hoursBetween(startHHMM, endHHMM) {
+  return (timeToMinutes(endHHMM) - timeToMinutes(startHHMM)) / 60;
+}
+
+/** Day-of-week index (0=Sun..6=Sat) for an ISO date string. */
+export function dayOfWeek(iso) {
+  return fromISODate(iso).getDay();
+}
+
+/** Returns an array of ISO date strings, `count` days starting at `startIso` inclusive. */
+export function dateRange(startIso, count) {
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(addDays(startIso, i));
+  return out;
+}
+
+/** True if iso date is strictly before today (local). Used to skip past days when scheduling. */
+export function isPast(iso) {
+  return iso < toISODate(new Date());
+}
+
+/**
+ * Parse a free-text duration estimate out of a task title/description, e.g.
+ * "[2h]", "1.5 hours", "90 min", "30 minutes", "45m", "half an hour".
+ * Returns hours (float) or null if no duration pattern is found.
+ *
+ * Re-exported from `durationParser.js`, which is the single source of
+ * truth for duration parsing (also used by `todoistService.js` when
+ * resolving a synced task's estimated hours) — kept here too so existing
+ * `import { parseDurationHours } from '../utils/dateUtils'` call sites
+ * keep working unchanged.
+ */
+export { extractDurationHours as parseDurationHours } from './durationParser';
+
+/** First-of-month ISO date for the month containing `iso`. */
+export function startOfMonth(iso) {
+  const date = fromISODate(iso);
+  return toISODate(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+/** Add N months to an ISO date string, clamping to the 1st (used for month-view navigation). */
+export function addMonths(iso, n) {
+  const date = fromISODate(iso);
+  return toISODate(new Date(date.getFullYear(), date.getMonth() + n, 1));
+}
+
+/** Format an ISO date as "Month YYYY", e.g. "July 2026" — month-view toolbar title. */
+export function formatMonthLabel(iso) {
+  return fromISODate(iso).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+/** Format an ISO date for display, e.g. "Mon, Jul 27". */
+export function formatDisplayDate(iso) {
+  const date = fromISODate(iso);
+  return date.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}

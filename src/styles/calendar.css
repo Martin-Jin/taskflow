@@ -1,0 +1,643 @@
+.calendar-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.calendar-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+.calendar-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.calendar-toolbar-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  min-width: 200px;
+}
+
+.view-switch {
+  display: flex;
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.view-switch button {
+  background: transparent;
+  border: none;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 639px) {
+  /* The toolbar's date-nav group, view switch, and action buttons together
+     are too wide for a phone in one row — previously this just overflowed
+     the viewport (Block time / Re-balance schedule ran off-screen with no
+     way to reach them). Let each group wrap onto its own row instead — and
+     give every one of those rows the same full width + centered content, so
+     they read as a consistent stack instead of some rows spanning edge to
+     edge while others (short on content) hug the left with a chunk of
+     empty space or dead background trailing off to one side. */
+  .calendar-toolbar-title {
+    min-width: 0;
+  }
+
+  /* .calendar-toolbar's own rows (left-group, actions-group, Today) are each
+     full-width EXCEPT the new solo Today row below, which is only as wide as
+     its label — space-between (the desktop default) would shove a lone item
+     like that to the row's edge instead of centering it. */
+  .calendar-toolbar {
+    justify-content: center;
+  }
+
+  .calendar-toolbar-left {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Today (rendered separately below as .calendar-today-btn-solo on mobile,
+     see CalendarPage.jsx) is absent from this row here, so what's left
+     re-orders into a plain "< Date >" — arrows flanking the date — instead
+     of the arrows-then-date-at-the-end order desktop uses. */
+  .calendar-nav-prev {
+    order: 1;
+  }
+
+  .calendar-toolbar-title {
+    order: 2;
+  }
+
+  .calendar-nav-next {
+    order: 3;
+  }
+
+  /* Today's own row, directly under the date — pulled out of the date-nav
+     row above (where it used to crowd in next to the arrows) so that row
+     can read as a clean "< Date >" and Today gets a clear tap target of its
+     own instead of competing for space. Only rendered at all once the user
+     has navigated away from today (see isViewingToday in CalendarPage.jsx). */
+  .calendar-today-btn-solo {
+    width: auto;
+    align-self: center;
+  }
+
+  .calendar-toolbar-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    justify-content: center;
+  }
+
+  .calendar-toolbar-actions .view-switch {
+    flex: 1 1 100%;
+  }
+
+  /* Four labeled tabs (Active/Completed/All/No due date) don't reliably
+     fit a narrow phone width without wrapping oddly — scroll horizontally
+     instead, same pattern as a native segmented control. */
+  .view-switch {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* Centers the tabs when they fit the row (the common case) instead of
+       leaving them left-aligned against a full-width background that
+       trails off empty to the right. `safe` falls back to start-aligned
+       if they ever don't fit, so an overflowing set never clips at both
+       ends instead of just scrolling. */
+    justify-content: safe center;
+  }
+
+  .view-switch::-webkit-scrollbar {
+    display: none;
+  }
+
+  .view-switch button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+.view-switch button.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.week-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.week-grid-header {
+  display: contents;
+}
+
+.day-header {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-surface-raised);
+  z-index: 2;
+  padding: 10px 6px;
+  text-align: center;
+  border-bottom: 1px solid var(--color-border);
+  border-left: 1px solid var(--color-border);
+}
+
+.day-header .dow {
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.day-header .dom {
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.day-header.today .dom {
+  color: var(--color-accent);
+}
+
+.day-header.is-last-col {
+  border-top-right-radius: var(--radius-md);
+}
+
+.time-gutter-cell {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-surface-raised);
+  z-index: 3;
+  border-top-left-radius: var(--radius-md);
+}
+
+.time-label {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-align: right;
+  padding-right: 6px;
+}
+
+.day-column {
+  position: relative;
+  border-left: 1px solid var(--color-border);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--color-border) 0,
+    var(--color-border) 1px,
+    transparent 1px,
+    transparent var(--hour-height, 48px)
+  );
+}
+
+.day-column.is-dragover {
+  background-color: var(--color-accent-soft);
+}
+
+.cal-block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 11.5px;
+  overflow: hidden;
+  cursor: grab;
+  border-left: 3px solid;
+  background: var(--color-bg-surface-raised);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.12s ease;
+}
+
+.cal-block:hover {
+  box-shadow: var(--shadow-card);
+  z-index: 5;
+}
+
+.cal-block:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: 1px;
+  z-index: 5;
+}
+
+.cal-block.dragging {
+  opacity: 0.5;
+}
+
+.cal-block.locked {
+  cursor: not-allowed;
+}
+
+.cal-block.passive {
+  border-left-style: dashed;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--color-bg-surface-raised),
+    var(--color-bg-surface-raised) 8px,
+    var(--color-bg-surface) 8px,
+    var(--color-bg-surface) 16px
+  );
+}
+
+.cal-cluster {
+  border-left-style: dashed;
+  border-left-color: var(--color-border-strong);
+  background: var(--color-bg-surface-hover);
+  cursor: pointer;
+}
+
+.cal-cluster.is-open {
+  border-left-style: solid;
+  border-left-color: var(--color-accent-border);
+  box-shadow: 0 0 0 1px var(--color-accent-soft), var(--shadow-card);
+}
+
+.cal-cluster .cal-block-title {
+  padding-right: 7px;
+}
+
+/* Flyout listing the individual short tasks folded into a cluster chip —
+   opened by clicking the chip (see WeekView's openCluster state). Rendered
+   via a portal to <body> with position:fixed set inline (computed from the
+   chip's own bounding rect), so it floats above the entire page — including
+   whatever's packed immediately after the chip in the same day column —
+   rather than competing for space inside the cramped, densely-packed grid. */
+.cal-cluster-popover {
+  min-width: 190px;
+  max-width: 260px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  z-index: 1000;
+  padding: 4px;
+  cursor: default;
+}
+
+/* Transient "36px/hr" pill shown while Ctrl+scroll/pinch-zooming the grid —
+   fades out on its own shortly after the gesture stops (see WeekView). */
+.zoom-hint {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 40;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-bg-surface-raised);
+  box-shadow: var(--shadow-elevated);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+  animation: zoom-hint-in var(--duration-fast) var(--ease-standard);
+}
+
+@keyframes zoom-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.cal-cluster-popover-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+}
+
+.cal-cluster-popover-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.cal-cluster-popover-time {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+}
+
+.cal-cluster-popover-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-block-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Leave room so the title never runs under the lock badge in the
+     top-right corner (see .lock-indicator below). */
+  padding-right: 16px;
+}
+
+.cal-block-time {
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+.cal-event {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 11px;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-bg-surface-hover),
+    var(--color-bg-surface-hover) 4px,
+    var(--color-bg-surface) 4px,
+    var(--color-bg-surface) 8px
+  );
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+}
+
+.cal-event.free-time {
+  opacity: 0.5;
+  border-style: dotted;
+}
+
+.cal-event.manual {
+  cursor: pointer;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-danger) 12%, transparent),
+    color-mix(in srgb, var(--color-danger) 12%, transparent) 4px,
+    var(--color-bg-surface) 4px,
+    var(--color-bg-surface) 8px
+  );
+  border-color: var(--color-danger);
+  color: var(--color-text-primary);
+}
+
+/* Drag-to-block-out-time ghost preview, shown while the mouse is held down
+   on empty grid space (see WeekView.handleColumnMouseDown). */
+.cal-event-ghost {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 11px;
+  background: var(--color-accent-soft);
+  border: 1px dashed var(--color-accent-border);
+  color: var(--color-accent);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* Live current-time indicator, mirroring Google Calendar's own "now" line —
+   only rendered in today's column (see WeekView), repositioned every 30s. */
+.now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--color-danger);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.now-line-dot {
+  position: absolute;
+  left: -1px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-danger);
+}
+
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+/*
+ * Lock/unlock badge on a calendar block: a small pill/square container
+ * sized and inset to sit fully inside the block's border-radius, using
+ * the app's own surface/accent tokens so the icon reads as an in-theme
+ * control. Locked vs unlocked gets a distinct tint (accent vs neutral)
+ * so the state is legible even before hovering.
+ */
+.lock-indicator {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
+  opacity: 0.9;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.lock-indicator:hover {
+  background: var(--color-border-strong);
+  opacity: 1;
+}
+
+.cal-block.locked .lock-indicator {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.cal-block.is-mobile {
+  cursor: pointer;
+}
+
+/* ============================================================================
+   MONTH VIEW
+   ============================================================================ */
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(100px, 1fr);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg-surface);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.month-dow-header {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-surface-raised);
+  z-index: 2;
+  padding: 8px 6px;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.month-cell {
+  border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.month-cell.is-outside {
+  background: var(--color-bg-surface-hover);
+  opacity: 0.55;
+}
+
+.month-cell.today .month-cell-daynum {
+  background: var(--color-accent-solid-bg);
+  color: #fff;
+}
+
+.month-cell-daynum {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.4;
+}
+
+.month-cell-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.month-chip {
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--color-priority-medium);
+  background: var(--color-bg-surface-raised);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  text-align: left;
+}
+
+.month-chip-event {
+  border-left-style: dashed;
+  border-left-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.month-chip-cluster {
+  border-left-style: dashed;
+  border-left-color: var(--color-border-strong);
+  background: var(--color-bg-surface-hover);
+}
+
+.month-chip-more {
+  border-left: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.month-chip-more:hover {
+  color: var(--color-accent);
+}
+
+@media (max-width: 639px) {
+  .month-grid {
+    grid-auto-rows: minmax(70px, 1fr);
+  }
+
+  .month-chip {
+    font-size: 9.5px;
+  }
+}
+
+@media (max-width: 639px) {
+  .calendar-toolbar {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .calendar-toolbar-title {
+    min-width: 0;
+    font-size: var(--text-base);
+  }
+
+  .week-grid {
+    font-size: var(--text-sm);
+  }
+
+  .cal-block {
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+  }
+
+  .day-header .dow {
+    font-size: 10px;
+  }
+
+  .day-header .dom {
+    font-size: 17px;
+  }
+}

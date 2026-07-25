@@ -1,0 +1,197 @@
+/**
+ * ============================================================================
+ * DOMAIN TYPE DEFINITIONS
+ * ============================================================================
+ * This file centralizes every shape used across the scheduler. We use JSDoc
+ * typedefs instead of TypeScript so the project runs on plain Vite + React
+ * with zero build-step changes, while still giving editors full autocomplete
+ * and type-checking (via `// @ts-check` if the consumer enables it).
+ * ============================================================================
+ */
+
+/**
+ * @typedef {'low' | 'medium' | 'high' | 'urgent'} Priority
+ * Priority order used for sorting: urgent(4) > high(3) > medium(2) > low(1)
+ */
+
+/**
+ * @typedef {Object} Task
+ * @property {string} id                     - Unique identifier (uuid).
+ * @property {string} title                  - Human readable task title.
+ * @property {string} [notes]                - Optional free-text notes/description.
+ * @property {number} estimatedHours         - Total hours required to complete the task.
+ * @property {number} remainingHours         - Hours not yet scheduled/completed (drives re-scheduling).
+ * @property {Priority} priority             - Task priority, drives allocation order.
+ * @property {string|null} dueDate           - ISO date string (YYYY-MM-DD) or null if no deadline. OPTIONAL: a task
+ *                                              with no due date still shows up normally in the Tasks list and Board
+ *                                              view (matching Todoist) — it simply has no planning window, so the
+ *                                              allocator/rebalance engine never place it on the calendar.
+ * @property {boolean} [isRecurring]         - True if this task repeats (imported from Todoist's `due.is_recurring`,
+ *                                              or set directly for a locally-created task). Completing a recurring
+ *                                              task advances `dueDate` to the next occurrence instead of setting
+ *                                              `isCompleted` — see SchedulerContext.completeTask.
+ * @property {string|null} [recurrenceString] - Natural-language recurrence phrasing (e.g. "every day", "every 2
+ *                                              weeks"), imported verbatim from Todoist's `due.string` when present.
+ *                                              Used by utils/recurrence.js to compute the next due date locally.
+ *                                              Null/undefined for non-recurring tasks.
+ * @property {string} [projectId]            - Todoist project id, if synced.
+ * @property {'todoist'|'manual'} source     - Where the task originated.
+ * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.
+ * @property {boolean} isCompleted           - Completion state. Recurring tasks never reach `true` via normal
+ *                                              completion — see `isRecurring` above.
+ * @property {number} minChunkHours          - Smallest allowed contiguous block (default 0.5h) - prevents over-fragmentation.
+ * @property {number} maxChunkHours          - Largest allowed contiguous block per day (default 4h) - encourages context-switching breaks.
+ * @property {string} createdAt              - ISO datetime.
+ * @property {string} updatedAt              - ISO datetime.
+ * @property {string|null} [sectionId]       - Todoist Section id this task lives in (board view column), or null.
+ * @property {string|null} [sectionName]     - Denormalized section display name, or null for "No Section".
+ * @property {Subtask[]} [subtasks]           - Todoist sub-items, grouped under this task (never scheduled/listed on their own).
+ * @property {string} [todoistId]            - The task's raw numeric/string id in Todoist (source === 'todoist' only). Used to push edits back via todoistService.
+ * @property {string[]} [dependsOn]          - IDs of other Tasks that must be completed before this one is eligible
+ *                                              for auto-scheduling. Empty/absent means no dependencies. Checked by
+ *                                              rebalanceEngine before a task is handed to the allocator — see
+ *                                              utils/dependencyUtils.areDependenciesMet.
+ * @property {boolean} [isPassive]           - True if this task can run unattended (e.g. laundry, something baking)
+ *                                              and so may be scheduled to overlap other tasks' time blocks instead
+ *                                              of competing for exclusive capacity — see allocator.js.
+ * @property {string|null} [earliestDate]    - ISO date (YYYY-MM-DD). When set, this task's planning window can
+ *                                              never start before this date — the allocator clamps its window-start
+ *                                              to max(today, earliestDate) instead of just `today` — see
+ *                                              allocator.js's getTaskWindow. Lets a user override the scheduler to
+ *                                              say "don't touch this until at least day X", independent of
+ *                                              dueDate/priority. Null/absent means no override (the normal case).
+ * @property {string[]} [labelIds]           - IDs of Labels (see Label typedef) attached to this task, e.g. via the
+ *                                              "@tag" smart-parse shorthand in the title. App-local only — has no
+ *                                              Todoist equivalent and is never pushed/pulled by todoistService.
+ */
+
+/**
+ * @typedef {Object} Subtask
+ * A Todoist child task, grouped under its parent Task rather than being an
+ * independently-scheduled unit. Purely a checklist item for display/tracking.
+ * @property {string} id
+ * @property {string} title
+ * @property {boolean} isCompleted
+ * @property {string} [notes]                - Optional free-text notes, editable from its own compact detail view.
+ *                                              App-local only — has no Todoist equivalent.
+ * @property {string} [todoistId]            - The subtask's raw id in Todoist, used to push edits back.
+ */
+
+/**
+ * @typedef {Object} Label
+ * A lightweight, app-local tag a user can attach to Tasks via the "@tag"
+ * smart-parse shorthand in the title (see utils/smartParse.js). Distinct
+ * from Project — a task can carry any number of labels but only one project,
+ * mirroring Todoist's own label/project distinction. Has no Todoist
+ * equivalent; created/stored entirely in TaskFlow.
+ * @property {string} id
+ * @property {string} name
+ * @property {string} color                  - CSS color value assigned once at creation (see utils/labelColor.js),
+ *                                              kept stable afterward so the same tag always renders the same color.
+ */
+
+/**
+ * @typedef {Object} Section
+ * A Todoist Section (board-view column) belonging to a project.
+ * @property {string} id
+ * @property {string} name
+ * @property {string} [projectId]
+ * @property {number} [order]
+ */
+
+/**
+ * @typedef {Object} Project
+ * A Todoist Project — the top-level container Sections and Tasks belong to.
+ * Used to populate the Board view's project filter.
+ * @property {string} id
+ * @property {string} name
+ * @property {string} [color]
+ * @property {number} [order]
+ */
+
+/**
+ * @typedef {Object} ScheduledBlock
+ * A concrete, dated/timed slice of a Task placed on the calendar.
+ * @property {string} id                     - Unique identifier for this block.
+ * @property {string} taskId                 - FK to Task.id.
+ * @property {string} date                   - ISO date (YYYY-MM-DD) this block occurs on.
+ * @property {string} startTime              - "HH:MM" 24hr local time.
+ * @property {string} endTime                - "HH:MM" 24hr local time.
+ * @property {number} durationHours           - Convenience-cached duration (endTime - startTime).
+ * @property {boolean} isLocked              - User has manually pinned this block; engine must not move it.
+ * @property {boolean} isAutoScheduled       - True if placed by the engine (vs. manually dragged in).
+ * @property {'scheduled'|'in-progress'|'done'} status
+ * @property {string|null} googleEventId     - Linked Google Calendar event id, once pushed.
+ * @property {boolean} [isPassive]           - Denormalized from Task.isPassive at placement time. True if this
+ *                                              block is allowed to overlap other blocks in time (e.g. laundry
+ *                                              running alongside other scheduled work) — calendar views should lay
+ *                                              overlapping blocks out side-by-side rather than treating it as a
+ *                                              conflict.
+ */
+
+/**
+ * @typedef {Object} FixedRoutine
+ * A recurring, non-negotiable block of time removed from daily capacity
+ * BEFORE the scheduler ever runs (sleep, meals, hygiene, commute).
+ * @property {string} id
+ * @property {string} label                  - e.g. "Sleep", "Commute (AM)", "Lunch".
+ * @property {string} startTime              - "HH:MM"
+ * @property {string} endTime                - "HH:MM"
+ * @property {number[]} daysOfWeek            - 0(Sun)-6(Sat) which days this routine applies to.
+ * @property {boolean} isActive
+ */
+
+/**
+ * @typedef {Object} CalendarEvent
+ * An externally-sourced (Google Calendar) or manually created event that
+ * occupies time on a given day. Distinct from ScheduledBlock (task work).
+ * @property {string} id
+ * @property {string} title
+ * @property {string} date                   - ISO date (YYYY-MM-DD)
+ * @property {string} startTime              - "HH:MM"
+ * @property {string} endTime                - "HH:MM"
+ * @property {boolean} isFreeTime            - If true, scheduler treats this as available (ignore/override rule).
+ * @property {boolean} isRecurring
+ * @property {string|null} googleEventId
+ * @property {string} [calendarId]           - Google calendarId this event came from (primary or a subscribed calendar).
+ * @property {string} [calendarName]         - Display name of the source calendar, e.g. "Lecture Timetable".
+ * @property {'google'|'manual'} source
+ * @property {string|null} [seriesId]        - Google's `recurringEventId` (the shared master-event id every
+ *                                              instance of a recurring event carries) — lets "ignore this event"
+ *                                              be applied to just this instance, this-and-following, or the whole
+ *                                              series. Null for non-recurring or manually created events.
+ */
+
+/**
+ * @typedef {Object} SchedulingRules
+ * Global configuration governing how the engine allocates hours.
+ * @property {number} bufferDays              - Days before due date the task should be *finished* by (default 1).
+ * @property {string} workDayStart            - "HH:MM" earliest hour work can be scheduled.
+ * @property {string} workDayEnd              - "HH:MM" latest hour work can be scheduled.
+ * @property {number} maxDailyDeepWorkHours    - Cap on total scheduled task-hours per day, to avoid burnout.
+ * @property {number} horizonWeeks             - How many weeks ahead the scheduler plans across.
+ * @property {boolean} frontLoadUrgent         - If true, urgent/high priority tasks are packed near their due dates first.
+ * @property {number} minGapBetweenBlocksMins  - Minimum break minutes required between two scheduled blocks.
+ */
+
+/**
+ * @typedef {Object} DayCapacity
+ * Derived/computed capacity snapshot for a single calendar day - the core
+ * unit the allocation algorithm consumes.
+ * @property {string} date                   - ISO date.
+ * @property {number} totalAvailableHours     - Hours left after subtracting routines + calendar events.
+ * @property {number} allocatedHours          - Hours already claimed by scheduled blocks (this run).
+ * @property {Array<{start:string,end:string}>} freeIntervals - Open time windows, sorted, in "HH:MM" pairs.
+ */
+
+/**
+ * @typedef {Object} HistoryEntry
+ * A single snapshot in the Undo/Redo stack.
+ * @property {string} id
+ * @property {number} timestamp
+ * @property {string} actionLabel            - Human-readable description, e.g. "Auto-scheduled 4 tasks".
+ * @property {ScheduledBlock[]} blocksSnapshot
+ * @property {Task[]} tasksSnapshot
+ */
+
+export {}; // This file only exports types (JSDoc); no runtime code.
