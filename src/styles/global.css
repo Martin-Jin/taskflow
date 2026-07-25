@@ -1,0 +1,828 @@
+/* ============================================================================
+   DESIGN TOKENS
+   ----------------------------------------------------------------------------
+   Palette: a calm, low-glare "control room" feel — deep slate background,
+   a single confident indigo accent for scheduled work, and warm amber/red
+   reserved strictly for priority signaling (so color always carries meaning,
+   never decoration). Avoids the generic cream+terracotta AI-default look.
+
+   BREAKPOINTS (literal values used verbatim in every @media query in the
+   app — no build-time custom-media plugin is configured, so these are
+   documented here rather than expressed as real CSS variables):
+     mobile:  max-width: 639px
+     tablet:  min-width: 640px and max-width: 1023px  (keeps the desktop
+              sidebar shell; only the bottom-tab-bar mobile nav differs)
+     desktop: min-width: 1024px  (current/original layout, unchanged)
+   Mirrored in JS as useIsMobile()/useIsTablet() (src/hooks/useIsMobile.js)
+   for the few places layout must branch in script rather than pure CSS.
+   ============================================================================ */
+
+:root {
+  --bg-canvas: #14161c;
+  --bg-surface: #1b1e27;
+  --bg-surface-raised: #232733;
+  --bg-hover: #2a2f3d;
+  --border-subtle: #454e63;
+  --border-strong: #4f576c;
+  /* Meets WCAG 1.4.11 (3:1) against both --bg-surface and --bg-canvas —
+     use for borders that are the sole cue of an interactive control's
+     boundary (pill buttons, checkboxes), not for decorative dividers. */
+  --border-control: #6b7280;
+
+  --text-primary: #e8e9ee;
+  --text-secondary: #9498a8;
+  --text-tertiary: #9199b4;
+
+  --accent: #6c7bf0;
+  --accent-hover: #8390f3;
+  --accent-soft: rgba(108, 123, 240, 0.14);
+  /* Darker than --accent specifically for solid fills with white text
+     (btn-primary) — --accent itself reads fine as a border/soft accent but
+     fails 4.5:1 with white text on top of it. */
+  --accent-solid: #4a58cf;
+  --accent-solid-hover: #3f4bb8;
+
+  --priority-urgent: #f3696e;
+  --priority-high: #f0a83e;
+  --priority-medium: #4fb8e0;
+  --priority-low: #8b92a0;
+
+  --success: #4fbf8b;
+  --warning: #f0a83e;
+  --danger: #f3696e;
+
+  --font-display: 'Fraunces', 'Georgia', serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 3px 10px rgba(0, 0, 0, 0.4);
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 19px;
+  --text-xl: 24px;
+  --text-display: 28px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --bottom-bar-height: 58px;
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+  grid-template-areas:
+    'sidebar topbar'
+    'sidebar main';
+}
+
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--bg-surface);
+}
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px;
+}
+
+.main-content {
+  grid-area: main;
+  overflow: auto;
+  padding: 20px;
+}
+
+.tab-panel {
+  animation: tab-fade-in var(--duration-fast) var(--ease-standard);
+}
+
+/* Used by tabs (e.g. calendar) that manage their own internal scroll
+   container, so the page-level .main-content scrollbar never doubles up
+   with the tab's own. */
+.tab-panel-fill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+@keyframes tab-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .app-shell.is-mobile {
+    grid-template-columns: 1fr;
+    grid-template-rows: 56px 1fr;
+    grid-template-areas:
+      'topbar'
+      'main';
+  }
+
+  .app-shell.is-mobile .main-content {
+    padding: var(--space-3);
+    padding-bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+  }
+
+  .app-shell.is-mobile .topbar {
+    padding: 0 var(--space-3);
+  }
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 0 6px;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), #a06cf0);
+  flex-shrink: 0;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 20px;
+}
+
+.nav-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 6px 10px 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-size: 13.5px;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nav-item:active {
+  transform: scale(0.98);
+}
+
+.nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 15px;
+  border-radius: var(--radius-sm);
+  /* A visible border, not just a fill — .btn's background sits so close in
+     tone to the surfaces it's placed on (modals, cards) that fill contrast
+     alone doesn't reliably read as a button boundary. text-tertiary against
+     --bg-surface-raised clears WCAG 1.4.11's 3:1 non-text contrast minimum. */
+  border: 1px solid var(--text-tertiary);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--border-strong);
+  border-color: var(--text-secondary);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent-solid);
+  border-color: transparent;
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-solid-hover);
+  border-color: transparent;
+}
+
+.btn-icon {
+  padding: 8px;
+}
+
+/* A close/remove "X" button reads fine from its icon alone and sits right
+   next to whatever it's closing — the border+fill every other .btn now has
+   would just add visual noise here, so this is the one deliberate
+   exception to "every button gets a background". */
+.btn-x {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn-x:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+@media (max-width: 639px) {
+  .btn-icon {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .nav-item,
+  .bottom-tab-item,
+  .more-sheet-item {
+    min-height: 44px;
+  }
+}
+
+.card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  animation: card-in var(--duration-base) var(--ease-decelerate);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.task-row {
+  transition: background var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.task-row:hover {
+  background: var(--bg-hover);
+}
+
+.task-row:active {
+  transform: scale(0.995);
+}
+
+.priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.priority-dot.urgent {
+  background: var(--priority-urgent);
+}
+.priority-dot.high {
+  background: var(--priority-high);
+}
+.priority-dot.medium {
+  background: var(--priority-medium);
+}
+.priority-dot.low {
+  background: var(--priority-low);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.badge.urgent {
+  background: rgba(239, 90, 90, 0.15);
+  color: var(--priority-urgent);
+}
+.badge.high {
+  background: rgba(240, 168, 62, 0.15);
+  color: var(--priority-high);
+}
+.badge.medium {
+  background: rgba(79, 184, 224, 0.15);
+  color: var(--priority-medium);
+}
+.badge.low {
+  background: rgba(107, 114, 128, 0.15);
+  color: var(--priority-low);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chip-project {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.chip-toggle {
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.chip-toggle:hover {
+  background: var(--border-strong);
+}
+
+.chip-toggle.active {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.chip-clear {
+  cursor: pointer;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.chip-clear:hover {
+  color: var(--text-primary);
+}
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 15, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: modal-overlay-in var(--duration-base) var(--ease-standard);
+}
+
+.modal-overlay.is-closing {
+  animation: modal-overlay-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+.modal {
+  background: var(--bg-surface-raised);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+  width: 480px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 24px;
+  animation: modal-in var(--duration-base) var(--ease-decelerate);
+  scrollbar-width: none; /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
+  -ms-overflow-style: none;
+}
+
+.modal::-webkit-scrollbar {
+  display: none;
+}
+
+.modal-overlay.is-closing .modal {
+  animation: modal-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+@keyframes modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes modal-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.form-row label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.form-row input:not([type='checkbox']),
+.form-row select,
+.form-row textarea {
+  background: var(--bg-canvas);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13.5px;
+  overflow: hidden;
+}
+
+.form-row textarea {
+  overflow: auto; /* textareas need scroll/resize, so only clip via border-radius elsewhere */
+}
+
+.form-row input:focus,
+.form-row select:focus,
+.form-row textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.form-row-split {
+  display: flex;
+  gap: 10px;
+}
+
+.settings-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+@media (max-width: 639px) {
+  .modal-overlay {
+    align-items: flex-end;
+  }
+
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .form-row-split {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .modal-actions {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .modal-actions > div {
+    flex-wrap: wrap;
+  }
+
+  .settings-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   Number / time input spinner buttons.
+   The raw OS-drawn spinner (light grey box, sharp corners) reads as a
+   foreign widget against the dark theme. We can't recolor the native
+   control directly, so we hide it and draw a matching custom one that
+   sits flush with the field instead.
+   ---------------------------------------------------------------------- */
+input[type='number'] {
+  -moz-appearance: textfield; /* Firefox: drop the native spinner entirely */
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Re-introduce a theme-matched stepper via a wrapper the number/time
+   inputs already sit inside (.form-row), using background-painted arrows
+   so no extra markup is required. */
+.form-row input[type='number'],
+.form-row input[type='time'],
+.form-row input[type='date'] {
+  color-scheme: dark; /* tells the browser to draw any remaining native
+                          chrome (time/date picker icon) in a dark-matching
+                          style instead of stark white */
+  overflow: hidden; /* clips the native picker-indicator/spinner chrome to
+                        the field's rounded corners — without this Chromium
+                        squares off whichever side that chrome sits on */
+}
+
+input[type='time']::-webkit-calendar-picker-indicator,
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.6) brightness(1.3);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px;
+}
+
+input[type='time']::-webkit-calendar-picker-indicator:hover,
+input[type='date']::-webkit-calendar-picker-indicator:hover {
+  background: var(--bg-hover);
+}
+
+/* ----------------------------------------------------------------------
+   Custom checkbox skin. The raw browser checkbox (a stark white square)
+   reads as a foreign, unstyled widget against the dark theme — this
+   replaces it with a rounded, accent-colored control (Todoist-style) via
+   `appearance: none` + a hand-drawn checkmark, applied globally so every
+   existing <input type="checkbox"> in the app picks it up with no markup
+   changes.
+   ---------------------------------------------------------------------- */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-control);
+  background: transparent;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+input[type='checkbox']:hover {
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:checked {
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  display: block;
+  width: 5px;
+  height: 9px;
+  margin-top: -1px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ----------------------------------------------------------------------
+   Todoist-style task-row checkbox (TaskListPanel) — a circular,
+   priority-colored control that doubles as the priority indicator and the
+   "mark complete" action, replacing the old split dot + icon-button.
+   ---------------------------------------------------------------------- */
+.task-checkbox {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--priority-medium);
+  background: transparent;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bg-canvas);
+  padding: 0;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.task-checkbox.urgent {
+  border-color: var(--priority-urgent);
+}
+.task-checkbox.high {
+  border-color: var(--priority-high);
+}
+.task-checkbox.medium {
+  border-color: var(--priority-medium);
+}
+.task-checkbox.low {
+  border-color: var(--priority-low);
+}
+
+.task-checkbox:hover:not(:disabled) {
+  background: var(--accent-soft);
+  transform: scale(1.08);
+}
+
+.task-checkbox.urgent.checked {
+  background: var(--priority-urgent);
+}
+.task-checkbox.high.checked {
+  background: var(--priority-high);
+}
+.task-checkbox.medium.checked {
+  background: var(--priority-medium);
+}
+.task-checkbox.low.checked {
+  background: var(--priority-low);
+}
+
+.task-checkbox:disabled {
+  cursor: default;
+}
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-raised);
+  box-shadow: var(--shadow-elevated);
+  max-width: 360px;
+  font-size: 13px;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: toast-in var(--duration-base) var(--ease-decelerate);
+}
+
+.toast.is-closing {
+  animation: toast-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.toast.success {
+  border-left: 3px solid var(--success);
+}
+.toast.warning {
+  border-left: 3px solid var(--warning);
+}
+.toast.error {
+  border-left: 3px solid var(--danger);
+}
+.toast.info {
+  border-left: 3px solid var(--accent);
+}
+
+@media (max-width: 639px) {
+  .toast {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+    max-width: none;
+  }
+}

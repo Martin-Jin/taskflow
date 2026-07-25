@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # NOTE: no VITE_TODOIST_API_TOKEN here, deliberately — this is a public
+      # build served to every visitor, and each visitor connects their OWN
+      # Todoist account from Settings (see SchedulerContext.setTodoistApiToken).
+      # Baking a personal token in here would hand it to every visitor.
+      # VITE_GOOGLE_CLIENT_ID / VITE_GOOGLE_API_KEY are safe to build in: they
+      # identify the OAuth client, not a credential, and Google's own
+      # "Authorized JavaScript origins" restriction is what actually secures
+      # them (set it to https://<owner>.github.io in Cloud Console).
+      - name: Build
+        env:
+          GH_PAGES: true
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

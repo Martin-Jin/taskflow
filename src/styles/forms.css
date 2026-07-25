@@ -1,0 +1,787 @@
+/* ============================================================================
+   Shared form primitives used across AddTaskModal / TaskDetailModal.
+   Centralizing these here instead of inline styles keeps both modals in
+   visual sync as fields are added/edited.
+   ============================================================================ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.detail-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.form-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.form-hint {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  margin: 4px 0 0;
+}
+
+.form-error {
+  font-size: 12.5px;
+  color: var(--danger);
+  margin-top: -6px;
+  margin-bottom: 14px;
+}
+
+.form-warning {
+  font-size: 11.5px;
+  color: var(--danger);
+  margin-top: -10px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+/* ----------------------------------------------------------------------
+   SmartTitleInput — the Title field's inline highlight overlay. A backdrop
+   sits behind the real input, rendering the same text with invisible
+   characters so only the <mark> highlights show through; the real input's
+   own text renders on top of it. See the component doc comment for why.
+   ---------------------------------------------------------------------- */
+.smart-title-wrap {
+  position: relative;
+}
+
+.smart-title-backdrop,
+.smart-title-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  font-family: inherit;
+  line-height: normal;
+  white-space: pre;
+}
+
+.smart-title-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+}
+
+.smart-title-mark {
+  background: var(--accent-soft);
+  border-radius: 3px;
+  color: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.smart-title-input {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-canvas);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.smart-title-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* ----------------------------------------------------------------------
+   Smart-parse detection chips (SmartChips) — shown under the Title field
+   as live, dismissible previews of what smartParse.js picked up out of
+   the typed text (due date / recurrence / priority / dependency).
+   ---------------------------------------------------------------------- */
+.smart-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 14px;
+  animation: smart-chip-in var(--duration-base) var(--ease-decelerate);
+}
+
+.smart-chip {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  border-color: transparent;
+  padding-right: 4px;
+}
+
+@keyframes smart-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   DependencyPicker — combobox with removable chips, replacing the old
+   native <select multiple> (which required an undiscoverable ctrl/cmd
+   click to deselect an option).
+   ---------------------------------------------------------------------- */
+.dependency-picker {
+  position: relative;
+}
+
+.dependency-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.chip-dependency {
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  padding-right: 4px;
+}
+
+.chip-dependency-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  padding: 0;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.chip-dependency-remove:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
+
+.dependency-picker-input-row {
+  position: relative;
+}
+
+.dependency-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.dependency-picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.dependency-picker-option:hover,
+.dependency-picker-option.highlighted {
+  background: var(--bg-hover);
+}
+
+.dependency-picker-empty {
+  padding: 8px 9px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+/* ----------------------------------------------------------------------
+   Label (tag) chips — LabelPicker's selected-tag row and the small swatch
+   shown next to each option in its dropdown. Each label carries its own
+   `color` (utils/labelColor.js), applied inline by the component; these
+   rules only cover the shared shape.
+   ---------------------------------------------------------------------- */
+.chip-label {
+  border-color: transparent;
+  padding-right: 4px;
+  font-weight: 600;
+}
+
+.label-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 7px;
+  flex-shrink: 0;
+}
+
+/* ----------------------------------------------------------------------
+   Task/Block/Event detail layout — Todoist-inspired "page" structure used
+   by TaskDetailModal, AddTaskModal, BlockDetailModal and EventDetailModal:
+   a header row (complete-checkbox + title + close), a two-column body
+   (free-text main column, compact metadata sidebar), and a footer action
+   row. Sidebar fields render as a plain-looking control that only reveals
+   its input chrome (border/background) on hover/focus, so at rest it reads
+   like a label + value pair rather than a form.
+   ---------------------------------------------------------------------- */
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.detail-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-title-wrap .smart-title-backdrop,
+.detail-title-wrap .smart-title-input {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  padding: 4px 6px;
+}
+
+.detail-title-wrap .smart-title-input {
+  border-color: transparent;
+  background: transparent;
+}
+
+.detail-title-wrap .smart-title-input:focus {
+  background: var(--bg-canvas);
+  border-color: var(--accent);
+}
+
+.detail-header-close {
+  flex-shrink: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+.detail-header-close:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+.detail-sync-note {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  margin: -6px 0 14px 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.detail-body {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-5);
+  margin-top: var(--space-2);
+}
+
+.detail-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The description field is the first row in the main column — let it grow
+   to soak up whatever height the sidebar's field list ends up needing, so
+   the two columns end at the same height instead of leaving a gap under a
+   short description next to a long sidebar. */
+.detail-main > .form-row:first-child {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-main > .form-row:first-child textarea {
+  flex: 1;
+}
+
+.detail-main > .form-row textarea {
+  background: var(--bg-canvas);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  resize: none; /* grows to fit content instead — see useAutosizeTextarea */
+  min-height: 140px;
+  overflow: hidden;
+}
+
+.detail-main > .form-row textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* AddTaskModal's description — no reason to stretch it to match the
+   sidebar's height (that's TaskDetailModal's job, where subtasks/notes
+   share the space); left blank underneath is fine here. Borderless at
+   rest, like Todoist's own quick-add, revealing its box only on focus. */
+.detail-main > .form-row.form-row-compact-notes {
+  flex: none;
+}
+
+.detail-main > .form-row.form-row-compact-notes textarea {
+  flex: none;
+  min-height: 60px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.detail-main > .form-row.form-row-compact-notes textarea:hover {
+  background: var(--bg-hover);
+}
+
+.detail-main > .form-row.form-row-compact-notes textarea:focus {
+  background: var(--bg-canvas);
+}
+
+/* ----------------------------------------------------------------------
+   AddTaskModal's pill row — Todoist-style quick-add: Date/Priority/Labels
+   stay hidden as plain-looking buttons until clicked, each revealing its
+   own compact editor panel below the row (accordion-style, one open at a
+   time) instead of an always-visible sidebar. "..." folds every less
+   common field (Section, Estimated hours, Repeat, Depends on, Lock a day,
+   Unattended) behind one more panel.
+   ---------------------------------------------------------------------- */
+.addtask-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+
+.addtask-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.addtask-pill:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.addtask-pill.is-set {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+.addtask-pill-panel {
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.addtask-more-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.addtask-more-panel .detail-field {
+  padding: 8px 0;
+}
+
+.addtask-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.addtask-project-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.addtask-project-select select {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 0;
+}
+
+.detail-sidebar {
+  width: 230px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Used by modals with no two-column split (Block/Event detail) — the
+   field list runs full width instead of sitting in a narrow column. */
+.detail-sidebar--full {
+  width: 100%;
+}
+
+.detail-field {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.detail-field:last-child {
+  border-bottom: none;
+}
+
+.detail-field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.detail-field-value select,
+.detail-field-value input:not([type='checkbox']) {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  margin: -4px -6px;
+  width: calc(100% + 12px);
+  color: var(--text-primary);
+  font-size: 13px;
+  overflow: hidden; /* clips native date/time picker chrome to the rounded corners */
+}
+
+.detail-field-value select:hover,
+.detail-field-value input:not([type='checkbox']):hover {
+  background: var(--bg-hover);
+}
+
+.detail-field-value select:focus,
+.detail-field-value input:not([type='checkbox']):focus {
+  background: var(--bg-canvas);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.detail-field-value .form-checkbox-row {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.detail-field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ----------------------------------------------------------------------
+   Subtask checklist rows — used inside TaskDetailModal's Sub-tasks field.
+   The whole row (minus its own checkbox/delete controls) opens
+   SubtaskDetailModal on click, mirroring a top-level task row.
+   ---------------------------------------------------------------------- */
+.subtask-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.subtask-row:hover {
+  background: var(--bg-hover);
+}
+
+.subtask-row-title {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subtask-row-title.completed {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.subtask-row-remove {
+  flex-shrink: 0;
+  opacity: 0;
+  background: transparent;
+  border-color: transparent;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.subtask-row-remove:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+.subtask-row:hover .subtask-row-remove,
+.subtask-row-remove:focus-visible {
+  opacity: 1;
+}
+
+.subtask-add-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.subtask-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.subtask-hide-completed {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.subtask-hide-completed:hover {
+  color: var(--text-primary);
+}
+
+@media (max-width: 639px) {
+  .detail-body {
+    flex-direction: column;
+  }
+
+  .detail-sidebar {
+    width: 100%;
+  }
+
+  .detail-sync-note {
+    margin-left: 0;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   RoutineTimeline — the Fixed-routines drag editor (Settings). A single
+   24-hour column, styled after Calendar/WeekView's day-column + cal-block
+   so the drag-to-create / drag-to-move / drag-edge-to-resize gestures feel
+   like the same control, just scoped to one day instead of a full week.
+   ---------------------------------------------------------------------- */
+.routine-timeline {
+  display: flex;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 10px 8px 4px;
+  background: var(--bg-canvas);
+}
+
+.routine-timeline-gutter {
+  position: relative;
+  width: 42px;
+  flex-shrink: 0;
+}
+
+.routine-timeline-hour {
+  position: absolute;
+  right: 6px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.routine-timeline-column {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--border-subtle);
+  cursor: crosshair;
+}
+
+.routine-timeline-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border-subtle);
+  pointer-events: none;
+}
+
+.routine-timeline-ghost {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--accent-hover);
+  padding: 2px 6px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.routine-block {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  background: var(--bg-surface-raised);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  box-shadow: var(--shadow-sm);
+  cursor: grab;
+  overflow: hidden;
+}
+
+.routine-block.inactive {
+  opacity: 0.45;
+  border-left-style: dashed;
+}
+
+.routine-block-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.routine-block-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  background: var(--accent-solid);
+  flex-shrink: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.routine-block.inactive .routine-block-dot {
+  background: transparent;
+  border-color: var(--border-strong);
+}
+
+.routine-block-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.routine-block-label-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-canvas);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.routine-block-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.routine-block:hover .routine-block-remove,
+.routine-block-remove:focus-visible {
+  opacity: 1;
+}
+
+.routine-block-time {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+.routine-block-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.routine-block-edge-top {
+  top: 0;
+}
+
+.routine-block-edge-bottom {
+  bottom: 0;
+}

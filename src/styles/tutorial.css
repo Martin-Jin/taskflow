@@ -1,0 +1,92 @@
+/* ============================================================================
+   TutorialModal — reuses .modal/.btn primitives from global.css, adding
+   only the layout specific to a centered step carousel.
+   ============================================================================ */
+
+.tutorial-modal {
+  width: 420px;
+  text-align: center;
+  position: relative;
+  padding-top: 32px;
+}
+
+.tutorial-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: none;
+  background: transparent;
+}
+
+.tutorial-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tutorial-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  margin: 0 0 8px;
+}
+
+.tutorial-body {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+
+.tutorial-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.tutorial-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--border-strong);
+  transition: background var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.tutorial-dot.active {
+  background: var(--accent);
+  transform: scale(1.35);
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tutorial-actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.help-icon-btn {
+  position: relative;
+}
+
+.help-icon-unread-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1.5px solid var(--bg-surface);
+}
