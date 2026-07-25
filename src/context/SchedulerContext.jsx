@@ -242,6 +242,12 @@ export function SchedulerProvider({ children }) {
 
       try {
         if (shouldSyncTodoist) {
+          // Deliberately a wholesale replace, not a merge: this is also what
+          // drops the bundled sample tasks/boards/sections (see mockData.js,
+          // isDefault: true) the moment a real Todoist sync succeeds — they
+          // only ever exist as the local-storage fallback above and are
+          // never pushed to Todoist (createProject/createSection/createTask
+          // below are only ever called from user-driven add* actions).
           const [fetchedProjects, fetchedSections] = await Promise.all([
             fetchTodoistProjects(todoistToken),
             fetchTodoistSections(todoistToken),
@@ -940,6 +946,22 @@ export function SchedulerProvider({ children }) {
 
   const clearNotification = useCallback(() => setNotification(null), []);
 
+  /**
+   * Wipe every task, board (project), section, and label — used by
+   * Settings' "Clear all data" action for a user who wants a blank slate
+   * instead of the bundled sample data. Deliberately narrower than the
+   * "Reset local data" danger-zone action: routines/rules/sync settings are
+   * left untouched, and (unlike a full localStorage wipe) this doesn't fall
+   * back to the sample data again afterward, since it persists the emptied
+   * arrays rather than clearing the storage keys outright.
+   */
+  const clearAllData = useCallback(() => {
+    commit({ tasks: [], blocks: [] }, 'Cleared all tasks and boards');
+    setSections([]);
+    setProjects([]);
+    setLabels([]);
+  }, [commit]);
+
   const value = useMemo(
     () => ({
       tasks,
@@ -998,6 +1020,7 @@ export function SchedulerProvider({ children }) {
       connectGoogleCalendar,
       pushToGoogleCalendar,
       clearNotification,
+      clearAllData,
     }),
     [
       tasks,
@@ -1052,6 +1075,7 @@ export function SchedulerProvider({ children }) {
       connectGoogleCalendar,
       pushToGoogleCalendar,
       clearNotification,
+      clearAllData,
     ]
   );
 

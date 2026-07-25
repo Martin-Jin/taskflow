@@ -5,16 +5,15 @@
  */
 
 import React, { useState } from 'react';
-import { RefreshCw, Pause, Circle, Check, HelpCircle, AlertTriangle, KeyRound, ExternalLink } from 'lucide-react';
+import { RefreshCw, Pause, Circle, Check, HelpCircle, AlertTriangle, KeyRound, ExternalLink, Trash2 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { clearAllPersisted } from '../utils/persistence';
-import TutorialModal from './Tutorial/TutorialModal';
 import RoutineTimeline from './Settings/RoutineTimeline';
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export default function SettingsPanel() {
-  const [showTutorial, setShowTutorial] = useState(false);
+/** @param {{ onOpenTour: () => void }} props — replays the app-level guided tour (see App.jsx), which needs to be able to switch tabs as it advances. */
+export default function SettingsPanel({ onOpenTour }) {
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenDraft, setTokenDraft] = useState('');
   const {
@@ -34,6 +33,7 @@ export default function SettingsPanel() {
     taskSyncEnabled,
     setTaskSyncEnabled,
     syncActive,
+    clearAllData,
   } = useScheduler();
 
   function submitToken(e) {
@@ -64,7 +64,7 @@ export default function SettingsPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
-      <div className="card">
+      <div className="card" data-tour="integrations-card">
         <h3 style={{ marginTop: 0 }}>Integrations</h3>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span
@@ -324,21 +324,39 @@ export default function SettingsPanel() {
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Help</h3>
-        <button className="btn" onClick={() => setShowTutorial(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <button className="btn" onClick={onOpenTour} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <HelpCircle size={14} />
-          Show tutorial
+          Replay guided tour
         </button>
       </div>
 
-      <div className="card">
+      <div className="card" data-tour="danger-zone-card">
         <h3 style={{ marginTop: 0 }}>Danger zone</h3>
-        <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: -6 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: -6, marginBottom: 10 }}>
+          Clears every task and board (including the sample "Work / Writing / Personal" data new accounts start
+          with) so you can start from a blank slate. Routines, scheduling rules, and your Todoist/Google Calendar
+          connections are left untouched.
+        </p>
+        <button
+          className="btn"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--danger)' }}
+          onClick={() => {
+            if (window.confirm('Clear all tasks and boards? This cannot be undone.')) {
+              clearAllData();
+            }
+          }}
+        >
+          <Trash2 size={14} />
+          Clear all data (tasks & boards)
+        </button>
+
+        <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 16, marginBottom: -6 }}>
           Wipes every locally-saved TaskFlow setting (tasks, blocks, routines, rules, events) from this browser and
           reloads. Todoist/Google Calendar accounts themselves are untouched — this only clears what's cached here.
         </p>
         <button
           className="btn"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--danger)' }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--danger)', marginTop: 10 }}
           onClick={() => {
             if (window.confirm('Reset all local TaskFlow data? This cannot be undone.')) {
               clearAllPersisted();
@@ -350,8 +368,6 @@ export default function SettingsPanel() {
           Reset local data
         </button>
       </div>
-
-      {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
     </div>
   );
 }

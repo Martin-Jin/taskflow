@@ -160,12 +160,14 @@ select:focus-visible,
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  background: var(--bg-surface);
+  background: var(--bg-surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar {
   grid-area: sidebar;
   background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
@@ -780,7 +782,9 @@ input[type='checkbox']:checked::after {
   box-shadow: var(--shadow-elevated);
   max-width: 360px;
   font-size: 13px;
-  z-index: 200;
+  /* Above .guided-tour-overlay (1000, see tutorial.css) so a background
+     sync/error toast is never hidden behind the tour's dim layer. */
+  z-index: 1100;
   display: flex;
   align-items: flex-start;
   gap: 10px;

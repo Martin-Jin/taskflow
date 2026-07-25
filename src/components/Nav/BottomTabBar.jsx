@@ -30,6 +30,7 @@ export default function BottomTabBar({ tabs, activeTab, onSelectTab, onOpenMore 
           key={t.id}
           className={`bottom-tab-item ${activeTab === t.id ? 'active' : ''}`}
           onClick={() => onSelectTab(t.id)}
+          data-tour={`nav-${t.id}`}
         >
           <span className="bottom-tab-icon">
             <t.icon size={20} strokeWidth={2} />
