@@ -163,8 +163,8 @@ export default function GuidedTour({ currentTab, onTabChange, onFinish }) {
   const tooltipPos = computeTooltipPosition(rect, step.placement, tooltipHeight);
 
   return (
-    <div className={`guided-tour-overlay ${isClosing ? 'is-closing' : ''}`}>
-      <div className="guided-tour-dim" onClick={requestClose} />
+    <div className={`guided-tour-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
+      {!rect && <div className="guided-tour-dim" />}
       {rect && (
         <div
           className="guided-tour-spotlight"
@@ -180,6 +180,7 @@ export default function GuidedTour({ currentTab, onTabChange, onFinish }) {
         className="guided-tour-tooltip"
         style={{ top: tooltipPos.top, left: tooltipPos.left }}
         ref={tooltipRef}
+        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="guided-tour-title"

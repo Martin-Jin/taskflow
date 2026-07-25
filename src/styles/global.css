@@ -124,6 +124,37 @@ button {
   cursor: pointer;
 }
 
+a {
+  color: var(--accent-hover);
+}
+
+a:visited {
+  color: var(--accent);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='search'],
+input[type='email'],
+input[type='url'] {
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+input[type='text']:focus,
+input[type='password']:focus,
+input[type='search']:focus,
+input[type='email']:focus,
+input[type='url']:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
