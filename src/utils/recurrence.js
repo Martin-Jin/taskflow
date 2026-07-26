@@ -31,6 +31,9 @@ import { addDays } from './dateUtils';
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
+/** Short display labels for DAY_NAMES indices (0=Sun..6=Sat), used to build a readable recurrenceString. */
+export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 // Canonical unit -> aliases Todoist (or a user typing a custom recurrence)
 // might use. Longest/most-specific first isn't required here since we
 // build a single alternation and rely on \b word boundaries.
@@ -44,9 +47,118 @@ const UNIT_ALIASES = {
 // "each" is as common a leading word as "every"/"ev" ("each week", "each month").
 const LEAD_WORD = 'every|ev|each';
 
+// Ordinal words for "every second sunday" (= every other Sunday), "every third monday", etc.
+// Numeric ordinals ("every 2nd sunday") are handled separately via a digit+suffix pattern.
+// "other" is folded in here too so "every other monday" (Todoist's own phrasing for
+// biweekly-on-a-weekday) falls out of the same ordinal machinery for free.
+const ORDINAL_ALIASES = {
+  other: 2,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+};
+
 function unitAliasPattern() {
   const all = Object.values(UNIT_ALIASES).flat();
   return all.join('|');
+}
+
+function ordinalAliasPattern() {
+  return Object.keys(ORDINAL_ALIASES).join('|');
+}
+
+/** "sun"/"sunday" -> 0, ..., "sat"/"saturday" -> 6; matches DAY_NAMES stems with any trailing letters. */
+function dayTokenPattern() {
+  return `(?:${DAY_NAMES.join('|')})[a-z]*`;
+}
+
+function ordinalTokenPattern() {
+  return `(?:\\d+(?:st|nd|rd|th)|${ordinalAliasPattern()})`;
+}
+
+/** Every distinct weekday index (0=Sun..6=Sat) mentioned in `span`, in weekday order. */
+function extractDaysFromSpan(span) {
+  const days = [];
+  const dayRe = new RegExp(`\\b(${DAY_NAMES.join('|')})[a-z]*\\b`, 'g');
+  for (const m of span.matchAll(dayRe)) {
+    const idx = DAY_NAMES.indexOf(m[1]);
+    if (idx !== -1 && !days.includes(idx)) days.push(idx);
+  }
+  return days.sort((a, b) => a - b);
+}
+
+/**
+ * First ordinal ("second", "2nd", ...) mentioned in `span`, or 1 if none.
+ * Known limitation: the `{unit, count, days}` shape has one count for every
+ * day in the match, so a mixed phrase like "every sunday and every second
+ * saturday" comes out as every-2-weeks on BOTH days rather than weekly
+ * Sunday + biweekly Saturday. Representing that correctly would need a
+ * per-day count, which isn't worth the complexity for how rare mixed-cadence
+ * phrasing is in practice — Todoist's own sync remains the source of truth
+ * for the precise next date regardless.
+ */
+function extractOrdinalCountFromSpan(span) {
+  const m = span.match(new RegExp(`\\b(?:(\\d+)(?:st|nd|rd|th)|(${ordinalAliasPattern()}))\\b`));
+  if (!m) return 1;
+  return m[1] ? Number(m[1]) : ORDINAL_ALIASES[m[2]];
+}
+
+/**
+ * Match one or more weekday mentions after a leading "every"/"ev"/"each",
+ * covering the phrasings this feature targets:
+ *   "every sunday", "every sat and sun", "every mon, wed, fri",
+ *   "every sunday and every saturday" (repeated lead word per day),
+ *   "every second sun" / "every 2nd sunday" (ordinal -> biweekly-style count).
+ * Returns a rule with a `days` array (weekday indices, 0=Sun..6=Sat) alongside
+ * the existing `{unit, count}` shape so simple callers (computeNextDueDate)
+ * keep working unchanged while richer callers (smartParse's chip label) can
+ * use `days` to show which weekdays were detected.
+ */
+function findWeekdayRecurrenceSpan(s) {
+  const dayToken = dayTokenPattern();
+  const ordinalToken = ordinalTokenPattern();
+  const re = new RegExp(
+    `(?:${LEAD_WORD})!?\\s+(?:${ordinalToken}\\s+)?${dayToken}` +
+      `(?:\\s*(?:,|&|and)\\s*(?:(?:${LEAD_WORD})!?\\s+)?(?:${ordinalToken}\\s+)?${dayToken})*`
+  );
+  const m = s.match(re);
+  if (!m) return null;
+  const span = m[0];
+  const days = extractDaysFromSpan(span);
+  if (!days.length) return null;
+  const count = extractOrdinalCountFromSpan(span);
+  return { rule: { unit: 'week', count, days }, matchedText: span, index: m.index };
+}
+
+/**
+ * "every weekday" / "every weekdays" — Todoist's own shortcut for Mon-Fri.
+ * Modeled with the same `{unit: 'week', count: 1, days}` shape the
+ * multi-weekday matcher already produces, just with all five business days
+ * pre-filled, so every caller that already knows how to render/advance a
+ * `days` array (smartParse's chip label, computeNextDueDate) handles this
+ * for free with no special-casing.
+ */
+function findWeekdayShortcutMatch(s) {
+  const m = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+weekdays?\\b`));
+  if (!m) return null;
+  return { rule: { unit: 'week', count: 1, days: [1, 2, 3, 4, 5] }, matchedText: m[0], index: m.index };
+}
+
+/**
+ * "every other <unit>" — Todoist's own phrasing for a plain every-2 cadence
+ * ("every other week" = "every 2 weeks"). Kept separate from the numeric
+ * ("every N <unit>") and simple ("every <unit>") matchers above since
+ * neither pattern has a slot for the word "other" between the lead word
+ * and the unit.
+ */
+function findOtherUnitMatch(s, unitAlt) {
+  const m = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+other\\s+(${unitAlt})\\b`));
+  if (!m) return null;
+  const unit = resolveCanonicalUnit(m[1]);
+  if (!unit) return null;
+  return { rule: { unit, count: 2 }, matchedText: m[0], index: m.index };
 }
 
 function resolveCanonicalUnit(word) {
@@ -92,8 +204,8 @@ export function isRecurringDue(due) {
  *   - Falls back to a weekly cadence for "every <weekday>" / "every mon,
  *     wed, fri" style strings.
  *
- * @param {string} str - e.g. "every day", "every 2 weeks", "every month", "monthly"
- * @returns {{unit: 'day'|'week'|'month'|'year', count: number}|null}
+ * @param {string} str - e.g. "every day", "every 2 weeks", "every month", "monthly", "every sat and sun"
+ * @returns {{unit: 'day'|'week'|'month'|'year', count: number, days?: number[]}|null}
  */
 export function parseRecurrenceRule(str) {
   if (!str || typeof str !== 'string') return null;
@@ -108,6 +220,14 @@ export function parseRecurrenceRule(str) {
     const unit = resolveCanonicalUnit(numericMatch[2]);
     if (unit) return { unit, count: Math.max(1, Number(numericMatch[1])) };
   }
+
+  // "every weekday" (Mon-Fri shortcut) and "every other <unit>" (= every 2
+  // <unit>) — checked before the plain simple/numeric forms since neither
+  // of those has a slot for "weekday" or "other".
+  const weekdayShortcutMatch = findWeekdayShortcutMatch(s);
+  if (weekdayShortcutMatch && weekdayShortcutMatch.index === 0) return weekdayShortcutMatch.rule;
+  const otherUnitMatch = findOtherUnitMatch(s, unitAlt);
+  if (otherUnitMatch && otherUnitMatch.index === 0) return otherUnitMatch.rule;
 
   // "every <unit>" / "ev <unit>" (implicit count of 1), tolerating the "!" marker.
   const simpleMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(${unitAlt})\\b`));
@@ -125,13 +245,17 @@ export function parseRecurrenceRule(str) {
     if (unit) return { unit, count: /fortnight/.test(bareMatch[1]) ? 2 : 1 };
   }
 
-  // "every <weekday>" or "every mon, wed, fri" — treat as a weekly cadence
-  // for local advancement purposes (Todoist will compute the precise next
-  // matching weekday server-side on the next sync).
-  const hasWeekday = DAY_NAMES.some((d) => s.includes(d));
-  if ((s.startsWith('every') || s.startsWith('ev') || s.startsWith('each')) && hasWeekday) {
-    return { unit: 'week', count: 1 };
-  }
+  // "every <weekday>", "every sat and sun", "every mon, wed, fri", "every
+  // second sunday" — treat as a weekly (or every-N-weeks, for the ordinal
+  // form) cadence for local advancement purposes; Todoist computes the
+  // precise next matching weekday(s) server-side on the next sync.
+  // Require the match at the very start of the string (unlike
+  // findRecurrencePhrase, which intentionally searches anywhere inside a
+  // longer typed title) — parseRecurrenceRule's contract is "does this
+  // whole due.string represent a recurrence", so a stray weekday mention
+  // later in an unrelated string shouldn't be treated as one.
+  const weekdayMatch = findWeekdayRecurrenceSpan(s);
+  if (weekdayMatch && weekdayMatch.index === 0) return weekdayMatch.rule;
 
   return null;
 }
@@ -145,7 +269,7 @@ export function parseRecurrenceRule(str) {
  * parseRecurrenceRule so the two stay in sync.
  *
  * @param {string} text
- * @returns {{rule: {unit: string, count: number}, matchedText: string, index: number}|null}
+ * @returns {{rule: {unit: string, count: number, days?: number[]}, matchedText: string, index: number}|null}
  */
 export function findRecurrencePhrase(text) {
   if (!text || typeof text !== 'string') return null;
@@ -160,6 +284,11 @@ export function findRecurrencePhrase(text) {
     }
   }
 
+  const weekdayShortcutMatch = findWeekdayShortcutMatch(s);
+  if (weekdayShortcutMatch) return weekdayShortcutMatch;
+  const otherUnitMatch = findOtherUnitMatch(s, unitAlt);
+  if (otherUnitMatch) return otherUnitMatch;
+
   const simpleMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(${unitAlt})\\b`));
   if (simpleMatch) {
     const unit = resolveCanonicalUnit(simpleMatch[1]);
@@ -169,10 +298,8 @@ export function findRecurrencePhrase(text) {
     }
   }
 
-  const weekdayMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(${DAY_NAMES.join('|')})[a-z]*(?:,\\s*(?:${DAY_NAMES.join('|')})[a-z]*)*`));
-  if (weekdayMatch) {
-    return { rule: { unit: 'week', count: 1 }, matchedText: weekdayMatch[0], index: weekdayMatch.index };
-  }
+  const weekdayMatch = findWeekdayRecurrenceSpan(s);
+  if (weekdayMatch) return weekdayMatch;
 
   const bareMatch = s.match(new RegExp(`\\b(${unitAlt})\\b`));
   if (bareMatch) {

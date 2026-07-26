@@ -284,6 +284,75 @@
    its input chrome (border/background) on hover/focus, so at rest it reads
    like a label + value pair rather than a form.
    ---------------------------------------------------------------------- */
+/* Slim icon-only bar above the two-column body — Todoist keeps its
+   "..."/close controls up here, separate from the title, so the title can
+   live inside `.detail-main` and top-align with the sidebar's first field
+   instead of spanning the full width above both columns. */
+.detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.detail-menu {
+  position: relative;
+}
+
+.detail-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  width: 280px;
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px 10px;
+  list-style: none;
+  margin: 0;
+}
+
+.detail-menu-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px -10px;
+}
+
+.detail-menu-dropdown .detail-field {
+  padding: 8px 0;
+}
+
+.detail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detail-menu-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-menu-item-danger {
+  color: var(--color-danger);
+}
+
+/* AddTaskModal's header — title input + close button on one row, close
+   pinned to the top-right corner instead of stacking under the title
+   (there's no separate .detail-topbar here like TaskDetailModal has). */
 .detail-header {
   display: flex;
   align-items: flex-start;
@@ -291,9 +360,87 @@
   margin-bottom: 4px;
 }
 
+/* Title row now lives at the top of `.detail-main`, so it starts at the
+   same height as the sidebar's first field (see `.detail-body`'s flex row)
+   instead of sitting above the two-column split. */
+.detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+/* Inline Save/Cancel, shown right under the description once title/notes/
+   any sidebar field actually differs from the last save — replaces a
+   permanent footer bar (see TaskDetailModal's `isDirty`). Sits snug against
+   .detail-editbox right below it rather than floating with a gap. */
+.detail-save-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: 2px 0 14px;
+}
+
 .detail-title-wrap {
   flex: 1;
   min-width: 0;
+}
+
+/* Wraps the title + link badge + description into one Todoist-style box —
+   reads as plain text at rest, reveals its border/background as soon as
+   either the title or the description is focused (:focus-within), so the
+   two fields feel like one editable surface instead of two separate boxes. */
+.detail-editbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  margin: 0 -10px;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+.detail-editbox:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-editbox:focus-within {
+  background: var(--color-bg-page);
+  border-color: var(--color-accent-border);
+}
+
+.detail-editbox .detail-notes-textarea {
+  margin: 0;
+  width: 100%;
+}
+
+/* Description row — an icon sized/positioned to match the title checkbox
+   and subtask checkboxes (same 20px box, same left column) instead of the
+   description just reading as unlabeled text beneath the title. */
+.detail-notes-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.detail-notes-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+}
+
+.detail-notes-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-editbox .detail-notes-textarea:hover,
+.detail-editbox .detail-notes-textarea:focus {
+  background: transparent;
+  border-color: transparent;
 }
 
 .detail-title-wrap .smart-title-backdrop,
@@ -308,11 +455,6 @@
   background: transparent;
 }
 
-.detail-title-wrap .smart-title-input:focus {
-  background: var(--color-bg-page);
-  border-color: var(--color-accent-border);
-}
-
 .detail-header-close {
   flex-shrink: 0;
   background: transparent;
@@ -324,13 +466,49 @@
   border-color: transparent;
 }
 
-.detail-sync-note {
-  font-size: 11.5px;
-  color: var(--color-text-secondary);
-  margin: -6px 0 14px 6px;
-  display: flex;
+/* The task's `link` field (a URL detected in the title via smart-parse,
+   see utils/smartParse.js) — shown as a small dismissible pill under the
+   title, matching the "chip" look elsewhere, since a task carries at most
+   one link and it isn't worth a full sidebar field of its own. */
+.detail-link-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: -2px 0 10px 6px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-surface-hover);
+  font-size: 12px;
+}
+
+.detail-link-badge-open {
+  display: inline-flex;
   align-items: center;
   gap: 5px;
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.detail-link-badge-open:hover {
+  text-decoration: underline;
+}
+
+.detail-link-badge-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+}
+
+.detail-link-badge-remove:hover {
+  background: var(--color-bg-surface-raised);
+  color: var(--color-text-primary);
 }
 
 .detail-body {
@@ -347,31 +525,32 @@
   flex-direction: column;
 }
 
-/* The description field is the first row in the main column — let it grow
-   to soak up whatever height the sidebar's field list ends up needing, so
-   the two columns end at the same height instead of leaving a gap under a
-   short description next to a long sidebar. */
-.detail-main > .form-row:first-child {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.detail-main > .form-row:first-child textarea {
-  flex: 1;
-}
-
-.detail-main > .form-row textarea {
-  background: var(--color-bg-page);
+/* Description — Todoist-style: reads as plain text at rest (one line tall,
+   no border/background), grows with its content via useAutosizeTextarea,
+   and only reveals a border once the user actually clicks into it. Shared
+   with SubtaskDetailModal's notes field, hence a standalone class instead
+   of a `.detail-main` descendant selector. */
+.detail-notes-textarea {
+  background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  resize: none; /* grows to fit content instead — see useAutosizeTextarea */
-  min-height: 140px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  width: calc(100% + 16px);
+  resize: none;
+  min-height: 34px;
   overflow: hidden;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-text-primary);
 }
 
-.detail-main > .form-row textarea:focus {
+.detail-notes-textarea:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-notes-textarea:focus {
+  background: var(--color-bg-page);
   border-color: var(--color-accent-border);
   outline: none;
 }
@@ -395,6 +574,27 @@
   border-color: transparent;
   resize: none;
   overflow: hidden;
+}
+
+/* Read-only rendered preview of any URLs found in a notes/description
+   field — the textarea above stays plain text (can't embed live <a> tags
+   inside an editable control), so this surfaces clickable links just below
+   it. Only mounted when linkify() actually finds a link (see Linkified). */
+.notes-link-preview {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.notes-link-preview a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.notes-link-preview a:hover {
+  color: var(--color-accent-hover);
 }
 
 .form-row.form-row-compact-notes textarea:hover {
@@ -564,11 +764,85 @@
   font-weight: 600;
 }
 
+/* ----------------------------------------------------------------------
+   MentionDropdown — the live "@"/"#" popup shown while typing in
+   SmartTitleInput. Same portaled-to-body treatment as .select-menu-dropdown
+   (and the same stacking-context reasoning), anchored to the trigger
+   character's measured position instead of a fixed trigger element.
+   ---------------------------------------------------------------------- */
+.mention-dropdown {
+  width: max-content;
+  min-width: 160px;
+  max-width: 280px;
+  z-index: 200;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  margin: 0;
+  list-style: none;
+}
+
+.mention-dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mention-dropdown-option:hover,
+.mention-dropdown-option.highlighted {
+  background: var(--color-bg-surface-hover);
+}
+
+.mention-dropdown-option svg {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.mention-dropdown-create {
+  color: var(--color-accent);
+}
+
 .detail-sidebar {
-  width: 230px;
+  width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+}
+
+.detail-more-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+.detail-more-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.detail-more-toggle svg {
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 /* Used by modals with no two-column split (Block/Event detail) — the
@@ -599,7 +873,8 @@
 }
 
 .detail-field-value select,
-.detail-field-value input:not([type='checkbox']) {
+.detail-field-value input:not([type='checkbox']),
+.detail-field-value .detail-recurrence-toggle {
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -612,12 +887,14 @@
 }
 
 .detail-field-value select:hover,
-.detail-field-value input:not([type='checkbox']):hover {
+.detail-field-value input:not([type='checkbox']):hover,
+.detail-field-value .detail-recurrence-toggle:hover {
   background: var(--color-bg-surface-hover);
 }
 
 .detail-field-value select:focus,
-.detail-field-value input:not([type='checkbox']):focus {
+.detail-field-value input:not([type='checkbox']):focus,
+.detail-field-value .detail-recurrence-toggle:focus {
   background: var(--color-bg-page);
   border-color: var(--color-accent-border);
   outline: none;
@@ -626,6 +903,38 @@
 .detail-field-value .form-checkbox-row {
   font-size: 13px;
   color: var(--color-text-primary);
+}
+
+/* Repeat field — a plain-looking row (no checkbox) matching Due date/
+   Priority's "click to edit" feel: tapping it while off reveals the
+   count+unit editor below; an explicit X in that editor (see
+   .detail-field-inline) is the only way back to "Does not repeat", since
+   the row itself no longer toggles once it's showing the editor. */
+.detail-recurrence-toggle {
+  display: block;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.detail-recurrence-toggle:disabled {
+  cursor: default;
+  color: var(--color-text-secondary);
+}
+
+.detail-recurrence-toggle-active {
+  cursor: default;
+}
+
+.detail-recurrence-clear {
+  flex-shrink: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+.detail-recurrence-clear:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
 }
 
 .detail-field-inline {
@@ -647,9 +956,13 @@
 
 .subtask-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 5px 6px;
+  /* Cancel the horizontal padding (kept for the hover highlight's inset)
+     so the checkbox itself lands flush with the title/description icon
+     column above, instead of sitting 6px further right than they do. */
+  margin: 0 -6px;
   border-radius: var(--radius-sm);
   transition: background var(--duration-fast) var(--ease-standard);
 }
@@ -658,19 +971,27 @@
   background: var(--color-bg-surface-hover);
 }
 
+.subtask-row > input[type='checkbox'] {
+  margin-top: 1px;
+  flex-shrink: 0;
+  /* Match the title/subtask-caption checkbox's 20px box at every viewport
+     width (native checkbox defaults vary by platform/browser). */
+  width: 20px;
+  height: 20px;
+}
+
 .subtask-row-title {
   flex: 1;
   min-width: 0;
   background: none;
   border: none;
   text-align: left;
-  padding: 0;
+  padding: 2px 0;
   font-size: 13px;
   color: var(--color-text-primary);
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .subtask-row-title.completed {
@@ -696,10 +1017,38 @@
   opacity: 1;
 }
 
+/* Touch devices have no hover state, so a hover-only reveal makes this
+   button permanently invisible (and unreachable by a single tap) — keep it
+   visible at rest wherever there's no real pointer to hover with. */
+@media (hover: none) {
+  .subtask-row-remove {
+    opacity: 1;
+  }
+}
+
 .subtask-add-row {
   display: flex;
   gap: 6px;
   margin-top: 4px;
+}
+
+.subtask-add-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.subtask-add-trigger:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
 }
 
 .subtask-header {
@@ -732,6 +1081,32 @@
 
   .detail-sync-note {
     margin-left: 0;
+  }
+
+  /* .detail-menu-dropdown's fixed 280px width (fine on wider viewports) can
+     run past the right edge of a narrow phone's modal padding depending on
+     where its trigger sits — clamp it to whatever room the modal actually
+     has (viewport minus .modal-overlay's own side padding and .modal's own
+     24px padding on each side) so it can never push the topbar/close button
+     wider than the viewport. */
+  .detail-menu-dropdown {
+    width: 280px;
+    max-width: calc(100vw - 72px);
+  }
+
+  /* A fixed label-beside-value column (as used on wider viewports) doesn't
+     leave enough room for labels like "Estimated hours" next to a usable
+     value width at phone sizes, so fields go back to stacking label above
+     value here, flush with the label/icon above (same left edge as every
+     other column in the modal — title checkbox, subtask checkboxes,
+     description icon). */
+  .detail-field {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .detail-field-label {
+    padding-top: 0;
   }
 }
 

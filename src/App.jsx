@@ -18,6 +18,7 @@ import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import AccountButton from './components/Nav/AccountButton';
+import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
 import TaskListPanel from './components/TaskListPanel';
 import StatsDashboard from './components/Stats/StatsDashboard';
@@ -27,13 +28,16 @@ import BottomTabBar from './components/Nav/BottomTabBar';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
 import GuidedTour from './components/Tutorial/GuidedTour';
-import { CalendarDays, CheckSquare, TrendingUp, Settings, Undo2, Redo2, HelpCircle } from 'lucide-react';
+import DashboardPage from './components/Dashboard/DashboardPage';
+import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
+import { LayoutDashboard, CalendarDays, CheckSquare, TrendingUp, Settings, Undo2, Redo2, HelpCircle } from 'lucide-react';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch), so
-// four tabs is the full set — small enough that BottomTabBar shows all of
+// five tabs is the full set — small enough that BottomTabBar shows all of
 // them directly with no "More" overflow needed.
 const TABS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare },
   { id: 'stats', label: 'Stats', icon: TrendingUp },
@@ -41,12 +45,37 @@ const TABS = [
 ];
 
 function AppShell() {
-  const [tab, setTab] = useState('calendar');
+  const [tab, setTab] = useState('dashboard');
   const [taskView, setTaskView] = useState('list'); // 'list' | 'board' | 'gantt' — the Tasks page's own sub-view
+  const [activeProjectId, setActiveProjectId] = usePersistedState('activeProjectId', ALL_TASKS_PROJECT_ID);
   const [showTour, setShowTour] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = usePersistedState('tutorial-seen', false);
   const isMobile = useIsMobile();
-  const { undo, redo, canUndo, canRedo, currentActionLabel, isLoading, notification, clearNotification } = useScheduler();
+  const {
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    currentActionLabel,
+    isLoading,
+    notification,
+    clearNotification,
+    projects,
+    addProject,
+    renameProject,
+    togglePinProject,
+    deleteProject,
+    touchProjectVisited,
+  } = useScheduler();
+
+  // Shared by the sidebar, List view, and Board view — selecting a project
+  // always jumps to the Tasks tab and stamps it as "recently visited" so the
+  // sidebar's unpinned-project ordering (sortProjectsForSidebar) stays fresh.
+  function selectProject(projectId) {
+    setActiveProjectId(projectId);
+    if (projectId !== ALL_TASKS_PROJECT_ID) touchProjectVisited(projectId);
+    setTab('tasks');
+  }
 
   // Auto-launch the guided tour for a brand-new visitor, once. Anyone who's
   // already seen it (or dismissed it) only gets it again via the Help icon
@@ -69,32 +98,29 @@ function AppShell() {
   return (
     <div className={`app-shell ${isMobile ? 'is-mobile' : ''}`}>
       {!isMobile && (
-        <aside className="sidebar">
-          <div className="brand" data-tour="brand">
-            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="brand-mark" />
-            TaskFlow
-          </div>
-          <div className="nav-group">
-            <div className="nav-group-label">Workspace</div>
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                className={`nav-item ${tab === t.id ? 'active' : ''}`}
-                onClick={() => setTab(t.id)}
-                data-tour={`nav-${t.id}`}
-              >
-                <t.icon size={16} strokeWidth={2} />
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', padding: '0 10px' }}>
-              Dynamic task auto-scheduler
-            </div>
-            <AccountButton menuAlign="up" onOpenAccountSettings={() => setTab('settings')} />
-          </div>
-        </aside>
+        <Sidebar
+          tabs={TABS}
+          activeTab={tab}
+          onSelectTab={setTab}
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSelectProject={selectProject}
+          onAddProject={addProject}
+          onRenameProject={renameProject}
+          onTogglePinProject={togglePinProject}
+          onDeleteProject={(id) => {
+            deleteProject(id);
+            if (activeProjectId === id) setActiveProjectId(ALL_TASKS_PROJECT_ID);
+          }}
+          footer={
+            <>
+              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', padding: '0 10px' }}>
+                Dynamic task auto-scheduler
+              </div>
+              <AccountButton menuAlign="up" onOpenAccountSettings={() => setTab('settings')} />
+            </>
+          }
+        />
       )}
 
       <header className="topbar">
@@ -119,9 +145,20 @@ function AppShell() {
       </header>
 
       <main className="main-content">
-        <div key={tab} className={`tab-panel ${tab === 'calendar' ? 'tab-panel-fill' : ''}`}>
+        <div
+          key={tab}
+          className={`tab-panel ${tab === 'calendar' || (tab === 'tasks' && taskView === 'board') ? 'tab-panel-fill' : ''}`}
+        >
+          {tab === 'dashboard' && <DashboardPage onSelectProject={selectProject} />}
           {tab === 'calendar' && <CalendarPage />}
-          {tab === 'tasks' && <TaskListPanel view={taskView} onChangeView={setTaskView} />}
+          {tab === 'tasks' && (
+            <TaskListPanel
+              view={taskView}
+              onChangeView={setTaskView}
+              activeProjectId={activeProjectId}
+              onChangeActiveProject={selectProject}
+            />
+          )}
           {tab === 'stats' && <StatsDashboard />}
           {tab === 'settings' && <SettingsPanel onOpenTour={openTour} />}
         </div>

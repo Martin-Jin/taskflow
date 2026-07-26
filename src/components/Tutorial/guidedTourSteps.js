@@ -14,6 +14,13 @@ export const GUIDED_TOUR_STEPS = [
     body: 'TaskFlow turns your task list into an auto-scheduled calendar. This short tour points out where everything lives — replay it anytime from Settings.',
   },
   {
+    tab: 'dashboard',
+    selector: '[data-tour="nav-dashboard"]',
+    placement: 'right',
+    title: 'Dashboard',
+    body: 'Your home base — what\'s due, what you\'re doing right now, today\'s agenda, this week\'s progress, and your pinned links, all at a glance.',
+  },
+  {
     tab: 'calendar',
     selector: '[data-tour="nav-calendar"]',
     placement: 'right',
@@ -59,10 +66,10 @@ export const GUIDED_TOUR_STEPS = [
   {
     tab: 'tasks',
     view: 'board',
-    selector: '[data-tour="add-board"]',
-    placement: 'bottom',
-    title: 'Boards',
-    body: 'Create as many boards as you like to separate work, personal life, or any other project. New accounts start with a few generic sample boards you can rename, delete, or clear from Settings.',
+    selector: '[data-tour="add-project"]',
+    placement: 'right',
+    title: 'Projects',
+    body: 'Create as many projects as you like from the sidebar to separate work, personal life, or any other area — pin your favorites, rename or delete any of them, and switch between them from here, the project picker, or the search bar.',
   },
   {
     tab: 'stats',

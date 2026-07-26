@@ -44,6 +44,14 @@ export function timeToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+/** Format "HH:MM" (24h) as a 12-hour clock string, e.g. "14:05" -> "2:05 PM". */
+export function formatTime12h(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
 /** Convert minutes since midnight -> "HH:MM". */
 export function minutesToTime(mins) {
   const h = Math.floor(mins / 60)
@@ -65,6 +73,12 @@ export function dayOfWeek(iso) {
   return fromISODate(iso).getDay();
 }
 
+/** The Sun–Sat week containing `todayIso`, as `{ weekStart, weekEnd }` ISO dates (inclusive). */
+export function getWeekRange(todayIso) {
+  const weekStart = addDays(todayIso, -dayOfWeek(todayIso));
+  return { weekStart, weekEnd: addDays(weekStart, 6) };
+}
+
 /** Returns an array of ISO date strings, `count` days starting at `startIso` inclusive. */
 export function dateRange(startIso, count) {
   const out = [];
@@ -75,6 +89,19 @@ export function dateRange(startIso, count) {
 /** True if iso date is strictly before today (local). Used to skip past days when scheduling. */
 export function isPast(iso) {
   return iso < toISODate(new Date());
+}
+
+/**
+ * True once a scheduled block's time has fully elapsed, regardless of
+ * whether its `status` was ever manually flipped to 'done' — time already
+ * elapsed is simply a fact. Shared by the weekly/today progress rings (and
+ * anything else that needs "is this block in the past" for a given
+ * `today`/`nowMinutes` snapshot).
+ */
+export function isBlockPast(block, today, nowMinutes) {
+  if (block.date < today) return true;
+  if (block.date > today) return false;
+  return timeToMinutes(block.endTime) <= nowMinutes;
 }
 
 /**

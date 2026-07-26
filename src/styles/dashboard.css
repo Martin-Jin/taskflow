@@ -1,0 +1,816 @@
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.dashboard-greeting h1 {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  margin: 0;
+  animation: dashboard-greeting-in var(--duration-slow) var(--ease-decelerate);
+}
+
+.dashboard-greeting p {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  margin: 4px 0 0;
+}
+
+@keyframes dashboard-greeting-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Quick stats strip                                                     */
+/* -------------------------------------------------------------------- */
+
+.dashboard-stats-strip {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dashboard-stat-tile {
+  flex: 1;
+  min-width: 140px;
+  padding: 14px 16px;
+}
+
+.dashboard-stat-tile-clickable {
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.dashboard-stat-tile-clickable:hover,
+.dashboard-stat-tile-clickable:focus-visible {
+  background: var(--color-bg-surface-hover);
+  transform: translateY(-1px);
+}
+
+.dashboard-stat-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dashboard-stat-value {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin-top: 4px;
+  color: var(--color-text-primary);
+}
+
+/* -------------------------------------------------------------------- */
+/* Grid layout                                                           */
+/* -------------------------------------------------------------------- */
+
+.dashboard-grid {
+  display: grid;
+  /* The main column caps out at 820px (its content — NowNextCard,
+     TodayAgenda — is a list of single-line rows, not prose, but at very
+     wide viewports letting it keep growing just adds empty-feeling
+     whitespace inside the cards). The side column is a flexible 1fr so it
+     absorbs the rest of the width instead of leaving a dead margin on the
+     right — see the (now-removed) .dashboard-page max-width. */
+  grid-template-columns: minmax(0, 820px) minmax(280px, 1fr);
+  gap: var(--space-4);
+  /* stretch (grid's default) makes both columns match the height of the
+     taller one — combined with .today-agenda's flex: 1 below, that lets
+     Today's Agenda absorb whatever leftover height the side column leaves,
+     so the two columns' bottoms always line up instead of leaving dead
+     space under the shorter column. */
+}
+
+.dashboard-grid-main,
+.dashboard-grid-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@media (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* On a single-column mobile layout there's no second column to match
+     heights with, so let the agenda size to its own content again instead
+     of stretching to fill leftover grid-row height. */
+  .today-agenda {
+    flex: none;
+  }
+
+  .today-agenda-list {
+    flex: none;
+    max-height: 400px;
+  }
+}
+
+.dashboard-card-header {
+  margin-bottom: var(--space-3);
+}
+
+.dashboard-card-header h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* -------------------------------------------------------------------- */
+/* Right now / up next                                                   */
+/* -------------------------------------------------------------------- */
+
+.now-block-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.now-block-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.now-block-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.now-block-time {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+.now-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  margin-top: var(--space-3);
+  overflow: hidden;
+}
+
+.now-progress-fill {
+  height: 100%;
+  background: var(--color-accent-solid-bg);
+  border-radius: 999px;
+  transition: width 1s linear;
+}
+
+.now-empty {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.next-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.next-block-icon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.next-block-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.next-block-title {
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.next-block-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+/* -------------------------------------------------------------------- */
+/* Today's agenda                                                        */
+/* -------------------------------------------------------------------- */
+
+.today-agenda {
+  /* Grows to fill whatever height NowNextCard leaves within the (now
+     stretch-height) .dashboard-grid-main, so its bottom lines up with the
+     side column's — see .today-agenda-list below for the scrollable part. */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.today-agenda-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+.today-agenda-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  border-left: 3px solid transparent;
+}
+
+.today-agenda-item.is-current {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+  border-left-color: var(--color-accent-solid-bg);
+  font-weight: 600;
+}
+
+/* A missed item's block/task pairing is mutually exclusive with is-current
+   (a block can't still be "in progress" once its end time has passed), so
+   these two states never need to combine. */
+.today-agenda-item.is-missed {
+  border-left-color: var(--color-danger);
+}
+
+.today-agenda-missed-icon {
+  color: var(--color-danger);
+  flex-shrink: 0;
+}
+
+.today-agenda-missed-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-danger);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.today-agenda-time {
+  color: var(--color-text-secondary);
+  min-width: 74px;
+  flex-shrink: 0;
+}
+
+.today-agenda-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-solid-bg);
+  flex-shrink: 0;
+  animation: today-agenda-pulse 2s ease-in-out infinite;
+}
+
+@keyframes today-agenda-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Pinned links (bookmark-style: folders + recent strip + grid)          */
+/* -------------------------------------------------------------------- */
+
+.pinned-links-recent {
+  margin-bottom: var(--space-3);
+}
+
+/* Shown in place of the "Jump back in" / "Recently added" strips when the
+   user has no links at all yet, so the card reserves roughly the same
+   vertical footprint whether or not those strips have content to show. */
+.pinned-links-recent-empty {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  padding: 8px 0;
+}
+
+.pinned-links-recent-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.pinned-links-recent-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pinned-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  font-size: var(--text-xs);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.pinned-link-chip:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.pinned-links-folders {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pinned-folder-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.pinned-folder-tab:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.pinned-folder-tab.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.pinned-folder-tab-add {
+  color: var(--color-text-secondary);
+}
+
+/* Reset so the "select this folder" control reads as the tab's own label,
+   not a nested button — the tab pill itself (.pinned-folder-tab) is a plain
+   <div> now, since it holds two sibling buttons (select + remove). */
+.pinned-folder-tab-select {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pinned-folder-remove {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.pinned-folder-remove:hover {
+  opacity: 1;
+}
+
+.pinned-folder-add-form input {
+  font-size: var(--text-sm);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-accent-border);
+  background: var(--color-bg-page);
+  width: 110px;
+}
+
+.pinned-open-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.pinned-open-all-btn:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+}
+
+.pinned-links-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--space-2);
+}
+
+.pinned-link-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  text-align: center;
+  transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.pinned-link-tile:hover {
+  background: var(--color-bg-surface-hover);
+  transform: translateY(-1px);
+}
+
+/* Fills the tile behind the absolutely-positioned .pinned-link-remove button
+   — kept as its own element (rather than reusing .pinned-link-tile's flex
+   layout directly on the <a>) so the link and the remove button are
+   siblings, not nested interactive elements. */
+.pinned-link-tile-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.pinned-link-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.pinned-link-favicon {
+  border-radius: 3px;
+}
+
+/* z-index above .pinned-link-tile-link (which is also position: absolute
+   and covers the entire tile) — without this, the anchor overlay painted
+   after this button in the DOM would sit on top of it and swallow clicks
+   meant for remove/rename, since both are absolutely positioned and
+   default (auto) stacking falls back to DOM/paint order. */
+.pinned-link-remove,
+.pinned-link-edit {
+  position: absolute;
+  top: 4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+.pinned-link-remove {
+  right: 4px;
+}
+
+.pinned-link-edit {
+  left: 4px;
+}
+
+.pinned-link-tile:hover .pinned-link-remove,
+.pinned-link-tile:hover .pinned-link-edit {
+  opacity: 1;
+}
+
+/* Same reasoning as .subtask-row-remove in forms.css — a hover-only reveal
+   is permanently invisible on touch devices, which have no hover state. */
+@media (hover: none) {
+  .pinned-link-remove,
+  .pinned-link-edit {
+    opacity: 1;
+  }
+}
+
+.pinned-link-remove:hover {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.pinned-link-edit:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+}
+
+.pinned-link-tile-add {
+  color: var(--color-text-secondary);
+  border: 1px dashed var(--color-border-strong);
+  background: transparent;
+}
+
+.pinned-link-tile-add:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+}
+
+.pinned-link-add-form {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+}
+
+.pinned-link-add-form input {
+  font-size: var(--text-sm);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-interactive);
+  background: var(--color-bg-surface);
+}
+
+.pinned-link-add-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Replaces the tile's contents in-place while renaming, so it shares the
+   tile's own padding/box rather than needing its own absolute layout. */
+.pinned-link-rename-input {
+  width: 100%;
+  font-size: var(--text-xs);
+  text-align: center;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-interactive);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+}
+
+.pinned-links-empty {
+  grid-column: 1 / -1;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  padding: 8px 0;
+}
+
+.pinned-links-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.pinned-links-search-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.pinned-links-search-input {
+  width: 100%;
+  font-size: var(--text-sm);
+  padding: 6px 28px 6px 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+}
+
+.pinned-links-search-clear {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.pinned-links-search-clear:hover {
+  color: var(--color-text-primary);
+}
+
+.pinned-links-import-input {
+  /* Hidden but still focusable/reachable via the visible "Import bookmarks"
+     button that triggers it — display:none would also work, but visually
+     hidden keeps it out of layout without pulling it out of the tab order
+     in browsers that skip display:none inputs differently. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.pinned-links-import-message {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+/* -------------------------------------------------------------------- */
+/* Progress rings (weekly + today) — shared by ProgressRingCard.jsx        */
+/* -------------------------------------------------------------------- */
+
+/* Two-up row for TodayProgressRing + WeeklyProgressRing — two separate
+   .card containers side by side, not one card cramming both rings in. */
+.progress-ring-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.progress-ring-row .progress-ring-card {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+@media (max-width: 639px) {
+  .progress-ring-row {
+    flex-direction: column;
+  }
+}
+
+.progress-ring-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.progress-ring-svg {
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+
+.progress-ring-track {
+  fill: none;
+  stroke: var(--color-bg-page);
+  stroke-width: 8;
+}
+
+.progress-ring-fill {
+  fill: none;
+  stroke: var(--color-accent-solid-bg);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--duration-slow) var(--ease-decelerate);
+}
+
+.progress-ring-percent {
+  fill: var(--color-text-primary);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  transform: rotate(90deg);
+  transform-origin: center;
+}
+
+.progress-ring-detail {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+
+.progress-ring-hours {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.progress-ring-of {
+  color: var(--color-text-secondary);
+}
+
+/* -------------------------------------------------------------------- */
+/* Missed tasks card                                                     */
+/* -------------------------------------------------------------------- */
+
+.missed-tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.missed-tasks-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.missed-tasks-icon {
+  color: var(--color-danger);
+  flex-shrink: 0;
+}
+
+.missed-tasks-time {
+  color: var(--color-text-secondary);
+  min-width: 74px;
+  flex-shrink: 0;
+}
+
+.missed-tasks-title {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- */
+/* Stat tile popup (Missed / Overdue) — reuses .missed-tasks-* row       */
+/* styling above for both lists, see StatListModal.jsx.                 */
+/* -------------------------------------------------------------------- */
+
+/* Narrower than the default .modal width (480px) since these are short
+   single-column lists — only applied above the mobile breakpoint so the
+   shared .modal-overlay/.modal media query (global.css) still governs the
+   full-width, top-anchored mobile layout unopposed. */
+@media (min-width: 640px) {
+  .modal-stat-list {
+    width: 420px;
+  }
+}
+
+.stat-list-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.stat-list-modal-header h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Overdue rows show a due date instead of a time — wider than the 74px
+   time column so longer date strings (e.g. "Wed, Jul 22") don't clip. */
+.overdue-list-date {
+  min-width: 92px;
+}

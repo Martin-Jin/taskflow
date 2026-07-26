@@ -2,15 +2,54 @@
    so mobile media queries can target them (inline styles can't be
    overridden by @media without !important). */
 
+/* Lets Board view (the one sub-view with its own internal scroll — see
+   .board-page/.board-column-body) size itself against the page's actual
+   available height instead of growing forever. Only takes effect inside
+   .tab-panel-fill (App.jsx adds that class for the Board sub-view); List/
+   Gantt don't set it, so they keep growing naturally with .main-content's
+   own scrollbar. */
+.taskpage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tab-panel-fill .taskpage {
+  flex: 1;
+  min-height: 0;
+}
+
 /* The Tasks page's own List/Board/Gantt switch — an underlined tab bar
    (distinct from the pill-style .view-switch used for the Active/Completed
    filter below it) so the two don't read as the same control stacked
    twice. */
+.taskpage-view-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--color-border);
+  /* Board's viewport-height-constrained layout (.tab-panel-fill .taskpage
+     above) needs this row to hold its natural height rather than shrink
+     when the column runs short on space. */
+  flex-shrink: 0;
+}
+
+/* The "⋯" project-actions trigger never shrinks to make room for the
+   List/Board/Gantt tabs beside it — that flex item already has its own
+   overflow-x:auto + min-width:0 to absorb any squeeze (see
+   .taskpage-view-switch below), so this button should always keep its
+   full tap target rather than the two competing for space and this one
+   losing width on a narrow phone. */
+.taskpage-view-switch-row .project-actions-trigger {
+  flex-shrink: 0;
+}
+
 .taskpage-view-switch {
   display: flex;
   gap: var(--space-1);
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -39,6 +78,49 @@
 .taskpage-view-switch button.active {
   color: var(--color-accent);
   border-bottom-color: var(--color-accent);
+}
+
+/* Shared page header shown above List/Board (not Gantt) — the project
+   switcher, the current project's name (or "All Tasks"), click-to-rename
+   the same way Board's own column titles work, and the "⋯" actions menu. */
+.taskpage-project-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.taskpage-project-title {
+  font-size: 21px;
+  font-weight: 700;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskpage-project-title.editable {
+  cursor: text;
+}
+
+.taskpage-project-title.editable:hover {
+  color: var(--color-accent);
+}
+
+.taskpage-project-title-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 21px;
+  font-weight: 700;
+  font-family: inherit;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  color: var(--color-text-primary);
 }
 
 .tasklist-toolbar {
@@ -92,14 +174,38 @@
 
 .task-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   cursor: pointer;
+}
+
+.task-row .task-checkbox {
+  margin-top: 1px;
 }
 
 .task-row-main {
   flex: 1;
   min-width: 0;
+}
+
+/* A task's `link` field (see utils/smartParse.js) makes its title a
+   click-through to that URL instead of plain text — the rest of the row
+   still opens TaskDetailModal (this stops that propagation). */
+.task-title-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.task-title-link:hover {
+  text-decoration: underline;
+}
+
+.task-title-link svg {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
 }
 
 /* Priority/label pills sit under the "remaining/due" line, left-aligned —
@@ -129,6 +235,11 @@
 
   .tasklist-toolbar > * {
     flex: 1 1 100%;
+  }
+
+  .taskpage-project-title,
+  .taskpage-project-title-input {
+    font-size: 18px;
   }
 
   /* Tighter rows — the full-height .card padding plus a fat inter-row gap

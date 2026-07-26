@@ -60,9 +60,21 @@
  *                                              allocator.js's getTaskWindow. Lets a user override the scheduler to
  *                                              say "don't touch this until at least day X", independent of
  *                                              dueDate/priority. Null/absent means no override (the normal case).
+ * @property {boolean} [enforceDueDate]      - True if this task must be completed ON its due date — the allocator
+ *                                              collapses its entire planning window to just `dueDate` (windowStart
+ *                                              === windowEnd === dueDate), overriding bufferDays and earliestDate
+ *                                              (the more restrictive setting wins) — see allocator.js's
+ *                                              getTaskWindow. Only meaningful when `dueDate` is set; ignored
+ *                                              otherwise. Falsy/absent means no override (the normal case).
  * @property {string[]} [labelIds]           - IDs of Labels (see Label typedef) attached to this task, e.g. via the
  *                                              "@tag" smart-parse shorthand in the title. App-local only — has no
  *                                              Todoist equivalent and is never pushed/pulled by todoistService.
+ * @property {string|null} [link]            - A URL associated with this task, detected via smart-parse when a
+ *                                              plain link is typed into the title (see utils/smartParse.js) and
+ *                                              stripped out of the displayed title. Wherever the title renders as
+ *                                              read-only text (task list, board, dashboard) it becomes a click-
+ *                                              through to this link instead of opening the detail view. App-local
+ *                                              only — has no Todoist equivalent.
  */
 
 /**
@@ -102,11 +114,14 @@
 /**
  * @typedef {Object} Project
  * A Todoist Project — the top-level container Sections and Tasks belong to.
- * Used to populate the Board view's project filter.
+ * Used to populate the Board view's project filter and the sidebar's
+ * project shortcuts.
  * @property {string} id
  * @property {string} name
  * @property {string} [color]
  * @property {number} [order]
+ * @property {boolean} [isPinned]      - Shown at the top of the sidebar's project list.
+ * @property {string} [lastVisitedAt]  - ISO timestamp, updated whenever this project becomes the active one.
  */
 
 /**

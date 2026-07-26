@@ -27,14 +27,14 @@
 import { useState } from 'react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
 
-const SCALAR_FIELD_TYPES = ['dueDate', 'recurrence', 'priority', 'estimatedHours', 'unattended', 'dependency', 'project'];
+const SCALAR_FIELD_TYPES = ['link', 'dueDate', 'recurrence', 'priority', 'estimatedHours', 'unattended', 'dependency', 'project'];
 
-export function useSmartTaskTitle({ tasks, projects = [], fields }) {
+export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields }) {
   const [smartDetected, setSmartDetected] = useState({});
   const [dismissedKeys, setDismissedKeys] = useState(() => new Set());
 
   function handleTitleChange(value) {
-    const { detected } = parseTaskText(value, { existingTasks: tasks, projects });
+    const { detected } = parseTaskText(value, { existingTasks: tasks, projects, sections });
     const nextVisible = {};
     const nextDismissed = new Set(dismissedKeys);
 
@@ -49,6 +49,13 @@ export function useSmartTaskTitle({ tasks, projects = [], fields }) {
         [...nextDismissed].forEach((key) => {
           if (key.startsWith(`${type}:`)) nextDismissed.delete(key);
         });
+        // If a chip was showing (i.e. this field was auto-applied from a
+        // previous detection), the phrase that drove it just got edited
+        // away — revert the field now, otherwise it stays "touched" forever
+        // and isUntouched() below would block re-applying the same phrase
+        // if the user retypes it.
+        const wasVisible = smartDetected[type];
+        if (wasVisible) fields[type].revert(wasVisible);
         return;
       }
 
@@ -102,8 +109,15 @@ export function useSmartTaskTitle({ tasks, projects = [], fields }) {
     });
   }
 
-  /** Strip whatever smart-parse phrases are still accepted (visible) out of the saved title. */
-  function buildFinalTitle(title) {
+  /**
+   * Strip whatever smart-parse phrases are still accepted (visible) out of
+   * the saved title. If that leaves nothing (e.g. the whole title was just
+   * a smart-parsed link), falls back to `fallback` if the caller passed one
+   * (e.g. the link's hostname) — otherwise falls back to the untouched raw
+   * title so a save is never blocked, even if that means the phrase stays
+   * visible in the title after all.
+   */
+  function buildFinalTitle(title, fallback) {
     let result = title;
     SCALAR_FIELD_TYPES.forEach((type) => {
       if (smartDetected[type]) result = stripMatchedText(result, smartDetected[type].matchedText);
@@ -111,7 +125,7 @@ export function useSmartTaskTitle({ tasks, projects = [], fields }) {
     (smartDetected.labels || []).forEach((match) => {
       result = stripMatchedText(result, match.matchedText);
     });
-    return result.trim() || title.trim();
+    return result.trim() || fallback || title.trim();
   }
 
   function resetSmartState() {

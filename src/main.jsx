@@ -9,6 +9,7 @@ import './styles/nav.css';
 import './styles/tasklist.css';
 import './styles/stats.css';
 import './styles/forms.css';
+import './styles/dashboard.css';
 import './styles/tutorial.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(

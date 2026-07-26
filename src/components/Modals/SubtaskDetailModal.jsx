@@ -1,17 +1,22 @@
 /**
  * SubtaskDetailModal — a compact edit view for a single Subtask, opened by
  * clicking its row in TaskDetailModal's checklist ("a sub-task is just a
- * task", per Todoist). Deliberately smaller than TaskDetailModal: a Subtask
- * has no priority/dueDate/scheduling of its own (see Subtask typedef — it's
- * never independently scheduled), so this only edits what it actually has:
- * title, notes, and completion.
+ * task", per Todoist). Mirrors TaskDetailModal's own layout (completed
+ * checkbox + click-to-edit title in the header, expanding description
+ * below, a "..." menu for Delete, inline Save/Cancel under the description)
+ * so the two feel like the same surface at different scales — deliberately
+ * smaller, since a Subtask has no priority/dueDate/scheduling of its own
+ * (see Subtask typedef — it's never independently scheduled), so this only
+ * edits what it actually has: title, notes, and completion.
  */
 
-import React, { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Trash2, X, Check, MoreHorizontal } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
+import Linkified from '../Common/Linkified';
 
 export default function SubtaskDetailModal({ taskId, subtask, onClose }) {
   const { updateSubtask, removeSubtask } = useScheduler();
@@ -21,10 +26,33 @@ export default function SubtaskDetailModal({ taskId, subtask, onClose }) {
   const [title, setTitle] = useState(subtask.title);
   const [notes, setNotes] = useState(subtask.notes || '');
   const [isCompleted, setIsCompleted] = useState(subtask.isCompleted);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const notesRef = useRef(null);
+  useAutosizeTextarea(notesRef, notes);
+
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function handlePointerDown(e) {
+      if (menuRef.current?.contains(e.target)) return;
+      setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [menuOpen]);
+
+  const isDirty = title !== subtask.title || notes !== (subtask.notes || '') || isCompleted !== subtask.isCompleted;
 
   function handleSave() {
     updateSubtask(taskId, subtask.id, { title: title.trim() || subtask.title, notes, isCompleted });
     requestClose();
+  }
+
+  function handleCancel() {
+    setTitle(subtask.title);
+    setNotes(subtask.notes || '');
+    setIsCompleted(subtask.isCompleted);
   }
 
   function handleDelete() {
@@ -35,47 +63,94 @@ export default function SubtaskDetailModal({ taskId, subtask, onClose }) {
   return (
     <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
-        className="modal"
+        className="modal modal-detail"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 420 }}
+        style={{ width: 460 }}
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="subtask-detail-title"
+        aria-label="Sub-task details"
         tabIndex={-1}
       >
-        <h3 id="subtask-detail-title" style={{ marginTop: 0, fontFamily: 'var(--font-display)' }}>Edit sub-task</h3>
-
-        <div className="form-row">
-          <label>Title</label>
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} />
-        </div>
-
-        <div className="form-row">
-          <label>Notes</label>
-          <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional details…" />
-        </div>
-
-        <div className="form-row">
-          <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
-            <input type="checkbox" checked={isCompleted} onChange={(e) => setIsCompleted(e.target.checked)} />
-            Completed
-          </label>
-        </div>
-
-        <div className="modal-actions" style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'space-between' }}>
-          <button className="btn" onClick={handleDelete} style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <Trash2 size={14} /> Delete
+        <div className="detail-topbar">
+          <div className="detail-menu" ref={menuRef}>
+            <button
+              type="button"
+              className="btn btn-icon menu-trigger"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="More actions"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+            {menuOpen && (
+              <ul className="detail-menu-dropdown" role="menu">
+                <li role="none">
+                  <button type="button" role="menuitem" className="detail-menu-item detail-menu-item-danger" onClick={handleDelete}>
+                    <Trash2 size={14} aria-hidden="true" />
+                    Delete
+                  </button>
+                </li>
+              </ul>
+            )}
+          </div>
+          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+            <X size={16} />
           </button>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={requestClose}>
+        </div>
+
+        <div className="detail-editbox">
+          <div className="detail-title-row">
+            <button
+              className={`task-checkbox ${isCompleted ? 'checked' : ''}`}
+              onClick={() => setIsCompleted((v) => !v)}
+              title={isCompleted ? 'Completed' : 'Mark complete'}
+              aria-label={isCompleted ? `${title} completed` : `Mark ${title} complete`}
+              style={{ marginTop: 6 }}
+            >
+              {isCompleted && <Check size={12} aria-hidden="true" />}
+            </button>
+            <div className="detail-title-wrap">
+              <label htmlFor="subtask-detail-title" className="sr-only">
+                Sub-task name
+              </label>
+              <input
+                id="subtask-detail-title"
+                className="smart-title-input"
+                autoFocus
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Sub-task name"
+              />
+            </div>
+          </div>
+
+          <label htmlFor="subtask-detail-notes" className="sr-only">
+            Description
+          </label>
+          <textarea
+            id="subtask-detail-notes"
+            className="detail-notes-textarea"
+            ref={notesRef}
+            rows={1}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Description"
+          />
+          <Linkified text={notes} className="notes-link-preview" />
+        </div>
+
+        {isDirty && (
+          <div className="detail-save-row">
+            <button type="button" className="btn" onClick={handleCancel}>
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={handleSave}>
+            <button type="button" className="btn btn-primary" onClick={handleSave}>
               Save
             </button>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

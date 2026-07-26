@@ -14,13 +14,14 @@
  *   - tasks / blocks / sections / projects / events are all seeded from
  *     localStorage on boot and re-saved on every change, so nothing is
  *     lost on refresh.
- *   - If Todoist sync is OFF (no token configured, or the user has
- *     switched off "Keep syncing task changes to Todoist" in Settings),
- *     the initial-load effect below does NOT re-fetch from Todoist —
- *     the locally persisted `tasks` are the source of truth, full stop.
- *     This is what makes local-only mode actually local-only: without
- *     this guard, every page load would silently re-import from Todoist
- *     and clobber local edits regardless of the toggle.
+ *   - Todoist is a ONE-TIME IMPORT, not a live sync: nothing here ever
+ *     fetches from Todoist automatically. `importFromTodoist()` below is
+ *     the only thing that talks to Todoist's API, and it only runs when
+ *     the user explicitly triggers it from Settings. Once imported, a task
+ *     is exactly as locally-editable as any manually-created one — no
+ *     field is ever pushed back to Todoist, and re-running the import
+ *     later just upserts (updates existing imported items by id, adds new
+ *     ones) rather than wiping out local edits by replacing everything.
  *   - If Google Calendar was connected in a previous session,
  *     `googleConnected` persists and the load effect attempts a SILENT
  *     token refresh (no popup) so the user isn't asked to sign in again
@@ -29,32 +30,17 @@
  *     and the user just clicks "Connect" again — no error state, no
  *     forced popup on load.
  *
- * TWO-WAY TODOIST SYNC: every task/subtask/section mutation below applies
- * the change to local state immediately (so the UI and Undo/Redo never
- * wait on a network round trip), then — if the item is Todoist-sourced and
- * a token is configured — fires the matching todoistService write call in
- * the background. Failures surface as a toast rather than rolling back the
- * local edit, since silently reverting a change the user just made would
- * be more confusing than a "sync failed, retry from Todoist" notice.
- * Local-only ("manual") tasks and their subtasks are never pushed, since
- * there's no corresponding Todoist item to update.
- *
  * RECURRING TASKS: a Task can carry `isRecurring` + `recurrenceString`
  * (captured from Todoist's `due.is_recurring` / `due.string` on import, or
  * set directly when adding/editing a local task). Completing a recurring
- * task does NOT set `isCompleted` — mirroring Todoist, where checking off a
- * recurring task just advances its due date to the next occurrence and
- * keeps it active. See `completeTask` below and `utils/recurrence.js` for
- * the local next-due-date computation, which now uses a much more
- * permissive parser (handles "every month", "monthly", "every 1 month",
- * Todoist's non-shifting "every!" marker, etc.) plus a defensive fallback
- * detector (`isRecurringDue`) so recurrence is picked up even if Todoist's
- * `is_recurring` flag is ever missing on a task that clearly repeats.
- *
- * `recurrenceString` is now also a Todoist-synced field (see
- * TODOIST_SYNCED_FIELDS below) — editing the "Repeats every N ___" control
- * in TaskDetailModal/AddTaskModal pushes the change to Todoist via its
- * natural-language `due_string` field, same as any other synced field.
+ * task does NOT set `isCompleted` — mirroring Todoist's own behavior —
+ * instead its due date advances to the next occurrence, computed locally
+ * via `utils/recurrence.js` (handles "every month", "monthly", "every 1
+ * month", Todoist's non-shifting "every!" marker, multi-weekday phrases
+ * like "every sat and sun", "every weekday", "every other week", etc.) —
+ * there's no Todoist round trip to defer to anymore, so this local
+ * computation is now the only source of truth for the next date, not just
+ * a same-session convenience ahead of the next sync.
  * ============================================================================
  */
 
@@ -70,19 +56,6 @@ import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
   fetchProjects as fetchTodoistProjects,
-  createProject as createTodoistProject,
-  createTask as createTodoistTask,
-  updateTask as updateTodoistTask,
-  moveTask as moveTodoistTask,
-  deleteTask as deleteTodoistTask,
-  setTaskCompleted as setTodoistTaskCompleted,
-  createSubtask as createTodoistSubtask,
-  setSubtaskCompleted as setTodoistSubtaskCompleted,
-  deleteSubtask as deleteTodoistSubtask,
-  renameSubtask as renameTodoistSubtask,
-  createSection as createTodoistSection,
-  renameSection as renameTodoistSection,
-  deleteSection as deleteTodoistSection,
 } from '../services/todoistService';
 import { fetchEvents as fetchGoogleEvents, pushBlockToCalendar, initGoogleCalendar, requestAccessToken } from '../services/googleCalendarService';
 import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects } from '../services/mockData';
@@ -90,9 +63,6 @@ import { toISODate } from '../utils/dateUtils';
 import { nextLabelColor } from '../utils/labelColor';
 
 const SchedulerContext = createContext(null);
-
-/** Fields on a Task that have a Todoist equivalent and should be pushed on updateTask(). */
-const TODOIST_SYNCED_FIELDS = ['title', 'notes', 'priority', 'dueDate', 'estimatedHours', 'recurrenceString'];
 
 const EVENTS_HORIZON_DAYS = 28;
 
@@ -112,11 +82,14 @@ export function SchedulerProvider({ children }) {
 
   // Pure user preferences — persisted verbatim, no Todoist/Google
   // equivalent to fall back on, so these must survive a refresh or every
-  // setting (work hours, buffer days, routines, sync toggle...) would
-  // silently reset each time the app is opened.
+  // setting (work hours, buffer days, routines...) would silently reset
+  // each time the app is opened.
   const [routines, setRoutines] = usePersistedState('routines', getDefaultRoutines);
   const [rules, setRules] = usePersistedState('rules', getDefaultRules);
-  const [taskSyncEnabled, setTaskSyncEnabled] = usePersistedState('taskSyncEnabled', true);
+  // When the last one-time Todoist import ran, and how many tasks it
+  // touched — shown as a status line in Settings so a re-import isn't a
+  // total mystery each time ("last imported 3 tasks, 2 days ago").
+  const [lastTodoistImport, setLastTodoistImport] = usePersistedState('lastTodoistImport', null);
 
   // Whether the user has connected Google Calendar in *some* previous
   // session. The actual OAuth access token is short-lived and lives only
@@ -133,15 +106,15 @@ export function SchedulerProvider({ children }) {
   // regardless).
   const [events, setEvents] = useState(() => loadPersisted('events', null) ?? []);
 
-  // sections/projects: same idea as tasks — seeded from local storage so a
-  // refresh doesn't wipe locally-created boards/sections when Todoist isn't
-  // configured (or sync is paused), but overwritten by the Todoist fetch
-  // below whenever that sync is actually active.
+  // sections/projects: same idea as tasks — seeded from local storage, and
+  // only ever touched by importFromTodoist's upsert-merge (see below), not
+  // by anything that runs automatically on load.
   const [sections, setSections] = useState(() => loadPersisted('sections', null) ?? getMockSections());
   const [projects, setProjects] = useState(() => loadPersisted('projects', null) ?? getMockProjects());
-  // labels: app-local tags (see types/index.js's Label typedef) — no Todoist
-  // equivalent, so unlike sections/projects this is never overwritten by the
-  // Todoist load effect below.
+  // labels: app-local tags (see types/index.js's Label typedef) — Todoist
+  // does have its own label concept, and importFromTodoist maps a task's
+  // Todoist labels onto these (creating any that don't exist yet by name),
+  // but nothing here is ever pushed back to Todoist.
   const [labels, setLabels] = useState(() => loadPersisted('labels', null) ?? []);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -168,14 +141,13 @@ export function SchedulerProvider({ children }) {
   // Todoist account to every visitor. `VITE_TODOIST_API_TOKEN` is still read
   // as a fallback purely for local `npm run dev` convenience; it's gitignored
   // (see .env.example) and stays out of any production build a visitor uses.
-  // A ref (not state) because every write helper below needs the current
-  // value without re-creating its callback whenever unrelated state changes;
+  // A ref (not state) because importFromTodoist needs the current value
+  // without re-creating its callback whenever unrelated state changes;
   // changing the token instead reloads the page (see setTodoistApiToken),
   // which naturally re-reads this on the fresh mount.
   const todoistTokenRef = useRef(loadPersisted('todoistToken', null) || import.meta.env.VITE_TODOIST_API_TOKEN || null);
   const todoistToken = todoistTokenRef.current;
-  const todoistEnabled = !!todoistToken; // "is a Todoist token configured" — governs import + UI visibility
-  const syncActive = todoistEnabled && taskSyncEnabled; // "should we actually push writes to Todoist right now"
+  const todoistEnabled = !!todoistToken; // "is a Todoist token configured" — governs whether Import is available
 
   /**
    * Save (or clear, if passed a falsy value) the visitor's personal Todoist
@@ -220,62 +192,19 @@ export function SchedulerProvider({ children }) {
     savePersisted('events', events);
   }, [events]);
 
-  /** Surface a background sync failure without disturbing the local edit that already applied. */
-  const notifySyncFailure = useCallback((action, err) => {
-    console.error(`[SchedulerContext] Todoist sync failed: ${action}`, err);
-    setNotification({ type: 'warning', message: `Saved locally, but syncing to Todoist failed (${action}): ${err.message || err}` });
-  }, []);
-
   // ---- Initial data load ---------------------------------------------------
-  // Runs once on mount. Two independent concerns, gated separately:
-  //   1. Todoist projects/sections/tasks — only re-fetched if sync is
-  //      actually active (token configured AND the user hasn't paused it
-  //      in Settings). If sync is off, whatever was loaded from
-  //      localStorage above stands untouched — that's the whole point of
-  //      "local-only" mode.
-  //   2. Google Calendar events — only attempted if the user previously
-  //      connected (persisted `googleConnected`), and done SILENTLY (no
-  //      consent popup) so re-opening the app doesn't require signing in
-  //      again. If the silent attempt fails, we quietly fall back to
-  //      "not connected" rather than throwing an error at the user.
+  // Runs once on mount. Todoist is NOT part of this — it's a one-time
+  // import the user explicitly triggers from Settings (see
+  // importFromTodoist below), never fetched automatically. The only thing
+  // this effect does is Google Calendar events, attempted SILENTLY (no
+  // consent popup) if the user previously connected (persisted
+  // `googleConnected`), so re-opening the app doesn't require signing in
+  // again. If the silent attempt fails, we quietly fall back to "not
+  // connected" rather than throwing an error at the user.
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setIsLoading(true);
-      const shouldSyncTodoist = todoistEnabled && taskSyncEnabled;
-
-      try {
-        if (shouldSyncTodoist) {
-          // Deliberately a wholesale replace, not a merge: this is also what
-          // drops the bundled sample tasks/boards/sections (see mockData.js,
-          // isDefault: true) the moment a real Todoist sync succeeds — they
-          // only ever exist as the local-storage fallback above and are
-          // never pushed to Todoist (createProject/createSection/createTask
-          // below are only ever called from user-driven add* actions).
-          const [fetchedProjects, fetchedSections] = await Promise.all([
-            fetchTodoistProjects(todoistToken),
-            fetchTodoistSections(todoistToken),
-          ]);
-          const sectionsById = new Map(fetchedSections.map((s) => [s.id, s.name]));
-          const fetchedTasks = await fetchTodoistTasks(todoistToken, sectionsById);
-          if (!cancelled) {
-            // NOTE: blocks is intentionally preserved here (not reset to
-            // []) — calendar placements have no Todoist equivalent and
-            // this effect runs on every mount, so resetting it would wipe
-            // the user's schedule every time the app reloads. Read via
-            // stateRef (not the `blocks` closed over at mount) in case the
-            // user edited a block while this fetch was in flight.
-            commit({ tasks: fetchedTasks, blocks: stateRef.current.blocks }, 'Loaded tasks from Todoist');
-            setSections(fetchedSections);
-            setProjects(fetchedProjects);
-          }
-        }
-        // else: sync is off — leave the locally persisted tasks/sections/
-        // projects exactly as loaded from storage above.
-      } catch (err) {
-        console.error('Failed to load Todoist data', err);
-        if (!cancelled) setNotification({ type: 'error', message: `Failed to load Todoist data: ${err.message}` });
-      }
 
       if (googleConnected) {
         try {
@@ -348,7 +277,6 @@ export function SchedulerProvider({ children }) {
         if ('routines' in remote) setRoutines(remote.routines);
         if ('rules' in remote) setRules(remote.rules);
         if ('events' in remote) setEvents(remote.events);
-        if ('taskSyncEnabled' in remote) setTaskSyncEnabled(remote.taskSyncEnabled);
       } else {
         await pushUserData(uid, {
           tasks: stateRef.current.tasks,
@@ -359,11 +287,10 @@ export function SchedulerProvider({ children }) {
           routines,
           rules,
           events,
-          taskSyncEnabled,
         });
       }
     },
-    [sections, projects, labels, routines, rules, events, taskSyncEnabled, commit, setSections, setProjects, setLabels, setRoutines, setRules, setEvents, setTaskSyncEnabled]
+    [sections, projects, labels, routines, rules, events, commit, setSections, setProjects, setLabels, setRoutines, setRules, setEvents]
   );
 
   useEffect(() => {
@@ -390,12 +317,12 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     const handle = setTimeout(() => {
-      pushUserData(user.uid, { tasks, blocks, sections, projects, labels, routines, rules, events, taskSyncEnabled }).catch((err) => {
+      pushUserData(user.uid, { tasks, blocks, sections, projects, labels, routines, rules, events }).catch((err) => {
         console.error('[SchedulerContext] Cloud sync failed to save', err);
       });
     }, 1500);
     return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, taskSyncEnabled]);
+  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events]);
 
   /**
    * Manual re-pull for Settings' "Sync now" button — covers the gap this
@@ -473,9 +400,9 @@ export function SchedulerProvider({ children }) {
   // ---- Task CRUD -----------------------------------------------------------
 
   /**
-   * Add a task. Local-only by default (source: 'manual'); pass
-   * `syncToTodoist: true` (e.g. from an "Add to Todoist too" checkbox) to
-   * also create it in Todoist immediately and adopt the returned todoistId.
+   * Add a task. Always local-only (source: 'manual') — Todoist tasks only
+   * ever enter TaskFlow via the one-time importFromTodoist below, never
+   * created directly from here.
    *
    * A due date is OPTIONAL — an undated task simply has no planning window
    * for the allocator, so it never gets auto-scheduled, but it still shows
@@ -483,7 +410,6 @@ export function SchedulerProvider({ children }) {
    */
   const addTask = useCallback(
     (taskInput) => {
-      const { syncToTodoist, ...rest } = taskInput;
       const localId = `task_${Date.now()}`;
       const newTask = {
         id: localId,
@@ -497,52 +423,23 @@ export function SchedulerProvider({ children }) {
         dependsOn: [],
         isPassive: false,
         earliestDate: null,
+        enforceDueDate: false,
+        link: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         source: 'manual',
         subtasks: [],
-        ...rest,
+        ...taskInput,
       };
       commit({ tasks: [...tasks, newTask], blocks }, `Added task "${newTask.title}"`);
-
-      if (syncToTodoist && syncActive) {
-        createTodoistTask(todoistToken, {
-          title: newTask.title,
-          notes: newTask.notes,
-          priority: newTask.priority,
-          dueDate: newTask.dueDate,
-          estimatedHours: newTask.estimatedHours,
-          recurrenceString: newTask.recurrenceString,
-          projectId: newTask.projectId,
-          sectionId: newTask.sectionId,
-        })
-          .then((created) => {
-            if (!created?.id) return;
-            // Read the latest tasks/blocks (via stateRef), not the `tasks`
-            // closed over at call time — an intervening commit elsewhere
-            // must not be clobbered by this delayed follow-up commit.
-            commit(
-              {
-                tasks: stateRef.current.tasks.map((t) =>
-                  t.id === localId ? { ...t, source: 'todoist', todoistId: String(created.id) } : t
-                ),
-                blocks: stateRef.current.blocks,
-              },
-              `Synced task "${newTask.title}" to Todoist`
-            );
-          })
-          .catch((err) => notifySyncFailure('create task', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   /**
-   * Update a task's fields. Applies locally first, then pushes any
-   * Todoist-synced fields (title/notes/priority/dueDate/estimatedHours/
-   * recurrenceString) and, separately, any section/project move — Todoist
-   * requires the move to go through its own `/move` endpoint rather than
-   * the general update call.
+   * Update a task's fields — purely local, regardless of `source`. A
+   * Todoist-imported task is exactly as editable as a manual one once it's
+   * in TaskFlow; nothing here is ever pushed back to Todoist.
    *
    * LIVE UI UPDATE: because this always calls `commit`, which updates the
    * shared `tasks` array in context, every consumer reading `tasks` (the
@@ -552,33 +449,14 @@ export function SchedulerProvider({ children }) {
    */
   const updateTask = useCallback(
     (taskId, updates) => {
-      const existing = tasks.find((t) => t.id === taskId);
       const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t));
       commit({ tasks: newTasks, blocks }, `Updated task`);
-
-      if (!existing || existing.source !== 'todoist' || !syncActive || !existing.todoistId) return;
-
-      const fieldUpdates = {};
-      for (const field of TODOIST_SYNCED_FIELDS) {
-        if (field in updates) fieldUpdates[field] = updates[field];
-      }
-      if (Object.keys(fieldUpdates).length > 0) {
-        updateTodoistTask(todoistToken, existing.todoistId, fieldUpdates).catch((err) => notifySyncFailure('update task', err));
-      }
-
-      if ('sectionId' in updates || 'projectId' in updates) {
-        moveTodoistTask(todoistToken, existing.todoistId, {
-          sectionId: 'sectionId' in updates ? updates.sectionId : undefined,
-          projectId: 'projectId' in updates ? updates.projectId : undefined,
-        }).catch((err) => notifySyncFailure('move task', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   const deleteTask = useCallback(
     (taskId) => {
-      const existing = tasks.find((t) => t.id === taskId);
       // Scrub the deleted id out of every other task's dependsOn — otherwise
       // a dependent task references a task that no longer exists and,
       // since areDependenciesMet() treats a missing dependency as unmet,
@@ -588,16 +466,10 @@ export function SchedulerProvider({ children }) {
         .map((t) => (t.dependsOn?.includes(taskId) ? { ...t, dependsOn: t.dependsOn.filter((id) => id !== taskId) } : t));
       const newBlocks = blocks.filter((b) => b.taskId !== taskId);
       commit({ tasks: newTasks, blocks: newBlocks }, `Deleted task`);
-
-      if (existing?.source === 'todoist' && syncActive && existing.todoistId) {
-        deleteTodoistTask(todoistToken, existing.todoistId).catch((err) => notifySyncFailure('delete task', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
-  // Lock/unlock is a scheduling-engine-only concept with no Todoist
-  // equivalent, so it's never synced.
   const toggleTaskLock = useCallback(
     (taskId) => {
       const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isLocked: !t.isLocked } : t));
@@ -611,18 +483,16 @@ export function SchedulerProvider({ children }) {
    *
    * RECURRING TASKS (isRecurring: true): matches Todoist's own behavior —
    * checking off a recurring task does NOT complete it. Instead its due
-   * date advances to the next occurrence (computed locally via
-   * utils/recurrence.js — now with a much more permissive parser and a
-   * defensive "does the string look like a recurrence rule" fallback, so
-   * "every month", "monthly", "every 1 month" etc. all advance correctly
-   * instead of silently falling back to +1 day), `remainingHours` resets
-   * to `estimatedHours` so it's schedulable again, and `isCompleted` stays
-   * false. Any scheduled blocks tied to the task's *previous* occurrence
-   * are removed, since they belonged to a cycle that's now closed out. We
-   * still call Todoist's `close` endpoint (not `reopen`) for recurring
-   * tasks — that's the exact action Todoist itself uses to advance a
-   * recurring task's date server-side, and it remains the ultimate
-   * authority on the precise next date on the next sync.
+   * date advances to the next occurrence, computed locally via
+   * utils/recurrence.js (a permissive parser with a defensive "does the
+   * string look like a recurrence rule" fallback, so "every month",
+   * "monthly", "every 1 month", multi-weekday phrases, etc. all advance
+   * correctly instead of silently falling back to +1 day) — this is now
+   * the only source of truth for the next date, since there's no Todoist
+   * round trip to defer to. `remainingHours` resets to `estimatedHours` so
+   * it's schedulable again, and `isCompleted` stays false. Any scheduled
+   * blocks tied to the task's *previous* occurrence are removed, since they
+   * belonged to a cycle that's now closed out.
    *
    * NON-RECURRING TASKS: unchanged — `isCompleted: true`, `remainingHours: 0`.
    */
@@ -651,21 +521,13 @@ export function SchedulerProvider({ children }) {
         // other tasks are untouched.
         const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked);
         commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
-
-        if (existing.source === 'todoist' && syncActive && existing.todoistId) {
-          setTodoistTaskCompleted(todoistToken, existing.todoistId, true).catch((err) => notifySyncFailure('complete recurring task', err));
-        }
         return;
       }
 
       const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: true, remainingHours: 0 } : t));
       commit({ tasks: newTasks, blocks }, `Completed task`);
-
-      if (existing.source === 'todoist' && syncActive && existing.todoistId) {
-        setTodoistTaskCompleted(todoistToken, existing.todoistId, true).catch((err) => notifySyncFailure('complete task', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   // ---- Subtask CRUD (nested under a parent Task) ---------------------------
@@ -680,45 +542,20 @@ export function SchedulerProvider({ children }) {
       const newSubtasks = [...(parent.subtasks || []), { id: localId, title: trimmed, isCompleted: false }];
       const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, subtasks: newSubtasks, updatedAt: new Date().toISOString() } : t));
       commit({ tasks: newTasks, blocks }, `Added subtask`);
-
-      if (parent.source === 'todoist' && syncActive && parent.todoistId) {
-        createTodoistSubtask(todoistToken, parent.todoistId, trimmed)
-          .then((created) => {
-            if (!created?.id) return;
-            // Read the latest tasks/blocks (via stateRef) rather than the
-            // `tasks` closed over at call time — see stateRef's doc comment.
-            const latestTasks = stateRef.current.tasks;
-            const latestParent = latestTasks.find((t) => t.id === taskId);
-            if (!latestParent) return;
-            const updatedSubtasks = (latestParent.subtasks || newSubtasks).map((s) =>
-              s.id === localId ? { ...s, todoistId: String(created.id) } : s
-            );
-            const finalTasks = latestTasks.map((t) => (t.id === taskId ? { ...t, subtasks: updatedSubtasks } : t));
-            commit({ tasks: finalTasks, blocks: stateRef.current.blocks }, `Synced subtask to Todoist`);
-          })
-          .catch((err) => notifySyncFailure('add subtask', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   const renameSubtask = useCallback(
     (taskId, subtaskId, title) => {
       const trimmed = title.trim();
       if (!trimmed) return;
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
       const newTasks = tasks.map((t) =>
         t.id === taskId ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, title: trimmed } : s)) } : t
       );
       commit({ tasks: newTasks, blocks }, `Renamed subtask`);
-
-      if (sub?.todoistId && syncActive) {
-        renameTodoistSubtask(todoistToken, sub.todoistId, trimmed).catch((err) => notifySyncFailure('rename subtask', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   const toggleSubtask = useCallback(
@@ -733,27 +570,16 @@ export function SchedulerProvider({ children }) {
           : t
       );
       commit({ tasks: newTasks, blocks }, `Toggled subtask`);
-
-      if (sub?.todoistId && syncActive) {
-        setTodoistSubtaskCompleted(todoistToken, sub.todoistId, nextCompleted).catch((err) => notifySyncFailure('toggle subtask', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   const removeSubtask = useCallback(
     (taskId, subtaskId) => {
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
       const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== subtaskId) } : t));
       commit({ tasks: newTasks, blocks }, `Removed subtask`);
-
-      if (sub?.todoistId && syncActive) {
-        deleteTodoistSubtask(todoistToken, sub.todoistId).catch((err) => notifySyncFailure('delete subtask', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   /**
@@ -761,8 +587,6 @@ export function SchedulerProvider({ children }) {
    * view (SubtaskDetailModal) in one commit, rather than composing the
    * individual renameSubtask/toggleSubtask calls above — those still exist
    * for the quick inline checkbox/rename affordances in the checklist row.
-   * Only `title` and `isCompleted` have a Todoist equivalent; `notes` stays
-   * app-local (see Subtask typedef).
    */
   const updateSubtask = useCallback(
     (taskId, subtaskId, updates) => {
@@ -777,19 +601,8 @@ export function SchedulerProvider({ children }) {
           : t
       );
       commit({ tasks: newTasks, blocks }, `Updated subtask`);
-
-      if (sub.todoistId && syncActive) {
-        if (updates.title !== undefined && nextTitle !== sub.title) {
-          renameTodoistSubtask(todoistToken, sub.todoistId, nextTitle).catch((err) => notifySyncFailure('rename subtask', err));
-        }
-        if (updates.isCompleted !== undefined && updates.isCompleted !== sub.isCompleted) {
-          setTodoistSubtaskCompleted(todoistToken, sub.todoistId, updates.isCompleted).catch((err) =>
-            notifySyncFailure('toggle subtask', err)
-          );
-        }
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   // ---- Label CRUD (app-local tags, see Label typedef) -----------------------
@@ -832,60 +645,155 @@ export function SchedulerProvider({ children }) {
     [labels]
   );
 
-  // ---- Project CRUD (Board view "boards") -----------------------------------
+  // ---- Todoist: one-time import ---------------------------------------------
 
   /**
-   * Create a new Project ("board"). If Todoist is configured, tries to
-   * create it there first (so it two-way-syncs like everything else). If
-   * Todoist rejects it because the account has hit its project limit (free
-   * tier: 5 active projects), we fall back to a LOCAL-ONLY project instead
-   * of failing outright — the board still works in TaskFlow, it just won't
-   * exist in Todoist, and we tell the user that explicitly via toast so
-   * they're not confused later about why it's missing from the Todoist app.
+   * Pull every Project/Section/Task from Todoist ONCE and merge it into
+   * local state — the only thing in this app that ever talks to the
+   * Todoist API. Safe to re-run any time the user wants to pull in what's
+   * changed on Todoist since the last import:
+   *   - Projects/Sections/Tasks already imported (matched by id) get their
+   *     fields refreshed from the fresh fetch.
+   *   - New Projects/Sections/Tasks are added.
+   *   - Anything local-only (a manually-created board/section, or a task
+   *     with source: 'manual') is left completely untouched — this is an
+   *     upsert-merge, never a wholesale replace.
+   *   - A previously-imported item that's since been deleted in Todoist is
+   *     NOT removed here; it just stops being touched by future imports,
+   *     which is the expected "import once, then manage locally" contract.
    *
-   * @returns {Promise<{ ok: boolean, localOnly: boolean }>}
+   * Also resolves each imported task's Todoist labels (raw label name
+   * strings — Todoist's `labels` field, distinct from TaskFlow's own Label
+   * records) onto local `labelIds`, creating any label that doesn't
+   * already exist by name. This used to be silently dropped entirely (see
+   * todoistService.js's module doc comment) from before the LabelPicker
+   * feature existed, when labels genuinely had no Todoist equivalent to
+   * worry about.
    */
-  const addProject = useCallback(
-    async (name) => {
-      const trimmed = name.trim();
-      if (!trimmed) return { ok: false, localOnly: false };
+  const importFromTodoist = useCallback(async () => {
+    if (!todoistToken) {
+      setNotification({ type: 'error', message: 'Add a Todoist API token in Settings first.' });
+      return { ok: false };
+    }
 
-      if (!syncActive) {
-        const localId = `proj_${Date.now()}`;
-        setProjects((prev) => [...prev, { id: localId, name: trimmed, order: prev.length + 1 }]);
-        setNotification({
-          type: 'success',
-          message: todoistEnabled
-            ? `Board "${trimmed}" created (TaskFlow only — task sync is turned off in Settings).`
-            : `Board "${trimmed}" created (TaskFlow only — Todoist not configured).`,
+    setIsSyncing(true);
+    try {
+      const [fetchedProjects, fetchedSections] = await Promise.all([
+        fetchTodoistProjects(todoistToken),
+        fetchTodoistSections(todoistToken),
+      ]);
+      const sectionsById = new Map(fetchedSections.map((s) => [s.id, s.name]));
+      const fetchedTasks = await fetchTodoistTasks(todoistToken, sectionsById);
+
+      setProjects((prev) => {
+        const byId = new Map(prev.map((p) => [p.id, p]));
+        fetchedProjects.forEach((p) => byId.set(p.id, { ...byId.get(p.id), ...p }));
+        return [...byId.values()];
+      });
+      setSections((prev) => {
+        const byId = new Map(prev.map((s) => [s.id, s]));
+        fetchedSections.forEach((s) => byId.set(s.id, { ...byId.get(s.id), ...s }));
+        return [...byId.values()];
+      });
+
+      // Resolve every fetched task's Todoist label NAMES to local label ids
+      // in one batched pass across all tasks (not one getOrCreateLabelIds
+      // call per task), so a label mentioned on several tasks is only
+      // created once instead of racing itself across separate state updates.
+      const allLabelNames = [...new Set(fetchedTasks.flatMap((t) => t.labelNames || []))];
+      const labelIdByName = new Map();
+      if (allLabelNames.length > 0) {
+        const byLowerName = new Map(labels.map((l) => [l.name.toLowerCase(), l]));
+        const newLabels = [];
+        let nextCount = labels.length;
+        allLabelNames.forEach((name) => {
+          const key = name.toLowerCase();
+          const existing = byLowerName.get(key);
+          if (existing) {
+            labelIdByName.set(name, existing.id);
+            return;
+          }
+          const newLabel = { id: `label_${Date.now()}_${nextCount}`, name, color: nextLabelColor(nextCount) };
+          byLowerName.set(key, newLabel);
+          newLabels.push(newLabel);
+          labelIdByName.set(name, newLabel.id);
+          nextCount += 1;
         });
-        return { ok: true, localOnly: true };
+        if (newLabels.length > 0) setLabels((prev) => [...prev, ...newLabels]);
       }
 
-      try {
-        const created = await createTodoistProject(todoistToken, trimmed);
-        if (!created?.id) throw new Error('Todoist did not return a created project.');
-        setProjects((prev) => [...prev, { id: String(created.id), name: trimmed, color: created.color, order: prev.length + 1 }]);
-        setNotification({ type: 'success', message: `Board "${trimmed}" created and synced to Todoist.` });
-        return { ok: true, localOnly: false };
-      } catch (err) {
-        if (err.isLimitReached) {
-          // Fall back to a local-only board rather than blocking the user.
-          const localId = `proj_${Date.now()}`;
-          setProjects((prev) => [...prev, { id: localId, name: trimmed, order: prev.length + 1 }]);
-          setNotification({
-            type: 'warning',
-            message: `Todoist's project limit is reached, so "${trimmed}" was created in TaskFlow only — it won't sync to Todoist.`,
-          });
-          return { ok: true, localOnly: true };
-        }
-        console.error('[SchedulerContext] Failed to create project', err);
-        setNotification({ type: 'error', message: `Couldn't create board: ${err.message || err}` });
-        return { ok: false, localOnly: false };
-      }
+      let addedCount = 0;
+      let updatedCount = 0;
+      const byId = new Map(tasks.map((t) => [t.id, t]));
+      fetchedTasks.forEach((raw) => {
+        const { labelNames, ...task } = raw;
+        const resolvedLabelIds = (labelNames || []).map((n) => labelIdByName.get(n)).filter(Boolean);
+        if (byId.has(task.id)) updatedCount += 1;
+        else addedCount += 1;
+        byId.set(task.id, { ...task, labelIds: resolvedLabelIds });
+      });
+      const newTasks = [...byId.values()];
+      commit({ tasks: newTasks, blocks }, `Imported from Todoist (${addedCount} new, ${updatedCount} updated)`);
+
+      const summary = { at: new Date().toISOString(), addedCount, updatedCount, totalCount: fetchedTasks.length };
+      setLastTodoistImport(summary);
+      setNotification({
+        type: 'success',
+        message: `Imported ${addedCount} new and updated ${updatedCount} existing task${addedCount + updatedCount === 1 ? '' : 's'} from Todoist.`,
+      });
+      return { ok: true, ...summary };
+    } catch (err) {
+      console.error('[SchedulerContext] Todoist import failed', err);
+      setNotification({ type: 'error', message: `Todoist import failed: ${err.message || err}` });
+      return { ok: false };
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [todoistToken, tasks, blocks, labels, commit, setLastTodoistImport]);
+
+  // ---- Project CRUD (Board view "boards") -----------------------------------
+
+  /** Create a new Project ("board") — always local; Todoist projects only ever enter via importFromTodoist. */
+  const addProject = useCallback((name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false };
+    const localId = `proj_${Date.now()}`;
+    setProjects((prev) => [...prev, { id: localId, name: trimmed, order: prev.length + 1 }]);
+    return { ok: true };
+  }, []);
+
+  /**
+   * Rename/delete/pin are all purely local — even for a Todoist-imported
+   * project, none of these ever call the Todoist API.
+   */
+  const renameProject = useCallback(
+    (projectId, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, name: trimmed } : p)));
     },
-    [syncActive, todoistEnabled, todoistToken]
+    []
   );
+
+  const deleteProject = useCallback(
+    (projectId) => {
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setSections((prev) => prev.filter((s) => s.projectId !== projectId));
+      const newTasks = tasks.map((t) =>
+        t.projectId === projectId ? { ...t, projectId: null, sectionId: null, sectionName: null } : t
+      );
+      commit({ tasks: newTasks, blocks }, `Deleted project`);
+    },
+    [tasks, blocks, commit]
+  );
+
+  const togglePinProject = useCallback((projectId) => {
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, isPinned: !p.isPinned } : p)));
+  }, []);
+
+  const touchProjectVisited = useCallback((projectId) => {
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, lastVisitedAt: new Date().toISOString() } : p)));
+  }, []);
 
   // ---- Section CRUD (Board view columns) ------------------------------------
 
@@ -896,17 +804,8 @@ export function SchedulerProvider({ children }) {
       const localId = `sec_${Date.now()}`;
       const newSection = { id: localId, name: trimmed, projectId, order: sections.length + 1 };
       setSections((prev) => [...prev, newSection]);
-
-      if (syncActive) {
-        createTodoistSection(todoistToken, projectId, trimmed)
-          .then((created) => {
-            if (!created?.id) return;
-            setSections((prev) => prev.map((s) => (s.id === localId ? { ...s, id: String(created.id) } : s)));
-          })
-          .catch((err) => notifySyncFailure('create section', err));
-      }
     },
-    [sections.length, syncActive, todoistToken, notifySyncFailure]
+    [sections.length]
   );
 
   const renameSection = useCallback(
@@ -917,12 +816,8 @@ export function SchedulerProvider({ children }) {
       // Denormalized sectionName on any task currently in this section stays in sync too.
       const newTasks = tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionName: trimmed } : t));
       if (newTasks.some((t, i) => t !== tasks[i])) commit({ tasks: newTasks, blocks }, `Renamed section`);
-
-      if (syncActive) {
-        renameTodoistSection(todoistToken, sectionId, trimmed).catch((err) => notifySyncFailure('rename section', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   const deleteSection = useCallback(
@@ -931,12 +826,8 @@ export function SchedulerProvider({ children }) {
       // Tasks in the deleted section fall back to "No Section", matching what Todoist does.
       const newTasks = tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionId: null, sectionName: null } : t));
       commit({ tasks: newTasks, blocks }, `Deleted section`);
-
-      if (syncActive) {
-        deleteTodoistSection(todoistToken, sectionId).catch((err) => notifySyncFailure('delete section', err));
-      }
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   // ---- Block CRUD (manual drag/resize/lock) --------------------------------
@@ -1091,9 +982,8 @@ export function SchedulerProvider({ children }) {
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
-      taskSyncEnabled,
-      setTaskSyncEnabled,
-      syncActive,
+      importFromTodoist,
+      lastTodoistImport,
       lastOverflow,
       notification,
       canUndo,
@@ -1118,6 +1008,10 @@ export function SchedulerProvider({ children }) {
       updateSubtask,
       getOrCreateLabelIds,
       addProject,
+      renameProject,
+      deleteProject,
+      togglePinProject,
+      touchProjectVisited,
       addSection,
       renameSection,
       deleteSection,
@@ -1151,9 +1045,8 @@ export function SchedulerProvider({ children }) {
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
-      taskSyncEnabled,
-      setTaskSyncEnabled,
-      syncActive,
+      importFromTodoist,
+      lastTodoistImport,
       lastOverflow,
       notification,
       canUndo,
@@ -1174,6 +1067,10 @@ export function SchedulerProvider({ children }) {
       updateSubtask,
       getOrCreateLabelIds,
       addProject,
+      renameProject,
+      deleteProject,
+      togglePinProject,
+      touchProjectVisited,
       addSection,
       renameSection,
       deleteSection,

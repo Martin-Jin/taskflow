@@ -1,12 +1,8 @@
 .board-page {
   display: flex;
   flex-direction: column;
-  height: 100%;
-}
-
-.board-toolbar {
-  display: flex;
-  margin-bottom: 14px;
+  flex: 1;
+  min-height: 0;
 }
 
 .board-toolbar {
@@ -17,59 +13,44 @@
   flex-wrap: wrap;
 }
 
-.board-project-select {
-  background: var(--color-bg-surface);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 7px 10px;
-  color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  min-width: 180px;
-}
-
-.board-project-select:focus {
-  border-color: var(--color-accent-border);
-  outline: none;
-}
-
-.board-sync-badge {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.board-sync-badge.enabled {
-  color: var(--color-success);
-}
-
 .board-columns {
   display: flex;
-  gap: 14px;
-  overflow-x: auto;
   flex: 1;
   min-height: 0;
-  padding-bottom: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
+.board-columns::-webkit-scrollbar {
+  display: none;
+}
+
+/* Deliberately NOT a boxed surface — a column is a header label plus a
+   plain stack of cards sitting on the page background, matching Todoist's
+   board (only the cards themselves are "boxed"). An extra bordered/filled
+   wrapper around the whole column read as a box-inside-a-box. */
 .board-column {
   flex: 0 0 280px;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-surface);
-  border-radius: var(--radius-md);
+  min-height: 0;
   max-height: 100%;
+  padding-right: 14px;
+  margin-right: 14px;
+  border-right: 1px solid var(--color-border);
 }
 
 .board-column-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 4px 4px 10px;
   border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-page);
 }
 
 .board-column.no-section .board-column-header {
@@ -169,11 +150,31 @@
 
 .board-column-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.board-column-body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Flat single-list mode (no sections yet in this project) — same card
+   stack as a column's body, just without any column chrome around it. */
+.board-flat-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.board-flat-list-footer {
+  margin-top: 4px;
+  max-width: 260px;
 }
 
 .board-column-empty {
@@ -186,29 +187,39 @@
 .board-card {
   display: flex;
   gap: 8px;
-  background: var(--color-bg-surface-raised);
   border-left: 3px solid;
-  border-radius: var(--radius-sm);
-  padding: 10px 10px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 10px 4px 10px 9px;
   cursor: pointer;
-  transition: box-shadow var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard),
-    transform var(--duration-fast) var(--ease-standard);
+  transition: background var(--duration-fast) var(--ease-standard);
   animation: card-in var(--duration-base) var(--ease-decelerate);
 }
 
+.board-column-body > .board-card:last-child {
+  border-bottom: none;
+}
+
 .board-card:hover {
-  box-shadow: var(--shadow-card);
   background: var(--color-bg-surface-hover);
 }
 
 .board-card:active {
-  transform: scale(0.985);
+  background: var(--color-bg-surface-raised);
 }
 
 .board-card:focus-visible,
 .board-column-title:focus-visible {
   outline: 2px solid var(--color-accent-border);
   outline-offset: 2px;
+}
+
+.board-card.is-dragging {
+  opacity: 0.5;
+}
+
+.board-column-body.is-dragover {
+  background-color: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
 }
 
 .board-card-check {
@@ -250,13 +261,15 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 10px 2px;
+  margin-top: 2px;
   border: none;
   border-top: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12.5px;
   text-align: left;
+  border-radius: var(--radius-sm);
 }
 
 .board-add-task:hover {
@@ -269,19 +282,23 @@
     flex: 1 1 100%;
   }
 
-  .board-sync-badge {
-    margin-left: 0;
-  }
-
   .board-columns {
     scroll-snap-type: x mandatory;
-    gap: 10px;
-    padding: 0 6px 8px;
+    padding: 0 6px;
   }
 
-  .board-column,
+  .board-column {
+    flex: 0 0 88vw;
+    scroll-snap-align: center;
+    border-right: none;
+  }
+
   .board-add-column {
     flex: 0 0 88vw;
     scroll-snap-align: center;
+  }
+
+  .board-flat-list-footer {
+    max-width: 100%;
   }
 }

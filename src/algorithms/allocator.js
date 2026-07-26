@@ -48,6 +48,10 @@
  *                 schedule before this" override)
  *   windowEnd   = effectiveDeadline (or horizon end, if no due date)
  *
+ *   task.enforceDueDate overrides all of the above: windowStart and windowEnd
+ *   both collapse to dueDate itself (no buffer, no earliestDate) — the task
+ *   must be done ON its due date, not paced earlier. See getTaskWindow().
+ *
  * Step 3 — PACE HOURS ACROSS THE WINDOW:
  *   daysInWindow = windowEnd - windowStart + 1
  *   idealHoursPerDay = remainingHours / daysInWindow
@@ -99,15 +103,27 @@ const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
 // through the sweep/spill passes and into the overflow report.
 const EPSILON_HOURS = 1 / 120;
 
+/**
+ * The date by which a task's remaining hours must effectively be finished:
+ * the buffer-shrunk deadline normally, but the raw due date itself when
+ * `enforceDueDate` is set (the buffer doesn't apply — there's no "finish
+ * early" cushion once the whole window is collapsed onto the due date).
+ * Returns null for tasks with no due date at all.
+ */
+function getEffectiveDeadline(task, bufferDays) {
+  if (!task.dueDate) return null;
+  return task.enforceDueDate ? task.dueDate : addDays(task.dueDate, -bufferDays);
+}
+
 /** Compute a single sortable urgency+priority score for a task, relative to `today`. */
 export function scoreTask(task, today, bufferDays) {
   const weight = PRIORITY_WEIGHT[task.priority] ?? 1;
 
-  if (!task.dueDate) {
+  const effectiveDeadline = getEffectiveDeadline(task, bufferDays);
+  if (effectiveDeadline === null) {
     return weight * 1; // no deadline -> baseline urgency multiplier of 1
   }
 
-  const effectiveDeadline = addDays(task.dueDate, -bufferDays);
   const daysRemaining = Math.max(1, diffDays(today, effectiveDeadline));
   const urgencyMultiplier = 1 + (1 / daysRemaining) * 10;
 
@@ -126,6 +142,18 @@ export function prioritizeTasks(tasks, today, bufferDays) {
  * hours must be placed within.
  */
 function getTaskWindow(task, today, horizonEnd, bufferDays) {
+  // enforceDueDate collapses the ENTIRE window onto the due date itself —
+  // more restrictive than (and takes precedence over) earliestDate/
+  // bufferDays, which only ever clamp the window's edges. Only meaningful
+  // when a due date actually exists; otherwise falls through to the normal
+  // undated-task handling below. If the due date has already passed, this
+  // intentionally leaves the window in the past (outside the capacity map),
+  // so the task's hours simply report as overflow like any other task that
+  // no longer fits its window — no special catch-up behavior invented here.
+  if (task.enforceDueDate && task.dueDate) {
+    return { windowStart: task.dueDate, windowEnd: task.dueDate };
+  }
+
   // task.earliestDate is a user-set override ("don't schedule this before
   // day X") — clamp the window start to it when it's later than today, but
   // never let it push the start before today (that would try to schedule
@@ -133,7 +161,7 @@ function getTaskWindow(task, today, horizonEnd, bufferDays) {
   const windowStart = task.earliestDate && task.earliestDate > today ? task.earliestDate : today;
   let windowEnd = horizonEnd;
   if (task.dueDate) {
-    const effectiveDeadline = addDays(task.dueDate, -bufferDays);
+    const effectiveDeadline = getEffectiveDeadline(task, bufferDays);
     // If the buffer pushes the deadline back past windowStart, the buffer
     // can't be honored in full — fall back to the actual due date (clamped
     // to the horizon) rather than collapsing the window to windowStart

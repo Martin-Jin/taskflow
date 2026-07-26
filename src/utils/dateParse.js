@@ -325,10 +325,21 @@ export function findDuePhrase(text, referenceDate = new Date()) {
     return { iso: thisWeekdayFrom(todayIso, dow), matchedText: m[0], index: m.index };
   }
 
-  m = s.match(new RegExp(`\\b(${WEEKDAY_PATTERN})\\b`));
-  if (m) {
-    const dow = WEEKDAY_ALIASES[m[1]];
-    return { iso: nextWeekdayFrom(todayIso, dow), matchedText: m[0], index: m.index };
+  // A bare weekday mention ("sat", "monday") normally means "the next
+  // occurrence of that day" as a one-off due date — EXCEPT right after a
+  // recurrence lead word ("every sat", "each monday"), where it's part of
+  // a recurrence phrase instead (see recurrence.js's findWeekdayRecurrenceSpan,
+  // which handles multi-day spans like "every sat and every sun"). Without
+  // this guard, this due-date detector — which runs before the recurrence
+  // detector in smartParse.js's pipeline — would grab just the first "sat"
+  // out of that phrase as a due date, leaving recurrence to see only
+  // "every sun" and silently drop Saturday from the rule.
+  const bareWeekdayRe = new RegExp(`\\b(${WEEKDAY_PATTERN})\\b`, 'g');
+  for (const bareMatch of s.matchAll(bareWeekdayRe)) {
+    const before = s.slice(0, bareMatch.index);
+    if (/(?:every|ev|each)!?\s+$/.test(before)) continue;
+    const dow = WEEKDAY_ALIASES[bareMatch[1]];
+    return { iso: nextWeekdayFrom(todayIso, dow), matchedText: bareMatch[0], index: bareMatch.index };
   }
 
   return null;

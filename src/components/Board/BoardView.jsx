@@ -2,14 +2,20 @@
  * ============================================================================
  * BoardView
  * ============================================================================
- * A Kanban-style board that mirrors Todoist's own Board view: pick one
- * Project from the filter dropdown (like Todoist, this shows one project's
- * board at a time rather than every project stacked together), then one
- * column per Section within that project, plus a leading "No Section"
- * column for tasks that aren't assigned to one. Cards show priority, due
- * date, hours, and a subtask progress indicator. Clicking a card opens the
- * same TaskDetailModal used everywhere else, so editing stays consistent
- * across views.
+ * A Kanban-style board that mirrors Todoist's own Board view: shows one
+ * Project's board at a time (the project is shared state — see `projectId`/
+ * `onProjectChange` props — set from the sidebar, the shared project header,
+ * or the search bar, so it stays in sync with List view), with one column
+ * per Section within that project, plus a leading "No Section" column for
+ * tasks that aren't assigned to one. Cards show priority, due date, hours,
+ * and a subtask progress indicator. Clicking a card opens the same
+ * TaskDetailModal used everywhere else, so editing stays consistent across
+ * views.
+ *
+ * If the project has NO sections at all, the board renders as a single flat
+ * task list instead of a one-column kanban — a project the user hasn't
+ * split into sections shouldn't visually look like a board with one lonely
+ * "No Section" column.
  *
  * Columns respect the shared search query — a task (or any of its
  * subtasks) matching the query keeps its card visible; the column itself
@@ -33,8 +39,9 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, X, RefreshCw, Pause, Circle, Repeat, Wind, SquareCheck, Ban, Lock, Unlock } from 'lucide-react';
+import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, Lock, Unlock, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import AddTaskModal from '../Modals/AddTaskModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import SearchBar, { taskMatchesQuery } from '../Common/SearchBar';
@@ -42,40 +49,54 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
+import { ALL_TASKS_PROJECT_ID, filterTasksByProject } from '../../utils/projectConstants';
 
-export default function BoardView() {
-  const { tasks, sections, projects, labels, searchQuery, toggleTaskLock, completeTask, addProject, addSection, renameSection, deleteSection, todoistEnabled, syncActive } =
-    useScheduler();
+export default function BoardView({ projectId, onProjectChange }) {
+  const {
+    tasks,
+    sections,
+    projects,
+    labels,
+    searchQuery,
+    toggleTaskLock,
+    completeTask,
+    addSection,
+    renameSection,
+    deleteSection,
+    updateTask,
+  } = useScheduler();
   // Track only the id — deriving the task object live from `tasks` (below)
   // ensures edits made in the modal (e.g. removing a subtask) show up
   // immediately instead of requiring a close/reopen.
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [addingToSectionId, setAddingToSectionId] = useState(undefined); // undefined = modal closed
-  const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [editingColumnId, setEditingColumnId] = useState(null); // null | 'no-section' | sectionId
+  const [editingColumnId, setEditingColumnId] = useState(null); // null | sectionId
   const [editingColumnTitle, setEditingColumnTitle] = useState('');
   const [addingSection, setAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
-  const [addingBoard, setAddingBoard] = useState(false);
-  const [newBoardName, setNewBoardName] = useState('');
-  const [isCreatingBoard, setIsCreatingBoard] = useState(false);
-  // Set right after a board is created; used to auto-select it once it
-  // shows up in `projects` (see the effect below `sortedProjects`).
-  const [pendingSelectName, setPendingSelectName] = useState(null);
+  // Native HTML5 DnD for cross-column moves (mirrors WeekView's block drag)
+  // — disabled on mobile, where there's no drag gesture to hook into.
+  const isMobile = useIsMobile();
+  const [dragTaskId, setDragTaskId] = useState(null);
+  const [dragOverColumnId, setDragOverColumnId] = useState(undefined); // undefined = none, null = "No Section" column
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
   const sortedProjects = useMemo(() => [...projects].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)), [projects]);
 
-  // Default to the first project once projects load, so the board isn't
-  // empty on first render (mirrors Todoist always showing *some* project's
-  // board rather than an "all projects" view).
+  // Board always needs one concrete project selected (unlike List's "All
+  // Tasks" pseudo view) — if the shared selection is the "All Tasks"
+  // pseudo id or doesn't match a real project, fall back to the first one
+  // and report it back up so List view/sidebar reflect the resolved pick.
   useEffect(() => {
-    if (!selectedProjectId && sortedProjects.length > 0) {
-      setSelectedProjectId(sortedProjects[0].id);
-    }
-  }, [sortedProjects, selectedProjectId]);
+    if (sortedProjects.length === 0) return;
+    const isValid = projectId !== ALL_TASKS_PROJECT_ID && sortedProjects.some((p) => p.id === projectId);
+    if (!isValid) onProjectChange(sortedProjects[0].id);
+  }, [projectId, sortedProjects, onProjectChange]);
+
+  const selectedProjectId = projectId;
+  const selectedProject = sortedProjects.find((p) => p.id === selectedProjectId);
 
   const projectSections = useMemo(
     () =>
@@ -85,6 +106,8 @@ export default function BoardView() {
     [sections, selectedProjectId]
   );
 
+  const hasSections = projectSections.length > 0;
+
   const columns = useMemo(() => {
     const cols = [{ id: null, name: 'No Section', isNoSection: true }, ...projectSections];
 
@@ -92,14 +115,17 @@ export default function BoardView() {
       // Every non-completed task in this project/section shows up here,
       // regardless of due date — Boards mirrors Todoist's board, which has
       // no concept of "too far out to show" or "not schedulable."
-      const columnTasks = tasks
+      const columnTasks = filterTasksByProject(tasks, selectedProjectId)
         .filter((t) => !t.isCompleted)
-        .filter((t) => t.projectId === selectedProjectId)
         .filter((t) => (col.id === null ? !t.sectionId : t.sectionId === col.id))
         .filter((t) => taskMatchesQuery(t, searchQuery, labels));
       return { ...col, tasks: columnTasks };
     });
   }, [tasks, projectSections, selectedProjectId, searchQuery, labels]);
+
+  // Flat mode has exactly one synthetic "No Section" column (there are no
+  // real sections yet), so its tasks are just columns[0].tasks.
+  const flatTasks = columns[0]?.tasks ?? [];
 
   function startEditingColumn(col) {
     if (col.isNoSection) return; // "No Section" is a synthetic bucket, not a real editable Section
@@ -130,133 +156,197 @@ export default function BoardView() {
     setAddingSection(false);
   }
 
-  async function handleAddBoard() {
-    const trimmed = newBoardName.trim();
-    if (!trimmed || isCreatingBoard) return;
-    setIsCreatingBoard(true);
-    try {
-      const result = await addProject(trimmed);
-      if (result.ok) {
-        setNewBoardName('');
-        setAddingBoard(false);
-        // Selecting the new board happens once `projects` updates and flows
-        // back down as `sortedProjects` — handled by the effect below.
-        setPendingSelectName(trimmed);
-      }
-    } finally {
-      setIsCreatingBoard(false);
-    }
+  // --- Drag handlers (native HTML5 DnD for cross-column moves) --------------
+  function handleCardDragStart(e, task) {
+    e.dataTransfer.setData('text/plain', task.id);
+    setDragTaskId(task.id);
   }
 
-  // After a new board is created, `projects` updates asynchronously (either
-  // immediately for local-only boards, or once the Todoist create call
-  // resolves) — this selects it by name as soon as it shows up, rather than
-  // leaving the board switcher on whatever was previously selected.
-  useEffect(() => {
-    if (!pendingSelectName) return;
-    const match = projects.find((p) => p.name === pendingSelectName);
-    if (match) {
-      setSelectedProjectId(match.id);
-      setPendingSelectName(null);
-    }
-  }, [pendingSelectName, projects]);
+  function handleColumnDragOver(e, col) {
+    e.preventDefault();
+    setDragOverColumnId(col.id);
+  }
 
-  const selectedProject = sortedProjects.find((p) => p.id === selectedProjectId);
+  function handleColumnDrop(e, col) {
+    e.preventDefault();
+    setDragOverColumnId(undefined);
+    setDragTaskId(null);
+    const taskId = e.dataTransfer.getData('text/plain');
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task || task.sectionId === col.id) return; // no-op: dropped back on its current section
+    updateTask(taskId, { sectionId: col.id, sectionName: col.isNoSection ? null : col.name });
+  }
+
+  function renderCard(task) {
+    const subtaskTotal = task.subtasks?.length || 0;
+    const subtaskDone = task.subtasks?.filter((s) => s.isCompleted).length || 0;
+    // Same fix as TaskListPanel's renderTaskRow: the Repeat/Wind icons render
+    // inline before the title (13px + 4px margin-right = 17px each), pushing
+    // the title's text right of the card's left edge — match that on the
+    // meta line below so the two lines' text shares the same left edge.
+    const titleIconOffset = (task.isRecurring ? 17 : 0) + (task.isPassive ? 17 : 0);
+    return (
+      <div
+        key={task.id}
+        className={`board-card ${dragTaskId === task.id ? 'is-dragging' : ''}`}
+        style={{ borderLeftColor: priorityColor(task.priority) }}
+        role="button"
+        tabIndex={0}
+        draggable={!isMobile}
+        onDragStart={isMobile ? undefined : (e) => handleCardDragStart(e, task)}
+        onDragEnd={isMobile ? undefined : () => setDragTaskId(null)}
+        onClick={() => setEditingTaskId(task.id)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setEditingTaskId(task.id);
+          }
+        }}
+      >
+        <button
+          className="board-card-check"
+          title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+          onClick={(e) => {
+            e.stopPropagation();
+            completeTask(task.id);
+          }}
+        >
+          <Circle size={16} strokeWidth={1.75} />
+        </button>
+        <div className="board-card-body">
+          <div className="board-card-title">
+            {task.isRecurring && (
+              <Repeat size={13} style={{ verticalAlign: -2, marginRight: 4 }} title={task.recurrenceString || 'Repeats'} />
+            )}
+            {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginRight: 4 }} title="Can run unattended" />}
+            {task.link ? (
+              <a
+                href={task.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="task-title-link"
+                onClick={(e) => e.stopPropagation()}
+                title={`Open link: ${task.link}`}
+              >
+                {task.title}
+                <ExternalLink size={11} aria-hidden="true" />
+              </a>
+            ) : (
+              task.title
+            )}
+          </div>
+          <div
+            className="board-card-meta"
+            style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 3, paddingLeft: titleIconOffset }}
+          >
+            <span>
+              {formatHours(task.remainingHours)} left
+              {task.dueDate ? (
+                <span className="board-card-due"> · due {formatDisplayDate(task.dueDate)}</span>
+              ) : (
+                <span> · no due date</span>
+              )}
+            </span>
+            {subtaskTotal > 0 && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                {' · '}
+                <SquareCheck size={12} />
+                {subtaskDone}/{subtaskTotal}
+              </span>
+            )}
+            {!areDependenciesMet(task, taskById) && (
+              <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                {' · '}
+                <Ban size={12} />
+                blocked
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+            <span className={`badge ${task.priority}`}>{task.priority}</span>
+            <button
+              className="btn btn-icon"
+              style={{ padding: '2px 6px', marginLeft: 'auto' }}
+              title={task.isLocked ? 'Unlock' : 'Lock'}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleTaskLock(task.id);
+              }}
+            >
+              {task.isLocked ? <Lock size={13} /> : <Unlock size={13} />}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="board-page">
-      <div className="board-toolbar">
-        <select
-          className="board-project-select"
-          value={selectedProjectId}
-          onChange={(e) => setSelectedProjectId(e.target.value)}
-          aria-label="Filter board by project"
-        >
-          {sortedProjects.length === 0 && <option value="">No projects</option>}
-          {sortedProjects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-
-        {addingBoard ? (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input
-              autoFocus
-              value={newBoardName}
-              onChange={(e) => setNewBoardName(e.target.value)}
-              placeholder="Board name…"
-              disabled={isCreatingBoard}
-              style={{
-                background: 'var(--color-bg-surface-raised)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                padding: '7px 10px',
-                color: 'var(--color-text-primary)',
-                fontSize: 13,
-                width: 160,
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAddBoard();
-                }
-                if (e.key === 'Escape') {
-                  setAddingBoard(false);
-                  setNewBoardName('');
-                }
-              }}
-            />
-            <button className="btn btn-primary" onClick={handleAddBoard} disabled={isCreatingBoard || !newBoardName.trim()}>
-              {isCreatingBoard ? '…' : 'Create'}
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                setAddingBoard(false);
-                setNewBoardName('');
-              }}
-              disabled={isCreatingBoard}
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button className="btn" data-tour="add-board" onClick={() => setAddingBoard(true)} title="Create a new board (Todoist project)">
-            <Plus size={14} />
-            Add board
-          </button>
-        )}
-
+      <div className="board-toolbar tasklist-toolbar">
         <SearchBar placeholder="Search board…" />
-        <span className={`board-sync-badge ${syncActive ? 'enabled' : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          {syncActive ? (
-            <>
-              <RefreshCw size={12} /> Synced with Todoist
-            </>
-          ) : todoistEnabled ? (
-            <>
-              <Pause size={12} /> Todoist sync paused
-            </>
-          ) : (
-            <>
-              <Circle size={12} /> Local only (no Todoist token configured)
-            </>
-          )}
-        </span>
+        <button className="btn btn-primary add-task-btn" onClick={() => setAddingToSectionId('')} aria-label="Add task">
+          <Plus size={14} />
+          <span className="add-task-btn-label">Add task</span>
+        </button>
       </div>
 
       {!selectedProject ? (
         <div className="board-column-empty" style={{ padding: 30 }}>
-          No projects available yet.
+          No projects yet — add one from the sidebar.
+        </div>
+      ) : !hasSections ? (
+        <div className="board-flat-list">
+          {flatTasks.map((task) => renderCard(task))}
+          {flatTasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
+          <div className="board-flat-list-footer">
+            {addingSection ? (
+              <div className="board-add-column-form">
+                <input
+                  autoFocus
+                  value={newSectionName}
+                  onChange={(e) => setNewSectionName(e.target.value)}
+                  placeholder="Section name…"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddSection();
+                    }
+                    if (e.key === 'Escape') {
+                      setAddingSection(false);
+                      setNewSectionName('');
+                    }
+                  }}
+                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAddSection}>
+                    Add
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      setAddingSection(false);
+                      setNewSectionName('');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button className="board-add-column-btn" onClick={() => setAddingSection(true)}>
+                <Plus size={13} />
+                Add section
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="board-columns">
           {columns.map((col) => (
             <div key={col.id ?? 'no-section'} className={`board-column ${col.isNoSection ? 'no-section' : ''}`}>
               <div className="board-column-header">
-                {editingColumnId === col.id ? (
+                {!col.isNoSection && editingColumnId === col.id ? (
                   <input
                     autoFocus
                     className="board-column-title-input"
@@ -299,86 +389,13 @@ export default function BoardView() {
                 )}
               </div>
 
-              <div className="board-column-body">
-                {col.tasks.map((task) => {
-                  const subtaskTotal = task.subtasks?.length || 0;
-                  const subtaskDone = task.subtasks?.filter((s) => s.isCompleted).length || 0;
-                  return (
-                    <div
-                      key={task.id}
-                      className="board-card"
-                      style={{ borderLeftColor: priorityColor(task.priority) }}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setEditingTaskId(task.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setEditingTaskId(task.id);
-                        }
-                      }}
-                    >
-                      <button
-                        className="board-card-check"
-                        title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          completeTask(task.id);
-                        }}
-                      >
-                        <Circle size={16} strokeWidth={1.75} />
-                      </button>
-                      <div className="board-card-body">
-                        <div className="board-card-title">
-                          {task.isRecurring && (
-                            <Repeat size={13} style={{ verticalAlign: -2, marginRight: 4 }} title={task.recurrenceString || 'Repeats'} />
-                          )}
-                          {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginRight: 4 }} title="Can run unattended" />}
-                          {task.title}
-                        </div>
-                        <div className="board-card-meta" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 3 }}>
-                          <span>
-                            {formatHours(task.remainingHours)} left
-                            {task.dueDate ? (
-                              <span className="board-card-due"> · due {formatDisplayDate(task.dueDate)}</span>
-                            ) : (
-                              <span> · no due date</span>
-                            )}
-                          </span>
-                          {subtaskTotal > 0 && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                              {' · '}
-                              <SquareCheck size={12} />
-                              {subtaskDone}/{subtaskTotal}
-                            </span>
-                          )}
-                          {!areDependenciesMet(task, taskById) && (
-                            <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                              {' · '}
-                              <Ban size={12} />
-                              blocked
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
-                          <span className={`badge ${task.priority}`}>{task.priority}</span>
-                          <button
-                            className="btn btn-icon"
-                            style={{ padding: '2px 6px', marginLeft: 'auto' }}
-                            title={task.isLocked ? 'Unlock' : 'Lock'}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleTaskLock(task.id);
-                            }}
-                          >
-                            {task.isLocked ? <Lock size={13} /> : <Unlock size={13} />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-
+              <div
+                className={`board-column-body ${dragOverColumnId === col.id ? 'is-dragover' : ''}`}
+                onDragOver={isMobile ? undefined : (e) => handleColumnDragOver(e, col)}
+                onDragLeave={isMobile ? undefined : () => setDragOverColumnId(undefined)}
+                onDrop={isMobile ? undefined : (e) => handleColumnDrop(e, col)}
+              >
+                {col.tasks.map((task) => renderCard(task))}
                 {col.tasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
               </div>
 

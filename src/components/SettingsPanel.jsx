@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { RefreshCw, Pause, Circle, Check, HelpCircle, AlertTriangle, KeyRound, ExternalLink, Trash2, Sun, Moon, LogIn, LogOut, CloudCog } from 'lucide-react';
+import { Download, Circle, Check, HelpCircle, AlertTriangle, KeyRound, ExternalLink, Trash2, Sun, Moon, LogIn, LogOut, CloudCog } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -34,9 +34,8 @@ export default function SettingsPanel({ onOpenTour }) {
     isSyncing,
     todoistEnabled,
     setTodoistApiToken,
-    taskSyncEnabled,
-    setTaskSyncEnabled,
-    syncActive,
+    importFromTodoist,
+    lastTodoistImport,
     syncNow,
     clearAllData,
   } = useScheduler();
@@ -199,22 +198,23 @@ export default function SettingsPanel({ onOpenTour }) {
           </h4>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
             <span
-              className={`badge ${syncActive ? 'low' : 'medium'}`}
+              className={`badge ${lastTodoistImport ? 'low' : 'medium'}`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,
-                background: syncActive ? 'rgba(79, 191, 139, 0.15)' : undefined,
-                color: syncActive ? 'var(--color-success)' : undefined,
+                background: lastTodoistImport ? 'rgba(79, 191, 139, 0.15)' : undefined,
+                color: lastTodoistImport ? 'var(--color-success)' : undefined,
               }}
             >
-              {syncActive ? (
+              {lastTodoistImport ? (
                 <>
-                  <RefreshCw size={12} /> Todoist two-way sync active
+                  <Check size={12} /> Imported {lastTodoistImport.totalCount} task{lastTodoistImport.totalCount === 1 ? '' : 's'} from
+                  Todoist
                 </>
               ) : todoistEnabled ? (
                 <>
-                  <Pause size={12} /> Todoist sync paused
+                  <KeyRound size={12} /> Connected — not yet imported
                 </>
               ) : (
                 <>
@@ -224,11 +224,10 @@ export default function SettingsPanel({ onOpenTour }) {
             </span>
           </div>
           <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 10 }}>
-            {syncActive
-              ? 'Editing a Todoist-sourced task, its subtasks, or a Board section here updates Todoist immediately. Fields with no Todoist equivalent (lock state, chunk sizes) stay app-only.'
-              : todoistEnabled
-                ? 'Task sync is paused — edits here stay in TaskFlow only and are not pushed to Todoist until you turn sync back on below.'
-                : 'Connect Todoist below to sync your real tasks instead of the samples.'}
+            Todoist is a ONE-TIME IMPORT, not a live sync: pulling in tasks/boards/sections never happens
+            automatically, and nothing you edit in TaskFlow afterward is ever pushed back to your Todoist account.
+            Re-running the import later updates previously-imported items and adds anything new, without touching
+            tasks you created directly in TaskFlow.
           </p>
           {todoistEnabled ? (
             <>
@@ -270,7 +269,7 @@ export default function SettingsPanel({ onOpenTour }) {
           ) : (
             <>
               <p style={{ fontSize: 12.5, marginTop: 0, marginBottom: 8 }}>
-                Optional: connect your own Todoist account to sync your real tasks in place of the samples.
+                Optional: connect your own Todoist account to import your real tasks in place of the samples.
               </p>
               <form onSubmit={submitToken} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <input
@@ -301,20 +300,23 @@ export default function SettingsPanel({ onOpenTour }) {
           )}
 
           {todoistEnabled && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 14 }}>
-              <input
-                type="checkbox"
-                checked={taskSyncEnabled}
-                onChange={(e) => setTaskSyncEnabled(e.target.checked)}
-              />
-              <span style={{ fontSize: 13 }}>
-                Keep syncing task changes to Todoist
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', fontWeight: 400, marginTop: 2 }}>
-                  Turn this off to import your Todoist tasks once and manage everything from TaskFlow afterward — new
-                  edits, completions, and deletions stay local and won't touch your Todoist account.
-                </div>
-              </span>
-            </label>
+            <div style={{ marginTop: 14 }}>
+              <button
+                className="btn btn-primary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                onClick={() => importFromTodoist()}
+                disabled={isSyncing}
+              >
+                <Download size={14} />
+                {isSyncing ? 'Importing…' : lastTodoistImport ? 'Re-import from Todoist' : 'Import from Todoist'}
+              </button>
+              {lastTodoistImport && (
+                <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 8, marginBottom: 0 }}>
+                  Last imported {new Date(lastTodoistImport.at).toLocaleString()} — {lastTodoistImport.addedCount} new,{' '}
+                  {lastTodoistImport.updatedCount} updated.
+                </p>
+              )}
+            </div>
           )}
         </div>
       </div>

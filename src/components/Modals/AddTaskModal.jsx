@@ -2,10 +2,8 @@
  * AddTaskModal — creates a new task, laid out to match TaskDetailModal's
  * Todoist-style structure (title header, free-text main column, metadata
  * sidebar) minus the fields that only make sense once a task exists
- * (sub-tasks, lock state). Local-only by default; when Todoist sync is
- * active, offers an "Also create in Todoist" checkbox (which requires
- * picking a project, per Todoist's own requirement that every task belongs
- * to one).
+ * (sub-tasks, lock state). Always local-only — Todoist tasks only ever
+ * enter TaskFlow via the one-time import in Settings, never created here.
  *
  * A due date is OPTIONAL. Undated tasks still show up in the Tasks list
  * and Board view (matching Todoist, where an undated task is completely
@@ -20,8 +18,9 @@
  * calendar capacity. The user can lengthen it right here before saving, or
  * later from the task detail modal.
  *
- * SMART PARSE: covers due date, estimated hours, "unattended", recurrence,
- * dependency ("after X"), priority ("p1"-"p4"), plus "#project" and "@tag".
+ * SMART PARSE: covers a plain URL (becomes the task's `link` field), due
+ * date, estimated hours, "unattended", recurrence, dependency ("after X"),
+ * priority ("p1"-"p4"), plus "#project" and "@tag".
  * Every field but priority/project/labels reads plain English — no leading
  * symbol needed. Priority stays p1-p4 only (deliberately not inferred from
  * bare words like "high"/"low" — too easy to mistake an unrelated word in
@@ -49,10 +48,12 @@ import {
   Tag,
   Clock,
   MoreHorizontal,
+  Link as LinkIcon,
   X,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
+import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
@@ -70,11 +71,12 @@ import SmartTitleInput from '../Common/SmartTitleInput';
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes
 
 export default function AddTaskModal({ onClose, initialProjectId = '', initialSectionId = '' }) {
-  const { addTask, tasks, sections, projects, labels, getOrCreateLabelIds, syncActive } = useScheduler();
+  const { addTask, tasks, sections, projects, labels, getOrCreateLabelIds } = useScheduler();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
   const [title, setTitle] = useState('');
+  const [link, setLink] = useState('');
   const [notes, setNotes] = useState('');
   const notesRef = useRef(null);
   useAutosizeTextarea(notesRef, notes);
@@ -91,6 +93,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [projectId, setProjectId] = useState(initialProjectId || '');
   const [hasEditedProject, setHasEditedProject] = useState(!!initialProjectId);
   const [sectionId, setSectionId] = useState(initialSectionId || '');
+  const [hasEditedSection, setHasEditedSection] = useState(!!initialSectionId);
   const [dependsOn, setDependsOn] = useState([]);
   const [hasEditedDependencies, setHasEditedDependencies] = useState(false);
   const [isPassive, setIsPassive] = useState(false);
@@ -123,7 +126,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle } = useSmartTaskTitle({
     tasks,
     projects,
+    sections,
     fields: {
+      link: {
+        isUntouched: () => true,
+        apply: (match) => setLink(match.url),
+        revert: () => setLink(''),
+      },
       dueDate: {
         isUntouched: () => !hasEditedDueDate,
         apply: (match) => setDueDate(match.iso),
@@ -169,8 +178,17 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         isUntouched: () => !hasEditedProject,
         apply: (match) => {
           if (match.project) handleProjectChange(match.project.id);
+          // Guarded separately from the project's own touch-flag: a user
+          // could leave the project itself smart-parse-driven while still
+          // manually overriding just the section from the dropdown, and a
+          // later keystroke re-running this same detection shouldn't clobber
+          // that manual section choice.
+          if (match.section && !hasEditedSection) setSectionId(match.section.id);
         },
-        revert: () => handleProjectChange(''),
+        revert: () => {
+          handleProjectChange('');
+          if (!hasEditedSection) setSectionId('');
+        },
       },
     },
   });
@@ -181,6 +199,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   }
 
   const smartChips = [
+    smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
     smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
     smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
     smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
@@ -192,7 +211,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
     smartDetected.project &&
       (smartDetected.project.project
-        ? { type: 'project', icon: Folder, label: `Project: ${smartDetected.project.project.name}` }
+        ? {
+            type: 'project',
+            icon: smartDetected.project.sectionFragment && !smartDetected.project.section ? HelpCircle : Folder,
+            label: smartDetected.project.sectionFragment
+              ? smartDetected.project.section
+                ? `Project: ${smartDetected.project.project.name} → ${smartDetected.project.section.name}`
+                : `${smartDetected.project.project.name}: no section match for "${smartDetected.project.sectionFragment}"`
+              : `Project: ${smartDetected.project.project.name}`,
+          }
         : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
     ...(smartDetected.labels || []).map((m) => ({
       type: 'labels',
@@ -228,7 +255,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     const finalLabelIds = [...new Set([...labelIds, ...(pendingLabelNames.length ? getOrCreateLabelIds(pendingLabelNames) : [])])];
 
     addTask({
-      title: buildFinalTitle(title),
+      // If the title was nothing but a smart-parsed link, stripping it
+      // leaves an empty string — fall back to the link's hostname (already
+      // used for its chip label) rather than saving a blank/raw-URL title.
+      title: buildFinalTitle(title, link ? linkLabel(link) : undefined),
+      link: link || null,
       notes,
       estimatedHours: Number(estimatedHours) || DEFAULT_ESTIMATED_HOURS,
       priority,
@@ -242,7 +273,6 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       isPassive,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
-      syncToTodoist: syncActive,
     });
     requestClose();
   }
@@ -268,6 +298,9 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
               smartDetected={smartDetected}
               onDismiss={dismissSmartChip}
               placeholder="Task name"
+              projects={projects}
+              sections={sections}
+              labels={labels}
             />
           </div>
           <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
@@ -278,7 +311,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         {error && <p className="form-error">{error}</p>}
 
         <p className="form-hint" style={{ marginTop: -6, marginBottom: 10, paddingLeft: 7 }}>
-          Smart parse: due dates, p1–p4, duration, "unattended", #project, @tag, "every month"
+          Smart parse: links, due dates, p1–p4, duration, "unattended", #project, @tag, "every month"
         </p>
 
         <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
@@ -365,7 +398,14 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         {moreOpen && (
           <div className="addtask-pill-panel addtask-more-panel">
             <DetailField icon={Layers} label="Section">
-              <select value={sectionId} onChange={(e) => setSectionId(e.target.value)} disabled={!projectId}>
+              <select
+                value={sectionId}
+                onChange={(e) => {
+                  setSectionId(e.target.value);
+                  setHasEditedSection(true);
+                }}
+                disabled={!projectId}
+              >
                 <option value="">No section</option>
                 {availableSections.map((s) => (
                   <option key={s.id} value={s.id}>

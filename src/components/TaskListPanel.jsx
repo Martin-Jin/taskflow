@@ -17,17 +17,20 @@
  * looked like the moment the modal opened.)
  */
 
-import React, { useMemo, useState } from 'react';
-import { Plus, Repeat, Wind, SquareCheck, Ban, Check } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus, Repeat, Wind, SquareCheck, Ban, Check, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
 import BoardView from './Board/BoardView';
 import GanttChart from './Gantt/GanttChart';
 import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
+import SelectMenu from './Common/SelectMenu';
+import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
+import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject } from '../utils/projectConstants';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
@@ -47,31 +50,68 @@ const PAGE_VIEWS = [
   { key: 'gantt', label: 'Gantt' },
 ];
 
-export default function TaskListPanel({ view, onChangeView }) {
-  const { tasks, labels, completeTask, searchQuery } = useScheduler();
+export default function TaskListPanel({ view, onChangeView, activeProjectId, onChangeActiveProject }) {
+  const { tasks, labels, projects, completeTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filter, setFilter] = useState('active'); // active | completed | all | noDueDate
+  const [isRenamingProject, setIsRenamingProject] = useState(false);
+  const [projectNameDraft, setProjectNameDraft] = useState('');
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
+  const activeProject = activeProjectId === ALL_TASKS_PROJECT_ID ? null : projects.find((p) => p.id === activeProjectId);
+
+  // If activeProjectId points at a project that no longer exists (e.g.
+  // deleted from another tab, or via Todoist sync), fall back to "All
+  // Tasks" instead of leaving the project select and page title
+  // disagreeing with each other — unlike Board, List always has a valid
+  // "All Tasks" fallback so there's no need to pick a substitute project.
+  useEffect(() => {
+    if (activeProjectId === ALL_TASKS_PROJECT_ID) return;
+    if (!projects.some((p) => p.id === activeProjectId)) onChangeActiveProject(ALL_TASKS_PROJECT_ID);
+  }, [activeProjectId, projects, onChangeActiveProject]);
+  const projectSelectOptions = useMemo(
+    () => [{ value: ALL_TASKS_PROJECT_ID, label: ALL_TASKS_PROJECT_LABEL }, ...projects.map((p) => ({ value: p.id, label: p.name }))],
+    [projects]
+  );
 
   const visibleTasks = useMemo(() => {
-    let list = tasks;
+    let list = filterTasksByProject(tasks, activeProjectId);
     // "Active" means scheduled: not completed and has a due date (the
     // scheduler only ever places blocks for tasks with a due date — see
     // the "Won't be auto-scheduled without a due date" hint in
-    // TaskDetailModal). "All" is everything with a due date, completed or
-    // not — undated tasks live exclusively under "No due date" now rather
-    // than also being folded into "All", so the two don't overlap.
+    // TaskDetailModal). "All" is genuinely everything in the project,
+    // dated or not, completed or not — "No due date" is just a quick
+    // filter onto a subset of what "All" already contains, not a disjoint
+    // bucket (an undated task should never look like it vanished from a
+    // project just because it has no date).
     if (filter === 'active') list = list.filter((t) => !t.isCompleted && !!t.dueDate);
     if (filter === 'completed') list = list.filter((t) => t.isCompleted);
-    if (filter === 'all') list = list.filter((t) => !!t.dueDate);
     if (filter === 'noDueDate') list = list.filter((t) => !t.dueDate);
     list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
-  }, [tasks, filter, searchQuery, labels]);
+  }, [tasks, activeProjectId, filter, searchQuery, labels]);
+
+  function startRenameProject() {
+    if (!activeProject) return;
+    setProjectNameDraft(activeProject.name);
+    setIsRenamingProject(true);
+  }
+
+  function commitRenameProject() {
+    if (activeProject && projectNameDraft.trim()) renameProject(activeProject.id, projectNameDraft);
+    setIsRenamingProject(false);
+  }
+
+  function handleDeleteProject() {
+    if (!activeProject) return;
+    if (window.confirm(`Delete "${activeProject.name}"? Its tasks will move to All Tasks.`)) {
+      deleteProject(activeProject.id);
+      onChangeActiveProject(ALL_TASKS_PROJECT_ID);
+    }
+  }
 
   // Grouped into a "Today" section so what's due today stands out instead
   // of being buried in one priority-sorted list. Only meaningful for the
@@ -82,13 +122,18 @@ export default function TaskListPanel({ view, onChangeView }) {
     const today = toISODate(new Date());
     const todayTasks = [];
     const upcoming = [];
+    const undated = [];
     for (const task of visibleTasks) {
-      if (task.dueDate === today) todayTasks.push(task);
+      if (!task.dueDate) undated.push(task);
+      else if (task.dueDate === today) todayTasks.push(task);
       else upcoming.push(task);
     }
     return [
       { key: 'today', label: 'Today', tasks: todayTasks },
       { key: 'upcoming', label: 'Upcoming', tasks: upcoming },
+      // Only "All" ever surfaces undated tasks here — "Active" already
+      // filters them out above, so this group is empty (and hidden) there.
+      { key: 'noDueDate', label: 'No due date', tasks: undated },
     ].filter((group) => group.tasks.length > 0);
   }, [visibleTasks, showGroups]);
 
@@ -111,13 +156,37 @@ export default function TaskListPanel({ view, onChangeView }) {
         </button>
         <div className="task-row-main">
           <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
-            {task.isRecurring && (
-              <Repeat size={13} style={{ verticalAlign: -2, marginRight: 4 }} title={task.recurrenceString || 'Repeats'} />
+            {task.link ? (
+              <a
+                href={task.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="task-title-link"
+                onClick={(e) => e.stopPropagation()}
+                title={`Open link: ${task.link}`}
+              >
+                {task.title}
+                <ExternalLink size={11} aria-hidden="true" />
+              </a>
+            ) : (
+              task.title
             )}
-            {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginRight: 4 }} title="Can run unattended" />}
-            {task.title}
+            {task.isRecurring && (
+              <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
+            )}
+            {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 3 }}>
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--color-text-secondary)',
+              marginTop: 2,
+              display: 'flex',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 3,
+            }}
+          >
             <span>
               {formatHours(task.remainingHours)} remaining of {formatHours(task.estimatedHours)}
               {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
@@ -157,15 +226,65 @@ export default function TaskListPanel({ view, onChangeView }) {
 
   return (
     <div className="taskpage">
-      <div className="taskpage-view-switch" data-tour="tasks-view-switch" role="group" aria-label="Task view">
-        {PAGE_VIEWS.map((v) => (
-          <button key={v.key} className={view === v.key ? 'active' : ''} aria-pressed={view === v.key} onClick={() => onChangeView(v.key)}>
-            {v.label}
-          </button>
-        ))}
+      <div className="taskpage-view-switch-row">
+        <div className="taskpage-view-switch" data-tour="tasks-view-switch" role="group" aria-label="Task view">
+          {PAGE_VIEWS.map((v) => (
+            <button key={v.key} className={view === v.key ? 'active' : ''} aria-pressed={view === v.key} onClick={() => onChangeView(v.key)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+        {view !== 'gantt' && activeProject && (
+          <ProjectActionsMenu
+            isPinned={!!activeProject.isPinned}
+            ariaLabel={`Actions for ${activeProject.name}`}
+            onRename={startRenameProject}
+            onTogglePin={() => togglePinProject(activeProject.id)}
+            onDelete={handleDeleteProject}
+          />
+        )}
       </div>
 
-      {view === 'board' && <BoardView />}
+      {view !== 'gantt' && (
+        <div className="taskpage-project-header">
+          <SelectMenu value={activeProjectId} options={projectSelectOptions} onChange={onChangeActiveProject} ariaLabel="Switch project" />
+          {isRenamingProject ? (
+            <input
+              autoFocus
+              className="taskpage-project-title-input"
+              aria-label={`Rename project "${activeProject?.name || ''}"`}
+              value={projectNameDraft}
+              onChange={(e) => setProjectNameDraft(e.target.value)}
+              onBlur={commitRenameProject}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitRenameProject();
+                }
+                if (e.key === 'Escape') setIsRenamingProject(false);
+              }}
+            />
+          ) : (
+            <h2
+              className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
+              title={activeProject ? 'Click to rename' : undefined}
+              role={activeProject ? 'button' : undefined}
+              tabIndex={activeProject ? 0 : undefined}
+              onClick={startRenameProject}
+              onKeyDown={(e) => {
+                if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  startRenameProject();
+                }
+              }}
+            >
+              {activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL}
+            </h2>
+          )}
+        </div>
+      )}
+
+      {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onChangeActiveProject} />}
       {view === 'gantt' && <GanttChart />}
 
       {view === 'list' && (
@@ -178,7 +297,7 @@ export default function TaskListPanel({ view, onChangeView }) {
                 </button>
               ))}
             </div>
-            <SearchBar />
+            <SearchBar onSelectProject={onChangeActiveProject} />
             <button
               className="btn btn-primary add-task-btn"
               data-tour="add-task"
@@ -209,7 +328,9 @@ export default function TaskListPanel({ view, onChangeView }) {
               : visibleTasks.map((task) => renderTaskRow(task))}
           </div>
 
-          {showAddModal && <AddTaskModal onClose={() => setShowAddModal(false)} />}
+          {showAddModal && (
+            <AddTaskModal onClose={() => setShowAddModal(false)} initialProjectId={activeProject ? activeProject.id : ''} />
+          )}
           {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
         </>
       )}

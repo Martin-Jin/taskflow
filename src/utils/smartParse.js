@@ -9,17 +9,20 @@
  *
  * Composes the existing hand-rolled parsers (findDuePhrase from
  * dateParse.js, findRecurrencePhrase from recurrence.js) plus detectors
- * kept local here since they have no other call site: priority (Todoist's
- * own p1-p4 shorthand only — no "urgent"/"!!" keyword matching), dependency
- * mentions ("after <task>" / "depends on <task>"), a "#project" mention
- * (fuzzy-matched against existing Projects, same idea as dependency), and
- * "@label" mentions (one or more — unlike the other detectors these don't
- * need to resolve against anything that already exists, since a new tag is
- * just created on save).
+ * kept local here since they have no other call site: a plain URL (reusing
+ * utils/linkify.js's regex, becomes the task's `link` field), priority
+ * (Todoist's own p1-p4 shorthand only — no "urgent"/"!!" keyword matching),
+ * dependency mentions ("after <task>" / "depends on <task>"), a "#project"
+ * mention (fuzzy-matched against existing Projects, same idea as
+ * dependency) optionally followed by "/ section" (Todoist's own
+ * #Project/Section syntax, fuzzy-matched against that project's Sections),
+ * and "@label" mentions (one or more — unlike the other detectors these
+ * don't need to resolve against anything that already exists, since a new
+ * tag is just created on save).
  *
- * Detection runs in sequence — due date, recurrence, priority, duration,
- * "can run unattended", dependency, project, then labels — stripping each
- * match out of the working text
+ * Detection runs in sequence — link, due date, recurrence, priority,
+ * duration, "can run unattended", dependency, project, then labels —
+ * stripping each match out of the working text
  * before the next detector runs. This keeps the dependency fragment (which
  * captures "everything after the trigger word") free of unrelated phrases
  * that were typed after it, e.g. "after Design review tomorrow p2" leaves
@@ -31,8 +34,9 @@
  */
 
 import { findDuePhrase } from './dateParse';
-import { findRecurrencePhrase } from './recurrence';
+import { findRecurrencePhrase, WEEKDAY_LABELS } from './recurrence';
 import { findDurationPhrase } from './durationParser';
+import { URL_PATTERN_SOURCE, needsScheme } from './linkify';
 
 const PRIORITY_LEVELS = { 1: 'urgent', 2: 'high', 3: 'medium', 4: 'low' };
 
@@ -45,6 +49,21 @@ function removeMatch(text, matchedText) {
 
 /** Exported so callers can strip an individually-accepted match out of a title at save time. */
 export { removeMatch as stripMatchedText };
+
+// Reuses utils/linkify.js's URL pattern (used to render links inside notes
+// text) so the two can't silently drift apart — built as its own non-global
+// instance since a detector only ever needs the first match, and sharing
+// the `g`-flagged regex would require resetting `.lastIndex` between calls.
+const LINK_REGEX = new RegExp(URL_PATTERN_SOURCE, 'i');
+
+/** A plain URL typed into the title — becomes the task's `link` field, stripped out of the displayed title. */
+function findLinkPhrase(text) {
+  const m = text.match(LINK_REGEX);
+  if (!m) return null;
+  const matchedText = m[0];
+  const url = needsScheme(matchedText) ? `https://${matchedText}` : matchedText;
+  return { url, matchedText, index: m.index };
+}
 
 function findPriorityPhrase(text) {
   const m = text.match(/\bp([1-4])\b/i);
@@ -103,13 +122,30 @@ function findDependencyPhrase(text, existingTasks) {
   return { task, fragment, matchedText: m[0], index: m.index };
 }
 
-/** "#project" shorthand — single-word fragment (project names can be multi-word, but a hashtag delimiter can't tell where it ends without one). */
-function findProjectPhrase(text, projects) {
-  const m = text.match(/#([a-zA-Z0-9_-]+)/);
+/**
+ * "#project" shorthand, optionally followed by "/ section" — Todoist's own
+ * "#Project/Section" syntax, tolerant of spaces around the slash ("#Tasks /
+ * section one"). The project fragment stays single-word (project names can
+ * be multi-word, but a hashtag delimiter can't tell where it ends without
+ * one); the section fragment, once a "/" is typed, can contain spaces, so
+ * it runs until the next "@"/"#" token or the end of the string instead of
+ * stopping at the first space. The lookahead sits *inside* the optional
+ * slash-group so it only bounds the section capture — it must not gate the
+ * project-only match too, or a plain "#Tasks p2 tomorrow" (nothing special
+ * right after the project mention) would fail to match at all.
+ */
+function findProjectPhrase(text, projects, sections) {
+  const m = text.match(/#([a-zA-Z0-9_-]+)(?:\s*\/\s*([^@#]+?)(?=\s*[@#]|$))?/);
   if (!m) return null;
   const fragment = m[1];
   const project = matchFragmentAgainstCandidates(fragment, projects, (p) => p.name);
-  return { project, fragment, matchedText: m[0], index: m.index };
+  const sectionFragment = m[2] ? m[2].trim() : undefined;
+  let section = null;
+  if (sectionFragment && project) {
+    const projectSections = sections.filter((s) => s.projectId === project.id);
+    section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
+  }
+  return { project, section, fragment, sectionFragment, matchedText: m[0], index: m.index };
 }
 
 /**
@@ -127,24 +163,33 @@ function findLabelPhrases(text) {
  * dependency mentions.
  *
  * @param {string} text
- * @param {{existingTasks?: Array<{id: string, title: string}>, projects?: Array<{id: string, name: string}>}} [options]
+ * @param {{existingTasks?: Array<{id: string, title: string}>, projects?: Array<{id: string, name: string}>, sections?: Array<{id: string, name: string, projectId: string}>}} [options]
  * @returns {{
  *   cleanedTitle: string,
  *   detected: {
+ *     link?: {url: string, matchedText: string},
  *     dueDate?: {iso: string, matchedText: string},
  *     recurrence?: {rule: {unit: string, count: number}, recurrenceString: string, matchedText: string},
  *     priority?: {level: string, matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
- *     project?: {project: object|null, fragment: string, matchedText: string},
+ *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
  *     labels?: Array<{name: string, matchedText: string}>,
  *   }
  * }}
  */
-export function parseTaskText(text, { existingTasks = [], projects = [] } = {}) {
+export function parseTaskText(text, { existingTasks = [], projects = [], sections = [] } = {}) {
   if (!text || !text.trim()) return { cleanedTitle: text || '', detected: {} };
 
   let working = text;
   const detected = {};
+
+  // Runs first — a URL's own text (query strings, paths) could otherwise
+  // confuse the dependency/project detectors below.
+  const linkMatch = findLinkPhrase(working);
+  if (linkMatch) {
+    detected.link = linkMatch;
+    working = removeMatch(working, linkMatch.matchedText);
+  }
 
   const dueMatch = findDuePhrase(working);
   if (dueMatch) {
@@ -155,7 +200,14 @@ export function parseTaskText(text, { existingTasks = [], projects = [] } = {}) 
   const recMatch = findRecurrencePhrase(working);
   if (recMatch) {
     const n = Math.max(1, recMatch.rule.count);
-    detected.recurrence = { ...recMatch, recurrenceString: `every ${n} ${recMatch.rule.unit}${n === 1 ? '' : 's'}` };
+    // Weekday-specific matches ("every sat and sun", "every second sun") carry a `days`
+    // array — show which day(s) were detected instead of collapsing to a generic
+    // "every N week(s)" that would silently drop that detail.
+    const recurrenceString =
+      recMatch.rule.days && recMatch.rule.days.length
+        ? `every ${n === 1 ? '' : `${n} `}week${n === 1 ? '' : 's'} on ${recMatch.rule.days.map((d) => WEEKDAY_LABELS[d]).join(', ')}`
+        : `every ${n} ${recMatch.rule.unit}${n === 1 ? '' : 's'}`;
+    detected.recurrence = { ...recMatch, recurrenceString };
     working = removeMatch(working, recMatch.matchedText);
   }
 
@@ -183,7 +235,7 @@ export function parseTaskText(text, { existingTasks = [], projects = [] } = {}) 
     working = removeMatch(working, depMatch.matchedText);
   }
 
-  const projectMatch = findProjectPhrase(working, projects);
+  const projectMatch = findProjectPhrase(working, projects, sections);
   if (projectMatch) {
     detected.project = projectMatch;
     working = removeMatch(working, projectMatch.matchedText);

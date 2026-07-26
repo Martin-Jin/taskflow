@@ -43,6 +43,11 @@ pnpm-debug.log*
 # Testing
 # ==========================
 coverage/
+test-results/
+playwright-report/
+playwright/.cache/
+# Personal Todoist login session used only by tests/e2e/todoist-parity.spec.js — never commit a real session.
+todoist-storage-state.json
 
 # ==========================
 # Editor / IDE
@@ -87,3 +92,4 @@ DEV_NOTES.md
 # ==========================
 .claude/
 CLAUDE.local.md
+CLAUDE.md

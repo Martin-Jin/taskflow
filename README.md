@@ -9,8 +9,9 @@ the box on local sample data, so you can try every view and every feature
 Board/Gantt/Stats views) without connecting anything.
 
 If you already keep tasks in Todoist, you can optionally connect your
-account to sync them in instead of typing them into TaskFlow, and optionally
-push the resulting schedule straight to Google Calendar. Both integrations
+account to import them in one click instead of typing them into TaskFlow
+(a one-time pull, not an ongoing sync — see below), and optionally push
+the resulting schedule straight to Google Calendar. Both integrations
 are entirely opt-in — see [Connecting real data](#connecting-real-data).
 
 Signing in with Google (optional — see [Account & cross-device
@@ -35,6 +36,7 @@ Settings → Help).
 - [Persistence](#persistence)
 - [Contributing / working in this codebase](#contributing--working-in-this-codebase)
 - [Tech stack](#tech-stack)
+- [Testing](#testing)
 - [Hosting a public copy on GitHub Pages](#hosting-a-public-copy-on-github-pages)
 - [Hosting it beyond localhost (private network)](#hosting-it-beyond-localhost-private-network)
 - [Known limitations](#known-limitations)
@@ -151,12 +153,22 @@ why the two are kept separate). This is also how `.env` itself is
 Todoist-agnostic: whichever one is present at runtime wins, checked in this
 order — the browser's saved token, then `VITE_TODOIST_API_TOKEN` if built in.
 
-Tasks (and Sections, for Board view) now come from your live Todoist
-account. A few things worth knowing:
+**This is a one-time import, not a live sync.** Nothing is ever fetched
+from Todoist automatically — click **Settings → Import from Todoist** to
+pull in your Projects, Sections, and Tasks. Nothing you edit in TaskFlow
+afterward is ever pushed back to your Todoist account; it's exactly as
+locally-editable as a task you created directly in TaskFlow. A few things
+worth knowing:
 
 - **This targets Todoist API v1** (`api.todoist.com/api/v1`), not the
   retired REST v2. If you're merging in older code that still points at
   `rest/v2`, update it — see `src/services/todoistService.js`.
+- **Re-running the import upserts, never duplicates.** Projects/Sections/
+  Tasks already imported (matched by id) get their fields refreshed from
+  the latest fetch; anything new is added. Tasks/boards/sections you
+  created directly in TaskFlow are never touched by an import, and a
+  previously-imported item that's since been deleted in Todoist isn't
+  removed here either — it just stops being updated by future imports.
 - **Tasks with no due date are imported but never scheduled.** They show up
   in Tasks/Board like any other task (mirroring Todoist 1:1), but the
   scheduler needs a due date to compute a planning window, so an undated
@@ -169,34 +181,12 @@ account. A few things worth knowing:
   `src/utils/durationParser.js`), otherwise default to a deliberately short
   5 minutes, so an un-estimated task doesn't silently eat a large chunk of
   calendar capacity before you get a chance to correct it.
+- **Labels** are resolved by name onto TaskFlow's own Label records,
+  creating any that don't already exist — a label attached to several
+  imported tasks is only created once.
 - **Subtasks** (Todoist items with a parent) are grouped under their parent
   as a checklist in the task detail modal — never scheduled as independent
   blocks.
-
-**Two-way sync.** Once a token is configured, editing a Todoist-sourced task
-(or its subtasks, or a Board Section) in TaskFlow pushes the change back to
-Todoist immediately in the background. The local edit applies instantly
-regardless of whether the network call has finished, and Undo/Redo keeps
-working normally; a failed sync call (offline, revoked token) keeps the
-local edit and toasts what didn't sync.
-
-| Editable in TaskFlow | Syncs to Todoist? |
-|---|---|
-| Title, description, priority, due date, estimated hours | Yes — hours sync as Todoist's `duration` field |
-| Task's project/section (moving it on the Board) | Yes |
-| Marking a task complete | Yes |
-| Deleting a task | Yes |
-| Subtask add/rename/check off/delete | Yes |
-| Section create/rename/delete | Yes |
-| New task created in-app | Local-only unless you check "Also create in Todoist" (requires picking a project) |
-| Lock state, min/max chunk hours, `remainingHours` | No — app-only, no Todoist equivalent |
-| Scheduled block placement/timing | No — that's what Google Calendar push is for |
-
-Manually-created tasks that were never synced to Todoist stay local-only,
-since there's no Todoist item to update. Flip **"Keep syncing task changes
-to Todoist"** off in Settings to freeze your current tasks as the local
-source of truth and stop all Todoist reads/writes; turning it back on
-resumes syncing on the next load.
 
 ### Google Calendar
 
@@ -272,6 +262,11 @@ the buffer-shrunk window can't fit a task's remaining hours, the engine
 spills the leftover into the days between the buffer target and the real
 due date before ever calling a task unschedulable.
 
+A task can opt out of both the buffer and pacing with **"Enforce due
+date"**: the window collapses to just `[dueDate, dueDate]`, so every
+remaining hour lands on the due date itself instead of being spread out
+ahead of it.
+
 **Pacing** distributes hours across the window: even pacing (default) gives
 every day an equal share; front-loaded pacing (for urgent/high-priority
 tasks, when enabled) ramps effort up as the deadline approaches.
@@ -315,7 +310,7 @@ See `src/types/index.js` for full JSDoc typedefs.
 | `Task` | Hours, priority, due date, lock/complete state, optional section + subtasks, optional `dependsOn` and `isPassive`. Always has a `dueDate`. |
 | `Subtask` | A Todoist child item, grouped under its parent `Task` |
 | `Section` | A Todoist Section — Board view column |
-| `Project` | A Todoist Project — Board view's project filter |
+| `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar |
 | `ScheduledBlock` | A concrete dated/timed slice of a `Task` on the calendar |
 | `FixedRoutine` | Recurring non-negotiable time (sleep, meals, commute) |
 | `CalendarEvent` | External (Google) or manual event; `isFreeTime` enables the "ignore" override |
@@ -332,14 +327,15 @@ src/
 │   ├── allocator.js          # Priority/deadline-aware hour distribution
 │   └── rebalanceEngine.js    # Orchestrates capacity+allocator, preserves locks
 ├── components/
+│   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, WeeklyProgressRing, PinnedLinks (+ pinnedLinksModel.js)
 │   ├── Calendar/              # WeekView (day/week time-grid, drag/resize), MonthView (density overview), CalendarPage
-│   ├── Board/                 # BoardView — Kanban-style Section columns
+│   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
 │   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal, BlockDetailModal, EventDetailModal, SubtaskDetailModal
-│   ├── Nav/                   # BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + topbar)
+│   ├── Nav/                   # Sidebar — desktop/tablet nav + project list (pin/rename/delete via ProjectActionsMenu); BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + topbar)
 │   ├── Tutorial/               # TutorialModal + its step content
-│   ├── Common/                 # SearchBar, Toast, SmartChips, SmartTitleInput, DependencyPicker, LabelPicker, DetailField
+│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, DependencyPicker, LabelPicker, DetailField
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── TaskListPanel.jsx
 │   └── SettingsPanel.jsx
@@ -369,7 +365,9 @@ src/
 │   ├── recurrence.js         # Free-text recurrence phrase detection
 │   ├── smartParse.js         # Composes the above + priority/dependency detection
 │   ├── dependencyUtils.js    # Cycle detection for dependsOn graphs
-│   └── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
+│   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
+│   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
+│   └── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
 ├── types/
 │   └── index.js               # JSDoc typedefs for the whole domain model
 ├── styles/                    # global.css (tokens/breakpoints), calendar.css, gantt.css, board.css, nav.css, tasklist.css, stats.css, forms.css, tutorial.css
@@ -387,10 +385,16 @@ directly, which is what keeps Undo/Redo reliable everywhere.
 ## Using the app
 
 On phone-width screens (<640px) the sidebar is replaced by a fixed bottom
-tab bar (Calendar / Tasks / Stats / Settings). Tablet widths keep the full
-sidebar. Every view is fully usable at any width — nothing is hidden, only
-reorganized.
+tab bar (Dashboard / Calendar / Tasks / Stats / Settings). Tablet widths
+keep the full sidebar. Every view is fully usable at any width — nothing is
+hidden, only reorganized.
 
+- **Dashboard** — the default landing tab: a stats strip (due today,
+  overdue, hours scheduled this week), **Right now** (the block currently
+  in progress, or what's next, with a live countdown), **Today's agenda**,
+  a **this week's progress** ring, and **Pinned links** — bookmark-bar-style
+  shortcuts organized into folders, with a "Jump back in" row of recently
+  opened links and an "Open all" button per folder.
 - **Calendar** — Month / Week / Day views. On desktop/tablet, drag a block
   to a new day/time or drag its edge to resize; on mobile, tap a block to
   edit its date/time/lock state instead, since native drag-and-drop doesn't
@@ -405,13 +409,21 @@ reorganized.
   most calendar apps handle month → day navigation. Tap the lock icon on a
   block to protect it from future rebalances. **Re-balance schedule**
   re-runs the engine while preserving locked blocks.
-- **Tasks** — one page, three views via its own List/Board/Gantt switch:
+- **Tasks** — one page, three views via its own List/Board/Gantt switch, all
+  scoped to one project at a time (or "All Tasks"). Switch projects from the
+  sidebar, the project picker shown above List/Board, or the search bar;
+  pin, rename, or delete a project from its "⋯" menu (sidebar row or the
+  page header) — pinned projects sort first, unpinned ones by most recently
+  visited.
   - **List** — searchable/filterable; add/edit/complete/delete/lock tasks
     (adding requires a due date); open a task to edit every field, manage
-    subtasks, set dependencies, and mark it as able to run unattended.
-  - **Board** — Todoist-style Kanban board, one project at a time via a
-    project filter, one column per Section plus a leading "No Section"
-    column. Rename/delete columns, add sections, drag cards between them.
+    subtasks, set dependencies, mark it as able to run unattended, or force
+    it to be scheduled entirely on its due date ("Enforce due date").
+  - **Board** — Todoist-style Kanban board, one column per Section plus a
+    leading "No Section" column (or a flat list if the project has no
+    Sections yet). Rename/delete columns, add sections, drag cards between
+    them on desktop/tablet (on mobile, open a card and change its Section
+    field instead, since there's no drag gesture to hook into).
   - **Gantt** — multi-week burn-down: one row per task, bar spans from first
     scheduled block to due date, colored by priority; blocked tasks get a
     hollow dashed marker, passive tasks get a striped overlay.
@@ -432,24 +444,53 @@ reorganized.
 Typing naturally into the Title field — e.g. *"Call dentist tomorrow p2
 every month after Book appointment"* — auto-detects a due date, Todoist's
 `p1`–`p4` priority shorthand, a recurrence rule, an estimated duration
-(`"~2 hours"`, `"45 min"`), whether it "can run unattended", and a
-dependency, surfacing each as a dismissible chip rather than applying
-anything silently.
-Dismissing a chip blocks that exact phrase from re-triggering until you
-edit it. See `src/utils/smartParse.js` and `src/hooks/useSmartTaskTitle.js`.
+(`"~2 hours"`, `"45 min"`), whether it "can run unattended", a plain URL, a
+dependency, a `#project` mention, and one or more `@label` mentions,
+surfacing each as a dismissible chip rather than applying anything
+silently. Dismissing a chip blocks that exact phrase from re-triggering
+until you edit it. See `src/utils/smartParse.js` and
+`src/hooks/useSmartTaskTitle.js`.
+
+**Recurrence** covers the phrasings Todoist's own natural-language quick-add
+produces: `"every day"` / `"daily"`, `"every 2 weeks"` / `"fortnightly"`,
+weekday lists (`"every mon, wed, fri"`, `"every sat and sun"`, `"every
+saturday and every sunday"`), ordinal weekdays (`"every 2nd sunday"`,
+`"every second monday"`, `"every other monday"`), `"every weekday"`
+(Mon–Fri), and `"every other <unit>"` (`"every other week"` = every 2
+weeks) — see `src/utils/recurrence.js`.
+
+**Projects and sections**: `#Tasks` matches an existing Project by name;
+`#Tasks/Scholarships` or `#Tasks / scholarships` (spaces around the slash
+are fine) additionally matches a Section within that project, the same
+`#Project/Section` shorthand Todoist itself uses. Typing `@` or `#` also
+opens a live autocomplete dropdown filtered as you type — arrow keys +
+Enter to pick a project/section/label, Escape to dismiss — rather than
+only showing a result after the fact as a chip; see
+`src/hooks/useMentionAutocomplete.js`.
+
+**Links**: a plain URL (`https://…`, `www.…`, or a bare `domain.tld/path`)
+becomes the task's `link` field — the URL itself is stripped out of the
+title (shown as a highlighted, removable chip while editing, matching how
+`@`/`#` mentions are hidden from the title text too), and everywhere that
+task's title is shown (List, Board, both Dashboard widgets, the detail
+modal) it becomes a click-through with a small link icon so it's obvious
+at a glance which tasks have one attached.
+
+Any http(s)/`www.` URL typed into a task's notes (not just the title) also
+renders as a clickable link automatically — see `src/utils/linkify.js`.
 
 ## Persistence
 
 Everything persists to `localStorage` (see `src/utils/persistence.js`):
 tasks, scheduled blocks, sections, projects, calendar events, scheduling
-rules, fixed routines, the Todoist-sync toggle, and a "connected to Google
-Calendar" flag (the OAuth token itself is not persisted — a silent,
-popup-free refresh runs on load instead).
+rules, fixed routines, when the last Todoist import ran, and a "connected
+to Google Calendar" flag (the OAuth token itself is not persisted — a
+silent, popup-free refresh runs on load instead).
 
-In practice: with Todoist sync on, TaskFlow re-fetches current tasks on
-every load but always preserves your local calendar (`blocks`); with sync
-off, nothing is re-fetched and your local tasks are the source of truth.
-Use **Settings → Reset local data** to wipe everything and start fresh from
+In practice: nothing is ever re-fetched from Todoist automatically — your
+local tasks are always the source of truth, and a Todoist import only ever
+happens when you click **Settings → Import from Todoist**. Use
+**Settings → Reset local data** to wipe everything and start fresh from
 mock data.
 
 If signed in (see [Account & cross-device sync](#account--cross-device-sync)),
@@ -515,6 +556,30 @@ this section covers how the pieces talk to each other.
 - JSDoc typedefs (`src/types/index.js`) give editor-level type safety
   without a TypeScript build step — add `// @ts-check` to any file to get
   live type checking in VS Code today.
+
+## Testing
+
+`npm run build` is the main correctness check for everything in this repo
+(catches type/import/build errors) — there's no unit test suite.
+
+`npm run test:e2e` runs a [Playwright](https://playwright.dev) suite
+(`tests/e2e/todoist-parity.spec.js`) that checks TaskFlow's smart-parse
+(`utils/smartParse.js`) against real Todoist's own quick-add parsing for a
+table of representative phrases. It needs a logged-in Todoist session,
+since quick-add's natural-language parsing only runs for a signed-in
+account:
+
+```bash
+npx playwright open --save-storage=todoist-storage-state.json https://todoist.com/app
+# log in manually in the window that opens, then close it
+TODOIST_STORAGE_STATE=todoist-storage-state.json npm run test:e2e
+```
+
+Without `TODOIST_STORAGE_STATE` set (or if the file doesn't exist), the
+suite skips with a clear message rather than failing — there's no
+expectation that a Todoist test account is available in every environment
+this runs in. Never commit the storage-state file (it's a real logged-in
+session) — it's already gitignored.
 
 ## Hosting a public copy on GitHub Pages
 
@@ -595,9 +660,10 @@ restrictions, if using Google Calendar sync from that hostname.
 - Google Calendar sync is one-directional push (app → Calendar) plus a
   read-only pull of existing events; true two-way sync would need a
   webhook/polling layer and a backend, out of scope for a client-only SPA.
-- Todoist sync is pull-only for tasks; completing a task in-app doesn't yet
-  call `todoistService.completeTask` from the UI (the function exists and
-  is ready to wire up).
+- Todoist is a one-time import, not a sync — completing, editing, or
+  deleting a Todoist-imported task in TaskFlow never writes back to
+  Todoist. Re-importing later pulls in anything new/changed on Todoist's
+  side, but won't reflect changes made here.
 - Silent Google token refresh depends on the underlying OAuth grant still
   being valid; Google may occasionally require interactive re-consent
   (e.g. after long inactivity or a security-related grant reset) that a
