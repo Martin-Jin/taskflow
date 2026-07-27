@@ -39,7 +39,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, Lock, Unlock, ExternalLink } from 'lucide-react';
+import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import AddTaskModal from '../Modals/AddTaskModal';
@@ -58,7 +58,6 @@ export default function BoardView({ projectId, onProjectChange }) {
     projects,
     labels,
     searchQuery,
-    toggleTaskLock,
     completeTask,
     addSection,
     renameSection,
@@ -264,17 +263,6 @@ export default function BoardView({ projectId, onProjectChange }) {
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
             <span className={`badge ${task.priority}`}>{task.priority}</span>
-            <button
-              className="btn btn-icon"
-              style={{ padding: '2px 6px', marginLeft: 'auto' }}
-              title={task.isLocked ? 'Unlock' : 'Lock'}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleTaskLock(task.id);
-              }}
-            >
-              {task.isLocked ? <Lock size={13} /> : <Unlock size={13} />}
-            </button>
           </div>
         </div>
       </div>

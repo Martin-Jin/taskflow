@@ -45,6 +45,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Repeat,
   Ban,
@@ -80,6 +81,8 @@ import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle } from '../../hooks/useSmartTaskTitle';
+import { useMenuPosition } from '../../hooks/useMenuPosition';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import DependencyPicker from '../Common/DependencyPicker';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
@@ -137,16 +140,33 @@ export default function TaskDetailModal({ task, onClose }) {
   const notesRef = useRef(null);
   useAutosizeTextarea(notesRef, notes);
 
-  const menuRef = useRef(null);
-  useEffect(() => {
-    if (!menuOpen) return undefined;
-    function handlePointerDown(e) {
-      if (menuRef.current?.contains(e.target)) return;
-      setMenuOpen(false);
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [menuOpen]);
+  // On mobile this menu always opens as a centered popup rather than
+  // attempting to anchor to the trigger — a corner-anchored menu this wide
+  // (280px, the same width as most of a phone's own viewport) rarely has
+  // room to sit flush under a topbar icon without clipping. Desktop keeps
+  // the anchored dropdown, still measured/portaled the same way so
+  // useMenuPosition's overflow check covers it too.
+  const isMobile = useIsMobile();
+  const menuTriggerRef = useRef(null);
+  const {
+    menuRef,
+    mode: menuMode,
+    style: menuStyle,
+  } = useMenuPosition({
+    isOpen: menuOpen,
+    anchorRef: menuTriggerRef,
+    onClose: () => setMenuOpen(false),
+    forceCentered: isMobile,
+    computeAnchored: (anchorRect, menuRect) => {
+      const spaceBelow = window.innerHeight - anchorRect.bottom;
+      const openAbove = spaceBelow < menuRect.height && anchorRect.top > spaceBelow;
+      return {
+        left: anchorRect.right - menuRect.width,
+        top: openAbove ? undefined : anchorRect.bottom + 4,
+        bottom: openAbove ? window.innerHeight - anchorRect.top + 4 : undefined,
+      };
+    },
+  });
 
   // Snapshot of the task's saved values, refreshed whenever a *different*
   // task is opened (mirrors the reset-on-task.id effect below) — compared
@@ -487,9 +507,10 @@ export default function TaskDetailModal({ task, onClose }) {
           tabIndex={-1}
         >
           <div className="detail-topbar">
-            <div className="detail-menu" ref={menuRef}>
+            <div className="detail-menu">
               <button
                 type="button"
+                ref={menuTriggerRef}
                 className="btn btn-icon menu-trigger"
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-haspopup="menu"
@@ -498,88 +519,103 @@ export default function TaskDetailModal({ task, onClose }) {
               >
                 <MoreHorizontal size={16} />
               </button>
-              {menuOpen && (
-                <ul className="detail-menu-dropdown" role="menu">
-                  <li role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="detail-menu-item"
-                      onClick={() => {
-                        toggleTaskLock(task.id);
-                        setMenuOpen(false);
-                      }}
+              {menuOpen &&
+                createPortal(
+                  <>
+                    {menuMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setMenuOpen(false)} />}
+                    <ul
+                      ref={menuRef}
+                      className={`detail-menu-dropdown ${menuMode === 'centered' ? 'menu-popover-centered' : ''}`}
+                      role="menu"
+                      style={menuMode === 'anchored' ? menuStyle : undefined}
                     >
-                      {task.isLocked ? <Unlock size={14} aria-hidden="true" /> : <Lock size={14} aria-hidden="true" />}
-                      {task.isLocked ? 'Unlock' : 'Lock'}
-                    </button>
-                  </li>
-                  <li role="none">
-                    <button type="button" role="menuitem" className="detail-menu-item detail-menu-item-danger" onClick={handleDelete}>
-                      <Trash2 size={14} aria-hidden="true" />
-                      Delete
-                    </button>
-                  </li>
+                      <li role="none">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="detail-menu-item"
+                          onClick={() => {
+                            toggleTaskLock(task.id);
+                            setMenuOpen(false);
+                          }}
+                        >
+                          {task.isLocked ? <Unlock size={14} aria-hidden="true" /> : <Lock size={14} aria-hidden="true" />}
+                          {task.isLocked ? 'Unlock' : 'Lock'}
+                        </button>
+                      </li>
+                      <li role="none">
+                        <button type="button" role="menuitem" className="detail-menu-item detail-menu-item-danger" onClick={handleDelete}>
+                          <Trash2 size={14} aria-hidden="true" />
+                          Delete
+                        </button>
+                      </li>
 
-                  <li role="none" className="detail-menu-divider" />
+                      <li role="none" className="detail-menu-divider" />
 
-                  {dependencyOptions.length > 0 && (
-                    <li role="none">
-                      <DetailField icon={Link2} label="Depends on">
-                        <DependencyPicker options={dependencyOptions} selectedIds={dependsOn} onChange={setDependsOn} />
-                      </DetailField>
-                    </li>
-                  )}
-
-                  <li role="none">
-                    <DetailField icon={CalendarX2} label="Lock to a day">
-                      <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={!!earliestDate}
-                          onChange={(e) => setEarliestDate(e.target.checked ? toISODate(new Date()) : '')}
-                        />
-                        {earliestDate ? formatDisplayDate(earliestDate) : 'Not locked'}
-                      </label>
-                      {earliestDate && (
-                        <>
-                          <input type="date" value={earliestDate} onChange={(e) => setEarliestDate(e.target.value)} style={{ marginTop: 6 }} />
-                          <p className="form-hint">The scheduler won't place blocks before this date, overriding its usual pacing.</p>
-                        </>
+                      {dependencyOptions.length > 0 && (
+                        <li role="none">
+                          <DetailField icon={Link2} label="Depends on">
+                            <DependencyPicker options={dependencyOptions} selectedIds={dependsOn} onChange={setDependsOn} />
+                          </DetailField>
+                        </li>
                       )}
-                    </DetailField>
-                  </li>
 
-                  <li role="none">
-                    <DetailField icon={CalendarCheck} label="Enforce due date">
-                      <label className="form-checkbox-row" style={{ cursor: dueDate ? 'pointer' : 'not-allowed' }}>
-                        <input
-                          type="checkbox"
-                          checked={enforceDueDate}
-                          disabled={!dueDate}
-                          onChange={(e) => setEnforceDueDate(e.target.checked)}
-                        />
-                        Must be done on due date
-                      </label>
-                      <p className="form-hint">
-                        {dueDate
-                          ? "Task won't be scheduled earlier — all remaining work is forced onto the due date."
-                          : 'Set a due date first to enable this.'}
-                      </p>
-                    </DetailField>
-                  </li>
+                      <li role="none">
+                        <DetailField icon={CalendarX2} label="Lock to a day">
+                          <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!earliestDate}
+                              onChange={(e) => setEarliestDate(e.target.checked ? toISODate(new Date()) : '')}
+                            />
+                            {earliestDate ? formatDisplayDate(earliestDate) : 'Not locked'}
+                          </label>
+                          {earliestDate && (
+                            <>
+                              <input
+                                type="date"
+                                value={earliestDate}
+                                onChange={(e) => setEarliestDate(e.target.value)}
+                                style={{ marginTop: 6 }}
+                              />
+                              <p className="form-hint">The scheduler won't place blocks before this date, overriding its usual pacing.</p>
+                            </>
+                          )}
+                        </DetailField>
+                      </li>
 
-                  <li role="none">
-                    <DetailField icon={Wind} label="Unattended">
-                      <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
-                        <input type="checkbox" checked={isPassive} onChange={(e) => setIsPassive(e.target.checked)} />
-                        Can run unattended
-                      </label>
-                      <p className="form-hint">e.g. laundry — can overlap other scheduled work.</p>
-                    </DetailField>
-                  </li>
-                </ul>
-              )}
+                      <li role="none">
+                        <DetailField icon={CalendarCheck} label="Enforce due date">
+                          <label className="form-checkbox-row" style={{ cursor: dueDate ? 'pointer' : 'not-allowed' }}>
+                            <input
+                              type="checkbox"
+                              checked={enforceDueDate}
+                              disabled={!dueDate}
+                              onChange={(e) => setEnforceDueDate(e.target.checked)}
+                            />
+                            Must be done on due date
+                          </label>
+                          <p className="form-hint">
+                            {dueDate
+                              ? "Task won't be scheduled earlier — all remaining work is forced onto the due date."
+                              : 'Set a due date first to enable this.'}
+                          </p>
+                        </DetailField>
+                      </li>
+
+                      <li role="none">
+                        <DetailField icon={Wind} label="Unattended">
+                          <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                            <input type="checkbox" checked={isPassive} onChange={(e) => setIsPassive(e.target.checked)} />
+                            Can run unattended
+                          </label>
+                          <p className="form-hint">e.g. laundry — can overlap other scheduled work.</p>
+                        </DetailField>
+                      </li>
+                    </ul>
+                  </>,
+                  document.body
+                )}
             </div>
             <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
               <X size={16} />

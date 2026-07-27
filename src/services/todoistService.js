@@ -30,15 +30,13 @@
  *      small so an un-estimated task doesn't eat a large, wrong chunk of
  *      calendar capacity; the user can always lengthen it after import.
  *
- * On WRITE, `estimatedHours` is always pushed back as Todoist's structured
- * `duration` field (in minutes) — this is the one authoritative, round-trip
- * safe field, so edits made in this app don't get silently re-parsed from
- * text and drift on the next sync.
- *
  * SUBTASKS: Todoist tasks with a `parent_id` are grouped under their parent
  * as `subtasks` (a simple checklist) rather than surfaced as independent,
  * schedulable Tasks — matching Todoist's own grouping and keeping the
  * scheduling engine from ever allocating time to a subtask on its own.
+ * Todoist allows nesting subtasks arbitrarily deep; anything below the
+ * first level is flattened up onto the nearest top-level ancestor rather
+ * than dropped (see `fetchTasks`'s `resolveTopAncestorId`).
  *
  * TASKS WITH NO DUE DATE: previously excluded entirely on import, since the
  * allocator can't compute a planning window for them. They are now KEPT —
@@ -104,7 +102,8 @@ function mapTodoistPriority(todoistPriority) {
  */
 function resolveDurationHours(raw) {
   if (raw.duration) {
-    return raw.duration.unit === 'minute' ? raw.duration.amount / 60 : raw.duration.amount;
+    // Todoist's `duration.unit` is only ever 'minute' or 'day' — there's no 'hour' unit.
+    return raw.duration.unit === 'minute' ? raw.duration.amount / 60 : raw.duration.amount * 24;
   }
 
   const parsedFromDescription = extractDurationHours(raw.description);
@@ -260,17 +259,35 @@ export async function fetchTasks(apiToken, sectionsById) {
 
   const parents = rawTasks.filter((t) => !t.parent_id);
   const children = rawTasks.filter((t) => t.parent_id);
+  const byId = new Map(rawTasks.map((t) => [t.id, t]));
+
+  // A child's parent_id may itself point at another child (a sub-subtask,
+  // or deeper) rather than a top-level task. Walk up the chain to find the
+  // nearest top-level ancestor so nothing gets silently dropped — Todoist
+  // only surfaces one level of subtasks here (see module doc comment), so
+  // deeper nesting is flattened onto that top-level ancestor rather than
+  // preserving the intermediate grouping.
+  function resolveTopAncestorId(task) {
+    const visited = new Set();
+    let current = task;
+    while (current.parent_id && byId.has(current.parent_id) && !visited.has(current.id)) {
+      visited.add(current.id);
+      current = byId.get(current.parent_id);
+    }
+    return current.id;
+  }
 
   const subtasksByParent = new Map();
   for (const child of children) {
-    const list = subtasksByParent.get(child.parent_id) || [];
+    const topAncestorId = resolveTopAncestorId(child);
+    const list = subtasksByParent.get(topAncestorId) || [];
     list.push({
       id: `todoist_${child.id}`,
       todoistId: String(child.id),
       title: child.content,
       isCompleted: !!child.checked || !!child.is_completed,
     });
-    subtasksByParent.set(child.parent_id, list);
+    subtasksByParent.set(topAncestorId, list);
   }
 
   return parents.map((t) => normalizeTodoistTask(t, sectionMap, subtasksByParent.get(t.id)));

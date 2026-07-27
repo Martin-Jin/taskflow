@@ -300,11 +300,14 @@
   position: relative;
 }
 
+/* Positioned via useMenuPosition (src/hooks/useMenuPosition.js) — portaled
+   to document.body and given an inline `position: fixed` + left/top/bottom
+   when anchored, or the `.menu-popover-centered` class (see global.css)
+   when the anchored spot wouldn't fit the viewport. z-index has to clear
+   .modal-overlay's (160) now that this renders at the document.body level
+   rather than in-flow inside the modal. */
 .detail-menu-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 10;
+  z-index: 200;
   width: 280px;
   max-height: min(70vh, 520px);
   overflow-y: auto;
@@ -764,6 +767,33 @@
   font-weight: 600;
 }
 
+.select-menu-footer-wrap {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.select-menu-footer-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.select-menu-footer-item:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
 /* ----------------------------------------------------------------------
    MentionDropdown — the live "@"/"#" popup shown while typing in
    SmartTitleInput. Same portaled-to-body treatment as .select-menu-dropdown
@@ -1081,17 +1111,6 @@
 
   .detail-sync-note {
     margin-left: 0;
-  }
-
-  /* .detail-menu-dropdown's fixed 280px width (fine on wider viewports) can
-     run past the right edge of a narrow phone's modal padding depending on
-     where its trigger sits — clamp it to whatever room the modal actually
-     has (viewport minus .modal-overlay's own side padding and .modal's own
-     24px padding on each side) so it can never push the topbar/close button
-     wider than the viewport. */
-  .detail-menu-dropdown {
-    width: 280px;
-    max-width: calc(100vw - 72px);
   }
 
   /* A fixed label-beside-value column (as used on wider viewports) doesn't

@@ -13,7 +13,7 @@
  * ============================================================================
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
@@ -25,12 +25,22 @@ import StatsDashboard from './components/Stats/StatsDashboard';
 import SettingsPanel from './components/SettingsPanel';
 import Toast from './components/Common/Toast';
 import BottomTabBar from './components/Nav/BottomTabBar';
+import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
 import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
-import { LayoutDashboard, CalendarDays, CheckSquare, TrendingUp, Settings, Undo2, Redo2, HelpCircle } from 'lucide-react';
+import {
+  LayoutDashboard,
+  CalendarDays,
+  CheckSquare,
+  TrendingUp,
+  Settings,
+  Undo2,
+  Redo2,
+  HelpCircle,
+} from 'lucide-react';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch), so
@@ -50,6 +60,8 @@ function AppShell() {
   const [activeProjectId, setActiveProjectId] = usePersistedState('activeProjectId', ALL_TASKS_PROJECT_ID);
   const [showTour, setShowTour] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = usePersistedState('tutorial-seen', false);
+  const [showManageProjects, setShowManageProjects] = useState(false);
+  const [manageProjectsAutoAdd, setManageProjectsAutoAdd] = useState(false);
   const isMobile = useIsMobile();
   const {
     undo,
@@ -85,6 +97,20 @@ function AppShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Mobile has no sidebar to add/browse projects from — the topbar's "⋯"
+  // menu and the Tasks page's project SelectMenu both open this same modal
+  // (see ManageProjectsModal), autoAdd just decides whether it lands on the
+  // add-project form or the plain list+search.
+  function openManageProjects(autoAdd = false) {
+    setManageProjectsAutoAdd(autoAdd);
+    setShowManageProjects(true);
+  }
+
+  function handleDeleteProject(id) {
+    deleteProject(id);
+    if (activeProjectId === id) setActiveProjectId(ALL_TASKS_PROJECT_ID);
+  }
+
   function openTour() {
     setShowTour(true);
     setHasSeenTutorial(true);
@@ -108,10 +134,7 @@ function AppShell() {
           onAddProject={addProject}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
-          onDeleteProject={(id) => {
-            deleteProject(id);
-            if (activeProjectId === id) setActiveProjectId(ALL_TASKS_PROJECT_ID);
-          }}
+          onDeleteProject={handleDeleteProject}
           footer={
             <>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', padding: '0 10px' }}>
@@ -157,6 +180,7 @@ function AppShell() {
               onChangeView={setTaskView}
               activeProjectId={activeProjectId}
               onChangeActiveProject={selectProject}
+              onOpenManageProjects={isMobile ? openManageProjects : undefined}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
@@ -167,6 +191,19 @@ function AppShell() {
       {isMobile && <BottomTabBar tabs={TABS} activeTab={tab} onSelectTab={setTab} />}
 
       <Toast notification={notification} onDismiss={clearNotification} />
+      {showManageProjects && (
+        <ManageProjectsModal
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSelectProject={selectProject}
+          onAddProject={addProject}
+          onRenameProject={renameProject}
+          onTogglePinProject={togglePinProject}
+          onDeleteProject={handleDeleteProject}
+          autoShowAdd={manageProjectsAutoAdd}
+          onClose={() => setShowManageProjects(false)}
+        />
+      )}
       {showTour && (
         <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onViewChange={setTaskView} onFinish={closeTour} />
       )}

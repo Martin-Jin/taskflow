@@ -29,10 +29,10 @@ export const GUIDED_TOUR_STEPS = [
   },
   {
     tab: 'calendar',
-    selector: '[data-tour="block-time"]',
+    selector: '[data-tour="new-event"]',
     placement: 'bottom',
-    title: 'Block time',
-    body: 'Reserve time for anything that is not a task — meetings, appointments, focus blocks — so Re-balance schedule plans around it.',
+    title: 'New event',
+    body: 'Add any event — a meeting, appointment, or anything else that is not a task — and drag it to move, or drag its edge to resize. Re-balance schedule plans around it automatically.',
   },
   {
     tab: 'calendar',
@@ -80,10 +80,10 @@ export const GUIDED_TOUR_STEPS = [
   },
   {
     tab: 'settings',
-    selector: '[data-tour="nav-settings"]',
-    placement: 'right',
-    title: 'Settings',
-    body: 'Connect Todoist and Google Calendar, tune scheduling rules, and manage your data here.',
+    selector: '[data-tour="account-card"]',
+    placement: 'top',
+    title: 'Sync across devices',
+    body: 'Sign in with Google (also available from the account button in the sidebar/topbar) to keep your tasks, boards, and settings automatically up to date across your phone and computer — usually within seconds of a change. Fully optional — staying signed out keeps TaskFlow exactly as local-only as it is today.',
   },
   {
     tab: 'settings',

@@ -175,6 +175,12 @@
  *                                              instance of a recurring event carries) — lets "ignore this event"
  *                                              be applied to just this instance, this-and-following, or the whole
  *                                              series. Null for non-recurring or manually created events.
+ * @property {string} [description]          - Plain text description, optional.
+ * @property {string} [location]              - Plain text location, optional.
+ * @property {string|null} [recurrenceRule]   - RFC5545 RRULE string (e.g. "FREQ=WEEKLY;BYDAY=MO,WE"), null/absent for non-recurring events.
+ * @property {Object<string,Object>} [overrides] - Per-occurrence override map keyed by ISO date (e.g. `{"2026-08-04": {isFreeTime: true}}`), for overriding fields on a single occurrence of a recurring event without duplicating the record.
+ * @property {string|null} [googleUpdatedAt]  - Google's `updated` timestamp as of the last pull/push, used for conflict detection.
+ * @property {string|null} [localUpdatedAt]   - Stamped on every local edit, compared against `googleUpdatedAt` to decide whether to push local changes or accept Google's incoming version.
  */
 
 /**

@@ -53,6 +53,25 @@ export function useHistoryState(initialState) {
     });
   }, []);
 
+
+  // Applies an incoming snapshot (e.g. from a live cloud-sync listener)
+  // WITHOUT pushing a history entry — unlike commit(), this doesn't touch
+  // past/future at all, so it can't be undone and doesn't consume a redo
+  // slot. Used for state that arrived from elsewhere rather than from a
+  // user action taken in this tab.
+  const overwritePresent = useCallback((newTasksAndBlocks) => {
+    setHistory((h) => ({
+      ...h,
+      present: {
+        ...h.present,
+        id: `sync_${Date.now()}`,
+        timestamp: Date.now(),
+        tasksSnapshot: newTasksAndBlocks.tasks,
+        blocksSnapshot: newTasksAndBlocks.blocks,
+      },
+    }));
+  }, []);
+
   const undo = useCallback(() => {
     setHistory((h) => {
       if (h.past.length === 0) return h;
@@ -82,6 +101,7 @@ export function useHistoryState(initialState) {
   return {
     state,
     commit,
+    overwritePresent,
     undo,
     redo,
     canUndo,

@@ -7,11 +7,18 @@
  * positioned absolutely by time.
  *
  * Interaction model:
- *   - Drag a block to a new day/time -> updateBlock() with new date/times.
- *   - Drag the bottom edge of a block -> resize (change duration).
+ *   - Drag a block or event to a new day/time -> updateBlock()/updateEvent()
+ *     with new date/times. Desktop uses native HTML5 DnD (mouse); mobile has
+ *     no such API, so touch gets its own long-press-then-drag path instead
+ *     (see handleItemTouchStart) — a normal short tap still just selects.
+ *   - Drag the bottom edge of a block or event -> resize (change duration),
+ *     via mouse or touch (see handleResizeStart).
  *   - Click the lock icon -> toggleBlockLock() so the rebalance engine will
- *     never move it again.
- *   - Click a block -> opens BlockDetailModal for full editing.
+ *     never move it again. Events have no lock concept.
+ *   - Click a block/event -> opens its detail modal for full editing.
+ *   - Two or more overlapping blocks/events pack into side-by-side lanes on
+ *     desktop, or collapse into a single "N events" chip on mobile (too
+ *     narrow for side-by-side slices) — see layoutDayItems.
  * ============================================================================
  */
 
@@ -20,6 +27,7 @@ import { createPortal } from 'react-dom';
 import { Lock, Unlock, Wind } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, formatDisplayDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
+import { expandEventsForRange } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 
@@ -38,7 +46,7 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 // as unreadable slivers if drawn individually — see clusterShortBlocks below.
 const SHORT_BLOCK_MAX_MIN = 15; // blocks this short (or shorter) are cluster-eligible
 const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
-const TWO_LINE_MIN_HEIGHT = 30; // below this px height, drop the time-range line rather than clip it
+const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
 
 // Floor height for any single block/cluster, and the breathing room left
 // between two boxes stacked back-to-back in the same lane — see packLane.
@@ -72,6 +80,12 @@ function computeClusterPopoverStyle(rect) {
  * Passive tasks are left alone since they intentionally overlap other work
  * rather than sitting in a sequential run. Runs of exactly one short block
  * are left as a normal single item — nothing to cluster with.
+ *
+ * Operates on generic `{ type: 'block'|'event', data, start, end }` items.
+ * Events are never cluster-eligible (folding a real user event's title into
+ * an anonymous "N short tasks" chip would hide it), so this only ever groups
+ * `type === 'block'` items — the resulting `kind: 'cluster'` item's `.blocks`
+ * array is therefore always `ScheduledBlock[]`.
  */
 function clusterShortBlocks(items) {
   const out = [];
@@ -80,11 +94,11 @@ function clusterShortBlocks(items) {
   function flushRun() {
     if (run.length === 0) return;
     if (run.length === 1) {
-      out.push({ kind: 'single', block: run[0].block, start: run[0].start, end: run[0].end });
+      out.push({ kind: 'single', type: run[0].type, data: run[0].data, start: run[0].start, end: run[0].end });
     } else {
       out.push({
         kind: 'cluster',
-        blocks: run.map((r) => r.block),
+        blocks: run.map((r) => r.data),
         start: run[0].start,
         end: run[run.length - 1].end,
       });
@@ -93,10 +107,10 @@ function clusterShortBlocks(items) {
   }
 
   for (const item of items) {
-    const isShort = !item.block.isPassive && item.end - item.start <= SHORT_BLOCK_MAX_MIN;
+    const isShort = item.type === 'block' && !item.data.isPassive && item.end - item.start <= SHORT_BLOCK_MAX_MIN;
     if (!isShort) {
       flushRun();
-      out.push({ kind: 'single', block: item.block, start: item.start, end: item.end });
+      out.push({ kind: 'single', type: item.type, data: item.data, start: item.start, end: item.end });
       continue;
     }
     if (run.length > 0 && item.start - run[run.length - 1].end > CLUSTER_MAX_GAP_MIN) flushRun();
@@ -115,11 +129,19 @@ function clusterShortBlocks(items) {
  * needed for — an unrelated item later in the day still gets full width.
  * Short blocks are pre-merged into cluster items (see clusterShortBlocks)
  * before lane assignment so a cluster occupies one lane like any other item.
+ *
+ * `dayItems` is a generic `{ type: 'block'|'event', data, start, end }[]`
+ * (blocks and events already merged, see dayItemsByDay) — the caller is
+ * responsible for computing `start`/`end` via timeToMinutes beforehand.
+ *
+ * On mobile, side-by-side lanes are too narrow to read — so instead of
+ * assigning per-item lanes, any overlap group with more than one item
+ * collapses into a single synthetic `kind: 'mobileOverlap'` item (a
+ * tappable "N events" chip, see WeekView's render). Groups of exactly one
+ * item are unaffected either way — there's nothing to collapse.
  */
-function layoutDayBlocks(dayBlocks) {
-  const items = dayBlocks
-    .map((block) => ({ block, start: timeToMinutes(block.startTime), end: timeToMinutes(block.endTime) }))
-    .sort((a, b) => a.start - b.start || a.end - b.end);
+function layoutDayItems(dayItems, isMobile) {
+  const items = [...dayItems].sort((a, b) => a.start - b.start || a.end - b.end);
 
   const clustered = clusterShortBlocks(items);
 
@@ -129,6 +151,18 @@ function layoutDayBlocks(dayBlocks) {
 
   function flushGroup() {
     if (overlapGroup.length === 0) return;
+    if (isMobile && overlapGroup.length > 1) {
+      results.push({
+        kind: 'mobileOverlap',
+        items: overlapGroup.map((g) => ({ type: g.type, data: g.data, kind: g.kind, blocks: g.blocks })),
+        start: Math.min(...overlapGroup.map((g) => g.start)),
+        end: Math.max(...overlapGroup.map((g) => g.end)),
+        lane: 0,
+        totalLanes: 1,
+      });
+      overlapGroup = [];
+      return;
+    }
     const laneEnds = []; // end minute of the last item placed in each lane
     for (const item of overlapGroup) {
       let lane = laneEnds.findIndex((end) => end <= item.start);
@@ -199,6 +233,28 @@ function computeDayPositions(items, pxPerMin) {
   return out;
 }
 
+/**
+ * Shared drop-position math used by both the mouse (native HTML5 DnD) and
+ * touch (long-press) drag paths (see handleDropOnDay / handleItemTouchStart)
+ * — converts a Y position relative to a day column's own bounding rect into
+ * a 15-minute-snapped start minute, clamped so the moved item's new start
+ * can never push its end past GRID_END_MIN (or its start before
+ * GRID_START_MIN), which would otherwise produce an out-of-range "HH:MM"
+ * string (e.g. "24:15") that corrupts every downstream time comparison.
+ */
+function computeSnappedStartMinute(relY, pxPerMin, duration) {
+  let newStartMin = GRID_START_MIN + relY / pxPerMin;
+  newStartMin = Math.round(newStartMin / SNAP_MIN) * SNAP_MIN;
+  return Math.min(Math.max(newStartMin, GRID_START_MIN), GRID_END_MIN - duration);
+}
+
+/** Normalizes a mouse OR touch event down to its clientY, so drag/resize
+ * handlers can be wired to both `mousemove`/`mouseup` and `touchmove`/
+ * `touchend` without duplicating the math for each input type. */
+function getClientY(evt) {
+  return evt.touches?.[0]?.clientY ?? evt.changedTouches?.[0]?.clientY ?? evt.clientY;
+}
+
 export default function WeekView({
   weekStart,
   dayCount = 7,
@@ -209,7 +265,7 @@ export default function WeekView({
   onSelectEvent,
   onCreateEvent,
 }) {
-  const { tasks, blocks, events, updateBlock, toggleBlockLock } = useScheduler();
+  const { tasks, blocks, events, updateBlock, toggleBlockLock, updateEvent } = useScheduler();
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
@@ -230,24 +286,47 @@ export default function WeekView({
   }, [blocks]);
   const eventsByDay = useMemo(() => {
     const map = new Map();
-    for (const e of events) {
+    // Recurring events are stored once (the master's date/times describe
+    // DTSTART) and expanded into virtual per-day instances here, at display
+    // time only — never written back to state — so a repeating event shows
+    // up on every day it recurs without becoming N duplicate records.
+    const expanded = expandEventsForRange(events, days[0], days[days.length - 1]);
+    for (const e of expanded) {
       const list = map.get(e.date);
       if (list) list.push(e);
       else map.set(e.date, [e]);
     }
     return map;
-  }, [events]);
-  const dayBlocksByDay = useMemo(() => {
+  }, [events, days]);
+  // Blocks and events are laid out together (one lane-packing pass sees
+  // both) so an overlapping block+event pair packs into side-by-side lanes
+  // (or, on mobile, collapses into one "N events" chip) exactly like two
+  // overlapping blocks would — see layoutDayItems.
+  const dayItemsByDay = useMemo(() => {
     const map = new Map();
     for (const day of days) {
-      map.set(day, computeDayPositions(layoutDayBlocks(blocksByDay.get(day) || []), pxPerMin));
+      const blockItems = (blocksByDay.get(day) || []).map((b) => ({
+        type: 'block',
+        data: b,
+        start: timeToMinutes(b.startTime),
+        end: timeToMinutes(b.endTime),
+      }));
+      const eventItems = (eventsByDay.get(day) || []).map((e) => ({
+        type: 'event',
+        data: e,
+        start: timeToMinutes(e.startTime),
+        end: timeToMinutes(e.endTime),
+      }));
+      const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
+      map.set(day, computeDayPositions(layoutDayItems(merged, isMobile), pxPerMin));
     }
     return map;
-  }, [days, blocksByDay, pxPerMin]);
+  }, [days, blocksByDay, eventsByDay, pxPerMin, isMobile]);
 
-  const [dragState, setDragState] = useState(null); // { blockId, mode: 'move'|'resize' }
+  const [dragState, setDragState] = useState(null); // { id, type, mode: 'move'|'resize' }
   const [dragOverDay, setDragOverDay] = useState(null);
   const [createDrag, setCreateDrag] = useState(null); // { day, startMin, currentMin } — drag-to-block-out-time
+  const [touchDragPreview, setTouchDragPreview] = useState(null); // { day, startMin, duration } — see handleItemTouchStart
   const gridRef = useRef(null);
 
   // Ctrl+scroll / trackpad-pinch zoom. JSX's onWheel is attached passively by
@@ -338,14 +417,18 @@ export default function WeekView({
   // grid as the hour lines (see packLane's matching rounding, above).
   const timeToY = (hhmm) => Math.round((timeToMinutes(hhmm) - GRID_START_MIN) * pxPerMin);
 
-  // --- Drag handlers (native HTML5 DnD for cross-day moves) -----------------
-  function handleDragStart(e, block) {
-    if (block.isLocked) {
+  // --- Drag handlers (native HTML5 DnD for cross-day moves, mouse/desktop) ---
+  // `item` is one of dayItemsByDay's `{ type: 'block'|'event', data, ... }`
+  // entries — generalized so a block and an event share the exact same
+  // move/resize math, only branching on `type` at the point they call back
+  // into SchedulerContext (updateBlock vs updateEvent).
+  function handleDragStart(e, item) {
+    if (item.type === 'block' && item.data.isLocked) {
       e.preventDefault();
       return;
     }
-    e.dataTransfer.setData('text/plain', block.id);
-    setDragState({ blockId: block.id, mode: 'move' });
+    e.dataTransfer.setData('text/plain', JSON.stringify({ id: item.data.id, type: item.type }));
+    setDragState({ id: item.data.id, type: item.type, mode: 'move' });
   }
 
   function handleDragOverDay(e, day) {
@@ -353,64 +436,148 @@ export default function WeekView({
     setDragOverDay(day);
   }
 
+  /** Shared by the mouse-drop handler and the touch-drag-end handler — looks
+   * up the dragged block/event, applies the same snap/clamp math, and calls
+   * the right updater for its type. */
+  function applyDrop(type, id, day, relY) {
+    const source = type === 'block' ? blocks.find((b) => b.id === id) : events.find((e) => e.id === id);
+    if (!source) return;
+    const duration = timeToMinutes(source.endTime) - timeToMinutes(source.startTime);
+    const newStartMin = computeSnappedStartMinute(relY, pxPerMin, duration);
+    const newEndMin = newStartMin + duration;
+    const updates = { date: day, startTime: minutesToTime(newStartMin), endTime: minutesToTime(newEndMin) };
+    if (type === 'block') {
+      updateBlock(id, { ...updates, isAutoScheduled: false });
+    } else {
+      updateEvent(id, updates);
+    }
+  }
+
   function handleDropOnDay(e, day) {
     e.preventDefault();
-    const blockId = e.dataTransfer.getData('text/plain');
-    const block = blocks.find((b) => b.id === blockId);
     setDragOverDay(null);
-    if (!block) return;
+    let payload;
+    try {
+      payload = JSON.parse(e.dataTransfer.getData('text/plain'));
+    } catch {
+      return; // not a drag we started (or a stale/foreign payload) — ignore
+    }
+    if (!payload?.id || !payload?.type) return;
 
     // Determine drop Y position relative to the day column to compute new start time.
     const columnEl = e.currentTarget;
     const rect = columnEl.getBoundingClientRect();
     const relY = e.clientY - rect.top;
-    let newStartMin = GRID_START_MIN + relY / pxPerMin;
-    newStartMin = Math.round(newStartMin / SNAP_MIN) * SNAP_MIN;
-
-    const duration = timeToMinutes(block.endTime) - timeToMinutes(block.startTime);
-    // Clamp so a drop near either edge of the grid can't push the block's
-    // start before GRID_START_MIN or its end past GRID_END_MIN, which would
-    // otherwise produce an out-of-range "HH:MM" string (e.g. "24:15") that
-    // corrupts every downstream time comparison.
-    newStartMin = Math.min(Math.max(newStartMin, GRID_START_MIN), GRID_END_MIN - duration);
-    const newEndMin = newStartMin + duration;
-
-    updateBlock(block.id, {
-      date: day,
-      startTime: minutesToTime(newStartMin),
-      endTime: minutesToTime(newEndMin),
-      isAutoScheduled: false,
-    });
+    applyDrop(payload.type, payload.id, day, relY);
   }
 
-  // --- Resize handlers (mouse-based, vertical only) --------------------------
-  function handleResizeStart(e, block) {
-    e.stopPropagation();
-    e.preventDefault();
-    const startY = e.clientY;
-    const originalEndMin = timeToMinutes(block.endTime);
+  // --- Touch drag (long-press then move) — mobile has no native HTML5 DnD ---
+  // Mirrors handleDragStart/handleDropOnDay above but driven by touchmove
+  // instead of the browser's own drag events, since those don't exist for
+  // touch. A short (~250ms) long-press delay distinguishes "the user means
+  // to drag this item" from "the user is scrolling the page" — if the touch
+  // moves more than a few px before the timer fires, it's treated as a
+  // scroll and the drag is aborted with no side effects.
+  const LONG_PRESS_MS = 250;
+  const DRAG_START_THRESHOLD_PX = 8;
+  function handleItemTouchStart(e, item) {
+    if (item.type === 'block' && item.data.isLocked) return;
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    const duration = timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime);
+    let dragging = false;
+    let lastDay = null;
+    let lastRelY = null;
+
+    const longPressTimer = setTimeout(() => {
+      dragging = true;
+    }, LONG_PRESS_MS);
+
+    function cleanup() {
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      setDragOverDay(null);
+      setTouchDragPreview(null);
+    }
 
     function onMove(moveEvent) {
-      const deltaY = moveEvent.clientY - startY;
+      const t = moveEvent.touches?.[0];
+      if (!t) return;
+      if (!dragging) {
+        if (Math.hypot(t.clientX - startX, t.clientY - startY) > DRAG_START_THRESHOLD_PX) {
+          clearTimeout(longPressTimer);
+          cleanup();
+        }
+        return;
+      }
+      // Once actually dragging, stop the page itself from scrolling under
+      // the finger — safe to call now since the initial scroll-vs-drag
+      // ambiguity (handled above) has already been resolved in favor of drag.
+      if (moveEvent.cancelable) moveEvent.preventDefault();
+      const columnEl = document.elementFromPoint(t.clientX, t.clientY)?.closest('.day-column');
+      if (!columnEl) return;
+      const day = columnEl.dataset.day;
+      const rect = columnEl.getBoundingClientRect();
+      const relY = t.clientY - rect.top;
+      lastDay = day;
+      lastRelY = relY;
+      setDragOverDay(day);
+      setTouchDragPreview({ day, startMin: computeSnappedStartMinute(relY, pxPerMin, duration), duration });
+    }
+
+    function onEnd(endEvent) {
+      clearTimeout(longPressTimer);
+      if (dragging && lastDay != null && lastRelY != null) {
+        if (endEvent.cancelable) endEvent.preventDefault();
+        applyDrop(item.type, item.data.id, lastDay, lastRelY);
+      }
+      cleanup();
+    }
+
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+  }
+
+  // --- Resize handlers (vertical only; mouse OR touch) ------------------------
+  function handleResizeStart(e, item) {
+    e.stopPropagation();
+    e.preventDefault();
+    const startY = getClientY(e);
+    const originalEndMin = timeToMinutes(item.data.endTime);
+    const elId = item.type === 'block' ? `block-${item.data.id}` : `event-${item.data.id}`;
+
+    function onMove(moveEvent) {
+      if (moveEvent.cancelable) moveEvent.preventDefault();
+      const deltaY = getClientY(moveEvent) - startY;
       const deltaMin = Math.round(deltaY / pxPerMin / SNAP_MIN) * SNAP_MIN;
       let newEndMin = originalEndMin + deltaMin;
-      newEndMin = Math.min(Math.max(timeToMinutes(block.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
-      const el = document.getElementById(`block-${block.id}`);
-      if (el) el.style.height = `${(newEndMin - timeToMinutes(block.startTime)) * pxPerMin}px`;
+      newEndMin = Math.min(Math.max(timeToMinutes(item.data.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
+      const el = document.getElementById(elId);
+      if (el) el.style.height = `${(newEndMin - timeToMinutes(item.data.startTime)) * pxPerMin}px`;
     }
 
     function onUp(upEvent) {
-      const deltaY = upEvent.clientY - startY;
+      const deltaY = getClientY(upEvent) - startY;
       const deltaMin = Math.round(deltaY / pxPerMin / SNAP_MIN) * SNAP_MIN;
       let newEndMin = originalEndMin + deltaMin;
-      newEndMin = Math.min(Math.max(timeToMinutes(block.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
-      updateBlock(block.id, { endTime: minutesToTime(newEndMin), isAutoScheduled: false });
+      newEndMin = Math.min(Math.max(timeToMinutes(item.data.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
+      if (item.type === 'block') {
+        updateBlock(item.data.id, { endTime: minutesToTime(newEndMin), isAutoScheduled: false });
+      } else {
+        updateEvent(item.data.id, { endTime: minutesToTime(newEndMin) });
+      }
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
     }
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
   }
 
   // --- Drag-to-block-out-time (mousedown+drag on empty grid space) ----------
@@ -485,11 +652,11 @@ export default function WeekView({
       </div>
 
       {days.map((day) => {
-        const dayBlocks = dayBlocksByDay.get(day) || [];
-        const dayEvents = eventsByDay.get(day) || [];
+        const dayItems = dayItemsByDay.get(day) || [];
         return (
           <div
             key={day}
+            data-day={day}
             className={`day-column ${dragOverDay === day ? 'is-dragover' : ''}`}
             style={{ height: gridHeight }}
             onDragOver={(e) => handleDragOverDay(e, day)}
@@ -514,27 +681,28 @@ export default function WeekView({
                   ),
                 }}
               >
-                Block time
+                New event
               </div>
             )}
 
-            {dayEvents.map((evt) => (
+            {touchDragPreview && touchDragPreview.day === day && (
               <div
-                key={evt.id}
-                className={`cal-event ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''}`}
-                style={{ top: timeToY(evt.startTime), height: Math.max(20, timeToY(evt.endTime) - timeToY(evt.startTime)) }}
-                title={evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title}
-                onClick={() => onSelectEvent?.(evt)}
+                className="cal-event-ghost"
+                style={{
+                  top: timeToY(minutesToTime(touchDragPreview.startMin)),
+                  height: Math.max(20, touchDragPreview.duration * pxPerMin),
+                }}
               >
-                {evt.title}
+                Move here
               </div>
-            ))}
+            )}
 
-            {dayBlocks.map((item) => {
+            {dayItems.map((item) => {
               const { lane, totalLanes } = item;
-              // Blocks side-by-side within an overlap group — see
-              // layoutDayBlocks above. totalLanes is 1 for the common case
-              // (no overlap), so this is a no-op then.
+              // Items side-by-side within an overlap group — see
+              // layoutDayItems above. totalLanes is 1 for the common case
+              // (no overlap, or a collapsed mobileOverlap chip), so this is
+              // a no-op then.
               const laneWidthPct = 100 / totalLanes;
               const laneStyle =
                 totalLanes > 1
@@ -556,6 +724,8 @@ export default function WeekView({
                 // rather than left to clip into the block below.
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
+                const openThisCluster = (rect) =>
+                  setOpenCluster({ key: clusterKey, rect, items: item.blocks.map((b) => ({ type: 'block', data: b })) });
                 return (
                   <div
                     key={clusterKey}
@@ -565,20 +735,14 @@ export default function WeekView({
                     tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (isOpen) {
-                        setOpenCluster(null);
-                      } else {
-                        setOpenCluster({ key: clusterKey, rect: e.currentTarget.getBoundingClientRect(), blocks: item.blocks });
-                      }
+                      if (isOpen) setOpenCluster(null);
+                      else openThisCluster(e.currentTarget.getBoundingClientRect());
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        if (isOpen) {
-                          setOpenCluster(null);
-                        } else {
-                          setOpenCluster({ key: clusterKey, rect: e.currentTarget.getBoundingClientRect(), blocks: item.blocks });
-                        }
+                        if (isOpen) setOpenCluster(null);
+                        else openThisCluster(e.currentTarget.getBoundingClientRect());
                       }
                     }}
                     title={`${item.blocks.length} short tasks · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
@@ -593,7 +757,80 @@ export default function WeekView({
                 );
               }
 
-              const { block, top, height } = item;
+              if (item.kind === 'mobileOverlap') {
+                const chipKey = `${day}_overlap_${item.start}`;
+                const { top, height } = item;
+                const isOpen = openCluster?.key === chipKey;
+                // Flatten so the popover lists every real block/event as its
+                // own tappable row — a nested "N short tasks" sub-cluster
+                // inside the group expands out to its individual blocks here
+                // rather than the popover having to render yet another
+                // nested cluster chip.
+                const flatItems = item.items.flatMap((it) =>
+                  it.kind === 'cluster' ? it.blocks.map((b) => ({ type: 'block', data: b })) : [{ type: it.type, data: it.data }]
+                );
+                const openThisOverlap = (rect) => setOpenCluster({ key: chipKey, rect, items: flatItems });
+                return (
+                  <div
+                    key={chipKey}
+                    className={`cal-block cal-mobile-overlap ${isOpen ? 'is-open' : ''}`}
+                    style={{ top, height, ...laneStyle }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isOpen) setOpenCluster(null);
+                      else openThisOverlap(e.currentTarget.getBoundingClientRect());
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (isOpen) setOpenCluster(null);
+                        else openThisOverlap(e.currentTarget.getBoundingClientRect());
+                      }
+                    }}
+                    title={`${item.items.length} events · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
+                  >
+                    <div className="cal-block-title">{item.items.length} events</div>
+                  </div>
+                );
+              }
+
+              if (item.type === 'event') {
+                const evt = item.data;
+                const { top, height } = item;
+                return (
+                  <div
+                    key={evt.id}
+                    id={`event-${evt.id}`}
+                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''} ${isMobile ? 'is-mobile' : ''}`}
+                    style={{ top, height, ...laneStyle }}
+                    title={evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title}
+                    draggable={!isMobile}
+                    onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
+                    onTouchStart={(e) => handleItemTouchStart(e, item)}
+                    onClick={() => onSelectEvent?.(evt)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelectEvent?.(evt);
+                      }
+                    }}
+                  >
+                    {evt.title}
+                    <div
+                      className="resize-handle"
+                      onMouseDown={(e) => handleResizeStart(e, item)}
+                      onTouchStart={(e) => handleResizeStart(e, item)}
+                    />
+                  </div>
+                );
+              }
+
+              const block = item.data;
+              const { top, height } = item;
               const task = taskById[block.taskId];
               if (!task) return null;
               const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
@@ -609,7 +846,8 @@ export default function WeekView({
                     ...laneStyle,
                   }}
                   draggable={!isMobile && !block.isLocked}
-                  onDragStart={isMobile ? undefined : (e) => handleDragStart(e, block)}
+                  onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
+                  onTouchStart={(e) => handleItemTouchStart(e, item)}
                   onClick={() => onSelectBlock?.(block)}
                   role="button"
                   tabIndex={0}
@@ -640,8 +878,12 @@ export default function WeekView({
                       {block.startTime}–{block.endTime}
                     </div>
                   )}
-                  {!isMobile && !block.isLocked && (
-                    <div className="resize-handle" onMouseDown={(e) => handleResizeStart(e, block)} />
+                  {!block.isLocked && (
+                    <div
+                      className="resize-handle"
+                      onMouseDown={(e) => handleResizeStart(e, item)}
+                      onTouchStart={(e) => handleResizeStart(e, item)}
+                    />
                   )}
                 </div>
               );
@@ -658,22 +900,39 @@ export default function WeekView({
             style={{ position: 'fixed', ...computeClusterPopoverStyle(openCluster.rect) }}
             onClick={(e) => e.stopPropagation()}
           >
-            {openCluster.blocks.map((b) => {
-              const t = taskById[b.taskId];
-              if (!t) return null;
+            {openCluster.items.map((it) => {
+              if (it.type === 'block') {
+                const t = taskById[it.data.taskId];
+                if (!t) return null;
+                return (
+                  <button
+                    key={`block-${it.data.id}`}
+                    className="cal-cluster-popover-item"
+                    onClick={() => {
+                      setOpenCluster(null);
+                      onSelectBlock?.(it.data);
+                    }}
+                  >
+                    <span className="cal-cluster-popover-time">
+                      {it.data.startTime}–{it.data.endTime}
+                    </span>
+                    <span className="cal-cluster-popover-title">{t.title}</span>
+                  </button>
+                );
+              }
               return (
                 <button
-                  key={b.id}
+                  key={`event-${it.data.id}`}
                   className="cal-cluster-popover-item"
                   onClick={() => {
                     setOpenCluster(null);
-                    onSelectBlock?.(b);
+                    onSelectEvent?.(it.data);
                   }}
                 >
                   <span className="cal-cluster-popover-time">
-                    {b.startTime}–{b.endTime}
+                    {it.data.startTime}–{it.data.endTime}
                   </span>
-                  <span className="cal-cluster-popover-title">{t.title}</span>
+                  <span className="cal-cluster-popover-title">{it.data.title}</span>
                 </button>
               );
             })}

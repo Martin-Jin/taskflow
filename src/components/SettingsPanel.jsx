@@ -4,13 +4,30 @@
  * "Free Time / Ignore" overrides on recurring calendar events.
  */
 
-import React, { useState } from 'react';
-import { Download, Circle, Check, HelpCircle, AlertTriangle, KeyRound, ExternalLink, Trash2, Sun, Moon, LogIn, LogOut, CloudCog } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import {
+  Download,
+  Upload,
+  History,
+  Circle,
+  Check,
+  HelpCircle,
+  AlertTriangle,
+  KeyRound,
+  ExternalLink,
+  Trash2,
+  Sun,
+  Moon,
+  LogIn,
+  LogOut,
+  CloudCog,
+} from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { clearAllPersisted } from '../utils/persistence';
 import RoutineTimeline from './Settings/RoutineTimeline';
+import BackupsModal from './Modals/BackupsModal';
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -18,6 +35,8 @@ const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export default function SettingsPanel({ onOpenTour }) {
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenDraft, setTokenDraft] = useState('');
+  const [showBackupsModal, setShowBackupsModal] = useState(false);
+  const fileInputRef = useRef(null);
   const { theme, setTheme } = useTheme();
   const { user, authLoading, login, logout } = useAuth();
   const {
@@ -32,11 +51,19 @@ export default function SettingsPanel({ onOpenTour }) {
     googleConnected,
     pushToGoogleCalendar,
     isSyncing,
+    isBackingUp,
+    cloudBackups,
     todoistEnabled,
     setTodoistApiToken,
     importFromTodoist,
     lastTodoistImport,
     syncNow,
+    exportBackup,
+    importBackupFromFile,
+    refreshCloudBackups,
+    backupToCloud,
+    restoreCloudBackup,
+    deleteCloudBackup,
     clearAllData,
   } = useScheduler();
 
@@ -61,6 +88,21 @@ export default function SettingsPanel({ onOpenTour }) {
 
   function removeRoutine(id) {
     setRoutines((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  async function handleBackupFileSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // reset so picking the same file twice still fires onChange
+    if (!file) return;
+    if (!window.confirm('Restore from this backup file? This replaces your current tasks, boards, and settings on this device.')) {
+      return;
+    }
+    await importBackupFromFile(file);
+  }
+
+  async function openBackupsModal() {
+    await refreshCloudBackups();
+    setShowBackupsModal(true);
   }
 
   const recurringEvents = events.filter((e) => e.seriesId);
@@ -122,8 +164,9 @@ export default function SettingsPanel({ onOpenTour }) {
               </button>
             </div>
             <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 10, marginBottom: 0 }}>
-              Your data syncs automatically shortly after each change. "Sync now" pulls down anything saved from
-              another device since you opened TaskFlow here — useful right after making changes elsewhere.
+              Changes sync automatically in the background — usually within a few seconds — to every device signed
+              in with this account, no reload needed. "Sync now" is a manual fallback, and also refreshes Google
+              Calendar events, which don't push live.
             </p>
           </>
         ) : (
@@ -139,12 +182,14 @@ export default function SettingsPanel({ onOpenTour }) {
         )}
       </div>
 
-      <div className="card" data-tour="integrations-card">
-        <h3 style={{ marginTop: 0 }}>Integrations</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
-          TaskFlow works fully standalone with local sample tasks — connecting Todoist and Google Calendar is
-          optional. See the tutorial (Help, below) for a step-by-step walkthrough of both.
-        </p>
+      <div className="card">
+        <div data-tour="integrations-card">
+          <h3 style={{ marginTop: 0 }}>Integrations</h3>
+          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
+            TaskFlow works fully standalone with local sample tasks — connecting Todoist and Google Calendar is
+            optional. See the tutorial (Help, below) for a step-by-step walkthrough of both.
+          </p>
+        </div>
 
         <h4
           style={{
@@ -470,6 +515,71 @@ export default function SettingsPanel({ onOpenTour }) {
         </button>
       </div>
 
+      <div className="card" data-tour="backups-card">
+        <h3 style={{ marginTop: 0 }}>Backups</h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
+          Download a snapshot of your tasks, boards, and settings as a file, or restore one — both work whether or
+          not you're signed in. Already-completed one-off tasks aren't included; recurring tasks always are.
+        </p>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button className="btn" onClick={exportBackup} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Download size={14} />
+            Download backup
+          </button>
+          <button
+            className="btn"
+            onClick={() => fileInputRef.current?.click()}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Upload size={14} />
+            Restore from file
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            style={{ display: 'none' }}
+            onChange={handleBackupFileSelected}
+          />
+        </div>
+
+        {user && (
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--color-border)' }}>
+            <h4
+              style={{
+                margin: '0 0 10px',
+                fontSize: 12,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: 0.5,
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              Cloud backups
+            </h4>
+            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 10 }}>
+              TaskFlow quietly takes a cloud backup roughly once a day while you're signed in, on top of whatever
+              you back up manually here.
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                className="btn"
+                onClick={backupToCloud}
+                disabled={isBackingUp}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <History size={14} />
+                {isBackingUp ? 'Backing up…' : 'Back up now'}
+              </button>
+              <button className="btn" onClick={openBackupsModal} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <CloudCog size={14} />
+                View backups{cloudBackups.length > 0 ? ` (${cloudBackups.length})` : ''}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card" data-tour="danger-zone-card">
         <h3 style={{ marginTop: 0 }}>Danger zone</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
@@ -508,6 +618,16 @@ export default function SettingsPanel({ onOpenTour }) {
           Reset local data
         </button>
       </div>
+
+      {showBackupsModal && (
+        <BackupsModal
+          backups={cloudBackups}
+          isBusy={isBackingUp}
+          onRestore={restoreCloudBackup}
+          onDelete={deleteCloudBackup}
+          onClose={() => setShowBackupsModal(false)}
+        />
+      )}
     </div>
   );
 }

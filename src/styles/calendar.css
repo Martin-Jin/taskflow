@@ -411,6 +411,44 @@
   color: var(--color-text-primary);
 }
 
+/* CalendarEvents get full drag/resize parity with ScheduledBlocks (see
+   WeekView) — this class layers the grab cursor + lane-positioning support
+   on top of .cal-event's existing dashed/striped look without touching its
+   colors. */
+.cal-event-item {
+  cursor: grab;
+}
+
+.cal-event-item.is-mobile {
+  cursor: pointer;
+}
+
+/* Mobile-only "N events" chip — shown instead of side-by-side lanes when two
+   or more blocks/events overlap in time (see layoutDayItems' isMobile
+   branch), since narrow phone widths can't readably fit slices side by side.
+   Styled close to .cal-cluster (also a "N things folded into one chip"
+   pattern) but tinted with the accent color instead, so it doesn't read as
+   just another short-task cluster. */
+.cal-mobile-overlap {
+  border-left-style: dashed;
+  border-left-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.cal-mobile-overlap .cal-block-title {
+  padding-right: 0;
+}
+
+.cal-mobile-overlap.is-open {
+  box-shadow: 0 0 0 1px var(--color-accent-soft), var(--shadow-card);
+}
+
 /* Drag-to-block-out-time ghost preview, shown while the mouse is held down
    on empty grid space (see WeekView.handleColumnMouseDown). */
 .cal-event-ghost {
@@ -456,6 +494,22 @@
   right: 0;
   height: 5px;
   cursor: ns-resize;
+}
+
+@media (max-width: 639px) {
+  /* A 5px strip is fine for a mouse pointer but far too thin to reliably
+     grab with a finger — extend the actual touch target to ~24px via a
+     transparent pseudo-element rather than growing the visible strip
+     itself, so the resize affordance doesn't visually dominate short
+     blocks/events on a small screen. */
+  .resize-handle::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -10px;
+    bottom: -10px;
+  }
 }
 
 /*

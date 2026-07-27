@@ -73,7 +73,9 @@ export default function TodayAgenda() {
             >
               {isCurrent && <span className="today-agenda-pulse" />}
               {item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}
-              <span className="today-agenda-time">{formatTime(item.startTime)}</span>
+              <span className="today-agenda-time">
+                {formatTime(item.startTime)} – {formatTime(item.endTime)}
+              </span>
               {item.link ? (
                 <a
                   href={item.link}

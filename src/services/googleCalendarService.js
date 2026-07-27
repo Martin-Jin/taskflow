@@ -17,7 +17,7 @@
  */
 
 import { getMockEvents } from './mockData';
-import { fromISODate, toISODate } from '../utils/dateUtils';
+import { fromISODate, toISODate, timeToMinutes } from '../utils/dateUtils';
 
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 // calendar.events: read/write events on calendars the user can edit (needed for push).
@@ -120,7 +120,9 @@ async function listSubscribedCalendars() {
   const resp = await window.gapi.client.calendar.calendarList.list({
     minAccessRole: 'freeBusyReader',
   });
-  return (resp.result.items || []).filter((c) => c.selected !== false).map((c) => ({ id: c.id, summary: c.summary }));
+  return (resp.result.items || [])
+    .filter((c) => c.selected !== false)
+    .map((c) => ({ id: c.id, summary: c.summary, primary: !!c.primary }));
 }
 
 /**
@@ -175,7 +177,12 @@ export async function fetchEvents(startIso, endIso) {
     calendars = [{ id: 'primary', summary: 'primary' }];
   }
   // Always include primary even if the calendarList call above somehow omitted it.
-  if (!calendars.some((c) => c.id === 'primary')) calendars.unshift({ id: 'primary', summary: 'primary' });
+  // Note: calendarList normally lists the primary calendar under its REAL id
+  // (the account's email address) with `primary: true`, not the literal
+  // string "primary" — checking only `c.id === 'primary'` missed that and
+  // caused the primary calendar to be queried a second time under the
+  // 'primary' alias, duplicating every one of its events on the agenda.
+  if (!calendars.some((c) => c.id === 'primary' || c.primary)) calendars.unshift({ id: 'primary', summary: 'primary' });
 
   const timeMin = fromISODate(startIso).toISOString();
   const timeMax = fromISODate(endIso).toISOString();
@@ -186,13 +193,21 @@ export async function fetchEvents(startIso, endIso) {
   const perCalendarResults = await Promise.all(
     calendars.map(async (cal) => {
       try {
+        // singleEvents: false — a recurring series comes back as ONE item
+        // (the master event, carrying a `recurrence: [...]` RRULE/EXDATE
+        // array) instead of being pre-expanded into N individual instances.
+        // This is what lets a recurring event be stored as a single record
+        // instead of importing "100 duplicate events" for something that
+        // just repeats (see recurrenceExpansion.js, which expands it back
+        // out for display only). Google's API only allows `orderBy:
+        // 'startTime'` when singleEvents is true (it throws otherwise), so
+        // ordering is done client-side after flattening/deduping below.
         const resp = await window.gapi.client.calendar.events.list({
           calendarId: cal.id,
           timeMin,
           timeMax,
           timeZone: localTimeZone,
-          singleEvents: true,
-          orderBy: 'startTime',
+          singleEvents: false,
         });
         return (resp.result.items || []).map((e) => ({ ...e, __calendarId: cal.id, __calendarName: cal.summary }));
       } catch (err) {
@@ -208,9 +223,26 @@ export async function fetchEvents(startIso, endIso) {
     })
   );
 
+  // Dedupe across calendars: the same logical event commonly has a copy on
+  // more than one calendar the user can see (e.g. an event on a shared
+  // family/team calendar that's also mirrored onto their primary calendar
+  // as an attendee), which otherwise shows the same event twice on the
+  // agenda. Google gives every calendar's copy of the same event the same
+  // `iCalUID`, so that (plus the occurrence's start time, since a
+  // recurring series' instances share one iCalUID) reliably identifies
+  // "same event" regardless of which calendarId it came from — unlike
+  // `id`, which Google mints separately per calendar.
+  const seenEventKeys = new Set();
+
   const events = perCalendarResults
     .flat()
     .filter((e) => e.start?.dateTime) // skip all-day events for time-blocking purposes
+    .filter((e) => {
+      const key = `${e.iCalUID || e.id}::${e.start.dateTime}`;
+      if (seenEventKeys.has(key)) return false;
+      seenEventKeys.add(key);
+      return true;
+    })
     .map((e) => {
       // Parse via Date objects rather than string-slicing — see the
       // function doc comment above for why this matters.
@@ -218,24 +250,56 @@ export async function fetchEvents(startIso, endIso) {
       const end = new Date(e.end.dateTime);
       const pad2 = (n) => String(n).padStart(2, '0');
 
+      const id = `gcal_${e.__calendarId}_${e.id}`;
+
+      // With singleEvents:false, a recurring event's `recurringEventId`
+      // field is NOT present (that only appears on pre-expanded
+      // instances) — the master event's own id doubles as its seriesId,
+      // matching the convention used elsewhere for manually-created
+      // recurring events (see recurrenceExpansion.js / SchedulerContext).
+      const seriesId = e.recurrence ? id : null;
+
+      // e.recurrence is an array of RRULE/EXDATE/RDATE/EXRULE lines. Only
+      // the RRULE line is used — EXDATE/RDATE/EXRULE are an out-of-scope
+      // subset, same limitation documented in recurrenceExpansion.js.
+      let recurrenceRule = null;
+      if (e.recurrence) {
+        const rruleLine = e.recurrence.find((line) => line.startsWith('RRULE:'));
+        if (rruleLine) recurrenceRule = rruleLine.slice('RRULE:'.length);
+      }
+
       return {
-        id: `gcal_${e.__calendarId}_${e.id}`,
+        id,
         title: e.summary || '(no title)',
         date: toISODate(start),
         startTime: `${pad2(start.getHours())}:${pad2(start.getMinutes())}`,
         endTime: `${pad2(end.getHours())}:${pad2(end.getMinutes())}`,
         isFreeTime: false,
-        isRecurring: !!e.recurringEventId,
+        isRecurring: !!e.recurrence,
         googleEventId: e.id,
         calendarId: e.__calendarId,
         calendarName: e.__calendarName,
         source: 'google',
+        description: e.description || '',
+        location: e.location || '',
+        recurrenceRule,
+        googleUpdatedAt: e.updated,
+        localUpdatedAt: null,
         // Google's shared master-event id for every instance of a recurring
         // event — lets "ignore this event" be applied to just this
         // instance, this-and-following, or the whole series. See
         // SchedulerContext.setEventIgnored.
-        seriesId: e.recurringEventId || null,
+        seriesId,
       };
+    })
+    // Google only allows orderBy:'startTime' when singleEvents:true (see
+    // above), so sort client-side instead. Dates are "YYYY-MM-DD" ISO
+    // strings, so plain string comparison sorts correctly; times go through
+    // timeToMinutes for consistency with the rest of the codebase's
+    // "HH:MM" comparisons.
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
     });
 
   return { events: withSyntheticSeries(events), failedCalendars };
@@ -298,10 +362,46 @@ export async function pushBlockToCalendar(block, task) {
   return resp.result.id;
 }
 
-/** Delete a pushed event (e.g. when a block is rescheduled/removed). */
-export async function deleteCalendarEvent(googleEventId) {
+/**
+ * Push a single CalendarEvent (manual or a locally-edited Google-sourced
+ * one) to Google Calendar — creates it if it has no googleEventId yet,
+ * otherwise updates the existing one. Returns { id, updated } (Google's
+ * event id and its fresh `updated` timestamp) so the caller can stamp
+ * googleEventId/googleUpdatedAt back onto the local record, or null if
+ * not authorized (mock/offline mode).
+ */
+export async function pushEventToCalendar(event) {
+  if (!gapiInited || !accessToken) {
+    console.info('[googleCalendarService] Not authorized — skipping event push (mock mode).');
+    return null;
+  }
+
+  const calendarId = event.calendarId || 'primary';
+  const resource = {
+    summary: event.title,
+    description: event.description || undefined,
+    location: event.location || undefined,
+    start: { dateTime: `${event.date}T${event.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    recurrence: event.recurrenceRule ? [`RRULE:${event.recurrenceRule}`] : undefined,
+  };
+
+  const resp = event.googleEventId
+    ? await window.gapi.client.calendar.events.update({ calendarId, eventId: event.googleEventId, resource })
+    : await window.gapi.client.calendar.events.insert({ calendarId, resource });
+
+  return { id: resp.result.id, updated: resp.result.updated };
+}
+
+/**
+ * Delete a pushed event (e.g. when a block is rescheduled/removed, or a
+ * CalendarEvent is deleted locally). `calendarId` defaults to 'primary' but
+ * must be passed explicitly for anything sourced from a non-primary (e.g.
+ * subscribed) calendar, or the delete call targets the wrong calendar.
+ */
+export async function deleteCalendarEvent(googleEventId, calendarId = 'primary') {
   if (!gapiInited || !accessToken || !googleEventId) return;
-  await window.gapi.client.calendar.events.delete({ calendarId: 'primary', eventId: googleEventId });
+  await window.gapi.client.calendar.events.delete({ calendarId, eventId: googleEventId });
 }
 
 function priorityToColorId(priority) {

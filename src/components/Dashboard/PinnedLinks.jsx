@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Plus, X, Clock, FolderPlus, Rewind, ExternalLink, Pencil, Search, Upload } from 'lucide-react';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import {
@@ -240,10 +240,6 @@ export default function PinnedLinks() {
         {data.folders
           .filter((folder) => folder.id !== DEFAULT_FOLDER_ID)
           .map((folder) => (
-            // Two sibling <button>s, not an <X> click handler nested inside
-            // a <button> — the old markup put a non-focusable SVG inside a
-            // button as the only way to remove a folder, which a keyboard
-            // user couldn't reach at all.
             <div key={folder.id} className={`pinned-folder-tab ${activeFolderId === folder.id ? 'active' : ''}`}>
               <button className="pinned-folder-tab-select" onClick={() => setActiveFolderId(folder.id)}>
                 {folder.name}
@@ -274,7 +270,9 @@ export default function PinnedLinks() {
             <FolderPlus size={13} />
           </button>
         )}
+      </div>
 
+      <div className="pinned-links-actions">
         {visibleLinks.length > 0 && (
           <button className="pinned-open-all-btn" onClick={openAllVisible} title="Open all links in new tabs">
             <ExternalLink size={12} /> Open all
@@ -338,7 +336,7 @@ export default function PinnedLinks() {
                   onClick={() => recordOpen(link.id)}
                 >
                   <FaviconImg url={link.url} size={20} />
-                  <span className="pinned-link-label">{link.label}</span>
+                  <MarqueeLabel text={link.label} />
                 </a>
               </>
             )}
@@ -379,4 +377,49 @@ function FaviconImg({ url, size = 14 }) {
   const src = faviconUrl(url);
   if (!src) return null;
   return <img src={src} alt="" width={size} height={size} className="pinned-link-favicon" />;
+}
+
+/**
+ * MarqueeLabel — shows a link's name at full width, auto-scrolling
+ * horizontally (no user interaction) only when the name is actually too
+ * long to fit its tile. Measures the single-copy text against its
+ * container via ResizeObserver (grid tiles resize with the viewport/column
+ * count), and only then renders a second, aria-hidden copy of the text so
+ * the CSS marquee animation (see .pinned-link-label in dashboard.css) can
+ * loop seamlessly by translating exactly one copy-width.
+ */
+function MarqueeLabel({ text }) {
+  const containerRef = useRef(null);
+  const textRef = useRef(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const textEl = textRef.current;
+    if (!container || !textEl) return undefined;
+
+    function measure() {
+      setIsOverflowing(textEl.scrollWidth > container.clientWidth + 1);
+    }
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [text]);
+
+  return (
+    <span className={`pinned-link-label ${isOverflowing ? 'is-marquee' : ''}`} ref={containerRef}>
+      <span className="pinned-link-label-track">
+        <span className="pinned-link-label-text" ref={textRef}>
+          {text}
+        </span>
+        {isOverflowing && (
+          <span className="pinned-link-label-text" aria-hidden="true">
+            {text}
+          </span>
+        )}
+      </span>
+    </span>
+  );
 }

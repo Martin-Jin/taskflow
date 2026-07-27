@@ -10,8 +10,9 @@ Board/Gantt/Stats views) without connecting anything.
 
 If you already keep tasks in Todoist, you can optionally connect your
 account to import them in one click instead of typing them into TaskFlow
-(a one-time pull, not an ongoing sync — see below), and optionally push
-the resulting schedule straight to Google Calendar. Both integrations
+(a one-time pull, not an ongoing sync — see below), and optionally sync
+your calendar events two-way with Google Calendar (Google's version
+always wins if the same event changes on both sides). Both integrations
 are entirely opt-in — see [Connecting real data](#connecting-real-data).
 
 Signing in with Google (optional — see [Account & cross-device
@@ -79,12 +80,14 @@ backed by [Firebase](https://firebase.google.com/) (Auth + Firestore).
   a phone and a computer converge onto the same data instead of keeping two
   separate copies.
 - From then on, local changes are pushed to the cloud automatically a
-  moment after you make them.
-- Sync is **not live** — it isn't a realtime connection between open tabs on
-  different devices. If you make a change on your phone while TaskFlow is
-  already open and signed in on your computer, use **Settings → Account &
-  sync → Sync now** (or just reload) to pull that change down. See [Known
-  limitations](#known-limitations).
+  moment after you make them (a short debounce so a burst of edits doesn't
+  fire a write per keystroke).
+- Sync is **live** while signed in: a background Firestore listener picks up
+  a change pushed from another signed-in device and applies it here too,
+  usually within a few seconds — no reload needed. **Settings → Account &
+  sync → Sync now** is still there as a manual fallback (and it's what
+  refreshes Google Calendar events, which don't push live — see [Google
+  Calendar](#google-calendar)).
 - Signing out just signs out of the account — no local data is deleted.
 
 **Setup, for anyone running their own copy of this app** (not needed if
@@ -97,22 +100,14 @@ there):
    enable it.
 3. **Build → Firestore Database → Create database** → start in **production
    mode**.
-4. **Firestore Database → Rules** (not Realtime Database → Rules — a
-   different product with its own JSON-based rules editor, listed separately
-   in the sidebar) → replace the default with the following, which restricts
-   each user's synced data to that user only → **Publish**:
-
-   ```
-   rules_version = '2';
-
-   service cloud.firestore {
-     match /databases/{database}/documents {
-       match /users/{userId} {
-         allow read, write: if request.auth != null && request.auth.uid == userId;
-       }
-     }
-   }
-   ```
+4. Deploy the rules in [`firestore.rules`](firestore.rules), which restrict
+   each user's synced data to that user only — either:
+   - CLI: `firebase use --add` (pick your project), then
+     `firebase deploy --only firestore:rules`, or
+   - Console: **Firestore Database → Rules** (not Realtime Database → Rules —
+     a different product with its own JSON-based rules editor, listed
+     separately in the sidebar) → paste in the contents of
+     [`firestore.rules`](firestore.rules) → **Publish**.
 5. Project settings (gear icon) → scroll to "Your apps" → add a Web app →
    copy the `firebaseConfig` object it gives you into `src/firebase.js`,
    replacing the values already there.
@@ -122,6 +117,30 @@ they identify the project, they don't authorize access to it — so it's
 normal for them to live directly in client-side code rather than `.env`,
 unlike the Todoist/Google Calendar credentials below. Access control is
 enforced entirely by the Firestore rules from step 4.
+
+### Backups
+
+Independent of cross-device sync, **Settings → Backups** lets you download a
+full snapshot of your tasks, boards, and settings as a `.json` file, or
+restore one back in — both work whether or not you're signed in, since the
+file path never touches Firestore.
+
+If you're signed in, TaskFlow also keeps point-in-time snapshots in your
+account: a "Back up now" button for an on-demand snapshot, and a quiet
+automatic one roughly once a day while you're signed in. These live
+separately from the live sync doc described above (`users/{uid}`, which is
+just "current state" and gets overwritten on every change) in their own
+`users/{uid}/backups/{backupId}` subcollection, so they're a genuine
+rollback point even if a bad sync or an accidental bulk-delete already
+propagated to the live doc. **View backups** in Settings lists your recent
+snapshots (newest first) to restore or delete.
+
+Restoring — from a file or from a cloud snapshot — replaces your current
+tasks, boards, and settings on this device, and asks for confirmation
+first, same as **Clear all data** below. Already-completed one-off tasks
+aren't included in any backup (there's nothing to restore them to);
+recurring tasks always are, since completing one occurrence doesn't mark
+the task itself as done.
 
 ## Connecting real data
 
@@ -164,11 +183,16 @@ worth knowing:
   retired REST v2. If you're merging in older code that still points at
   `rest/v2`, update it — see `src/services/todoistService.js`.
 - **Re-running the import upserts, never duplicates.** Projects/Sections/
-  Tasks already imported (matched by id) get their fields refreshed from
-  the latest fetch; anything new is added. Tasks/boards/sections you
-  created directly in TaskFlow are never touched by an import, and a
-  previously-imported item that's since been deleted in Todoist isn't
-  removed here either — it just stops being updated by future imports.
+  Tasks already imported (matched by id) get their Todoist-sourced fields
+  (title, notes, estimated hours, priority, due date, recurrence,
+  project/section, labels, subtasks) refreshed from the latest fetch, while
+  app-only fields you've since set locally (lock state, completion,
+  min/max chunk hours, dependencies, passive flag, earliest date, enforce
+  due date, link, scheduling progress) are left alone; anything new is
+  added. Tasks/boards/sections you created directly in TaskFlow are never
+  touched by an import, and a previously-imported item that's since been
+  deleted in Todoist isn't removed here either — it just stops being
+  updated by future imports.
 - **Tasks with no due date are imported but never scheduled.** They show up
   in Tasks/Board like any other task (mirroring Todoist 1:1), but the
   scheduler needs a due date to compute a planning window, so an undated
@@ -186,7 +210,9 @@ worth knowing:
   imported tasks is only created once.
 - **Subtasks** (Todoist items with a parent) are grouped under their parent
   as a checklist in the task detail modal — never scheduled as independent
-  blocks.
+  blocks. Todoist allows nesting subtasks arbitrarily deep; anything below
+  the first level is flattened onto the top-level task's checklist rather
+  than dropped.
 
 ### Google Calendar
 
@@ -203,9 +229,15 @@ worth knowing:
    VITE_GOOGLE_API_KEY=xxxxxxxx
    ```
 6. Restart the dev server, then **Settings → Connect Google Calendar** and
-   approve the OAuth prompt. Your real events populate the calendar grid,
-   and **Push scheduled blocks to Google Calendar** creates real events on
-   your primary calendar.
+   approve the OAuth prompt. This enables two-way sync of calendar events:
+   your Google events populate the calendar grid, and creating, editing,
+   moving, resizing, or deleting an event in TaskFlow now pushes that
+   change to your primary Google Calendar too. Pulls happen on sign-in/
+   connect, on a background poll roughly every 5 minutes while connected,
+   and on manual **Sync now** — it isn't instant/live, so a change made
+   directly in Google Calendar can take a few minutes to show up here. If
+   the same event changed on both sides since the last sync, **Google
+   Calendar's version always wins**.
 
 While the project is in Testing publishing status (the default), only
 accounts you've explicitly added as test users can complete the OAuth flow:
@@ -352,17 +384,21 @@ src/
 │   ├── useAutosizeTextarea.js     # Grows a textarea to fit its content, no scrollbar
 │   ├── useComboboxMultiSelect.js  # Shared open/close/query state for DependencyPicker + LabelPicker
 │   └── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
+├── migrations/
+│   └── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
-│   ├── googleCalendarService.js  # Google Calendar OAuth + events + push
-│   ├── firestoreSync.js          # Pull/push a signed-in user's synced data
+│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull)
+│   ├── eventSyncService.js       # Google-wins merge/reconcile logic for pulled events
+│   ├── firestoreSync.js          # Pull/push/live-subscribe to a signed-in user's synced data
 │   └── mockData.js               # Zero-config sample data
 ├── utils/
 │   ├── dateUtils.js          # ISO date / "HH:MM" arithmetic
 │   ├── intervalUtils.js      # Interval merge/subtract math
 │   ├── durationParser.js     # Free-text duration extraction
 │   ├── dateParse.js          # Free-text due-date phrase detection
-│   ├── recurrence.js         # Free-text recurrence phrase detection
+│   ├── recurrence.js         # Free-text recurrence phrase detection (task due-date recurrence, e.g. "every monday")
+│   ├── recurrenceExpansion.js # RRULE parsing + display-time expansion of recurring calendar events into visual instances
 │   ├── smartParse.js         # Composes the above + priority/dependency detection
 │   ├── dependencyUtils.js    # Cycle detection for dependsOn graphs
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
@@ -395,20 +431,25 @@ hidden, only reorganized.
   a **this week's progress** ring, and **Pinned links** — bookmark-bar-style
   shortcuts organized into folders, with a "Jump back in" row of recently
   opened links and an "Open all" button per folder.
-- **Calendar** — Month / Week / Day views. On desktop/tablet, drag a block
-  to a new day/time or drag its edge to resize; on mobile, tap a block to
-  edit its date/time/lock state instead, since native drag-and-drop doesn't
-  work on touch. Week/Day view clusters runs of short back-to-back tasks
-  into a single "N short tasks" chip (click to expand) and packs every
-  block/chip with a guaranteed non-overlapping layout, so a densely
-  scheduled day always stays legible no matter how many short tasks land
-  close together. Hold Ctrl and scroll (or pinch on a trackpad) over the
-  grid to zoom the time axis in/out. Month view shows a density overview
-  (chips per day, clustering short tasks, "+N more" on busy days) and
-  clicking a day drills into Day view for the full time grid, matching how
-  most calendar apps handle month → day navigation. Tap the lock icon on a
-  block to protect it from future rebalances. **Re-balance schedule**
-  re-runs the engine while preserving locked blocks.
+- **Calendar** — Month / Week / Day views. Both scheduled task blocks and
+  calendar events (Google-sourced or created in TaskFlow via **New event**)
+  support drag-to-move and drag-edge-to-resize, on desktop with the mouse
+  and on mobile via long-press-then-drag/resize by touch — any event you
+  create counts as busy time the scheduler avoids, there's no separate
+  "blocked time" concept anymore. Overlapping events/blocks render
+  side-by-side in columns on desktop; on mobile, where there's no room for
+  columns, they collapse into a single tappable "N events" chip instead.
+  Week/Day view clusters runs of short back-to-back tasks into a single "N
+  short tasks" chip (click to expand) and packs every block/chip with a
+  guaranteed non-overlapping layout, so a densely scheduled day always
+  stays legible no matter how many short tasks land close together. Hold
+  Ctrl and scroll (or pinch on a trackpad) over the grid to zoom the time
+  axis in/out. Month view shows a density overview (chips per day,
+  clustering short tasks, "+N more" on busy days) and clicking a day
+  drills into Day view for the full time grid, matching how most calendar
+  apps handle month → day navigation. Tap the lock icon on a block to
+  protect it from future rebalances. **Re-balance schedule** re-runs the
+  engine while preserving locked blocks.
 - **Tasks** — one page, three views via its own List/Board/Gantt switch, all
   scoped to one project at a time (or "All Tasks"). Switch projects from the
   sidebar, the project picker shown above List/Board, or the search bar;
@@ -485,7 +526,9 @@ Everything persists to `localStorage` (see `src/utils/persistence.js`):
 tasks, scheduled blocks, sections, projects, calendar events, scheduling
 rules, fixed routines, when the last Todoist import ran, and a "connected
 to Google Calendar" flag (the OAuth token itself is not persisted — a
-silent, popup-free refresh runs on load instead).
+silent, popup-free refresh runs on load instead). A recurring calendar
+event is stored once with its RRULE recurrence rule, not as one record
+per occurrence — occurrences are expanded for display only.
 
 In practice: nothing is ever re-fetched from Todoist automatically — your
 local tasks are always the source of truth, and a Todoist import only ever
@@ -652,14 +695,22 @@ restrictions, if using Google Calendar sync from that hostname.
 ## Known limitations
 
 - Cross-device sync (see [Account & cross-device
-  sync](#account--cross-device-sync)) pulls once per sign-in and pushes on
-  local change — it is not a live connection between two devices signed in
-  and open at the same time. A change made on device A while device B is
-  already open won't show up on device B until it re-signs-in, reloads, or
-  hits **Settings → Account & sync → Sync now**.
-- Google Calendar sync is one-directional push (app → Calendar) plus a
-  read-only pull of existing events; true two-way sync would need a
-  webhook/polling layer and a backend, out of scope for a client-only SPA.
+  sync](#account--cross-device-sync)) is live for tasks/blocks/boards/
+  settings — a change on device A shows up on an already-open device B
+  within moments via a background Firestore listener, no reload needed.
+  Google Calendar sync is the exception: it stays poll-based (see the next
+  bullet), so a change made directly in Google Calendar can still take a
+  few minutes to appear.
+- Google Calendar sync is two-way but poll-based, not truly real-time —
+  pulls happen on sign-in/connect, a ~5-minute background poll while
+  connected, and manual **Sync now**, not via a live webhook (no backend
+  exists for that in this client-only SPA), so a change made directly in
+  Google Calendar can take a few minutes to appear in TaskFlow. On
+  conflict (the same event changed in both places since the last sync),
+  **Google Calendar's version always wins** — a local edit that hasn't
+  been pushed yet can be silently overwritten by the next pull.
+- All-day Google Calendar events are not imported or synced — only timed
+  events are.
 - Todoist is a one-time import, not a sync — completing, editing, or
   deleting a Todoist-imported task in TaskFlow never writes back to
   Todoist. Re-importing later pulls in anything new/changed on Todoist's

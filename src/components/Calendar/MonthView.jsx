@@ -21,6 +21,7 @@
 import React, { useMemo } from 'react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, timeToMinutes, toISODate } from '../../utils/dateUtils';
+import { expandEventsForRange } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -47,12 +48,17 @@ export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, on
 
   const eventsByDay = useMemo(() => {
     const map = new Map();
-    for (const e of events) {
+    // Recurring events are stored once (the master's date/times describe
+    // DTSTART) and expanded into virtual per-day instances here, at display
+    // time only — never written back to state — so a repeating event shows
+    // up on every grid day it recurs without becoming N duplicate records.
+    const expanded = expandEventsForRange(events, days[0], days[days.length - 1]);
+    for (const e of expanded) {
       if (!map.has(e.date)) map.set(e.date, []);
       map.get(e.date).push(e);
     }
     return map;
-  }, [events]);
+  }, [events, days]);
 
   return (
     <div className="month-grid">

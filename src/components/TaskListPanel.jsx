@@ -18,7 +18,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Repeat, Wind, SquareCheck, Ban, Check, ExternalLink } from 'lucide-react';
+import { Plus, Repeat, Wind, SquareCheck, Ban, Check, ExternalLink, FolderKanban } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
@@ -50,13 +50,16 @@ const PAGE_VIEWS = [
   { key: 'gantt', label: 'Gantt' },
 ];
 
-export default function TaskListPanel({ view, onChangeView, activeProjectId, onChangeActiveProject }) {
+export default function TaskListPanel({ view, onChangeView, activeProjectId, onChangeActiveProject, onOpenManageProjects }) {
   const { tasks, labels, projects, completeTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filter, setFilter] = useState('active'); // active | completed | all | noDueDate
   const [isRenamingProject, setIsRenamingProject] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
+  const footerActions = onOpenManageProjects
+    ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
+    : undefined;
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
@@ -247,7 +250,13 @@ export default function TaskListPanel({ view, onChangeView, activeProjectId, onC
 
       {view !== 'gantt' && (
         <div className="taskpage-project-header">
-          <SelectMenu value={activeProjectId} options={projectSelectOptions} onChange={onChangeActiveProject} ariaLabel="Switch project" />
+          <SelectMenu
+            value={activeProjectId}
+            options={projectSelectOptions}
+            onChange={onChangeActiveProject}
+            ariaLabel="Switch project"
+            footerActions={footerActions}
+          />
           {isRenamingProject ? (
             <input
               autoFocus
@@ -317,14 +326,14 @@ export default function TaskListPanel({ view, onChangeView, activeProjectId, onC
             )}
             {taskGroups
               ? taskGroups.map((group) => (
-                  <div key={group.key} className="tasklist-section">
-                    <h3 className="tasklist-section-header">
-                      {group.label}
-                      <span className="tasklist-section-count">{group.tasks.length}</span>
-                    </h3>
-                    {group.tasks.map((task) => renderTaskRow(task))}
-                  </div>
-                ))
+                <div key={group.key} className="tasklist-section">
+                  <h3 className="tasklist-section-header">
+                    {group.label}
+                    <span className="tasklist-section-count">{group.tasks.length}</span>
+                  </h3>
+                  {group.tasks.map((task) => renderTaskRow(task))}
+                </div>
+              ))
               : visibleTasks.map((task) => renderTaskRow(task))}
           </div>
 

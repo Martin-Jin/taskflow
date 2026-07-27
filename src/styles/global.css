@@ -626,6 +626,58 @@ select:focus-visible,
 }
 
 /* ----------------------------------------------------------------------
+   ManageProjectsModal — reuses the .sidebar-project-* / .sidebar-add-
+   project-* rows/classes above (they're standalone, not scoped under
+   .sidebar) inside a modal shell for mobile, which has no persistent
+   sidebar to browse projects from.
+   ---------------------------------------------------------------------- */
+.modal-manage-projects {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-manage-projects .sidebar-project-search {
+  margin: 0 0 8px;
+}
+
+.modal-manage-projects .manage-projects-list {
+  max-height: 340px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+}
+
+/* ----------------------------------------------------------------------
+   Centered-popup fallback for useMenuPosition
+   (src/hooks/useMenuPosition.js) — shared by every menu that hook drives
+   (ProjectActionsMenu, SelectMenu, TaskDetailModal/SubtaskDetailModal's
+   "..." menu): when an anchored dropdown position wouldn't fit the
+   viewport, the menu renders centered with this dim backdrop behind it
+   instead of risking clipping off-screen. Reuses .modal-overlay's exact
+   dim color so this reads as the same "lightweight modal" language as the
+   rest of the app rather than inventing a new one. z-index sits above
+   .modal-overlay (160) so it isn't buried by whatever modal the menu's
+   trigger happens to live inside — the menu itself doesn't need a higher
+   z-index than the backdrop's here, since each menu's own dropdown class
+   already carries a z-index in this same 200 tier, and it's portaled as
+   the backdrop's next DOM sibling, so it paints on top regardless.
+   ---------------------------------------------------------------------- */
+.menu-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 15, 0.6);
+  z-index: 200;
+}
+
+.menu-popover-centered {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}
+
+/* ----------------------------------------------------------------------
    ProjectActionsMenu (src/components/Common/ProjectActionsMenu.jsx) —
    shared "⋯" popover for Rename/Pin/Delete, used by both the sidebar rows
    and the List/Board project header.

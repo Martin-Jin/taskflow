@@ -11,7 +11,7 @@
 import React, { createContext, useContext, useEffect } from 'react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useAuth } from './AuthContext';
-import { pullUserData, pushUserData } from '../services/firestoreSync';
+import { pullUserData, pushUserData, subscribeUserData } from '../services/firestoreSync';
 
 const ThemeContext = createContext(null);
 
@@ -32,6 +32,22 @@ export function ThemeProvider({ children }) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Live convergence, same idea as SchedulerContext's own listener on this
+  // same users/{uid} doc — picks up a theme change made on another
+  // signed-in device within moments instead of only on next sign-in/reload.
+  useEffect(() => {
+    if (!user) return undefined;
+    const unsubscribe = subscribeUserData(
+      user.uid,
+      (remote) => {
+        if ('theme' in remote) setTheme(remote.theme);
+      },
+      (err) => console.error('[ThemeContext] Live sync listener failed', err)
+    );
+    return () => unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 

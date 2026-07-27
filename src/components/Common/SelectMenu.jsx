@@ -11,61 +11,38 @@
  * sits inside .modal, which has `overflow-y: auto` — an in-flow popup
  * gets clipped at the modal's edge the moment the trigger is near the
  * bottom (exactly where AddTaskModal's footer places it). Flips above
- * the trigger when there isn't room below.
+ * the trigger when there isn't room below, and falls back to a centered
+ * popup (see useMenuPosition) if even that wouldn't fit the viewport.
  */
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
+import { useMenuPosition } from '../../hooks/useMenuPosition';
 
-export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel }) {
+export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, footerActions }) {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(() => Math.max(0, options.findIndex((o) => o.value === value)));
-  const [position, setPosition] = useState(null);
   const rootRef = useRef(null);
   const buttonRef = useRef(null);
-  const dropdownRef = useRef(null);
 
   const selected = options.find((o) => o.value === value);
 
-  useLayoutEffect(() => {
-    if (!isOpen) return undefined;
-
-    function reposition() {
-      const trigger = buttonRef.current;
-      const dropdown = dropdownRef.current;
-      if (!trigger) return;
-      const triggerRect = trigger.getBoundingClientRect();
-      const dropdownHeight = dropdown ? dropdown.offsetHeight : 220;
-      const spaceBelow = window.innerHeight - triggerRect.bottom;
-      const openAbove = spaceBelow < dropdownHeight && triggerRect.top > spaceBelow;
-      setPosition({
-        left: triggerRect.left,
-        width: triggerRect.width,
-        top: openAbove ? undefined : triggerRect.bottom + 4,
-        bottom: openAbove ? window.innerHeight - triggerRect.top + 4 : undefined,
-      });
-    }
-
-    reposition();
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    function handlePointerDown(e) {
-      if (rootRef.current?.contains(e.target)) return;
-      if (dropdownRef.current?.contains(e.target)) return;
-      setIsOpen(false);
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [isOpen]);
+  const { menuRef, mode, style } = useMenuPosition({
+    isOpen,
+    anchorRef: buttonRef,
+    onClose: () => setIsOpen(false),
+    computeAnchored: (anchorRect, menuRect) => {
+      const spaceBelow = window.innerHeight - anchorRect.bottom;
+      const openAbove = spaceBelow < menuRect.height && anchorRect.top > spaceBelow;
+      return {
+        left: anchorRect.left,
+        minWidth: anchorRect.width,
+        top: openAbove ? undefined : anchorRect.bottom + 4,
+        bottom: openAbove ? window.innerHeight - anchorRect.top + 4 : undefined,
+      };
+    },
+  });
 
   function open() {
     setHighlightedIndex(Math.max(0, options.findIndex((o) => o.value === value)));
@@ -76,6 +53,12 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
     onChange(optionValue);
     setIsOpen(false);
     buttonRef.current?.focus();
+  }
+
+  function runFooterAction(action) {
+    setIsOpen(false);
+    buttonRef.current?.focus();
+    action.onClick();
   }
 
   function handleKeyDown(e) {
@@ -123,31 +106,49 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
       </button>
 
       {isOpen &&
-        position &&
         createPortal(
-          <ul
-            ref={dropdownRef}
-            className="select-menu-dropdown"
-            role="listbox"
-            aria-label={ariaLabel}
-            style={{ position: 'fixed', left: position.left, minWidth: position.width, top: position.top, bottom: position.bottom }}
-          >
-            {options.map((o, i) => (
-              <li key={o.value} role="presentation">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={o.value === value}
-                  className={`select-menu-option ${i === highlightedIndex ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''}`}
-                  onMouseEnter={() => setHighlightedIndex(i)}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => choose(o.value)}
-                >
-                  {o.label}
-                </button>
-              </li>
-            ))}
-          </ul>,
+          <>
+            {mode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setIsOpen(false)} />}
+            <ul
+              ref={menuRef}
+              className={`select-menu-dropdown ${mode === 'centered' ? 'menu-popover-centered' : ''}`}
+              role="listbox"
+              aria-label={ariaLabel}
+              style={mode === 'anchored' ? style : undefined}
+            >
+              {options.map((o, i) => (
+                <li key={o.value} role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={o.value === value}
+                    className={`select-menu-option ${i === highlightedIndex ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''}`}
+                    onMouseEnter={() => setHighlightedIndex(i)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => choose(o.value)}
+                  >
+                    {o.label}
+                  </button>
+                </li>
+              ))}
+              {footerActions && footerActions.length > 0 && (
+                <li role="presentation" className="select-menu-footer-wrap">
+                  {footerActions.map((action) => (
+                    <button
+                      key={action.label}
+                      type="button"
+                      className="select-menu-footer-item"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => runFooterAction(action)}
+                    >
+                      {action.icon && <action.icon size={13} />}
+                      {action.label}
+                    </button>
+                  ))}
+                </li>
+              )}
+            </ul>
+          </>,
           document.body
         )}
     </div>

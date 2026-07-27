@@ -147,13 +147,13 @@ export default function CalendarPage() {
           </div>
           <button
             className="btn"
-            data-tour="block-time"
+            data-tour="new-event"
             onClick={() =>
               setCreatingEvent({ date: view === 'day' ? anchorDate : toISODate(new Date()), startTime: '', endTime: '' })
             }
           >
             <CalendarPlus size={14} />
-            Block time
+            New event
           </button>
           <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
             <Zap size={14} />

@@ -16,6 +16,7 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { GUIDED_TOUR_STEPS } from './guidedTourSteps';
 
 const SPOTLIGHT_PADDING = 6;
@@ -30,38 +31,64 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-/** Where to place the tooltip for a given target rect, flipping to the opposite side if it would overflow the viewport. */
+/**
+ * Where to place the tooltip for a given target rect, flipping to the
+ * opposite side if it would overflow the viewport. For 'top'/'bottom', the
+ * final clamp is bounded to whichever side of the rect the tooltip landed on
+ * (not the full viewport) — otherwise a rect taller than the available space
+ * (common on short mobile viewports, e.g. a settings card scrolled to
+ * center) would get clamped right back on top of the spotlighted element.
+ */
 function computeTooltipPosition(rect, placement, tooltipHeight) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
-  if (!rect) {
+  if (!rect || placement === 'center') {
     return { top: vh / 2 - tooltipHeight / 2, left: vw / 2 - TOOLTIP_WIDTH / 2 };
   }
 
   let top;
   let left;
+  let minTop = EDGE_MARGIN;
+  let maxTop = vh - tooltipHeight - EDGE_MARGIN;
+
   switch (placement) {
     case 'right':
       left = rect.right + GAP;
       top = rect.top + rect.height / 2 - tooltipHeight / 2;
       if (left + TOOLTIP_WIDTH > vw - EDGE_MARGIN) left = rect.left - TOOLTIP_WIDTH - GAP;
       break;
-    case 'top':
-      top = rect.top - tooltipHeight - GAP;
+    case 'top': {
+      const spaceAbove = rect.top - GAP - EDGE_MARGIN;
+      const spaceBelow = vh - rect.bottom - GAP - EDGE_MARGIN;
       left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-      if (top < EDGE_MARGIN) top = rect.bottom + GAP;
+      if (spaceAbove >= tooltipHeight || spaceAbove >= spaceBelow) {
+        top = rect.top - tooltipHeight - GAP;
+        maxTop = Math.max(minTop, rect.top - GAP - tooltipHeight);
+      } else {
+        top = rect.bottom + GAP;
+        minTop = Math.min(maxTop, rect.bottom + GAP);
+      }
       break;
+    }
     case 'bottom':
-    default:
-      top = rect.bottom + GAP;
+    default: {
+      const spaceBelow = vh - rect.bottom - GAP - EDGE_MARGIN;
+      const spaceAbove = rect.top - GAP - EDGE_MARGIN;
       left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-      if (top + tooltipHeight > vh - EDGE_MARGIN) top = rect.top - tooltipHeight - GAP;
+      if (spaceBelow >= tooltipHeight || spaceBelow >= spaceAbove) {
+        top = rect.bottom + GAP;
+        minTop = Math.min(maxTop, rect.bottom + GAP);
+      } else {
+        top = rect.top - tooltipHeight - GAP;
+        maxTop = Math.max(minTop, rect.top - GAP - tooltipHeight);
+      }
       break;
+    }
   }
 
   return {
-    top: clamp(top, EDGE_MARGIN, vh - tooltipHeight - EDGE_MARGIN),
+    top: clamp(top, minTop, maxTop),
     left: clamp(left, EDGE_MARGIN, vw - TOOLTIP_WIDTH - EDGE_MARGIN),
   };
 }
@@ -69,6 +96,7 @@ function computeTooltipPosition(rect, placement, tooltipHeight) {
 export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange, onFinish }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onFinish);
   const tooltipRef = useModalA11y(requestClose);
+  const isMobile = useIsMobile();
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState(null);
   // Corrected to the tooltip's real rendered height below, once it's known —
@@ -167,7 +195,12 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
     setStepIndex((i) => Math.max(0, i - 1));
   }
 
-  const tooltipPos = computeTooltipPosition(rect, step.placement, tooltipHeight);
+  // On mobile, nav steps target the bottom tab bar — anchoring the tooltip
+  // beside it (as on desktop's left sidebar) plants it right on top of the
+  // bar it's supposed to be explaining. Center it on screen instead; the
+  // spotlight still highlights the real tab.
+  const isBottomNavStep = isMobile && step.selector.startsWith('[data-tour="nav-');
+  const tooltipPos = computeTooltipPosition(rect, isBottomNavStep ? 'center' : step.placement, tooltipHeight);
 
   return (
     <div className={`guided-tour-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
