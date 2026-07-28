@@ -35,7 +35,7 @@ import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject } f
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 const FILTER_TABS = [
-  { key: 'active', label: 'Active' },
+  { key: 'active', label: 'Scheduled' },
   { key: 'completed', label: 'Completed' },
   { key: 'all', label: 'All' },
   { key: 'noDueDate', label: 'No due date' },
@@ -50,7 +50,14 @@ const PAGE_VIEWS = [
   { key: 'gantt', label: 'Gantt' },
 ];
 
-export default function TaskListPanel({ view, onChangeView, activeProjectId, onChangeActiveProject, onOpenManageProjects }) {
+export default function TaskListPanel({
+  view,
+  onChangeView,
+  activeProjectId,
+  onChangeActiveProject,
+  onOpenManageProjects,
+  showManageProjectsButton = false,
+}) {
   const { tasks, labels, projects, completeTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -116,22 +123,28 @@ export default function TaskListPanel({ view, onChangeView, activeProjectId, onC
     }
   }
 
-  // Grouped into a "Today" section so what's due today stands out instead
-  // of being buried in one priority-sorted list. Only meaningful for the
-  // dated tabs — "Completed" and "No due date" render as a flat list.
+  // Grouped into Overdue/Today/Upcoming sections so what needs attention
+  // stands out instead of being buried in one priority-sorted list. Only
+  // meaningful for the dated tabs — "Completed" and "No due date" render
+  // as a flat list. Overdue is its own bucket (dueDate strictly before
+  // today) rather than being silently lumped into "Upcoming" — it's
+  // surfaced first since it's the most urgent thing in the list.
   const showGroups = filter === 'active' || filter === 'all';
   const taskGroups = useMemo(() => {
     if (!showGroups) return null;
     const today = toISODate(new Date());
+    const overdue = [];
     const todayTasks = [];
     const upcoming = [];
     const undated = [];
     for (const task of visibleTasks) {
       if (!task.dueDate) undated.push(task);
+      else if (task.dueDate < today) overdue.push(task);
       else if (task.dueDate === today) todayTasks.push(task);
       else upcoming.push(task);
     }
     return [
+      { key: 'overdue', label: 'Overdue', tasks: overdue },
       { key: 'today', label: 'Today', tasks: todayTasks },
       { key: 'upcoming', label: 'Upcoming', tasks: upcoming },
       // Only "All" ever surfaces undated tasks here — "Active" already
@@ -257,6 +270,12 @@ export default function TaskListPanel({ view, onChangeView, activeProjectId, onC
             ariaLabel="Switch project"
             footerActions={footerActions}
           />
+          {showManageProjectsButton && onOpenManageProjects && (
+            <button type="button" className="taskpage-project-manage-btn btn" onClick={() => onOpenManageProjects()}>
+              <FolderKanban size={15} />
+              Manage projects
+            </button>
+          )}
           {isRenamingProject ? (
             <input
               autoFocus
@@ -327,7 +346,7 @@ export default function TaskListPanel({ view, onChangeView, activeProjectId, onC
             {taskGroups
               ? taskGroups.map((group) => (
                 <div key={group.key} className="tasklist-section">
-                  <h3 className="tasklist-section-header">
+                  <h3 className={`tasklist-section-header ${group.key === 'overdue' ? 'is-overdue' : ''}`}>
                     {group.label}
                     <span className="tasklist-section-count">{group.tasks.length}</span>
                   </h3>

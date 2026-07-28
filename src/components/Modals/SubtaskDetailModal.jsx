@@ -32,7 +32,7 @@ export default function SubtaskDetailModal({ taskId, subtask, onClose }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const notesRef = useRef(null);
-  useAutosizeTextarea(notesRef, notes);
+  useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
 
   // Same portaled/measured "..." menu as TaskDetailModal's, forced centered
   // on mobile rather than anchored — see useMenuPosition and its comment

@@ -3,6 +3,11 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  /* Flex items default to min-width: auto, which refuses to shrink below
+     their content's natural width — without this, .board-columns' wide
+     row of cards pushes .board-page (and its ancestors) wider instead of
+     ever triggering .board-columns' own horizontal scrollbar below. */
+  min-width: 0;
 }
 
 .board-toolbar {
@@ -13,18 +18,20 @@
   flex-wrap: wrap;
 }
 
-.board-columns {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
+  .board-columns {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Deliberately visible here (unlike other scrollbar-width:none spots in
+      the app) — Board's columns are the one place a desktop mouse user has
+      no intuitive gesture to discover "there's more to the right" without
+      a scrollbar to grab. Picks up the app-wide themed thumb/track already
+      defined in global.css's ::-webkit-scrollbar rules. */
+  }
 
-.board-columns::-webkit-scrollbar {
-  display: none;
-}
 
 /* Deliberately NOT a boxed surface — a column is a header label plus a
    plain stack of cards sitting on the page background, matching Todoist's
@@ -195,7 +202,7 @@
   animation: card-in var(--duration-base) var(--ease-decelerate);
 }
 
-.board-column-body > .board-card:last-child {
+.board-column-body>.board-card:last-child {
   border-bottom: none;
 }
 
@@ -278,24 +285,53 @@
 }
 
 @media (max-width: 639px) {
-  .board-toolbar > * {
+  .board-toolbar>* {
     flex: 1 1 100%;
   }
 
+  /* Stack columns vertically on mobile instead of horizontal swipe-scroll
+     — each column gets its own full-width section, scrolled the same way
+     as the rest of the page, rather than needing a horizontal gesture. */
   .board-columns {
-    scroll-snap-type: x mandatory;
-    padding: 0 6px;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: visible;
   }
 
   .board-column {
-    flex: 0 0 88vw;
-    scroll-snap-align: center;
+    flex: none;
+    width: 100%;
+    max-height: none;
     border-right: none;
+    padding-right: 0;
+    margin-right: 0;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+  }
+
+  .board-column-body {
+    /* Column bodies were capped by the desktop board's shared height
+       (flex:1 inside a fixed-height row) — on mobile each column is its
+       own full-height section instead, so let it size to its cards. */
+    overflow-y: visible;
+    max-height: none;
   }
 
   .board-add-column {
-    flex: 0 0 88vw;
-    scroll-snap-align: center;
+    flex: none;
+    width: 100%;
+  }
+
+  /* The board-wide "+ Add task" button (top-right) sits in .board-toolbar,
+     which the rule above stretches every child to flex: 1 1 100% — full
+     width is fine for the search input, but it squashed this button's
+     horizontal padding/label. Give it its own sizing so it reads as a
+     normal button instead of a stretched, squished bar. */
+  .board-toolbar .add-task-btn {
+    flex: none;
+    width: auto;
+    align-self: flex-end;
   }
 
   .board-flat-list-footer {

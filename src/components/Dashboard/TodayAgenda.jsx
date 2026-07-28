@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, AlertCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime } from '../../utils/dateUtils';
 import { isBlockMissed } from '../../utils/missedTasks';
+import TaskDetailModal from '../Modals/TaskDetailModal';
 
 export default function TodayAgenda() {
   const { tasks, blocks, events } = useScheduler();
@@ -11,6 +12,10 @@ export default function TodayAgenda() {
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const listRef = useRef(null);
   const currentItemRef = useRef(null);
+  // Only block-backed items (real tasks) are openable — calendar events have
+  // no task to edit, so their rows stay non-interactive (see the render
+  // below, which only wires onClick for items carrying a taskId).
+  const [editingTaskId, setEditingTaskId] = useState(null);
 
   const items = useMemo(() => {
     const now = new Date();
@@ -22,6 +27,7 @@ export default function TodayAgenda() {
         const task = taskById.get(b.taskId);
         return {
           id: b.id,
+          taskId: task?.id || null,
           startTime: b.startTime,
           endTime: b.endTime,
           title: task?.title || 'Untitled task',
@@ -65,11 +71,25 @@ export default function TodayAgenda() {
       <ul className="today-agenda-list" ref={listRef}>
         {items.map((item) => {
           const isCurrent = currentId === item.id;
+          const isOpenable = !!item.taskId;
           return (
             <li
               key={item.id}
               ref={isCurrent ? currentItemRef : null}
-              className={`today-agenda-item ${isCurrent ? 'is-current' : ''} ${item.isMissed ? 'is-missed' : ''}`}
+              className={`today-agenda-item ${isCurrent ? 'is-current' : ''} ${item.isMissed ? 'is-missed' : ''} ${isOpenable ? 'is-openable' : ''}`}
+              role={isOpenable ? 'button' : undefined}
+              tabIndex={isOpenable ? 0 : undefined}
+              onClick={isOpenable ? () => setEditingTaskId(item.taskId) : undefined}
+              onKeyDown={
+                isOpenable
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setEditingTaskId(item.taskId);
+                      }
+                    }
+                  : undefined
+              }
             >
               {isCurrent && <span className="today-agenda-pulse" />}
               {item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}
@@ -83,6 +103,7 @@ export default function TodayAgenda() {
                   rel="noopener noreferrer"
                   className="today-agenda-title task-title-link"
                   title={`Open link: ${item.link}`}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {item.title}
                   <ExternalLink size={11} aria-hidden="true" />
@@ -95,6 +116,10 @@ export default function TodayAgenda() {
           );
         })}
       </ul>
+      {editingTaskId && (() => {
+        const task = tasks.find((t) => t.id === editingTaskId);
+        return task ? <TaskDetailModal task={task} onClose={() => setEditingTaskId(null)} /> : null;
+      })()}
     </div>
   );
 }

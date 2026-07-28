@@ -213,6 +213,24 @@ export function parseRecurrenceRule(str) {
 
   const unitAlt = unitAliasPattern();
 
+  // "every N week(s) on Mon, Wed" — the exact shape buildRecurrenceString
+  // produces above for a weekday-specific rule. Checked first so a saved/
+  // re-opened task (or one edited again after smart-parse) can round-trip
+  // its own `days` back out instead of losing them to the generic
+  // "every N week(s)" branch further down.
+  const onDaysMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(?:(\\d+)\\s*)?weeks?\\s+on\\s+(.+)$`));
+  if (onDaysMatch) {
+    const dayLabelsLower = WEEKDAY_LABELS.map((l) => l.toLowerCase());
+    const days = onDaysMatch[2]
+      .split(',')
+      .map((d) => dayLabelsLower.indexOf(d.trim().toLowerCase()))
+      .filter((i) => i !== -1)
+      .sort((a, b) => a - b);
+    if (days.length > 0) {
+      return { unit: 'week', count: Math.max(1, Number(onDaysMatch[1]) || 1), days };
+    }
+  }
+
   // "every N <unit>(s)" — the general numeric form. Allows "every!" (Todoist's
   // non-shifting marker) and "ev" as an abbreviation for "every".
   const numericMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(\\d+)\\s*(${unitAlt})\\b`));
@@ -357,8 +375,20 @@ export const RECURRENCE_UNITS = [
   { value: 'year', label: 'Year(s)' },
 ];
 
-/** Build a normalized "every N <unit>(s)" string from a count+unit pair — the inverse of parseRecurrenceRule. */
-export function buildRecurrenceString(count, unit) {
+/**
+ * Build a normalized recurrence string from a count+unit pair — the inverse
+ * of parseRecurrenceRule. When `days` (weekday indices, 0=Sun..6=Sat) is
+ * given for a weekly rule, produces the same "every N week(s) on Mon, Wed"
+ * shape smartParse.js's chip label already uses, so a weekday-specific
+ * recurrence detected via smart-parse doesn't collapse into a generic
+ * "every N week(s)" once saved — see parseRecurrenceRule's matching branch
+ * below for the round-trip back into { unit, count, days }.
+ */
+export function buildRecurrenceString(count, unit, days) {
   const n = Math.max(1, Number(count) || 1);
+  if (unit === 'week' && Array.isArray(days) && days.length > 0) {
+    const dayLabels = days.map((d) => WEEKDAY_LABELS[d]).join(', ');
+    return `every ${n === 1 ? '' : `${n} `}week${n === 1 ? '' : 's'} on ${dayLabels}`;
+  }
   return `every ${n} ${unit}${n === 1 ? '' : 's'}`;
 }

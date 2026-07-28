@@ -347,6 +347,11 @@ select:focus-visible,
   grid-area: main;
   overflow: auto;
   padding: 20px;
+  /* Grid tracks default to min-width: auto — same trap as flexbox — so a
+     wide-content descendant (Board's row of columns) can force this 1fr
+     track wider instead of ever triggering its own scrollbar. Without
+     this, the overflow bubbles all the way up past .app-shell. */
+  min-width: 0;
 }
 
 .tab-panel {
@@ -361,6 +366,10 @@ select:focus-visible,
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* Same min-width:auto flex-item trap as .main-content above — needed at
+     every level between the grid and the actual scroll container
+     (.board-columns) or the overflow keeps propagating upward. */
+  min-width: 0;
 }
 
 @keyframes tab-fade-in {

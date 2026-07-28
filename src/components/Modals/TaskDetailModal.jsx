@@ -73,7 +73,7 @@ import {
 import { useScheduler } from '../../context/SchedulerContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { parseRecurrenceRule, RECURRENCE_UNITS, buildRecurrenceString } from '../../utils/recurrence';
+import { parseRecurrenceRule, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { getIneligibleDependencyIds } from '../../utils/dependencyUtils';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
@@ -86,10 +86,11 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import DependencyPicker from '../Common/DependencyPicker';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
-import Linkified from '../Common/Linkified';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
+import { faviconUrl } from '../Dashboard/pinnedLinksModel';
 import SubtaskDetailModal from './SubtaskDetailModal';
+import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
 
 export default function TaskDetailModal({ task, onClose }) {
   const {
@@ -111,7 +112,14 @@ export default function TaskDetailModal({ task, onClose }) {
 
   const [title, setTitle] = useState(task.title);
   const [link, setLink] = useState(task.link || '');
-  const [notes, setNotes] = useState(task.notes || '');
+  const [notes, setNotes] = useState(() => {
+    const raw = task.notes || '';
+    let next = raw;
+    findLinkPhrases(raw).forEach((match) => {
+      next = stripMatchedText(next, match.matchedText);
+    });
+    return next;
+  });
   const [estimatedHours, setEstimatedHours] = useState(task.estimatedHours);
   const [priority, setPriority] = useState(task.priority);
   const [dueDate, setDueDate] = useState(task.dueDate || '');
@@ -119,6 +127,11 @@ export default function TaskDetailModal({ task, onClose }) {
   const initialRule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
   const [recurrenceCount, setRecurrenceCount] = useState(initialRule.count);
   const [recurrenceUnit, setRecurrenceUnit] = useState(initialRule.unit);
+  // Weekday indices (0=Sun..6=Sat) for a day-specific rule ("every sat and
+  // sun") — null for a plain "every N <unit>" rule. Carried alongside
+  // count/unit so a smart-parsed or previously-imported weekday-specific
+  // recurrence isn't silently collapsed to a generic cadence on save.
+  const [recurrenceDays, setRecurrenceDays] = useState(initialRule.days || null);
   const [projectId, setProjectId] = useState(task.projectId || '');
   const [sectionId, setSectionId] = useState(task.sectionId || '');
   // Separate from the projectId/sectionId untouched-comparisons below: a
@@ -136,9 +149,11 @@ export default function TaskDetailModal({ task, onClose }) {
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [editingSubtask, setEditingSubtask] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notesLinkMatches, setNotesLinkMatches] = useState(() => findLinkPhrases(task.notes || ''));
+  const [isNotesFocused, setIsNotesFocused] = useState(false);
 
   const notesRef = useRef(null);
-  useAutosizeTextarea(notesRef, notes);
+  useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
 
   // On mobile this menu always opens as a centered popup rather than
   // attempting to anchor to the trigger — a corner-anchored menu this wide
@@ -178,13 +193,21 @@ export default function TaskDetailModal({ task, onClose }) {
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
-      notes: task.notes || '',
+      notes: (() => {
+        const raw = task.notes || '';
+        let next = raw;
+        findLinkPhrases(raw).forEach((match) => {
+          next = stripMatchedText(next, match.matchedText);
+        });
+        return next;
+      })(),
       estimatedHours: task.estimatedHours,
       priority: task.priority,
       dueDate: task.dueDate || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: initialRule.count,
       recurrenceUnit: initialRule.unit,
+      recurrenceDays: initialRule.days || null,
       projectId: task.projectId || '',
       sectionId: task.sectionId || '',
       dependsOn: task.dependsOn || [],
@@ -211,7 +234,14 @@ export default function TaskDetailModal({ task, onClose }) {
   useEffect(() => {
     setTitle(task.title);
     setLink(task.link || '');
-    setNotes(task.notes || '');
+    const rawNotes = task.notes || '';
+    let nextNotes = rawNotes;
+    findLinkPhrases(rawNotes).forEach((match) => {
+      nextNotes = stripMatchedText(nextNotes, match.matchedText);
+    });
+    setNotes(nextNotes);
+    setNotesLinkMatches(findLinkPhrases(rawNotes));
+    setIsNotesFocused(false);
     setEstimatedHours(task.estimatedHours);
     setPriority(task.priority);
     setDueDate(task.dueDate || '');
@@ -219,6 +249,7 @@ export default function TaskDetailModal({ task, onClose }) {
     const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
     setRecurrenceCount(rule.count);
     setRecurrenceUnit(rule.unit);
+    setRecurrenceDays(rule.days || null);
     setProjectId(task.projectId || '');
     setSectionId(task.sectionId || '');
     setHasEditedSection(false);
@@ -231,13 +262,21 @@ export default function TaskDetailModal({ task, onClose }) {
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
-      notes: task.notes || '',
+      notes: (() => {
+        const raw = task.notes || '';
+        let next = raw;
+        findLinkPhrases(raw).forEach((match) => {
+          next = stripMatchedText(next, match.matchedText);
+        });
+        return next;
+      })(),
       estimatedHours: task.estimatedHours,
       priority: task.priority,
       dueDate: task.dueDate || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: rule.count,
       recurrenceUnit: rule.unit,
+      recurrenceDays: rule.days || null,
       projectId: task.projectId || '',
       sectionId: task.sectionId || '',
       dependsOn: task.dependsOn || [],
@@ -290,9 +329,16 @@ export default function TaskDetailModal({ task, onClose }) {
           setIsRecurring(true);
           setRecurrenceCount(match.rule.count);
           setRecurrenceUnit(match.rule.unit);
+          setRecurrenceDays(match.rule.days || null);
           if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
         },
-        revert: () => setIsRecurring(!!task.isRecurring),
+        revert: () => {
+          setIsRecurring(!!task.isRecurring);
+          const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
+          setRecurrenceCount(rule.count);
+          setRecurrenceUnit(rule.unit);
+          setRecurrenceDays(rule.days || null);
+        },
       },
       priority: {
         isUntouched: () => priority === task.priority,
@@ -373,16 +419,30 @@ export default function TaskDetailModal({ task, onClose }) {
   // Drives the inline Save/Cancel row rendered under the description
   // (Todoist-style, replacing a permanent footer) — only worth showing once
   // something in the form actually differs from the last-saved snapshot.
-  const isDirty =
+  // Split into "main content" (title/link/notes — the free-text area that
+  // genuinely benefits from an explicit Save/Cancel step) vs "sidebar"
+  // (every other field — Project, Date, Priority, Labels, Estimated hours,
+  // Repeat, and the "..." menu's Depends on/Lock/Enforce/Unattended). Only
+  // mainDirty gates the visible Save/Cancel row below; sidebarDirty instead
+  // drives a debounced auto-save effect (see below) since those fields
+  // don't need explicit confirmation — a stray click into a select/date
+  // picker shouldn't need a follow-up "Save" click to actually stick.
+  const mainDirty =
     title !== initialSnapshotRef.current.title ||
     link !== initialSnapshotRef.current.link ||
-    notes !== initialSnapshotRef.current.notes ||
+    notes !== initialSnapshotRef.current.notes;
+  // Note: a pending "@label" chip doesn't need its own dirty clause —
+  // detecting one requires the title to contain that "@tag" text, which the
+  // `title !== ...` check above already catches (labels aren't stripped out
+  // of `title` until buildFinalTitle runs at save time).
+  const sidebarDirty =
     String(estimatedHours) !== String(initialSnapshotRef.current.estimatedHours) ||
     priority !== initialSnapshotRef.current.priority ||
     dueDate !== initialSnapshotRef.current.dueDate ||
     isRecurring !== initialSnapshotRef.current.isRecurring ||
     recurrenceCount !== initialSnapshotRef.current.recurrenceCount ||
     recurrenceUnit !== initialSnapshotRef.current.recurrenceUnit ||
+    JSON.stringify(recurrenceDays || []) !== JSON.stringify(initialSnapshotRef.current.recurrenceDays || []) ||
     projectId !== initialSnapshotRef.current.projectId ||
     sectionId !== initialSnapshotRef.current.sectionId ||
     isPassive !== initialSnapshotRef.current.isPassive ||
@@ -392,19 +452,58 @@ export default function TaskDetailModal({ task, onClose }) {
     dependsOn.some((id) => !initialSnapshotRef.current.dependsOn.includes(id)) ||
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
-  // Note: a pending "@label" chip doesn't need its own isDirty clause —
-  // detecting one requires the title to contain that "@tag" text, which the
-  // `title !== ...` check above already catches (labels aren't stripped out
-  // of `title` until buildFinalTitle runs at save time).
+  const isDirty = mainDirty || sidebarDirty;
+
+  function normalizeNotesText(text) {
+    let next = text || '';
+    findLinkPhrases(next).forEach((match) => {
+      next = stripMatchedText(next, match.matchedText);
+    });
+    return next;
+  }
+
+  function handleNotesChange(value) {
+    setNotes(value);
+    setNotesLinkMatches(findLinkPhrases(value));
+  }
 
   function handleNotesBlur() {
+    const nextNotes = normalizeNotesText(notes);
+    setNotes(nextNotes);
+    setNotesLinkMatches(findLinkPhrases(notes));
     // Convenience: if the user typed a duration hint into the notes (e.g.
     // "30 minutes" or "1.5 hours") and hasn't touched the hours field
     // manually since opening, offer the parsed value.
-    const parsed = parseDurationHours(notes);
+    const parsed = parseDurationHours(nextNotes);
     if (parsed && parsed !== estimatedHours && estimatedHours === task.estimatedHours) {
       setEstimatedHours(parsed);
     }
+  }
+
+  function dismissNotesLink(match) {
+    const nextNotes = stripMatchedText(notes, match.matchedText);
+    setNotes(nextNotes);
+    setNotesLinkMatches((prev) => prev.filter((item) => item.matchedText !== match.matchedText));
+  }
+
+  function renderHighlightedNotesText(text) {
+    if (!isNotesFocused || !text) return null;
+    const matches = notesLinkMatches.filter((match) => typeof match.index === 'number');
+    if (!matches.length) return text;
+
+    const parts = [];
+    let cursor = 0;
+    matches.forEach((match, index) => {
+      if (match.index > cursor) parts.push(text.slice(cursor, match.index));
+      parts.push(
+        <mark key={`${match.matchedText}-${index}`} className="smart-notes-mark">
+          {match.matchedText}
+        </mark>
+      );
+      cursor = match.index + match.matchedText.length;
+    });
+    if (cursor < text.length) parts.push(text.slice(cursor));
+    return parts;
   }
 
   function handleAddSubtask() {
@@ -418,12 +517,20 @@ export default function TaskDetailModal({ task, onClose }) {
     setIsAddingSubtask(false);
   }
 
-  function handleSave() {
+  /**
+   * Builds the update payload from current form state and pushes it via
+   * updateTask, then refreshes the snapshot so isDirty recomputes back to
+   * false against these just-saved values. Shared by the explicit Save
+   * button (which also closes the modal) and the sidebar auto-save effect
+   * below (which doesn't).
+   */
+  function commitChanges() {
     const section = sections.find((s) => s.id === sectionId);
     const nextDueDate = dueDate || null;
     const nextIsRecurring = isRecurring && !!nextDueDate;
-    const nextRecurrenceString = isRecurring && nextDueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit) : null;
-
+    const nextRecurrenceString = isRecurring && nextDueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit, recurrenceDays) : null;
+    const nextNotes = normalizeNotesText(notes);
+ 
     // Resolve any still-pending "@tag" mentions to real Label ids now,
     // merging with whatever was already picked via the sidebar's LabelPicker.
     const pendingLabelNames = (smartDetected.labels || []).map((m) => m.name);
@@ -439,13 +546,15 @@ export default function TaskDetailModal({ task, onClose }) {
       Math.max(0, task.remainingHours + (nextEstimatedHours - task.estimatedHours))
     );
 
+    const nextTitle = buildFinalTitle(title, link ? linkLabel(link) : task.title);
+
     updateTask(task.id, {
       // If the title was nothing but a smart-parsed link, stripping it
       // leaves an empty string — fall back to the link's hostname rather
       // than a blank/raw-URL title.
-      title: buildFinalTitle(title, link ? linkLabel(link) : task.title),
+      title: nextTitle,
       link: link || null,
-      notes,
+      notes: nextNotes,
       estimatedHours: nextEstimatedHours,
       remainingHours: nextRemainingHours,
       priority,
@@ -463,20 +572,74 @@ export default function TaskDetailModal({ task, onClose }) {
       enforceDueDate: enforceDueDate && !!nextDueDate,
       labelIds: finalLabelIds,
     });
+
+    initialSnapshotRef.current = {
+      title: nextTitle,
+      link: link || '',
+      notes: nextNotes,
+      estimatedHours: nextEstimatedHours,
+      priority,
+      dueDate: nextDueDate || '',
+      isRecurring: nextIsRecurring,
+      recurrenceCount,
+      recurrenceUnit,
+      recurrenceDays,
+      projectId: projectId || '',
+      sectionId: sectionId || '',
+      dependsOn,
+      isPassive,
+      earliestDate: earliestDate || '',
+      enforceDueDate: enforceDueDate && !!nextDueDate,
+      labelIds: finalLabelIds,
+    };
+  }
+
+  function handleSave() {
+    commitChanges();
     requestClose();
   }
+
+  // Sidebar fields auto-save (debounced) without needing the explicit
+  // Save/Cancel row — that row is reserved for mainDirty (title/notes)
+  // below. Skips entirely while mainDirty is also true, since in that case
+  // Save/Cancel is already visible and will commit both together.
+  useEffect(() => {
+    if (mainDirty || !sidebarDirty) return undefined;
+    const handle = setTimeout(() => commitChanges(), 500);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    mainDirty,
+    sidebarDirty,
+    estimatedHours,
+    priority,
+    dueDate,
+    isRecurring,
+    recurrenceCount,
+    recurrenceUnit,
+    recurrenceDays,
+    projectId,
+    sectionId,
+    isPassive,
+    earliestDate,
+    enforceDueDate,
+    dependsOn,
+    labelIds,
+  ]);
 
   function handleCancel() {
     const snap = initialSnapshotRef.current;
     setTitle(snap.title);
     setLink(snap.link);
     setNotes(snap.notes);
+    setNotesLinkMatches(findLinkPhrases(task.notes || ''));
     setEstimatedHours(snap.estimatedHours);
     setPriority(snap.priority);
     setDueDate(snap.dueDate);
     setIsRecurring(snap.isRecurring);
     setRecurrenceCount(snap.recurrenceCount);
     setRecurrenceUnit(snap.recurrenceUnit);
+    setRecurrenceDays(snap.recurrenceDays || null);
     setProjectId(snap.projectId);
     setSectionId(snap.sectionId);
     setHasEditedSection(false);
@@ -677,22 +840,56 @@ export default function TaskDetailModal({ task, onClose }) {
                     <label htmlFor="task-detail-notes" className="sr-only">
                       Description
                     </label>
-                    <textarea
-                      id="task-detail-notes"
-                      className="detail-notes-textarea"
-                      ref={notesRef}
-                      rows={1}
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      onBlur={handleNotesBlur}
-                      placeholder="Description"
-                    />
-                    <Linkified text={notes} className="notes-link-preview" />
+                    <div className="smart-notes-wrap">
+                      {isNotesFocused && (
+                        <div className="smart-notes-backdrop" aria-hidden="true">
+                          {renderHighlightedNotesText(notes)}
+                        </div>
+                      )}
+                      <textarea
+                        id="task-detail-notes"
+                        className="detail-notes-textarea"
+                        ref={notesRef}
+                        rows={1}
+                        value={notes}
+                        onChange={(e) => handleNotesChange(e.target.value)}
+                        onFocus={() => setIsNotesFocused(true)}
+                        onBlur={() => {
+                          setIsNotesFocused(false);
+                          handleNotesBlur();
+                        }}
+                        placeholder="Description"
+                      />
+                    </div>
+                    {notesLinkMatches.length > 0 && (
+                      <div className="notes-link-preview">
+                        {notesLinkMatches.map((match) => {
+                          const favicon = faviconUrl(match.url);
+                          return (
+                            <div key={`${match.url}-${match.index}`} className="notes-link-pill">
+                              {favicon ? <img src={favicon} alt="" className="notes-link-pill-favicon" /> : <LinkIcon size={12} aria-hidden="true" />}
+                              <a href={match.url} target="_blank" rel="noopener noreferrer" className="notes-link-pill-link">
+                                {match.url}
+                              </a>
+                              <button
+                                type="button"
+                                className="chip-dependency-remove"
+                                onClick={() => dismissNotesLink(match)}
+                                title="Remove link suggestion"
+                                aria-label="Remove link suggestion"
+                              >
+                                <X size={11} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {isDirty && (
+              {mainDirty && (
                 <div className="detail-save-row">
                   <button type="button" className="btn" onClick={handleCancel}>
                     Cancel
@@ -732,11 +929,12 @@ export default function TaskDetailModal({ task, onClose }) {
                       />
                       <button
                         type="button"
-                        className={`subtask-row-title ${s.isCompleted ? 'completed' : ''}`}
+                        className={`subtask-row-title-wrap ${s.isCompleted ? 'completed' : ''}`}
                         onClick={() => setEditingSubtask(s)}
                         title="Open sub-task"
                       >
-                        {s.title}
+                        <span className="subtask-row-title">{s.title}</span>
+                        {s.notes && <span className="subtask-row-notes">{s.notes}</span>}
                       </button>
                       <button
                         className="btn btn-icon subtask-row-remove"
@@ -845,7 +1043,11 @@ export default function TaskDetailModal({ task, onClose }) {
               <DetailField icon={Repeat} label="Repeat">
                 {isRecurring ? (
                   <div className="detail-recurrence-toggle detail-recurrence-toggle-active">
-                    {`Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`}
+                    {recurrenceDays && recurrenceDays.length > 0
+                      ? `Every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
+                          .map((d) => WEEKDAY_LABELS[d])
+                          .join(', ')}`
+                      : `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`}
                   </div>
                 ) : (
                   <button
@@ -864,10 +1066,20 @@ export default function TaskDetailModal({ task, onClose }) {
                       min="1"
                       step="1"
                       value={recurrenceCount}
-                      onChange={(e) => setRecurrenceCount(Math.max(1, Number(e.target.value) || 1))}
+                      onChange={(e) => {
+                        setRecurrenceCount(Math.max(1, Number(e.target.value) || 1));
+                        setRecurrenceDays(null);
+                      }}
                       style={{ width: 56 }}
                     />
-                    <select value={recurrenceUnit} onChange={(e) => setRecurrenceUnit(e.target.value)} style={{ flex: 1 }}>
+                    <select
+                      value={recurrenceUnit}
+                      onChange={(e) => {
+                        setRecurrenceUnit(e.target.value);
+                        setRecurrenceDays(null);
+                      }}
+                      style={{ flex: 1 }}
+                    >
                       {RECURRENCE_UNITS.map((u) => (
                         <option key={u.value} value={u.value}>
                           {u.label}

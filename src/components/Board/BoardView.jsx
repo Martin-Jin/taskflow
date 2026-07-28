@@ -110,7 +110,7 @@ export default function BoardView({ projectId, onProjectChange }) {
   const columns = useMemo(() => {
     const cols = [{ id: null, name: 'No Section', isNoSection: true }, ...projectSections];
 
-    return cols.map((col) => {
+    const withTasks = cols.map((col) => {
       // Every non-completed task in this project/section shows up here,
       // regardless of due date — Boards mirrors Todoist's board, which has
       // no concept of "too far out to show" or "not schedulable."
@@ -120,6 +120,11 @@ export default function BoardView({ projectId, onProjectChange }) {
         .filter((t) => taskMatchesQuery(t, searchQuery, labels));
       return { ...col, tasks: columnTasks };
     });
+
+    // Only show the synthetic "No Section" column when there's actually an
+    // unsectioned task to put in it — a project whose tasks are all sorted
+    // into real Sections shouldn't show a permanently-empty leading column.
+    return withTasks.filter((col) => !col.isNoSection || col.tasks.length > 0);
   }, [tasks, projectSections, selectedProjectId, searchQuery, labels]);
 
   // Flat mode has exactly one synthetic "No Section" column (there are no

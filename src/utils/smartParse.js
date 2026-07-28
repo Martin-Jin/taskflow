@@ -51,10 +51,26 @@ function removeMatch(text, matchedText) {
 export { removeMatch as stripMatchedText };
 
 // Reuses utils/linkify.js's URL pattern (used to render links inside notes
-// text) so the two can't silently drift apart — built as its own non-global
-// instance since a detector only ever needs the first match, and sharing
-// the `g`-flagged regex would require resetting `.lastIndex` between calls.
+// text) so the two can't silently drift apart. The non-global regex keeps the
+// single-match title detector simple; the global variant is used for the
+// notes-field multi-link detector below.
 const LINK_REGEX = new RegExp(URL_PATTERN_SOURCE, 'i');
+const LINK_REGEX_GLOBAL = new RegExp(URL_PATTERN_SOURCE, 'gi');
+
+/** Return every URL-like phrase found in text, preserving their indexes. */
+export function findLinkPhrases(text) {
+  if (!text || !text.trim()) return [];
+  const matches = [];
+  LINK_REGEX_GLOBAL.lastIndex = 0;
+  let m;
+  while ((m = LINK_REGEX_GLOBAL.exec(text)) !== null) {
+    const matchedText = m[0];
+    const url = needsScheme(matchedText) ? `https://${matchedText}` : matchedText;
+    matches.push({ url, matchedText, index: m.index });
+  }
+  LINK_REGEX_GLOBAL.lastIndex = 0;
+  return matches;
+}
 
 /** A plain URL typed into the title — becomes the task's `link` field, stripped out of the displayed title. */
 function findLinkPhrase(text) {

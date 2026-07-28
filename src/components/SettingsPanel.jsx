@@ -21,6 +21,7 @@ import {
   LogIn,
   LogOut,
   CloudCog,
+  Tag,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
@@ -28,6 +29,7 @@ import { useAuth } from '../context/AuthContext';
 import { clearAllPersisted } from '../utils/persistence';
 import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
+import LabelsModal from './Modals/LabelsModal';
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -36,6 +38,7 @@ export default function SettingsPanel({ onOpenTour }) {
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenDraft, setTokenDraft] = useState('');
   const [showBackupsModal, setShowBackupsModal] = useState(false);
+  const [showLabelsModal, setShowLabelsModal] = useState(false);
   const fileInputRef = useRef(null);
   const { theme, setTheme } = useTheme();
   const { user, authLoading, login, logout } = useAuth();
@@ -508,6 +511,17 @@ export default function SettingsPanel({ onOpenTour }) {
       </div>
 
       <div className="card">
+        <h3 style={{ marginTop: 0 }}>Tags</h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
+          See every tag you've created across all tasks, with how many tasks currently carry each one.
+        </p>
+        <button className="btn" onClick={() => setShowLabelsModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Tag size={14} />
+          View all tags
+        </button>
+      </div>
+
+      <div className="card">
         <h3 style={{ marginTop: 0 }}>Help</h3>
         <button className="btn" onClick={onOpenTour} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <HelpCircle size={14} />
@@ -628,6 +642,7 @@ export default function SettingsPanel({ onOpenTour }) {
           onClose={() => setShowBackupsModal(false)}
         />
       )}
+      {showLabelsModal && <LabelsModal onClose={() => setShowLabelsModal(false)} />}
     </div>
   );
 }

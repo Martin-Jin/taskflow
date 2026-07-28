@@ -13,7 +13,7 @@ function greetingForHour(hour) {
   return 'Good evening';
 }
 
-export default function DashboardPage({ onSelectProject }) {
+export default function DashboardPage({ onSelectProject, onOpenCalendar }) {
   const { user } = useAuth();
   const [greeting, setGreeting] = useState(() => greetingForHour(new Date().getHours()));
 
@@ -36,7 +36,7 @@ export default function DashboardPage({ onSelectProject }) {
         <p>Here's what's on your plate.</p>
       </div>
 
-      <DashboardStats onSelectProject={onSelectProject} />
+      <DashboardStats onSelectProject={onSelectProject} onOpenCalendar={onOpenCalendar} />
 
       <div className="dashboard-grid">
         <div className="dashboard-grid-main">

@@ -48,6 +48,7 @@ playwright-report/
 playwright/.cache/
 # Personal Todoist login session used only by tests/e2e/todoist-parity.spec.js — never commit a real session.
 todoist-storage-state.json
+TODO.MD
 
 # ==========================
 # Editor / IDE

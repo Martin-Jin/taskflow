@@ -247,15 +247,25 @@
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   border: 1px solid transparent;
-  background: var(--color-bg-surface-hover);
+  /* Rest state sits on the page background rather than
+     --color-bg-surface-hover — that token doubled as both this row's
+     resting color AND its hover target, so the two states barely read as
+     different. Using the page background at rest and the hover token on
+     hover/focus gives a clear, theme-consistent step between them,
+     matching how .task-row/.board-card do it elsewhere. */
+  background: var(--color-bg-page);
   border-left: 3px solid transparent;
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
     transform var(--duration-fast) var(--ease-standard);
 }
 
-.today-agenda-item:hover {
-  background: color-mix(in srgb, var(--color-bg-surface-hover) 60%, var(--color-bg-surface-raised));
-  transform: translateY(-1px);
+.today-agenda-item.is-openable {
+  cursor: pointer;
+}
+
+.today-agenda-item.is-openable:hover,
+.today-agenda-item.is-openable:focus-visible {
+  background: var(--color-bg-surface-hover);
 }
 
 /* A missed item's block/task pairing is mutually exclusive with is-current
@@ -872,6 +882,16 @@
   font-size: var(--text-sm);
 }
 
+.missed-tasks-item.is-openable {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.missed-tasks-item.is-openable:hover {
+  background: var(--color-bg-surface-hover);
+}
+
 .missed-tasks-icon {
   color: var(--color-danger);
   flex-shrink: 0;
@@ -923,4 +943,13 @@
    time column so longer date strings (e.g. "Wed, Jul 22") don't clip. */
 .overdue-list-date {
   min-width: 92px;
+}
+
+/* "Scheduled today" popup rows — background-differentiated against the
+   modal's own surface so each row reads as a distinct item rather than
+   just a bare line of text (unlike Missed/Overdue's plainer rows). */
+.scheduled-today-item {
+  background: var(--color-bg-surface-hover);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
 }

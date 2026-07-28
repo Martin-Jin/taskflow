@@ -33,6 +33,7 @@ export function getMissedTaskItems(tasks, blocks, now = new Date()) {
     .filter(({ block, task }) => isBlockMissed(block, task, today, nowMinutes))
     .map(({ block, task }) => ({
       id: block.id,
+      taskId: task.id,
       startTime: block.startTime,
       endTime: block.endTime,
       title: task.title,

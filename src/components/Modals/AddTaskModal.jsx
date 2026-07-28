@@ -54,7 +54,7 @@ import {
 import { useScheduler } from '../../context/SchedulerContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { RECURRENCE_UNITS, buildRecurrenceString } from '../../utils/recurrence';
+import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
@@ -79,7 +79,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [link, setLink] = useState('');
   const [notes, setNotes] = useState('');
   const notesRef = useRef(null);
-  useAutosizeTextarea(notesRef, notes);
+  useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
   const [estimatedHours, setEstimatedHours] = useState(DEFAULT_ESTIMATED_HOURS);
   const [hasEditedHours, setHasEditedHours] = useState(false);
   const [priority, setPriority] = useState('medium');
@@ -90,6 +90,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedRecurrence, setHasEditedRecurrence] = useState(false);
   const [recurrenceCount, setRecurrenceCount] = useState(1);
   const [recurrenceUnit, setRecurrenceUnit] = useState('month');
+  const [recurrenceDays, setRecurrenceDays] = useState(null);
   const [projectId, setProjectId] = useState(initialProjectId || '');
   const [hasEditedProject, setHasEditedProject] = useState(!!initialProjectId);
   const [sectionId, setSectionId] = useState(initialSectionId || '');
@@ -144,11 +145,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           setIsRecurring(true);
           setRecurrenceCount(match.rule.count);
           setRecurrenceUnit(match.rule.unit);
+          setRecurrenceDays(match.rule.days || null);
           // A recurring task needs a starting due date — default to today if
           // the user hasn't set (or typed) one, matching Todoist's own behavior.
           if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
         },
-        revert: () => setIsRecurring(false),
+        revert: () => {
+          setIsRecurring(false);
+          setRecurrenceDays(null);
+        },
       },
       priority: {
         isUntouched: () => !hasEditedPriority,
@@ -265,7 +270,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       priority,
       dueDate: dueDate || null,
       isRecurring: isRecurring && !!dueDate,
-      recurrenceString: isRecurring && dueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit) : null,
+      recurrenceString: isRecurring && dueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit, recurrenceDays) : null,
       projectId: projectId || null,
       sectionId: sectionId || null,
       sectionName: section ? section.name : null,
@@ -301,6 +306,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
               projects={projects}
               sections={sections}
               labels={labels}
+              onEnter={handleSubmit}
             />
           </div>
           <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
@@ -439,7 +445,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                     setIsRecurring(e.target.checked);
                   }}
                 />
-                {isRecurring ? `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}` : 'Does not repeat'}
+                {isRecurring
+                  ? recurrenceDays && recurrenceDays.length > 0
+                    ? `Every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
+                        .map((d) => WEEKDAY_LABELS[d])
+                        .join(', ')}`
+                    : `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`
+                  : 'Does not repeat'}
               </label>
               {isRecurring && (
                 <div className="detail-field-inline" style={{ marginTop: 6 }}>
@@ -451,6 +463,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                     onChange={(e) => {
                       setHasEditedRecurrence(true);
                       setRecurrenceCount(Math.max(1, Number(e.target.value) || 1));
+                      setRecurrenceDays(null);
                     }}
                     style={{ width: 56 }}
                   />
@@ -459,6 +472,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                     onChange={(e) => {
                       setHasEditedRecurrence(true);
                       setRecurrenceUnit(e.target.value);
+                      setRecurrenceDays(null);
                     }}
                     style={{ flex: 1 }}
                   >

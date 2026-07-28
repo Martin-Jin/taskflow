@@ -1027,6 +1027,25 @@ export function SchedulerProvider({ children }) {
     [labels]
   );
 
+  /** Rename a Label — purely local (labels have no Todoist equivalent). Every task referencing it by id picks up the new name automatically since nothing denormalizes a label's name onto the task itself. */
+  const renameLabel = useCallback((labelId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setLabels((prev) => prev.map((l) => (l.id === labelId ? { ...l, name: trimmed } : l)));
+  }, []);
+
+  /** Delete a Label and strip it out of every task's labelIds — goes through commit() (not a bare setState) so removing a tag from every task it's attached to is itself one undoable action. */
+  const deleteLabel = useCallback(
+    (labelId) => {
+      setLabels((prev) => prev.filter((l) => l.id !== labelId));
+      const newTasks = tasks.map((t) =>
+        t.labelIds?.includes(labelId) ? { ...t, labelIds: t.labelIds.filter((id) => id !== labelId) } : t
+      );
+      if (newTasks.some((t, i) => t !== tasks[i])) commit({ tasks: newTasks, blocks }, `Deleted tag`);
+    },
+    [tasks, blocks, commit]
+  );
+
   // ---- Todoist: one-time import ---------------------------------------------
 
   /**
@@ -1494,6 +1513,8 @@ export function SchedulerProvider({ children }) {
       removeSubtask,
       updateSubtask,
       getOrCreateLabelIds,
+      renameLabel,
+      deleteLabel,
       addProject,
       renameProject,
       deleteProject,
@@ -1562,6 +1583,8 @@ export function SchedulerProvider({ children }) {
       removeSubtask,
       updateSubtask,
       getOrCreateLabelIds,
+      renameLabel,
+      deleteLabel,
       addProject,
       renameProject,
       deleteProject,

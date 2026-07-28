@@ -51,7 +51,7 @@ export default function EventDetailModal({ event, initial, onClose }) {
   const [scope, setScope] = useState('this');
 
   const descriptionRef = useRef(null);
-  useAutosizeTextarea(descriptionRef, description);
+  useAutosizeTextarea(descriptionRef, description, { maxLines: 3 });
 
   function handleSave() {
     if (isCreate) {

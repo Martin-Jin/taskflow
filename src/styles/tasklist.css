@@ -17,6 +17,7 @@
 .tab-panel-fill .taskpage {
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 /* The Tasks page's own List/Board/Gantt switch — an underlined tab bar
@@ -90,7 +91,17 @@
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
-
+ 
+.taskpage-project-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-left: auto;
+}
+ 
 .taskpage-project-title {
   font-size: 21px;
   font-weight: 700;
@@ -156,6 +167,14 @@
   color: var(--color-text-secondary);
 }
 
+/* Overdue is the one section header worth calling out — same danger color
+   used for Missed/Overdue elsewhere (DashboardStats, GanttChart's blocked
+   marker) so it reads consistently as "needs attention" everywhere it
+   appears. */
+.tasklist-section-header.is-overdue {
+  color: var(--color-danger);
+}
+
 .tasklist-section-count {
   display: inline-flex;
   align-items: center;
@@ -170,6 +189,11 @@
   font-weight: 600;
   text-transform: none;
   letter-spacing: normal;
+}
+
+.tasklist-section-header.is-overdue .tasklist-section-count {
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+  color: var(--color-danger);
 }
 
 .task-row {

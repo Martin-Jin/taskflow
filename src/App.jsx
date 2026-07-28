@@ -56,8 +56,21 @@ const TABS = [
 
 function AppShell() {
   const [tab, setTab] = useState('dashboard');
-  const [taskView, setTaskView] = useState('list'); // 'list' | 'board' | 'gantt' — the Tasks page's own sub-view
   const [activeProjectId, setActiveProjectId] = usePersistedState('activeProjectId', ALL_TASKS_PROJECT_ID);
+  // Tasks page's own sub-view ('list' | 'board' | 'gantt'), remembered PER
+  // PROJECT (keyed by projectId, including the ALL_TASKS_PROJECT_ID pseudo
+  // project) rather than as one global choice — switching from Board on
+  // Project A to Project B shouldn't drag Board along with it if B was last
+  // viewed as List.
+  const [taskViewByProject, setTaskViewByProject] = usePersistedState('taskViewByProject', {});
+  const taskView = taskViewByProject[activeProjectId] || 'list';
+  function setTaskView(next) {
+    setTaskViewByProject((prev) => {
+      const current = prev[activeProjectId] || 'list';
+      const resolved = typeof next === 'function' ? next(current) : next;
+      return { ...prev, [activeProjectId]: resolved };
+    });
+  }
   const [showTour, setShowTour] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = usePersistedState('tutorial-seen', false);
   const [showManageProjects, setShowManageProjects] = useState(false);
@@ -172,7 +185,7 @@ function AppShell() {
           key={tab}
           className={`tab-panel ${tab === 'calendar' || (tab === 'tasks' && taskView === 'board') ? 'tab-panel-fill' : ''}`}
         >
-          {tab === 'dashboard' && <DashboardPage onSelectProject={selectProject} />}
+          {tab === 'dashboard' && <DashboardPage onSelectProject={selectProject} onOpenCalendar={() => setTab('calendar')} />}
           {tab === 'calendar' && <CalendarPage />}
           {tab === 'tasks' && (
             <TaskListPanel
@@ -180,7 +193,8 @@ function AppShell() {
               onChangeView={setTaskView}
               activeProjectId={activeProjectId}
               onChangeActiveProject={selectProject}
-              onOpenManageProjects={isMobile ? openManageProjects : undefined}
+              onOpenManageProjects={openManageProjects}
+              showManageProjectsButton={!isMobile}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}

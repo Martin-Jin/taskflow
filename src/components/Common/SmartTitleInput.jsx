@@ -28,6 +28,7 @@
  */
 
 import React, { useLayoutEffect, useRef, useState } from 'react';
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useMentionAutocomplete } from '../../hooks/useMentionAutocomplete';
 import MentionDropdown from './MentionDropdown';
 
@@ -123,16 +124,20 @@ export default function SmartTitleInput({
   projects = [],
   sections = [],
   labels = [],
+  onEnter,
 }) {
   const inputRef = useRef(null);
   const markerRef = useRef(null);
-  const [scrollLeft, setScrollLeft] = useState(0);
+  const [scrollState, setScrollState] = useState({ left: 0, top: 0 });
   const [anchorRect, setAnchorRect] = useState(null);
 
   const mention = useMentionAutocomplete({ inputRef, value, onChange, projects, sections, labels });
+  useAutosizeTextarea(inputRef, value, { maxLines: 3 });
 
   function syncScroll() {
-    if (inputRef.current) setScrollLeft(inputRef.current.scrollLeft);
+    if (inputRef.current) {
+      setScrollState({ left: inputRef.current.scrollLeft, top: inputRef.current.scrollTop });
+    }
   }
 
   const ranges = buildRanges(value, smartDetected);
@@ -179,12 +184,20 @@ export default function SmartTitleInput({
   }
 
   function handleKeyDown(e) {
-    mention.handleKeyDown(e);
+    // If the mention dropdown (see useMentionAutocomplete) consumed this
+    // keypress (e.g. Enter to pick a suggestion), it already returns true
+    // and we shouldn't also treat it as "submit the form". Only an Enter
+    // that the dropdown ignored counts as a real submit request.
+    const handledByMention = mention.handleKeyDown(e);
+    if (!handledByMention && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      onEnter?.(e);
+    }
   }
 
   return (
     <div className="smart-title-wrap">
-      <div className="smart-title-backdrop" style={{ transform: `translateX(-${scrollLeft}px)` }} aria-hidden="true">
+      <div className="smart-title-backdrop" style={{ transform: `translate(-${scrollState.left}px, -${scrollState.top}px)` }} aria-hidden="true">
         {segments.map((seg, i) =>
           seg.marker ? (
             <span key={i} ref={markerRef} />
@@ -205,7 +218,7 @@ export default function SmartTitleInput({
           )
         )}
       </div>
-      <input
+      <textarea
         ref={inputRef}
         className="smart-title-input"
         autoFocus={autoFocus}
@@ -216,6 +229,7 @@ export default function SmartTitleInput({
         onClick={handleCaretMove}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
+        rows={1}
       />
       {mention.isOpen && (
         <MentionDropdown
