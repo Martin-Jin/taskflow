@@ -308,7 +308,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
       <div className="board-toolbar tasklist-toolbar">
         <SearchBar placeholder="Search board…" onSelectTask={setEditingTaskId} />
         {isAIQuickAddConfigured() && (
-          <button className="btn btn-icon" onClick={() => setShowAIQuickAdd(true)} aria-label="AI Quick Add" title="AI Quick Add">
+          <button className="btn btn-icon" data-tour="ai-quick-add" onClick={() => setShowAIQuickAdd(true)} aria-label="AI Quick Add" title="AI Quick Add">
             <Sparkles size={14} />
           </button>
         )}

@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.2',
+    date: '2026-07-30',
+    title: 'AI Quick Add now has an in-app guide',
+    changes: [
+      'The guided tour now points out the AI Quick Add sparkle button.',
+      'A new "?" button inside the AI Quick Add panel opens a guide covering what it does, where to get a free Anthropic/Gemini API key, and how to use it.',
+    ],
+  },
+  {
     version: '1.16.1',
     date: '2026-07-30',
     title: 'AI Quick Add now uses your own API key',
