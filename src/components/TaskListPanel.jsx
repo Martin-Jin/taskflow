@@ -74,7 +74,7 @@ export default function TaskListPanel({
 }) {
   const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const { requestComplete } = useCompleteTask();
-  const { playUncomplete, playSelect } = useSound();
+  const { playUncomplete } = useSound();
   const [showAddModal, setShowAddModal] = useState(false);
   // The "new task" shortcut (see useKeyboardShortcuts in App.jsx) bumps this
   // from anywhere in the app to open "Add task" here, since this modal's open
@@ -243,10 +243,7 @@ export default function TaskListPanel({
         <div
           className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
           style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
-          onClick={() => {
-            setEditingTaskId(task.id);
-            playSelect();
-          }}
+          onClick={() => setEditingTaskId(task.id)}
         >
           {hasChildren ? (
             <button

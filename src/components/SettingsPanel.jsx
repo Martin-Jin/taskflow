@@ -72,7 +72,7 @@ export default function SettingsPanel({ onOpenTour }) {
   const sectionRefs = useRef({});
   const fileInputRef = useRef(null);
   const { theme, setTheme } = useTheme();
-  const { soundEnabled, setSoundEnabled } = useSound();
+  const { soundEnabled, setSoundEnabled, soundVolume, setSoundVolume, playComplete } = useSound();
   const { user, authLoading, login, logout } = useAuth();
   const {
     routines,
@@ -605,8 +605,30 @@ export default function SettingsPanel({ onOpenTour }) {
           </label>
         </div>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, marginBottom: 0 }}>
-          Short sounds when you add, complete, uncomplete, delete, or open a task.
+          Short sounds when you add, complete, uncomplete, or delete a task.
         </p>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
+          <label htmlFor="soundVolume" style={{ margin: 0, opacity: soundEnabled ? 1 : 0.5 }}>
+            Volume
+          </label>
+          <input
+            type="range"
+            id="soundVolume"
+            min="0"
+            max="1"
+            step="0.05"
+            value={soundVolume}
+            disabled={!soundEnabled}
+            onChange={(e) => setSoundVolume(Number(e.target.value))}
+            onMouseUp={() => soundEnabled && playComplete()}
+            onTouchEnd={() => soundEnabled && playComplete()}
+            onKeyUp={() => soundEnabled && playComplete()}
+            style={{ flex: 1, opacity: soundEnabled ? 1 : 0.5 }}
+          />
+          <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', minWidth: 34, textAlign: 'right', opacity: soundEnabled ? 1 : 0.5 }}>
+            {Math.round(soundVolume * 100)}%
+          </span>
+        </div>
       </div>
 
       <div className="card" ref={(el) => (sectionRefs.current.tags = el)}>

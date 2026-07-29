@@ -11,7 +11,7 @@
  */
 
 /** Exactly the fields the live cloud sync already pushes (see firestoreSync.js's pushUserData) — a backup is the same shape, just point-in-time. */
-export const BACKUP_FIELDS = ['tasks', 'blocks', 'sections', 'projects', 'labels', 'routines', 'rules', 'events'];
+export const BACKUP_FIELDS = ['tasks', 'blocks', 'sections', 'projects', 'labels', 'routines', 'rules', 'events', 'soundEnabled', 'soundVolume'];
 
 /** Recurring tasks never reach isCompleted: true (completing one just advances dueDate — see types/index.js), so this only ever drops finished one-off tasks. */
 function excludeCompletedTasks(tasks, blocks) {

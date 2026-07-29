@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.12.0',
+    date: '2026-07-29',
+    title: 'Real sound effects and a volume control',
+    changes: [
+      'Replaced the synthesized "beep" sound effects with real, higher-quality click sounds for adding, completing, uncompleting, and deleting tasks.',
+      'Added a volume slider in Settings → Appearance so you can adjust (or mute) sound effects independently of turning them off entirely.',
+      'Sound settings now sync across your devices and are included in backups, just like your other preferences.',
+    ],
+  },
+  {
     version: '1.11.1',
     date: '2026-07-29',
     title: 'Fixed the "new task" shortcut',

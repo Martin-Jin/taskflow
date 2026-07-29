@@ -49,7 +49,7 @@ import { useHistoryState } from '../hooks/useHistoryState';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
-import { useSound } from './SoundContext';
+import { playAddSound, playDeleteSound } from '../services/soundService';
 import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackups, getBackup, deleteBackup } from '../services/firestoreSync';
 import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
@@ -290,7 +290,6 @@ const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export function SchedulerProvider({ children }) {
   const { user } = useAuth();
-  const { playAdd, playDelete } = useSound();
 
   // tasks/blocks: seeded from whatever was last saved locally (falling back
   // to mock data on first-ever run). Whether the initial-load effect below
@@ -327,6 +326,13 @@ export function SchedulerProvider({ children }) {
   // each time the app is opened.
   const [routines, setRoutines] = usePersistedState('routines', getDefaultRoutines);
   const [rules, setRules] = usePersistedState('rules', getDefaultRules);
+  // Sound effect settings — synced/backed-up siblings of routines/rules (see
+  // BACKUP_FIELDS) rather than SoundContext's own local-only state, so they
+  // follow the user across devices and survive a backup restore like every
+  // other setting. SoundContext (rendered inside this provider) just reads
+  // these via useScheduler() instead of maintaining an independent copy.
+  const [soundEnabled, setSoundEnabled] = usePersistedState('soundEnabled', true);
+  const [soundVolume, setSoundVolume] = usePersistedState('soundVolume', 0.5);
   // When the last one-time Todoist import ran, and how many tasks it
   // touched — shown as a status line in Settings so a re-import isn't a
   // total mystery each time ("last imported 3 tasks, 2 days ago").
@@ -640,8 +646,10 @@ export function SchedulerProvider({ children }) {
       if ('routines' in remote) setRoutines(remote.routines);
       if ('rules' in remote) setRules(remote.rules);
       if ('events' in remote) setEvents(dedupeEventsByOccurrence(remote.events));
+      if ('soundEnabled' in remote) setSoundEnabled(remote.soundEnabled);
+      if ('soundVolume' in remote) setSoundVolume(remote.soundVolume);
     },
-    [overwritePresent, setSections, setProjects, setLabels, setRoutines, setRules, setEvents]
+    [overwritePresent, setSections, setProjects, setLabels, setRoutines, setRules, setEvents, setSoundEnabled, setSoundVolume]
   );
 
   /**
@@ -666,12 +674,14 @@ export function SchedulerProvider({ children }) {
           routines,
           rules,
           events,
+          soundEnabled,
+          soundVolume,
         };
         await pushUserData(uid, seedPayload);
         lastSyncedSnapshotRef.current = computeSyncFingerprint(seedPayload);
       }
     },
-    [applyRemoteData, sections, projects, labels, routines, rules, events]
+    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume]
   );
 
   /**
@@ -705,6 +715,8 @@ export function SchedulerProvider({ children }) {
           routines,
           rules,
           events,
+          soundEnabled,
+          soundVolume,
         });
         await createBackup(uid, payload);
         setCloudBackups(await listBackups(uid));
@@ -714,7 +726,7 @@ export function SchedulerProvider({ children }) {
         console.warn('[SchedulerContext] Auto-backup check failed', err);
       }
     },
-    [sections, projects, labels, routines, rules, events]
+    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume]
   );
 
   useEffect(() => {
@@ -780,7 +792,7 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     if (!initialPullDoneRef.current) return; // wait for this sign-in's pull to settle first — see initialPullDoneRef's comment
-    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events };
+    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume };
     const fingerprint = computeSyncFingerprint(payload);
     if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
     const handle = setTimeout(() => {
@@ -793,7 +805,7 @@ export function SchedulerProvider({ children }) {
         });
     }, 1500);
     return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events]);
+  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume]);
 
   /**
    * Manual re-pull for Settings' "Sync now" button — covers the gap this
@@ -850,8 +862,10 @@ export function SchedulerProvider({ children }) {
       if ('routines' in payload) setRoutines(payload.routines);
       if ('rules' in payload) setRules(payload.rules);
       if ('events' in payload) setEvents(payload.events);
+      if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
+      if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
     },
-    [commit, setSections, setProjects, setLabels, setRoutines, setRules, setEvents]
+    [commit, setSections, setProjects, setLabels, setRoutines, setRules, setEvents, setSoundEnabled, setSoundVolume]
   );
 
   /** Downloads a full backup of current state as a local .json file — works signed-out, since it never touches Firestore. */
@@ -865,9 +879,11 @@ export function SchedulerProvider({ children }) {
       routines,
       rules,
       events,
+      soundEnabled,
+      soundVolume,
     });
     downloadBackupFile(payload);
-  }, [sections, projects, labels, routines, rules, events]);
+  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume]);
 
   /** Reads a backup .json file the user picked and restores it — works signed-out, matching exportBackup. */
   const importBackupFromFile = useCallback(
@@ -915,6 +931,8 @@ export function SchedulerProvider({ children }) {
         routines,
         rules,
         events,
+        soundEnabled,
+        soundVolume,
       });
       await createBackup(user.uid, payload);
       await refreshCloudBackups();
@@ -925,7 +943,7 @@ export function SchedulerProvider({ children }) {
     } finally {
       setIsBackingUp(false);
     }
-  }, [user, sections, projects, labels, routines, rules, events, refreshCloudBackups]);
+  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, refreshCloudBackups]);
 
   /** Fetches one cloud backup's full payload by id and restores it. */
   const restoreCloudBackup = useCallback(
@@ -1054,9 +1072,9 @@ export function SchedulerProvider({ children }) {
         ...taskInput,
       };
       commit({ tasks: [...tasks, newTask], blocks }, `Added task "${newTask.title}"`);
-      playAdd();
+      if (soundEnabled) playAddSound(soundVolume);
     },
-    [tasks, blocks, commit, playAdd]
+    [tasks, blocks, commit, soundEnabled, soundVolume]
   );
 
   /**
@@ -1114,9 +1132,9 @@ export function SchedulerProvider({ children }) {
           });
       }
       commit({ tasks: newTasks, blocks: newBlocks }, `Deleted task`);
-      playDelete();
+      if (soundEnabled) playDeleteSound(soundVolume);
     },
-    [tasks, blocks, commit, user, playDelete]
+    [tasks, blocks, commit, user, soundEnabled, soundVolume]
   );
 
   /**
@@ -1936,6 +1954,10 @@ export function SchedulerProvider({ children }) {
       setRoutines,
       setEvents,
       setRules,
+      soundEnabled,
+      setSoundEnabled,
+      soundVolume,
+      setSoundVolume,
       setSearchQuery,
       undo,
       redo,
@@ -2008,6 +2030,8 @@ export function SchedulerProvider({ children }) {
       currentActionLabel,
       actionToast,
       dismissActionToast,
+      soundEnabled,
+      soundVolume,
       undo,
       redo,
       runRebalance,
