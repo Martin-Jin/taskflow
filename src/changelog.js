@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.10.1',
+    date: '2026-07-29',
+    title: 'Fixes for the repeat field, estimated time, and live undo',
+    changes: [
+      'Fixed a day-specific repeat (e.g. "every week on Sun, Sat") not being recognized when typed or edited directly — it now highlights and saves correctly instead of silently losing the selected days.',
+      'The Estimated time field now shows the plain-English duration ("20 minutes") in place, instead of a duplicate line underneath, and swaps to the short editable form when you click in. Clearing the field now actually sets the estimate to 0 instead of snapping back to the old value.',
+      'Undoing a change (via the bottom-corner Undo notification) now updates an already-open task edit screen immediately, instead of requiring you to close and reopen it to see the reverted value.',
+    ],
+  },
+  {
     version: '1.10.0',
     date: '2026-07-29',
     title: 'Keyboard shortcuts, smarter time & repeat fields, and timer-aware completion',

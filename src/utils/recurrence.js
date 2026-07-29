@@ -117,6 +117,28 @@ function extractOrdinalCountFromSpan(span) {
 }
 
 /**
+ * "every N week(s) on <weekday list>" — the exact shape buildRecurrenceString
+ * produces for a weekday-specific rule, tolerant of full weekday names too
+ * (not just the 3-letter labels it emits) so a manually typed/edited
+ * recurrence still parses. Shared by parseRecurrenceRule (whole-string
+ * contract) and findRecurrencePhrase (search-anywhere contract) so both stay
+ * in sync — findRecurrencePhrase previously lacked this branch entirely and
+ * fell through to the plain "every week" matcher, silently dropping the day
+ * list from the match.
+ */
+function findOnDaysSpan(s) {
+  const dayToken = dayTokenPattern();
+  const re = new RegExp(
+    `(?:${LEAD_WORD})!?\\s+(?:(\\d+)\\s*)?weeks?\\s+on\\s+${dayToken}(?:\\s*(?:,|&|and)\\s*${dayToken})*`
+  );
+  const m = s.match(re);
+  if (!m) return null;
+  const days = extractDaysFromSpan(m[0]);
+  if (!days.length) return null;
+  return { rule: { unit: 'week', count: Math.max(1, Number(m[1]) || 1), days }, matchedText: m[0], index: m.index };
+}
+
+/**
  * Match one or more weekday mentions after a leading "every"/"ev"/"each",
  * covering the phrasings this feature targets:
  *   "every sunday", "every sat and sun", "every mon, wed, fri",
@@ -229,18 +251,8 @@ export function parseRecurrenceRule(str) {
   // re-opened task (or one edited again after smart-parse) can round-trip
   // its own `days` back out instead of losing them to the generic
   // "every N week(s)" branch further down.
-  const onDaysMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(?:(\\d+)\\s*)?weeks?\\s+on\\s+(.+)$`));
-  if (onDaysMatch) {
-    const dayLabelsLower = WEEKDAY_LABELS.map((l) => l.toLowerCase());
-    const days = onDaysMatch[2]
-      .split(',')
-      .map((d) => dayLabelsLower.indexOf(d.trim().toLowerCase()))
-      .filter((i) => i !== -1)
-      .sort((a, b) => a - b);
-    if (days.length > 0) {
-      return { unit: 'week', count: Math.max(1, Number(onDaysMatch[1]) || 1), days };
-    }
-  }
+  const onDaysSpan = findOnDaysSpan(s);
+  if (onDaysSpan) return onDaysSpan.rule;
 
   // "every N <unit>(s)" — the general numeric form. Allows "every!" (Todoist's
   // non-shifting marker) and "ev" as an abbreviation for "every".
@@ -304,6 +316,9 @@ export function findRecurrencePhrase(text) {
   if (!text || typeof text !== 'string') return null;
   const s = text.toLowerCase();
   const unitAlt = unitAliasPattern();
+
+  const onDaysSpan = findOnDaysSpan(s);
+  if (onDaysSpan) return onDaysSpan;
 
   const numericMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(\\d+)\\s*(${unitAlt})\\b`));
   if (numericMatch) {
