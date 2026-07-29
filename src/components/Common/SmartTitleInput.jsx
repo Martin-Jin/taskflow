@@ -25,12 +25,21 @@
  * transparent) backdrop text at the span's start offset and reading its
  * getBoundingClientRect() — reusing the backdrop's already-perfect overlay
  * instead of a second hidden measuring element.
+ *
+ * LIVE TYPO SUGGESTION: same idea again, one more time — useSmartKeywordSuggest
+ * watches the caret for a word that's a near-miss (fuzzy edit-distance) for a
+ * real smart-parse keyword ("tommorow" -> "tomorrow") and offers a
+ * KeywordSuggestPopup to fix it (Tab cycles candidates, Enter applies, or tap
+ * on mobile). Suppressed while the mention dropdown is open so the two never
+ * fight over the same word.
  */
 
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useMentionAutocomplete } from '../../hooks/useMentionAutocomplete';
+import { useSmartKeywordSuggest } from '../../hooks/useSmartKeywordSuggest';
 import MentionDropdown from './MentionDropdown';
+import KeywordSuggestPopup from './KeywordSuggestPopup';
 
 const TYPE_LABELS = {
   link: 'link',
@@ -99,8 +108,8 @@ function buildRanges(title, smartDetected) {
   return ranges.sort((a, b) => a.start - b.start);
 }
 
-/** Splice a zero-width `{ marker: true }` entry into `segments` at character offset `at`, splitting a text segment if `at` falls inside one. */
-function insertMarker(segments, at) {
+/** Splice a zero-width `{ marker: kind }` entry into `segments` at character offset `at`, splitting a text segment if `at` falls inside one. `kind` distinguishes which popup's anchor this marker is for when more than one can be spliced in (mention vs. keyword-suggest). */
+function insertMarker(segments, at, kind) {
   const out = [];
   let pos = 0;
   let inserted = false;
@@ -108,13 +117,13 @@ function insertMarker(segments, at) {
     const segStart = pos;
     const segEnd = pos + seg.text.length;
     if (!inserted && at === segStart) {
-      out.push({ marker: true });
+      out.push({ marker: kind });
       inserted = true;
     }
     if (!inserted && at > segStart && at < segEnd) {
       const cut = at - segStart;
       out.push({ ...seg, text: seg.text.slice(0, cut) });
-      out.push({ marker: true });
+      out.push({ marker: kind });
       out.push({ ...seg, text: seg.text.slice(cut) });
       inserted = true;
       pos = segEnd;
@@ -123,7 +132,7 @@ function insertMarker(segments, at) {
     out.push(seg);
     pos = segEnd;
   });
-  if (!inserted) out.push({ marker: true });
+  if (!inserted) out.push({ marker: kind });
   return out;
 }
 
@@ -141,10 +150,13 @@ export default function SmartTitleInput({
 }) {
   const inputRef = useRef(null);
   const markerRef = useRef(null);
+  const keywordMarkerRef = useRef(null);
   const [scrollState, setScrollState] = useState({ left: 0, top: 0 });
   const [anchorRect, setAnchorRect] = useState(null);
+  const [keywordAnchorRect, setKeywordAnchorRect] = useState(null);
 
   const mention = useMentionAutocomplete({ inputRef, value, onChange, projects, sections, labels });
+  const keywordSuggest = useSmartKeywordSuggest({ inputRef, value, onChange, suppress: mention.isOpen });
   useAutosizeTextarea(inputRef, value, { maxLines: 3 });
 
   function syncScroll() {
@@ -164,7 +176,9 @@ export default function SmartTitleInput({
   if (cursor < value.length) segments.push({ text: value.slice(cursor), type: null });
 
   if (mention.isOpen && mention.spanStart != null) {
-    segments = insertMarker(segments, mention.spanStart);
+    segments = insertMarker(segments, mention.spanStart, 'mention');
+  } else if (keywordSuggest.isOpen && keywordSuggest.anchorIndex != null) {
+    segments = insertMarker(segments, keywordSuggest.anchorIndex, 'keyword');
   }
 
   // Deliberately no dependency array — this needs to re-measure on every
@@ -191,18 +205,36 @@ export default function SmartTitleInput({
     );
   });
 
+  // Same anchor-measuring trick as above, for the keyword-suggest popup's
+  // own marker (mutually exclusive with the mention marker — only one of
+  // the two is ever spliced into segments at a time).
+  useLayoutEffect(() => {
+    if (!keywordSuggest.isOpen || !keywordMarkerRef.current || !inputRef.current) {
+      setKeywordAnchorRect((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const markerRect = keywordMarkerRef.current.getBoundingClientRect();
+    const inputRect = inputRef.current.getBoundingClientRect();
+    const next = { left: markerRect.left, top: inputRect.bottom + 4, aboveTop: inputRect.top - 4 };
+    setKeywordAnchorRect((prev) =>
+      prev && prev.left === next.left && prev.top === next.top && prev.aboveTop === next.aboveTop ? prev : next
+    );
+  });
+
   function handleCaretMove() {
     syncScroll();
     mention.refresh();
+    keywordSuggest.refresh();
   }
 
   function handleKeyDown(e) {
     // If the mention dropdown (see useMentionAutocomplete) consumed this
     // keypress (e.g. Enter to pick a suggestion), it already returns true
     // and we shouldn't also treat it as "submit the form". Only an Enter
-    // that the dropdown ignored counts as a real submit request.
+    // that neither popup handled counts as a real submit request.
     const handledByMention = mention.handleKeyDown(e);
-    if (!handledByMention && e.key === 'Enter' && !e.shiftKey) {
+    const handledByKeywordSuggest = !handledByMention && keywordSuggest.handleKeyDown(e);
+    if (!handledByMention && !handledByKeywordSuggest && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onEnter?.(e);
     }
@@ -212,8 +244,10 @@ export default function SmartTitleInput({
     <div className="smart-title-wrap">
       <div className="smart-title-backdrop" style={{ transform: `translate(-${scrollState.left}px, -${scrollState.top}px)` }} aria-hidden="true">
         {segments.map((seg, i) =>
-          seg.marker ? (
+          seg.marker === 'mention' ? (
             <span key={i} ref={markerRef} />
+          ) : seg.marker === 'keyword' ? (
+            <span key={i} ref={keywordMarkerRef} />
           ) : seg.type ? (
             <mark
               key={i}
@@ -262,6 +296,14 @@ export default function SmartTitleInput({
           highlightedIndex={mention.highlightedIndex}
           onHighlight={mention.setHighlightedIndex}
           onSelect={mention.selectByIndex}
+        />
+      )}
+      {keywordSuggest.isOpen && (
+        <KeywordSuggestPopup
+          anchorRect={keywordAnchorRect}
+          matches={keywordSuggest.matches}
+          activeIndex={keywordSuggest.activeIndex}
+          onSelect={keywordSuggest.selectIndex}
         />
       )}
     </div>

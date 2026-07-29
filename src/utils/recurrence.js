@@ -36,8 +36,10 @@ export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Canonical unit -> aliases Todoist (or a user typing a custom recurrence)
 // might use. Longest/most-specific first isn't required here since we
-// build a single alternation and rely on \b word boundaries.
-const UNIT_ALIASES = {
+// build a single alternation and rely on \b word boundaries. Exported so
+// fuzzy typo suggestion (useSmartKeywordSuggest) can reuse this same
+// vocabulary instead of duplicating it.
+export const UNIT_ALIASES = {
   day: ['day', 'days', 'daily', 'everyday'],
   week: ['week', 'weeks', 'weekly', 'fortnight', 'fortnightly'],
   month: ['month', 'months', 'monthly'],
@@ -46,12 +48,14 @@ const UNIT_ALIASES = {
 
 // "each" is as common a leading word as "every"/"ev" ("each week", "each month").
 const LEAD_WORD = 'every|ev|each';
+// Same words as LEAD_WORD, as a plain list for fuzzy typo suggestion.
+export const LEAD_WORDS = ['every', 'ev', 'each'];
 
 // Ordinal words for "every second sunday" (= every other Sunday), "every third monday", etc.
 // Numeric ordinals ("every 2nd sunday") are handled separately via a digit+suffix pattern.
 // "other" is folded in here too so "every other monday" (Todoist's own phrasing for
 // biweekly-on-a-weekday) falls out of the same ordinal machinery for free.
-const ORDINAL_ALIASES = {
+export const ORDINAL_ALIASES = {
   other: 2,
   second: 2,
   third: 3,
@@ -173,6 +177,10 @@ function findWeekdayRecurrenceSpan(s) {
  * `days` array (smartParse's chip label, computeNextDueDate) handles this
  * for free with no special-casing.
  */
+// "weekday"/"weekdays" themselves, for fuzzy typo suggestion — not part of
+// UNIT_ALIASES since they're matched as a fixed literal below, not a unit.
+export const WEEKDAY_SHORTCUT_WORDS = ['weekday', 'weekdays'];
+
 function findWeekdayShortcutMatch(s) {
   const m = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+weekdays?\\b`));
   if (!m) return null;

@@ -77,6 +77,12 @@
   padding: 4px;
 }
 
+.account-widget.compact .account-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+}
+
 .account-avatar-btn:hover {
   background: var(--color-bg-surface-hover);
 }

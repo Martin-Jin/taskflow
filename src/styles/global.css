@@ -431,12 +431,6 @@ select:focus-visible,
   height: 20px;
 }
 
-@media (max-width: 420px) {
-  .topbar .brand-name {
-    display: none;
-  }
-}
-
 .brand {
   font-family: var(--font-display);
   font-size: 19px;
