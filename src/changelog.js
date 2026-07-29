@@ -17,6 +17,19 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.8',
+    date: '2026-07-30',
+    title: 'Calendar redesigned to feel like Google Calendar mobile',
+    changes: [
+      'Added a 3-day view alongside Day/Week/Month.',
+      'The date title is now a dropdown — tap it for a month-strip date picker to jump straight to any day.',
+      'Day/Week/Month/3 Day is now picked from a hamburger menu next to the date, replacing the old tab row.',
+      'Tapping a day-of-week column header in Week/3 Day view now jumps into Day view for that date, same as tapping a day in Month view.',
+      'The "New event" button is now a floating "+" button in the corner (matching the Tasks page\'s "Add task" button), on both mobile and desktop.',
+      'Prev/next arrows are hidden on mobile, since swiping the calendar already moves between days/weeks/months there.',
+    ],
+  },
+  {
     version: '1.15.7',
     date: '2026-07-30',
     title: 'See and jump between a task and its parent/sub-tasks',

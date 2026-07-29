@@ -1,7 +1,9 @@
 /**
  * CalendarPage — top-level container for the calendar tab: navigation
- * toolbar (prev/next week, today, view switch) + the WeekView grid itself,
- * plus the block detail modal when a block is selected.
+ * toolbar (prev/next/today on desktop, a date-picker dropdown, and a
+ * hamburger view-switcher menu) + the WeekView/MonthView grid itself, a
+ * floating "+" button for creating events, plus the block detail modal
+ * when a block is selected.
  *
  * Only the selected block's *id* is tracked in state; the block object
  * passed to BlockDetailModal is derived fresh from context on every render
@@ -9,10 +11,11 @@
  * the modal happens to still be open.
  */
 
-import React, { useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Zap, CalendarPlus, RefreshCw } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
+import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
 import BlockDetailModal from '../Modals/BlockDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
@@ -31,11 +34,12 @@ function getWeekStart(iso) {
 // enough to not fire on incidental vertical-scroll touches.
 const SWIPE_THRESHOLD_PX = 50;
 
-// Views mirror Google Calendar's own switcher: Day/Week give the full
-// time-grid (WeekView, sized to 1 or 7 columns), Month trades timeline
+// Views mirror Google Calendar's own switcher: Day/3 Day/Week give the full
+// time-grid (WeekView, sized to 1, 3, or 7 columns), Month trades timeline
 // precision for a density-first overview (MonthView).
 const VIEWS = [
   { key: 'day', label: 'Day' },
+  { key: 'threeDay', label: '3 Day' },
   { key: 'week', label: 'Week' },
   { key: 'month', label: 'Month' },
 ];
@@ -47,8 +51,34 @@ export default function CalendarPage() {
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [creatingEvent, setCreatingEvent] = useState(null); // { date, startTime, endTime } while the "block time" modal is open
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showViewMenu, setShowViewMenu] = useState(false);
+  const dateWrapRef = useRef(null);
+  const viewMenuWrapRef = useRef(null);
   const { blocks, events, runRebalance, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
   const touchStartX = useRef(null);
+
+  // Close the date-picker/view-menu dropdowns on an outside click — each ref
+  // wraps BOTH its trigger button and its dropdown panel, so clicks on the
+  // trigger itself (which already toggles open/closed in its own onClick)
+  // don't get double-handled here.
+  useEffect(() => {
+    if (!showDatePicker) return;
+    function onDocMouseDown(e) {
+      if (dateWrapRef.current && !dateWrapRef.current.contains(e.target)) setShowDatePicker(false);
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [showDatePicker]);
+
+  useEffect(() => {
+    if (!showViewMenu) return;
+    function onDocMouseDown(e) {
+      if (viewMenuWrapRef.current && !viewMenuWrapRef.current.contains(e.target)) setShowViewMenu(false);
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [showViewMenu]);
   // _v2: the zoom level table gained more zoom-in steps above the original
   // max, so a v1 key persisted from before that change would pin returning
   // users to what is now a mid-range level instead of the new top/default.
@@ -80,9 +110,12 @@ export default function CalendarPage() {
     return occurrence || null; // this occurrence was deleted (scope:'this' delete) since being displayed
   }, [selectedEventId, events]);
 
-  const dayCount = view === 'day' ? 1 : 7;
-  const step = view === 'day' ? 1 : 7;
-  const rangeStart = view === 'day' ? anchorDate : getWeekStart(anchorDate);
+  const dayCount = view === 'day' ? 1 : view === 'threeDay' ? 3 : 7;
+  const step = view === 'day' ? 1 : view === 'threeDay' ? 3 : 7;
+  // Day/3 Day are anchored directly at anchorDate (so "today" as the anchor
+  // shows "today, tomorrow, day after" for 3 Day, matching Google Calendar's
+  // own 3-day view) — only Week snaps back to its Sunday start.
+  const rangeStart = view === 'week' ? getWeekStart(anchorDate) : anchorDate;
   const rangeEnd = addDays(rangeStart, dayCount - 1);
   const monthStart = startOfMonth(anchorDate);
   const todayISO = toISODate(new Date());
@@ -103,6 +136,14 @@ export default function CalendarPage() {
 
   function goToday() {
     setAnchorDate(toISODate(new Date()));
+  }
+
+  // Shared by MonthView's day cells and WeekView's day headers — jumping
+  // into Day view for the full time-grid detail, matching how most
+  // calendar apps handle month/week -> day navigation.
+  function jumpToDay(date) {
+    setAnchorDate(date);
+    setView('day');
   }
 
   function handleTouchStart(e) {
@@ -142,24 +183,69 @@ export default function CalendarPage() {
     <div className="calendar-container">
       <div className="calendar-toolbar">
         <div className="calendar-toolbar-left">
-          <button className="btn btn-icon calendar-nav-prev" onClick={goPrev} aria-label="Previous">
-            <ChevronLeft size={16} />
-          </button>
-          {/* Desktop keeps Today inline here (prev/Today/next/date, unchanged).
-              On mobile it's hidden here and re-rendered underneath the date
-              row instead (see calendar-today-btn-solo below) — the date/
-              arrows row becomes a plain "< Date >", reordered via CSS (see
-              calendar.css) rather than here, so this DOM order stays what
-              desktop needs. */}
+          {/* Prev/Today/Next are desktop-only — mobile navigates by swiping
+              the grid itself (see handleTouchStart/End), so a duplicate tap
+              target for the same thing would be redundant there. */}
           {!isMobile && (
-            <button className="btn" onClick={goToday}>
-              Today
-            </button>
+            <>
+              <button className="btn btn-icon calendar-nav-prev" onClick={goPrev} aria-label="Previous">
+                <ChevronLeft size={16} />
+              </button>
+              <button className="btn" onClick={goToday}>
+                Today
+              </button>
+              <button className="btn btn-icon calendar-nav-next" onClick={goNext} aria-label="Next">
+                <ChevronRight size={16} />
+              </button>
+            </>
           )}
-          <button className="btn btn-icon calendar-nav-next" onClick={goNext} aria-label="Next">
-            <ChevronRight size={16} />
-          </button>
-          <div className="calendar-toolbar-title">{title}</div>
+          <div className="calendar-title-wrap" ref={dateWrapRef}>
+            <button
+              className={`calendar-toolbar-title-btn ${showDatePicker ? 'is-open' : ''}`}
+              onClick={() => setShowDatePicker((v) => !v)}
+              aria-haspopup="true"
+              aria-expanded={showDatePicker}
+            >
+              <span className="calendar-toolbar-title">{title}</span>
+              <ChevronDown size={14} className="chevron" />
+            </button>
+            {showDatePicker && (
+              <CalendarDatePickerDropdown
+                value={anchorDate}
+                onSelect={(date) => {
+                  setAnchorDate(date);
+                  setShowDatePicker(false);
+                }}
+              />
+            )}
+          </div>
+          <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
+            <button
+              className="btn btn-icon"
+              onClick={() => setShowViewMenu((v) => !v)}
+              aria-label="Change view"
+              aria-haspopup="true"
+              aria-expanded={showViewMenu}
+            >
+              <Menu size={16} />
+            </button>
+            {showViewMenu && (
+              <div className="calendar-view-menu">
+                {VIEWS.map((v) => (
+                  <button
+                    key={v.key}
+                    className={view === v.key ? 'active' : ''}
+                    onClick={() => {
+                      setView(v.key);
+                      setShowViewMenu(false);
+                    }}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         {/* Only worth showing once the user has actually navigated away from
             the current day/week/month — tapping it when it's already
@@ -170,23 +256,6 @@ export default function CalendarPage() {
           </button>
         )}
         <div className="calendar-toolbar-actions">
-          <div className="view-switch">
-            {VIEWS.map((v) => (
-              <button key={v.key} className={view === v.key ? 'active' : ''} onClick={() => setView(v.key)}>
-                {v.label}
-              </button>
-            ))}
-          </div>
-          <button
-            className="btn"
-            data-tour="new-event"
-            onClick={() =>
-              setCreatingEvent({ date: view === 'day' ? anchorDate : toISODate(new Date()), startTime: '', endTime: '' })
-            }
-          >
-            <CalendarPlus size={14} />
-            New event
-          </button>
           <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
             <Zap size={14} />
             Re-balance schedule
@@ -221,10 +290,7 @@ export default function CalendarPage() {
             monthStart={monthStart}
             onSelectBlock={(block) => setSelectedBlockId(block.id)}
             onSelectEvent={(evt) => setSelectedEventId(evt.id)}
-            onSelectDay={(date) => {
-              setAnchorDate(date);
-              setView('day');
-            }}
+            onSelectDay={jumpToDay}
           />
         ) : (
           <WeekView
@@ -236,9 +302,28 @@ export default function CalendarPage() {
             onSelectBlock={(block) => setSelectedBlockId(block.id)}
             onSelectEvent={(evt) => setSelectedEventId(evt.id)}
             onCreateEvent={(date, startTime, endTime) => setCreatingEvent({ date, startTime, endTime })}
+            onSelectDay={jumpToDay}
           />
         )}
       </div>
+
+      {/* Floating "+" action button — replaces the old inline "New event"
+          toolbar button, matching TaskListPanel's "Add task" FAB style
+          (see .calendar-fab in calendar.css, mirroring .add-task-btn). */}
+      <button
+        className="btn btn-primary calendar-fab"
+        data-tour="new-event"
+        onClick={() =>
+          setCreatingEvent({
+            date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()),
+            startTime: '',
+            endTime: '',
+          })
+        }
+        aria-label="New event"
+      >
+        <Plus size={22} />
+      </button>
 
       {selectedBlock && <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} />}
       {selectedEvent && <EventDetailModal event={selectedEvent} onClose={() => setSelectedEventId(null)} />}

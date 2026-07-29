@@ -32,41 +32,201 @@
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 600;
-  min-width: 200px;
 }
 
-.view-switch {
+/* Wraps the date/range title button + its dropdown so the dropdown can
+   anchor to this specific element (position: relative) regardless of how
+   the toolbar's own flex row wraps around it. */
+.calendar-title-wrap {
+  position: relative;
+}
+
+.calendar-toolbar-title-btn {
   display: flex;
-  background: var(--color-bg-surface);
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
-  overflow: hidden;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
 }
 
-.view-switch button {
+.calendar-toolbar-title-btn:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.calendar-toolbar-title-btn .chevron {
+  color: var(--color-text-secondary);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-toolbar-title-btn.is-open .chevron {
+  transform: rotate(180deg);
+}
+
+/* Date-picker dropdown — see CalendarDatePickerDropdown.jsx. Drops down
+   from the title button, centered under it regardless of where that button
+   ends up sitting once the toolbar wraps on narrow widths. */
+.calendar-date-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  width: min(320px, 94vw);
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 10px;
+  animation: dropdown-in-centered var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-date-picker-months {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-date-picker-months::-webkit-scrollbar {
+  display: none;
+}
+
+.calendar-date-picker-month-tab {
+  flex-shrink: 0;
   background: transparent;
   border: none;
-  padding: 6px 12px;
-  font-size: 12.5px;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
   color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.calendar-date-picker-month-tab.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.calendar-date-picker-dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+
+.calendar-date-picker-dow {
+  text-align: center;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+}
+
+.calendar-date-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-date-picker-day {
+  background: none;
+  border: none;
+  border-radius: 999px;
+  aspect-ratio: 1;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.calendar-date-picker-day:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.calendar-date-picker-day.is-outside {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
+.calendar-date-picker-day.is-today {
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.calendar-date-picker-day.is-selected {
+  background: var(--color-accent-solid-bg);
+  color: #fff;
+}
+
+/* Hamburger view-switcher menu — replaces the old segmented Day/Week/Month
+   button group with a Google-Calendar-mobile-style dropdown, now that Day/
+   3 Day/Week/Month is one option too many to comfortably fit as tabs on a
+   phone width. */
+.calendar-view-menu-wrap {
+  position: relative;
+}
+
+.calendar-view-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 200;
+  min-width: 130px;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  animation: dropdown-in var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-view-menu button {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.calendar-view-menu button:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.calendar-view-menu button.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes dropdown-in-centered {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
 }
 
 @media (max-width: 639px) {
-  /* The toolbar's date-nav group, view switch, and action buttons together
-     are too wide for a phone in one row — previously this just overflowed
-     the viewport (Block time / Re-balance schedule ran off-screen with no
-     way to reach them). Let each group wrap onto its own row instead — and
-     give every one of those rows the same full width + centered content, so
-     they read as a consistent stack instead of some rows spanning edge to
-     edge while others (short on content) hug the left with a chunk of
-     empty space or dead background trailing off to one side. */
-  .calendar-toolbar-title {
-    min-width: 0;
-  }
-
-  /* .calendar-toolbar's own rows (left-group, actions-group, Today) are each
-     full-width EXCEPT the new solo Today row below, which is only as wide as
-     its label — space-between (the desktop default) would shove a lone item
-     like that to the row's edge instead of centering it. */
+  /* The toolbar's date-nav group and action buttons together are too wide
+     for a phone in one row — previously this just overflowed the viewport
+     (Block time / Re-balance schedule ran off-screen with no way to reach
+     them). Let each group wrap onto its own row instead — and give every
+     one of those rows the same full width + centered content, so they read
+     as a consistent stack instead of some rows spanning edge to edge while
+     others (short on content) hug the left with a chunk of empty space or
+     dead background trailing off to one side. */
   .calendar-toolbar {
     justify-content: center;
   }
@@ -76,27 +236,11 @@
     justify-content: center;
   }
 
-  /* Today (rendered separately below as .calendar-today-btn-solo on mobile,
-     see CalendarPage.jsx) is absent from this row here, so what's left
-     re-orders into a plain "< Date >" — arrows flanking the date — instead
-     of the arrows-then-date-at-the-end order desktop uses. */
-  .calendar-nav-prev {
-    order: 1;
-  }
-
-  .calendar-toolbar-title {
-    order: 2;
-  }
-
-  .calendar-nav-next {
-    order: 3;
-  }
-
-  /* Today's own row, directly under the date — pulled out of the date-nav
-     row above (where it used to crowd in next to the arrows) so that row
-     can read as a clean "< Date >" and Today gets a clear tap target of its
-     own instead of competing for space. Only rendered at all once the user
-     has navigated away from today (see isViewingToday in CalendarPage.jsx). */
+  /* Today (and the prev/next arrows, both desktop-only — see CalendarPage.jsx)
+     are absent from this row on mobile, so what's left is just the date
+     dropdown + hamburger view-menu button. Today gets its own row below
+     instead, as .calendar-today-btn-solo, so it still has a dedicated tap
+     target once the user has navigated away from today. */
   .calendar-today-btn-solo {
     width: auto;
     align-self: center;
@@ -108,40 +252,35 @@
     row-gap: var(--space-2);
     justify-content: center;
   }
-
-  .calendar-toolbar-actions .view-switch {
-    flex: 1 1 100%;
-  }
-
-  /* Four labeled tabs (Active/Completed/All/No due date) don't reliably
-     fit a narrow phone width without wrapping oddly — scroll horizontally
-     instead, same pattern as a native segmented control. */
-  .view-switch {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    /* Centers the tabs when they fit the row (the common case) instead of
-       leaving them left-aligned against a full-width background that
-       trails off empty to the right. `safe` falls back to start-aligned
-       if they ever don't fit, so an overflowing set never clips at both
-       ends instead of just scrolling. */
-    justify-content: safe center;
-  }
-
-  .view-switch::-webkit-scrollbar {
-    display: none;
-  }
-
-  .view-switch button {
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
 }
 
-.view-switch button.active {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-weight: 600;
+/* Floating "New event" button, replacing the old inline toolbar button on
+   both mobile and desktop — deliberately matches TaskListPanel's "Add task"
+   FAB (see .add-task-btn in tasklist.css) rather than inventing new FAB
+   styling: same size/radius/shadow/safe-area handling, just always
+   floating here (Add task only floats below 640px; every calendar view
+   already needs the toolbar space back on all widths since the old button
+   is gone). */
+.calendar-fab {
+  position: fixed;
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  z-index: 120;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-elevated);
+}
+
+@media (max-width: 639px) {
+  /* Clear the fixed mobile bottom-tab-bar, same offset .add-task-btn uses. */
+  .calendar-fab {
+    bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
+  }
 }
 
 .week-grid {
@@ -160,6 +299,8 @@
   display: contents;
 }
 
+/* Clickable — jumps into Day view on this date (see WeekView's onSelectDay),
+   matching MonthView's own day-number cells. */
 .day-header {
   position: sticky;
   top: 0;
@@ -169,6 +310,17 @@
   text-align: center;
   border-bottom: 1px solid var(--color-border);
   border-left: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.day-header:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.day-header:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: -2px;
 }
 
 .day-header .dow {
