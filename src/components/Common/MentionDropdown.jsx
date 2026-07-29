@@ -10,38 +10,22 @@
  * their horizontal position can be computed from the trigger rect alone),
  * this list's width depends on its content (label/project names, the
  * "Create …" option), so it has to actually mount and be measured before
- * its position can be clamped — same "no dependency array, bail out via
- * functional setState" trick as the anchor-measuring effect in
- * SmartTitleInput, so this settles before the browser ever paints it
- * on-screen instead of visibly jumping into place a frame later.
+ * its position can be clamped — see useAnchoredPosition (shared with
+ * KeywordSuggestPopup) for that measure-then-clamp logic.
  */
 
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React from 'react';
 import { createPortal } from 'react-dom';
 import { Tag, Folder, Layers, Plus } from 'lucide-react';
+import { useAnchoredPosition } from '../../hooks/useAnchoredPosition';
 
 const MODE_ICONS = { label: Tag, project: Folder, section: Layers };
-const EDGE_MARGIN = 8;
 
 export default function MentionDropdown({ anchorRect, mode, matches, showCreateOption, highlightedIndex, onHighlight, onSelect, query }) {
-  const listRef = useRef(null);
-  const [position, setPosition] = useState(null);
-
-  useLayoutEffect(() => {
-    if (!anchorRect || !listRef.current) return;
-    const rect = listRef.current.getBoundingClientRect();
-    const left = Math.max(EDGE_MARGIN, Math.min(anchorRect.left, window.innerWidth - rect.width - EDGE_MARGIN));
-    const spaceBelow = window.innerHeight - anchorRect.top;
-    const openAbove = spaceBelow < rect.height + EDGE_MARGIN && anchorRect.aboveTop > rect.height + EDGE_MARGIN;
-    const top = openAbove
-      ? Math.max(EDGE_MARGIN, anchorRect.aboveTop - rect.height)
-      : Math.min(anchorRect.top, window.innerHeight - rect.height - EDGE_MARGIN);
-    setPosition((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }));
-  });
+  const { elementRef: listRef, position: pos } = useAnchoredPosition(anchorRect);
 
   if (!anchorRect) return null;
   const Icon = MODE_ICONS[mode] || Tag;
-  const pos = position || anchorRect;
 
   return createPortal(
     <ul ref={listRef} className="mention-dropdown" role="listbox" style={{ position: 'fixed', left: pos.left, top: pos.top }}>

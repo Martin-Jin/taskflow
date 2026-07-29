@@ -1,10 +1,10 @@
 /**
- * useModalA11y — shared keyboard/focus behavior for the app's modals
- * (AddTaskModal, TaskDetailModal, BlockDetailModal, EventDetailModal,
- * GuidedTour). None of these trapped focus or
- * closed on Escape before, so Tab could leak out to the page behind the
- * overlay and screen readers had no dialog context — this centralizes the
- * fix instead of repeating it six times.
+ * useModalA11y — shared keyboard/focus behavior for every modal in the app
+ * (AddTaskModal, TaskDetailModal, BlockDetailModal, EventDetailModal, and
+ * the rest of src/components/Modals/, plus GuidedTour). None of these
+ * trapped focus or closed on Escape before, so Tab could leak out to the
+ * page behind the overlay and screen readers had no dialog context — this
+ * centralizes the fix instead of repeating it in every modal.
  *
  * Usage: const modalRef = useModalA11y(requestClose); then attach modalRef
  * to the `.modal` element and add role="dialog" aria-modal="true" in JSX

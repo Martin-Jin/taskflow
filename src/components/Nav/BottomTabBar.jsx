@@ -21,6 +21,7 @@ export default function BottomTabBar({ tabs, activeTab, onSelectTab }) {
           className={`bottom-tab-item ${activeTab === t.id ? 'active' : ''}`}
           onClick={() => onSelectTab(t.id)}
           data-tour={`nav-${t.id}`}
+          aria-current={activeTab === t.id ? 'page' : undefined}
         >
           <span className="bottom-tab-icon">
             <t.icon size={20} strokeWidth={2} />

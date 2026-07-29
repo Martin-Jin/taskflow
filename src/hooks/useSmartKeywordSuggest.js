@@ -9,10 +9,12 @@
  * real parser (parseTaskText) ever sees it. This is deliberately not a new
  * detected-field type: it never touches smartDetected/the chip system.
  *
- * Shape mirrors useMentionAutocomplete: `refresh()` re-derives the active
- * word from the caret position (called from onKeyUp/onClick, plus a
- * useEffect on `value`), and `handleKeyDown` returns true when it consumed
- * the keypress so callers know not to fall through to their own handling.
+ * Shape mirrors useMentionAutocomplete — both share the caret-watching and
+ * splice-and-reposition-caret boilerplate via useCaretActiveSpan.js.
+ * `refresh()` re-derives the active word from the caret position (called
+ * from onKeyUp/onClick, plus a useEffect on `value`), and `handleKeyDown`
+ * returns true when it consumed the keypress so callers know not to fall
+ * through to their own handling.
  *
  * Interaction differs from the mention popup on purpose (per design): Tab
  * cycles between candidates (rare to have more than one) instead of
@@ -21,7 +23,8 @@
  * candidate as a tappable button (see KeywordSuggestPopup).
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useCaretActiveSpan, spliceTextAndMoveCaret } from './useCaretActiveSpan';
 import { findActiveWord, findFuzzyKeywordMatches } from '../utils/fuzzyKeyword';
 import { WEEKDAY_ALIASES, MONTH_ALIASES, WORD_NUMBERS, UNIT_ALIASES as DATE_UNIT_ALIASES, PHRASE_WORDS } from '../utils/dateParse';
 import { UNIT_ALIASES as RECURRENCE_UNIT_ALIASES, LEAD_WORDS, ORDINAL_ALIASES, WEEKDAY_SHORTCUT_WORDS } from '../utils/recurrence';
@@ -45,23 +48,8 @@ const VOCABULARY = [
 ];
 
 export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = false }) {
-  const [word, setWord] = useState(null);
   const [activeIndex, setActiveIndex] = useState(0);
-
-  function refresh() {
-    const el = inputRef.current;
-    const caret = el ? el.selectionStart : null;
-    setWord(caret == null ? null : findActiveWord(value, caret));
-    setActiveIndex(0);
-  }
-
-  // Re-derive on every text change (typing); click/arrow-key caret moves
-  // with no text change are handled by callers wiring `refresh` into
-  // onClick/onKeyUp, same as useMentionAutocomplete.
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  const [word, setWord, refresh] = useCaretActiveSpan(inputRef, value, findActiveWord, () => setActiveIndex(0));
 
   const matches = !suppress && word ? findFuzzyKeywordMatches(word.word, VOCABULARY) : [];
   const isOpen = matches.length > 0;
@@ -70,18 +58,8 @@ export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = f
   /** Replace the active word with `candidate` and move the caret right after it. */
   function applyCandidate(candidate) {
     if (!word || !candidate) return;
-    const el = inputRef.current;
-    const before = value.slice(0, word.start);
-    const after = value.slice(word.end);
-    const next = `${before}${candidate}${after}`;
-    onChange(next);
     setWord(null);
-    const nextCaret = before.length + candidate.length;
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(nextCaret, nextCaret);
-    });
+    spliceTextAndMoveCaret({ inputRef, value, onChange, start: word.start, end: word.end, replacement: candidate });
   }
 
   function selectIndex(index) {

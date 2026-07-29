@@ -51,7 +51,14 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
 
   return (
     <div className={`account-widget ${compact ? 'compact' : 'full-width'}`} ref={wrapperRef}>
-      <button className="account-avatar-btn" onClick={() => setMenuOpen((v) => !v)} title={label}>
+      <button
+        className="account-avatar-btn"
+        onClick={() => setMenuOpen((v) => !v)}
+        title={label}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+      >
         {user.photoURL ? (
           <img src={user.photoURL} alt="" className="account-avatar" referrerPolicy="no-referrer" />
         ) : (

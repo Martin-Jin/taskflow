@@ -2,10 +2,10 @@
  * KeywordSuggestPopup — the "did you mean?" popup shown by
  * useSmartKeywordSuggest while typing a near-miss for a smart-parse keyword
  * (e.g. "tommorow"). Same portaled-to-body/anchor-measured approach as
- * MentionDropdown (see its own doc comment for why), just rendered as a
- * compact single row of candidate pills rather than a tall list — there's
- * usually exactly one candidate, and this is a lighter-weight assist than a
- * full autocomplete menu.
+ * MentionDropdown (see useAnchoredPosition for the shared positioning math),
+ * just rendered as a compact single row of candidate pills rather than a
+ * tall list — there's usually exactly one candidate, and this is a
+ * lighter-weight assist than a full autocomplete menu.
  *
  * Every pill is its own tappable button (mobile has no physical Tab key, so
  * tapping is the only way to reach a non-active candidate there); the
@@ -13,29 +13,14 @@
  * what Enter will apply.
  */
 
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React from 'react';
 import { createPortal } from 'react-dom';
-
-const EDGE_MARGIN = 8;
+import { useAnchoredPosition } from '../../hooks/useAnchoredPosition';
 
 export default function KeywordSuggestPopup({ anchorRect, matches, activeIndex, onSelect }) {
-  const popupRef = useRef(null);
-  const [position, setPosition] = useState(null);
-
-  useLayoutEffect(() => {
-    if (!anchorRect || !popupRef.current) return;
-    const rect = popupRef.current.getBoundingClientRect();
-    const left = Math.max(EDGE_MARGIN, Math.min(anchorRect.left, window.innerWidth - rect.width - EDGE_MARGIN));
-    const spaceBelow = window.innerHeight - anchorRect.top;
-    const openAbove = spaceBelow < rect.height + EDGE_MARGIN && anchorRect.aboveTop > rect.height + EDGE_MARGIN;
-    const top = openAbove
-      ? Math.max(EDGE_MARGIN, anchorRect.aboveTop - rect.height)
-      : Math.min(anchorRect.top, window.innerHeight - rect.height - EDGE_MARGIN);
-    setPosition((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }));
-  });
+  const { elementRef: popupRef, position: pos } = useAnchoredPosition(anchorRect);
 
   if (!anchorRect) return null;
-  const pos = position || anchorRect;
 
   return createPortal(
     <div ref={popupRef} className="keyword-suggest-popup" style={{ position: 'fixed', left: pos.left, top: pos.top }}>

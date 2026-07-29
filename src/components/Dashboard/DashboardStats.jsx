@@ -9,6 +9,41 @@ import { ALL_TASKS_PROJECT_ID } from '../../utils/projectConstants';
 import StatListModal from './StatListModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 
+function StatListItem({ item, taskId, icon: Icon, timeLabel, timeClassName, itemClassName, onOpen }) {
+  return (
+    <li
+      className={`missed-tasks-item is-openable${itemClassName ? ` ${itemClassName}` : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(taskId)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(taskId);
+        }
+      }}
+    >
+      {Icon && <Icon size={13} className="missed-tasks-icon" aria-hidden="true" />}
+      <span className={`missed-tasks-time${timeClassName ? ` ${timeClassName}` : ''}`}>{timeLabel}</span>
+      {item.link ? (
+        <a
+          href={item.link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="missed-tasks-title task-title-link"
+          title={`Open link: ${item.link}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {item.title}
+          <ExternalLink size={11} aria-hidden="true" />
+        </a>
+      ) : (
+        <span className="missed-tasks-title">{item.title}</span>
+      )}
+    </li>
+  );
+}
+
 function StatTile({ label, value, accent, onClick }) {
   const clickable = typeof onClick === 'function';
   return (
@@ -118,36 +153,14 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
           emptyMessage="Nothing scheduled today."
           onClose={() => setOpenPopup(null)}
           renderItem={(item) => (
-            <li
+            <StatListItem
               key={item.id}
-              className="missed-tasks-item scheduled-today-item is-openable"
-              role="button"
-              tabIndex={0}
-              onClick={() => openTaskFromPopup(item.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openTaskFromPopup(item.id);
-                }
-              }}
-            >
-              <span className="missed-tasks-time">{formatTime(item.startTime)}</span>
-              {item.link ? (
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="missed-tasks-title task-title-link"
-                  title={`Open link: ${item.link}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {item.title}
-                  <ExternalLink size={11} aria-hidden="true" />
-                </a>
-              ) : (
-                <span className="missed-tasks-title">{item.title}</span>
-              )}
-            </li>
+              item={item}
+              taskId={item.id}
+              timeLabel={formatTime(item.startTime)}
+              itemClassName="scheduled-today-item"
+              onOpen={openTaskFromPopup}
+            />
           )}
         />
       )}
@@ -159,37 +172,14 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
           emptyMessage="Nothing missed — nice."
           onClose={() => setOpenPopup(null)}
           renderItem={(item) => (
-            <li
+            <StatListItem
               key={item.id}
-              className="missed-tasks-item is-openable"
-              role="button"
-              tabIndex={0}
-              onClick={() => openTaskFromPopup(item.taskId)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openTaskFromPopup(item.taskId);
-                }
-              }}
-            >
-              <AlertCircle size={13} className="missed-tasks-icon" aria-hidden="true" />
-              <span className="missed-tasks-time">{formatTime(item.startTime)}</span>
-              {item.link ? (
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="missed-tasks-title task-title-link"
-                  title={`Open link: ${item.link}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {item.title}
-                  <ExternalLink size={11} aria-hidden="true" />
-                </a>
-              ) : (
-                <span className="missed-tasks-title">{item.title}</span>
-              )}
-            </li>
+              item={item}
+              taskId={item.taskId}
+              icon={AlertCircle}
+              timeLabel={formatTime(item.startTime)}
+              onOpen={openTaskFromPopup}
+            />
           )}
         />
       )}
@@ -201,37 +191,15 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
           emptyMessage="Nothing overdue — nice."
           onClose={() => setOpenPopup(null)}
           renderItem={(item) => (
-            <li
+            <StatListItem
               key={item.id}
-              className="missed-tasks-item is-openable"
-              role="button"
-              tabIndex={0}
-              onClick={() => openTaskFromPopup(item.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openTaskFromPopup(item.id);
-                }
-              }}
-            >
-              <AlertTriangle size={13} className="missed-tasks-icon" aria-hidden="true" />
-              <span className="missed-tasks-time overdue-list-date">{formatDisplayDate(item.dueDate)}</span>
-              {item.link ? (
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="missed-tasks-title task-title-link"
-                  title={`Open link: ${item.link}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {item.title}
-                  <ExternalLink size={11} aria-hidden="true" />
-                </a>
-              ) : (
-                <span className="missed-tasks-title">{item.title}</span>
-              )}
-            </li>
+              item={item}
+              taskId={item.id}
+              icon={AlertTriangle}
+              timeLabel={formatDisplayDate(item.dueDate)}
+              timeClassName="overdue-list-date"
+              onOpen={openTaskFromPopup}
+            />
           )}
         />
       )}

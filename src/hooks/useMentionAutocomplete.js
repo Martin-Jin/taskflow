@@ -15,9 +15,13 @@
  * match — an autocomplete list is expected to show several loose
  * candidates as the user narrows them down, unlike the single confident-or-
  * null resolution the chip detector needs once typing is done.
+ *
+ * Shares its caret-watching and splice-and-reposition-caret boilerplate with
+ * useSmartKeywordSuggest via useCaretActiveSpan.js.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useCaretActiveSpan, spliceTextAndMoveCaret } from './useCaretActiveSpan';
 
 const MAX_SUGGESTIONS = 8;
 
@@ -66,23 +70,8 @@ function findActiveSpan(text, caret) {
 }
 
 export function useMentionAutocomplete({ inputRef, value, onChange, projects = [], sections = [], labels = [] }) {
-  const [span, setSpan] = useState(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-
-  function refresh() {
-    const el = inputRef.current;
-    const caret = el ? el.selectionStart : null;
-    setSpan(caret == null ? null : findActiveSpan(value, caret));
-    setHighlightedIndex(0);
-  }
-
-  // Re-derive the active span whenever the text changes (typing) — click/
-  // arrow-key caret moves with no text change are handled by callers wiring
-  // this same `refresh` into onClick/onKeyUp, since those don't re-run this effect.
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  const [span, setSpan, refresh] = useCaretActiveSpan(inputRef, value, findActiveSpan, () => setHighlightedIndex(0));
 
   let mode = null; // 'label' | 'project' | 'section'
   let matches = [];
@@ -118,17 +107,15 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
     if (!span) return;
     const el = inputRef.current;
     const caret = el ? el.selectionStart : value.length;
-    const before = value.slice(0, span.start);
-    const after = value.slice(caret);
-    const needsTrailingSpace = !/^\s/.test(after);
-    const next = `${before}${insertText}${needsTrailingSpace ? ' ' : ''}${after}`;
-    onChange(next);
+    const needsTrailingSpace = !/^\s/.test(value.slice(caret));
     setSpan(null);
-    const nextCaret = before.length + insertText.length + (needsTrailingSpace ? 1 : 0);
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(nextCaret, nextCaret);
+    spliceTextAndMoveCaret({
+      inputRef,
+      value,
+      onChange,
+      start: span.start,
+      end: caret,
+      replacement: `${insertText}${needsTrailingSpace ? ' ' : ''}`,
     });
   }
 

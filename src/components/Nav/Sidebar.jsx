@@ -75,6 +75,7 @@ export default function Sidebar({
             className={`nav-item ${activeTab === t.id ? 'active' : ''}`}
             onClick={() => onSelectTab(t.id)}
             data-tour={`nav-${t.id}`}
+            aria-current={activeTab === t.id ? 'page' : undefined}
           >
             <t.icon size={16} strokeWidth={2} />
             {t.label}
@@ -99,6 +100,7 @@ export default function Sidebar({
         <button
           className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
           onClick={() => onSelectProject(ALL_TASKS_PROJECT_ID)}
+          aria-current={activeProjectId === ALL_TASKS_PROJECT_ID ? 'page' : undefined}
         >
           <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
         </button>
@@ -126,7 +128,11 @@ export default function Sidebar({
                   }}
                 />
               ) : (
-                <button className="nav-item sidebar-project-row" onClick={() => onSelectProject(p.id)}>
+                <button
+                  className="nav-item sidebar-project-row"
+                  onClick={() => onSelectProject(p.id)}
+                  aria-current={activeProjectId === p.id ? 'page' : undefined}
+                >
                   {p.isPinned && <Pin size={12} className="sidebar-project-pin-icon" aria-hidden="true" />}
                   <span className="sidebar-project-name">{p.name}</span>
                 </button>

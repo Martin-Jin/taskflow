@@ -8,9 +8,12 @@
  * at-a-glance "burn-down" view across the full planning horizon, per the
  * requirements.
  *
- * Bar color = priority. A vertical line marks "today". Days with no
- * scheduled hours for a task simply show no fill in that column, so gaps in
- * pacing are visually obvious.
+ * Bar color = priority. A vertical line marks "today". Each task renders as
+ * one single solid bar spanning its first to last scheduled date — per-day
+ * hours (`hoursByDate`) are only summed for the bar's tooltip total, not
+ * used to vary the fill within the bar, so a gap-free scheduled range still
+ * renders as one uninterrupted block regardless of how the hours land day to
+ * day within it.
  *
  * DEPENDENCIES: the scheduler (rebalanceEngine) refuses to place any blocks
  * for a task until every task in its `dependsOn` list is complete, so a

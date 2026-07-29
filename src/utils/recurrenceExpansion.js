@@ -33,7 +33,7 @@
  * ============================================================================
  */
 
-import { addDays, dayOfWeek, diffDays } from './dateUtils';
+import { addDays, addMonthsClamped, dayOfWeek, diffDays } from './dateUtils';
 
 const DAY_CODE_TO_INDEX = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 
@@ -85,16 +85,6 @@ export function parseRRule(ruleStr) {
   }
 
   return { freq, interval, byDay: byDay && byDay.length ? byDay : null, count, until };
-}
-
-/** Add N months to an ISO date, clamping the day-of-month if it overflows the target month (e.g. Jan 31 + 1 -> Feb 28). */
-function addMonthsSameDay(iso, n) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const target = new Date(y, m - 1 + n, 1);
-  const lastDayOfTargetMonth = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
-  target.setDate(Math.min(d, lastDayOfTargetMonth));
-  const pad = (v) => String(v).padStart(2, '0');
-  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
 }
 
 /** Whole-month difference between two ISO dates (b's month - a's month, ignoring day-of-month). */
@@ -186,7 +176,7 @@ function generateOccurrenceDates(dtstartIso, rule, rangeStartIso, hardStop) {
   }
 
   const stepDays = freq === 'DAILY' ? interval : freq === 'WEEKLY' ? interval * 7 : null; // null => MONTHLY (variable-length step)
-  const dateAtIndex = (n) => (freq === 'MONTHLY' ? addMonthsSameDay(dtstartIso, n * interval) : addDays(dtstartIso, n * stepDays));
+  const dateAtIndex = (n) => (freq === 'MONTHLY' ? addMonthsClamped(dtstartIso, n * interval) : addDays(dtstartIso, n * stepDays));
   const dates = [];
 
   if (count) {
@@ -267,7 +257,7 @@ export function ruleEndDate(dtstartIso, ruleStr) {
   const rule = parseRRule(ruleStr);
   if (!rule || (!rule.count && !rule.until)) return null;
   if (rule.until && !rule.count) return rule.until;
-  const farStop = rule.until || addMonthsSameDay(dtstartIso, 240); // ~20yr safety cap when only COUNT bounds it
+  const farStop = rule.until || addMonthsClamped(dtstartIso, 240); // ~20yr safety cap when only COUNT bounds it
   const dates = generateOccurrenceDates(dtstartIso, rule, dtstartIso, farStop);
   return dates.length ? dates[dates.length - 1] : null;
 }

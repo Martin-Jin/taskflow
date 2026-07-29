@@ -17,6 +17,17 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.4',
+    date: '2026-07-30',
+    title: 'Backup and recurrence fixes, plus internal cleanup',
+    changes: [
+      'Fixed a bug where "Back up now" (Settings → Backups) could save a cloud backup that silently turned interface animations off when later restored.',
+      'Restoring a backup no longer risks reintroducing duplicate calendar events.',
+      'Fixed a bug in Add Task where editing the repeat count/unit for a weekday-specific recurrence (e.g. "every Sat and Sun") could silently downgrade it to a generic weekly repeat.',
+      'Add Task now shows the same explanatory hints as the task detail view for "Lock to a day" and "Unattended".',
+    ],
+  },
+  {
     version: '1.16.3',
     date: '2026-07-30',
     title: 'Fix: "#project" smart parse missing multi-word/ambiguous projects',

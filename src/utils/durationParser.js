@@ -25,23 +25,18 @@
  * ============================================================================
  */
 
+import { BASE_WORD_NUMBERS } from './wordNumbers';
+
+// Shares dateParse.js's base word-to-number vocabulary (a/an/one/.../ten,
+// couple, few) and layers on duration-specific forms: "half"/"half an" (no
+// equivalent when counting whole weeks/months) and "couple of" (this parser's
+// unit always follows directly, e.g. "a couple of hours", so the "of" needs
+// its own entry here).
 const WORD_NUMBERS = {
+  ...BASE_WORD_NUMBERS,
   half: 0.5,
   'half an': 0.5,
-  a: 1,
-  an: 1,
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  six: 6,
-  seven: 7,
-  eight: 8,
-  couple: 2,
   'couple of': 2,
-  few: 3,
-  'a few': 3,
 };
 
 /** Normalize a numeric token: handles ".", "," decimals and simple "a/b" fractions. */

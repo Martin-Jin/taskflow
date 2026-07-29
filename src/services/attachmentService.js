@@ -83,7 +83,15 @@ export async function uploadCommentAttachment(uid, taskId, file) {
   const storageRef = ref(storage, path);
   const timeoutMessage = 'Upload timed out — check your connection and try again.';
   await withTimeout(uploadBytes(storageRef, file, { contentType: file.type || undefined }), UPLOAD_TIMEOUT_MS, timeoutMessage);
-  const url = await withTimeout(getDownloadURL(storageRef), UPLOAD_TIMEOUT_MS, timeoutMessage);
+  let url;
+  try {
+    url = await withTimeout(getDownloadURL(storageRef), UPLOAD_TIMEOUT_MS, timeoutMessage);
+  } catch (err) {
+    // The file itself already landed in Storage — without a URL nothing will
+    // ever reference it, so clean it up now rather than leaving it orphaned.
+    await deleteCommentAttachment(path);
+    throw err;
+  }
   return { url, path, name: file.name, size: file.size, type: file.type || '' };
 }
 

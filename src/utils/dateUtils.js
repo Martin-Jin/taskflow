@@ -104,6 +104,11 @@ export function isBlockPast(block, today, nowMinutes) {
   return timeToMinutes(block.endTime) <= nowMinutes;
 }
 
+// Re-exported so existing `import { BASE_WORD_NUMBERS } from '../utils/dateUtils'`
+// call sites keep working — see wordNumbers.js for why the vocabulary itself
+// lives in its own dependency-free file instead of here.
+export { BASE_WORD_NUMBERS } from './wordNumbers';
+
 /**
  * Parse a free-text duration estimate out of a task title/description, e.g.
  * "[2h]", "1.5 hours", "90 min", "30 minutes", "45m", "half an hour".
@@ -127,6 +132,25 @@ export function startOfMonth(iso) {
 export function addMonths(iso, n) {
   const date = fromISODate(iso);
   return toISODate(new Date(date.getFullYear(), date.getMonth() + n, 1));
+}
+
+/**
+ * Add N months to an ISO date, clamping the day-of-month if it overflows the
+ * target month (e.g. Jan 31 + 1 -> Feb 28/29). Unlike `addMonths` above (which
+ * always resets to the 1st, for month-view navigation), this preserves the
+ * day-of-month — used for recurrence/date-math where "same day next month"
+ * is the intent. Shared by recurrence.js (task due-date recurrence),
+ * recurrenceExpansion.js (calendar RRULE expansion), and dateParse.js
+ * (natural-language "next month"/"in N months" phrases).
+ */
+export function addMonthsClamped(iso, n) {
+  const date = fromISODate(iso);
+  const targetMonthIndex = date.getMonth() + n;
+  const year = date.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const monthIndex = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const day = Math.min(date.getDate(), lastDayOfTargetMonth);
+  return toISODate(new Date(year, monthIndex, day));
 }
 
 /** Format an ISO date as "Month YYYY", e.g. "July 2026" — month-view toolbar title. */

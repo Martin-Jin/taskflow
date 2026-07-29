@@ -486,7 +486,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                     : `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`
                   : 'Does not repeat'}
               </label>
-              {isRecurring && (
+              {isRecurring && !(recurrenceDays && recurrenceDays.length > 0) && (
                 <div className="detail-field-inline" style={{ marginTop: 6 }}>
                   <input
                     type="number"
@@ -575,7 +575,12 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 />
                 {earliestDate ? formatDisplayDate(earliestDate) : 'Not locked'}
               </label>
-              {earliestDate && <input type="date" value={earliestDate} onChange={(e) => setEarliestDate(e.target.value)} style={{ marginTop: 6 }} />}
+              {earliestDate && (
+                <>
+                  <input type="date" value={earliestDate} onChange={(e) => setEarliestDate(e.target.value)} style={{ marginTop: 6 }} />
+                  <p className="form-hint">The scheduler won't place blocks before this date, overriding its usual pacing.</p>
+                </>
+              )}
             </DetailField>
 
             <DetailField icon={Wind} label="Unattended">
@@ -590,6 +595,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 />
                 Can run unattended
               </label>
+              <p className="form-hint">e.g. laundry — can overlap other scheduled work.</p>
             </DetailField>
           </div>
         )}
