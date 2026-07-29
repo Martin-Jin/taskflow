@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.3',
+    date: '2026-07-30',
+    title: 'Fix: "#project" smart parse missing multi-word/ambiguous projects',
+    changes: [
+      'Typing "#" followed by a multi-word project name (e.g. "#Work Trip") now resolves to that exact project instead of silently matching a shorter, differently-named project that happened to share its first word (e.g. "Work").',
+      'A "#project" or "@label" mention typed after an "after <task>"/"depends on <task>" dependency phrase is no longer swallowed into the dependency match — both are now detected together.',
+    ],
+  },
+  {
     version: '1.16.2',
     date: '2026-07-30',
     title: 'AI Quick Add now has an in-app guide',
