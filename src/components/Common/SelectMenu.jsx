@@ -13,14 +13,22 @@
  * bottom (exactly where AddTaskModal's footer places it). Flips above
  * the trigger when there isn't room below, and falls back to a centered
  * popup (see useMenuPosition) if even that wouldn't fit the viewport.
+ *
+ * `marquee` (default off) swaps the plain label span for MarqueeText, which
+ * only animates when the label actually overflows its box — opt-in so the
+ * default rendering (e.g. AddTaskModal's footer picker, which has plenty of
+ * room and isn't width-constrained) is unaffected. The Tasks page's project
+ * switcher passes it since long project names get a fixed max-width there
+ * (see tasklist.css's `.taskpage-project-header .select-menu-value`).
  */
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
+import MarqueeText from './MarqueeText';
 
-export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, footerActions }) {
+export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, footerActions, marquee = false }) {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(() => Math.max(0, options.findIndex((o) => o.value === value)));
   const rootRef = useRef(null);
@@ -101,7 +109,9 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
         onKeyDown={handleKeyDown}
       >
         {Icon && <Icon size={14} />}
-        <span className="select-menu-value">{selected ? selected.label : ''}</span>
+        <span className="select-menu-value">
+          {selected ? (marquee ? <MarqueeText text={selected.label} /> : selected.label) : ''}
+        </span>
         <ChevronDown size={14} className="select-menu-chevron" />
       </button>
 

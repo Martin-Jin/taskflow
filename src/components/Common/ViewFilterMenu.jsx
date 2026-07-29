@@ -10,15 +10,23 @@
  * The filter is per-view (see TaskListPanel's `filterByView` state) — this
  * component is just the picker, not the source of truth for which filter
  * belongs to which view.
+ *
+ * `projectActions` (optional — { isPinned, onRename, onTogglePin, onDelete })
+ * folds ProjectActionsMenu's Rename/Pin/Delete items into this same popover
+ * as a third headed group, and swaps the trigger for a "⋯"-style icon
+ * button. TaskListPanel only passes this on mobile (see useIsMobile), where
+ * there isn't room for a title plus two separate menu triggers — desktop
+ * keeps rendering ViewFilterMenu and ProjectActionsMenu as two triggers.
  */
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Check } from 'lucide-react';
+import { ChevronDown, Check, MoreHorizontal } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { TASK_STATUS_FILTERS } from '../../utils/projectConstants';
+import { ProjectActionsItems } from './ProjectActionsMenu';
 
-export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter, onChangeFilter }) {
+export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter, onChangeFilter, projectActions }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -44,23 +52,34 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
 
   const currentViewLabel = viewOptions.find((v) => v.key === view)?.label || view;
 
+  function runAndClose(fn) {
+    fn();
+    closeMenu();
+  }
+
   return (
     <>
       <button
         type="button"
         ref={buttonRef}
-        className="btn menu-trigger view-filter-trigger"
+        className={projectActions ? 'btn btn-icon menu-trigger project-actions-trigger' : 'btn menu-trigger view-filter-trigger'}
         data-tour="tasks-view-switch"
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        aria-label="Change view or filter"
+        aria-label={projectActions ? 'View, filter, and project actions' : 'Change view or filter'}
         onClick={(e) => {
           e.stopPropagation();
           setIsOpen((v) => !v);
         }}
       >
-        {currentViewLabel}
-        <ChevronDown size={14} />
+        {projectActions ? (
+          <MoreHorizontal size={14} />
+        ) : (
+          <>
+            {currentViewLabel}
+            <ChevronDown size={14} />
+          </>
+        )}
       </button>
 
       {isOpen &&
@@ -108,6 +127,19 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
                   {filter === f.key && <Check size={13} />}
                 </button>
               ))}
+
+              {projectActions && (
+                <>
+                  <p className="dashboard-customize-heading">Project</p>
+                  <ProjectActionsItems
+                    isPinned={projectActions.isPinned}
+                    onRename={projectActions.onRename}
+                    onTogglePin={projectActions.onTogglePin}
+                    onDelete={projectActions.onDelete}
+                    runAndClose={runAndClose}
+                  />
+                </>
+              )}
             </div>
           </>,
           document.body

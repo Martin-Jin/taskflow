@@ -28,6 +28,7 @@ export const BACKUP_FIELDS = [
   'events',
   'soundEnabled',
   'soundVolume',
+  'animationsEnabled',
   'theme',
   'pinnedLinks',
   'shortcutBindings',

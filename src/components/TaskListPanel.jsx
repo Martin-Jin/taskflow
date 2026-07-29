@@ -40,6 +40,8 @@ import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
 import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import ViewFilterMenu from './Common/ViewFilterMenu';
+import MarqueeText from './Common/MarqueeText';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -74,6 +76,7 @@ export default function TaskListPanel({
   const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
+  const isMobile = useIsMobile();
   const [showAddModal, setShowAddModal] = useState(false);
   // The "new task" shortcut (see useKeyboardShortcuts in App.jsx) bumps this
   // from anywhere in the app to open "Add task" here, since this modal's open
@@ -340,68 +343,85 @@ export default function TaskListPanel({
     );
   }
 
+  // On mobile there isn't room for a title plus two separate menu triggers,
+  // so the view/filter picker and the project's Rename/Pin/Delete actions
+  // collapse into one combined "⋯" popover (see ViewFilterMenu's
+  // `projectActions` prop) instead of the two desktop-only triggers below.
+  const projectActionsProps = activeProject
+    ? {
+      isPinned: !!activeProject.isPinned,
+      onRename: startRenameProject,
+      onTogglePin: () => togglePinProject(activeProject.id),
+      onDelete: handleDeleteProject,
+    }
+    : undefined;
+
   return (
     <div className="taskpage">
-      <div className="taskpage-view-switch-row">
-        <ViewFilterMenu
-          view={view}
-          onChangeView={onChangeView}
-          viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID)}
-          filter={filter}
-          onChangeFilter={setFilter}
-        />
-        {activeProject && (
-          <ProjectActionsMenu
-            isPinned={!!activeProject.isPinned}
-            ariaLabel={`Actions for ${activeProject.name}`}
-            onRename={startRenameProject}
-            onTogglePin={() => togglePinProject(activeProject.id)}
-            onDelete={handleDeleteProject}
+      <div className="taskpage-header-row">
+        <div className="taskpage-project-header">
+          <SelectMenu
+            value={activeProjectId}
+            options={projectSelectOptions}
+            onChange={onChangeActiveProject}
+            ariaLabel="Switch project"
+            footerActions={footerActions}
+            marquee
           />
-        )}
-      </div>
+          {isRenamingProject ? (
+            <input
+              autoFocus
+              className="taskpage-project-title-input"
+              aria-label={`Rename project "${activeProject?.name || ''}"`}
+              value={projectNameDraft}
+              onChange={(e) => setProjectNameDraft(e.target.value)}
+              onBlur={commitRenameProject}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitRenameProject();
+                }
+                if (e.key === 'Escape') setIsRenamingProject(false);
+              }}
+            />
+          ) : (
+            <h2
+              className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
+              title={activeProject ? 'Click to rename' : undefined}
+              role={activeProject ? 'button' : undefined}
+              tabIndex={activeProject ? 0 : undefined}
+              onClick={startRenameProject}
+              onKeyDown={(e) => {
+                if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  startRenameProject();
+                }
+              }}
+            >
+              <MarqueeText text={activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL} />
+            </h2>
+          )}
+        </div>
 
-      <div className="taskpage-project-header">
-        <SelectMenu
-          value={activeProjectId}
-          options={projectSelectOptions}
-          onChange={onChangeActiveProject}
-          ariaLabel="Switch project"
-          footerActions={footerActions}
-        />
-        {isRenamingProject ? (
-          <input
-            autoFocus
-            className="taskpage-project-title-input"
-            aria-label={`Rename project "${activeProject?.name || ''}"`}
-            value={projectNameDraft}
-            onChange={(e) => setProjectNameDraft(e.target.value)}
-            onBlur={commitRenameProject}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                commitRenameProject();
-              }
-              if (e.key === 'Escape') setIsRenamingProject(false);
-            }}
+        <div className="taskpage-view-switch-row">
+          <ViewFilterMenu
+            view={view}
+            onChangeView={onChangeView}
+            viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID)}
+            filter={filter}
+            onChangeFilter={setFilter}
+            projectActions={isMobile ? projectActionsProps : undefined}
           />
-        ) : (
-          <h2
-            className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
-            title={activeProject ? 'Click to rename' : undefined}
-            role={activeProject ? 'button' : undefined}
-            tabIndex={activeProject ? 0 : undefined}
-            onClick={startRenameProject}
-            onKeyDown={(e) => {
-              if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
-                e.preventDefault();
-                startRenameProject();
-              }
-            }}
-          >
-            {activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL}
-          </h2>
-        )}
+          {!isMobile && activeProject && (
+            <ProjectActionsMenu
+              isPinned={!!activeProject.isPinned}
+              ariaLabel={`Actions for ${activeProject.name}`}
+              onRename={startRenameProject}
+              onTogglePin={() => togglePinProject(activeProject.id)}
+              onDelete={handleDeleteProject}
+            />
+          )}
+        </div>
       </div>
 
       {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onResolveBoardProject} filter={filter} />}

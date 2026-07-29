@@ -871,6 +871,14 @@
   padding: 4px;
   margin: 0;
   list-style: none;
+  animation: select-menu-in var(--duration-fast) var(--ease-decelerate);
+}
+
+@keyframes select-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }
 
 .select-menu-option {

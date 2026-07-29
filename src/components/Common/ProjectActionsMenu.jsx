@@ -15,6 +15,33 @@ import { createPortal } from 'react-dom';
 import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 
+// The Rename/Pin/Delete buttons themselves, split out so ViewFilterMenu can
+// fold them into its own combined mobile popover (see that file's
+// `projectActions` prop) without duplicating this markup.
+export function ProjectActionsItems({ isPinned, onRename, onTogglePin, onDelete, runAndClose }) {
+  return (
+    <>
+      <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onRename)}>
+        <Pencil size={13} />
+        Rename
+      </button>
+      <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onTogglePin)}>
+        {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+        {isPinned ? 'Unpin' : 'Pin'}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="project-actions-item project-actions-item-danger"
+        onClick={() => runAndClose(onDelete)}
+      >
+        <Trash2 size={13} />
+        Delete
+      </button>
+    </>
+  );
+}
+
 export default function ProjectActionsMenu({ isPinned, onRename, onTogglePin, onDelete, ariaLabel = 'Project actions' }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
@@ -80,23 +107,13 @@ export default function ProjectActionsMenu({ isPinned, onRename, onTogglePin, on
               role="menu"
               style={mode === 'anchored' ? style : undefined}
             >
-              <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onRename)}>
-                <Pencil size={13} />
-                Rename
-              </button>
-              <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onTogglePin)}>
-                {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
-                {isPinned ? 'Unpin' : 'Pin'}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="project-actions-item project-actions-item-danger"
-                onClick={() => runAndClose(onDelete)}
-              >
-                <Trash2 size={13} />
-                Delete
-              </button>
+              <ProjectActionsItems
+                isPinned={isPinned}
+                onRename={onRename}
+                onTogglePin={onTogglePin}
+                onDelete={onDelete}
+                runAndClose={runAndClose}
+              />
             </div>
           </>,
           document.body
