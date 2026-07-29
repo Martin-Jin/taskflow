@@ -95,7 +95,7 @@ import { linkLabel } from '../../utils/linkify';
 import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { getIneligibleDependencyIds } from '../../utils/dependencyUtils';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours, formatHoursLong } from '../../utils/formatHours';
+import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -417,6 +417,95 @@ export default function TaskDetailModal({ task, onClose }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
+
+  // Pulls in an EXTERNAL change to a sidebar field (e.g. an undo/redo
+  // elsewhere restoring this task's previous priority/due date/etc.) while
+  // this modal stays open on the same task — otherwise the field only
+  // catches up the next time the modal is reopened. Only syncs a field that
+  // is still "untouched" (local value === the last value we synced/saved),
+  // so an in-progress edit is never clobbered — consistent with how these
+  // same fields already autosave themselves without an explicit Save step
+  // (see sidebarDirty/commitChanges below). Deliberately excludes
+  // title/link/notes, which keep the existing task.id-only reset behavior
+  // since they're gated behind an explicit Save/Cancel instead.
+  useEffect(() => {
+    const snap = initialSnapshotRef.current;
+    if (!snap) return;
+    const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
+    const taskValues = {
+      estimatedHours: task.estimatedHours,
+      priority: task.priority,
+      dueDate: task.dueDate || '',
+      isRecurring: !!task.isRecurring,
+      recurrenceCount: rule.count,
+      recurrenceUnit: rule.unit,
+      projectId: task.projectId || '',
+      sectionId: task.sectionId || '',
+      isPassive: !!task.isPassive,
+      earliestDate: task.earliestDate || '',
+      enforceDueDate: !!task.enforceDueDate,
+      fixedTime: task.fixedTime || '',
+    };
+    const setters = {
+      estimatedHours: setEstimatedHours,
+      priority: setPriority,
+      dueDate: setDueDate,
+      isRecurring: setIsRecurring,
+      recurrenceCount: setRecurrenceCount,
+      recurrenceUnit: setRecurrenceUnit,
+      projectId: setProjectId,
+      sectionId: setSectionId,
+      isPassive: setIsPassive,
+      earliestDate: setEarliestDate,
+      enforceDueDate: setEnforceDueDate,
+      fixedTime: setFixedTime,
+    };
+    const localValues = {
+      estimatedHours,
+      priority,
+      dueDate,
+      isRecurring,
+      recurrenceCount,
+      recurrenceUnit,
+      projectId,
+      sectionId,
+      isPassive,
+      earliestDate,
+      enforceDueDate,
+      fixedTime,
+    };
+    Object.keys(taskValues).forEach((key) => {
+      if (String(localValues[key]) === String(snap[key]) && String(taskValues[key]) !== String(snap[key])) {
+        setters[key](taskValues[key]);
+        snap[key] = taskValues[key];
+      }
+    });
+    const taskRecurrenceDays = rule.days || null;
+    if (
+      JSON.stringify(recurrenceDays || []) === JSON.stringify(snap.recurrenceDays || []) &&
+      JSON.stringify(taskRecurrenceDays || []) !== JSON.stringify(snap.recurrenceDays || [])
+    ) {
+      setRecurrenceDays(taskRecurrenceDays);
+      snap.recurrenceDays = taskRecurrenceDays;
+    }
+    const taskDependsOn = task.dependsOn || [];
+    if (
+      JSON.stringify(dependsOn) === JSON.stringify(snap.dependsOn) &&
+      JSON.stringify(taskDependsOn) !== JSON.stringify(snap.dependsOn)
+    ) {
+      setDependsOn(taskDependsOn);
+      snap.dependsOn = taskDependsOn;
+    }
+    const taskLabelIds = task.labelIds || [];
+    if (
+      JSON.stringify(labelIds) === JSON.stringify(snap.labelIds) &&
+      JSON.stringify(taskLabelIds) !== JSON.stringify(snap.labelIds)
+    ) {
+      setLabelIds(taskLabelIds);
+      snap.labelIds = taskLabelIds;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task]);
 
   // Direct children only (one level) — a grandchild is reached by opening
   // its own parent's nested TaskDetailModal in turn, not shown flattened here.
@@ -1398,7 +1487,6 @@ export default function TaskDetailModal({ task, onClose }) {
 
               <DetailField icon={Clock} label="Estimated time">
                 <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} />
-                <p className="form-hint">{formatHoursLong(estimatedHours)}</p>
                 {typeof task.actualHours === 'number' && (
                   <p className="form-hint">Actually spent: {formatHours(task.actualHours)} (tracked via timer)</p>
                 )}

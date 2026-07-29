@@ -57,7 +57,7 @@ import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/da
 import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours, formatHoursLong } from '../../utils/formatHours';
+import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -462,7 +462,6 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                   setEstimatedHours(h);
                 }}
               />
-              <p className="form-hint">{formatHoursLong(estimatedHours)}</p>
             </DetailField>
 
             <DetailField icon={Repeat} label="Repeat">

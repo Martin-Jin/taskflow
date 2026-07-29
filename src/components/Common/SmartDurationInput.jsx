@@ -10,16 +10,20 @@
  * keystroke and, when it matches, both highlights the recognized substring
  * (same backdrop/<mark> overlay trick as SmartTitleInput, mirrored scroll)
  * and reports the parsed hours up via onChange. On blur, the field collapses
- * to the clean canonical short form (formatHours) rather than leaving the
- * user's raw typed text sitting there — so "1h 30m" settles to "1.5h" once
- * they move on. If nothing parses, the last confirmed `hours` value is kept
- * (onChange simply isn't called), so a stray keystroke never wipes out the
- * committed estimate.
+ * to the spelled-out long form (formatHoursLong, e.g. "1 hour 30 minutes")
+ * rather than leaving the user's raw typed text sitting there or showing a
+ * separate hint line underneath — so "1h 30m" settles to "1 hour 30 minutes"
+ * once they move on, and clicking back in swaps it for the short editable
+ * form ("1.5h") to type over. If nothing parses, the last confirmed `hours`
+ * value is kept (onChange simply isn't called), so a stray keystroke never
+ * wipes out the committed estimate — except clearing the field entirely,
+ * which commits an estimate of 0 on blur rather than snapping back to the
+ * old value.
  */
 
 import React, { useRef, useState } from 'react';
 import { findDurationPhrase } from '../../utils/durationParser';
-import { formatHours } from '../../utils/formatHours';
+import { formatHours, formatHoursLong } from '../../utils/formatHours';
 
 export default function SmartDurationInput({ hours, onChange, placeholder }) {
   const inputRef = useRef(null);
@@ -47,6 +51,7 @@ export default function SmartDurationInput({ hours, onChange, placeholder }) {
   }
 
   function handleBlur() {
+    if (!rawText.trim()) onChange(0);
     setEditing(false);
   }
 
@@ -77,7 +82,7 @@ export default function SmartDurationInput({ hours, onChange, placeholder }) {
         type="text"
         inputMode="text"
         className="smart-duration-input"
-        value={editing ? rawText : formatHours(hours)}
+        value={editing ? rawText : formatHoursLong(hours)}
         onFocus={handleFocus}
         onChange={handleChange}
         onScroll={syncScroll}
