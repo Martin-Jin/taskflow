@@ -27,7 +27,7 @@
  * ============================================================================
  */
 
-import { addDays } from './dateUtils';
+import { addDays, addMonthsClamped } from './dateUtils';
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -383,22 +383,12 @@ export function computeNextDueDate(currentDueDate, recurrenceString) {
     case 'week':
       return addDays(currentDueDate, rule.count * 7);
     case 'month':
-      return addMonths(currentDueDate, rule.count);
+      return addMonthsClamped(currentDueDate, rule.count);
     case 'year':
-      return addMonths(currentDueDate, rule.count * 12);
+      return addMonthsClamped(currentDueDate, rule.count * 12);
     default:
       return addDays(currentDueDate, 1);
   }
-}
-
-/** Add N months to an ISO date, clamping the day-of-month if it overflows the target month. */
-function addMonths(iso, n) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const target = new Date(y, m - 1 + n, 1);
-  const lastDayOfTargetMonth = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
-  target.setDate(Math.min(d, lastDayOfTargetMonth));
-  const pad = (v) => String(v).padStart(2, '0');
-  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
 }
 
 /** Options for the "Repeats every N ___" unit <select> in AddTaskModal/TaskDetailModal. */

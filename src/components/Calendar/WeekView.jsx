@@ -3,8 +3,9 @@
  * WeekView
  * ============================================================================
  * The primary interactive calendar surface. Renders a 1/3/7-day time grid
- * (06:00-24:00, the full day; column count set by `dayCount` — Day/3 Day/
- * Week in CalendarPage all render this same component) with ScheduledBlocks
+ * (06:00-24:00, 18 of the 24 hours — a block/event starting before 06:00
+ * would render off the top of the grid; column count set by `dayCount` —
+ * Day/3 Day/Week in CalendarPage all render this same component) with ScheduledBlocks
  * and CalendarEvents positioned absolutely by time.
  *
  * Interaction model:
@@ -35,9 +36,10 @@ import { createPortal } from 'react-dom';
 import { Lock, Unlock, Wind } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, formatDisplayDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
-import { expandEventsForRange, expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
+import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
+import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
 
 const GRID_START_MIN = 6 * 60; // 06:00
 const GRID_END_MIN = 24 * 60; // 24:00
@@ -52,7 +54,7 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
 // A run of tiny tasks (e.g. several 5-minute defaults back-to-back) renders
 // as unreadable slivers if drawn individually — see clusterShortBlocks below.
-const SHORT_BLOCK_MAX_MIN = 15; // blocks this short (or shorter) are cluster-eligible
+// (SHORT_BLOCK_MAX_MIN itself lives in calendarGrouping.js, shared with MonthView.)
 const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
 
@@ -331,29 +333,7 @@ export default function WeekView({
   // array once per visible day, and pre-compute each day's cluster/lane
   // layout with useMemo — this is otherwise redone on every render,
   // including every dragover event that fires continuously while dragging.
-  const blocksByDay = useMemo(() => {
-    const map = new Map();
-    for (const b of blocks) {
-      const list = map.get(b.date);
-      if (list) list.push(b);
-      else map.set(b.date, [b]);
-    }
-    return map;
-  }, [blocks]);
-  const eventsByDay = useMemo(() => {
-    const map = new Map();
-    // Recurring events are stored once (the master's date/times describe
-    // DTSTART) and expanded into virtual per-day instances here, at display
-    // time only — never written back to state — so a repeating event shows
-    // up on every day it recurs without becoming N duplicate records.
-    const expanded = expandEventsForRange(events, days[0], days[days.length - 1]);
-    for (const e of expanded) {
-      const list = map.get(e.date);
-      if (list) list.push(e);
-      else map.set(e.date, [e]);
-    }
-    return map;
-  }, [events, days]);
+  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days), [blocks, events, days]);
   // Blocks and events are laid out together (one lane-packing pass sees
   // both) so an overlapping block+event pair packs into side-by-side lanes
   // (or, if short enough, collapses into one "N events" chip) exactly like

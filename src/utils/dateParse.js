@@ -19,7 +19,8 @@
  * ============================================================================
  */
 
-import { toISODate, fromISODate, addDays, dayOfWeek } from './dateUtils';
+import { toISODate, fromISODate, addDays, addMonthsClamped, dayOfWeek } from './dateUtils';
+import { BASE_WORD_NUMBERS } from './wordNumbers';
 
 // Exported so fuzzyKeyword-based typo suggestion (see useSmartKeywordSuggest)
 // can reuse the exact same keyword vocabulary this parser matches against,
@@ -68,25 +69,7 @@ export const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
 MONTH_ALIASES.sept = 8;
 
 /** Small word-numbers people type instead of digits: "in a week", "in a couple of days", "in a few months". */
-export const WORD_NUMBERS = {
-  a: 1,
-  an: 1,
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  six: 6,
-  seven: 7,
-  eight: 8,
-  nine: 9,
-  ten: 10,
-  couple: 2,
-  few: 3,
-  // Multi-word forms — "a couple"/"a few" read as one count, not "a" (=1) stopping short before "couple".
-  'a couple': 2,
-  'a few': 3,
-};
+export const WORD_NUMBERS = BASE_WORD_NUMBERS;
 
 export const UNIT_ALIASES = {
   day: 'day',
@@ -146,16 +129,6 @@ function thisWeekdayFrom(fromIso, targetDow) {
 /** Last calendar day of `year`/`monthIndex` (0-11), e.g. lastDayOfMonth(2025, 1) === 28. */
 function lastDayOfMonth(year, monthIndex) {
   return new Date(year, monthIndex + 1, 0).getDate();
-}
-
-/** Add N whole calendar months, clamping the day-of-month so e.g. Jan 31 + 1 month lands on Feb 28/29, not rolling into March. */
-function addMonthsClamped(iso, n) {
-  const date = fromISODate(iso);
-  const targetMonthIndex = date.getMonth() + n;
-  const year = date.getFullYear() + Math.floor(targetMonthIndex / 12);
-  const monthIndex = ((targetMonthIndex % 12) + 12) % 12;
-  const day = Math.min(date.getDate(), lastDayOfMonth(year, monthIndex));
-  return toISODate(new Date(year, monthIndex, day));
 }
 
 /** Add N whole calendar years, clamping Feb 29 -> Feb 28 on non-leap target years. */

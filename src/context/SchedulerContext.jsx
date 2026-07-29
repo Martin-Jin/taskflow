@@ -950,7 +950,7 @@ export function SchedulerProvider({ children }) {
   /**
    * Applies a full backup payload (from a local file import or a cloud
    * backup — same shape either way, see backupService.js) onto current
-   * state. Mirrors pullFromCloud's field-by-field apply above, but routes
+   * state. Mirrors applyRemoteData's field-by-field apply above, but routes
    * tasks/blocks through commit() so a restore is itself one undoable
    * action, matching clearAllData's precedent. A payload missing a field
    * (an older/partial backup) leaves that field untouched rather than
@@ -970,7 +970,11 @@ export function SchedulerProvider({ children }) {
       if ('labels' in payload) setLabels(payload.labels);
       if ('routines' in payload) setRoutines(payload.routines);
       if ('rules' in payload) setRules(payload.rules);
-      if ('events' in payload) setEvents(payload.events);
+      // Deduped the same way applyRemoteData/the boot-time load already are —
+      // a backup can carry duplicate copies of the same event occurrence for
+      // the same reasons localStorage/Firestore can (see dedupeEventsByOccurrence's
+      // own comment), so restoring one shouldn't reintroduce them.
+      if ('events' in payload) setEvents(dedupeEventsByOccurrence(payload.events));
       if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
       if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
       if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
@@ -1070,6 +1074,7 @@ export function SchedulerProvider({ children }) {
         events,
         soundEnabled,
         soundVolume,
+        animationsEnabled,
         theme,
         pinnedLinks,
         shortcutBindings,
@@ -1083,7 +1088,7 @@ export function SchedulerProvider({ children }) {
     } finally {
       setIsBackingUp(false);
     }
-  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, theme, pinnedLinks, shortcutBindings, refreshCloudBackups]);
+  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, pinnedLinks, shortcutBindings, refreshCloudBackups]);
 
   /** Fetches one cloud backup's full payload by id and restores it. */
   const restoreCloudBackup = useCallback(

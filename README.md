@@ -303,6 +303,12 @@ var unset and the AI Quick Add button simply doesn't appear. Even once it's
 configured, each visitor still needs to add their own API key in Settings
 before they can actually use it.
 
+For local `npm run dev` convenience, you can also set `VITE_ANTHROPIC_API_KEY`
+and/or `VITE_GEMINI_API_KEY` in `.env` — these are read before falling back to
+the Settings-saved key, so you don't need to paste a key into the UI on every
+fresh checkout. They're never present in the public GitHub Pages build, since
+there's no `.env` at build time there.
+
 In-app help is built in too: the guided tour (Settings → Help → Show
 tutorial) has a step pointing at the sparkle button, and the button "?" in
 the top-right of the AI Quick Add panel itself opens a fuller guide covering

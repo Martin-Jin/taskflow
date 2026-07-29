@@ -7,7 +7,7 @@
  * (days from the adjacent months are dimmed). Each cell lists its scheduled
  * blocks/events as small chips rather than the full time-grid WeekView uses
  * — there's no room to draw a real timeline, so this is a density-first
- * overview. A run of short tasks (see WeekView's own SHORT_TASK_MAX_MIN
+ * overview. A run of short tasks (see WeekView's own SHORT_BLOCK_MAX_MIN
  * clustering) is collapsed into one "N short tasks" chip so a busy day
  * doesn't get crowded out by tiny slivers here either.
  *
@@ -21,12 +21,11 @@
 import React, { useMemo } from 'react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, timeToMinutes, toISODate } from '../../utils/dateUtils';
-import { expandEventsForRange } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
+import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MAX_VISIBLE_ITEMS = 3; // per day cell before collapsing into "+N more"
-const SHORT_TASK_MAX_MIN = 15; // matches WeekView's own cluster threshold
 
 export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, onSelectDay }) {
   const { tasks, blocks, events } = useScheduler();
@@ -37,28 +36,7 @@ export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, on
   const days = useMemo(() => dateRange(gridStart, 42), [gridStart]);
   const currentMonth = monthStart.slice(0, 7); // "YYYY-MM"
 
-  const blocksByDay = useMemo(() => {
-    const map = new Map();
-    for (const b of blocks) {
-      if (!map.has(b.date)) map.set(b.date, []);
-      map.get(b.date).push(b);
-    }
-    return map;
-  }, [blocks]);
-
-  const eventsByDay = useMemo(() => {
-    const map = new Map();
-    // Recurring events are stored once (the master's date/times describe
-    // DTSTART) and expanded into virtual per-day instances here, at display
-    // time only — never written back to state — so a repeating event shows
-    // up on every grid day it recurs without becoming N duplicate records.
-    const expanded = expandEventsForRange(events, days[0], days[days.length - 1]);
-    for (const e of expanded) {
-      if (!map.has(e.date)) map.set(e.date, []);
-      map.get(e.date).push(e);
-    }
-    return map;
-  }, [events, days]);
+  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days), [blocks, events, days]);
 
   return (
     <div className="month-grid">
@@ -77,7 +55,7 @@ export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, on
           .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
         const shortBlocks = dayBlocks.filter(
-          (b) => !b.isPassive && timeToMinutes(b.endTime) - timeToMinutes(b.startTime) <= SHORT_TASK_MAX_MIN
+          (b) => !b.isPassive && timeToMinutes(b.endTime) - timeToMinutes(b.startTime) <= SHORT_BLOCK_MAX_MIN
         );
         const shortBlockIds = new Set(shortBlocks.map((b) => b.id));
         const normalBlocks = dayBlocks.filter((b) => !shortBlockIds.has(b.id));
