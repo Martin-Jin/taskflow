@@ -976,6 +976,57 @@
   color: var(--color-accent);
 }
 
+/* ----------------------------------------------------------------------
+   KeywordSuggestPopup — the "did you mean?" typo popup shown while typing
+   in SmartTitleInput. Same portaled/anchored treatment as .mention-dropdown,
+   but a single compact row rather than a list, since there's usually just
+   one candidate.
+   ---------------------------------------------------------------------- */
+.keyword-suggest-popup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, calc(100vw - 16px));
+  flex-wrap: wrap;
+  z-index: 200;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  padding: 6px 8px;
+}
+
+.keyword-suggest-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.keyword-suggest-option {
+  padding: 4px 9px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.keyword-suggest-option:hover,
+.keyword-suggest-option.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast, #fff);
+}
+
+.keyword-suggest-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  white-space: nowrap;
+  margin-left: auto;
+}
+
 .detail-sidebar {
   width: 260px;
   flex-shrink: 0;

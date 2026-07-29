@@ -74,6 +74,11 @@ function parseNumberToken(token) {
 const HOUR_UNIT = /(?:hours?|hrs?|h)(?=[^a-z]|$)/i;
 const MINUTE_UNIT = /(?:minutes?|mins?|m)(?=[^a-z]|$)/i;
 
+// Plain-word form of the two patterns above, for fuzzy typo suggestion
+// (useSmartKeywordSuggest) — kept in sync by hand since the regexes above
+// use "s?" shorthand rather than a list this could be generated from.
+export const DURATION_UNIT_WORDS = ['hour', 'hours', 'hr', 'hrs', 'minute', 'minutes', 'min', 'mins'];
+
 // A leading approximation marker some people prefix estimates with. Each
 // word alternative needs a leading \b — without it, "est" (an abbreviation
 // for "estimate") would also match mid-word inside unrelated text like

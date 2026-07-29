@@ -21,7 +21,10 @@
 
 import { toISODate, fromISODate, addDays, dayOfWeek } from './dateUtils';
 
-const WEEKDAY_ALIASES = {
+// Exported so fuzzyKeyword-based typo suggestion (see useSmartKeywordSuggest)
+// can reuse the exact same keyword vocabulary this parser matches against,
+// instead of maintaining a second copy that could drift out of sync.
+export const WEEKDAY_ALIASES = {
   sunday: 0,
   sun: 0,
   monday: 1,
@@ -56,7 +59,7 @@ const MONTH_NAMES = [
   'december',
 ];
 
-const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
+export const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
   acc[name] = i;
   acc[name.slice(0, 3)] = i;
   return acc;
@@ -65,7 +68,7 @@ const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
 MONTH_ALIASES.sept = 8;
 
 /** Small word-numbers people type instead of digits: "in a week", "in a couple of days", "in a few months". */
-const WORD_NUMBERS = {
+export const WORD_NUMBERS = {
   a: 1,
   an: 1,
   one: 1,
@@ -85,7 +88,7 @@ const WORD_NUMBERS = {
   'a few': 3,
 };
 
-const UNIT_ALIASES = {
+export const UNIT_ALIASES = {
   day: 'day',
   days: 'day',
   week: 'week',
@@ -103,6 +106,14 @@ function alternation(map) {
     .sort((a, b) => b.length - a.length) // longest-first so "thurs" isn't shadowed by "thu"
     .join('|');
 }
+
+// Bare phrase words this parser matches literally rather than through an
+// alias table above (e.g. "today"/"tomorrow", or words that only mean
+// something as part of a fixed phrase like "next"/"end of"). Exported
+// alongside the tables above so fuzzy typo suggestion covers these too —
+// "month"/"year"/"week"/"fortnight" are deliberately omitted since they're
+// already covered by UNIT_ALIASES.
+export const PHRASE_WORDS = ['today', 'tomorrow', 'yesterday', 'next', 'this', 'weekend', 'end', 'of'];
 
 const WEEKDAY_PATTERN = alternation(WEEKDAY_ALIASES);
 const MONTH_PATTERN = alternation(MONTH_ALIASES);

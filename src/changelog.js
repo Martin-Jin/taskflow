@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.14.0',
+    date: '2026-07-29',
+    title: 'Typo-tolerant smart parsing, bigger mobile header',
+    changes: [
+      'Smart parsing in the task title field now catches near-miss typos of due date, recurrence, and duration keywords (e.g. "tommorow") and offers the correction as a suggestion — press Tab to cycle between options and Enter to accept, or tap it on mobile.',
+      'The mobile top bar now always shows the "TaskFlow" name next to the logo, and the account avatar is a bit bigger and easier to tap.',
+    ],
+  },
+  {
     version: '1.13.1',
     date: '2026-07-29',
     title: 'More settings now follow you across devices',
