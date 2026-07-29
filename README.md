@@ -280,18 +280,28 @@ Friday, ~3 hours, high priority" creates a Task with those fields already
 set. You choose Claude (Anthropic) or Gemini (Google) per request; your last
 choice is remembered on that device.
 
-**This requires deploying a small companion Cloudflare Worker** — the actual
-Anthropic/Gemini API keys must never reach the browser, so the app calls a
-Worker you deploy yourself (free tier, no billing required), which holds the
-keys as server-side secrets. See [`cloudflare-worker/README.md`](cloudflare-worker/README.md)
-for setup steps. Once deployed, point the app at it via `.env`:
+This is **bring-your-own-key (BYOK)**, the same model as the Todoist
+integration above: each person using the app pastes their own Anthropic
+and/or Gemini API key into **Settings → Integrations → AI Quick Add**. That
+key is saved only in that browser's `localStorage` and sent straight through
+to the provider — never to the app owner, and never baked into any build.
+
+**Getting the button to appear at all requires deploying a small companion
+Cloudflare Worker once** — browsers can't call Anthropic/Gemini directly
+(CORS), so requests go through a Worker you deploy yourself (free tier, no
+billing required). The worker holds no secrets of its own — it's a stateless
+relay that forwards whatever key your browser sends it. See
+[`cloudflare-worker/README.md`](cloudflare-worker/README.md) for setup steps.
+Once deployed, point the app at it via `.env`:
 
 ```
 VITE_AI_QUICKADD_WORKER_URL=https://taskflow-ai-quickadd.<your-subdomain>.workers.dev
 ```
 
 Like the other integrations above, this is entirely optional — leave the env
-var unset and the AI Quick Add button simply doesn't appear.
+var unset and the AI Quick Add button simply doesn't appear. Even once it's
+configured, each visitor still needs to add their own API key in Settings
+before they can actually use it.
 
 ## How the scheduler works
 
@@ -696,12 +706,12 @@ every push to `main`.
      connects their own account from Settings.
    - If you want **AI Quick Add** to work for visitors too, add
      `VITE_AI_QUICKADD_WORKER_URL` as a repo secret as well (see [AI Quick
-     Add](#ai-quick-add) above). Unlike the Todoist token, this is just a
-     Worker URL, not a credential — but since every visitor's browser would
-     now call your deployed Worker (and therefore spend your Anthropic/
-     Gemini API credits), lock the Worker's `ALLOWED_ORIGIN` down to your
-     Pages origin (see `cloudflare-worker/README.md`) rather than leaving it
-     wide open.
+     Add](#ai-quick-add) above). This is just a Worker URL, not a credential
+     — each visitor brings their own Anthropic/Gemini API key from Settings,
+     so nothing here costs you anything. Still worth locking the Worker's
+     `ALLOWED_ORIGIN` down to your Pages origin (see
+     `cloudflare-worker/README.md`) so random other sites can't piggyback on
+     it as a generic CORS relay.
 3. Push to `main`. Check the **Actions** tab for the workflow run, then visit
    `https://<your-username>.github.io/taskflow/`.
 
@@ -716,10 +726,13 @@ every push to `main`.
   screen, no password ever seen by TaskFlow — works for every visitor
   against the one OAuth client you configured in step 2, exactly like any
   other multi-user web app's "Sign in with Google" button.
-- Everything (tasks, routines, scheduling rules, the Todoist token) is saved
-  to that visitor's own browser via `localStorage` — nothing is shared
-  between visitors, and nothing is stored on any server, since there isn't
-  one.
+- **AI Quick Add** (if you deployed the Worker): each visitor pastes their
+  own Anthropic and/or Gemini API key in **Settings → Integrations → AI
+  Quick Add**, same BYOK pattern as Todoist above.
+- Everything (tasks, routines, scheduling rules, the Todoist token, AI Quick
+  Add keys) is saved to that visitor's own browser via `localStorage` —
+  nothing is shared between visitors, and nothing is stored on any server,
+  since there isn't one.
 
 If the Google Cloud project is still in **Testing** publishing status (the
 default for a new project), only accounts you've explicitly added as test

@@ -30,7 +30,8 @@ import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
 import { useSound } from '../context/SoundContext';
 import { useAuth } from '../context/AuthContext';
-import { clearAllPersisted } from '../utils/persistence';
+import { clearAllPersisted, loadPersisted, savePersisted } from '../utils/persistence';
+import { getStoredApiKey } from '../services/aiQuickAddService';
 import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
 import LabelsModal from './Modals/LabelsModal';
@@ -62,6 +63,19 @@ const SETTINGS_SECTIONS = [
 export default function SettingsPanel({ onOpenTour }) {
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenDraft, setTokenDraft] = useState('');
+  // AI Quick Add keys (BYOK) — read/written directly via persistence.js, same
+  // localStorage-only pattern as the Todoist token above, but kept as local
+  // component state (re-read live) rather than reloading the page: unlike
+  // the Todoist token, these keys are only ever read at the moment an AI
+  // Quick Add request is actually submitted (see aiQuickAddService.js), so
+  // there's no other hook/effect relying on them at init that a reload would
+  // need to refresh.
+  const [anthropicKey, setAnthropicKeyState] = useState(() => getStoredApiKey('anthropic'));
+  const [geminiKey, setGeminiKeyState] = useState(() => getStoredApiKey('gemini'));
+  const [showAnthropicKeyInput, setShowAnthropicKeyInput] = useState(false);
+  const [showGeminiKeyInput, setShowGeminiKeyInput] = useState(false);
+  const [anthropicKeyDraft, setAnthropicKeyDraft] = useState('');
+  const [geminiKeyDraft, setGeminiKeyDraft] = useState('');
   const [showBackupsModal, setShowBackupsModal] = useState(false);
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [showChangelogModal, setShowChangelogModal] = useState(false);
@@ -108,6 +122,30 @@ export default function SettingsPanel({ onOpenTour }) {
     e.preventDefault();
     if (!tokenDraft.trim()) return;
     setTodoistApiToken(tokenDraft.trim());
+  }
+
+  /** Save (or clear, if passed a falsy value) the visitor's own Anthropic/Gemini API key. */
+  function setAiApiKey(provider, key) {
+    const trimmed = (key || '').trim() || null;
+    savePersisted(provider === 'anthropic' ? 'aiAnthropicApiKey' : 'aiGeminiApiKey', trimmed);
+    if (provider === 'anthropic') setAnthropicKeyState(trimmed);
+    else setGeminiKeyState(trimmed);
+  }
+
+  function submitAnthropicKey(e) {
+    e.preventDefault();
+    if (!anthropicKeyDraft.trim()) return;
+    setAiApiKey('anthropic', anthropicKeyDraft.trim());
+    setAnthropicKeyDraft('');
+    setShowAnthropicKeyInput(false);
+  }
+
+  function submitGeminiKey(e) {
+    e.preventDefault();
+    if (!geminiKeyDraft.trim()) return;
+    setAiApiKey('gemini', geminiKeyDraft.trim());
+    setGeminiKeyDraft('');
+    setShowGeminiKeyInput(false);
   }
 
   function updateRoutine(id, updates) {
@@ -453,6 +491,170 @@ export default function SettingsPanel({ onOpenTour }) {
               )}
             </div>
           )}
+        </div>
+
+        <div
+          style={{
+            marginTop: 18,
+            paddingTop: 16,
+            borderTop: '1px solid var(--color-border)',
+          }}
+        >
+          <h4
+            style={{
+              margin: '0 0 10px',
+              fontSize: 12,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: 0.5,
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            AI Quick Add
+          </h4>
+          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 10 }}>
+            AI Quick Add (the sparkle button next to Add Task) uses your own Anthropic and/or Gemini API key — bring
+            whichever provider(s) you have a key for. Your key is saved only in this browser and sent directly
+            through to that provider, never to the app owner.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <span
+                  className={`badge ${anthropicKey ? 'low' : 'medium'}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: anthropicKey ? 'rgba(79, 191, 139, 0.15)' : undefined,
+                    color: anthropicKey ? 'var(--color-success)' : undefined,
+                  }}
+                >
+                  {anthropicKey ? (
+                    <>
+                      <KeyRound size={12} /> Claude (Anthropic) key connected
+                    </>
+                  ) : (
+                    <>
+                      <Circle size={12} /> Claude (Anthropic) key not set
+                    </>
+                  )}
+                </span>
+              </div>
+              {anthropicKey ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowAnthropicKeyInput((v) => !v)}>
+                    Change key
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 12, color: 'var(--color-danger)' }}
+                    onClick={() => {
+                      if (window.confirm('Remove your Anthropic API key from this browser?')) setAiApiKey('anthropic', null);
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 8 }}>
+                  Get one from{' '}
+                  <a
+                    href="https://console.anthropic.com/settings/keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                  >
+                    console.anthropic.com <ExternalLink size={11} />
+                  </a>
+                  .
+                </p>
+              )}
+              {(showAnthropicKeyInput || !anthropicKey) && (
+                <form onSubmit={submitAnthropicKey} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: showAnthropicKeyInput ? 10 : 0 }}>
+                  <input
+                    type="password"
+                    placeholder={anthropicKey ? 'Paste new Anthropic API key' : 'Paste your Anthropic API key'}
+                    value={anthropicKeyDraft}
+                    onChange={(e) => setAnthropicKeyDraft(e.target.value)}
+                    style={{ flex: 1, minWidth: 220 }}
+                  />
+                  <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }} disabled={!anthropicKeyDraft.trim()}>
+                    Save
+                  </button>
+                </form>
+              )}
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <span
+                  className={`badge ${geminiKey ? 'low' : 'medium'}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: geminiKey ? 'rgba(79, 191, 139, 0.15)' : undefined,
+                    color: geminiKey ? 'var(--color-success)' : undefined,
+                  }}
+                >
+                  {geminiKey ? (
+                    <>
+                      <KeyRound size={12} /> Gemini key connected
+                    </>
+                  ) : (
+                    <>
+                      <Circle size={12} /> Gemini key not set
+                    </>
+                  )}
+                </span>
+              </div>
+              {geminiKey ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowGeminiKeyInput((v) => !v)}>
+                    Change key
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 12, color: 'var(--color-danger)' }}
+                    onClick={() => {
+                      if (window.confirm('Remove your Gemini API key from this browser?')) setAiApiKey('gemini', null);
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 8 }}>
+                  Get one from{' '}
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                  >
+                    aistudio.google.com <ExternalLink size={11} />
+                  </a>
+                  .
+                </p>
+              )}
+              {(showGeminiKeyInput || !geminiKey) && (
+                <form onSubmit={submitGeminiKey} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: showGeminiKeyInput ? 10 : 0 }}>
+                  <input
+                    type="password"
+                    placeholder={geminiKey ? 'Paste new Gemini API key' : 'Paste your Gemini API key'}
+                    value={geminiKeyDraft}
+                    onChange={(e) => setGeminiKeyDraft(e.target.value)}
+                    style={{ flex: 1, minWidth: 220 }}
+                  />
+                  <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }} disabled={!geminiKeyDraft.trim()}>
+                    Save
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

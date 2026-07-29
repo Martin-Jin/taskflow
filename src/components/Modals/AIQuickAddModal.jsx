@@ -237,7 +237,12 @@ export default function AIQuickAddModal({ onClose }) {
         )}
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
 
-        {error && <p className="form-error">{error}</p>}
+        {error && (
+          <p className="form-error">
+            {error}
+            {error.includes('API key') && ' You can add it under Settings → Integrations → AI Quick Add.'}
+          </p>
+        )}
 
         <div className="addtask-footer">
           <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>

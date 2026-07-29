@@ -36,10 +36,11 @@ jobs:
       # "Authorized JavaScript origins" restriction is what actually secures
       # them (set it to https://<owner>.github.io in Cloud Console).
       # VITE_AI_QUICKADD_WORKER_URL is likewise just a URL, not a credential —
-      # the real Anthropic/Gemini keys live in the Worker's own secrets, never
-      # here. Lock the Worker's ALLOWED_ORIGIN down to this Pages origin (see
-      # cloudflare-worker/README.md) so a public build can't be used to spend
-      # your API credits from anywhere else.
+      # the Worker itself is bring-your-own-key (BYOK): each visitor pastes
+      # their own Anthropic/Gemini API key into Settings, so nothing here
+      # costs the app owner anything. Lock the Worker's ALLOWED_ORIGIN down to
+      # this Pages origin anyway (see cloudflare-worker/README.md) so other
+      # sites can't use it as a free CORS relay.
       - name: Build
         env:
           GH_PAGES: true

@@ -8,10 +8,14 @@
  * create_event) so the model always returns something the client can hand
  * straight to SchedulerContext's addTask/addManualEvent.
  *
- * This exists purely to keep the Anthropic/Gemini API keys off the client —
- * they're read from Worker secrets (`wrangler secret put ANTHROPIC_API_KEY` /
- * `GEMINI_API_KEY`), never from `.env` or any bundled code. See README.md in
- * this directory for deployment steps.
+ * This is bring-your-own-key (BYOK): the worker holds no secrets of its own.
+ * Each request carries the caller's own Anthropic/Gemini API key (`apiKey` in
+ * the POST body, see below), which this worker forwards straight through to
+ * the relevant provider and never logs or persists. The client (see
+ * src/services/aiQuickAddService.js) is responsible for sourcing that key
+ * from the visitor's own Settings — this worker exists purely to solve CORS
+ * (browsers can't call Anthropic/Gemini directly). See README.md in this
+ * directory for deployment steps.
  *
  * No persistence, no rate-limiting store (KV/Durable Object) — this is a
  * personal-scale app; the size/shape guards below are the only abuse guard.
@@ -292,9 +296,12 @@ export default {
       return jsonResponse({ error: 'Invalid JSON body.' }, 400, headers);
     }
 
-    const { provider, text, image, context } = body || {};
+    const { provider, text, image, context, apiKey } = body || {};
     if (provider !== 'anthropic' && provider !== 'gemini') {
       return jsonResponse({ error: "`provider` must be 'anthropic' or 'gemini'." }, 400, headers);
+    }
+    if (typeof apiKey !== 'string' || !apiKey.trim()) {
+      return jsonResponse({ error: 'Add your Anthropic/Gemini API key in Settings first.' }, 400, headers);
     }
 
     const trimmedText = typeof text === 'string' ? text.trim() : '';
@@ -316,17 +323,12 @@ export default {
       }
     }
 
-    const apiKey = provider === 'anthropic' ? env.ANTHROPIC_API_KEY : env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return jsonResponse({ error: `${provider} is not configured on this worker (missing API key secret).` }, 500, headers);
-    }
-
     let result;
     try {
       result =
         provider === 'anthropic'
-          ? await callAnthropic({ apiKey, text: trimmedText, image, context })
-          : await callGemini({ apiKey, text: trimmedText, image, context });
+          ? await callAnthropic({ apiKey: apiKey.trim(), text: trimmedText, image, context })
+          : await callGemini({ apiKey: apiKey.trim(), text: trimmedText, image, context });
     } catch (err) {
       return jsonResponse({ error: err.message || 'Upstream AI request failed.' }, 502, headers);
     }
