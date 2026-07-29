@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.7',
+    date: '2026-07-30',
+    title: 'See and jump between a task and its parent/sub-tasks',
+    changes: [
+      'Opening a sub-task now shows a "Parent > Sub-task" link at the top of the edit view — click the parent\'s name to jump straight to it.',
+      'Opening a task that has sub-tasks now shows a sub-task count in the same spot.',
+      'Clicking through a parent/sub-task chain now reuses the same edit window instead of opening a new one on top.',
+    ],
+  },
+  {
     version: '1.15.6',
     date: '2026-07-30',
     title: 'Calendar refreshes itself when you come back to the tab',
