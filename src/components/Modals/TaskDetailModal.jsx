@@ -233,6 +233,25 @@ export default function TaskDetailModal({ task, onClose }) {
     setCommentFilePreview(null);
   }
 
+  // Lets a screenshot on the clipboard (Ctrl+V / Cmd+V, e.g. from Win+Shift+S)
+  // attach directly to the comment without saving it to disk first — same
+  // validation/preview path as picking a file.
+  function handleCommentPaste(e) {
+    const file = Array.from(e.clipboardData?.items || [])
+      .find((item) => item.kind === 'file')
+      ?.getAsFile();
+    if (!file) return;
+    e.preventDefault();
+    const error = validateAttachment(file);
+    if (error) {
+      setCommentError(error);
+      return;
+    }
+    setCommentError('');
+    setCommentFile(file);
+    setCommentFilePreview(file.type.startsWith('image/') ? URL.createObjectURL(file) : null);
+  }
+
   async function handlePostComment() {
     const text = commentText.trim();
     if (!text && !commentFile) return;
@@ -1189,6 +1208,7 @@ export default function TaskDetailModal({ task, onClose }) {
                         handlePostComment();
                       }
                     }}
+                    onPaste={handleCommentPaste}
                     placeholder="Comment"
                     disabled={isPostingComment}
                   />
