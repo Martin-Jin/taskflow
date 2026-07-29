@@ -6,8 +6,9 @@
  * Stats/Settings) plus a Todoist-style "Projects" group underneath — a
  * search box, the "All Tasks" pseudo-project pinned at the top, then real
  * projects sorted pinned-first/most-recently-visited (sortProjectsForSidebar),
- * each with a "⋯" menu (Rename/Pin/Delete via ProjectActionsMenu), and an
- * "+ Add project" form at the bottom.
+ * each with a "⋯" menu (Rename/Pin/Delete via ProjectActionsMenu), and a
+ * "Manage projects" button at the bottom that opens ManageProjectsModal
+ * (which also has its own "Add project" form).
  *
  * Extracted out of App.jsx once the Projects group made the inline JSX too
  * large to keep readable there. Only rendered on desktop — mobile has no
@@ -17,7 +18,7 @@
  */
 
 import React, { useState } from 'react';
-import { Plus, Search, Pin } from 'lucide-react';
+import { FolderKanban, Search, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
 
@@ -28,7 +29,7 @@ export default function Sidebar({
   projects,
   activeProjectId,
   onSelectProject,
-  onAddProject,
+  onOpenManageProjects,
   onRenameProject,
   onTogglePinProject,
   onDeleteProject,
@@ -37,9 +38,6 @@ export default function Sidebar({
   const [projectQuery, setProjectQuery] = useState('');
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
 
   const sortedProjects = sortProjectsForSidebar(projects);
   const q = projectQuery.trim().toLowerCase();
@@ -59,21 +57,6 @@ export default function Sidebar({
   function handleDelete(project) {
     if (window.confirm(`Delete "${project.name}"? Its tasks will move to All Tasks.`)) {
       onDeleteProject(project.id);
-    }
-  }
-
-  async function handleAddProject() {
-    const trimmed = newProjectName.trim();
-    if (!trimmed || isCreating) return;
-    setIsCreating(true);
-    try {
-      const result = await onAddProject(trimmed);
-      if (result?.ok) {
-        setNewProjectName('');
-        setIsAdding(false);
-      }
-    } finally {
-      setIsCreating(false);
     }
   }
 
@@ -162,47 +145,14 @@ export default function Sidebar({
           {visibleProjects.length === 0 && <div className="sidebar-project-empty">No projects match.</div>}
         </div>
 
-        {isAdding ? (
-          <div className="sidebar-add-project-form">
-            <input
-              autoFocus
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="Project name…"
-              disabled={isCreating}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAddProject();
-                }
-                if (e.key === 'Escape') {
-                  setIsAdding(false);
-                  setNewProjectName('');
-                }
-              }}
-            />
-            <div className="sidebar-add-project-actions">
-              <button className="btn btn-primary" onClick={handleAddProject} disabled={isCreating || !newProjectName.trim()}>
-                {isCreating ? '…' : 'Add'}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setIsAdding(false);
-                  setNewProjectName('');
-                }}
-                disabled={isCreating}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button className="nav-item sidebar-add-project-btn" data-tour="add-project" onClick={() => setIsAdding(true)}>
-            <Plus size={14} />
-            Add project
-          </button>
-        )}
+        <button
+          className="nav-item sidebar-add-project-btn"
+          data-tour="add-project"
+          onClick={() => onOpenManageProjects()}
+        >
+          <FolderKanban size={14} />
+          Manage projects
+        </button>
       </div>
 
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>{footer}</div>

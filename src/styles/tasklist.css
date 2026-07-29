@@ -20,68 +20,31 @@
   min-width: 0;
 }
 
-/* The Tasks page's own List/Board/Gantt switch — an underlined tab bar
-   (distinct from the pill-style .view-switch used for the Active/Completed
-   filter below it) so the two don't read as the same control stacked
-   twice. */
+/* The Tasks page's top-right row: the combined view/filter dropdown
+   (ViewFilterMenu — List/Board/Gantt plus the status filter, replacing what
+   used to be two separate rows) and the "⋯" project actions menu. */
 .taskpage-view-switch-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 6px;
   margin-bottom: 14px;
-  border-bottom: 1px solid var(--color-border);
-  /* Board's viewport-height-constrained layout (.tab-panel-fill .taskpage
-     above) needs this row to hold its natural height rather than shrink
-     when the column runs short on space. */
-  flex-shrink: 0;
 }
 
-/* The "⋯" project-actions trigger never shrinks to make room for the
-   List/Board/Gantt tabs beside it — that flex item already has its own
-   overflow-x:auto + min-width:0 to absorb any squeeze (see
-   .taskpage-view-switch below), so this button should always keep its
-   full tap target rather than the two competing for space and this one
-   losing width on a narrow phone. */
-.taskpage-view-switch-row .project-actions-trigger {
-  flex-shrink: 0;
-}
-
-.taskpage-view-switch {
-  display: flex;
-  gap: var(--space-1);
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.taskpage-view-switch::-webkit-scrollbar {
-  display: none;
-}
-
-.taskpage-view-switch button {
-  flex-shrink: 0;
-  background: transparent;
-  border: none;
-  padding: 8px 14px;
-  margin-bottom: -1px;
+.view-filter-trigger {
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--color-text-secondary);
-  border-bottom: 2px solid transparent;
-  white-space: nowrap;
 }
 
-.taskpage-view-switch button:hover {
-  color: var(--color-text-primary);
+.view-filter-dropdown {
+  width: 200px;
 }
 
-.taskpage-view-switch button.active {
-  color: var(--color-accent);
-  border-bottom-color: var(--color-accent);
+.view-filter-item {
+  justify-content: space-between;
 }
 
-/* Shared page header shown above List/Board (not Gantt) — the project
+/* Shared page header shown above List/Board/Gantt — the project
    switcher, the current project's name (or "All Tasks"), click-to-rename
    the same way Board's own column titles work, and the "⋯" actions menu. */
 .taskpage-project-header {
@@ -90,16 +53,6 @@
   gap: 10px;
   margin-bottom: 14px;
   flex-wrap: wrap;
-}
- 
-.taskpage-project-manage-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex-shrink: 0;
-  white-space: nowrap;
-  margin-left: auto;
 }
  
 .taskpage-project-title {
@@ -287,14 +240,6 @@
 }
 
 @media (max-width: 639px) {
-  /* Centered to match the pill-style .view-switch below it (Active/
-     Completed/All/No due date) instead of sitting left-aligned under its
-     own full-width underline, which read as inconsistent with everything
-     else stacked in this toolbar. */
-  .taskpage-view-switch {
-    justify-content: safe center;
-  }
-
   .tasklist-toolbar > * {
     flex: 1 1 100%;
   }

@@ -5,20 +5,27 @@
  * lightweight per-row editor: click "Edit" to either record a real keypress
  * or pick one of a few common presets from a dropdown, then Save.
  *
- * Bindings are persisted to localStorage only (see useKeyboardShortcuts) —
- * this is a personal device preference, not app data, so it's deliberately
- * left out of backups/cloud sync.
+ * Bindings are written straight to localStorage (see useKeyboardShortcuts —
+ * setShortcutBinding/resetShortcutBinding), which is still exactly what the
+ * global keydown listener reads on every keypress, for hot-path performance
+ * (no React state/context in that loop). Every write here ALSO mirrors the
+ * new value into SchedulerContext's `shortcutBindings` (see setShortcutBindings
+ * below), so custom bindings sync across devices and survive a backup restore
+ * like every other setting — the keydown listener itself is unaffected by
+ * this and keeps reading localStorage directly.
  */
 
 import React, { useMemo, useState } from 'react';
 import { X, Search, Keyboard, RotateCcw, Pencil } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { useScheduler } from '../../context/SchedulerContext';
 import {
   SHORTCUT_DEFS,
   PRESET_COMBOS,
   comboFromEvent,
   comboFor,
+  getShortcutBindings,
   setShortcutBinding,
   resetShortcutBinding,
 } from '../../hooks/useKeyboardShortcuts';
@@ -26,6 +33,7 @@ import {
 export default function ShortcutsModal({ onClose }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
+  const { setShortcutBindings } = useScheduler();
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [recording, setRecording] = useState(false);
@@ -63,6 +71,7 @@ export default function ShortcutsModal({ onClose }) {
       return;
     }
     setShortcutBinding(id, combo);
+    setShortcutBindings(getShortcutBindings()); // mirror the just-written localStorage value into SchedulerContext for sync/backup
     setVersion((v) => v + 1);
     cancelEditing();
   }
@@ -82,6 +91,7 @@ export default function ShortcutsModal({ onClose }) {
 
   function handleReset(id) {
     resetShortcutBinding(id);
+    setShortcutBindings(getShortcutBindings()); // mirror the just-written localStorage value into SchedulerContext for sync/backup
     setVersion((v) => v + 1);
   }
 
@@ -207,7 +217,7 @@ export default function ShortcutsModal({ onClose }) {
           <p style={{ fontSize: 12, color: 'var(--color-danger)', marginTop: 8, marginBottom: 0 }}>{error}</p>
         )}
         <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 10, marginBottom: 0 }}>
-          Shortcuts don't fire while typing in a text field. Custom combos are saved on this device only.
+          Shortcuts don't fire while typing in a text field. Custom combos sync across your signed-in devices, like other settings.
         </p>
       </div>
     </div>

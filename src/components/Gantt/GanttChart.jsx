@@ -33,12 +33,13 @@ import { addDays, dateRange, diffDays, toISODate, dayOfWeek } from '../../utils/
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
+import { filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 
 const HORIZON_DAYS = 28;
 const LABEL_COL_WIDTH_DESKTOP = 220;
 const LABEL_COL_WIDTH_MOBILE = 140;
 
-export default function GanttChart() {
+export default function GanttChart({ activeProjectId, filter = 'all' }) {
   const { tasks, blocks } = useScheduler();
   const isMobile = useIsMobile();
   const labelColWidth = isMobile ? LABEL_COL_WIDTH_MOBILE : LABEL_COL_WIDTH_DESKTOP;
@@ -48,7 +49,12 @@ export default function GanttChart() {
   // Sub-tasks (parentId set) are rolled up into their parent elsewhere (see
   // BoardView's progress badge) rather than getting their own row here —
   // Gantt has no such badge, so they're simply excluded from this flat list.
-  const activeTasks = useMemo(() => tasks.filter((t) => !t.isCompleted && !t.parentId), [tasks]);
+  // `filter` defaults to "all" (every non-completed task, dated or not),
+  // matching Gantt's original behavior — see filterTasksByStatus.
+  const activeTasks = useMemo(
+    () => filterTasksByStatus(filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId), filter),
+    [tasks, activeProjectId, filter]
+  );
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
   // Group once instead of re-filtering the full `blocks` array per task
