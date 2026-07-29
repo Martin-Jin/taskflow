@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.2',
+    date: '2026-07-30',
+    title: 'Fixed smart-parsed links in sub-tasks and descriptions',
+    changes: [
+      'A sub-task whose name gets auto-turned into a link now shows that link in the parent task\'s sub-task list, not just in its own edit view.',
+      'Re-opening a task title for editing no longer keeps stale link highlighting after the link was already saved.',
+      'A link previously detected in a task\'s description no longer disappears when you click back into the description to edit it.',
+    ],
+  },
+  {
     version: '1.15.1',
     date: '2026-07-30',
     title: 'Fixed undo sometimes needing a second try',

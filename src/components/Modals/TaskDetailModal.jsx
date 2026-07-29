@@ -84,6 +84,7 @@ import {
   Pause,
   Play,
   Square,
+  ExternalLink,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -132,18 +133,27 @@ function stripNotesLinks(text) {
   return next;
 }
 
-// Once a link phrase is stripped out of notes, the raw text alone can never
-// reproduce it again on reload — so the matches also get persisted to
-// task.noteLinks (see commitChanges). Loading favors freshly re-detected
-// matches (which carry a text `index`, needed for the in-textarea highlight)
-// but falls back to the persisted ones for links whose phrase is already gone
-// from the notes text, keyed by url so a link isn't duplicated if it somehow
-// still appears in both.
-function getInitialNoteLinks(task) {
-  const detected = findLinkPhrases(task.notes || '');
-  const byUrl = new Map((task.noteLinks || []).map((m) => [m.url, m]));
+// Merges freshly re-detected link phrases in `text` with a set of
+// already-known matches (which carry no text `index` once their raw phrase
+// has been stripped out), keyed by url so a link isn't duplicated if it
+// somehow still appears in both. Freshly detected matches win (they carry an
+// `index`, needed for the in-textarea highlight); a previously-known link
+// whose phrase is no longer present in `text` is still kept, since stripping
+// the raw phrase out of notes is normal/expected once it's become a pill —
+// only the pill's own remove ("X") button should drop it.
+function mergeNoteLinks(text, prevMatches) {
+  const detected = findLinkPhrases(text || '');
+  const byUrl = new Map((prevMatches || []).map((m) => [m.url, m]));
   detected.forEach((m) => byUrl.set(m.url, m));
   return [...byUrl.values()];
+}
+
+// On load, seeds notesLinkMatches from whatever's freshly detectable in the
+// raw notes plus whatever was already persisted to task.noteLinks (see
+// commitChanges) — the persisted-value path a fresh mount needs since there's
+// no "previous" in-memory state yet.
+function getInitialNoteLinks(task) {
+  return mergeNoteLinks(task.notes || '', task.noteLinks || []);
 }
 
 export default function TaskDetailModal({ task, onClose }) {
@@ -718,13 +728,13 @@ export default function TaskDetailModal({ task, onClose }) {
 
   function handleNotesChange(value) {
     setNotes(value);
-    setNotesLinkMatches(findLinkPhrases(value));
+    setNotesLinkMatches((prev) => mergeNoteLinks(value, prev));
   }
 
   function handleNotesBlur() {
     const nextNotes = stripNotesLinks(notes);
     setNotes(nextNotes);
-    setNotesLinkMatches(findLinkPhrases(notes));
+    setNotesLinkMatches((prev) => mergeNoteLinks(notes, prev));
     // Convenience: if the user typed a duration hint into the notes (e.g.
     // "30 minutes" or "1.5 hours") and hasn't touched the hours field
     // manually since opening, offer the parsed value.
@@ -845,6 +855,13 @@ export default function TaskDetailModal({ task, onClose }) {
       fixedTime: fixedTime || null,
       labelIds: finalLabelIds,
     });
+
+    // Sync local title state to the just-persisted, already-stripped value
+    // and clear smart-parse detection state — otherwise re-entering edit
+    // (e.g. via the sidebar auto-save path, which doesn't close the modal)
+    // would keep showing the raw pre-strip text with stale link highlighting.
+    setTitle(nextTitle);
+    resetSmartState();
 
     initialSnapshotRef.current = {
       title: nextTitle,
@@ -1263,15 +1280,38 @@ export default function TaskDetailModal({ task, onClose }) {
                           if (!child.isCompleted) requestComplete(child.id);
                         }}
                       />
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={`subtask-row-title-wrap ${child.isCompleted ? 'completed' : ''}`}
                         onClick={() => setEditingChildId(child.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setEditingChildId(child.id);
+                          }
+                        }}
                         title="Open sub-task"
                       >
-                        <span className="subtask-row-title">{child.title}</span>
+                        <span className="subtask-row-title">
+                          {child.link ? (
+                            <a
+                              href={child.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="task-title-link"
+                              onClick={(e) => e.stopPropagation()}
+                              title={`Open link: ${child.link}`}
+                            >
+                              {child.title}
+                              <ExternalLink size={11} aria-hidden="true" />
+                            </a>
+                          ) : (
+                            child.title
+                          )}
+                        </span>
                         {child.notes && <span className="subtask-row-notes">{child.notes}</span>}
-                      </button>
+                      </div>
                       <button
                         className="btn btn-icon subtask-row-remove"
                         onClick={() => deleteTask(child.id)}
