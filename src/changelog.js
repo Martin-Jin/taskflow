@@ -17,7 +17,7 @@
 
 export const CHANGELOG = [
   {
-    version: '1.16.4',
+    version: '1.16.5',
     date: '2026-07-30',
     title: 'Backup and recurrence fixes, plus internal cleanup',
     changes: [
@@ -25,6 +25,14 @@ export const CHANGELOG = [
       'Restoring a backup no longer risks reintroducing duplicate calendar events.',
       'Fixed a bug in Add Task where editing the repeat count/unit for a weekday-specific recurrence (e.g. "every Sat and Sun") could silently downgrade it to a generic weekly repeat.',
       'Add Task now shows the same explanatory hints as the task detail view for "Lock to a day" and "Unattended".',
+    ],
+  },
+  {
+    version: '1.16.4',
+    date: '2026-07-30',
+    title: 'App now runs full-screen when installed to your home screen',
+    changes: [
+      'Launching TaskFlow from a phone home-screen icon now hides the browser address bar/chrome, so it feels like a native app.',
     ],
   },
   {
