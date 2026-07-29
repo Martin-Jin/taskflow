@@ -7,17 +7,24 @@
  *
  * The input itself stays bound directly to the raw `searchQuery` string,
  * exactly as before — typing/backspace/cursor behavior is unchanged. On top
- * of that:
+ * of that, a dropdown lists live suggestions as the user types:
+ *  - By default (plain text, not inside a "#"/"@" token) it suggests
+ *    matching Tasks, via `taskMatchesQuery` (below) run against the whole
+ *    query — clicking one opens that task directly (via `onSelectTask`)
+ *    rather than filling the search box, since the intent is to jump to it.
+ *  - While the last word being typed is non-empty, it also lists matching
+ *    Projects and Labels/tags (this part predates and is independent of the
+ *    Tasks suggestions above). Clicking a project navigates to it (via
+ *    `onSelectProject`) and clears the query. Clicking a tag commits the
+ *    word being typed into an "@tag" token instead of navigating.
+ *  - A leading "#" (bare, or with text after it — e.g. "#pro") narrows the
+ *    dropdown to Projects only, same as smart-parse's own "#project"
+ *    shorthand; typing a space afterwards ends that token and reverts to
+ *    the default Task suggestions.
  *  - Every already-applied "@tag" token in the query renders as a removable
  *    pill chip next to the input (styled like the app's other tag pills),
  *    so an applied filter reads as a distinct chip rather than being buried
  *    in free text; removing one strips just that token from the query.
- *  - While the last word being typed is non-empty, a dropdown lists
- *    matching Projects and Labels/tags. Clicking a project navigates to it
- *    (via `onSelectProject`) and clears the query. Clicking a tag commits
- *    the word being typed into an "@tag" token instead of navigating.
- * Tasks themselves are NOT listed here — they're already filtered in place
- * in whichever view (List/Board) is open, via `taskMatchesQuery` below.
  *
  * Sized via the `.search-bar` CSS classes (global.css) rather than inline
  * styles so the mobile media query can drop the desktop max-width — an
@@ -27,11 +34,11 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, X, Folder, Tag } from 'lucide-react';
+import { Search, X, Folder, Tag, CheckSquare } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 
-export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject }) {
-  const { searchQuery, setSearchQuery, projects, labels } = useScheduler();
+export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask }) {
+  const { searchQuery, setSearchQuery, projects, labels, tasks } = useScheduler();
   const [isFocused, setIsFocused] = useState(false);
   const rootRef = useRef(null);
 
@@ -43,29 +50,46 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
 
-  const allTokens = searchQuery.trim().length ? searchQuery.trim().split(/\s+/) : [];
+  const trimmedQuery = searchQuery.trim();
+  const allTokens = trimmedQuery.length ? trimmedQuery.split(/\s+/) : [];
   const appliedTagTokens = allTokens.filter((t) => t.length > 1 && t.startsWith('@'));
-  // The word currently being typed — the last token — drives dropdown
-  // matching, so results update as the user types rather than only once a
-  // full "@tag" token is already committed.
-  const activeWord = allTokens[allTokens.length - 1] || '';
+  // The word currently being typed — the last token — drives Project/Label
+  // dropdown matching, so results update as the user types rather than only
+  // once a full "@tag"/"#project" token is already committed. Trailing
+  // whitespace on the raw (untrimmed) query means the caret is past the end
+  // of that last token, on a fresh empty word — checked separately from the
+  // trim()'d token split above, since trimming alone can't tell "#" (still
+  // being typed) apart from "# " (already finished, caret after the space).
+  const ownsCaretPastTrailingSpace = /\s$/.test(searchQuery);
+  const activeWord = ownsCaretPastTrailingSpace ? '' : allTokens[allTokens.length - 1] || '';
   const activeWordIsTag = activeWord.startsWith('@');
   // "#project" mirrors smart-parse's own project shorthand (see
   // utils/smartParse.js) — recognized here the same way "@tag" is, so a
-  // leading "#" narrows the dropdown to Projects only instead of being
-  // matched as a literal "#" character (which never matches anything).
+  // leading "#" (even bare, with nothing typed after it yet) narrows the
+  // dropdown to Projects only instead of being matched as a literal "#"
+  // character (which never matches anything) or falling through to the
+  // default Task suggestions.
   const activeWordIsProject = activeWord.startsWith('#');
   const activeWordText = (activeWordIsTag || activeWordIsProject ? activeWord.slice(1) : activeWord).toLowerCase();
 
   const matchingProjects =
-    activeWordText && !activeWordIsTag ? projects.filter((p) => p.name.toLowerCase().includes(activeWordText)).slice(0, 5) : [];
+    activeWordIsProject || (activeWordText && !activeWordIsTag)
+      ? projects.filter((p) => !activeWordText || p.name.toLowerCase().includes(activeWordText)).slice(0, 5)
+      : [];
   const matchingLabels =
     activeWordText && !activeWordIsProject
       ? labels
           .filter((l) => l.name.toLowerCase().includes(activeWordText) && !appliedTagTokens.includes(`@${l.name.toLowerCase()}`))
           .slice(0, 5)
       : [];
-  const showDropdown = isFocused && activeWordText.length > 0 && (matchingProjects.length > 0 || matchingLabels.length > 0);
+  // Default suggestion mode: plain text, not currently inside a "#"/"@"
+  // token. Matches against the whole query (not just the active word) via
+  // the same predicate the List/Board views use for in-place filtering.
+  const matchingTasks =
+    !activeWordIsProject && !activeWordIsTag && trimmedQuery.length > 0
+      ? tasks.filter((t) => taskMatchesQuery(t, trimmedQuery, labels)).slice(0, 5)
+      : [];
+  const showDropdown = isFocused && (matchingProjects.length > 0 || matchingLabels.length > 0 || matchingTasks.length > 0);
 
   function removeTagToken(token) {
     setSearchQuery(allTokens.filter((t) => t !== token).join(' '));
@@ -80,6 +104,12 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
     setSearchQuery('');
     setIsFocused(false);
     onSelectProject?.(project.id);
+  }
+
+  function selectTask(task) {
+    setSearchQuery('');
+    setIsFocused(false);
+    onSelectTask?.(task.id);
   }
 
   return (
@@ -117,6 +147,23 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
 
       {showDropdown && (
         <div className="search-bar-dropdown">
+          {matchingTasks.length > 0 && (
+            <div className="search-bar-dropdown-group">
+              <div className="search-bar-dropdown-label">Tasks</div>
+              {matchingTasks.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="search-bar-dropdown-item"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => selectTask(t)}
+                >
+                  <CheckSquare size={13} />
+                  <span className="search-bar-dropdown-item-label">{t.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {matchingProjects.length > 0 && (
             <div className="search-bar-dropdown-group">
               <div className="search-bar-dropdown-label">Projects</div>

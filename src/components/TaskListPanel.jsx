@@ -41,6 +41,7 @@ import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
+import AccountButton from './Nav/AccountButton';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
@@ -72,6 +73,7 @@ export default function TaskListPanel({
   onResolveBoardProject,
   onOpenManageProjects,
   openAddTaskSignal,
+  onOpenSettings,
 }) {
   const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const { requestComplete } = useCompleteTask();
@@ -162,7 +164,13 @@ export default function TaskListPanel({
     // 30 days after completion, see SchedulerContext's retention sweep) —
     // see filterTasksByStatus for what each filter key means.
     let list = filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId);
-    list = filterTasksByStatus(list, filter);
+    // A non-empty search query bypasses the active/completed/all/noDueDate
+    // filter chip entirely — search should be able to surface any matching
+    // task from the whole project (including e.g. a completed task while
+    // viewing "Active"), not just the subset the current chip already
+    // narrowed down to. Project scope still applies (filterTasksByProject
+    // above); only the status chip is skipped.
+    if (!searchQuery) list = filterTasksByStatus(list, filter);
     list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
   }, [tasks, activeProjectId, filter, searchQuery, labels]);
@@ -412,6 +420,10 @@ export default function TaskListPanel({
             onChangeFilter={setFilter}
             projectActions={isMobile ? projectActionsProps : undefined}
           />
+          {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
+              doubles as this page's one-tap way to reach account/settings —
+              mirrors the old mobile topbar's AccountButton. */}
+          {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={onOpenSettings} />}
           {!isMobile && activeProject && (
             <ProjectActionsMenu
               isPinned={!!activeProject.isPinned}
@@ -430,7 +442,7 @@ export default function TaskListPanel({
       {view === 'list' && (
         <>
           <div className="tasklist-toolbar">
-            <SearchBar onSelectProject={onChangeActiveProject} />
+            <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
             <button
               className="btn btn-primary add-task-btn"
               data-tour="add-task"

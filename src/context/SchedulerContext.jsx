@@ -635,6 +635,11 @@ export function SchedulerProvider({ children }) {
   // load-on-mount effect above and the manual syncNow path below, not a
   // replacement for either.
   const googlePollInFlightRef = useRef(false);
+  // Timestamp (ms) of the last poll attempt (interval tick OR visibility-
+  // triggered refresh below) — lets the visibilitychange listener throttle
+  // itself against both without needing a second in-flight flag.
+  const lastGooglePollAtRef = useRef(0);
+  const pollGoogleEventsRef = useRef(null);
   useEffect(() => {
     if (!googleConnected) return undefined;
 
@@ -643,6 +648,7 @@ export function SchedulerProvider({ children }) {
       // skip this tick rather than let two fetches race and merge out of order.
       if (googlePollInFlightRef.current) return;
       googlePollInFlightRef.current = true;
+      lastGooglePollAtRef.current = Date.now();
       try {
         const rangeStartIso = toISODate(new Date());
         const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
@@ -666,9 +672,34 @@ export function SchedulerProvider({ children }) {
         googlePollInFlightRef.current = false;
       }
     };
+    // Exposed via ref so the visibilitychange effect below (and anything
+    // else that wants "the same poll, on demand") can reuse this exact
+    // function/in-flight-guard instead of duplicating the fetch+merge logic.
+    pollGoogleEventsRef.current = poll;
 
     const handle = setInterval(poll, 5 * 60 * 1000);
     return () => clearInterval(handle);
+  }, [googleConnected]);
+
+  // Refresh Google events when the tab/app regains visibility (e.g. the user
+  // alt-tabs back after being away) — otherwise a stale calendar can sit
+  // around for up to the full 5-minute poll interval after switching back.
+  // Throttled against the periodic poll above (shared timestamp ref) so
+  // rapid tab-switching doesn't trigger a fetch every time; only fires if
+  // it's been at least VISIBILITY_REFRESH_THROTTLE_MS since the last poll
+  // (interval-driven or visibility-driven) of either kind.
+  useEffect(() => {
+    if (!googleConnected) return undefined;
+
+    const VISIBILITY_REFRESH_THROTTLE_MS = 60 * 1000;
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastGooglePollAtRef.current < VISIBILITY_REFRESH_THROTTLE_MS) return;
+      pollGoogleEventsRef.current?.();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [googleConnected]);
 
   // ---- Cloud sync (Firestore) ----------------------------------------------

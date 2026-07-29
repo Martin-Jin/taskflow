@@ -303,7 +303,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
   return (
     <div className="board-page">
       <div className="board-toolbar tasklist-toolbar">
-        <SearchBar placeholder="Search board…" />
+        <SearchBar placeholder="Search board…" onSelectTask={setEditingTaskId} />
         <button className="btn btn-primary add-task-btn" onClick={() => setAddingToSectionId('')} aria-label="Add task">
           <Plus size={14} />
           <span className="add-task-btn-label">Add task</span>
