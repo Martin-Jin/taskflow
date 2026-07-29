@@ -4,6 +4,18 @@
   gap: var(--space-5);
 }
 
+.dashboard-greeting {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.dashboard-customize-trigger {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
 .dashboard-greeting h1 {
   font-family: var(--font-display);
   font-size: 34px;
@@ -90,6 +102,14 @@
      Today's Agenda absorb whatever leftover height the side column leaves,
      so the two columns' bottoms always line up instead of leaving dead
      space under the shorter column. */
+}
+
+/* Applied when Dashboard Customization (see DashboardCustomizeMenu.jsx) has
+   hidden every widget in one column — the remaining column takes the full
+   width instead of staying capped at the two-column split's 820px, which
+   would otherwise leave a dead gap where the hidden column used to be. */
+.dashboard-grid.dashboard-grid-single {
+  grid-template-columns: 1fr;
 }
 
 .dashboard-grid-main,

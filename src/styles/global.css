@@ -727,6 +727,39 @@ select:focus-visible,
   color: var(--color-danger);
 }
 
+/* ----------------------------------------------------------------------
+   DashboardCustomizeMenu (src/components/Dashboard/DashboardCustomizeMenu.jsx)
+   — reuses .project-actions-dropdown's popover shell for a checkbox list.
+   ---------------------------------------------------------------------- */
+.dashboard-customize-dropdown {
+  width: 220px;
+}
+
+.dashboard-customize-heading {
+  margin: 2px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+.dashboard-customize-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dashboard-customize-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
