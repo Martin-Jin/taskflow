@@ -8,12 +8,21 @@
  * SUB-TASKS ARE JUST TASKS: a sub-task is a normal Task row with `parentId`
  * pointing at this task (see types/index.js) — there's no separate Subtask
  * type or modal anymore. The "Sub-tasks" section below lists this task's
- * direct children (`tasks.filter(t => t.parentId === task.id)`) and opens
- * the SAME TaskDetailModal, nested on top of this one, when a child's title
- * is clicked (mirroring how the old SubtaskDetailModal opened on top of this
- * modal — the smallest change given this modal's existing structure, and it
- * means a sub-task gets every field a normal task has, including the
- * notes-link handling below, for free — the whole reason for this change).
+ * direct children (`tasks.filter(t => t.parentId === task.id)`) and, when a
+ * child's title is clicked, swaps this SAME modal instance over to showing
+ * that child instead of mounting a second modal on top — see `activeTaskId`
+ * below. A hierarchy label in the header (see HIERARCHY LABEL below) lets the
+ * user navigate back the other way, from a sub-task up to its parent, the
+ * same in-place way.
+ *
+ * HIERARCHY LABEL: the header row (next to the "..." menu and close button)
+ * shows "Parent Task Name > This Task Name" (parent name clickable) when the
+ * open task has a parent, or just this task's title plus a sub-task count
+ * when it has children of its own — omitted entirely for a plain standalone
+ * task. Clicking the parent name calls `setActiveTaskId`, which re-derives
+ * `task` from the live `tasks` list without unmounting/remounting this
+ * modal — so a multi-level chain (grandparent > parent > child) is walked
+ * one in-place swap at a time, however deep it goes.
  *
  * Every field here that has a Todoist equivalent is pushed back to Todoist
  * immediately on Save — see SchedulerContext for the sync logic. Fields
@@ -85,6 +94,7 @@ import {
   Play,
   Square,
   ExternalLink,
+  ChevronRight,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -156,7 +166,7 @@ function getInitialNoteLinks(task) {
   return mergeNoteLinks(task.notes || '', task.noteLinks || []);
 }
 
-export default function TaskDetailModal({ task, onClose }) {
+export default function TaskDetailModal({ task: openedTask, onClose }) {
   const {
     tasks,
     addTask,
@@ -171,6 +181,16 @@ export default function TaskDetailModal({ task, onClose }) {
     addComment,
     deleteComment,
   } = useScheduler();
+
+  // Which task this modal instance currently displays. Starts as the task it
+  // was opened with, but navigating to a parent (via the hierarchy label) or
+  // a sub-task (via the Sub-tasks list) just swaps this id — re-deriving
+  // `task` below from the live `tasks` list — instead of mounting a new
+  // modal on top, so a click-through chain never stacks. `openedTask` is only
+  // ever read as this state's initial value; once mounted, this modal is
+  // fully driven by `activeTaskId`.
+  const [activeTaskId, setActiveTaskId] = useState(openedTask.id);
+  const task = tasks.find((t) => t.id === activeTaskId) || openedTask;
   const { user } = useAuth();
   const { getTimerForTask, startTimer, pauseTimer, resumeTimer, stopTimer } = useTimers();
   const { requestComplete } = useCompleteTask();
@@ -213,11 +233,6 @@ export default function TaskDetailModal({ task, onClose }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
-  // Only the id is tracked — the child Task object is derived fresh from
-  // `tasks` on every render (see `editingChildTask` below), the same
-  // live-updating pattern TaskListPanel/BoardView use for their own
-  // `editingTaskId`, so background changes to the child show up immediately.
-  const [editingChildId, setEditingChildId] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
   const [notesLinkMatches, setNotesLinkMatches] = useState(() => getInitialNoteLinks(task));
@@ -524,7 +539,11 @@ export default function TaskDetailModal({ task, onClose }) {
   const childTasks = useMemo(() => tasks.filter((t) => t.parentId === task.id), [tasks, task.id]);
   const visibleChildTasks = hideCompletedSubtasks ? childTasks.filter((c) => !c.isCompleted) : childTasks;
   const completedChildTasks = childTasks.filter((c) => c.isCompleted).length;
-  const editingChildTask = editingChildId ? tasks.find((t) => t.id === editingChildId) || null : null;
+  // This task's own parent, if any — drives the hierarchy label in the
+  // header. Only one level is looked up here; if that parent itself has a
+  // parent, navigating to it re-renders this same label against the new
+  // `task`, so an arbitrarily deep chain is walked one hop at a time.
+  const parentTask = task.parentId ? tasks.find((t) => t.id === task.parentId) || null : null;
 
   // Sections belong to a project — once a project is chosen, only show
   // that project's sections (matching Todoist's own board picker).
@@ -1107,6 +1126,34 @@ export default function TaskDetailModal({ task, onClose }) {
                   document.body
                 )}
             </div>
+
+            {(parentTask || childTasks.length > 0) && (
+              <div className="detail-hierarchy">
+                {parentTask ? (
+                  <>
+                    <button
+                      type="button"
+                      className="detail-hierarchy-link"
+                      onClick={() => setActiveTaskId(parentTask.id)}
+                      title={`Open parent task: ${parentTask.title}`}
+                    >
+                      {parentTask.title}
+                    </button>
+                    <ChevronRight size={12} className="detail-hierarchy-sep" aria-hidden="true" />
+                    <span className="detail-hierarchy-current">{task.title}</span>
+                  </>
+                ) : (
+                  <span className="detail-hierarchy-current">
+                    <Layers size={12} aria-hidden="true" />
+                    {task.title}
+                    <span className="detail-hierarchy-count">
+                      {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'}
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
+
             <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
               <X size={16} />
             </button>
@@ -1284,11 +1331,11 @@ export default function TaskDetailModal({ task, onClose }) {
                         role="button"
                         tabIndex={0}
                         className={`subtask-row-title-wrap ${child.isCompleted ? 'completed' : ''}`}
-                        onClick={() => setEditingChildId(child.id)}
+                        onClick={() => setActiveTaskId(child.id)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            setEditingChildId(child.id);
+                            setActiveTaskId(child.id);
                           }
                         }}
                         title="Open sub-task"
@@ -1667,10 +1714,6 @@ export default function TaskDetailModal({ task, onClose }) {
           document.body
         )}
 
-      {/* A sub-task is edited via a second, nested instance of this same
-          modal (rather than a separate smaller SubtaskDetailModal) — see
-          the module doc comment for why this was the smallest change. */}
-      {editingChildTask && <TaskDetailModal task={editingChildTask} onClose={() => setEditingChildId(null)} />}
       {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
     </>
   );

@@ -16,9 +16,10 @@ import { useEffect, useRef } from 'react';
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// Modals can nest (a sub-task's TaskDetailModal opened on top of its
-// parent's own instance). Every open
-// modal's close handler lives here in mount order, so Escape can always
+// Modals can nest (e.g. TaskDetailModal's own "..." menu opening
+// SmartParseGuideModal on top of it — a sub-task's TaskDetailModal instead
+// reuses the same modal in place, see that component's doc comment). Every
+// open modal's close handler lives here in mount order, so Escape can always
 // resolve to "close only the topmost one" instead of every open handler
 // racing to interpret the same keypress.
 const openModalStack = [];

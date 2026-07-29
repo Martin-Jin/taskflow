@@ -349,6 +349,60 @@
   position: relative;
 }
 
+/* Todoist-style parent/child breadcrumb — only rendered when the open task
+   actually has a parent or sub-tasks (see TaskDetailModal). Sits between the
+   "..." trigger and the close button on the same row; flex:1 both centers it
+   in the remaining space and lets it ellipsis instead of wrapping/pushing
+   the close button off the row on narrow screens. */
+.detail-hierarchy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+}
+
+.detail-hierarchy-link {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+.detail-hierarchy-link:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.detail-hierarchy-sep {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.detail-hierarchy-current {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-hierarchy-count {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  flex-shrink: 0;
+}
+
 /* Positioned via useMenuPosition (src/hooks/useMenuPosition.js) — portaled
    to document.body and given an inline `position: fixed` + left/top/bottom
    when anchored, or the `.menu-popover-centered` class (see global.css)
@@ -637,7 +691,8 @@
    no border/background), grows with its content via useAutosizeTextarea,
    and only reveals a border once the user actually clicks into it. A
    standalone class (rather than a `.detail-main` descendant selector) since
-   a nested sub-task's TaskDetailModal instance shares this same field. */
+   a sub-task swapped into the same TaskDetailModal instance shares this same
+   field. */
 .detail-notes-textarea {
   background: transparent;
   border: 1px solid transparent;
@@ -1164,8 +1219,9 @@
 
 /* ----------------------------------------------------------------------
    Subtask checklist rows — used inside TaskDetailModal's Sub-tasks field.
-   The whole row (minus its own checkbox/delete controls) opens a nested
-   TaskDetailModal instance for that child task on click.
+   The whole row (minus its own checkbox/delete controls) swaps this same
+   TaskDetailModal instance over to that child task on click (see
+   `activeTaskId` in TaskDetailModal.jsx).
    ---------------------------------------------------------------------- */
 .subtask-list {
   display: flex;
@@ -1511,6 +1567,18 @@
 
   .detail-field-label {
     padding-top: 0;
+  }
+
+  /* Tighter header row at phone widths — the "..." trigger and close button
+     already eat into the row, so trim the breadcrumb further and drop the
+     sub-task count text down to just the icon-adjacent number. */
+  .detail-hierarchy {
+    font-size: 11px;
+    gap: 3px;
+  }
+
+  .detail-hierarchy-link {
+    max-width: 38%;
   }
 }
 
