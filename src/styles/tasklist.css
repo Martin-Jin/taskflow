@@ -20,15 +20,30 @@
   min-width: 0;
 }
 
-/* The Tasks page's top-right row: the combined view/filter dropdown
-   (ViewFilterMenu — List/Board/Gantt plus the status filter, replacing what
-   used to be two separate rows) and the "⋯" project actions menu. */
+/* The Tasks page's header: project switcher + title on the left,
+   view/filter + "⋯" project actions on the right, all one line (no wrap —
+   see .taskpage-project-header's max-width truncation below for how a long
+   project name stays out of this row's way instead of pushing the right
+   side off or wrapping to a second line). */
+.taskpage-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* The combined view/filter dropdown (ViewFilterMenu — List/Board/Gantt plus
+   the status filter) and the "⋯" project actions menu. On mobile these
+   collapse into ViewFilterMenu's single combined trigger instead (see
+   TaskListPanel's `projectActions` prop) — never shrinks, so a long
+   project name truncates/marquees before this does. */
 .taskpage-view-switch-row {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  margin-bottom: 14px;
+  flex-shrink: 0;
 }
 
 .view-filter-trigger {
@@ -40,30 +55,52 @@
   width: 200px;
 }
 
+/* Clearer separation between the View and Filter groups than the shared
+   .dashboard-customize-heading's small top margin gives on its own — a
+   divider plus extra breathing room so the two groups don't read as one
+   continuous list. */
+.view-filter-dropdown .dashboard-customize-heading:not(:first-child) {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
 .view-filter-item {
   justify-content: space-between;
 }
 
 /* Shared page header shown above List/Board/Gantt — the project
-   switcher, the current project's name (or "All Tasks"), click-to-rename
-   the same way Board's own column titles work, and the "⋯" actions menu. */
+   switcher and the current project's name (or "All Tasks"), click-to-rename
+   the same way Board's own column titles work. Sits on the left of
+   .taskpage-header-row, sharing the line with the view/actions menu on the
+   right rather than wrapping to its own row — min-width: 0 lets it actually
+   shrink (and its children truncate/marquee) instead of forcing the row
+   wider than the page. */
 .taskpage-project-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
 }
- 
+
+/* Narrower than SelectMenu's default unbounded width — long project names
+   truncate/marquee (see MarqueeText) instead of stretching this trigger
+   wide. Scoped to this page's instance rather than .select-menu-value
+   itself, since SelectMenu is shared with AddTaskModal's footer picker,
+   which isn't width-constrained and shouldn't be affected. */
+.taskpage-project-header .select-menu-value {
+  display: inline-block;
+  max-width: 160px;
+  min-width: 0;
+}
+
 .taskpage-project-title {
   font-size: 21px;
   font-weight: 700;
   margin: 0;
-  flex: 1;
+  max-width: 280px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .taskpage-project-title.editable {
@@ -247,6 +284,19 @@
   .taskpage-project-title,
   .taskpage-project-title-input {
     font-size: 18px;
+  }
+
+  /* Less room on a phone-width header — a single "⋯" combined menu trigger
+     (see ViewFilterMenu's `projectActions` prop) replaces the two separate
+     desktop triggers, so the title/switcher get most of the row, but still
+     need a firm cap so a long name truncates/marquees rather than crowding
+     that trigger. */
+  .taskpage-project-title {
+    max-width: 150px;
+  }
+
+  .taskpage-project-header .select-menu-value {
+    max-width: 90px;
   }
 
   /* Tighter rows — the full-height .card padding plus a fat inter-row gap

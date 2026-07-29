@@ -177,6 +177,19 @@
   }
 }
 
+/* Settings → "Interface animations" toggle (see SchedulerContext's
+   animationsEnabled) — same near-zero-duration approach as the OS-level
+   reduced-motion query above, rather than animation/transition: none, so
+   anything listening for animationend/transitionend still fires. */
+:root[data-animations='off'] *,
+:root[data-animations='off'] *::before,
+:root[data-animations='off'] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -776,6 +789,44 @@ select:focus-visible,
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-text-secondary);
+}
+
+/* ----------------------------------------------------------------------
+   MarqueeText (src/components/Common/MarqueeText.jsx) — auto-scrolling
+   text used for the Tasks page's project title/switcher (see tasklist.css
+   for where it's given a max-width). Plain ellipsis truncation is the
+   default; the component only adds .marquee-text-inner's animated child
+   when its own scrollWidth/clientWidth check finds real overflow, so short
+   text never animates. Covered by this file's reduced-motion/
+   data-animations opt-outs like every other animation here.
+   ---------------------------------------------------------------------- */
+.marquee-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  text-overflow: ellipsis;
+}
+
+.marquee-text-inner {
+  display: inline-block;
+  animation: marquee-scroll 7s var(--ease-standard) infinite;
+}
+
+@keyframes marquee-scroll {
+  0%,
+  15% {
+    transform: translateX(0);
+  }
+  45%,
+  60% {
+    transform: translateX(calc(-1 * var(--marquee-overflow, 0px)));
+  }
+  85%,
+  100% {
+    transform: translateX(0);
+  }
 }
 
 .dashboard-customize-item {
@@ -1509,6 +1560,25 @@ input[type='checkbox']:checked::after {
 }
 .task-checkbox.low.checked {
   background: var(--color-priority-low);
+}
+
+/* Small "pop" the moment a task is marked complete — the .checked class only
+   applies once toggled on, so the animation naturally (re)plays each time a
+   task is completed rather than looping. */
+.task-checkbox.checked {
+  animation: checkbox-pop var(--duration-fast) var(--ease-standard);
+}
+
+@keyframes checkbox-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .task-checkbox:disabled {

@@ -100,6 +100,8 @@ export default function SettingsPanel({ onOpenTour }) {
     restoreCloudBackup,
     deleteCloudBackup,
     clearAllData,
+    animationsEnabled,
+    setAnimationsEnabled,
   } = useScheduler();
 
   function submitToken(e) {
@@ -629,6 +631,20 @@ export default function SettingsPanel({ onOpenTour }) {
             {Math.round(soundVolume * 100)}%
           </span>
         </div>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+          <input
+            type="checkbox"
+            id="animationsEnabled"
+            checked={animationsEnabled}
+            onChange={(e) => setAnimationsEnabled(e.target.checked)}
+          />
+          <label htmlFor="animationsEnabled" style={{ margin: 0 }}>
+            Interface animations
+          </label>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, marginBottom: 0 }}>
+          Motion for modals, toasts, and task transitions.
+        </p>
       </div>
 
       <div className="card" ref={(el) => (sectionRefs.current.tags = el)}>

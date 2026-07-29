@@ -354,6 +354,15 @@ export function SchedulerProvider({ children }) {
   // these via useScheduler() instead of maintaining an independent copy.
   const [soundEnabled, setSoundEnabled] = usePersistedState('soundEnabled', true);
   const [soundVolume, setSoundVolume] = usePersistedState('soundVolume', 0.5);
+  // Global animation toggle — same synced-setting treatment as sound above.
+  // Applied to the DOM via the effect below (mirrors ThemeContext's
+  // data-theme attribute) so global.css can key off it.
+  const [animationsEnabled, setAnimationsEnabled] = usePersistedState('animationsEnabled', true);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-animations', animationsEnabled ? 'on' : 'off');
+  }, [animationsEnabled]);
+
   // Bookmark-bar-style pinned links (see Dashboard/PinnedLinks.jsx) — lifted
   // up here (rather than that component's own local usePersistedState) so
   // this user-created content follows them across devices and survives a
@@ -683,6 +692,7 @@ export function SchedulerProvider({ children }) {
       if ('events' in remote) setEvents(dedupeEventsByOccurrence(remote.events));
       if ('soundEnabled' in remote) setSoundEnabled(remote.soundEnabled);
       if ('soundVolume' in remote) setSoundVolume(remote.soundVolume);
+      if ('animationsEnabled' in remote) setAnimationsEnabled(remote.animationsEnabled);
       if ('pinnedLinks' in remote) setPinnedLinks(remote.pinnedLinks);
       if ('shortcutBindings' in remote) {
         setShortcutBindings(remote.shortcutBindings);
@@ -703,6 +713,7 @@ export function SchedulerProvider({ children }) {
       setEvents,
       setSoundEnabled,
       setSoundVolume,
+      setAnimationsEnabled,
       setPinnedLinks,
       setShortcutBindings,
     ]
@@ -732,6 +743,7 @@ export function SchedulerProvider({ children }) {
           events,
           soundEnabled,
           soundVolume,
+          animationsEnabled,
           pinnedLinks,
           shortcutBindings,
         };
@@ -739,7 +751,7 @@ export function SchedulerProvider({ children }) {
         lastSyncedSnapshotRef.current = computeSyncFingerprint(seedPayload);
       }
     },
-    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, pinnedLinks, shortcutBindings]
+    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings]
   );
 
   /**
@@ -775,6 +787,7 @@ export function SchedulerProvider({ children }) {
           events,
           soundEnabled,
           soundVolume,
+          animationsEnabled,
           theme,
           pinnedLinks,
           shortcutBindings,
@@ -787,7 +800,7 @@ export function SchedulerProvider({ children }) {
         console.warn('[SchedulerContext] Auto-backup check failed', err);
       }
     },
-    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, theme, pinnedLinks, shortcutBindings]
+    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, pinnedLinks, shortcutBindings]
   );
 
   useEffect(() => {
@@ -853,7 +866,7 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     if (!initialPullDoneRef.current) return; // wait for this sign-in's pull to settle first — see initialPullDoneRef's comment
-    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, pinnedLinks, shortcutBindings };
+    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings };
     const fingerprint = computeSyncFingerprint(payload);
     if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
     const handle = setTimeout(() => {
@@ -866,7 +879,7 @@ export function SchedulerProvider({ children }) {
         });
     }, 1500);
     return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, pinnedLinks, shortcutBindings]);
+  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings]);
 
   /**
    * Manual re-pull for Settings' "Sync now" button — covers the gap this
@@ -925,6 +938,7 @@ export function SchedulerProvider({ children }) {
       if ('events' in payload) setEvents(payload.events);
       if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
       if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
+      if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
       if ('theme' in payload) setTheme(payload.theme);
       if ('pinnedLinks' in payload) setPinnedLinks(payload.pinnedLinks);
       if ('shortcutBindings' in payload) {
@@ -945,6 +959,7 @@ export function SchedulerProvider({ children }) {
       setEvents,
       setSoundEnabled,
       setSoundVolume,
+      setAnimationsEnabled,
       setTheme,
       setPinnedLinks,
       setShortcutBindings,
@@ -964,12 +979,13 @@ export function SchedulerProvider({ children }) {
       events,
       soundEnabled,
       soundVolume,
+      animationsEnabled,
       theme,
       pinnedLinks,
       shortcutBindings,
     });
     downloadBackupFile(payload);
-  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, theme, pinnedLinks, shortcutBindings]);
+  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, pinnedLinks, shortcutBindings]);
 
   /** Reads a backup .json file the user picked and restores it — works signed-out, matching exportBackup. */
   const importBackupFromFile = useCallback(
@@ -2047,6 +2063,8 @@ export function SchedulerProvider({ children }) {
       setSoundEnabled,
       soundVolume,
       setSoundVolume,
+      animationsEnabled,
+      setAnimationsEnabled,
       pinnedLinks,
       setPinnedLinks,
       shortcutBindings,
@@ -2125,6 +2143,7 @@ export function SchedulerProvider({ children }) {
       dismissActionToast,
       soundEnabled,
       soundVolume,
+      animationsEnabled,
       pinnedLinks,
       shortcutBindings,
       undo,
