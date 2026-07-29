@@ -1,0 +1,15 @@
+name = "taskflow-ai-quickadd"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# No KV/D1/Durable Object bindings needed — the only state this worker
+# touches is the two API-key secrets below, set via `wrangler secret put`
+# (never committed here):
+#   ANTHROPIC_API_KEY
+#   GEMINI_API_KEY
+#
+# ALLOWED_ORIGIN controls CORS (see src/index.js). Defaults to "*" if unset,
+# which is fine for local development but should be locked down to your
+# deployed app's origin for production — see cloudflare-worker/README.md.
+[vars]
+ALLOWED_ORIGIN = "*"

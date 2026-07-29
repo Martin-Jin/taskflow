@@ -29,6 +29,7 @@ every view on first launch (replay it anytime from Settings → Help).
 - [Quick start](#quick-start)
 - [Account & cross-device sync](#account--cross-device-sync)
 - [Connecting real data](#connecting-real-data)
+- [AI Quick Add](#ai-quick-add)
 - [How the scheduler works](#how-the-scheduler-works)
 - [Data model](#data-model)
 - [Project layout](#project-layout)
@@ -267,6 +268,30 @@ that the calendar isn't unchecked in Google Calendar's own sidebar
 "See all event details" rather than "See only free/busy" — a specific
 calendar that fails to load names itself in a toast so you know which one
 to check.
+
+## AI Quick Add
+
+The **AI Quick Add** button (a sparkle icon next to "Add task" in Tasks list
+and Board view) lets you type a free-form description — or attach a
+screenshot — and have an AI turn it into a new Task or Event, instead of
+filling in the structured Add Task form field by field. E.g. typing "dentist
+next Tuesday 2-3pm" creates a calendar Event; "finish the quarterly report by
+Friday, ~3 hours, high priority" creates a Task with those fields already
+set. You choose Claude (Anthropic) or Gemini (Google) per request; your last
+choice is remembered on that device.
+
+**This requires deploying a small companion Cloudflare Worker** — the actual
+Anthropic/Gemini API keys must never reach the browser, so the app calls a
+Worker you deploy yourself (free tier, no billing required), which holds the
+keys as server-side secrets. See [`cloudflare-worker/README.md`](cloudflare-worker/README.md)
+for setup steps. Once deployed, point the app at it via `.env`:
+
+```
+VITE_AI_QUICKADD_WORKER_URL=https://taskflow-ai-quickadd.<your-subdomain>.workers.dev
+```
+
+Like the other integrations above, this is entirely optional — leave the env
+var unset and the AI Quick Add button simply doesn't appear.
 
 ## How the scheduler works
 
@@ -669,6 +694,14 @@ every push to `main`.
      *your* personal Todoist token into a build every visitor downloads —
      see the [Todoist](#todoist) section above for why each visitor instead
      connects their own account from Settings.
+   - If you want **AI Quick Add** to work for visitors too, add
+     `VITE_AI_QUICKADD_WORKER_URL` as a repo secret as well (see [AI Quick
+     Add](#ai-quick-add) above). Unlike the Todoist token, this is just a
+     Worker URL, not a credential — but since every visitor's browser would
+     now call your deployed Worker (and therefore spend your Anthropic/
+     Gemini API credits), lock the Worker's `ALLOWED_ORIGIN` down to your
+     Pages origin (see `cloudflare-worker/README.md`) rather than leaving it
+     wide open.
 3. Push to `main`. Check the **Actions** tab for the workflow run, then visit
    `https://<your-username>.github.io/taskflow/`.
 

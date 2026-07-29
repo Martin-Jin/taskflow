@@ -1752,3 +1752,84 @@
 .routine-block-edge-bottom {
   bottom: 0;
 }
+
+/* ----------------------------------------------------------------------
+   AIQuickAddModal — provider toggle, screenshot drop zone/preview.
+   Reuses .modal/.form-row/.form-hint/.form-error/.addtask-footer from
+   elsewhere in this file rather than duplicating the modal shell.
+   ---------------------------------------------------------------------- */
+.modal-ai-quickadd {
+  width: 480px;
+}
+
+.ai-quickadd-provider-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-quickadd-provider-btn {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ai-quickadd-provider-btn.is-active {
+  border-color: var(--color-accent-border);
+  color: var(--color-text-primary);
+  background: var(--color-accent-soft, var(--color-bg-surface-hover));
+}
+
+.ai-quickadd-dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.ai-quickadd-dropzone:hover,
+.ai-quickadd-dropzone.is-dragover {
+  border-color: var(--color-accent-border);
+  color: var(--color-text-primary);
+}
+
+.ai-quickadd-image-preview {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 12px;
+}
+
+.ai-quickadd-image-preview img {
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.ai-quickadd-image-preview .btn-icon {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(10, 11, 15, 0.65);
+  color: #fff;
+}
+
+@media (max-width: 639px) {
+  .modal-ai-quickadd {
+    width: 100%;
+  }
+}

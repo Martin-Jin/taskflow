@@ -28,12 +28,14 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
+import { Plus, Sparkles, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useSound } from '../context/SoundContext';
 import AddTaskModal from './Modals/AddTaskModal';
+import AIQuickAddModal from './Modals/AIQuickAddModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
+import { isAIQuickAddConfigured } from '../services/aiQuickAddService';
 import BoardView from './Board/BoardView';
 import GanttChart from './Gantt/GanttChart';
 import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
@@ -80,6 +82,7 @@ export default function TaskListPanel({
   const { playUncomplete } = useSound();
   const isMobile = useIsMobile();
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showAIQuickAdd, setShowAIQuickAdd] = useState(false);
   // The "new task" shortcut (see useKeyboardShortcuts in App.jsx) bumps this
   // from anywhere in the app to open "Add task" here, since this modal's open
   // state is local to the Tasks tab rather than lifted — App.jsx switches to
@@ -443,6 +446,16 @@ export default function TaskListPanel({
         <>
           <div className="tasklist-toolbar">
             <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
+            {isAIQuickAddConfigured() && (
+              <button
+                className="btn btn-icon"
+                onClick={() => setShowAIQuickAdd(true)}
+                aria-label="AI Quick Add"
+                title="AI Quick Add"
+              >
+                <Sparkles size={14} />
+              </button>
+            )}
             <button
               className="btn btn-primary add-task-btn"
               data-tour="add-task"
@@ -476,6 +489,7 @@ export default function TaskListPanel({
           {showAddModal && (
             <AddTaskModal onClose={() => setShowAddModal(false)} initialProjectId={activeProject ? activeProject.id : ''} />
           )}
+          {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} />}
           {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
         </>
       )}
