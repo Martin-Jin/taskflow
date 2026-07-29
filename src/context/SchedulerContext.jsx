@@ -870,13 +870,14 @@ export function SchedulerProvider({ children }) {
     const fingerprint = computeSyncFingerprint(payload);
     if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
     const handle = setTimeout(() => {
-      pushUserData(user.uid, payload)
-        .then(() => {
-          lastSyncedSnapshotRef.current = fingerprint;
-        })
-        .catch((err) => {
-          console.error('[SchedulerContext] Cloud sync failed to save', err);
-        });
+      // Stamp the ref before sending, not after resolution — otherwise a local
+      // change (e.g. undo) made while this write is in flight can race the
+      // listener above, which would mistake the server echo for a genuine
+      // remote change and stomp the undo.
+      lastSyncedSnapshotRef.current = fingerprint;
+      pushUserData(user.uid, payload).catch((err) => {
+        console.error('[SchedulerContext] Cloud sync failed to save', err);
+      });
     }, 1500);
     return () => clearTimeout(handle);
   }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings]);

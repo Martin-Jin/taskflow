@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.1',
+    date: '2026-07-30',
+    title: 'Fixed undo sometimes needing a second try',
+    changes: [
+      "Undoing a change right after making it could occasionally get silently reverted a moment later by background cloud sync, making it look like the undo didn't work until you pressed it again. Undo now sticks on the first try.",
+    ],
+  },
+  {
     version: '1.15.0',
     date: '2026-07-29',
     title: 'Subtle animations, with an off switch',
