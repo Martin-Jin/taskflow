@@ -95,9 +95,12 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [recurrenceUnit, setRecurrenceUnit] = useState('month');
   const [recurrenceDays, setRecurrenceDays] = useState(null);
   const [projectId, setProjectId] = useState(initialProjectId || '');
-  const [hasEditedProject, setHasEditedProject] = useState(!!initialProjectId);
+  // Pre-filled from the view the modal was opened from (e.g. a project's task
+  // list, a board column) — that's a default, not a user edit, so it must not
+  // block smart-parse from overriding it when the title mentions "#project".
+  const [hasEditedProject, setHasEditedProject] = useState(false);
   const [sectionId, setSectionId] = useState(initialSectionId || '');
-  const [hasEditedSection, setHasEditedSection] = useState(!!initialSectionId);
+  const [hasEditedSection, setHasEditedSection] = useState(false);
   const [dependsOn, setDependsOn] = useState([]);
   const [hasEditedDependencies, setHasEditedDependencies] = useState(false);
   const [isPassive, setIsPassive] = useState(false);

@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.9',
+    date: '2026-07-30',
+    title: 'Fix: #project smart parse being ignored',
+    changes: [
+      'Fixed a bug where typing "#project" in a new task\'s title would silently do nothing if the Add Task dialog had already been opened from within a specific project or board column — smart parse can now still switch the project when you type a different one.',
+    ],
+  },
+  {
     version: '1.15.8',
     date: '2026-07-30',
     title: 'Calendar redesigned to feel like Google Calendar mobile',
