@@ -21,9 +21,10 @@
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Check, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
+import { ChevronDown, Check, MoreHorizontal } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { TASK_STATUS_FILTERS } from '../../utils/projectConstants';
+import { ProjectActionsItems } from './ProjectActionsMenu';
 
 export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter, onChangeFilter, projectActions }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -130,33 +131,13 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
               {projectActions && (
                 <>
                   <p className="dashboard-customize-heading">Project</p>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="project-actions-item"
-                    onClick={() => runAndClose(projectActions.onRename)}
-                  >
-                    <Pencil size={13} />
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="project-actions-item"
-                    onClick={() => runAndClose(projectActions.onTogglePin)}
-                  >
-                    {projectActions.isPinned ? <PinOff size={13} /> : <Pin size={13} />}
-                    {projectActions.isPinned ? 'Unpin' : 'Pin'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="project-actions-item project-actions-item-danger"
-                    onClick={() => runAndClose(projectActions.onDelete)}
-                  >
-                    <Trash2 size={13} />
-                    Delete
-                  </button>
+                  <ProjectActionsItems
+                    isPinned={projectActions.isPinned}
+                    onRename={projectActions.onRename}
+                    onTogglePin={projectActions.onTogglePin}
+                    onDelete={projectActions.onDelete}
+                    runAndClose={runAndClose}
+                  />
                 </>
               )}
             </div>
