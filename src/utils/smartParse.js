@@ -24,12 +24,15 @@
  * duration, "can run unattended", "on the day"/enforce due date, dependency,
  * project, then labels — stripping each match out of the working text
  * before the next detector runs. This keeps the dependency fragment (which
- * captures "everything after the trigger word") free of unrelated phrases
- * that were typed after it, e.g. "after Design review tomorrow p2" leaves
- * a clean "Design review" fragment to match against existing task titles
- * once "tomorrow" and "p2" have already been pulled out. Labels run last so
- * "@name" mentions aren't accidentally swallowed by an earlier detector's
- * fragment capture.
+ * captures "everything after the trigger word", up to the next "@"/"#" or
+ * the end of the string) free of unrelated phrases typed after it, e.g.
+ * "after Design review tomorrow p2" leaves a clean "Design review" fragment
+ * to match against existing task titles once "tomorrow" and "p2" have
+ * already been pulled out — and the same "@"/"#" boundary means a trailing
+ * "#project"/"@label" mention (e.g. "after Design review #Writing") is left
+ * alone for the detectors that run after it, rather than being swallowed
+ * into the dependency match. Labels run last so "@name" mentions aren't
+ * accidentally swallowed by an earlier detector's fragment capture.
  * ============================================================================
  */
 
@@ -143,37 +146,83 @@ function matchFragmentAgainstCandidates(fragment, candidates, getName) {
 }
 
 function findDependencyPhrase(text, existingTasks) {
-  const m = text.match(/\b(?:after|depends on)\s+(.+)$/i);
+  // Bounded at the next "@"/"#" (or end of string) rather than swallowing to
+  // the literal end of the text — otherwise a "#project"/"@label" mention
+  // typed *after* the dependency phrase (e.g. "after Design review #Writing")
+  // gets folded into the dependency fragment and never reaches the project/
+  // label detectors that run later in parseTaskText.
+  const m = text.match(/\b(?:after|depends on)\s+([^@#]+?)(?=\s*[@#]|$)/i);
   if (!m || !m[1].trim()) return null;
   const fragment = m[1].trim();
   const task = matchFragmentAgainstCandidates(fragment, existingTasks, (t) => t.title);
   return { task, fragment, matchedText: m[0], index: m.index };
 }
 
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * "#project" shorthand, optionally followed by "/ section" — Todoist's own
  * "#Project/Section" syntax, tolerant of spaces around the slash ("#Tasks /
- * section one"). The project fragment stays single-word (project names can
- * be multi-word, but a hashtag delimiter can't tell where it ends without
- * one); the section fragment, once a "/" is typed, can contain spaces, so
- * it runs until the next "@"/"#" token or the end of the string instead of
- * stopping at the first space. The lookahead sits *inside* the optional
- * slash-group so it only bounds the section capture — it must not gate the
- * project-only match too, or a plain "#Tasks p2 tomorrow" (nothing special
- * right after the project mention) would fail to match at all.
+ * section one"). The section fragment, once a "/" is typed, can contain
+ * spaces, running until the next "@"/"#" token or the end of the string.
+ *
+ * The project fragment itself first tries every existing project's FULL
+ * name (longest name first) as a literal, word-bounded prefix of whatever
+ * follows "#" — this is what lets multi-word project names ("Work Trip")
+ * resolve correctly instead of always stopping at the first word, and is
+ * essential for two projects that share a leading word ("Work" / "Work
+ * Trip"): trying the longest name first means "#Work Trip" resolves to
+ * "Work Trip" rather than silently matching the shorter "Work" and leaving
+ * "Trip" behind as stray title text (see useMentionAutocomplete, which
+ * inserts a selected project's full name this way). Only when no project's
+ * full name is spelled out does this fall back to the original single fuzzy
+ * word (matchFragmentAgainstCandidates) — so a typo or abbreviation like
+ * "#Groc" for "Groceries List" still resolves via substring match.
  */
 function findProjectPhrase(text, projects, sections) {
-  const m = text.match(/#([a-zA-Z0-9_-]+)(?:\s*\/\s*([^@#]+?)(?=\s*[@#]|$))?/);
-  if (!m) return null;
-  const fragment = m[1];
+  const hashMatch = text.match(/#([^@#]*)/);
+  if (!hashMatch) return null;
+  const tail = hashMatch[1];
+  if (!tail.trim()) return null;
+  const hashIndex = hashMatch.index;
+
+  const byNameLengthDesc = [...projects].sort((a, b) => b.name.length - a.name.length);
+  for (const project of byNameLengthDesc) {
+    const name = project.name.trim();
+    if (!name) continue;
+    const prefixMatch = tail.match(new RegExp(`^${escapeRegExp(name)}(?=\\s|/|$)`, 'i'));
+    if (!prefixMatch) continue;
+
+    const consumed = prefixMatch[0];
+    const rest = tail.slice(consumed.length);
+    const slashMatch = rest.match(/^\s*\/\s*([^@#]*)/);
+    let sectionFragment;
+    let section = null;
+    let matchedTail = consumed;
+    if (slashMatch) {
+      sectionFragment = slashMatch[1].trim() || undefined;
+      matchedTail = consumed + slashMatch[0];
+      if (sectionFragment) {
+        const projectSections = sections.filter((s) => s.projectId === project.id);
+        section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
+      }
+    }
+    return { project, section, fragment: name, sectionFragment, matchedText: `#${matchedTail}`, index: hashIndex };
+  }
+
+  const wordMatch = text.match(/#([a-zA-Z0-9_-]+)(?:\s*\/\s*([^@#]+?)(?=\s*[@#]|$))?/);
+  if (!wordMatch) return null;
+  const fragment = wordMatch[1];
   const project = matchFragmentAgainstCandidates(fragment, projects, (p) => p.name);
-  const sectionFragment = m[2] ? m[2].trim() : undefined;
+  const sectionFragment = wordMatch[2] ? wordMatch[2].trim() : undefined;
   let section = null;
   if (sectionFragment && project) {
     const projectSections = sections.filter((s) => s.projectId === project.id);
     section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
   }
-  return { project, section, fragment, sectionFragment, matchedText: m[0], index: m.index };
+  return { project, section, fragment, sectionFragment, matchedText: wordMatch[0], index: wordMatch.index };
 }
 
 /**
