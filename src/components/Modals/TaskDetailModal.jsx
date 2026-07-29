@@ -78,9 +78,16 @@ import {
   Paperclip,
   File as FileIcon,
   Send,
+  Loader2,
+  Sparkles,
+  Timer,
+  Pause,
+  Play,
+  Square,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
+import { useTimers, getLiveRemaining, getDefaultDurationSeconds, formatTimerDuration } from '../../context/TimerContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
 import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
@@ -101,6 +108,7 @@ import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
 import { faviconUrl } from '../Dashboard/pinnedLinksModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
+import SmartParseGuideModal from './SmartParseGuideModal';
 
 // Default estimated hours for a quick-added sub-task — matches
 // AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
@@ -151,6 +159,7 @@ export default function TaskDetailModal({ task, onClose }) {
     deleteComment,
   } = useScheduler();
   const { user } = useAuth();
+  const { getTimerForTask, startTimer, pauseTimer, resumeTimer, stopTimer } = useTimers();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -180,6 +189,7 @@ export default function TaskDetailModal({ task, onClose }) {
   const [isPassive, setIsPassive] = useState(!!task.isPassive);
   const [earliestDate, setEarliestDate] = useState(task.earliestDate || '');
   const [enforceDueDate, setEnforceDueDate] = useState(!!task.enforceDueDate);
+  const [fixedTime, setFixedTime] = useState(task.fixedTime || '');
   const [labelIds, setLabelIds] = useState(task.labelIds || []);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
@@ -190,6 +200,7 @@ export default function TaskDetailModal({ task, onClose }) {
   // `editingTaskId`, so background changes to the child show up immediately.
   const [editingChildId, setEditingChildId] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
   const [notesLinkMatches, setNotesLinkMatches] = useState(() => getInitialNoteLinks(task));
   const [isNotesFocused, setIsNotesFocused] = useState(false);
 
@@ -333,6 +344,7 @@ export default function TaskDetailModal({ task, onClose }) {
       isPassive: !!task.isPassive,
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
+      fixedTime: task.fixedTime || '',
       labelIds: task.labelIds || [],
     };
   }
@@ -372,6 +384,7 @@ export default function TaskDetailModal({ task, onClose }) {
     setIsPassive(!!task.isPassive);
     setEarliestDate(task.earliestDate || '');
     setEnforceDueDate(!!task.enforceDueDate);
+    setFixedTime(task.fixedTime || '');
     setLabelIds(task.labelIds || []);
     resetSmartState();
     initialSnapshotRef.current = {
@@ -391,6 +404,7 @@ export default function TaskDetailModal({ task, onClose }) {
       isPassive: !!task.isPassive,
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
+      fixedTime: task.fixedTime || '',
       labelIds: task.labelIds || [],
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -565,6 +579,7 @@ export default function TaskDetailModal({ task, onClose }) {
     isPassive !== initialSnapshotRef.current.isPassive ||
     earliestDate !== initialSnapshotRef.current.earliestDate ||
     enforceDueDate !== initialSnapshotRef.current.enforceDueDate ||
+    fixedTime !== initialSnapshotRef.current.fixedTime ||
     dependsOn.length !== initialSnapshotRef.current.dependsOn.length ||
     dependsOn.some((id) => !initialSnapshotRef.current.dependsOn.includes(id)) ||
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
@@ -697,6 +712,7 @@ export default function TaskDetailModal({ task, onClose }) {
       // Only meaningful once a due date exists — clear it rather than
       // persisting a flag that has nothing to enforce.
       enforceDueDate: enforceDueDate && !!nextDueDate,
+      fixedTime: fixedTime || null,
       labelIds: finalLabelIds,
     });
 
@@ -717,6 +733,7 @@ export default function TaskDetailModal({ task, onClose }) {
       isPassive,
       earliestDate: earliestDate || '',
       enforceDueDate: enforceDueDate && !!nextDueDate,
+      fixedTime: fixedTime || '',
       labelIds: finalLabelIds,
     };
   }
@@ -750,6 +767,7 @@ export default function TaskDetailModal({ task, onClose }) {
     isPassive,
     earliestDate,
     enforceDueDate,
+    fixedTime,
     dependsOn,
     labelIds,
   ]);
@@ -774,6 +792,7 @@ export default function TaskDetailModal({ task, onClose }) {
     setIsPassive(snap.isPassive);
     setEarliestDate(snap.earliestDate);
     setEnforceDueDate(snap.enforceDueDate);
+    setFixedTime(snap.fixedTime);
     setLabelIds(snap.labelIds);
     resetSmartState();
   }
@@ -839,6 +858,20 @@ export default function TaskDetailModal({ task, onClose }) {
                           Delete
                         </button>
                       </li>
+                      <li role="none">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="detail-menu-item"
+                          onClick={() => {
+                            setShowSmartParseGuide(true);
+                            setMenuOpen(false);
+                          }}
+                        >
+                          <Sparkles size={14} aria-hidden="true" />
+                          Smart parse guide
+                        </button>
+                      </li>
 
                       <li role="none" className="detail-menu-divider" />
 
@@ -890,6 +923,25 @@ export default function TaskDetailModal({ task, onClose }) {
                               ? "Task won't be scheduled earlier — all remaining work is forced onto the due date."
                               : 'Set a due date first to enable this.'}
                           </p>
+                        </DetailField>
+                      </li>
+
+                      <li role="none">
+                        <DetailField icon={Clock} label="Fixed time">
+                          <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!fixedTime}
+                              onChange={(e) => setFixedTime(e.target.checked ? '09:00' : '')}
+                            />
+                            {fixedTime ? `At ${fixedTime}` : 'Not fixed'}
+                          </label>
+                          {fixedTime && (
+                            <>
+                              <input type="time" value={fixedTime} onChange={(e) => setFixedTime(e.target.value)} style={{ marginTop: 6 }} />
+                              <p className="form-hint">Scheduled blocks for this task will always start at this time.</p>
+                            </>
+                          )}
                         </DetailField>
                       </li>
 
@@ -1235,9 +1287,9 @@ export default function TaskDetailModal({ task, onClose }) {
                     className="btn btn-icon comment-send-btn"
                     onClick={handlePostComment}
                     disabled={isPostingComment || (!commentText.trim() && !commentFile)}
-                    aria-label="Post comment"
+                    aria-label={isPostingComment ? 'Posting comment…' : 'Post comment'}
                   >
-                    <Send size={15} />
+                    {isPostingComment ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
                   </button>
                 </div>
               </div>
@@ -1308,6 +1360,17 @@ export default function TaskDetailModal({ task, onClose }) {
                   // pass through untouched so typing a decimal point isn't clobbered.
                   value={typeof estimatedHours === 'number' ? Math.round(estimatedHours * 10000) / 10000 : estimatedHours}
                   onChange={(e) => setEstimatedHours(e.target.value)}
+                />
+              </DetailField>
+
+              <DetailField icon={Timer} label="Timer">
+                <TaskTimerControl
+                  durationSeconds={getDefaultDurationSeconds({ ...task, estimatedHours })}
+                  timer={getTimerForTask(task.id)}
+                  onStart={(seconds) => startTimer(task, seconds)}
+                  onPause={() => pauseTimer(task.id)}
+                  onResume={() => resumeTimer(task.id)}
+                  onStop={() => stopTimer(task.id)}
                 />
               </DetailField>
 
@@ -1399,6 +1462,53 @@ export default function TaskDetailModal({ task, onClose }) {
           modal (rather than a separate smaller SubtaskDetailModal) — see
           the module doc comment for why this was the smallest change. */}
       {editingChildTask && <TaskDetailModal task={editingChildTask} onClose={() => setEditingChildId(null)} />}
+      {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
     </>
+  );
+}
+
+/**
+ * Start/pause/resume/stop controls for this task's Pomodoro timer (see
+ * TimerContext), plus a live "MM:SS remaining" readout. Ticks its own
+ * 1-second interval only while a timer is actually running for this task,
+ * so the rest of the (fairly heavy) detail modal doesn't re-render every
+ * second just because a timer elsewhere is counting down.
+ */
+function TaskTimerControl({ durationSeconds, timer, onStart, onPause, onResume, onStop }) {
+  const [, forceTick] = useState(0);
+
+  useEffect(() => {
+    if (!timer || timer.status !== 'running') return;
+    const id = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [timer]);
+
+  if (!timer) {
+    return (
+      <button type="button" className="btn" onClick={() => onStart(durationSeconds)}>
+        <Timer size={14} /> Start timer ({formatTimerDuration(durationSeconds)})
+      </button>
+    );
+  }
+
+  const remaining = getLiveRemaining(timer);
+  const isDone = timer.status === 'done';
+
+  return (
+    <div className="detail-timer-control">
+      <span className={`detail-timer-time ${isDone ? 'is-done' : ''}`}>{isDone ? "Time's up" : formatTimerDuration(remaining)}</span>
+      {timer.status === 'running' ? (
+        <button type="button" className="btn btn-icon" onClick={onPause} title="Pause" aria-label="Pause timer">
+          <Pause size={14} />
+        </button>
+      ) : (
+        <button type="button" className="btn btn-icon" onClick={onResume} title={isDone ? 'Restart' : 'Resume'} aria-label={isDone ? 'Restart timer' : 'Resume timer'}>
+          <Play size={14} />
+        </button>
+      )}
+      <button type="button" className="btn btn-icon" onClick={onStop} title="Stop" aria-label="Stop timer">
+        <Square size={14} />
+      </button>
+    </div>
   );
 }

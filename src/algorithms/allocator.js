@@ -20,6 +20,9 @@
  *   6. Passive tasks (task.isPassive — e.g. laundry, something baking) are
  *      allowed to overlap other blocks in time, since they don't need
  *      attention. See "PASSIVE TASK PLACEMENT" below.
+ *   7. task.fixedTime ("HH:MM"), when set, pins every block placed for that
+ *      task to start at that exact time of day instead of wherever first-fit
+ *      would land — see placeFixedTimeInDay below.
  *
  * --------------------------------------------------------------------------
  * ALGORITHM WALKTHROUGH
@@ -246,18 +249,66 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours) 
 }
 
 /**
+ * Like placeHoursInDay, but for a task with `fixedTime` set: the placement
+ * MUST start at `fixedStartMins` (the fixed time-of-day, in minutes) rather
+ * than wherever first-fit would land. Finds the single free interval that
+ * contains that start time and carves forward from it, splitting the
+ * interval around the placement (front slice, if any, stays free; back
+ * slice, if any, stays free) instead of always shrinking from the front like
+ * placeHoursInDay does.
+ *
+ * If no free interval contains the fixed start time, or the interval doesn't
+ * have enough room from that point to fit at least `minChunkHours`, this
+ * places nothing for the day — consistent with how the rest of the allocator
+ * treats a day that can't fit a task's requirements: the hours simply aren't
+ * placed there, and the caller's normal overflow reporting picks up any
+ * hours that end up unplaceable across the whole window (see allocateTasks).
+ * No fallback to a different time is attempted; the whole point of
+ * `fixedTime` is that the task is done at that time or not that day.
+ */
+function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, fixedStartMins) {
+  const hoursToPlace = Math.min(hours, maxChunkHours);
+  const effectiveMinChunk = Math.min(minChunkHours, hoursToPlace);
+
+  const idx = dayFreeIntervals.findIndex((iv) => iv.start <= fixedStartMins && iv.end > fixedStartMins);
+  if (idx === -1) return { placedHours: 0, placements: [] };
+
+  const interval = dayFreeIntervals[idx];
+  const availableHours = (interval.end - fixedStartMins) / 60;
+  if (availableHours < effectiveMinChunk - EPSILON_HOURS) return { placedHours: 0, placements: [] };
+
+  const takeHours = Math.min(hoursToPlace, availableHours);
+  const takeMins = Math.round(takeHours * 60);
+  const placementStart = fixedStartMins;
+  const placementEnd = fixedStartMins + takeMins;
+
+  // Replace the consumed interval with whatever free slivers remain before
+  // and/or after the placement (rather than always shrinking from the
+  // front, since the fixed start time can sit mid-interval).
+  const remainder = [];
+  if (placementStart > interval.start) remainder.push({ start: interval.start, end: placementStart });
+  if (placementEnd < interval.end) remainder.push({ start: placementEnd, end: interval.end });
+  dayFreeIntervals.splice(idx, 1, ...remainder);
+
+  return { placedHours: takeHours, placements: [{ start: placementStart, end: placementEnd }] };
+}
+
+/**
  * Shared by all three placement passes below: carve `hours` out of a day's
  * free intervals for `task`, push a ScheduledBlock per placement onto
  * `newBlocks` (mutated in place), and return the hours actually placed.
  * `idSuffix` keeps block ids unique/traceable across passes (e.g. "_sweep").
+ *
+ * `task.fixedTime` ("HH:MM") routes placement through placeFixedTimeInDay
+ * instead of the normal first-fit placeHoursInDay — see that function and
+ * the Task.fixedTime typedef for the override's semantics.
  */
 function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '') {
-  const { placedHours, placements } = placeHoursInDay(
-    hours,
-    dayIntervals,
-    task.minChunkHours ?? 0.5,
-    task.maxChunkHours ?? 4
-  );
+  const minChunkHours = task.minChunkHours ?? 0.5;
+  const maxChunkHours = task.maxChunkHours ?? 4;
+  const { placedHours, placements } = task.fixedTime
+    ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime))
+    : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours);
   for (const p of placements) {
     newBlocks.push({
       id: `blk_${task.id}_${date}_${p.start}${idSuffix}`,

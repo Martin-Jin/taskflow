@@ -1,0 +1,122 @@
+/* ============================================================================
+   TIMER WIDGET — floating panel listing active per-task Pomodoro timers.
+   See src/components/Common/TimerWidget.jsx / src/context/TimerContext.jsx.
+   ============================================================================ */
+
+.timer-widget {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  width: 260px;
+  max-width: calc(100vw - 40px);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  z-index: 1090;
+  overflow: hidden;
+}
+
+.timer-widget-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.timer-widget-header span {
+  flex: 1;
+}
+
+.timer-widget-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border);
+}
+
+.timer-widget-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timer-widget-row:last-child {
+  border-bottom: none;
+}
+
+.timer-widget-row.is-done .timer-widget-row-time {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.timer-widget-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timer-widget-row-title {
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timer-widget-row-time {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.timer-widget-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Inline "Start timer" / running-state controls inside TaskDetailModal's
+   "Timer" DetailField row (see TaskTimerControl). */
+.detail-timer-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-timer-time {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  min-width: 52px;
+}
+
+.detail-timer-time.is-done {
+  color: var(--color-accent);
+}
+
+@media (max-width: 639px) {
+  .timer-widget {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+    width: auto;
+    max-width: none;
+  }
+}

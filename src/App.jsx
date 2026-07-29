@@ -17,6 +17,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
+import { TimerProvider } from './context/TimerContext';
+import TimerWidget from './components/Common/TimerWidget';
 import AccountButton from './components/Nav/AccountButton';
 import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
@@ -24,6 +26,7 @@ import TaskListPanel from './components/TaskListPanel';
 import StatsDashboard from './components/Stats/StatsDashboard';
 import SettingsPanel from './components/SettingsPanel';
 import Toast from './components/Common/Toast';
+import ActionToast from './components/Common/ActionToast';
 import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -81,10 +84,11 @@ function AppShell() {
     redo,
     canUndo,
     canRedo,
-    currentActionLabel,
     isLoading,
     notification,
     clearNotification,
+    actionToast,
+    dismissActionToast,
     projects,
     addProject,
     renameProject,
@@ -178,9 +182,7 @@ function AppShell() {
       )}
 
       <header className="topbar">
-        <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
-          {isLoading ? 'Loading…' : currentActionLabel}
-        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{isLoading ? 'Loading…' : ''}</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn btn-icon help-icon-btn" onClick={openTour} title="Help / guided tour">
             <HelpCircle size={15} />
@@ -224,6 +226,8 @@ function AppShell() {
       {isMobile && <BottomTabBar tabs={TABS} activeTab={tab} onSelectTab={setTab} />}
 
       <Toast notification={notification} onDismiss={clearNotification} />
+      <ActionToast toast={actionToast} onUndo={undo} onDismiss={dismissActionToast} />
+      <TimerWidget />
       {showManageProjects && (
         <ManageProjectsModal
           projects={projects}
@@ -249,7 +253,9 @@ export default function App() {
     <AuthProvider>
       <ThemeProvider>
         <SchedulerProvider>
-          <AppShell />
+          <TimerProvider>
+            <AppShell />
+          </TimerProvider>
         </SchedulerProvider>
       </ThemeProvider>
     </AuthProvider>

@@ -59,6 +59,20 @@ export function validateAttachment(file) {
   return null;
 }
 
+// Firebase's Storage SDK has no built-in upload timeout — on a dead/stalled
+// connection the request can sit unresolved indefinitely, which reads to the
+// user as the comment box being permanently "stuck" with no error and no way
+// to retry. This caps how long we wait before giving up with a clear error.
+const UPLOAD_TIMEOUT_MS = 30_000;
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
  * Uploads a comment's attachment and returns the metadata persisted on the
  * Comment object. `path` is kept (not just `url`) so deleteCommentAttachment
@@ -67,8 +81,9 @@ export function validateAttachment(file) {
 export async function uploadCommentAttachment(uid, taskId, file) {
   const path = `users/${uid}/attachments/${taskId}/${Date.now()}_${file.name}`;
   const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, file, { contentType: file.type || undefined });
-  const url = await getDownloadURL(storageRef);
+  const timeoutMessage = 'Upload timed out — check your connection and try again.';
+  await withTimeout(uploadBytes(storageRef, file, { contentType: file.type || undefined }), UPLOAD_TIMEOUT_MS, timeoutMessage);
+  const url = await withTimeout(getDownloadURL(storageRef), UPLOAD_TIMEOUT_MS, timeoutMessage);
   return { url, path, name: file.name, size: file.size, type: file.type || '' };
 }
 

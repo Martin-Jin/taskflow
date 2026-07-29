@@ -6,7 +6,9 @@
  * calendar the user owns/can write to (`canEdit !== false`) is fully
  * editable here, mirroring real Google Calendar's own edit popup — editing
  * title/description/location/time pushes back to the calendar via
- * SchedulerContext.updateEvent.
+ * SchedulerContext.updateEvent, including a 'this'-scope edit on a single
+ * occurrence of a recurring series (pushed via Google's deterministic
+ * per-instance id — see googleCalendarService.pushEventInstanceUpdate).
  *
  * A Google-sourced event from a calendar the user only has read access to
  * (e.g. a subscribed lecture timetable shared as viewer-only) is rendered
@@ -76,11 +78,15 @@ export default function EventDetailModal({ event, initial, onClose }) {
       // local-only (setEventIgnored never pushes) so it stays available
       // through this same Save action regardless of read-only status.
       if (!isReadOnly) {
-        updateEvent(
-          event.id,
-          { title: title.trim() || 'Untitled event', description, location, date, startTime, endTime },
-          scope
-        );
+        const fieldUpdates = { title: title.trim() || 'Untitled event', description, location, startTime, endTime };
+        // "Date" only ever means "move just THIS occurrence to a different
+        // day" — for 'following'/'all' scope on a recurring event, the date
+        // field is left out of the pushed updates entirely rather than
+        // overwriting the master's own DTSTART with whatever occurrence
+        // happened to be open (the input is disabled for that scope below,
+        // for the same reason).
+        if (!event.seriesId || scope === 'this') fieldUpdates.date = date;
+        updateEvent(event.id, fieldUpdates, scope);
       }
       if (ignored !== !!event.isFreeTime) {
         setEventIgnored(event, ignored, scope);
@@ -90,7 +96,10 @@ export default function EventDetailModal({ event, initial, onClose }) {
   }
 
   function handleDelete() {
-    deleteEvent(event.id);
+    // scope is only meaningful for a recurring event (see the scope picker
+    // below) — deleteEvent defaults to 'all' for anything else, so passing
+    // it through unconditionally is safe for non-recurring events too.
+    deleteEvent(event.id, scope);
     requestClose();
   }
 
@@ -147,7 +156,15 @@ export default function EventDetailModal({ event, initial, onClose }) {
             />
           </DetailField>
           <DetailField icon={CalendarClock} label="Date">
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={isReadOnly} />
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              disabled={isReadOnly || (!isCreate && !!event.seriesId && scope !== 'this')}
+            />
+            {!isCreate && event.seriesId && scope !== 'this' && (
+              <p className="form-hint">Moving the date only applies to a single occurrence — set "Apply to" to "This event" first.</p>
+            )}
           </DetailField>
           <DetailField icon={Clock} label="Start time">
             <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={isReadOnly} />

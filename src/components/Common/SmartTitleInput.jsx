@@ -37,12 +37,25 @@ const TYPE_LABELS = {
   dueDate: 'due date',
   recurrence: 'recurrence',
   priority: 'priority',
+  estimatedHours: 'duration',
+  unattended: 'unattended flag',
+  enforceDueDate: 'due date enforcement',
   dependency: 'dependency',
   project: 'project',
   labels: 'tag',
 };
 
-const SCALAR_TYPES = ['link', 'dueDate', 'recurrence', 'priority', 'dependency', 'project'];
+const SCALAR_TYPES = [
+  'link',
+  'dueDate',
+  'recurrence',
+  'priority',
+  'estimatedHours',
+  'unattended',
+  'enforceDueDate',
+  'dependency',
+  'project',
+];
 
 /** Find where each still-active detection's matched text sits in the current title, in reading order. */
 function buildRanges(title, smartDetected) {
@@ -223,7 +236,15 @@ export default function SmartTitleInput({
         className="smart-title-input"
         autoFocus={autoFocus}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          // The autosize resize (useAutosizeTextarea) can reset scrollTop as
+          // part of its measure-then-clamp height dance, which doesn't
+          // always emit its own 'scroll' event — sync explicitly so the
+          // highlight backdrop never lags a stale scroll position while
+          // typing past the visible edge.
+          syncScroll();
+        }}
         onScroll={syncScroll}
         onKeyUp={handleCaretMove}
         onClick={handleCaretMove}

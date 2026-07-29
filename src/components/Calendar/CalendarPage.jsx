@@ -9,13 +9,14 @@
  * the modal happens to still be open.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Zap, CalendarPlus } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import BlockDetailModal from '../Modals/BlockDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
+import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -59,7 +60,25 @@ export default function CalendarPage() {
   }
 
   const selectedBlock = selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) || null : null;
-  const selectedEvent = selectedEventId ? events.find((e) => e.id === selectedEventId) || null : null;
+  // selectedEventId may be a VIRTUAL id (`${masterId}::${date}`) — every
+  // displayed recurring Google Calendar event (a true RRULE series is
+  // stored as one master row, expanded to virtual per-day instances only
+  // for display, see recurrenceExpansion.js) carries one of these instead
+  // of a real row id. Re-derive the effective (override-merged) occurrence
+  // fresh from the raw `events` array on every render — same "derived, not
+  // stored" pattern as selectedBlock above — by resolving back to the real
+  // master row and re-running the same single-day expansion used for
+  // display, rather than (as before this fix) looking the virtual id up
+  // directly in `events`, which can never match since it's display-only.
+  const selectedEvent = useMemo(() => {
+    if (!selectedEventId) return null;
+    const { masterId, occurrenceDate, isVirtual } = resolveEventId(selectedEventId);
+    const master = events.find((e) => e.id === masterId);
+    if (!master) return null;
+    if (!isVirtual) return master;
+    const [occurrence] = expandRecurringEvent(master, occurrenceDate, occurrenceDate);
+    return occurrence || null; // this occurrence was deleted (scope:'this' delete) since being displayed
+  }, [selectedEventId, events]);
 
   const dayCount = view === 'day' ? 1 : 7;
   const step = view === 'day' ? 1 : 7;

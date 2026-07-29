@@ -292,16 +292,32 @@ select:focus-visible,
   outline-offset: 2px;
 }
 
+/* Minimalist scrollbars app-wide: thin, square-cornered, transparent track
+   so a scrollbar never fights the rounded corners of whatever it sits
+   inside. Still fully functional wherever content actually overflows —
+   this is a restyle, not a removal. Per-element `scrollbar-width: none`
+   rules elsewhere (board columns, view switchers, etc.) opt specific
+   containers out entirely where a track would just add clutter. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
-  border-radius: 8px;
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .app-shell {
@@ -1324,6 +1340,17 @@ input.search-bar-input {
   }
 }
 
+/* Spin animation for in-progress icon buttons (e.g. posting a comment). */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
 /* ----------------------------------------------------------------------
    Number / time input spinner buttons.
    The raw OS-drawn spinner (light grey box, sharp corners) reads as a
@@ -1516,6 +1543,48 @@ input[type='checkbox']:checked::after {
 
 @media (max-width: 639px) {
   .toast {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+    max-width: none;
+  }
+}
+
+/* Bottom-left so it never overlaps the sync/backup .toast at bottom-right. */
+.action-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  padding: 10px 12px 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface-raised);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-elevated);
+  max-width: 360px;
+  font-size: 13px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: toast-in var(--duration-base) var(--ease-decelerate);
+}
+
+.action-toast.is-closing {
+  animation: toast-out var(--duration-fast) var(--ease-accelerate) forwards;
+}
+
+.action-toast-undo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+@media (max-width: 639px) {
+  .action-toast {
     left: var(--space-3);
     right: var(--space-3);
     bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));

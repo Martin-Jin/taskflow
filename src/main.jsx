@@ -11,6 +11,7 @@ import './styles/stats.css';
 import './styles/forms.css';
 import './styles/dashboard.css';
 import './styles/tutorial.css';
+import './styles/timer.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

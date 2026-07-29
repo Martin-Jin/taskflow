@@ -68,6 +68,7 @@ import DetailField from '../Common/DetailField';
 import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
+import SmartParseGuideModal from './SmartParseGuideModal';
 
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes
 
@@ -102,11 +103,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
   const [enforceDueDate, setEnforceDueDate] = useState(false);
   const [hasEditedEnforceDueDate, setHasEditedEnforceDueDate] = useState(false);
+  const [fixedTime, setFixedTime] = useState('');
   const [earliestDate, setEarliestDate] = useState('');
   const [labelIds, setLabelIds] = useState([]);
   const [error, setError] = useState('');
   const [openField, setOpenField] = useState(null); // 'date' | 'priority' | 'labels' | null
   const [moreOpen, setMoreOpen] = useState(false);
+  const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
 
   function togglePill(field) {
     setOpenField((prev) => (prev === field ? null : field));
@@ -286,6 +289,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       dependsOn,
       isPassive,
       enforceDueDate: enforceDueDate && !!dueDate,
+      fixedTime: fixedTime || null,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
     });
@@ -293,7 +297,8 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
+    <>
+      <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
         className="modal modal-detail"
         onClick={(e) => e.stopPropagation()}
@@ -326,9 +331,24 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
         {error && <p className="form-error">{error}</p>}
 
-        <p className="form-hint" style={{ marginTop: -6, marginBottom: 10, paddingLeft: 7 }}>
+        <button
+          type="button"
+          className="form-hint"
+          onClick={() => setShowSmartParseGuide(true)}
+          style={{
+            marginTop: -6,
+            marginBottom: 10,
+            paddingLeft: 7,
+            background: 'none',
+            border: 'none',
+            textAlign: 'left',
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+          }}
+        >
           Smart parse: links, due dates, p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
-        </p>
+        </button>
 
         <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
 
@@ -522,6 +542,19 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
               </p>
             </DetailField>
 
+            <DetailField icon={Clock} label="Fixed time">
+              <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!fixedTime} onChange={(e) => setFixedTime(e.target.checked ? '09:00' : '')} />
+                {fixedTime ? `At ${fixedTime}` : 'Not fixed'}
+              </label>
+              {fixedTime && (
+                <>
+                  <input type="time" value={fixedTime} onChange={(e) => setFixedTime(e.target.value)} style={{ marginTop: 6 }} />
+                  <p className="form-hint">Scheduled blocks for this task will always start at this time.</p>
+                </>
+              )}
+            </DetailField>
+
             {dependencyOptions.length > 0 && (
               <DetailField icon={Link2} label="Depends on">
                 <DependencyPicker
@@ -591,5 +624,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         </div>
       </div>
     </div>
+    {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
+    </>
   );
 }

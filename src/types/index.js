@@ -76,6 +76,15 @@
  *                                              (the more restrictive setting wins) — see allocator.js's
  *                                              getTaskWindow. Only meaningful when `dueDate` is set; ignored
  *                                              otherwise. Falsy/absent means no override (the normal case).
+ * @property {string|null} [fixedTime]       - "HH:MM" 24hr local time. When set, this task's block(s) must start at
+ *                                              exactly this time on whatever day the allocator schedules them —
+ *                                              overriding the normal first-fit placement within a day (the task is
+ *                                              still scheduled/paced across its window like any other task; only the
+ *                                              *time of day* is pinned, not the day itself). If that exact slot is
+ *                                              already taken on a given day, that day's placement is simply skipped
+ *                                              (no fallback to another time), and any hours that can't be placed
+ *                                              surface through the normal overflow reporting — see allocator.js's
+ *                                              placeFixedTimeInDay. Null/absent means no override (the normal case).
  * @property {string[]} [labelIds]           - IDs of Labels (see Label typedef) attached to this task, e.g. via the
  *                                              "@tag" smart-parse shorthand in the title. App-local only — has no
  *                                              Todoist equivalent and is never pushed/pulled by todoistService.
@@ -203,7 +212,7 @@
  * @property {string} [description]          - Plain text description, optional.
  * @property {string} [location]              - Plain text location, optional.
  * @property {string|null} [recurrenceRule]   - RFC5545 RRULE string (e.g. "FREQ=WEEKLY;BYDAY=MO,WE"), null/absent for non-recurring events.
- * @property {Object<string,Object>} [overrides] - Per-occurrence override map keyed by ISO date (e.g. `{"2026-08-04": {isFreeTime: true}}`), for overriding fields on a single occurrence of a recurring event without duplicating the record.
+ * @property {Object<string,Object>} [overrides] - Per-occurrence override map keyed by the occurrence's ORIGINAL (RRULE-generated) ISO date, even if that occurrence was later moved (e.g. `{"2026-08-04": {isFreeTime: true}}`), for overriding fields on a single occurrence of a recurring event without duplicating the record. Two keys are handled specially by recurrenceExpansion.expandRecurringEvent rather than just shallow-merged as display fields: `date` (moves the occurrence to a different day) and `deleted: true` (drops that occurrence from expansion entirely).
  * @property {string|null} [googleUpdatedAt]  - Google's `updated` timestamp as of the last pull/push, used for conflict detection.
  * @property {string|null} [localUpdatedAt]   - Stamped on every local edit, compared against `googleUpdatedAt` to decide whether to push local changes or accept Google's incoming version.
  * @property {boolean} [canEdit]              - Whether the user has 'owner'/'writer' access to this event's source calendar on Google (see googleCalendarService.fetchEvents). Absent/undefined (manual events, mock data) counts as editable — only an explicit `false` (a reader/freeBusyReader-shared calendar, e.g. a subscribed lecture timetable) gates Save/Delete/field-editing in EventDetailModal and drag/resize in WeekView.

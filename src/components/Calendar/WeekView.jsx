@@ -31,7 +31,7 @@ import { createPortal } from 'react-dom';
 import { Lock, Unlock, Wind } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, formatDisplayDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
-import { expandEventsForRange } from '../../utils/recurrenceExpansion';
+import { expandEventsForRange, expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 
@@ -450,9 +450,28 @@ export default function WeekView({
 
   /** Shared by the mouse-drop handler and the touch-drag-end handler — looks
    * up the dragged block/event, applies the same snap/clamp math, and calls
-   * the right updater for its type. */
+   * the right updater for its type. `id` may be a VIRTUAL event id
+   * (`${masterId}::${date}`, see recurrenceExpansion.resolveEventId) for a
+   * single occurrence of a recurring Google event — `events` (raw context
+   * state) only ever holds the real master row, never the virtual id
+   * itself, so it must be resolved back to the master and re-expanded for
+   * just that one date to read its current (override-merged) start/end
+   * time before computing the drag's new time. `updateEvent` (called below)
+   * defaults to 'this' scope, so dragging one occurrence only moves that
+   * occurrence, same as dragging any single event. */
   function applyDrop(type, id, day, relY) {
-    const source = type === 'block' ? blocks.find((b) => b.id === id) : events.find((e) => e.id === id);
+    let source;
+    if (type === 'block') {
+      source = blocks.find((b) => b.id === id);
+    } else {
+      const { masterId, occurrenceDate, isVirtual } = resolveEventId(id);
+      if (isVirtual) {
+        const master = events.find((e) => e.id === masterId);
+        source = master ? expandRecurringEvent(master, occurrenceDate, occurrenceDate)[0] : null;
+      } else {
+        source = events.find((e) => e.id === id);
+      }
+    }
     if (!source) return;
     const duration = timeToMinutes(source.endTime) - timeToMinutes(source.startTime);
     const newStartMin = computeSnappedStartMinute(relY, pxPerMin, duration);

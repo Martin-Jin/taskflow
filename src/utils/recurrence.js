@@ -65,6 +65,17 @@ function unitAliasPattern() {
   return all.join('|');
 }
 
+// Bare "day"/"days" (no leading "every"/"ev"/"each") is too ambiguous to treat
+// as a recurrence signal on its own — it collides with unrelated phrases like
+// "on the day" (enforceDueDate) or "in 3 days". The unambiguous adverbial
+// forms ("daily", "everyday") still work bare; only the plain noun requires a
+// lead word. Other units' bare forms ("monthly", "weekly", ...) are already
+// adverbial-only so they don't need this filtering.
+function bareUnitAliasPattern() {
+  const bareAliases = { ...UNIT_ALIASES, day: UNIT_ALIASES.day.filter((a) => a !== 'day' && a !== 'days') };
+  return Object.values(bareAliases).flat().join('|');
+}
+
 function ordinalAliasPattern() {
   return Object.keys(ORDINAL_ALIASES).join('|');
 }
@@ -256,8 +267,8 @@ export function parseRecurrenceRule(str) {
 
   // Bare adverbial form with no "every" at all: "monthly", "daily", "weekly",
   // "yearly", "fortnightly" — some Todoist strings (and custom text) omit
-  // "every" entirely.
-  const bareMatch = s.match(new RegExp(`^(${unitAlt})$`));
+  // "every" entirely. Plain "day"/"days" excluded (see bareUnitAliasPattern).
+  const bareMatch = s.match(new RegExp(`^(${bareUnitAliasPattern()})$`));
   if (bareMatch) {
     const unit = resolveCanonicalUnit(bareMatch[1]);
     if (unit) return { unit, count: /fortnight/.test(bareMatch[1]) ? 2 : 1 };
@@ -319,7 +330,7 @@ export function findRecurrencePhrase(text) {
   const weekdayMatch = findWeekdayRecurrenceSpan(s);
   if (weekdayMatch) return weekdayMatch;
 
-  const bareMatch = s.match(new RegExp(`\\b(${unitAlt})\\b`));
+  const bareMatch = s.match(new RegExp(`\\b(${bareUnitAliasPattern()})\\b`));
   if (bareMatch) {
     const unit = resolveCanonicalUnit(bareMatch[1]);
     if (unit) {

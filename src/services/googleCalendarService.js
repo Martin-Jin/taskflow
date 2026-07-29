@@ -413,6 +413,102 @@ export async function deleteCalendarEvent(googleEventId, calendarId = 'primary')
   await window.gapi.client.calendar.events.delete({ calendarId, eventId: googleEventId });
 }
 
+/**
+ * Build the deterministic Google Calendar id for a SINGLE modified instance
+ * of a recurring event: `{recurringEventId}_{originalStartTimeUTC}`, where
+ * `originalStartTimeUTC` is that occurrence's ORIGINAL (pre-override)
+ * scheduled start time in combined UTC basic format — "YYYYMMDDTHHMMSSZ", no
+ * dashes/colons. Google mints this id once, from the instance's *original*
+ * time, and it never changes even after the instance is later moved/edited —
+ * so it can be constructed client-side without first listing instances via
+ * `singleEvents: true`.
+ *
+ * `occurrenceDateIso` + `masterStartTime` MUST be the occurrence's ORIGINAL
+ * date/time (the RRULE-generated date, and the MASTER row's own DTSTART
+ * time-of-day) — never a moved/overridden date or time — or the constructed
+ * id won't match the instance Google actually has on file.
+ *
+ * Assumes a timed (non-all-day) occurrence: `fetchEvents` above filters out
+ * all-day events entirely (`.filter((e) => e.start?.dateTime)`), so every
+ * CalendarEvent in this app always has a startTime and this app never needs
+ * the date-only ("YYYYMMDD", no time/Z suffix) id variant Google uses for
+ * all-day recurring instances.
+ *
+ * @param {string} masterGoogleEventId - the recurring series' own (real) Google event id
+ * @param {string} occurrenceDateIso - "YYYY-MM-DD", the occurrence's ORIGINAL date
+ * @param {string} masterStartTime - "HH:MM", the MASTER's own (pre-override) start time
+ * @returns {string}
+ */
+export function buildInstanceEventId(masterGoogleEventId, occurrenceDateIso, masterStartTime) {
+  // No trailing 'Z'/offset -> parsed as LOCAL wall-clock time (matches how
+  // every other dateTime string in this file is built, e.g. pushEventToCalendar
+  // below), then read back off the Date object in UTC for the id — Google
+  // always encodes the instance id's time component in UTC regardless of the
+  // event's own timezone.
+  const localDate = new Date(`${occurrenceDateIso}T${masterStartTime}:00`);
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const utcStamp =
+    `${localDate.getUTCFullYear()}${pad2(localDate.getUTCMonth() + 1)}${pad2(localDate.getUTCDate())}` +
+    `T${pad2(localDate.getUTCHours())}${pad2(localDate.getUTCMinutes())}${pad2(localDate.getUTCSeconds())}Z`;
+  return `${masterGoogleEventId}_${utcStamp}`;
+}
+
+/**
+ * Push an edit to a SINGLE occurrence of a recurring Google event (scope
+ * 'this' in SchedulerContext.updateEvent) via the deterministic instance-id
+ * mechanism above, instead of the local-only fallback this used to require.
+ * Uses `events.patch` (partial update) rather than `.update` (full replace)
+ * so the instance's implicit link back to the series is left untouched.
+ *
+ * `master` is the series' master row (carries `googleEventId`/`calendarId`);
+ * `occurrenceDateIso` is the occurrence's ORIGINAL date (the overrides map
+ * key); `fields` is the occurrence's full current field set AFTER merging in
+ * whatever changed (title/description/location/date/startTime/endTime) — the
+ * caller is expected to have already merged any pre-existing override with
+ * the new edit, since a PATCH here still needs complete start/end dateTimes.
+ *
+ * Returns `{ id, updated }` like `pushEventToCalendar`, or null if not
+ * connected or the master has no `googleEventId` yet (never pushed to
+ * Google, so there's no series/instance to patch).
+ * @param {import('../types').CalendarEvent} master
+ * @param {string} occurrenceDateIso
+ * @param {Partial<import('../types').CalendarEvent>} fields
+ * @returns {Promise<{id: string, updated: string}|null>}
+ */
+export async function pushEventInstanceUpdate(master, occurrenceDateIso, fields) {
+  if (!gapiInited || !accessToken || !master?.googleEventId) return null;
+
+  const instanceId = buildInstanceEventId(master.googleEventId, occurrenceDateIso, master.startTime);
+  const calendarId = master.calendarId || 'primary';
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const resource = {
+    summary: fields.title,
+    description: fields.description || undefined,
+    location: fields.location || undefined,
+    start: { dateTime: `${fields.date}T${fields.startTime}:00`, timeZone },
+    end: { dateTime: `${fields.date}T${fields.endTime}:00`, timeZone },
+  };
+
+  const resp = await window.gapi.client.calendar.events.patch({ calendarId, eventId: instanceId, resource });
+  return { id: resp.result.id, updated: resp.result.updated };
+}
+
+/**
+ * Delete a SINGLE occurrence of a recurring Google event (scope 'this' in
+ * SchedulerContext.deleteEvent) via the same deterministic instance-id
+ * mechanism as `pushEventInstanceUpdate` above. No-ops if not connected or
+ * the master has no `googleEventId` yet, mirroring `deleteCalendarEvent`.
+ * @param {import('../types').CalendarEvent} master
+ * @param {string} occurrenceDateIso
+ */
+export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
+  if (!gapiInited || !accessToken || !master?.googleEventId) return;
+  const instanceId = buildInstanceEventId(master.googleEventId, occurrenceDateIso, master.startTime);
+  const calendarId = master.calendarId || 'primary';
+  await window.gapi.client.calendar.events.delete({ calendarId, eventId: instanceId });
+}
+
 function priorityToColorId(priority) {
   // Google Calendar colorId palette (1-11). Chosen for intuitive severity mapping.
   switch (priority) {

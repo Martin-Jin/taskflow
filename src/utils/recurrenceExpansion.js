@@ -212,20 +212,119 @@ function generateOccurrenceDates(dtstartIso, rule, rangeStartIso, hardStop) {
 }
 
 /**
+ * Resolve a CalendarEvent id that may be either a REAL row id or a VIRTUAL
+ * per-occurrence id (`${masterId}::${occurrenceDate}`, see
+ * expandRecurringEvent below) back to the real master row's id plus the
+ * occurrence date it represents. Every click/drag/resize/select path that
+ * takes an id off an already-expanded (display-only) event must resolve it
+ * through here before looking anything up in the real `events` array —
+ * a virtual id never appears there directly.
+ * @param {string} id
+ * @returns {{masterId: string, occurrenceDate: string|null, isVirtual: boolean}}
+ */
+export function resolveEventId(id) {
+  const sepIdx = typeof id === 'string' ? id.indexOf('::') : -1;
+  if (sepIdx === -1) return { masterId: id, occurrenceDate: null, isVirtual: false };
+  return { masterId: id.slice(0, sepIdx), occurrenceDate: id.slice(sepIdx + 2), isVirtual: true };
+}
+
+/** Strips the given (case-insensitive) KEY= parameters out of a bare RRULE string. */
+function stripRuleParams(ruleStr, keys) {
+  return ruleStr
+    .split(';')
+    .filter((part) => !keys.includes(part.split('=')[0]?.trim().toUpperCase()))
+    .join(';');
+}
+
+/**
+ * Truncate an RRULE string to end the day BEFORE `lastDateInclusiveIso`
+ * (i.e. UNTIL = lastDateInclusiveIso) — used when splitting a series at an
+ * occurrence for 'following'-scope edits/deletes (see SchedulerContext). Any
+ * existing UNTIL/COUNT is dropped first: COUNT is relative to DTSTART so it
+ * can't be "shrunk" without recomputing an occurrence count, and a plain
+ * UNTIL bound is simpler and just as correct here.
+ * @param {string} ruleStr
+ * @param {string} lastDateInclusiveIso - "YYYY-MM-DD"
+ * @returns {string}
+ */
+export function truncateRuleUntil(ruleStr, lastDateInclusiveIso) {
+  const stripped = stripRuleParams(ruleStr, ['UNTIL', 'COUNT']);
+  return `${stripped};UNTIL=${lastDateInclusiveIso.replace(/-/g, '')}`;
+}
+
+/**
+ * The ISO date of a rule's own last occurrence, or null if it's open-ended
+ * (no COUNT or UNTIL). A plain UNTIL is already a date. COUNT is a number of
+ * occurrences *from DTSTART*, not a date, so it's resolved by actually
+ * walking the rule's occurrences (bounded by UNTIL if also present, else a
+ * generous fixed lookahead — MAX_OCCURRENCES in generateOccurrenceDates
+ * already caps the walk regardless).
+ * @param {string} dtstartIso
+ * @param {string} ruleStr
+ * @returns {string|null}
+ */
+export function ruleEndDate(dtstartIso, ruleStr) {
+  const rule = parseRRule(ruleStr);
+  if (!rule || (!rule.count && !rule.until)) return null;
+  if (rule.until && !rule.count) return rule.until;
+  const farStop = rule.until || addMonthsSameDay(dtstartIso, 240); // ~20yr safety cap when only COUNT bounds it
+  const dates = generateOccurrenceDates(dtstartIso, rule, dtstartIso, farStop);
+  return dates.length ? dates[dates.length - 1] : null;
+}
+
+/**
+ * Re-anchor an RRULE string for the NEW master created when splitting a
+ * series at `newDtstartIso` (see SchedulerContext's 'following' scope):
+ * keeps the same FREQ/INTERVAL/BYDAY shape (the underlying pattern doesn't
+ * change just because DTSTART moved to a later occurrence of it), drops the
+ * original UNTIL/COUNT, then reapplies the ORIGINAL rule's own end bound
+ * (converted to a plain UNTIL via ruleEndDate) if it had one and it's still
+ * after the new DTSTART — so a bounded series stays bounded after a split
+ * instead of becoming accidentally open-ended.
+ * @param {string} ruleStr - the original (pre-split) rule
+ * @param {string} originalDtstartIso
+ * @param {string} newDtstartIso
+ * @returns {string}
+ */
+export function rebaseRuleForSplit(ruleStr, originalDtstartIso, newDtstartIso) {
+  const endDate = ruleEndDate(originalDtstartIso, ruleStr);
+  const stripped = stripRuleParams(ruleStr, ['UNTIL', 'COUNT']);
+  if (endDate && endDate >= newDtstartIso) return `${stripped};UNTIL=${endDate.replace(/-/g, '')}`;
+  return stripped;
+}
+
+/**
  * Expand a recurring CalendarEvent into virtual per-day instances for
  * display within [rangeStartIso, rangeEndIso] inclusive. Pure function —
  * never mutates or persists anything. If `masterEvent.recurrenceRule` is
  * falsy (or unparseable), returns `[masterEvent]` unchanged — still correct
  * to call unconditionally from a caller that doesn't know in advance which
  * events are recurring.
+ *
+ * `masterEvent.overrides[originalOccurrenceDate]` (keyed by the occurrence's
+ * ORIGINAL, RRULE-generated date, even once moved) is shallow-merged onto
+ * that occurrence. Two override fields are treated specially rather than
+ * just shallow-merged in as plain display fields:
+ *   - `date`: lets a single occurrence be moved to a different day (e.g.
+ *     dragged to another date) without touching the master's own DTSTART or
+ *     any other occurrence — the occurrence's `id` stays keyed to its
+ *     ORIGINAL date (so a later edit still resolves back to the right
+ *     overrides entry), but its displayed `date` (and therefore which day
+ *     column/cell it renders in) reflects the override.
+ *   - `deleted: true`: the occurrence is skipped entirely (single-occurrence
+ *     delete without touching the master or any other occurrence).
+ * Because a moved occurrence's original date may fall outside
+ * [rangeStartIso, rangeEndIso] even though its overridden date is inside it
+ * (or vice versa), override dates are checked in both directions rather
+ * than relying solely on the RRULE's own naturally-generated dates.
  * @param {import('../types').CalendarEvent} masterEvent
  * @param {string} rangeStartIso - "YYYY-MM-DD"
  * @param {string} rangeEndIso - "YYYY-MM-DD"
  * @returns {import('../types').CalendarEvent[]} virtual instances. Each is a
- *   shallow clone of masterEvent with `date` set to the occurrence's ISO
- *   date, `id` suffixed `${masterEvent.id}::${date}` (stable per-occurrence
- *   React key, and distinguishable from the master's own id), and any
- *   matching `masterEvent.overrides[date]` shallow-merged on top.
+ *   shallow clone of masterEvent with `id` suffixed
+ *   `${masterEvent.id}::${originalOccurrenceDate}` (stable per-occurrence
+ *   key, resolvable back via resolveEventId — distinguishable from the
+ *   master's own real id).
  */
 export function expandRecurringEvent(masterEvent, rangeStartIso, rangeEndIso) {
   if (!masterEvent.recurrenceRule) return [masterEvent];
@@ -233,17 +332,31 @@ export function expandRecurringEvent(masterEvent, rangeStartIso, rangeEndIso) {
   if (!rule) return [masterEvent]; // unparseable/unsupported rule — show the master occurrence rather than silently dropping the event
 
   const hardStop = rule.until && rule.until < rangeEndIso ? rule.until : rangeEndIso;
-  if (hardStop < masterEvent.date) return [];
-
-  const occurrenceDates = generateOccurrenceDates(masterEvent.date, rule, rangeStartIso, hardStop);
   const overrides = masterEvent.overrides || {};
 
-  return occurrenceDates.map((date) => ({
-    ...masterEvent,
-    ...(overrides[date] || null),
-    date,
-    id: `${masterEvent.id}::${date}`,
-  }));
+  const occurrenceDates = hardStop < masterEvent.date ? [] : generateOccurrenceDates(masterEvent.date, rule, rangeStartIso, hardStop);
+
+  // Occurrences whose ORIGINAL date the RRULE wouldn't naturally place in
+  // this range, but whose override moved them INTO it (or, symmetrically,
+  // whose natural date IS in range but was moved elsewhere — that case is
+  // already covered above and simply displays at the moved-to date below).
+  const movedInDates = Object.keys(overrides).filter((originalDate) => {
+    if (occurrenceDates.includes(originalDate)) return false;
+    const movedTo = overrides[originalDate]?.date;
+    return movedTo && movedTo >= rangeStartIso && movedTo <= rangeEndIso;
+  });
+
+  return [...occurrenceDates, ...movedInDates]
+    .map((originalDate) => {
+      const override = overrides[originalDate] || null;
+      return {
+        ...masterEvent,
+        ...override,
+        date: override?.date || originalDate,
+        id: `${masterEvent.id}::${originalDate}`,
+      };
+    })
+    .filter((occ) => !occ.deleted);
 }
 
 /**

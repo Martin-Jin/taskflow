@@ -107,5 +107,9 @@ export function useHistoryState(initialState) {
     canUndo,
     canRedo,
     currentActionLabel: history.present.actionLabel,
+    // Lets consumers tell "a genuinely new commit() just landed" apart from
+    // "undo/redo just replayed an entry we've already seen" — commit() always
+    // mints a fresh random id, while undo/redo revisit an existing entry's id.
+    currentActionId: history.present.id,
   };
 }
