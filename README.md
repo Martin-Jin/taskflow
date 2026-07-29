@@ -22,8 +22,7 @@ separate local copy.
 
 Fully responsive down to phone width, with a bottom tab bar replacing the
 sidebar on small screens, and a guided tour that walks new visitors through
-every view on first launch (replay it anytime from the help icon or
-Settings → Help).
+every view on first launch (replay it anytime from Settings → Help).
 
 ## Contents
 
@@ -368,16 +367,17 @@ src/
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
-│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal
-│   ├── Nav/                   # Sidebar — desktop/tablet nav + project list (pin/rename/delete via ProjectActionsMenu); BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + topbar)
+│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal, ShortcutsModal (Settings → Keyboard shortcuts)
+│   ├── Nav/                   # Sidebar — desktop/tablet nav + project list (pin/rename/delete via ProjectActionsMenu); BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
-│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, DependencyPicker, LabelPicker, DetailField
+│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── TaskListPanel.jsx
 │   └── SettingsPanel.jsx
 ├── context/
 │   ├── SchedulerContext.jsx  # Global state: tasks/blocks/routines/rules/sections + actions (+ cloud sync, see AuthContext)
 │   ├── ThemeContext.jsx      # Light/dark theme (+ cloud sync)
+│   ├── CompleteTaskContext.jsx # Intercepts task completion to stop/log a running Pomodoro timer (see TimerContext) before delegating to SchedulerContext.completeTask
 │   └── AuthContext.jsx       # Firebase Auth (Google sign-in) — see "Account & cross-device sync"
 ├── firebase.js                # Firebase app/Auth/Firestore init — see "Account & cross-device sync"
 ├── hooks/
@@ -387,7 +387,8 @@ src/
 │   ├── useAnimatedUnmount.js      # Plays a CSS exit transition before unmount
 │   ├── useAutosizeTextarea.js     # Grows a textarea to fit its content, no scrollbar
 │   ├── useComboboxMultiSelect.js  # Shared open/close/query state for DependencyPicker + LabelPicker
-│   └── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
+│   ├── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
+│   └── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 ├── migrations/
 │   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
 │   └── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
@@ -412,7 +413,7 @@ src/
 ├── types/
 │   └── index.js               # JSDoc typedefs for the whole domain model
 ├── styles/                    # global.css (tokens/breakpoints), calendar.css, gantt.css, board.css, nav.css, tasklist.css, stats.css, forms.css, tutorial.css
-├── App.jsx                    # Shell: sidebar (desktop/tablet) or bottom tab bar (mobile) + topbar + tabs
+├── App.jsx                    # Shell: sidebar (desktop/tablet) or bottom tab bar (mobile) + tabs; mobile-only brand topbar; global keyboard shortcuts (see useKeyboardShortcuts.js)
 └── main.jsx                   # React root
 ```
 
@@ -488,11 +489,14 @@ hidden, only reorganized.
   drag a block to move it, drag its edge to resize, click to rename/pause/
   delete), mark calendar events as "Free Time" individually or in bulk, view
   a searchable **What's new** changelog (**Settings → Versions**, also
-  auto-shown once whenever a new version ships), and reset local data to
-  wipe TaskFlow's local cache without touching your actual Todoist/Google
-  Calendar accounts.
+  auto-shown once whenever a new version ships), view and rebind every
+  keyboard shortcut (**Settings → Keyboard shortcuts**), replay the guided
+  tour (**Settings → Help**), and reset local data to wipe TaskFlow's local
+  cache without touching your actual Todoist/Google Calendar accounts.
 - **Undo / Redo** — every task/block mutation and every rebalance is one
-  atomic, undoable action.
+  atomic, undoable action, triggered via keyboard shortcut (`Ctrl+Z` /
+  `Ctrl+Shift+Z` by default, rebindable from Settings) rather than a topbar
+  button — see `useKeyboardShortcuts.js`.
 
 ### Smart task titles
 

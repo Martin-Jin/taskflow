@@ -150,6 +150,38 @@
 }
 
 /* ----------------------------------------------------------------------
+   SmartDurationInput — the "Estimated time" field's highlight overlay.
+   Same backdrop technique as SmartTitleInput above, scoped to a single
+   line of text; inset mirrors the negative margin/padding that
+   `.detail-field-value input` applies so the overlay lines up exactly
+   with the visible input box.
+   ---------------------------------------------------------------------- */
+.smart-duration-wrap {
+  position: relative;
+}
+
+.smart-duration-backdrop {
+  position: absolute;
+  inset: -4px -6px;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  padding: 4px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: pre;
+  display: flex;
+  align-items: center;
+}
+
+.smart-duration-mark {
+  background: color-mix(in srgb, var(--color-accent-border) 26%, transparent);
+  border-radius: 3px;
+  color: transparent;
+}
+
+/* ----------------------------------------------------------------------
    Smart-parse detection chips (SmartChips) — shown under the Title field
    as live, dismissible previews of what smartParse.js picked up out of
    the typed text (due date / recurrence / priority / dependency).

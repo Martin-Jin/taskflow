@@ -74,8 +74,12 @@ function parseNumberToken(token) {
 const HOUR_UNIT = /(?:hours?|hrs?|h)(?=[^a-z]|$)/i;
 const MINUTE_UNIT = /(?:minutes?|mins?|m)(?=[^a-z]|$)/i;
 
-// A leading approximation marker some people prefix estimates with.
-const APPROX_PREFIX = /(?:~|approx(?:imately)?\.?|about|est(?:imate[d]?)?:?\s*)?\s*/i;
+// A leading approximation marker some people prefix estimates with. Each
+// word alternative needs a leading \b — without it, "est" (an abbreviation
+// for "estimate") would also match mid-word inside unrelated text like
+// "test 5 min" or "quickest 20 min", swallowing part of the title into the
+// duration match.
+const APPROX_PREFIX = /(?:~|\bapprox(?:imately)?\.?|\babout|\best(?:imate[d]?)?:?\s*)?\s*/i;
 
 /**
  * Try to find an explicit "<number> <unit>" duration mention in free text.
@@ -148,9 +152,9 @@ function matchWordDuration(text) {
 export function findDurationPhrase(text) {
   if (!text || typeof text !== 'string') return null;
   const numeric = matchNumericDuration(text);
-  if (numeric) return { hours: roundToQuarterHour(numeric.hours), matchedText: numeric.matchedText, index: numeric.index };
+  if (numeric) return { hours: roundToNearestMinute(numeric.hours), matchedText: numeric.matchedText, index: numeric.index };
   const worded = matchWordDuration(text);
-  if (worded) return { hours: roundToQuarterHour(worded.hours), matchedText: worded.matchedText, index: worded.index };
+  if (worded) return { hours: roundToNearestMinute(worded.hours), matchedText: worded.matchedText, index: worded.index };
   return null;
 }
 
@@ -170,12 +174,12 @@ export function extractDurationHours(text) {
 }
 
 /**
- * Round to the nearest 15 minutes — matches the granularity the scheduler
- * already works in. Floors at one quarter-hour rather than 0: callers only
- * ever pass a confidently-matched positive duration (e.g. "5 min"), and a
- * result of 0 would be indistinguishable from "no duration found" at the
- * call site, silently discarding a real (if very short) estimate.
+ * Round to the nearest whole minute. Floors at one minute rather than 0:
+ * callers only ever pass a confidently-matched positive duration (e.g.
+ * "5 min"), and a result of 0 would be indistinguishable from "no duration
+ * found" at the call site, silently discarding a real (if very short)
+ * estimate.
  */
-function roundToQuarterHour(hours) {
-  return Math.max(0.25, Math.round(hours * 4) / 4);
+function roundToNearestMinute(hours) {
+  return Math.max(1 / 60, Math.round(hours * 60) / 60);
 }

@@ -57,7 +57,7 @@ import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/da
 import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours } from '../../utils/formatHours';
+import { formatHours, formatHoursLong } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -68,6 +68,7 @@ import DetailField from '../Common/DetailField';
 import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
+import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartParseGuideModal from './SmartParseGuideModal';
 
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes
@@ -453,20 +454,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
               </select>
             </DetailField>
 
-            <DetailField icon={Clock} label="Estimated hours">
-              <input
-                type="number"
-                min="0.0833"
-                step="0.0833"
-                // Round only unedited numeric values (defaults/smart-parse) to avoid
-                // floating-point noise like "0.0833333333333333"; user-typed strings
-                // pass through untouched so typing a decimal point isn't clobbered.
-                value={typeof estimatedHours === 'number' ? Math.round(estimatedHours * 10000) / 10000 : estimatedHours}
-                onChange={(e) => {
+            <DetailField icon={Clock} label="Estimated time">
+              <SmartDurationInput
+                hours={Number(estimatedHours) || 0}
+                onChange={(h) => {
                   setHasEditedHours(true);
-                  setEstimatedHours(e.target.value);
+                  setEstimatedHours(h);
                 }}
               />
+              <p className="form-hint">{formatHoursLong(estimatedHours)}</p>
             </DetailField>
 
             <DetailField icon={Repeat} label="Repeat">

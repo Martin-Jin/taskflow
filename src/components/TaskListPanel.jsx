@@ -30,6 +30,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
+import { useCompleteTask } from '../context/CompleteTaskContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
 import BoardView from './Board/BoardView';
@@ -68,9 +69,18 @@ export default function TaskListPanel({
   onResolveBoardProject,
   onOpenManageProjects,
   showManageProjectsButton = false,
+  openAddTaskSignal,
 }) {
-  const { tasks, labels, projects, completeTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
+  const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
+  const { requestComplete } = useCompleteTask();
   const [showAddModal, setShowAddModal] = useState(false);
+  // Ctrl+N (see useKeyboardShortcuts in App.jsx) bumps this from anywhere in
+  // the app to open "Add task" here, since this modal's open state is local
+  // to the Tasks tab rather than lifted — App.jsx switches to this tab and
+  // increments the signal, this just reacts to the change.
+  useEffect(() => {
+    if (openAddTaskSignal) setShowAddModal(true);
+  }, [openAddTaskSignal]);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filter, setFilter] = useState('active'); // active | completed | all | noDueDate
   // Ids of parent tasks whose children are currently hidden — collapsed is
@@ -244,7 +254,7 @@ export default function TaskListPanel({
             className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
             onClick={(e) => {
               e.stopPropagation();
-              if (!task.isCompleted) completeTask(task.id);
+              if (!task.isCompleted) requestComplete(task.id);
             }}
             disabled={task.isCompleted}
             title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
@@ -335,7 +345,7 @@ export default function TaskListPanel({
     <div className="taskpage">
       <div className="taskpage-view-switch-row">
         <div className="taskpage-view-switch" data-tour="tasks-view-switch" role="group" aria-label="Task view">
-          {PAGE_VIEWS.map((v) => (
+          {PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID).map((v) => (
             <button key={v.key} className={view === v.key ? 'active' : ''} aria-pressed={view === v.key} onClick={() => onChangeView(v.key)}>
               {v.label}
             </button>

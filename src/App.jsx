@@ -2,9 +2,12 @@
  * ============================================================================
  * App
  * ============================================================================
- * Top-level shell: sidebar navigation (Calendar / Tasks / Stats / Settings),
- * a topbar with global Undo/Redo controls and loading/sync status, and the
- * routed main content area. No external router is used (a simple useState
+ * Top-level shell: sidebar navigation (Calendar / Tasks / Stats / Settings)
+ * and the routed main content area. Global Undo/Redo/New-task now live as
+ * keyboard shortcuts (see useKeyboardShortcuts) rather than a topbar — the
+ * only header row left is the mobile brand bar (see the `isMobile` block
+ * below), desktop just gets a top margin on `.main-content` instead (see
+ * global.css). No external router is used (a simple useState
  * tab switch) since this is a single-page dashboard with no deep-linkable
  * sub-routes required by the spec. Board and Gantt aren't separate tabs —
  * they're views within the Tasks page (see TaskListPanel's own
@@ -18,7 +21,9 @@ import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { TimerProvider } from './context/TimerContext';
+import { CompleteTaskProvider } from './context/CompleteTaskContext';
 import TimerWidget from './components/Common/TimerWidget';
+import CompleteTaskConfirmModal from './components/Common/CompleteTaskConfirmModal';
 import AccountButton from './components/Nav/AccountButton';
 import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
@@ -32,6 +37,7 @@ import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
 import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
@@ -42,9 +48,6 @@ import {
   CheckSquare,
   TrendingUp,
   Settings,
-  Undo2,
-  Redo2,
-  HelpCircle,
 } from 'lucide-react';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
@@ -68,7 +71,14 @@ function AppShell() {
   // Project A to Project B shouldn't drag Board along with it if B was last
   // viewed as List.
   const [taskViewByProject, setTaskViewByProject] = usePersistedState('taskViewByProject', {});
-  const taskView = taskViewByProject[activeProjectId] || 'list';
+  // Board can't render the All Tasks pseudo-project (see resolveBoardProject
+  // below) — if that key was ever persisted as 'board' (e.g. from a session
+  // before the Board option was hidden here), clamp it back to 'list' rather
+  // than letting BoardView mount, bounce off its invalid-project check, and
+  // instantly redirect the user to whatever real project happens to be
+  // first — which reads as "All Tasks" being broken.
+  const rawTaskView = taskViewByProject[activeProjectId] || 'list';
+  const taskView = activeProjectId === ALL_TASKS_PROJECT_ID && rawTaskView === 'board' ? 'list' : rawTaskView;
   function setTaskView(next) {
     setTaskViewByProject((prev) => {
       const current = prev[activeProjectId] || 'list';
@@ -82,13 +92,16 @@ function AppShell() {
   const [showChangelog, setShowChangelog] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = usePersistedState('lastSeenChangelogVersion', null);
   const [manageProjectsAutoAdd, setManageProjectsAutoAdd] = useState(false);
+  // Bumped by the Ctrl+N shortcut below to signal TaskListPanel (which owns
+  // "Add task" modal state locally) to open it, even when Ctrl+N is pressed
+  // from a different tab — see the effect on this prop in TaskListPanel.
+  const [addTaskSignal, setAddTaskSignal] = useState(0);
   const isMobile = useIsMobile();
   const {
     undo,
     redo,
     canUndo,
     canRedo,
-    isLoading,
     notification,
     clearNotification,
     actionToast,
@@ -180,6 +193,15 @@ function AppShell() {
     setHasSeenTutorial(true);
   }
 
+  useKeyboardShortcuts({
+    undo: () => canUndo && undo(),
+    redo: () => canRedo && redo(),
+    newTask: () => {
+      setTab('tasks');
+      setAddTaskSignal((n) => n + 1);
+    },
+  });
+
   return (
     <div className={`app-shell ${isMobile ? 'is-mobile' : ''}`}>
       {!isMobile && (
@@ -205,24 +227,15 @@ function AppShell() {
         />
       )}
 
-      <header className="topbar">
-        <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{isLoading ? 'Loading…' : ''}</div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn btn-icon help-icon-btn" onClick={openTour} title="Help / guided tour">
-            <HelpCircle size={15} />
-            {!hasSeenTutorial && <span className="help-icon-unread-dot" />}
-          </button>
-          <button className="btn btn-icon" onClick={undo} disabled={!canUndo} title="Undo">
-            <Undo2 size={15} />
-            {!isMobile && 'Undo'}
-          </button>
-          <button className="btn btn-icon" onClick={redo} disabled={!canRedo} title="Redo">
-            <Redo2 size={15} />
-            {!isMobile && 'Redo'}
-          </button>
-          {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={() => setTab('settings')} />}
-        </div>
-      </header>
+      {isMobile && (
+        <header className="topbar">
+          <div className="brand" data-tour="brand">
+            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="brand-mark" />
+            <span className="brand-name">TaskFlow</span>
+          </div>
+          <AccountButton compact menuAlign="down" onOpenAccountSettings={() => setTab('settings')} />
+        </header>
+      )}
 
       <main className="main-content">
         <div
@@ -240,6 +253,7 @@ function AppShell() {
               onResolveBoardProject={resolveBoardProject}
               onOpenManageProjects={openManageProjects}
               showManageProjectsButton={!isMobile}
+              openAddTaskSignal={addTaskSignal}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
@@ -249,9 +263,11 @@ function AppShell() {
 
       {isMobile && <BottomTabBar tabs={TABS} activeTab={tab} onSelectTab={setTab} />}
 
-      <Toast notification={notification} onDismiss={clearNotification} />
-      <ActionToast toast={actionToast} onUndo={undo} onDismiss={dismissActionToast} />
-      <TimerWidget />
+      <div className="floating-notifications">
+        <Toast notification={notification} onDismiss={clearNotification} />
+        <ActionToast toast={actionToast} onUndo={undo} onDismiss={dismissActionToast} />
+        <TimerWidget />
+      </div>
       {showManageProjects && (
         <ManageProjectsModal
           projects={projects}
@@ -269,6 +285,7 @@ function AppShell() {
         <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onViewChange={setTaskView} onFinish={closeTour} />
       )}
       {showChangelog && <ChangelogModal onClose={closeChangelog} />}
+      <CompleteTaskConfirmModal />
     </div>
   );
 }
@@ -279,7 +296,9 @@ export default function App() {
       <ThemeProvider>
         <SchedulerProvider>
           <TimerProvider>
-            <AppShell />
+            <CompleteTaskProvider>
+              <AppShell />
+            </CompleteTaskProvider>
           </TimerProvider>
         </SchedulerProvider>
       </ThemeProvider>

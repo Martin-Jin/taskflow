@@ -23,6 +23,7 @@ import {
   CloudCog,
   Tag,
   Sparkles,
+  Keyboard,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
@@ -32,6 +33,7 @@ import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
 import LabelsModal from './Modals/LabelsModal';
 import ChangelogModal from './Modals/ChangelogModal';
+import ShortcutsModal from './Modals/ShortcutsModal';
 import { CURRENT_VERSION } from '../changelog';
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -43,6 +45,7 @@ export default function SettingsPanel({ onOpenTour }) {
   const [showBackupsModal, setShowBackupsModal] = useState(false);
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [showChangelogModal, setShowChangelogModal] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const fileInputRef = useRef(null);
   const { theme, setTheme } = useTheme();
   const { user, authLoading, login, logout } = useAuth();
@@ -534,6 +537,21 @@ export default function SettingsPanel({ onOpenTour }) {
       </div>
 
       <div className="card">
+        <h3 style={{ marginTop: 0 }}>Keyboard shortcuts</h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
+          See every shortcut TaskFlow supports and customize its key combo.
+        </p>
+        <button
+          className="btn"
+          onClick={() => setShowShortcutsModal(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        >
+          <Keyboard size={14} />
+          View shortcuts
+        </button>
+      </div>
+
+      <div className="card">
         <h3 style={{ marginTop: 0 }}>Versions</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           See what changed in each update to TaskFlow — currently v{CURRENT_VERSION}.
@@ -659,6 +677,7 @@ export default function SettingsPanel({ onOpenTour }) {
       )}
       {showLabelsModal && <LabelsModal onClose={() => setShowLabelsModal(false)} />}
       {showChangelogModal && <ChangelogModal onClose={() => setShowChangelogModal(false)} />}
+      {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
     </div>
   );
 }

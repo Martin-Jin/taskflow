@@ -4,16 +4,12 @@
    ============================================================================ */
 
 .timer-widget {
-  position: fixed;
-  left: 20px;
-  bottom: 20px;
   width: 260px;
   max-width: calc(100vw - 40px);
   background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
-  z-index: 1090;
   overflow: hidden;
 }
 
@@ -113,10 +109,17 @@
 
 @media (max-width: 639px) {
   .timer-widget {
-    left: var(--space-3);
-    right: var(--space-3);
-    bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
     width: auto;
     max-width: none;
   }
+}
+
+/* Task-completion confirmation popup (see CompleteTaskContext /
+   CompleteTaskConfirmModal). Reuses .modal/.modal-overlay's structure and
+   animations, but needs to layer above an already-open modal (e.g.
+   TaskDetailModal, .modal-overlay's own z-index: 160, global.css) since
+   completion can be triggered while one is open underneath it — same reason
+   .floating-notifications sits at 1100, so this goes one tier above that. */
+.complete-confirm-overlay {
+  z-index: 1200;
 }

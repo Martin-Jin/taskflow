@@ -1207,9 +1207,18 @@ export function SchedulerProvider({ children }) {
    * either direction — completing a sub-task never auto-completes its
    * parent, matching existing behavior (nothing reads sub-task completion
    * to trigger a parent action).
+   *
+   * ACTUAL TIME TRACKING: optional second arg `actualHours` — passed only by
+   * CompleteTaskContext.requestComplete when the task being completed had a
+   * Pomodoro timer, confirmed by the user via CompleteTaskConfirmModal. Only
+   * applied to the task itself (not the sub-task cascade, which never ran a
+   * timer of its own) and only on the non-recurring branch — a recurring
+   * completion never sets `isCompleted: true` in the first place, so there's
+   * nowhere meaningful to record it there (see requestComplete, which resets
+   * that timer silently instead of prompting).
    */
   const completeTask = useCallback(
-    (taskId) => {
+    (taskId, actualHours) => {
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing) return;
       const descendantIds = new Set(getDescendantIds(taskId, tasks));
@@ -1242,9 +1251,21 @@ export function SchedulerProvider({ children }) {
       }
 
       const nowIso = new Date().toISOString();
-      const newTasks = tasks.map((t) =>
-        t.id === taskId || descendantIds.has(t.id) ? { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 } : t
-      );
+      const newTasks = tasks.map((t) => {
+        if (t.id === taskId) {
+          return {
+            ...t,
+            isCompleted: true,
+            completedAt: nowIso,
+            remainingHours: 0,
+            ...(actualHours != null ? { actualHours } : {}),
+          };
+        }
+        if (descendantIds.has(t.id)) {
+          return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 };
+        }
+        return t;
+      });
       commit({ tasks: newTasks, blocks }, `Completed task`);
     },
     [tasks, blocks, commit]

@@ -8,8 +8,7 @@
  * it belongs to has rendered.
  *
  * Auto-launched once on a new visitor's first session (see App.jsx's
- * `hasSeenTutorial` flag) and replayable anytime from Settings or the
- * topbar help icon.
+ * `hasSeenTutorial` flag) and replayable anytime from Settings.
  */
 
 import React, { useEffect, useLayoutEffect, useState } from 'react';
