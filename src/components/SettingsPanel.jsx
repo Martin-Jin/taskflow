@@ -4,7 +4,7 @@
  * "Free Time / Ignore" overrides on recurring calendar events.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Download,
   Upload,
@@ -24,9 +24,11 @@ import {
   Tag,
   Sparkles,
   Keyboard,
+  Search,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
+import { useSound } from '../context/SoundContext';
 import { useAuth } from '../context/AuthContext';
 import { clearAllPersisted } from '../utils/persistence';
 import RoutineTimeline from './Settings/RoutineTimeline';
@@ -38,6 +40,24 @@ import { CURRENT_VERSION } from '../changelog';
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// One entry per `.card` section below, in the same top-to-bottom order —
+// drives the settings search dropdown's suggestions and its scroll target
+// (see sectionRefs). Keep this in sync if a section is added/renamed/reordered.
+const SETTINGS_SECTIONS = [
+  { id: 'account', label: 'Account & sync' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'scheduling', label: 'Scheduling rules' },
+  { id: 'routines', label: 'Fixed routines' },
+  { id: 'calendarOverrides', label: 'Calendar event overrides' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'tags', label: 'Tags' },
+  { id: 'help', label: 'Help' },
+  { id: 'shortcuts', label: 'Keyboard shortcuts' },
+  { id: 'versions', label: 'Versions' },
+  { id: 'backups', label: 'Backups' },
+  { id: 'dangerZone', label: 'Danger zone' },
+];
+
 /** @param {{ onOpenTour: () => void }} props — replays the app-level guided tour (see App.jsx), which needs to be able to switch tabs as it advances. */
 export default function SettingsPanel({ onOpenTour }) {
   const [showTokenInput, setShowTokenInput] = useState(false);
@@ -46,8 +66,13 @@ export default function SettingsPanel({ onOpenTour }) {
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [showChangelogModal, setShowChangelogModal] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [sectionQuery, setSectionQuery] = useState('');
+  const [isSectionSearchFocused, setIsSectionSearchFocused] = useState(false);
+  const sectionSearchRef = useRef(null);
+  const sectionRefs = useRef({});
   const fileInputRef = useRef(null);
   const { theme, setTheme } = useTheme();
+  const { soundEnabled, setSoundEnabled } = useSound();
   const { user, authLoading, login, logout } = useAuth();
   const {
     routines,
@@ -118,9 +143,62 @@ export default function SettingsPanel({ onOpenTour }) {
   const recurringEvents = events.filter((e) => e.seriesId);
   const allRecurringIgnored = recurringEvents.length > 0 && recurringEvents.every((e) => e.isFreeTime);
 
+  useEffect(() => {
+    function handlePointerDown(e) {
+      if (sectionSearchRef.current && !sectionSearchRef.current.contains(e.target)) setIsSectionSearchFocused(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  const matchingSections = sectionQuery.trim()
+    ? SETTINGS_SECTIONS.filter((s) => s.label.toLowerCase().includes(sectionQuery.trim().toLowerCase()))
+    : [];
+  const showSectionDropdown = isSectionSearchFocused && matchingSections.length > 0;
+
+  function goToSection(id) {
+    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setSectionQuery('');
+    setIsSectionSearchFocused(false);
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
-      <div className="card" data-tour="account-card">
+      <div className="search-bar settings-search-bar" ref={sectionSearchRef}>
+        <div className="search-bar-field">
+          <span className="search-bar-icon">
+            <Search size={14} />
+          </span>
+          <input
+            type="text"
+            className="search-bar-input"
+            value={sectionQuery}
+            onChange={(e) => setSectionQuery(e.target.value)}
+            onFocus={() => setIsSectionSearchFocused(true)}
+            placeholder="Search settings…"
+            aria-label="Search settings"
+          />
+        </div>
+        {showSectionDropdown && (
+          <div className="search-bar-dropdown">
+            <div className="search-bar-dropdown-group">
+              {matchingSections.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="search-bar-dropdown-item"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => goToSection(s.id)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="card" data-tour="account-card" ref={(el) => (sectionRefs.current.account = el)}>
         <h3 style={{ marginTop: 0 }}>Account &amp; sync</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
           Sign in to sync your tasks, boards, and settings across every device you use TaskFlow on. Also optional —
@@ -192,7 +270,7 @@ export default function SettingsPanel({ onOpenTour }) {
         )}
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.integrations = el)}>
         <div data-tour="integrations-card">
           <h3 style={{ marginTop: 0 }}>Integrations</h3>
           <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
@@ -376,7 +454,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.scheduling = el)}>
         <h3 style={{ marginTop: 0 }}>Scheduling rules</h3>
         <div className="form-row">
           <label>Buffer days (finish this many days before due date)</label>
@@ -430,7 +508,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.routines = el)}>
         <h3 style={{ marginTop: 0 }}>Fixed routines</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6 }}>
           These are subtracted from every day's capacity before tasks are scheduled.
@@ -442,7 +520,7 @@ export default function SettingsPanel({ onOpenTour }) {
         <RoutineTimeline routines={routines} onAdd={addRoutine} onUpdate={updateRoutine} onRemove={removeRoutine} />
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.calendarOverrides = el)}>
         <h3 style={{ marginTop: 0 }}>Calendar event overrides</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6 }}>
           Mark recurring events (lectures, optional meetings) as "Free Time" so tasks can be scheduled over them.
@@ -490,7 +568,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </div>
       </div>
 
-      <div className="card" data-tour="appearance-card">
+      <div className="card" data-tour="appearance-card" ref={(el) => (sectionRefs.current.appearance = el)}>
         <h3 style={{ marginTop: 0 }}>Appearance</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           Switch between a warm off-white and a warm charcoal theme. Your choice is saved on this device.
@@ -515,9 +593,23 @@ export default function SettingsPanel({ onOpenTour }) {
             Dark
           </button>
         </div>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+          <input
+            type="checkbox"
+            id="soundEnabled"
+            checked={soundEnabled}
+            onChange={(e) => setSoundEnabled(e.target.checked)}
+          />
+          <label htmlFor="soundEnabled" style={{ margin: 0 }}>
+            Sound effects
+          </label>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, marginBottom: 0 }}>
+          Short sounds when you add, complete, uncomplete, delete, or open a task.
+        </p>
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.tags = el)}>
         <h3 style={{ marginTop: 0 }}>Tags</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           See every tag you've created across all tasks, with how many tasks currently carry each one.
@@ -528,7 +620,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </button>
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.help = el)}>
         <h3 style={{ marginTop: 0 }}>Help</h3>
         <button className="btn" onClick={onOpenTour} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <HelpCircle size={14} />
@@ -536,7 +628,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </button>
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.shortcuts = el)}>
         <h3 style={{ marginTop: 0 }}>Keyboard shortcuts</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           See every shortcut TaskFlow supports and customize its key combo.
@@ -551,7 +643,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </button>
       </div>
 
-      <div className="card">
+      <div className="card" ref={(el) => (sectionRefs.current.versions = el)}>
         <h3 style={{ marginTop: 0 }}>Versions</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           See what changed in each update to TaskFlow — currently v{CURRENT_VERSION}.
@@ -562,7 +654,7 @@ export default function SettingsPanel({ onOpenTour }) {
         </button>
       </div>
 
-      <div className="card" data-tour="backups-card">
+      <div className="card" data-tour="backups-card" ref={(el) => (sectionRefs.current.backups = el)}>
         <h3 style={{ marginTop: 0 }}>Backups</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           Download a snapshot of your tasks, boards, and settings as a file, or restore one — both work whether or
@@ -627,7 +719,7 @@ export default function SettingsPanel({ onOpenTour }) {
         )}
       </div>
 
-      <div className="card" data-tour="danger-zone-card">
+      <div className="card" data-tour="danger-zone-card" ref={(el) => (sectionRefs.current.dangerZone = el)}>
         <h3 style={{ marginTop: 0 }}>Danger zone</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           Clears every task and board (including the sample "Work / Writing / Personal" data new accounts start
