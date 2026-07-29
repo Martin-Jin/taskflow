@@ -1,9 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Plus, X, Clock, FolderPlus, Rewind, ExternalLink, Pencil, Search, Upload } from 'lucide-react';
-import { usePersistedState } from '../../hooks/usePersistedState';
+import { useScheduler } from '../../context/SchedulerContext';
 import {
   DEFAULT_FOLDER_ID,
-  DEFAULT_PINNED_LINKS,
   faviconUrl,
   normalizeUrl,
   dedupeKey,
@@ -16,10 +15,12 @@ import {
  * Bookmark-bar-style pinned links: folders as chips to organize by, plus a
  * "Recently added" strip for quick access regardless of which folder is
  * selected — mirrors how browser bookmark managers separate "everything"
- * from "what did I just add".
+ * from "what did I just add". State lives in SchedulerContext (not a local
+ * usePersistedState) so these bookmarks sync across devices and survive a
+ * backup restore, like every other setting.
  */
 export default function PinnedLinks() {
-  const [data, setData] = usePersistedState('pinnedLinks', DEFAULT_PINNED_LINKS);
+  const { pinnedLinks: data, setPinnedLinks: setData } = useScheduler();
   const [activeFolderId, setActiveFolderId] = useState('all');
   const [isAdding, setIsAdding] = useState(false);
   const [newLabel, setNewLabel] = useState('');

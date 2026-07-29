@@ -230,7 +230,7 @@ function AppShell() {
           projects={projects}
           activeProjectId={activeProjectId}
           onSelectProject={selectProject}
-          onAddProject={addProject}
+          onOpenManageProjects={openManageProjects}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
           onDeleteProject={handleDeleteProject}
@@ -270,7 +270,6 @@ function AppShell() {
               onChangeActiveProject={selectProject}
               onResolveBoardProject={resolveBoardProject}
               onOpenManageProjects={openManageProjects}
-              showManageProjectsButton={!isMobile}
               openAddTaskSignal={addTaskSignal}
             />
           )}

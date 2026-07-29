@@ -17,6 +17,50 @@
 
 export const CHANGELOG = [
   {
+    version: '1.13.1',
+    date: '2026-07-29',
+    title: 'More settings now follow you across devices',
+    changes: [
+      'Pinned links and custom keyboard shortcut rebindings now sync across your signed-in devices and are included in backups, like your other settings.',
+      'Your light/dark theme choice is now included in backups too — it already synced live across devices, but restoring a backup previously wouldn\'t bring it back.',
+    ],
+  },
+  {
+    version: '1.13.0',
+    date: '2026-07-29',
+    title: 'Combined view and filter into one menu',
+    changes: [
+      'Replaced the List/Board/Gantt tab bar and the separate Active/Completed/All/No due date filter row with a single "View" dropdown in the top-right corner, next to the "⋯" project menu.',
+      'Each view now remembers its own filter independently — switching from List to Board no longer resets or shares the filter you had set.',
+      'Board and Gantt can now be filtered by Scheduled/No due date/Completed too, not just List.',
+    ],
+  },
+  {
+    version: '1.12.3',
+    date: '2026-07-29',
+    title: 'Gantt view now has a project switcher',
+    changes: [
+      'The Gantt view now shows the project name/dropdown and the "⋯" project actions menu, matching List and Board — and its bars now scope to the selected project instead of always showing every task.',
+    ],
+  },
+  {
+    version: '1.12.2',
+    date: '2026-07-29',
+    title: 'Moved project management into the sidebar',
+    changes: [
+      'The "Add project" button in the sidebar is now "Manage projects" — it opens the same projects list/search/rename/pin/delete view as before, plus adding new ones.',
+      'Removed the separate "Manage projects" button from the Tasks page; use the sidebar (or the project picker\'s "See / manage all projects" option) instead.',
+    ],
+  },
+  {
+    version: '1.12.1',
+    date: '2026-07-29',
+    title: 'Reordered task tabs',
+    changes: [
+      'Reordered the task filter tabs to All, Scheduled, No due date, Completed.',
+    ],
+  },
+  {
     version: '1.12.0',
     date: '2026-07-29',
     title: 'Real sound effects and a volume control',

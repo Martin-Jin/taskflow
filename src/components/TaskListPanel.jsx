@@ -39,19 +39,13 @@ import GanttChart from './Gantt/GanttChart';
 import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
 import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
+import ViewFilterMenu from './Common/ViewFilterMenu';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject } from '../utils/projectConstants';
+import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
-
-const FILTER_TABS = [
-  { key: 'active', label: 'Scheduled' },
-  { key: 'completed', label: 'Completed' },
-  { key: 'all', label: 'All' },
-  { key: 'noDueDate', label: 'No due date' },
-];
 
 // The Tasks page's own view switch — List/Board/Gantt are three
 // presentations of the same underlying tasks, so they live under one nav
@@ -62,6 +56,12 @@ const PAGE_VIEWS = [
   { key: 'gantt', label: 'Gantt' },
 ];
 
+// Each view keeps its own filter (see ViewFilterMenu) rather than sharing
+// one — defaults match what each view showed before the filter became
+// user-selectable: List defaulted to "Scheduled", Board/Gantt showed every
+// non-completed task regardless of due date ("All").
+const DEFAULT_FILTER_BY_VIEW = { list: 'active', board: 'all', gantt: 'all' };
+
 export default function TaskListPanel({
   view,
   onChangeView,
@@ -69,7 +69,6 @@ export default function TaskListPanel({
   onChangeActiveProject,
   onResolveBoardProject,
   onOpenManageProjects,
-  showManageProjectsButton = false,
   openAddTaskSignal,
 }) {
   const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
@@ -93,21 +92,22 @@ export default function TaskListPanel({
     }
   }, [openAddTaskSignal]);
   const [editingTaskId, setEditingTaskId] = useState(null);
-  const [filter, setFilter] = useState('active'); // active | completed | all | noDueDate
+  const [filterByView, setFilterByView] = useState(DEFAULT_FILTER_BY_VIEW);
+  const filter = filterByView[view]; // active | completed | all | noDueDate
+  function setFilter(key) {
+    setFilterByView((prev) => ({ ...prev, [view]: key }));
+  }
   // Ids of parent tasks whose children are currently hidden — collapsed is
   // opt-in per row, so anything not in this set renders expanded (the
   // default), and it's plain local state rather than persisted.
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [isRenamingProject, setIsRenamingProject] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
-  // On desktop, showManageProjectsButton renders a standalone "Manage
-  // projects" button right next to this dropdown already, so the footer
-  // action here would just be a redundant second way to do the same thing —
-  // only include it when that standalone button isn't present (mobile).
-  const footerActions =
-    onOpenManageProjects && !showManageProjectsButton
-      ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
-      : undefined;
+  // Managing projects now lives in the sidebar's "Manage projects" button
+  // (desktop) / this SelectMenu footer action (mobile, which has no sidebar).
+  const footerActions = onOpenManageProjects
+    ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
+    : undefined;
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
@@ -155,24 +155,11 @@ export default function TaskListPanel({
     // childrenByParentId/renderTaskRow), unaffected by which tab/search is
     // active up here (matching TaskDetailModal, which always lists a task's
     // full child set regardless of its own filters).
+    // Completed tasks live only under the "Completed" filter (auto-deleted
+    // 30 days after completion, see SchedulerContext's retention sweep) —
+    // see filterTasksByStatus for what each filter key means.
     let list = filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId);
-    // "Active" means scheduled: not completed and has a due date (the
-    // scheduler only ever places blocks for tasks with a due date — see
-    // the "Won't be auto-scheduled without a due date" hint in
-    // TaskDetailModal). "All" is everything *not completed* in the
-    // project, dated or not — completed tasks live only under their own
-    // "Completed" tab (auto-deleted 30 days after completion, see
-    // SchedulerContext's retention sweep). "No due date" is just a quick
-    // filter onto a subset of what "All" already contains, not a disjoint
-    // bucket (an undated task should never look like it vanished from a
-    // project just because it has no date).
-    if (filter === 'completed') {
-      list = list.filter((t) => t.isCompleted);
-    } else {
-      list = list.filter((t) => !t.isCompleted);
-      if (filter === 'active') list = list.filter((t) => !!t.dueDate);
-      if (filter === 'noDueDate') list = list.filter((t) => !t.dueDate);
-    }
+    list = filterTasksByStatus(list, filter);
     list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
   }, [tasks, activeProjectId, filter, searchQuery, labels]);
@@ -356,14 +343,14 @@ export default function TaskListPanel({
   return (
     <div className="taskpage">
       <div className="taskpage-view-switch-row">
-        <div className="taskpage-view-switch" data-tour="tasks-view-switch" role="group" aria-label="Task view">
-          {PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID).map((v) => (
-            <button key={v.key} className={view === v.key ? 'active' : ''} aria-pressed={view === v.key} onClick={() => onChangeView(v.key)}>
-              {v.label}
-            </button>
-          ))}
-        </div>
-        {view !== 'gantt' && activeProject && (
+        <ViewFilterMenu
+          view={view}
+          onChangeView={onChangeView}
+          viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID)}
+          filter={filter}
+          onChangeFilter={setFilter}
+        />
+        {activeProject && (
           <ProjectActionsMenu
             isPinned={!!activeProject.isPinned}
             ariaLabel={`Actions for ${activeProject.name}`}
@@ -374,70 +361,55 @@ export default function TaskListPanel({
         )}
       </div>
 
-      {view !== 'gantt' && (
-        <div className="taskpage-project-header">
-          <SelectMenu
-            value={activeProjectId}
-            options={projectSelectOptions}
-            onChange={onChangeActiveProject}
-            ariaLabel="Switch project"
-            footerActions={footerActions}
+      <div className="taskpage-project-header">
+        <SelectMenu
+          value={activeProjectId}
+          options={projectSelectOptions}
+          onChange={onChangeActiveProject}
+          ariaLabel="Switch project"
+          footerActions={footerActions}
+        />
+        {isRenamingProject ? (
+          <input
+            autoFocus
+            className="taskpage-project-title-input"
+            aria-label={`Rename project "${activeProject?.name || ''}"`}
+            value={projectNameDraft}
+            onChange={(e) => setProjectNameDraft(e.target.value)}
+            onBlur={commitRenameProject}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitRenameProject();
+              }
+              if (e.key === 'Escape') setIsRenamingProject(false);
+            }}
           />
-          {showManageProjectsButton && onOpenManageProjects && (
-            <button type="button" className="taskpage-project-manage-btn btn" onClick={() => onOpenManageProjects()}>
-              <FolderKanban size={15} />
-              Manage projects
-            </button>
-          )}
-          {isRenamingProject ? (
-            <input
-              autoFocus
-              className="taskpage-project-title-input"
-              aria-label={`Rename project "${activeProject?.name || ''}"`}
-              value={projectNameDraft}
-              onChange={(e) => setProjectNameDraft(e.target.value)}
-              onBlur={commitRenameProject}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitRenameProject();
-                }
-                if (e.key === 'Escape') setIsRenamingProject(false);
-              }}
-            />
-          ) : (
-            <h2
-              className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
-              title={activeProject ? 'Click to rename' : undefined}
-              role={activeProject ? 'button' : undefined}
-              tabIndex={activeProject ? 0 : undefined}
-              onClick={startRenameProject}
-              onKeyDown={(e) => {
-                if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
-                  e.preventDefault();
-                  startRenameProject();
-                }
-              }}
-            >
-              {activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL}
-            </h2>
-          )}
-        </div>
-      )}
+        ) : (
+          <h2
+            className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
+            title={activeProject ? 'Click to rename' : undefined}
+            role={activeProject ? 'button' : undefined}
+            tabIndex={activeProject ? 0 : undefined}
+            onClick={startRenameProject}
+            onKeyDown={(e) => {
+              if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault();
+                startRenameProject();
+              }
+            }}
+          >
+            {activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL}
+          </h2>
+        )}
+      </div>
 
-      {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onResolveBoardProject} />}
-      {view === 'gantt' && <GanttChart />}
+      {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onResolveBoardProject} filter={filter} />}
+      {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}
 
       {view === 'list' && (
         <>
           <div className="tasklist-toolbar">
-            <div className="view-switch" role="group" aria-label="Filter tasks">
-              {FILTER_TABS.map((f) => (
-                <button key={f.key} className={filter === f.key ? 'active' : ''} aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>
-                  {f.label}
-                </button>
-              ))}
-            </div>
             <SearchBar onSelectProject={onChangeActiveProject} />
             <button
               className="btn btn-primary add-task-btn"

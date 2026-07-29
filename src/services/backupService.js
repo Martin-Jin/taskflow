@@ -10,8 +10,28 @@
  * ============================================================================
  */
 
-/** Exactly the fields the live cloud sync already pushes (see firestoreSync.js's pushUserData) — a backup is the same shape, just point-in-time. */
-export const BACKUP_FIELDS = ['tasks', 'blocks', 'sections', 'projects', 'labels', 'routines', 'rules', 'events', 'soundEnabled', 'soundVolume'];
+/**
+ * Exactly the fields the live cloud sync already pushes (see firestoreSync.js's
+ * pushUserData) — a backup is the same shape, just point-in-time. Note:
+ * `theme` is an exception — it's synced live by ThemeContext independently
+ * (not pushed/pulled here, see SchedulerContext's cloud-sync comments), but
+ * is still included here so point-in-time backups/restores capture it too.
+ */
+export const BACKUP_FIELDS = [
+  'tasks',
+  'blocks',
+  'sections',
+  'projects',
+  'labels',
+  'routines',
+  'rules',
+  'events',
+  'soundEnabled',
+  'soundVolume',
+  'theme',
+  'pinnedLinks',
+  'shortcutBindings',
+];
 
 /** Recurring tasks never reach isCompleted: true (completing one just advances dueDate — see types/index.js), so this only ever drops finished one-off tasks. */
 function excludeCompletedTasks(tasks, blocks) {

@@ -27,10 +27,13 @@
  * keeps its card visible; the column itself always renders (even empty) so
  * the layout matches Todoist's board.
  *
- * SHOWS EVERY TASK IN THE PROJECT, regardless of due date or scheduling
- * status — Boards mirrors Todoist's own board, not the calendar. A task
- * with no due date (and therefore never auto-scheduled) still gets a card
- * here, same as an undated task shows up normally on Todoist's board.
+ * By default shows every non-completed task in the project regardless of
+ * due date or scheduling status — Boards mirrors Todoist's own board, not
+ * the calendar. A task with no due date (and therefore never
+ * auto-scheduled) still gets a card here, same as an undated task shows up
+ * normally on Todoist's board. `filter` (see TaskListPanel's ViewFilterMenu)
+ * can narrow this down to just Scheduled/No due date/Completed, same as
+ * List/Gantt — see filterTasksByStatus.
  *
  * Section editing: column headers are click-to-rename, each has a delete
  * button, and a trailing "+ Add section" column creates a new one — all
@@ -56,9 +59,9 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
-import { ALL_TASKS_PROJECT_ID, filterTasksByProject } from '../../utils/projectConstants';
+import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 
-export default function BoardView({ projectId, onProjectChange }) {
+export default function BoardView({ projectId, onProjectChange, filter = 'all' }) {
   const {
     tasks,
     sections,
@@ -132,13 +135,12 @@ export default function BoardView({ projectId, onProjectChange }) {
     const cols = [{ id: null, name: 'No Section', isNoSection: true }, ...projectSections];
 
     const withTasks = cols.map((col) => {
-      // Every non-completed task in this project/section shows up here,
-      // regardless of due date — Boards mirrors Todoist's board, which has
-      // no concept of "too far out to show" or "not schedulable." Sub-tasks
-      // (parentId set) are excluded from this top-level card list — they're
-      // rolled up into their parent's progress badge instead (see renderCard).
-      const columnTasks = filterTasksByProject(tasks, selectedProjectId)
-        .filter((t) => !t.isCompleted && !t.parentId)
+      // Sub-tasks (parentId set) are excluded from this top-level card
+      // list — they're rolled up into their parent's progress badge instead
+      // (see renderCard). `filter` defaults to "all" (every non-completed
+      // task, dated or not), matching Board's original always-show-everything
+      // behavior — see filterTasksByStatus.
+      const columnTasks = filterTasksByStatus(filterTasksByProject(tasks, selectedProjectId).filter((t) => !t.parentId), filter)
         .filter((t) => (col.id === null ? !t.sectionId : t.sectionId === col.id))
         .filter((t) => taskMatchesQuery(t, searchQuery, labels));
       return { ...col, tasks: columnTasks };
@@ -148,7 +150,7 @@ export default function BoardView({ projectId, onProjectChange }) {
     // unsectioned task to put in it — a project whose tasks are all sorted
     // into real Sections shouldn't show a permanently-empty leading column.
     return withTasks.filter((col) => !col.isNoSection || col.tasks.length > 0);
-  }, [tasks, projectSections, selectedProjectId, searchQuery, labels]);
+  }, [tasks, projectSections, selectedProjectId, filter, searchQuery, labels]);
 
   // Flat mode has exactly one synthetic "No Section" column (there are no
   // real sections yet), so its tasks are just columns[0].tasks.
