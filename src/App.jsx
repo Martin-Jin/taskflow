@@ -29,11 +29,13 @@ import Toast from './components/Common/Toast';
 import ActionToast from './components/Common/ActionToast';
 import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
+import ChangelogModal from './components/Modals/ChangelogModal';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
 import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
+import { CURRENT_VERSION } from './changelog';
 import {
   LayoutDashboard,
   CalendarDays,
@@ -77,6 +79,8 @@ function AppShell() {
   const [showTour, setShowTour] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = usePersistedState('tutorial-seen', false);
   const [showManageProjects, setShowManageProjects] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
+  const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = usePersistedState('lastSeenChangelogVersion', null);
   const [manageProjectsAutoAdd, setManageProjectsAutoAdd] = useState(false);
   const isMobile = useIsMobile();
   const {
@@ -131,6 +135,26 @@ function AppShell() {
     if (!hasSeenTutorial) setShowTour(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-pop the "What's new" changelog once per version bump, for
+  // returning visitors only — a brand-new visitor already gets the guided
+  // tour above, and showing both at once would just be two modals
+  // competing for attention. New visitors are silently marked as caught up
+  // instead, since a changelog of updates from before their first visit
+  // isn't "new" to them.
+  useEffect(() => {
+    if (!hasSeenTutorial) {
+      setLastSeenChangelogVersion(CURRENT_VERSION);
+    } else if (lastSeenChangelogVersion !== CURRENT_VERSION) {
+      setShowChangelog(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function closeChangelog() {
+    setShowChangelog(false);
+    setLastSeenChangelogVersion(CURRENT_VERSION);
+  }
 
   // Mobile has no sidebar to add/browse projects from — the topbar's "⋯"
   // menu and the Tasks page's project SelectMenu both open this same modal
@@ -244,6 +268,7 @@ function AppShell() {
       {showTour && (
         <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onViewChange={setTaskView} onFinish={closeTour} />
       )}
+      {showChangelog && <ChangelogModal onClose={closeChangelog} />}
     </div>
   );
 }

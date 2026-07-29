@@ -22,6 +22,7 @@ import {
   LogOut,
   CloudCog,
   Tag,
+  Sparkles,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
@@ -30,6 +31,8 @@ import { clearAllPersisted } from '../utils/persistence';
 import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
 import LabelsModal from './Modals/LabelsModal';
+import ChangelogModal from './Modals/ChangelogModal';
+import { CURRENT_VERSION } from '../changelog';
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -39,6 +42,7 @@ export default function SettingsPanel({ onOpenTour }) {
   const [tokenDraft, setTokenDraft] = useState('');
   const [showBackupsModal, setShowBackupsModal] = useState(false);
   const [showLabelsModal, setShowLabelsModal] = useState(false);
+  const [showChangelogModal, setShowChangelogModal] = useState(false);
   const fileInputRef = useRef(null);
   const { theme, setTheme } = useTheme();
   const { user, authLoading, login, logout } = useAuth();
@@ -529,6 +533,17 @@ export default function SettingsPanel({ onOpenTour }) {
         </button>
       </div>
 
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Versions</h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
+          See what changed in each update to TaskFlow — currently v{CURRENT_VERSION}.
+        </p>
+        <button className="btn" onClick={() => setShowChangelogModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Sparkles size={14} />
+          What's new
+        </button>
+      </div>
+
       <div className="card" data-tour="backups-card">
         <h3 style={{ marginTop: 0 }}>Backups</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
@@ -643,6 +658,7 @@ export default function SettingsPanel({ onOpenTour }) {
         />
       )}
       {showLabelsModal && <LabelsModal onClose={() => setShowLabelsModal(false)} />}
+      {showChangelogModal && <ChangelogModal onClose={() => setShowChangelogModal(false)} />}
     </div>
   );
 }

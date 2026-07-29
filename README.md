@@ -247,11 +247,13 @@ accounts you've explicitly added as test users can complete the OAuth flow:
 Cloud Console → **APIs & Services → OAuth consent screen → Audience/Test
 users → Add users**.
 
-You only need to click "Connect" once per browser profile — TaskFlow then
-silently refreshes the access token on future loads (no popup) as long as
-the underlying Google grant is still valid. If you revoke access from your
-Google Account settings, the silent refresh fails quietly and Settings just
-shows "Connect Google Calendar" again.
+You only need to click "Connect" once per browser profile. The access token
+Google issues is cached locally and reused for its full ~1 hour lifetime, so
+reopening or refreshing the app repeatedly doesn't re-trigger Google's
+sign-in flow each time. Once that cached token expires, TaskFlow falls back
+to silently refreshing it (no popup) as long as the underlying Google grant
+is still valid. If you revoke access from your Google Account settings, the
+refresh fails quietly and Settings just shows "Connect Google Calendar" again.
 
 > The app uses Google Identity Services' token client (implicit OAuth2
 > flow), which is appropriate for a client-only SPA. For a multi-tenant
@@ -484,9 +486,11 @@ hidden, only reorganized.
   work-day window, max daily hours, horizon, front-loading), edit fixed
   routines on a drag-based 24-hour timeline (drag empty space to add one,
   drag a block to move it, drag its edge to resize, click to rename/pause/
-  delete), mark calendar events as "Free Time" individually or in bulk, and
-  reset local data to wipe TaskFlow's local cache without touching your
-  actual Todoist/Google Calendar accounts.
+  delete), mark calendar events as "Free Time" individually or in bulk, view
+  a searchable **What's new** changelog (**Settings → Versions**, also
+  auto-shown once whenever a new version ships), and reset local data to
+  wipe TaskFlow's local cache without touching your actual Todoist/Google
+  Calendar accounts.
 - **Undo / Redo** — every task/block mutation and every rebalance is one
   atomic, undoable action.
 

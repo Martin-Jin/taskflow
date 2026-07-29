@@ -597,6 +597,16 @@ export function SchedulerProvider({ children }) {
         const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
         setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
       } catch (err) {
+        if (err?.isGoogleAuthError) {
+          // The token was already invalidated by fetchEvents — disconnecting
+          // here too stops this interval (see the `googleConnected` guard/dep
+          // above) instead of letting it keep firing with no access token,
+          // which would otherwise silently fall back to mock sample events
+          // being merged into the user's real calendar every 5 minutes.
+          console.warn('[SchedulerContext] Google Calendar auth expired during poll, disconnecting.', err);
+          setGoogleConnected(false);
+          return;
+        }
         // A missed poll just means the next one (5 minutes later) tries
         // again — not worth surfacing to the user as an error.
         console.warn('[SchedulerContext] Periodic Google Calendar poll failed', err);

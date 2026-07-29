@@ -18,6 +18,7 @@
 
 import { getMockEvents } from './mockData';
 import { fromISODate, toISODate, timeToMinutes } from '../utils/dateUtils';
+import { loadPersisted, savePersisted, clearPersisted } from '../utils/persistence';
 
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 // calendar.events: read/write events on calendars the user can edit (needed for push).
@@ -29,6 +30,71 @@ let tokenClient = null;
 let accessToken = null;
 let gapiInited = false;
 let gisInited = false;
+
+// GIS's implicit-flow token client has no refresh token to persist — only a
+// short-lived (~1hr) access token that lives in this module's memory, which
+// is wiped on every page reload/reopen. Without caching it, EVERY app open
+// re-runs the "silent" requestAccessToken(true) flow below, which — despite
+// `prompt: ''` asking Google to skip the consent screen — still has to pop
+// open a real (if brief) browser popup/tab to complete the OAuth round trip,
+// which reads to the user as "the Google sign-in popup opens every time I
+// open the app". Caching the still-valid token in localStorage lets repeat
+// opens within the same ~1hr window skip GIS entirely — no popup at all —
+// and only fall back to the silent GIS request once the cached token has
+// actually expired.
+// Stored via the app's own persistence layer (utils/persistence.js) rather
+// than a hand-rolled localStorage key — this piggybacks on its existing
+// try/catch-wrapped read/write AND, importantly, means "Settings → Reset
+// local data" (which wipes every taskflow:-namespaced key) also clears this
+// token cache instead of leaving a stale one orphaned behind a reset.
+const TOKEN_STORAGE_KEY = 'googleAccessToken';
+// Treat a token as expired slightly before its real expiry so an in-flight
+// API call started right before the deadline doesn't get a token that dies
+// mid-request.
+const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
+
+function cacheAccessToken(token, expiresInSec) {
+  savePersisted(TOKEN_STORAGE_KEY, { token, expiresAt: Date.now() + (expiresInSec || 3600) * 1000 });
+}
+
+function readCachedAccessToken() {
+  const cached = loadPersisted(TOKEN_STORAGE_KEY, null);
+  if (!cached?.token || Date.now() > cached.expiresAt - TOKEN_EXPIRY_BUFFER_MS) return null;
+  return cached.token;
+}
+
+function clearCachedAccessToken() {
+  clearPersisted(TOKEN_STORAGE_KEY);
+}
+
+/**
+ * True if a gapi client error is an auth failure (expired/revoked token)
+ * rather than a permissions/not-found/network issue on that one call.
+ */
+function isAuthError(err) {
+  const code = err?.status ?? err?.result?.error?.code;
+  return code === 401;
+}
+
+/**
+ * Drop both the in-memory and cached access token, forcing the next
+ * `requestAccessToken` call to actually talk to GIS again instead of
+ * re-serving a token Google has already rejected — otherwise a
+ * revoked-but-not-yet-"expired" cached token (see cacheAccessToken above)
+ * would keep failing silently for up to an hour before self-correcting.
+ */
+function invalidateAccessToken() {
+  accessToken = null;
+  clearCachedAccessToken();
+}
+
+/** Invalidate the token and throw a marked error callers can recognize (see `err.isGoogleAuthError`) and react to by disconnecting, instead of retrying with the same now-cleared token. */
+function throwAuthExpired() {
+  invalidateAccessToken();
+  const authErr = new Error('Google Calendar authorization expired — please reconnect.');
+  authErr.isGoogleAuthError = true;
+  throw authErr;
+}
 
 /**
  * Dynamically load the Google API + Identity Services scripts. Safe to call
@@ -94,16 +160,29 @@ export async function initGoogleCalendar(clientId, apiKey) {
  *   the user never consented, or has since revoked access, GIS will
  *   reject and the caller should fall back to treating the connection as
  *   inactive rather than forcing a popup.
+ *
+ * Before touching GIS at all, this checks localStorage for a still-valid
+ * token cached from a previous call (this session's or an earlier one) and
+ * resolves with that instead — see the caching block above for why this
+ * matters (it's what stops the popup/tab flash from happening on every
+ * single app open).
  */
 export function requestAccessToken(silent = false) {
+  if (!accessToken) {
+    const cached = readCachedAccessToken();
+    if (cached) accessToken = cached;
+  }
+  if (accessToken) return Promise.resolve(accessToken);
+
   return new Promise((resolve, reject) => {
     if (!gapiInited || !gisInited) return reject(new Error('Google Calendar client not initialized'));
     tokenClient.callback = (resp) => {
       if (resp.error) return reject(new Error(resp.error_description || resp.error));
       accessToken = resp.access_token;
+      cacheAccessToken(accessToken, resp.expires_in);
       resolve(accessToken);
     };
-    tokenClient.requestAccessToken({ prompt: silent || accessToken ? '' : 'consent' });
+    tokenClient.requestAccessToken({ prompt: silent ? '' : 'consent' });
   });
 }
 
@@ -176,6 +255,7 @@ export async function fetchEvents(startIso, endIso) {
   try {
     calendars = await listSubscribedCalendars();
   } catch (err) {
+    if (isAuthError(err)) throwAuthExpired();
     console.warn('[googleCalendarService] Failed to list subscribed calendars, falling back to primary only.', err);
     calendars = [{ id: 'primary', summary: 'primary', accessRole: 'owner' }];
   }
@@ -214,11 +294,20 @@ export async function fetchEvents(startIso, endIso) {
         });
         return (resp.result.items || []).map((e) => ({ ...e, __calendarId: cal.id, __calendarName: cal.summary, __accessRole: cal.accessRole }));
       } catch (err) {
-        // A single subscribed calendar failing (e.g. revoked share, or only
-        // shared at a lower access role than needed) shouldn't take down
-        // the whole fetch — skip it, keep the rest, and report it back to
-        // the caller so the UI can surface *which* calendar didn't load
-        // instead of silently showing an incomplete calendar.
+        // An expired/revoked token fails identically on every calendar in
+        // this Promise.all — reporting each one as a separate "failed
+        // calendar" would just spam the user with one warning per calendar
+        // on every poll until the (now stale) cached token's clock runs
+        // out. Invalidate it and let the rejection propagate instead, so
+        // the caller (SchedulerContext) treats this as a connection failure
+        // and falls back to "disconnected" the same way an outright silent
+        // re-auth failure already does.
+        if (isAuthError(err)) throwAuthExpired();
+        // Anything else (e.g. revoked share, or only shared at a lower
+        // access role than needed) is scoped to this ONE calendar and
+        // shouldn't take down the whole fetch — skip it, keep the rest, and
+        // report it back to the caller so the UI can surface *which*
+        // calendar didn't load instead of silently showing an incomplete one.
         console.warn(`[googleCalendarService] Failed to fetch events for calendar "${cal.summary}" (${cal.id})`, err);
         failedCalendars.push(cal.summary || cal.id);
         return [];
