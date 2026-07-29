@@ -27,7 +27,17 @@
 import { useState } from 'react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
 
-const SCALAR_FIELD_TYPES = ['link', 'dueDate', 'recurrence', 'priority', 'estimatedHours', 'unattended', 'dependency', 'project'];
+const SCALAR_FIELD_TYPES = [
+  'link',
+  'dueDate',
+  'recurrence',
+  'priority',
+  'estimatedHours',
+  'unattended',
+  'enforceDueDate',
+  'dependency',
+  'project',
+];
 
 export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields }) {
   const [smartDetected, setSmartDetected] = useState({});

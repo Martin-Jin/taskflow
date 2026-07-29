@@ -658,8 +658,8 @@ select:focus-visible,
 /* ----------------------------------------------------------------------
    Centered-popup fallback for useMenuPosition
    (src/hooks/useMenuPosition.js) — shared by every menu that hook drives
-   (ProjectActionsMenu, SelectMenu, TaskDetailModal/SubtaskDetailModal's
-   "..." menu): when an anchored dropdown position wouldn't fit the
+   (ProjectActionsMenu, SelectMenu, TaskDetailModal's "..." menu): when an
+   anchored dropdown position wouldn't fit the
    viewport, the menu renders centered with this dim backdrop behind it
    instead of risking clipping off-screen. Reuses .modal-overlay's exact
    dim color so this reads as the same "lightweight modal" language as the

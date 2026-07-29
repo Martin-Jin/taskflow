@@ -285,6 +285,15 @@
   border-left-color: var(--color-danger);
 }
 
+/* Without this, the generic .is-openable:hover rule above (same
+   specificity, later in source) would win on hover and flatten a missed
+   row back to plain gray — losing the red tint right when the user is
+   about to click it. */
+.today-agenda-item.is-missed.is-openable:hover,
+.today-agenda-item.is-missed.is-openable:focus-visible {
+  background: color-mix(in srgb, var(--color-danger) 16%, var(--color-bg-surface-hover));
+}
+
 .today-agenda-missed-icon {
   color: var(--color-danger);
   flex-shrink: 0;
@@ -296,6 +305,30 @@
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-danger);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Distinct from is-missed (red, "the deadline already passed") — a task due
+   today is still on track, so it gets a warning-orange accent instead of
+   danger-red, matching the same left-border + label pattern. */
+.today-agenda-item.is-due-today {
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-bg-surface-hover));
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  border-left-color: var(--color-warning);
+}
+
+.today-agenda-item.is-due-today.is-openable:hover,
+.today-agenda-item.is-due-today.is-openable:focus-visible {
+  background: color-mix(in srgb, var(--color-warning) 16%, var(--color-bg-surface-hover));
+}
+
+.today-agenda-due-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-warning);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -882,13 +915,27 @@
   font-size: var(--text-sm);
 }
 
+/* Padding/radius matches .scheduled-today-item below so Missed/Overdue rows
+   carry the same visual weight as Scheduled today's rows instead of reading
+   as bare, unstyled lines of text next to a filled-in row. */
 .missed-tasks-item.is-openable {
   cursor: pointer;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   transition: background var(--duration-fast) var(--ease-standard);
 }
 
+/* .missed-tasks-item is only ever used for Missed/Overdue rows (a danger
+   icon leads every row) — hover reads as a light red tint rather than the
+   same neutral gray every other row uses, reinforcing "needs attention"
+   instead of looking identical to a plain row's hover. Scheduled today
+   reuses this class too but isn't a danger state, so it opts back out to
+   the neutral gray below. */
 .missed-tasks-item.is-openable:hover {
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-surface-hover));
+}
+
+.missed-tasks-item.scheduled-today-item.is-openable:hover {
   background: var(--color-bg-surface-hover);
 }
 
@@ -945,11 +992,13 @@
   min-width: 92px;
 }
 
-/* "Scheduled today" popup rows — background-differentiated against the
-   modal's own surface so each row reads as a distinct item rather than
-   just a bare line of text (unlike Missed/Overdue's plainer rows). */
+/* Shared padding/radius for rows that aren't openable (so they don't pick up
+   .is-openable's cursor/hover) — currently just LabelsModal's tag rows, which
+   supply their own background inline. No default background of its own: the
+   Dashboard "Scheduled today" popup applies this alongside .is-openable,
+   which already owns padding/radius/hover — a default background here would
+   make every row look permanently hovered and hover itself a no-op. */
 .scheduled-today-item {
-  background: var(--color-bg-surface-hover);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
 }

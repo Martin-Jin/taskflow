@@ -130,10 +130,18 @@ export function scoreTask(task, today, bufferDays) {
   return weight * urgencyMultiplier;
 }
 
-/** Sort tasks by descending schedulability score. Pure function, does not mutate input. */
+/**
+ * Sort tasks by descending schedulability score. Pure function, does not
+ * mutate input.
+ *
+ * A sub-task (`parentId` set) is only eligible once it has its own
+ * `dueDate` — unlike a top-level task, an undated sub-task is excluded
+ * entirely rather than merely deprioritized, since it has no planning
+ * window at all yet and shouldn't compete with dated work for capacity.
+ */
 export function prioritizeTasks(tasks, today, bufferDays) {
   return [...tasks]
-    .filter((t) => !t.isCompleted && t.remainingHours > 0)
+    .filter((t) => !t.isCompleted && t.remainingHours > 0 && (!t.parentId || t.dueDate))
     .sort((a, b) => scoreTask(b, today, bufferDays) - scoreTask(a, today, bufferDays));
 }
 

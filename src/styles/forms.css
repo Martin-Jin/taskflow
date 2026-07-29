@@ -304,6 +304,15 @@
   margin-bottom: 4px;
 }
 
+/* .detail-header-close's own margin-left: auto (below) is for modals where
+   it shares a row with a title and needs to push itself to the far right —
+   here it already sits in a flex-end-justified row with the "..." trigger,
+   so the auto margin would eat all the free space and shove the trigger to
+   the opposite edge instead of leaving it adjacent to Close. */
+.detail-topbar .detail-header-close {
+  margin-left: 0;
+}
+
 .detail-menu {
   position: relative;
 }
@@ -594,9 +603,9 @@
 
 /* Description — Todoist-style: reads as plain text at rest (one line tall,
    no border/background), grows with its content via useAutosizeTextarea,
-   and only reveals a border once the user actually clicks into it. Shared
-   with SubtaskDetailModal's notes field, hence a standalone class instead
-   of a `.detail-main` descendant selector. */
+   and only reveals a border once the user actually clicks into it. A
+   standalone class (rather than a `.detail-main` descendant selector) since
+   a nested sub-task's TaskDetailModal instance shares this same field. */
 .detail-notes-textarea {
   background: transparent;
   border: 1px solid transparent;
@@ -1064,8 +1073,8 @@
 
 /* ----------------------------------------------------------------------
    Subtask checklist rows — used inside TaskDetailModal's Sub-tasks field.
-   The whole row (minus its own checkbox/delete controls) opens
-   SubtaskDetailModal on click, mirroring a top-level task row.
+   The whole row (minus its own checkbox/delete controls) opens a nested
+   TaskDetailModal instance for that child task on click.
    ---------------------------------------------------------------------- */
 .subtask-list {
   display: flex;
@@ -1126,7 +1135,7 @@
 
 /* Subtask description preview — clamped to 2 lines, ellipsized, so a long
    description doesn't blow out the checklist row height (full text is
-   still readable by opening the subtask itself via SubtaskDetailModal). */
+   still readable by opening the sub-task itself). */
 .subtask-row-notes {
   font-size: 11.5px;
   color: var(--color-text-secondary);
@@ -1211,6 +1220,178 @@
 
 .subtask-hide-completed:hover {
   color: var(--color-text-primary);
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.comment-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.comment-row .account-avatar {
+  flex-shrink: 0;
+}
+
+.comment-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comment-text {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.comment-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.comment-remove {
+  flex-shrink: 0;
+  opacity: 0;
+  background: transparent;
+  border-color: transparent;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.comment-row:hover .comment-remove,
+.comment-remove:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .comment-remove {
+    opacity: 1;
+  }
+}
+
+.comment-attachment-thumb {
+  display: inline-block;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+  max-width: 220px;
+}
+
+.comment-attachment-thumb img {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+}
+
+.comment-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  text-decoration: none;
+  max-width: fit-content;
+}
+
+.comment-attachment-file:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.comment-attachment-file-size {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.comment-pending-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.comment-pending-file button {
+  display: flex;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.comment-pending-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.comment-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comment-input-bar input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.attachment-lightbox {
+  position: fixed;
+  inset: 0;
+  /* Above .modal-overlay (160, global.css) and its own detail-modal content. */
+  z-index: 500;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.attachment-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.attachment-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.attachment-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 @media (max-width: 639px) {

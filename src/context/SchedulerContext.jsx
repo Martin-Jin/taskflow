@@ -51,6 +51,7 @@ import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
 import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackups, getBackup, deleteBackup } from '../services/firestoreSync';
 import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
+import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { computeNextDueDate } from '../utils/recurrence';
 import {
@@ -71,6 +72,7 @@ import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, get
 import { toISODate } from '../utils/dateUtils';
 import { nextLabelColor } from '../utils/labelColor';
 import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
+import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 
 const SchedulerContext = createContext(null);
 
@@ -130,6 +132,39 @@ function applyEventScopeUpdate(prevEvents, eventId, stamped, scope) {
     return { ...e, ...stamped };
   });
 }
+/**
+ * All ids of `taskId`'s descendants (children, grandchildren, ...) via the
+ * `parentId` chain — shared by completeTask's cascade (reset a recurring
+ * parent's whole subtree / complete a non-recurring parent's whole subtree)
+ * and deleteTask's cascade-delete, so a parent's subtree always moves
+ * together instead of leaving orphaned or inconsistent children behind.
+ *
+ * Nothing in the app's own UI can create a `parentId` cycle (it's only ever
+ * set once, at creation, and never re-parented), but a `visited` guard costs
+ * nothing and stops a hand-edited/corrupted backup restore from hanging the
+ * tab in an infinite loop.
+ */
+function getDescendantIds(taskId, tasks) {
+  const childrenByParentId = new Map();
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    const siblings = childrenByParentId.get(t.parentId) || [];
+    siblings.push(t.id);
+    childrenByParentId.set(t.parentId, siblings);
+  }
+  const descendants = [];
+  const visited = new Set([taskId]);
+  const queue = [...(childrenByParentId.get(taskId) || [])];
+  while (queue.length > 0) {
+    const id = queue.pop();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    descendants.push(id);
+    queue.push(...(childrenByParentId.get(id) || []));
+  }
+  return descendants;
+}
+
 // How long a signed-in session waits since the last cloud backup before
 // silently taking a new one on sign-in — frequent enough that a bad week
 // never costs more than a day of data, infrequent enough that the
@@ -174,6 +209,11 @@ export function SchedulerProvider({ children }) {
   // ever runs once per device instead of re-running (harmlessly, but
   // pointlessly) on every load. See src/migrations/migrateBlockedTimeToEvents.js.
   const [blockedTimeMigrationDone, setBlockedTimeMigrationDone] = usePersistedState('blockedTimeMigrationDone', false);
+
+  // Guards the one-time migrateSubtasksToTasks backfill below — see
+  // src/migrations/migrateSubtasksToTasks.js for why (the old nested
+  // Task.subtasks array became standalone Tasks linked by parentId).
+  const [subtasksMigrationDone, setSubtasksMigrationDone] = usePersistedState('subtasksMigrationDone', false);
 
   // events: seeded from local storage so a refresh doesn't blank the
   // calendar grid while the silent Google re-auth (below) is in flight, or
@@ -230,6 +270,21 @@ export function SchedulerProvider({ children }) {
   // applies it -> B's local state change re-triggers B's own push effect
   // -> ...).
   const lastSyncedSnapshotRef = useRef(null);
+
+  // Guards the push effect below against racing the initial pull-on-sign-in.
+  // Without this, a device that's been offline/closed a while (still holding
+  // stale local data) schedules its debounced push at mount time — same tick
+  // as the pull kicking off — purely because `lastSyncedSnapshotRef` starts
+  // at null on every sign-in, which looks like "unsynced local changes" even
+  // when there aren't any. Normally the pull (fast) resolves and rewrites
+  // local state before the debounce timer fires, cancelling it — but on a
+  // slow/flaky connection (exactly when this matters most: a device just
+  // coming back online) the stale push can fire FIRST and clobber genuinely
+  // newer data another device already wrote to the cloud doc. False until
+  // the current sign-in's pull settles (success or failure), so the push
+  // effect simply can't fire before this device has seen the latest remote
+  // state at least once.
+  const initialPullDoneRef = useRef(false);
 
   // The Todoist token: a per-visitor personal API token entered in Settings
   // (see setTodoistApiToken below), persisted to THIS BROWSER's localStorage
@@ -294,6 +349,37 @@ export function SchedulerProvider({ children }) {
     if (blockedTimeMigrationDone) return;
     setEvents((prev) => migrateBlockedTimeToEvents(prev));
     setBlockedTimeMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateSubtasksToTasks.js. Only
+  // actually commits a new history entry when this device's data has legacy
+  // embedded subtasks to convert, so most users (who never had any) don't
+  // get a needless "Migrated sub-tasks" entry in their Undo stack. Safe to
+  // delete this effect once the flag above is true for all users.
+  useEffect(() => {
+    if (subtasksMigrationDone) return;
+    if (stateRef.current.tasks.some((t) => t.subtasks && t.subtasks.length > 0)) {
+      commit({ tasks: migrateSubtasksToTasks(stateRef.current.tasks), blocks: stateRef.current.blocks }, 'Migrated sub-tasks to standalone tasks');
+    }
+    setSubtasksMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- Completed task retention sweep --------------------------------------
+  // Runs once on mount. Completed (non-recurring — recurring tasks never set
+  // isCompleted, see completeTask) tasks older than 30 days are dropped along
+  // with their blocks, same task-id-based filtering as backupService.js's
+  // excludeCompletedTasks. A once-per-load check is enough for this
+  // personal-scale app — no need for a running interval on top of it.
+  useEffect(() => {
+    const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const isStaleCompleted = (t) => t.isCompleted && t.completedAt && new Date(t.completedAt).getTime() < cutoffMs;
+    const staleIds = new Set(stateRef.current.tasks.filter(isStaleCompleted).map((t) => t.id));
+    if (staleIds.size === 0) return;
+    const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
+    const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
+    commit({ tasks: newTasks, blocks: newBlocks }, `Removed ${staleIds.size} completed task(s) older than 30 days`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -490,6 +576,7 @@ export function SchedulerProvider({ children }) {
     if (!user) return;
     let cancelled = false;
     lastSyncedSnapshotRef.current = null;
+    initialPullDoneRef.current = false;
     pullFromCloud(user.uid)
       .catch((err) => {
         if (cancelled) return;
@@ -506,6 +593,13 @@ export function SchedulerProvider({ children }) {
         // post-sync state.
         if (cancelled) return;
         return maybeAutoBackup(user.uid);
+      })
+      .finally(() => {
+        // Set even if the pull failed (offline etc.) — otherwise a
+        // persistent failure would permanently block this device from ever
+        // pushing local edits again for the rest of the session. See
+        // initialPullDoneRef's own comment for what this guards against.
+        if (!cancelled) initialPullDoneRef.current = true;
       });
     return () => {
       cancelled = true;
@@ -540,6 +634,7 @@ export function SchedulerProvider({ children }) {
   // write per keystroke.
   useEffect(() => {
     if (!user) return;
+    if (!initialPullDoneRef.current) return; // wait for this sign-in's pull to settle first — see initialPullDoneRef's comment
     const payload = { tasks, blocks, sections, projects, labels, routines, rules, events };
     const fingerprint = computeSyncFingerprint(payload);
     if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
@@ -810,7 +905,6 @@ export function SchedulerProvider({ children }) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         source: 'manual',
-        subtasks: [],
         ...taskInput,
       };
       commit({ tasks: [...tasks, newTask], blocks }, `Added task "${newTask.title}"`);
@@ -837,19 +931,99 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
+  /**
+   * Delete a task, cascading to its whole subtree — a task with children
+   * (parentId pointing at it) would otherwise leave those children orphaned,
+   * pointing at a parentId that no longer exists.
+   */
   const deleteTask = useCallback(
     (taskId) => {
-      // Scrub the deleted id out of every other task's dependsOn — otherwise
-      // a dependent task references a task that no longer exists and,
-      // since areDependenciesMet() treats a missing dependency as unmet,
-      // it would stay permanently blocked with no way to fix it in the UI.
+      const idsToDelete = new Set([taskId, ...getDescendantIds(taskId, tasks)]);
+      // Scrub every deleted id (parent + descendants) out of every other
+      // task's dependsOn — otherwise a dependent task references a task
+      // that no longer exists and, since areDependenciesMet() treats a
+      // missing dependency as unmet, it would stay permanently blocked with
+      // no way to fix it in the UI.
       const newTasks = tasks
-        .filter((t) => t.id !== taskId)
-        .map((t) => (t.dependsOn?.includes(taskId) ? { ...t, dependsOn: t.dependsOn.filter((id) => id !== taskId) } : t));
-      const newBlocks = blocks.filter((b) => b.taskId !== taskId);
+        .filter((t) => !idsToDelete.has(t.id))
+        .map((t) =>
+          t.dependsOn?.some((id) => idsToDelete.has(id))
+            ? { ...t, dependsOn: t.dependsOn.filter((id) => !idsToDelete.has(id)) }
+            : t
+        );
+      const newBlocks = blocks.filter((b) => !idsToDelete.has(b.taskId));
+      // Best-effort — deleted tasks' comment attachments would otherwise
+      // stay orphaned in Storage forever. Fire-and-forget, not awaited: the
+      // task deletion itself shouldn't wait on Storage round-trips. Skipped
+      // entirely while signed out — Storage paths are uid-scoped, so the
+      // delete would just fail auth (the attachment is orphaned either way;
+      // no point spending a network round-trip on a call known to fail).
+      if (user) {
+        tasks
+          .filter((t) => idsToDelete.has(t.id))
+          .flatMap((t) => t.comments || [])
+          .forEach((c) => {
+            if (c.attachment) deleteCommentAttachment(c.attachment.path);
+          });
+      }
       commit({ tasks: newTasks, blocks: newBlocks }, `Deleted task`);
     },
-    [tasks, blocks, commit]
+    [tasks, blocks, commit, user]
+  );
+
+  /**
+   * Post a new comment on a task, optionally with one file attachment.
+   * Uploads the file to Storage first (if present) so the Comment object
+   * committed to `tasks` already has a resolved url/path — matches the
+   * rest of the app's "Firestore only ever holds fully-formed data" model.
+   * Requires a signed-in user for the attachment upload (Storage paths are
+   * uid-scoped); text-only comments work whether signed in or not, same as
+   * every other local-first field.
+   *
+   * Applies onto stateRef.current.tasks (the LATEST state), not the `tasks`
+   * closed over at call time — an upload can take a while, and any
+   * edit/delete that lands while it's in flight would otherwise be silently
+   * clobbered when this commits a stale snapshot (same hazard
+   * pushToGoogleCalendar works around below).
+   */
+  const addComment = useCallback(
+    async (taskId, { text, file } = {}) => {
+      let attachment = null;
+      if (file) {
+        if (!user) throw new Error('Sign in to attach files to a comment.');
+        attachment = await uploadCommentAttachment(user.uid, taskId, file);
+      }
+      const newComment = {
+        id: `comment_${Date.now()}`,
+        text: text || '',
+        attachment,
+        createdAt: new Date().toISOString(),
+      };
+      const newTasks = stateRef.current.tasks.map((t) =>
+        t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment] } : t
+      );
+      commit({ tasks: newTasks, blocks: stateRef.current.blocks }, 'Added comment');
+    },
+    [commit, user]
+  );
+
+  /**
+   * Remove a comment and, if it carried one, its attachment. The Storage
+   * delete is best-effort (see deleteCommentAttachment) so a transient
+   * failure there never blocks removing the comment itself.
+   */
+  const deleteComment = useCallback(
+    (taskId, commentId) => {
+      const task = tasks.find((t) => t.id === taskId);
+      const comment = task?.comments?.find((c) => c.id === commentId);
+      // See deleteTask's cleanup above for why this is skipped signed-out.
+      if (comment?.attachment && user) deleteCommentAttachment(comment.attachment.path);
+      const newTasks = tasks.map((t) =>
+        t.id === taskId ? { ...t, comments: (t.comments || []).filter((c) => c.id !== commentId) } : t
+      );
+      commit({ tasks: newTasks, blocks }, 'Deleted comment');
+    },
+    [tasks, blocks, commit, user]
   );
 
   const toggleTaskLock = useCallback(
@@ -877,25 +1051,42 @@ export function SchedulerProvider({ children }) {
    * belonged to a cycle that's now closed out.
    *
    * NON-RECURRING TASKS: unchanged — `isCompleted: true`, `remainingHours: 0`.
+   *
+   * SUB-TASK CASCADE (both branches): completing a task with children
+   * (parentId chain, to arbitrary depth) cascades to the whole subtree —
+   * see getDescendantIds. For a recurring parent, every descendant is reset
+   * (isCompleted: false, dueDate: null) rather than "completed", since the
+   * parent itself isn't reaching a final completed state either; a
+   * descendant's own recurrence (if any) is irrelevant here, this is an
+   * unconditional reset. For a non-recurring parent, every descendant is
+   * marked completed right alongside it. There's no upward cascade in
+   * either direction — completing a sub-task never auto-completes its
+   * parent, matching existing behavior (nothing reads sub-task completion
+   * to trigger a parent action).
    */
   const completeTask = useCallback(
     (taskId) => {
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing) return;
+      const descendantIds = new Set(getDescendantIds(taskId, tasks));
 
       if (existing.isRecurring && existing.dueDate) {
-        const nextDueDate = computeNextDueDate(existing.dueDate, existing.recurrenceString);
-        const newTasks = tasks.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                dueDate: nextDueDate,
-                remainingHours: t.estimatedHours,
-                isCompleted: false,
-                updatedAt: new Date().toISOString(),
-              }
-            : t
-        );
+        // Base the next occurrence off today (not the stale due date) when the
+        // task is completed late, so finishing an overdue daily task today
+        // makes it due tomorrow instead of 1 day after the missed due date.
+        const todayIso = toISODate(new Date());
+        const baseDate = existing.dueDate < todayIso ? todayIso : existing.dueDate;
+        const nextDueDate = computeNextDueDate(baseDate, existing.recurrenceString);
+        const nowIso = new Date().toISOString();
+        const newTasks = tasks.map((t) => {
+          if (t.id === taskId) {
+            return { ...t, dueDate: nextDueDate, remainingHours: t.estimatedHours, isCompleted: false, updatedAt: nowIso };
+          }
+          if (descendantIds.has(t.id)) {
+            return { ...t, isCompleted: false, dueDate: null, updatedAt: nowIso };
+          }
+          return t;
+        });
         // Drop any *unlocked* blocks scheduled for the just-finished
         // occurrence — a fresh planning window starts from the new due date
         // on the next rebalance. Locked blocks are protected the same way a
@@ -906,83 +1097,25 @@ export function SchedulerProvider({ children }) {
         return;
       }
 
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: true, remainingHours: 0 } : t));
+      const nowIso = new Date().toISOString();
+      const newTasks = tasks.map((t) =>
+        t.id === taskId || descendantIds.has(t.id) ? { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 } : t
+      );
       commit({ tasks: newTasks, blocks }, `Completed task`);
     },
     [tasks, blocks, commit]
   );
 
-  // ---- Subtask CRUD (nested under a parent Task) ---------------------------
-
-  const addSubtask = useCallback(
-    (taskId, title) => {
-      const trimmed = title.trim();
-      if (!trimmed) return;
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const localId = `sub_${Date.now()}`;
-      const newSubtasks = [...(parent.subtasks || []), { id: localId, title: trimmed, isCompleted: false }];
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, subtasks: newSubtasks, updatedAt: new Date().toISOString() } : t));
-      commit({ tasks: newTasks, blocks }, `Added subtask`);
-    },
-    [tasks, blocks, commit]
-  );
-
-  const renameSubtask = useCallback(
-    (taskId, subtaskId, title) => {
-      const trimmed = title.trim();
-      if (!trimmed) return;
-      const newTasks = tasks.map((t) =>
-        t.id === taskId ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, title: trimmed } : s)) } : t
-      );
-      commit({ tasks: newTasks, blocks }, `Renamed subtask`);
-    },
-    [tasks, blocks, commit]
-  );
-
-  const toggleSubtask = useCallback(
-    (taskId, subtaskId) => {
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
-      const nextCompleted = !sub?.isCompleted;
-      const newTasks = tasks.map((t) =>
-        t.id === taskId
-          ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, isCompleted: nextCompleted } : s)) }
-          : t
-      );
-      commit({ tasks: newTasks, blocks }, `Toggled subtask`);
-    },
-    [tasks, blocks, commit]
-  );
-
-  const removeSubtask = useCallback(
-    (taskId, subtaskId) => {
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== subtaskId) } : t));
-      commit({ tasks: newTasks, blocks }, `Removed subtask`);
-    },
-    [tasks, blocks, commit]
-  );
-
   /**
-   * Update a subtask's title/notes/completion from its own compact detail
-   * view (SubtaskDetailModal) in one commit, rather than composing the
-   * individual renameSubtask/toggleSubtask calls above — those still exist
-   * for the quick inline checkbox/rename affordances in the checklist row.
+   * Restore a task out of the completed state (undoes completeTask's
+   * non-recurring branch). Only the single task is restored — a parent's
+   * children aren't force-restored alongside it, since completing the parent
+   * cascaded to them but that doesn't mean the reverse should be assumed.
    */
-  const updateSubtask = useCallback(
-    (taskId, subtaskId, updates) => {
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
-      if (!sub) return;
-      const nextTitle = updates.title !== undefined ? updates.title.trim() || sub.title : sub.title;
-      const newTasks = tasks.map((t) =>
-        t.id === taskId
-          ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, ...updates, title: nextTitle } : s)) }
-          : t
-      );
-      commit({ tasks: newTasks, blocks }, `Updated subtask`);
+  const uncompleteTask = useCallback(
+    (taskId) => {
+      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: false, completedAt: null } : t));
+      commit({ tasks: newTasks, blocks }, `Restored completed task`);
     },
     [tasks, blocks, commit]
   );
@@ -1149,8 +1282,12 @@ export function SchedulerProvider({ children }) {
             projectId: task.projectId,
             sectionId: task.sectionId,
             sectionName: task.sectionName,
+            // Todoist's parent_id hierarchy is authoritative the same way
+            // section/project membership is — a task moved under a
+            // different parent (or promoted to top-level) in Todoist
+            // should reflect that here on re-import too.
+            parentId: task.parentId ?? null,
             labelIds: resolvedLabelIds,
-            subtasks: task.subtasks,
             updatedAt: task.updatedAt,
           });
         } else {
@@ -1507,11 +1644,9 @@ export function SchedulerProvider({ children }) {
       deleteTask,
       toggleTaskLock,
       completeTask,
-      addSubtask,
-      renameSubtask,
-      toggleSubtask,
-      removeSubtask,
-      updateSubtask,
+      uncompleteTask,
+      addComment,
+      deleteComment,
       getOrCreateLabelIds,
       renameLabel,
       deleteLabel,
@@ -1577,11 +1712,9 @@ export function SchedulerProvider({ children }) {
       deleteTask,
       toggleTaskLock,
       completeTask,
-      addSubtask,
-      renameSubtask,
-      toggleSubtask,
-      removeSubtask,
-      updateSubtask,
+      uncompleteTask,
+      addComment,
+      deleteComment,
       getOrCreateLabelIds,
       renameLabel,
       deleteLabel,

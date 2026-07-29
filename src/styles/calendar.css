@@ -374,6 +374,11 @@
   margin-top: 1px;
 }
 
+/* Base look for a writable Google-sourced event — a solid card (not the
+   diagonal-stripe/dashed "blocked out" texture this used to have) with a
+   colored left border, so it reads as a clickable item like .cal-block
+   rather than an inert placeholder. Hover/focus elevation mirrors
+   .cal-block:hover's box-shadow/z-index bump for the same reason. */
 .cal-event {
   position: absolute;
   left: 3px;
@@ -381,6 +386,32 @@
   border-radius: 6px;
   padding: 4px 7px;
   font-size: 11px;
+  background: var(--color-bg-surface-raised);
+  border-left: 3px solid var(--color-accent-border);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.12s ease;
+  overflow: hidden;
+}
+
+.cal-event:hover {
+  box-shadow: var(--shadow-card);
+  z-index: 5;
+}
+
+.cal-event:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: 1px;
+  z-index: 5;
+}
+
+/* Read-only (the user only has reader/freeBusyReader access to this event's
+   calendar on Google, e.g. a subscribed lecture timetable) — still clickable
+   to view details, so it keeps the hover/focus feedback above, but a
+   lighter diagonal texture is a legitimate "look but don't touch" cue here
+   specifically (unlike the plain base style, which should read as fully
+   interactive). */
+.cal-event.is-readonly {
   background: repeating-linear-gradient(
     45deg,
     var(--color-bg-surface-hover),
@@ -388,14 +419,17 @@
     var(--color-bg-surface) 4px,
     var(--color-bg-surface) 8px
   );
-  border: 1px dashed var(--color-border-strong);
+  border-left-style: dashed;
   color: var(--color-text-secondary);
-  overflow: hidden;
+  /* Not draggable (WeekView disables drag/resize for read-only events), so
+     override .cal-event-item's grab cursor — still clickable, hence pointer
+     rather than default/not-allowed. */
+  cursor: pointer;
 }
 
 .cal-event.free-time {
   opacity: 0.5;
-  border-style: dotted;
+  border-left-style: dotted;
 }
 
 .cal-event.manual {
@@ -407,7 +441,7 @@
     var(--color-bg-surface) 4px,
     var(--color-bg-surface) 8px
   );
-  border-color: var(--color-danger);
+  border-left-color: var(--color-danger);
   color: var(--color-text-primary);
 }
 
@@ -634,7 +668,19 @@
   text-align: left;
 }
 
+/* Writable Google-sourced event chip — solid/accent-bordered like a task
+   chip so it reads as clickable, matching the .cal-event restyle in week/day
+   view rather than the old dashed "blocked out" look. */
 .month-chip-event {
+  border-left-color: var(--color-accent-border);
+  color: var(--color-text-primary);
+}
+
+/* Read-only (reader/freeBusyReader access only, e.g. a subscribed lecture
+   timetable) — still clickable to view details, but the dashed border +
+   muted text is the same "look but don't touch" cue .cal-event.is-readonly
+   uses in week/day view. */
+.month-chip-event.is-readonly {
   border-left-style: dashed;
   border-left-color: var(--color-border-strong);
   color: var(--color-text-secondary);

@@ -102,6 +102,24 @@ function AppShell() {
     setTab('tasks');
   }
 
+  // BoardView can't render the "All Tasks" pseudo-project (no single
+  // project's Sections to build columns from), so the moment it mounts (or
+  // its project gets deleted out from under it) while All Tasks is active,
+  // it auto-picks a real project via this callback instead of `selectProject`
+  // directly (see BoardView's own resolve effect). That auto-pick is a
+  // *consequence* of the user already being on Board, unlike a normal
+  // project switch (sidebar/search/project dropdown) — so unlike
+  // `selectProject`, this one also seeds the resolved project's remembered
+  // view as 'board'. Without that seed, `taskView` (looked up per-project
+  // from `taskViewByProject`) falls back to its 'list' default for a project
+  // with no stored preference yet, and the very click that just opened
+  // Board would silently revert to List a beat later, once this effect
+  // commits.
+  function resolveBoardProject(projectId) {
+    setTaskViewByProject((prev) => ({ ...prev, [projectId]: 'board' }));
+    selectProject(projectId);
+  }
+
   // Auto-launch the guided tour for a brand-new visitor, once. Anyone who's
   // already seen it (or dismissed it) only gets it again via the Help icon
   // or Settings' "Replay tour" button (see openTour below).
@@ -193,6 +211,7 @@ function AppShell() {
               onChangeView={setTaskView}
               activeProjectId={activeProjectId}
               onChangeActiveProject={selectProject}
+              onResolveBoardProject={resolveBoardProject}
               onOpenManageProjects={openManageProjects}
               showManageProjectsButton={!isMobile}
             />

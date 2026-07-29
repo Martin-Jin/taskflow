@@ -8,7 +8,7 @@
  * data-theme on <html> so CSS in global.css can key off it.
  */
 
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useAuth } from './AuthContext';
 import { pullUserData, pushUserData, subscribeUserData } from '../services/firestoreSync';
@@ -19,6 +19,17 @@ export function ThemeProvider({ children }) {
   const [theme, setTheme] = usePersistedState('theme', 'dark');
   const { user } = useAuth();
 
+  // Guards the push effect below against racing the initial pull-on-sign-in
+  // — without it, a device reloading with a stale local theme pushes that
+  // value up (with no debounce, so nothing slows it down) before the pull
+  // has had a chance to apply whatever another device most recently set,
+  // silently reverting the other device's choice with older data. State
+  // (not a ref) so flipping it back to true always re-runs the push effect
+  // below even when the pull didn't itself change `theme` (e.g. a brand
+  // new account with no `theme` field synced yet) — same fix as
+  // SchedulerContext's `initialPullDoneRef`, see its comment there.
+  const [initialPullDone, setInitialPullDone] = useState(false);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
@@ -26,9 +37,14 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    pullUserData(user.uid).then((remote) => {
-      if (!cancelled && remote && 'theme' in remote) setTheme(remote.theme);
-    });
+    setInitialPullDone(false);
+    pullUserData(user.uid)
+      .then((remote) => {
+        if (!cancelled && remote && 'theme' in remote) setTheme(remote.theme);
+      })
+      .finally(() => {
+        if (!cancelled) setInitialPullDone(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -53,8 +69,9 @@ export function ThemeProvider({ children }) {
 
   useEffect(() => {
     if (!user) return;
+    if (!initialPullDone) return; // wait for this sign-in's pull to settle first — see initialPullDone's comment
     pushUserData(user.uid, { theme }).catch((err) => console.error('[ThemeContext] Cloud sync failed to save', err));
-  }, [user, theme]);
+  }, [user, theme, initialPullDone]);
 
   function toggleTheme() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));

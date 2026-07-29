@@ -30,13 +30,15 @@
  *      small so an un-estimated task doesn't eat a large, wrong chunk of
  *      calendar capacity; the user can always lengthen it after import.
  *
- * SUBTASKS: Todoist tasks with a `parent_id` are grouped under their parent
- * as `subtasks` (a simple checklist) rather than surfaced as independent,
- * schedulable Tasks — matching Todoist's own grouping and keeping the
- * scheduling engine from ever allocating time to a subtask on its own.
- * Todoist allows nesting subtasks arbitrarily deep; anything below the
- * first level is flattened up onto the nearest top-level ancestor rather
- * than dropped (see `fetchTasks`'s `resolveTopAncestorId`).
+ * SUBTASKS: Todoist tasks with a `parent_id` become standalone Tasks here,
+ * just like any top-level task, linked back to their parent via `parentId`
+ * (see types/index.js). They're only schedulable once they carry their own
+ * `dueDate` — see allocator.js's prioritizeTasks — so an undated sub-task
+ * shows up in the Tasks/Board UI (nested under its parent) without ever
+ * being allocated calendar time. Todoist allows nesting subtasks arbitrarily
+ * deep; anything below the first level is flattened onto the nearest
+ * top-level ancestor's `parentId` rather than preserving the intermediate
+ * grouping (see `fetchTasks`'s `resolveTopAncestorId`).
  *
  * TASKS WITH NO DUE DATE: previously excluded entirely on import, since the
  * allocator can't compute a planning window for them. They are now KEPT —
@@ -119,9 +121,9 @@ function resolveDurationHours(raw) {
  * Normalize a raw Todoist v1 task object into our internal Task shape.
  * @param {Object} raw - Raw task object from the Todoist v1 API.
  * @param {Map<string,string>} sectionsById - Resolved section id -> name lookup.
- * @param {Array<{id:string,title:string,isCompleted:boolean}>} [subtasks] - Pre-grouped child items.
+ * @param {string} [parentId] - This task's resolved top-level-ancestor TaskFlow id, if it's a Todoist sub-item.
  */
-function normalizeTodoistTask(raw, sectionsById, subtasks) {
+function normalizeTodoistTask(raw, sectionsById, parentId) {
   const durationHours = resolveDurationHours(raw);
   // See module doc comment: don't trust due.is_recurring in isolation.
   const isRecurring = isRecurringDue(raw.due);
@@ -162,7 +164,7 @@ function normalizeTodoistTask(raw, sectionsById, subtasks) {
     maxChunkHours: Math.min(4, durationHours),
     createdAt: raw.added_at || raw.created_at || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    subtasks: subtasks || [],
+    parentId,
   };
 }
 
@@ -235,14 +237,17 @@ export async function fetchSections(apiToken) {
 }
 
 /**
- * Fetch active (incomplete) tasks from Todoist, grouping any sub-items
- * (tasks with a `parent_id`) under their parent as `subtasks` rather than
- * returning them as their own top-level Task.
+ * Fetch active (incomplete) tasks from Todoist as one flat array — Todoist
+ * sub-items (tasks with a `parent_id`) are returned as their own standalone
+ * Task entries, linked back to their top-level ancestor via `parentId`,
+ * rather than nested/grouped under their parent (see module doc comment).
  *
  * Tasks with NO due date are now included (previously excluded — see the
  * module doc comment above for why). They show up normally in the Tasks
  * list and Board view; the scheduling engine simply never places them on
- * the calendar, since it has no planning window to work with.
+ * the calendar, since it has no planning window to work with (and a
+ * sub-task specifically needs its own due date to be schedulable at all —
+ * see allocator.js's prioritizeTasks).
  *
  * @param {string|null} apiToken - Personal API token. If null/empty, mock data is used.
  * @param {Map<string,string>} [sectionsById] - Pre-fetched section id -> name map.
@@ -256,17 +261,14 @@ export async function fetchTasks(apiToken, sectionsById) {
 
   const rawTasks = await fetchAllPages('/tasks', apiToken);
   const sectionMap = sectionsById || new Map();
-
-  const parents = rawTasks.filter((t) => !t.parent_id);
-  const children = rawTasks.filter((t) => t.parent_id);
   const byId = new Map(rawTasks.map((t) => [t.id, t]));
 
   // A child's parent_id may itself point at another child (a sub-subtask,
   // or deeper) rather than a top-level task. Walk up the chain to find the
   // nearest top-level ancestor so nothing gets silently dropped — Todoist
-  // only surfaces one level of subtasks here (see module doc comment), so
-  // deeper nesting is flattened onto that top-level ancestor rather than
-  // preserving the intermediate grouping.
+  // only surfaces one level of nesting here (see module doc comment), so
+  // deeper nesting is flattened onto that top-level ancestor's `parentId`
+  // rather than preserving the intermediate grouping.
   function resolveTopAncestorId(task) {
     const visited = new Set();
     let current = task;
@@ -277,18 +279,8 @@ export async function fetchTasks(apiToken, sectionsById) {
     return current.id;
   }
 
-  const subtasksByParent = new Map();
-  for (const child of children) {
-    const topAncestorId = resolveTopAncestorId(child);
-    const list = subtasksByParent.get(topAncestorId) || [];
-    list.push({
-      id: `todoist_${child.id}`,
-      todoistId: String(child.id),
-      title: child.content,
-      isCompleted: !!child.checked || !!child.is_completed,
-    });
-    subtasksByParent.set(topAncestorId, list);
-  }
-
-  return parents.map((t) => normalizeTodoistTask(t, sectionMap, subtasksByParent.get(t.id)));
+  return rawTasks.map((raw) => {
+    const parentId = raw.parent_id ? `todoist_${resolveTopAncestorId(raw)}` : undefined;
+    return normalizeTodoistTask(raw, sectionMap, parentId);
+  });
 }

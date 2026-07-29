@@ -1,7 +1,7 @@
 /**
  * useModalA11y — shared keyboard/focus behavior for the app's modals
  * (AddTaskModal, TaskDetailModal, BlockDetailModal, EventDetailModal,
- * SubtaskDetailModal, GuidedTour). None of these trapped focus or
+ * GuidedTour). None of these trapped focus or
  * closed on Escape before, so Tab could leak out to the page behind the
  * overlay and screen readers had no dialog context — this centralizes the
  * fix instead of repeating it six times.
@@ -16,7 +16,8 @@ import { useEffect, useRef } from 'react';
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// Modals can nest (SubtaskDetailModal inside TaskDetailModal). Every open
+// Modals can nest (a sub-task's TaskDetailModal opened on top of its
+// parent's own instance). Every open
 // modal's close handler lives here in mount order, so Escape can always
 // resolve to "close only the topmost one" instead of every open handler
 // racing to interpret the same keypress.

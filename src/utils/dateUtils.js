@@ -143,3 +143,18 @@ export function formatDisplayDate(iso) {
     day: 'numeric',
   });
 }
+
+/**
+ * Format a full ISO datetime (unlike the other formatters here, this takes a
+ * timestamp with a time component — e.g. Comment.createdAt — not a bare
+ * YYYY-MM-DD, so it goes through `new Date()` rather than `fromISODate`).
+ */
+export function formatDisplayDateTime(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}

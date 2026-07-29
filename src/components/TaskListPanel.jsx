@@ -3,9 +3,19 @@
  * (lock, complete, delete) and an "Add task" entry point. Lives in the main
  * content area alongside the calendar on the Tasks tab.
  *
- * Subtasks are never listed as their own rows here — they're rolled up
- * into a small progress indicator ("2/3 subtasks") under their parent, and
- * fully editable from the task's detail modal, matching Todoist's grouping.
+ * SUB-TASKS: a task with `parentId` set is a real row here too, nested
+ * directly under its parent (then its own children, to arbitrary depth),
+ * indented per depth and rendered flatter (no card background) so the
+ * hierarchy reads as a checklist rather than a stack of equal-weight cards
+ * — see `renderTaskRow`'s `depth` param and `childrenByParentId` below. A
+ * parent with children gets a collapse/expand chevron (default expanded;
+ * collapse state is local/unpersisted). Only *top-level* tasks (`!task.
+ * parentId`) go through the project/tab/search filtering and Overdue/
+ * Today/Upcoming grouping below — a child is always rendered under its
+ * parent regardless of the active filter tab, matching how TaskDetailModal
+ * always lists a task's full child set regardless of its own hide-completed
+ * toggle. (Board/Gantt keep the older rolled-up-badge presentation instead —
+ * see BoardView.jsx/GanttChart.jsx.)
  *
  * LIVE-UPDATING EDIT MODAL: we track only the *id* of the task being
  * edited, not a snapshot of the task object itself. The actual task object
@@ -18,7 +28,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Repeat, Wind, SquareCheck, Ban, Check, ExternalLink, FolderKanban } from 'lucide-react';
+import { Plus, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
@@ -55,22 +65,53 @@ export default function TaskListPanel({
   onChangeView,
   activeProjectId,
   onChangeActiveProject,
+  onResolveBoardProject,
   onOpenManageProjects,
   showManageProjectsButton = false,
 }) {
-  const { tasks, labels, projects, completeTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
+  const { tasks, labels, projects, completeTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filter, setFilter] = useState('active'); // active | completed | all | noDueDate
+  // Ids of parent tasks whose children are currently hidden — collapsed is
+  // opt-in per row, so anything not in this set renders expanded (the
+  // default), and it's plain local state rather than persisted.
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [isRenamingProject, setIsRenamingProject] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
-  const footerActions = onOpenManageProjects
-    ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
-    : undefined;
+  // On desktop, showManageProjectsButton renders a standalone "Manage
+  // projects" button right next to this dropdown already, so the footer
+  // action here would just be a redundant second way to do the same thing —
+  // only include it when that standalone button isn't present (mobile).
+  const footerActions =
+    onOpenManageProjects && !showManageProjectsButton
+      ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
+      : undefined;
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
+  // Direct children (parentId chain) per task id — the basis for the
+  // recursive nested rows below (renderTaskRow reads this at every depth).
+  const childrenByParentId = useMemo(() => {
+    const map = new Map();
+    for (const t of tasks) {
+      if (!t.parentId) continue;
+      const siblings = map.get(t.parentId) || [];
+      siblings.push(t);
+      map.set(t.parentId, siblings);
+    }
+    return map;
+  }, [tasks]);
+
+  function toggleCollapsed(taskId) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }
   const activeProject = activeProjectId === ALL_TASKS_PROJECT_ID ? null : projects.find((p) => p.id === activeProjectId);
 
   // If activeProjectId points at a project that no longer exists (e.g.
@@ -88,18 +129,29 @@ export default function TaskListPanel({
   );
 
   const visibleTasks = useMemo(() => {
-    let list = filterTasksByProject(tasks, activeProjectId);
+    // Sub-tasks (parentId set) never go through this top-level filter/sort —
+    // they're always rendered nested under their own parent instead (see
+    // childrenByParentId/renderTaskRow), unaffected by which tab/search is
+    // active up here (matching TaskDetailModal, which always lists a task's
+    // full child set regardless of its own filters).
+    let list = filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId);
     // "Active" means scheduled: not completed and has a due date (the
     // scheduler only ever places blocks for tasks with a due date — see
     // the "Won't be auto-scheduled without a due date" hint in
-    // TaskDetailModal). "All" is genuinely everything in the project,
-    // dated or not, completed or not — "No due date" is just a quick
+    // TaskDetailModal). "All" is everything *not completed* in the
+    // project, dated or not — completed tasks live only under their own
+    // "Completed" tab (auto-deleted 30 days after completion, see
+    // SchedulerContext's retention sweep). "No due date" is just a quick
     // filter onto a subset of what "All" already contains, not a disjoint
     // bucket (an undated task should never look like it vanished from a
     // project just because it has no date).
-    if (filter === 'active') list = list.filter((t) => !t.isCompleted && !!t.dueDate);
-    if (filter === 'completed') list = list.filter((t) => t.isCompleted);
-    if (filter === 'noDueDate') list = list.filter((t) => !t.dueDate);
+    if (filter === 'completed') {
+      list = list.filter((t) => t.isCompleted);
+    } else {
+      list = list.filter((t) => !t.isCompleted);
+      if (filter === 'active') list = list.filter((t) => !!t.dueDate);
+      if (filter === 'noDueDate') list = list.filter((t) => !t.dueDate);
+    }
     list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
   }, [tasks, activeProjectId, filter, searchQuery, labels]);
@@ -153,90 +205,129 @@ export default function TaskListPanel({
     ].filter((group) => group.tasks.length > 0);
   }, [visibleTasks, showGroups]);
 
-  function renderTaskRow(task) {
-    const subtaskTotal = task.subtasks?.length || 0;
-    const subtaskDone = task.subtasks?.filter((s) => s.isCompleted).length || 0;
+  /**
+   * Renders a task row and, recursively, every descendant nested beneath it
+   * (see childrenByParentId) — `depth` drives both the indent (a
+   * `--space-5` multiple, matching this codebase's spacing scale) and
+   * whether the row gets the full `.card` container (depth 0, top-level) or
+   * the flatter `.task-row-child` styling (depth > 0, a sub-task) so the
+   * hierarchy reads as a checklist rather than a stack of equal-weight cards.
+   */
+  function renderTaskRow(task, depth = 0) {
+    const children = childrenByParentId.get(task.id) || [];
+    const hasChildren = children.length > 0;
+    const isCollapsed = collapsedIds.has(task.id);
     return (
-      <div key={task.id} className="card task-row" onClick={() => setEditingTaskId(task.id)}>
-        <button
-          className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!task.isCompleted) completeTask(task.id);
-          }}
-          disabled={task.isCompleted}
-          title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-          aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
+      <React.Fragment key={task.id}>
+        <div
+          className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
+          style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
+          onClick={() => setEditingTaskId(task.id)}
         >
-          {task.isCompleted && <Check size={12} aria-hidden="true" />}
-        </button>
-        <div className="task-row-main">
-          <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
-            {task.link ? (
-              <a
-                href={task.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="task-title-link"
-                onClick={(e) => e.stopPropagation()}
-                title={`Open link: ${task.link}`}
-              >
-                {task.title}
-                <ExternalLink size={11} aria-hidden="true" />
-              </a>
-            ) : (
-              task.title
-            )}
-            {task.isRecurring && (
-              <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
-            )}
-            {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: 'var(--color-text-secondary)',
-              marginTop: 2,
-              display: 'flex',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: 3,
+          {hasChildren ? (
+            <button
+              type="button"
+              className="btn btn-icon task-row-collapse"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleCollapsed(task.id);
+              }}
+              aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
+              aria-expanded={!isCollapsed}
+            >
+              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            </button>
+          ) : (
+            depth > 0 && <span className="task-row-collapse-spacer" aria-hidden="true" />
+          )}
+          <button
+            className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!task.isCompleted) completeTask(task.id);
             }}
+            disabled={task.isCompleted}
+            title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+            aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
           >
-            <span>
-              {formatHours(task.remainingHours)} remaining of {formatHours(task.estimatedHours)}
-              {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
-              {task.sectionName ? ` · ${task.sectionName}` : ''}
-            </span>
-            {subtaskTotal > 0 && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                {' · '}
-                <SquareCheck size={12} />
-                {subtaskDone}/{subtaskTotal} subtasks
+            {task.isCompleted && <Check size={12} aria-hidden="true" />}
+          </button>
+          <div className="task-row-main">
+            <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
+              {task.link ? (
+                <a
+                  href={task.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="task-title-link"
+                  onClick={(e) => e.stopPropagation()}
+                  title={`Open link: ${task.link}`}
+                >
+                  {task.title}
+                  <ExternalLink size={11} aria-hidden="true" />
+                </a>
+              ) : (
+                task.title
+              )}
+              {task.isRecurring && (
+                <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
+              )}
+              {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-secondary)',
+                marginTop: 2,
+                display: 'flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 3,
+              }}
+            >
+              <span>
+                {formatHours(task.remainingHours)} remaining of {formatHours(task.estimatedHours)}
+                {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
+                {task.sectionName ? ` · ${task.sectionName}` : ''}
               </span>
-            )}
-            {!task.isCompleted && !areDependenciesMet(task, taskById) && (
-              <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                {' · '}
-                <Ban size={12} />
-                blocked by dependency
-              </span>
-            )}
-          </div>
-          <div className="task-row-badges">
-            <span className={`badge ${task.priority}`}>{task.priority}</span>
-            {(task.labelIds || []).map((labelId) => {
-              const label = labelById.get(labelId);
-              if (!label) return null;
-              return (
-                <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
-                  {label.name}
+              {!task.isCompleted && !areDependenciesMet(task, taskById) && (
+                <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  {' · '}
+                  <Ban size={12} />
+                  blocked by dependency
                 </span>
-              );
-            })}
+              )}
+            </div>
+            <div className="task-row-badges">
+              <span className={`badge ${task.priority}`}>{task.priority}</span>
+              {(task.labelIds || []).map((labelId) => {
+                const label = labelById.get(labelId);
+                if (!label) return null;
+                return (
+                  <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
+                    {label.name}
+                  </span>
+                );
+              })}
+            </div>
           </div>
+          {task.isCompleted && (
+            <button
+              type="button"
+              className="btn btn-icon task-row-restore"
+              onClick={(e) => {
+                e.stopPropagation();
+                uncompleteTask(task.id);
+              }}
+              title="Restore to active"
+              aria-label={`Restore ${task.title}`}
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
         </div>
-      </div>
+        {hasChildren && !isCollapsed && children.map((child) => renderTaskRow(child, depth + 1))}
+      </React.Fragment>
     );
   }
 
@@ -312,7 +403,7 @@ export default function TaskListPanel({
         </div>
       )}
 
-      {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onChangeActiveProject} />}
+      {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onResolveBoardProject} />}
       {view === 'gantt' && <GanttChart />}
 
       {view === 'list' && (

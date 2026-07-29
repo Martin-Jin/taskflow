@@ -99,6 +99,10 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
   const isMobile = useIsMobile();
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState(null);
+  // True only while a scroll/resize-driven reposition is in flight — see the
+  // tracking effect below. Suppresses the spotlight's CSS transition for
+  // those updates (an animated move to a brand-new step still gets it).
+  const [isTracking, setIsTracking] = useState(false);
   // Corrected to the tooltip's real rendered height below, once it's known —
   // starts as a guess so the very first position computation has something
   // to work with before that measurement effect has run.
@@ -135,6 +139,7 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       const el = document.querySelector(step.selector);
       if (el) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setIsTracking(false);
         setRect(el.getBoundingClientRect());
       } else if (attempts < LOCATE_MAX_ATTEMPTS) {
         attempts += 1;
@@ -144,6 +149,7 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       }
     }
     setRect(null);
+    setIsTracking(false);
     locate();
     return () => {
       cancelled = true;
@@ -157,20 +163,31 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
   // `setRect` (and re-render) per scroll event.
   useEffect(() => {
     let frameRequested = false;
+    let idleTimer;
     function reposition() {
       if (frameRequested) return;
       frameRequested = true;
       requestAnimationFrame(() => {
         frameRequested = false;
         const el = document.querySelector(step.selector);
-        if (el) setRect(el.getBoundingClientRect());
+        if (el) {
+          setIsTracking(true);
+          setRect(el.getBoundingClientRect());
+        }
       });
+      // Scroll events fire in bursts; only flip the tracking flag back off
+      // once a burst has actually gone quiet, so the transition stays
+      // suppressed for the whole gesture rather than flickering back on
+      // between frames.
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => setIsTracking(false), 150);
     }
     window.addEventListener('resize', reposition);
     window.addEventListener('scroll', reposition, true);
     return () => {
       window.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition, true);
+      clearTimeout(idleTimer);
     };
   }, [step.selector]);
 
@@ -207,7 +224,7 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       {!rect && <div className="guided-tour-dim" />}
       {rect && (
         <div
-          className="guided-tour-spotlight"
+          className={`guided-tour-spotlight ${isTracking ? 'guided-tour-spotlight--tracking' : ''}`}
           style={{
             top: rect.top - SPOTLIGHT_PADDING,
             left: rect.left - SPOTLIGHT_PADDING,

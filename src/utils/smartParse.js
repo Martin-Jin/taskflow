@@ -21,8 +21,8 @@
  * tag is just created on save).
  *
  * Detection runs in sequence — link, due date, recurrence, priority,
- * duration, "can run unattended", dependency, project, then labels —
- * stripping each match out of the working text
+ * duration, "can run unattended", "on the day"/enforce due date, dependency,
+ * project, then labels — stripping each match out of the working text
  * before the next detector runs. This keeps the dependency fragment (which
  * captures "everything after the trigger word") free of unrelated phrases
  * that were typed after it, e.g. "after Design review tomorrow p2" leaves
@@ -90,6 +90,18 @@ function findPriorityPhrase(text) {
 /** Bare "unattended" mention — no symbol needed, matches useSmartTaskTitle's isPassive field. */
 function findUnattendedPhrase(text) {
   const m = text.match(/\bunattended\b/i);
+  if (!m) return null;
+  return { matchedText: m[0], index: m.index };
+}
+
+/**
+ * A handful of plain-English ways to say "this must happen ON the due date,
+ * not early" — matches the allocator's `enforceDueDate` flag (see
+ * allocator.js: it collapses the whole scheduling window onto the due date
+ * itself instead of allowing earlier placement).
+ */
+function findEnforceDueDatePhrase(text) {
+  const m = text.match(/\b(?:on (?:the|that) day|hard deadline|strict(?:ly)? due|no earlier)\b/i);
   if (!m) return null;
   return { matchedText: m[0], index: m.index };
 }
@@ -187,6 +199,7 @@ function findLabelPhrases(text) {
  *     dueDate?: {iso: string, matchedText: string},
  *     recurrence?: {rule: {unit: string, count: number}, recurrenceString: string, matchedText: string},
  *     priority?: {level: string, matchedText: string},
+ *     enforceDueDate?: {matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
  *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
  *     labels?: Array<{name: string, matchedText: string}>,
@@ -243,6 +256,12 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (unattendedMatch) {
     detected.unattended = unattendedMatch;
     working = removeMatch(working, unattendedMatch.matchedText);
+  }
+
+  const enforceDueDateMatch = findEnforceDueDatePhrase(working);
+  if (enforceDueDateMatch) {
+    detected.enforceDueDate = enforceDueDateMatch;
+    working = removeMatch(working, enforceDueDateMatch.matchedText);
   }
 
   const depMatch = findDependencyPhrase(working, existingTasks);

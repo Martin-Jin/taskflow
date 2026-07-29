@@ -45,7 +45,10 @@ export default function GanttChart() {
   const today = toISODate(new Date());
   const days = useMemo(() => dateRange(today, HORIZON_DAYS), [today]);
 
-  const activeTasks = useMemo(() => tasks.filter((t) => !t.isCompleted), [tasks]);
+  // Sub-tasks (parentId set) are rolled up into their parent elsewhere (see
+  // BoardView's progress badge) rather than getting their own row here —
+  // Gantt has no such badge, so they're simply excluded from this flat list.
+  const activeTasks = useMemo(() => tasks.filter((t) => !t.isCompleted && !t.parentId), [tasks]);
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
   // Group once instead of re-filtering the full `blocks` array per task

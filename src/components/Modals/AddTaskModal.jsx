@@ -39,6 +39,7 @@ import {
   Repeat,
   Wind,
   CalendarClock,
+  CalendarCheck,
   CalendarX2,
   Flag,
   Link2,
@@ -99,6 +100,8 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedDependencies, setHasEditedDependencies] = useState(false);
   const [isPassive, setIsPassive] = useState(false);
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
+  const [enforceDueDate, setEnforceDueDate] = useState(false);
+  const [hasEditedEnforceDueDate, setHasEditedEnforceDueDate] = useState(false);
   const [earliestDate, setEarliestDate] = useState('');
   const [labelIds, setLabelIds] = useState([]);
   const [error, setError] = useState('');
@@ -170,6 +173,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         apply: () => setIsPassive(true),
         revert: () => setIsPassive(false),
       },
+      enforceDueDate: {
+        isUntouched: () => !hasEditedEnforceDueDate,
+        apply: () => setEnforceDueDate(true),
+        revert: () => setEnforceDueDate(false),
+      },
       dependency: {
         isUntouched: () => !hasEditedDependencies,
         apply: (match) => {
@@ -210,6 +218,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
     smartDetected.estimatedHours && { type: 'estimatedHours', icon: Clock, label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}` },
     smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
+    smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
     smartDetected.dependency &&
       (smartDetected.dependency.task
         ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
@@ -276,6 +285,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       sectionName: section ? section.name : null,
       dependsOn,
       isPassive,
+      enforceDueDate: enforceDueDate && !!dueDate,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
     });
@@ -317,7 +327,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         {error && <p className="form-error">{error}</p>}
 
         <p className="form-hint" style={{ marginTop: -6, marginBottom: 10, paddingLeft: 7 }}>
-          Smart parse: links, due dates, p1–p4, duration, "unattended", #project, @tag, "every month"
+          Smart parse: links, due dates, p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
         </p>
 
         <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
@@ -345,7 +355,9 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           </button>
           <button
             type="button"
-            className={`addtask-pill ${isRecurring || isPassive || !!earliestDate || dependsOn.length > 0 ? 'is-set' : ''}`}
+            className={`addtask-pill ${
+              isRecurring || isPassive || enforceDueDate || !!earliestDate || dependsOn.length > 0 ? 'is-set' : ''
+            }`}
             onClick={() => setMoreOpen((v) => !v)}
             aria-label="More options"
             title="More options"
@@ -426,7 +438,10 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 type="number"
                 min="0.0833"
                 step="0.0833"
-                value={estimatedHours}
+                // Round only unedited numeric values (defaults/smart-parse) to avoid
+                // floating-point noise like "0.0833333333333333"; user-typed strings
+                // pass through untouched so typing a decimal point isn't clobbered.
+                value={typeof estimatedHours === 'number' ? Math.round(estimatedHours * 10000) / 10000 : estimatedHours}
                 onChange={(e) => {
                   setHasEditedHours(true);
                   setEstimatedHours(e.target.value);
@@ -485,6 +500,26 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 </div>
               )}
               {!dueDate && <p className="form-hint">Needs a due date first.</p>}
+            </DetailField>
+
+            <DetailField icon={CalendarCheck} label="Enforce due date">
+              <label className="form-checkbox-row" style={{ cursor: dueDate ? 'pointer' : 'not-allowed' }}>
+                <input
+                  type="checkbox"
+                  checked={enforceDueDate}
+                  disabled={!dueDate}
+                  onChange={(e) => {
+                    setHasEditedEnforceDueDate(true);
+                    setEnforceDueDate(e.target.checked);
+                  }}
+                />
+                Must be done on due date
+              </label>
+              <p className="form-hint">
+                {dueDate
+                  ? "Task won't be scheduled earlier — all remaining work is forced onto the due date."
+                  : 'Set a due date first to enable this.'}
+              </p>
             </DetailField>
 
             {dependencyOptions.length > 0 && (

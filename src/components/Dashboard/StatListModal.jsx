@@ -8,9 +8,9 @@ import { useModalA11y } from '../../hooks/useModalA11y';
  * "Overdue") — parameterized by title/items/emptyMessage/renderItem so both
  * tiles share one modal shell instead of duplicating the overlay boilerplate.
  * Follows the same open/close convention as the app's other modals (see
- * TaskDetailModal/SubtaskDetailModal): parent owns open/close via a nullable
- * useState, this component just calls useAnimatedUnmount/useModalA11y and
- * reuses the shared .modal-overlay/.modal classes.
+ * TaskDetailModal): parent owns open/close via a nullable useState, this
+ * component just calls useAnimatedUnmount/useModalA11y and reuses the
+ * shared .modal-overlay/.modal classes.
  */
 export default function StatListModal({ title, items, emptyMessage, renderItem, onClose }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);

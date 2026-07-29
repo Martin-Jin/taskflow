@@ -2,17 +2,23 @@
  * TaskDetailModal — the "task page" edit surface, laid out Todoist-style: a
  * title header, a free-text main column (description + sub-tasks), and a
  * compact metadata sidebar (Project, Date, Priority, Labels, ...). Lets the
- * user edit every tracked property of a Task plus manage its subtasks (add
- * / rename / check off / remove / open) — each sub-task is a real,
- * independently-editable item (SubtaskDetailModal), though — per the
- * Subtask typedef — it's still never split out into its own schedulable
- * Task; editing one here has no effect on the scheduling engine.
+ * user edit every tracked property of a Task plus manage its sub-tasks (add
+ * / check off / delete / open).
+ *
+ * SUB-TASKS ARE JUST TASKS: a sub-task is a normal Task row with `parentId`
+ * pointing at this task (see types/index.js) — there's no separate Subtask
+ * type or modal anymore. The "Sub-tasks" section below lists this task's
+ * direct children (`tasks.filter(t => t.parentId === task.id)`) and opens
+ * the SAME TaskDetailModal, nested on top of this one, when a child's title
+ * is clicked (mirroring how the old SubtaskDetailModal opened on top of this
+ * modal — the smallest change given this modal's existing structure, and it
+ * means a sub-task gets every field a normal task has, including the
+ * notes-link handling below, for free — the whole reason for this change).
  *
  * Every field here that has a Todoist equivalent is pushed back to Todoist
- * immediately on Save (for the task itself) or immediately on each action
- * (for subtasks, which sync one at a time as you add/check/remove them) —
- * see SchedulerContext for the sync logic. Fields with no Todoist
- * equivalent (lock state, min/max chunk hours, Labels) stay app-only.
+ * immediately on Save — see SchedulerContext for the sync logic. Fields
+ * with no Todoist equivalent (lock state, min/max chunk hours, Labels) stay
+ * app-only.
  *
  * SMART PARSE: typing "#project" or "@tag" into the title is picked up the
  * same way as the existing due-date/priority/dependency shorthands (see
@@ -69,9 +75,14 @@ import {
   MoreHorizontal,
   Trash2,
   Link as LinkIcon,
+  Paperclip,
+  File as FileIcon,
+  Send,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
-import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
+import { useAuth } from '../../context/AuthContext';
+import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
+import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
 import { parseRecurrenceRule, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { getIneligibleDependencyIds } from '../../utils/dependencyUtils';
@@ -89,12 +100,44 @@ import DetailField from '../Common/DetailField';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
 import { faviconUrl } from '../Dashboard/pinnedLinksModel';
-import SubtaskDetailModal from './SubtaskDetailModal';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
+
+// Default estimated hours for a quick-added sub-task — matches
+// AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
+// an un-estimated sub-task doesn't eat an oversized chunk of capacity
+// either (moot until it gets a due date — see allocator.js's
+// prioritizeTasks — but keeps the two "new task" entry points consistent).
+const DEFAULT_SUBTASK_ESTIMATED_HOURS = 5 / 60;
+
+// Smart-parsed link phrases (e.g. "check out example.com") get stripped out
+// of notes text on load/save so the raw phrase doesn't linger once it's
+// been turned into a link pill (see notesLinkMatches/notes-link-pill below).
+function stripNotesLinks(text) {
+  let next = text || '';
+  findLinkPhrases(next).forEach((match) => {
+    next = stripMatchedText(next, match.matchedText);
+  });
+  return next;
+}
+
+// Once a link phrase is stripped out of notes, the raw text alone can never
+// reproduce it again on reload — so the matches also get persisted to
+// task.noteLinks (see commitChanges). Loading favors freshly re-detected
+// matches (which carry a text `index`, needed for the in-textarea highlight)
+// but falls back to the persisted ones for links whose phrase is already gone
+// from the notes text, keyed by url so a link isn't duplicated if it somehow
+// still appears in both.
+function getInitialNoteLinks(task) {
+  const detected = findLinkPhrases(task.notes || '');
+  const byUrl = new Map((task.noteLinks || []).map((m) => [m.url, m]));
+  detected.forEach((m) => byUrl.set(m.url, m));
+  return [...byUrl.values()];
+}
 
 export default function TaskDetailModal({ task, onClose }) {
   const {
     tasks,
+    addTask,
     updateTask,
     deleteTask,
     toggleTaskLock,
@@ -102,24 +145,18 @@ export default function TaskDetailModal({ task, onClose }) {
     projects,
     labels,
     getOrCreateLabelIds,
-    addSubtask,
-    toggleSubtask,
-    removeSubtask,
     completeTask,
+    uncompleteTask,
+    addComment,
+    deleteComment,
   } = useScheduler();
+  const { user } = useAuth();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
   const [title, setTitle] = useState(task.title);
   const [link, setLink] = useState(task.link || '');
-  const [notes, setNotes] = useState(() => {
-    const raw = task.notes || '';
-    let next = raw;
-    findLinkPhrases(raw).forEach((match) => {
-      next = stripMatchedText(next, match.matchedText);
-    });
-    return next;
-  });
+  const [notes, setNotes] = useState(() => stripNotesLinks(task.notes || ''));
   const [estimatedHours, setEstimatedHours] = useState(task.estimatedHours);
   const [priority, setPriority] = useState(task.priority);
   const [dueDate, setDueDate] = useState(task.dueDate || '');
@@ -147,13 +184,83 @@ export default function TaskDetailModal({ task, onClose }) {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
-  const [editingSubtask, setEditingSubtask] = useState(null);
+  // Only the id is tracked — the child Task object is derived fresh from
+  // `tasks` on every render (see `editingChildTask` below), the same
+  // live-updating pattern TaskListPanel/BoardView use for their own
+  // `editingTaskId`, so background changes to the child show up immediately.
+  const [editingChildId, setEditingChildId] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [notesLinkMatches, setNotesLinkMatches] = useState(() => findLinkPhrases(task.notes || ''));
+  const [notesLinkMatches, setNotesLinkMatches] = useState(() => getInitialNoteLinks(task));
   const [isNotesFocused, setIsNotesFocused] = useState(false);
 
+  // Comments post immediately (like Todoist) rather than going through the
+  // draft-state + Save/Cancel flow the rest of this modal uses — so this
+  // local state only ever tracks the in-progress *next* comment, not the
+  // thread itself (that lives on `task.comments`, read live).
+  const [commentText, setCommentText] = useState('');
+  const [commentFile, setCommentFile] = useState(null);
+  const [commentFilePreview, setCommentFilePreview] = useState(null);
+  const [isPostingComment, setIsPostingComment] = useState(false);
+  const [commentError, setCommentError] = useState('');
+  const [lightboxAttachment, setLightboxAttachment] = useState(null);
+  const commentFileInputRef = useRef(null);
+
+  // Revoke the previous object URL whenever the pending attachment changes
+  // (new file picked, removed, or comment posted) so picking several image
+  // attachments in a row doesn't leak blob URLs for the lifetime of the tab.
+  useEffect(() => {
+    return () => {
+      if (commentFilePreview) URL.revokeObjectURL(commentFilePreview);
+    };
+  }, [commentFilePreview]);
+
+  function handleCommentFileSelect(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const error = validateAttachment(file);
+    if (error) {
+      setCommentError(error);
+      return;
+    }
+    setCommentError('');
+    setCommentFile(file);
+    setCommentFilePreview(file.type.startsWith('image/') ? URL.createObjectURL(file) : null);
+  }
+
+  function handleRemoveCommentFile() {
+    setCommentFile(null);
+    setCommentFilePreview(null);
+  }
+
+  async function handlePostComment() {
+    const text = commentText.trim();
+    if (!text && !commentFile) return;
+    setIsPostingComment(true);
+    setCommentError('');
+    try {
+      await addComment(task.id, { text, file: commentFile });
+      setCommentText('');
+      handleRemoveCommentFile();
+    } catch (err) {
+      setCommentError(err.message || 'Failed to post comment.');
+    } finally {
+      setIsPostingComment(false);
+    }
+  }
+
   const notesRef = useRef(null);
+  const notesBackdropRef = useRef(null);
   useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
+
+  // Keep the highlight backdrop's scroll position glued to the textarea's —
+  // otherwise scrolling the (max-3-line) textarea leaves the highlighted
+  // mark rendered at its old position while the underlying text has moved.
+  function syncNotesBackdropScroll() {
+    if (notesBackdropRef.current && notesRef.current) {
+      notesBackdropRef.current.scrollTop = notesRef.current.scrollTop;
+    }
+  }
 
   // On mobile this menu always opens as a centered popup rather than
   // attempting to anchor to the trigger — a corner-anchored menu this wide
@@ -193,14 +300,7 @@ export default function TaskDetailModal({ task, onClose }) {
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
-      notes: (() => {
-        const raw = task.notes || '';
-        let next = raw;
-        findLinkPhrases(raw).forEach((match) => {
-          next = stripMatchedText(next, match.matchedText);
-        });
-        return next;
-      })(),
+      notes: stripNotesLinks(task.notes || ''),
       estimatedHours: task.estimatedHours,
       priority: task.priority,
       dueDate: task.dueDate || '',
@@ -235,12 +335,8 @@ export default function TaskDetailModal({ task, onClose }) {
     setTitle(task.title);
     setLink(task.link || '');
     const rawNotes = task.notes || '';
-    let nextNotes = rawNotes;
-    findLinkPhrases(rawNotes).forEach((match) => {
-      nextNotes = stripMatchedText(nextNotes, match.matchedText);
-    });
-    setNotes(nextNotes);
-    setNotesLinkMatches(findLinkPhrases(rawNotes));
+    setNotes(stripNotesLinks(rawNotes));
+    setNotesLinkMatches(getInitialNoteLinks(task));
     setIsNotesFocused(false);
     setEstimatedHours(task.estimatedHours);
     setPriority(task.priority);
@@ -262,14 +358,7 @@ export default function TaskDetailModal({ task, onClose }) {
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
-      notes: (() => {
-        const raw = task.notes || '';
-        let next = raw;
-        findLinkPhrases(raw).forEach((match) => {
-          next = stripMatchedText(next, match.matchedText);
-        });
-        return next;
-      })(),
+      notes: stripNotesLinks(task.notes || ''),
       estimatedHours: task.estimatedHours,
       priority: task.priority,
       dueDate: task.dueDate || '',
@@ -288,9 +377,12 @@ export default function TaskDetailModal({ task, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
 
-  const subtasks = task.subtasks || [];
-  const visibleSubtasks = hideCompletedSubtasks ? subtasks.filter((s) => !s.isCompleted) : subtasks;
-  const completedSubtasks = subtasks.filter((s) => s.isCompleted).length;
+  // Direct children only (one level) — a grandchild is reached by opening
+  // its own parent's nested TaskDetailModal in turn, not shown flattened here.
+  const childTasks = useMemo(() => tasks.filter((t) => t.parentId === task.id), [tasks, task.id]);
+  const visibleChildTasks = hideCompletedSubtasks ? childTasks.filter((c) => !c.isCompleted) : childTasks;
+  const completedChildTasks = childTasks.filter((c) => c.isCompleted).length;
+  const editingChildTask = editingChildId ? tasks.find((t) => t.id === editingChildId) || null : null;
 
   // Sections belong to a project — once a project is chosen, only show
   // that project's sections (matching Todoist's own board picker).
@@ -355,6 +447,11 @@ export default function TaskDetailModal({ task, onClose }) {
         apply: () => setIsPassive(true),
         revert: () => setIsPassive(!!task.isPassive),
       },
+      enforceDueDate: {
+        isUntouched: () => enforceDueDate === !!task.enforceDueDate,
+        apply: () => setEnforceDueDate(true),
+        revert: () => setEnforceDueDate(!!task.enforceDueDate),
+      },
       dependency: {
         isUntouched: () =>
           dependsOn.length === (task.dependsOn || []).length && dependsOn.every((id) => (task.dependsOn || []).includes(id)),
@@ -391,6 +488,7 @@ export default function TaskDetailModal({ task, onClose }) {
     smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
     smartDetected.estimatedHours && { type: 'estimatedHours', icon: Clock, label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}` },
     smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
+    smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
     smartDetected.dependency &&
       (smartDetected.dependency.task
         ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
@@ -454,21 +552,13 @@ export default function TaskDetailModal({ task, onClose }) {
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
   const isDirty = mainDirty || sidebarDirty;
 
-  function normalizeNotesText(text) {
-    let next = text || '';
-    findLinkPhrases(next).forEach((match) => {
-      next = stripMatchedText(next, match.matchedText);
-    });
-    return next;
-  }
-
   function handleNotesChange(value) {
     setNotes(value);
     setNotesLinkMatches(findLinkPhrases(value));
   }
 
   function handleNotesBlur() {
-    const nextNotes = normalizeNotesText(notes);
+    const nextNotes = stripNotesLinks(notes);
     setNotes(nextNotes);
     setNotesLinkMatches(findLinkPhrases(notes));
     // Convenience: if the user typed a duration hint into the notes (e.g.
@@ -507,8 +597,22 @@ export default function TaskDetailModal({ task, onClose }) {
   }
 
   function handleAddSubtask() {
-    if (!newSubtaskTitle.trim()) return;
-    addSubtask(task.id, newSubtaskTitle);
+    const trimmed = newSubtaskTitle.trim();
+    if (!trimmed) return;
+    // A sub-task is just a top-level task with `parentId` set — created via
+    // the same addTask every other task uses. `dueDate` is deliberately left
+    // unset so it isn't auto-scheduled (see allocator.js's prioritizeTasks —
+    // a parentId-bearing task needs its own due date to be schedulable).
+    addTask({
+      title: trimmed,
+      parentId: task.id,
+      estimatedHours: DEFAULT_SUBTASK_ESTIMATED_HOURS,
+      priority: 'medium',
+      dueDate: null,
+      projectId: task.projectId ?? null,
+      sectionId: task.sectionId ?? null,
+      sectionName: task.sectionName ?? null,
+    });
     setNewSubtaskTitle('');
   }
 
@@ -529,8 +633,8 @@ export default function TaskDetailModal({ task, onClose }) {
     const nextDueDate = dueDate || null;
     const nextIsRecurring = isRecurring && !!nextDueDate;
     const nextRecurrenceString = isRecurring && nextDueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit, recurrenceDays) : null;
-    const nextNotes = normalizeNotesText(notes);
- 
+    const nextNotes = stripNotesLinks(notes);
+
     // Resolve any still-pending "@tag" mentions to real Label ids now,
     // merging with whatever was already picked via the sidebar's LabelPicker.
     const pendingLabelNames = (smartDetected.labels || []).map((m) => m.name);
@@ -555,6 +659,10 @@ export default function TaskDetailModal({ task, onClose }) {
       title: nextTitle,
       link: link || null,
       notes: nextNotes,
+      // Persist the detected link phrases alongside the (now-stripped) notes
+      // text — otherwise a reload has nothing left to re-detect them from
+      // (see getInitialNoteLinks above).
+      noteLinks: notesLinkMatches.map(({ url, matchedText }) => ({ url, matchedText })),
       estimatedHours: nextEstimatedHours,
       remainingHours: nextRemainingHours,
       priority,
@@ -632,7 +740,7 @@ export default function TaskDetailModal({ task, onClose }) {
     setTitle(snap.title);
     setLink(snap.link);
     setNotes(snap.notes);
-    setNotesLinkMatches(findLinkPhrases(task.notes || ''));
+    setNotesLinkMatches(getInitialNoteLinks(task));
     setEstimatedHours(snap.estimatedHours);
     setPriority(snap.priority);
     setDueDate(snap.dueDate);
@@ -792,11 +900,20 @@ export default function TaskDetailModal({ task, onClose }) {
                   <button
                     className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
                     onClick={() => {
-                      if (!task.isCompleted) completeTask(task.id);
+                      if (!task.isCompleted) {
+                        completeTask(task.id);
+                        // Close immediately rather than leaving this screen open showing
+                        // stale local state (e.g. the pre-completion due date for a
+                        // recurring task, which completeTask advances underneath us).
+                        requestClose();
+                      } else {
+                        // Already completed — clicking again restores it (mirrors the
+                        // "Completed" tab's restore action in TaskListPanel).
+                        uncompleteTask(task.id);
+                      }
                     }}
-                    disabled={task.isCompleted}
-                    title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-                    aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
+                    title={task.isCompleted ? 'Click to restore to active' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+                    aria-label={task.isCompleted ? `Restore ${task.title}` : `Mark ${task.title} complete`}
                     style={{ marginTop: 6 }}
                   >
                     {task.isCompleted && <Check size={12} aria-hidden="true" />}
@@ -842,7 +959,7 @@ export default function TaskDetailModal({ task, onClose }) {
                     </label>
                     <div className="smart-notes-wrap">
                       {isNotesFocused && (
-                        <div className="smart-notes-backdrop" aria-hidden="true">
+                        <div className="smart-notes-backdrop" ref={notesBackdropRef} aria-hidden="true">
                           {renderHighlightedNotesText(notes)}
                         </div>
                       )}
@@ -853,11 +970,15 @@ export default function TaskDetailModal({ task, onClose }) {
                         rows={1}
                         value={notes}
                         onChange={(e) => handleNotesChange(e.target.value)}
-                        onFocus={() => setIsNotesFocused(true)}
+                        onFocus={() => {
+                          setIsNotesFocused(true);
+                          requestAnimationFrame(syncNotesBackdropScroll);
+                        }}
                         onBlur={() => {
                           setIsNotesFocused(false);
                           handleNotesBlur();
                         }}
+                        onScroll={syncNotesBackdropScroll}
                         placeholder="Description"
                       />
                     </div>
@@ -912,35 +1033,41 @@ export default function TaskDetailModal({ task, onClose }) {
 
               <div className="form-row">
                 <div className="subtask-header">
-                  <label>Sub-tasks {subtasks.length > 0 ? `(${completedSubtasks}/${subtasks.length})` : ''}</label>
-                  {completedSubtasks > 0 && (
+                  <label>Sub-tasks {childTasks.length > 0 ? `(${completedChildTasks}/${childTasks.length})` : ''}</label>
+                  {completedChildTasks > 0 && (
                     <button type="button" className="subtask-hide-completed" onClick={() => setHideCompletedSubtasks((v) => !v)}>
                       {hideCompletedSubtasks ? 'Show completed' : 'Hide completed'}
                     </button>
                   )}
                 </div>
                 <div className="subtask-list">
-                  {visibleSubtasks.map((s) => (
-                    <div key={s.id} className="subtask-row">
+                  {visibleChildTasks.map((child) => (
+                    <div key={child.id} className="subtask-row">
                       <input
                         type="checkbox"
-                        checked={s.isCompleted}
-                        onChange={() => toggleSubtask(task.id, s.id)}
+                        checked={child.isCompleted}
+                        disabled={child.isCompleted}
+                        // Same "complete, never un-complete" checkbox as a
+                        // normal task's row (TaskListPanel) — reused as-is
+                        // rather than hand-rolling a new toggle path.
+                        onChange={() => {
+                          if (!child.isCompleted) completeTask(child.id);
+                        }}
                       />
                       <button
                         type="button"
-                        className={`subtask-row-title-wrap ${s.isCompleted ? 'completed' : ''}`}
-                        onClick={() => setEditingSubtask(s)}
+                        className={`subtask-row-title-wrap ${child.isCompleted ? 'completed' : ''}`}
+                        onClick={() => setEditingChildId(child.id)}
                         title="Open sub-task"
                       >
-                        <span className="subtask-row-title">{s.title}</span>
-                        {s.notes && <span className="subtask-row-notes">{s.notes}</span>}
+                        <span className="subtask-row-title">{child.title}</span>
+                        {child.notes && <span className="subtask-row-notes">{child.notes}</span>}
                       </button>
                       <button
                         className="btn btn-icon subtask-row-remove"
-                        onClick={() => removeSubtask(task.id, s.id)}
+                        onClick={() => deleteTask(child.id)}
                         style={{ color: 'var(--color-danger)' }}
-                        aria-label={`Delete ${s.title}`}
+                        aria-label={`Delete ${child.title}`}
                       >
                         <X size={13} />
                       </button>
@@ -977,6 +1104,121 @@ export default function TaskDetailModal({ task, onClose }) {
                       Add sub-task
                     </button>
                   )}
+                </div>
+              </div>
+
+              <div className="form-row comments-section">
+                <label>Comments{task.comments?.length ? ` (${task.comments.length})` : ''}</label>
+                <div className="comment-list">
+                  {(task.comments || []).map((c) => (
+                    <div key={c.id} className="comment-row">
+                      {user?.photoURL ? (
+                        <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="account-avatar" />
+                      ) : (
+                        <span className="account-avatar account-avatar-fallback">
+                          {(user?.displayName || user?.email || '?')[0].toUpperCase()}
+                        </span>
+                      )}
+                      <div className="comment-body">
+                        {c.text && <p className="comment-text">{c.text}</p>}
+                        {c.attachment &&
+                          (c.attachment.type.startsWith('image/') ? (
+                            <button
+                              type="button"
+                              className="comment-attachment-thumb"
+                              onClick={() => setLightboxAttachment(c.attachment)}
+                            >
+                              <img src={c.attachment.url} alt={c.attachment.name} />
+                            </button>
+                          ) : (
+                            <a
+                              href={c.attachment.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="comment-attachment-file"
+                            >
+                              <FileIcon size={14} />
+                              <span className="comment-attachment-file-name">{c.attachment.name}</span>
+                              <span className="comment-attachment-file-size">{formatFileSize(c.attachment.size)}</span>
+                            </a>
+                          ))}
+                        <span className="comment-meta">{formatDisplayDateTime(c.createdAt)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-icon comment-remove"
+                        onClick={() => deleteComment(task.id, c.id)}
+                        style={{ color: 'var(--color-danger)' }}
+                        aria-label="Delete comment"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {commentError && (
+                  <p className="form-warning">
+                    <Ban size={13} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden="true" />
+                    <span>{commentError}</span>
+                  </p>
+                )}
+
+                {commentFile && (
+                  <div className="comment-pending-file">
+                    {commentFilePreview ? (
+                      <img src={commentFilePreview} alt="" className="comment-pending-thumb" />
+                    ) : (
+                      <FileIcon size={14} />
+                    )}
+                    <span className="comment-pending-name">{commentFile.name}</span>
+                    <button type="button" onClick={handleRemoveCommentFile} aria-label="Remove attachment">
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+
+                <div className="comment-input-bar">
+                  <input
+                    type="text"
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handlePostComment();
+                      }
+                    }}
+                    placeholder="Comment"
+                    disabled={isPostingComment}
+                  />
+                  <input
+                    ref={commentFileInputRef}
+                    type="file"
+                    accept={ATTACHMENT_ACCEPT}
+                    style={{ display: 'none' }}
+                    onChange={handleCommentFileSelect}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-icon comment-attach-btn"
+                    onClick={() =>
+                      user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
+                    }
+                    title={user ? 'Attach a file' : 'Sign in to attach files'}
+                    disabled={isPostingComment}
+                  >
+                    <Paperclip size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-icon comment-send-btn"
+                    onClick={handlePostComment}
+                    disabled={isPostingComment || (!commentText.trim() && !commentFile)}
+                    aria-label="Post comment"
+                  >
+                    <Send size={15} />
+                  </button>
                 </div>
               </div>
             </div>
@@ -1037,7 +1279,16 @@ export default function TaskDetailModal({ task, onClose }) {
               </DetailField>
 
               <DetailField icon={Clock} label="Estimated hours">
-                <input type="number" min="0.0833" step="0.0833" value={estimatedHours} onChange={(e) => setEstimatedHours(e.target.value)} />
+                <input
+                  type="number"
+                  min="0.0833"
+                  step="0.0833"
+                  // Round only unedited numeric values (defaults/smart-parse) to avoid
+                  // floating-point noise like "0.0833333333333333"; user-typed strings
+                  // pass through untouched so typing a decimal point isn't clobbered.
+                  value={typeof estimatedHours === 'number' ? Math.round(estimatedHours * 10000) / 10000 : estimatedHours}
+                  onChange={(e) => setEstimatedHours(e.target.value)}
+                />
               </DetailField>
 
               <DetailField icon={Repeat} label="Repeat">
@@ -1108,7 +1359,26 @@ export default function TaskDetailModal({ task, onClose }) {
         </div>
       </div>
 
-      {editingSubtask && <SubtaskDetailModal taskId={task.id} subtask={editingSubtask} onClose={() => setEditingSubtask(null)} />}
+      {lightboxAttachment &&
+        createPortal(
+          <div className="attachment-lightbox" onClick={() => setLightboxAttachment(null)}>
+            <button
+              type="button"
+              className="attachment-lightbox-close"
+              onClick={() => setLightboxAttachment(null)}
+              aria-label="Close"
+            >
+              <X size={20} />
+            </button>
+            <img src={lightboxAttachment.url} alt={lightboxAttachment.name} onClick={(e) => e.stopPropagation()} />
+          </div>,
+          document.body
+        )}
+
+      {/* A sub-task is edited via a second, nested instance of this same
+          modal (rather than a separate smaller SubtaskDetailModal) — see
+          the module doc comment for why this was the smallest change. */}
+      {editingChildTask && <TaskDetailModal task={editingChildTask} onClose={() => setEditingChildId(null)} />}
     </>
   );
 }

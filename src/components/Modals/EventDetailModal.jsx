@@ -2,12 +2,19 @@
  * EventDetailModal — edits a single CalendarEvent (a slice of "busy" time on
  * the calendar, distinct from a task's ScheduledBlock).
  *
- * Every event is fully editable here regardless of `source` — this mirrors
- * real Google Calendar's own edit popup, where editing an event's
- * title/description/location/time from anywhere pushes back to the
- * calendar. A manual event just stays local; a Google-sourced event's edits
- * are pushed on the next sync (wired up in a later milestone — for now
- * edits here are local-only, same as any manual event).
+ * A manual event (created in TaskFlow) or a Google-sourced event from a
+ * calendar the user owns/can write to (`canEdit !== false`) is fully
+ * editable here, mirroring real Google Calendar's own edit popup — editing
+ * title/description/location/time pushes back to the calendar via
+ * SchedulerContext.updateEvent.
+ *
+ * A Google-sourced event from a calendar the user only has read access to
+ * (e.g. a subscribed lecture timetable shared as viewer-only) is rendered
+ * read-only (`event.canEdit === false`): fields are disabled and Delete is
+ * hidden, since Google would reject a write against a calendar we don't own.
+ * The "Ignore this event" toggle is the one exception — it's local-only
+ * (SchedulerContext.setEventIgnored never pushes to Google) so it stays
+ * available even on a read-only event, still via the same Save action.
  *
  * If the event is part of a recurring series (`seriesId`), a scope picker
  * mirrors Google Calendar's own "This event / This and following / All
@@ -40,6 +47,10 @@ export default function EventDetailModal({ event, initial, onClose }) {
   const modalRef = useModalA11y(requestClose);
 
   const isCreate = !event;
+  // Only an explicit `canEdit === false` counts as read-only — a manual event
+  // (no `canEdit` field at all) or mock data must still be treated as fully
+  // editable, so this deliberately checks `=== false` rather than `!canEdit`.
+  const isReadOnly = !isCreate && event.canEdit === false;
 
   const [title, setTitle] = useState(event?.title || '');
   const [description, setDescription] = useState(event?.description || '');
@@ -57,11 +68,20 @@ export default function EventDetailModal({ event, initial, onClose }) {
     if (isCreate) {
       addManualEvent({ title, description, location, date, startTime, endTime });
     } else {
-      updateEvent(
-        event.id,
-        { title: title.trim() || 'Untitled event', description, location, date, startTime, endTime },
-        scope
-      );
+      // Read-only events (subscribed/shared calendars without write access)
+      // skip updateEvent entirely — its fields are disabled below so they
+      // can't have changed anyway, but more importantly updateEvent also
+      // pushes to Google (see SchedulerContext.updateEvent), which would
+      // fail against a calendar we don't own. The "Ignore" toggle below is
+      // local-only (setEventIgnored never pushes) so it stays available
+      // through this same Save action regardless of read-only status.
+      if (!isReadOnly) {
+        updateEvent(
+          event.id,
+          { title: title.trim() || 'Untitled event', description, location, date, startTime, endTime },
+          scope
+        );
+      }
       if (ignored !== !!event.isFreeTime) {
         setEventIgnored(event, ignored, scope);
       }
@@ -98,10 +118,15 @@ export default function EventDetailModal({ event, initial, onClose }) {
         {!isCreate && event.calendarName && event.calendarName !== 'primary' && (
           <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>Synced from {event.calendarName}</p>
         )}
+        {isReadOnly && (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>
+            View only — you don't have edit access to this calendar on Google Calendar.
+          </p>
+        )}
 
         <div className="detail-sidebar detail-sidebar--full">
           <DetailField icon={TitleIcon} label="Title">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Team standup" />
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Team standup" disabled={isReadOnly} />
           </DetailField>
           <DetailField icon={AlignLeft} label="Description">
             <textarea
@@ -110,19 +135,25 @@ export default function EventDetailModal({ event, initial, onClose }) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Description"
+              disabled={isReadOnly}
             />
           </DetailField>
           <DetailField icon={MapPin} label="Location">
-            <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Conference room" />
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. Conference room"
+              disabled={isReadOnly}
+            />
           </DetailField>
           <DetailField icon={CalendarClock} label="Date">
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={isReadOnly} />
           </DetailField>
           <DetailField icon={Clock} label="Start time">
-            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={isReadOnly} />
           </DetailField>
           <DetailField icon={Clock} label="End time">
-            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
           </DetailField>
           {!isCreate && (
             <DetailField icon={Ban} label="Ignore">
@@ -151,7 +182,7 @@ export default function EventDetailModal({ event, initial, onClose }) {
         </div>
 
         <div className="modal-actions" style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
-          {!isCreate && (
+          {!isCreate && !isReadOnly && (
             <button className="btn" onClick={handleDelete} style={{ color: 'var(--color-danger)', marginRight: 'auto' }}>
               Delete
             </button>

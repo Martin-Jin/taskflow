@@ -11,6 +11,10 @@
  *     with new date/times. Desktop uses native HTML5 DnD (mouse); mobile has
  *     no such API, so touch gets its own long-press-then-drag path instead
  *     (see handleItemTouchStart) — a normal short tap still just selects.
+ *     A read-only event (`canEdit === false` — a subscribed/shared calendar
+ *     the user can't write to on Google) isn't draggable/resizable for the
+ *     same reason a locked block isn't: updateEvent would try to push the
+ *     change to Google and fail.
  *   - Drag the bottom edge of a block or event -> resize (change duration),
  *     via mouse or touch (see handleResizeStart).
  *   - Click the lock icon -> toggleBlockLock() so the rebalance engine will
@@ -427,6 +431,14 @@ export default function WeekView({
       e.preventDefault();
       return;
     }
+    // Read-only events (calendars the user can't write to on Google) mustn't
+    // be movable here either — dragging calls updateEvent below just like
+    // the detail modal's Save does, which would attempt to push a change
+    // to a calendar the user doesn't own. Mirrors the isLocked check above.
+    if (item.type === 'event' && item.data.canEdit === false) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.setData('text/plain', JSON.stringify({ id: item.data.id, type: item.type }));
     setDragState({ id: item.data.id, type: item.type, mode: 'move' });
   }
@@ -482,6 +494,7 @@ export default function WeekView({
   const DRAG_START_THRESHOLD_PX = 8;
   function handleItemTouchStart(e, item) {
     if (item.type === 'block' && item.data.isLocked) return;
+    if (item.type === 'event' && item.data.canEdit === false) return;
     const touch = e.touches?.[0];
     if (!touch) return;
     const startX = touch.clientX;
@@ -803,10 +816,10 @@ export default function WeekView({
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''} ${isMobile ? 'is-mobile' : ''}`}
+                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     title={evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title}
-                    draggable={!isMobile}
+                    draggable={!isMobile && evt.canEdit !== false}
                     onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
                     onTouchStart={(e) => handleItemTouchStart(e, item)}
                     onClick={() => onSelectEvent?.(evt)}
@@ -820,11 +833,13 @@ export default function WeekView({
                     }}
                   >
                     {evt.title}
-                    <div
-                      className="resize-handle"
-                      onMouseDown={(e) => handleResizeStart(e, item)}
-                      onTouchStart={(e) => handleResizeStart(e, item)}
-                    />
+                    {evt.canEdit !== false && (
+                      <div
+                        className="resize-handle"
+                        onMouseDown={(e) => handleResizeStart(e, item)}
+                        onTouchStart={(e) => handleResizeStart(e, item)}
+                      />
+                    )}
                   </div>
                 );
               }

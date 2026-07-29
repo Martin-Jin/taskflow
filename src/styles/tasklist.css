@@ -207,6 +207,44 @@
   margin-top: 1px;
 }
 
+/* Sub-task rows (task.parentId set, rendered nested under their parent by
+   TaskListPanel's renderTaskRow) — deliberately flatter than a top-level
+   task's `.card` container (no background/border, tighter padding) so the
+   hierarchy reads as a checklist rather than a stack of equal-weight cards,
+   while still sharing every other `.task-row` layout rule above. */
+.task-row-child {
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.task-row-child:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+/* Collapse/expand chevron for a row with children, and a same-width blank
+   spacer for a childless nested row — keeps every depth's title text
+   starting at the same horizontal offset whether or not that particular
+   row has its own chevron. */
+.task-row-collapse {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.task-row-collapse-spacer {
+  display: inline-block;
+  width: var(--space-6);
+  flex-shrink: 0;
+}
+
+/* Restore action on a completed-tab row (see FILTER_TABS' "completed" tab) —
+   sits at the row's trailing edge, same shrink-proofing as the collapse
+   chevron above so a long title never squeezes it out. */
+.task-row-restore {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
 .task-row-main {
   flex: 1;
   min-width: 0;

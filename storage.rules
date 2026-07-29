@@ -1,0 +1,19 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Mirrors firestore.rules' uid-ownership check: a signed-in user may
+    // only read/write attachments filed under their own uid.
+    match /users/{userId}/attachments/{taskId}/{fileName} {
+      allow read, delete: if request.auth != null && request.auth.uid == userId;
+      // `request.resource` only exists on create/update, not delete — kept
+      // as its own rule so the size cap doesn't null-reference on delete.
+      // 10MB MUST match MAX_ATTACHMENT_BYTES in src/services/attachmentService.js.
+      // <= (not <) so a file of exactly 10MB, which validateAttachment()
+      // allows client-side, doesn't then fail here with a raw Firebase error.
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size <= 10 * 1024 * 1024;
+    }
+  }
+}

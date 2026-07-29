@@ -1,7 +1,7 @@
 /**
  * useMenuPosition — shared positioning logic for the app's small anchored
- * popup menus (ProjectActionsMenu, SelectMenu, TaskDetailModal/
- * SubtaskDetailModal's "..." menu). Each of these independently computed a
+ * popup menus (ProjectActionsMenu, SelectMenu, TaskDetailModal's "..."
+ * menu). Each of these independently computed a
  * `getBoundingClientRect`-based anchored position (right-aligned dropdown,
  * flip-above when there's no room below, ...) but none of them checked
  * whether that anchored position actually fits the viewport — on a narrow
@@ -77,12 +77,27 @@ export function useMenuPosition({ isOpen, anchorRef, onClose, computeAnchored, f
       });
     }
 
+    // Scroll fires far more often than a frame renders (and capture-phase
+    // here means it fires for scrolling anywhere in the document, not just
+    // near this menu), so coalesce bursts down to one reposition — with its
+    // layout-forcing getBoundingClientRect calls — per animation frame
+    // instead of one per scroll event.
+    let frameRequested = false;
+    function scheduleReposition() {
+      if (frameRequested) return;
+      frameRequested = true;
+      requestAnimationFrame(() => {
+        frameRequested = false;
+        reposition();
+      });
+    }
+
     reposition();
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', scheduleReposition);
+    window.addEventListener('scroll', scheduleReposition, true);
     return () => {
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', scheduleReposition);
+      window.removeEventListener('scroll', scheduleReposition, true);
     };
   }, [isOpen, forceCentered]);
 

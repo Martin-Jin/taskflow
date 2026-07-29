@@ -64,8 +64,16 @@ export const GUIDED_TOUR_STEPS = [
     body: 'List, Board, or Gantt — same tasks, three ways to see them. Board groups them into boards and sections; Gantt shows burn-down bars across your planning horizon.',
   },
   {
+    // No `view` here (unlike the previous step) — the "Add project" button
+    // lives in the sidebar, not inside the Tasks page body, so this step
+    // doesn't need Board mounted to find its target. Forcing `view: 'board'`
+    // used to be harmless back when Board was its own tab, but now that it's
+    // a Tasks sub-view, mounting it here would trigger BoardView's own
+    // "All Tasks isn't a real project" fallback (see BoardView.jsx) and
+    // permanently reassign the visitor's active project before they've ever
+    // touched a project themselves — a passive tour step shouldn't have that
+    // side effect.
     tab: 'tasks',
-    view: 'board',
     selector: '[data-tour="add-project"]',
     placement: 'right',
     title: 'Projects',
@@ -84,13 +92,6 @@ export const GUIDED_TOUR_STEPS = [
     placement: 'top',
     title: 'Sync across devices',
     body: 'Sign in with Google (also available from the account button in the sidebar/topbar) to keep your tasks, boards, and settings automatically up to date across your phone and computer — usually within seconds of a change. Fully optional — staying signed out keeps TaskFlow exactly as local-only as it is today.',
-  },
-  {
-    tab: 'settings',
-    selector: '[data-tour="account-card"]',
-    placement: 'top',
-    title: 'Sync across devices',
-    body: 'Sign in with Google (also available from the account button in the sidebar/topbar) to sync your tasks, boards, and settings between your phone and computer. Fully optional — staying signed out keeps TaskFlow exactly as local-only as it is today.',
   },
   {
     tab: 'settings',

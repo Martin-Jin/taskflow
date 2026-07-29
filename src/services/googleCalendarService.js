@@ -114,7 +114,7 @@ export function requestAccessToken(silent = false) {
  * `selected: false` calendars are ones the user has hidden in the Google
  * Calendar UI, so we skip those too (matches what they'd see on
  * calendar.google.com).
- * @returns {Promise<Array<{id:string,summary:string}>>}
+ * @returns {Promise<Array<{id:string,summary:string,accessRole:string}>>}
  */
 async function listSubscribedCalendars() {
   const resp = await window.gapi.client.calendar.calendarList.list({
@@ -122,7 +122,10 @@ async function listSubscribedCalendars() {
   });
   return (resp.result.items || [])
     .filter((c) => c.selected !== false)
-    .map((c) => ({ id: c.id, summary: c.summary, primary: !!c.primary }));
+    // accessRole is one of 'owner'|'writer'|'reader'|'freeBusyReader' — carried
+    // through to each event below so we know whether the user can push edits
+    // back to Google (e.g. a subscribed read-only lecture timetable can't be).
+    .map((c) => ({ id: c.id, summary: c.summary, primary: !!c.primary, accessRole: c.accessRole }));
 }
 
 /**
@@ -174,7 +177,7 @@ export async function fetchEvents(startIso, endIso) {
     calendars = await listSubscribedCalendars();
   } catch (err) {
     console.warn('[googleCalendarService] Failed to list subscribed calendars, falling back to primary only.', err);
-    calendars = [{ id: 'primary', summary: 'primary' }];
+    calendars = [{ id: 'primary', summary: 'primary', accessRole: 'owner' }];
   }
   // Always include primary even if the calendarList call above somehow omitted it.
   // Note: calendarList normally lists the primary calendar under its REAL id
@@ -182,7 +185,7 @@ export async function fetchEvents(startIso, endIso) {
   // string "primary" — checking only `c.id === 'primary'` missed that and
   // caused the primary calendar to be queried a second time under the
   // 'primary' alias, duplicating every one of its events on the agenda.
-  if (!calendars.some((c) => c.id === 'primary' || c.primary)) calendars.unshift({ id: 'primary', summary: 'primary' });
+  if (!calendars.some((c) => c.id === 'primary' || c.primary)) calendars.unshift({ id: 'primary', summary: 'primary', accessRole: 'owner' });
 
   const timeMin = fromISODate(startIso).toISOString();
   const timeMax = fromISODate(endIso).toISOString();
@@ -209,7 +212,7 @@ export async function fetchEvents(startIso, endIso) {
           timeZone: localTimeZone,
           singleEvents: false,
         });
-        return (resp.result.items || []).map((e) => ({ ...e, __calendarId: cal.id, __calendarName: cal.summary }));
+        return (resp.result.items || []).map((e) => ({ ...e, __calendarId: cal.id, __calendarName: cal.summary, __accessRole: cal.accessRole }));
       } catch (err) {
         // A single subscribed calendar failing (e.g. revoked share, or only
         // shared at a lower access role than needed) shouldn't take down
@@ -283,6 +286,12 @@ export async function fetchEvents(startIso, endIso) {
         description: e.description || '',
         location: e.location || '',
         recurrenceRule,
+        // Whether the user can push edits/deletes back to Google for this
+        // event — 'owner'/'writer' calendars only. Subscribed calendars
+        // shared as 'reader'/'freeBusyReader' (e.g. a university timetable)
+        // are view-only on Google's side, so TaskFlow must not offer full
+        // edit controls for events sourced from them either.
+        canEdit: e.__accessRole === 'owner' || e.__accessRole === 'writer',
         googleUpdatedAt: e.updated,
         localUpdatedAt: null,
         // Google's shared master-event id for every instance of a recurring

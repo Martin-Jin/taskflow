@@ -162,7 +162,16 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
  * matched against the task's Label names instead of title/notes text, and
  * are required (AND'd) rather than merely one-of, since they read as an
  * explicit filter rather than free text; any remaining non-"@" text is
- * matched the same way as before (title/notes/section/subtask, OR'd).
+ * matched against title/notes/section (OR'd).
+ *
+ * NOTE: this used to also match a task via its embedded `subtasks[].title`
+ * (the old nested-array Subtask model). Now that a sub-task is just another
+ * Task linked by `parentId`, it's matched independently by this same
+ * predicate wherever the flat `tasks` list is searched — no separate
+ * cross-reference is needed, and TaskListPanel's nested rows mean a
+ * matching child still surfaces (under its parent, if the parent is also
+ * in the visible/top-level set — see TaskListPanel's own doc comment for
+ * that trade-off).
  */
 export function taskMatchesQuery(task, query, labels = []) {
   if (!query || !query.trim()) return true;
@@ -183,6 +192,5 @@ export function taskMatchesQuery(task, query, labels = []) {
   if (task.title?.toLowerCase().includes(q)) return true;
   if (task.notes?.toLowerCase().includes(q)) return true;
   if (task.sectionName?.toLowerCase().includes(q)) return true;
-  if (task.subtasks?.some((s) => s.title.toLowerCase().includes(q))) return true;
   return false;
 }

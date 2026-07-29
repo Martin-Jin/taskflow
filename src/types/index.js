@@ -19,6 +19,7 @@
  * @property {string} id                     - Unique identifier (uuid).
  * @property {string} title                  - Human readable task title.
  * @property {string} [notes]                - Optional free-text notes/description.
+ * @property {Array<{url: string, matchedText: string}>} [noteLinks] - Smart-parsed link phrases stripped out of `notes` (TaskDetailModal), persisted so they can still be rendered as pills after the raw phrase is gone from the notes text.
  * @property {number} estimatedHours         - Total hours required to complete the task.
  * @property {number} remainingHours         - Hours not yet scheduled/completed (drives re-scheduling).
  * @property {Priority} priority             - Task priority, drives allocation order.
@@ -39,13 +40,22 @@
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.
  * @property {boolean} isCompleted           - Completion state. Recurring tasks never reach `true` via normal
  *                                              completion — see `isRecurring` above.
+ * @property {string|null} [completedAt]     - ISO datetime stamped when `isCompleted` is set true (see
+ *                                              SchedulerContext.completeTask), cleared back to null on restore
+ *                                              (uncompleteTask). Drives the 30-day auto-delete sweep on load.
  * @property {number} minChunkHours          - Smallest allowed contiguous block (default 0.5h) - prevents over-fragmentation.
  * @property {number} maxChunkHours          - Largest allowed contiguous block per day (default 4h) - encourages context-switching breaks.
  * @property {string} createdAt              - ISO datetime.
  * @property {string} updatedAt              - ISO datetime.
  * @property {string|null} [sectionId]       - Todoist Section id this task lives in (board view column), or null.
  * @property {string|null} [sectionName]     - Denormalized section display name, or null for "No Section".
- * @property {Subtask[]} [subtasks]           - Todoist sub-items, grouped under this task (never scheduled/listed on their own).
+ * @property {string} [parentId]             - Id of this task's parent, if this task is a sub-task of another (nested
+ *                                              to arbitrary depth). Absent for top-level tasks. A sub-task is a
+ *                                              normal, independently-editable Task — it's only excluded from the
+ *                                              scheduler when it has no `dueDate` (see allocator.js's
+ *                                              prioritizeTasks) and from Board/Gantt's own top-level card/row lists
+ *                                              (see BoardView.jsx / GanttChart.jsx), which roll it up into its
+ *                                              parent's progress badge instead.
  * @property {string} [todoistId]            - The task's raw numeric/string id in Todoist (source === 'todoist' only). Used to push edits back via todoistService.
  * @property {string[]} [dependsOn]          - IDs of other Tasks that must be completed before this one is eligible
  *                                              for auto-scheduling. Empty/absent means no dependencies. Checked by
@@ -75,18 +85,33 @@
  *                                              read-only text (task list, board, dashboard) it becomes a click-
  *                                              through to this link instead of opening the detail view. App-local
  *                                              only — has no Todoist equivalent.
+ * @property {Comment[]} [comments]          - Todoist-style comment thread (see Comment typedef below), newest
+ *                                              last. Added/removed via SchedulerContext's addComment/deleteComment
+ *                                              rather than updateTask directly, since a comment can carry a file
+ *                                              that needs a matching Storage upload/delete alongside the Firestore
+ *                                              write. App-local only — has no Todoist equivalent.
  */
 
 /**
- * @typedef {Object} Subtask
- * A Todoist child task, grouped under its parent Task rather than being an
- * independently-scheduled unit. Purely a checklist item for display/tracking.
+ * @typedef {Object} CommentAttachment
+ * A single file attached to a Comment, stored in Firebase Storage under
+ * `users/{uid}/attachments/{taskId}/...` (see services/attachmentService.js).
+ * @property {string} url    - Public download URL, safe to render/link to directly.
+ * @property {string} path   - Storage object path, kept so the file can be deleted later.
+ * @property {string} name   - Original filename, for display.
+ * @property {number} size   - Bytes.
+ * @property {string} type   - MIME type, used to decide image-thumbnail vs generic-file rendering.
+ */
+
+/**
+ * @typedef {Object} Comment
+ * A single entry in a Task's comment thread (see Task.comments). Mirrors
+ * Todoist's task comments: plain text, an optional single file attachment,
+ * or both.
  * @property {string} id
- * @property {string} title
- * @property {boolean} isCompleted
- * @property {string} [notes]                - Optional free-text notes, editable from its own compact detail view.
- *                                              App-local only — has no Todoist equivalent.
- * @property {string} [todoistId]            - The subtask's raw id in Todoist, used to push edits back.
+ * @property {string} text                        - May be empty if the comment is attachment-only.
+ * @property {CommentAttachment|null} [attachment]
+ * @property {string} createdAt                    - ISO datetime.
  */
 
 /**
@@ -181,6 +206,7 @@
  * @property {Object<string,Object>} [overrides] - Per-occurrence override map keyed by ISO date (e.g. `{"2026-08-04": {isFreeTime: true}}`), for overriding fields on a single occurrence of a recurring event without duplicating the record.
  * @property {string|null} [googleUpdatedAt]  - Google's `updated` timestamp as of the last pull/push, used for conflict detection.
  * @property {string|null} [localUpdatedAt]   - Stamped on every local edit, compared against `googleUpdatedAt` to decide whether to push local changes or accept Google's incoming version.
+ * @property {boolean} [canEdit]              - Whether the user has 'owner'/'writer' access to this event's source calendar on Google (see googleCalendarService.fetchEvents). Absent/undefined (manual events, mock data) counts as editable — only an explicit `false` (a reader/freeBusyReader-shared calendar, e.g. a subscribed lecture timetable) gates Save/Delete/field-editing in EventDetailModal and drag/resize in WeekView.
  */
 
 /**

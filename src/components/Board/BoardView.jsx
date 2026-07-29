@@ -8,18 +8,24 @@
  * or the search bar, so it stays in sync with List view), with one column
  * per Section within that project, plus a leading "No Section" column for
  * tasks that aren't assigned to one. Cards show priority, due date, hours,
- * and a subtask progress indicator. Clicking a card opens the same
+ * and a sub-task progress indicator. Clicking a card opens the same
  * TaskDetailModal used everywhere else, so editing stays consistent across
  * views.
+ *
+ * SUB-TASKS: a task with `parentId` set is never its own card here — it's
+ * rolled up into its parent's "x/y" progress badge instead (see
+ * `childrenByParentId`/renderCard below). Unlike TaskListPanel (which now
+ * renders sub-tasks as nested rows under their parent), Board and Gantt
+ * keep this rolled-up-only presentation.
  *
  * If the project has NO sections at all, the board renders as a single flat
  * task list instead of a one-column kanban — a project the user hasn't
  * split into sections shouldn't visually look like a board with one lonely
  * "No Section" column.
  *
- * Columns respect the shared search query — a task (or any of its
- * subtasks) matching the query keeps its card visible; the column itself
- * always renders (even empty) so the layout matches Todoist's board.
+ * Columns respect the shared search query — a task matching the query
+ * keeps its card visible; the column itself always renders (even empty) so
+ * the layout matches Todoist's board.
  *
  * SHOWS EVERY TASK IN THE PROJECT, regardless of due date or scheduling
  * status — Boards mirrors Todoist's own board, not the calendar. A task
@@ -81,6 +87,20 @@ export default function BoardView({ projectId, onProjectChange }) {
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  // Direct children (parentId chain) per task id — used for the card's
+  // rolled-up "x/y" sub-task progress badge below. Board never lists a
+  // sub-task as its own card (see the `!t.parentId` filter in `columns`);
+  // it stays rolled up into its parent's badge instead.
+  const childrenByParentId = useMemo(() => {
+    const map = new Map();
+    for (const t of tasks) {
+      if (!t.parentId) continue;
+      const siblings = map.get(t.parentId) || [];
+      siblings.push(t);
+      map.set(t.parentId, siblings);
+    }
+    return map;
+  }, [tasks]);
 
   const sortedProjects = useMemo(() => [...projects].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)), [projects]);
 
@@ -113,9 +133,11 @@ export default function BoardView({ projectId, onProjectChange }) {
     const withTasks = cols.map((col) => {
       // Every non-completed task in this project/section shows up here,
       // regardless of due date — Boards mirrors Todoist's board, which has
-      // no concept of "too far out to show" or "not schedulable."
+      // no concept of "too far out to show" or "not schedulable." Sub-tasks
+      // (parentId set) are excluded from this top-level card list — they're
+      // rolled up into their parent's progress badge instead (see renderCard).
       const columnTasks = filterTasksByProject(tasks, selectedProjectId)
-        .filter((t) => !t.isCompleted)
+        .filter((t) => !t.isCompleted && !t.parentId)
         .filter((t) => (col.id === null ? !t.sectionId : t.sectionId === col.id))
         .filter((t) => taskMatchesQuery(t, searchQuery, labels));
       return { ...col, tasks: columnTasks };
@@ -182,8 +204,9 @@ export default function BoardView({ projectId, onProjectChange }) {
   }
 
   function renderCard(task) {
-    const subtaskTotal = task.subtasks?.length || 0;
-    const subtaskDone = task.subtasks?.filter((s) => s.isCompleted).length || 0;
+    const children = childrenByParentId.get(task.id) || [];
+    const subtaskTotal = children.length;
+    const subtaskDone = children.filter((c) => c.isCompleted).length;
     // Same fix as TaskListPanel's renderTaskRow: the Repeat/Wind icons render
     // inline before the title (13px + 4px margin-right = 17px each), pushing
     // the title's text right of the card's left edge — match that on the

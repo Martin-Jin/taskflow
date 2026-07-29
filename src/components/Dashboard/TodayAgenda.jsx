@@ -5,6 +5,7 @@ import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime } from '../../utils/dateUtils';
 import { isBlockMissed } from '../../utils/missedTasks';
 import TaskDetailModal from '../Modals/TaskDetailModal';
+import EventDetailModal from '../Modals/EventDetailModal';
 
 export default function TodayAgenda() {
   const { tasks, blocks, events } = useScheduler();
@@ -12,10 +13,8 @@ export default function TodayAgenda() {
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const listRef = useRef(null);
   const currentItemRef = useRef(null);
-  // Only block-backed items (real tasks) are openable — calendar events have
-  // no task to edit, so their rows stay non-interactive (see the render
-  // below, which only wires onClick for items carrying a taskId).
   const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editingEventId, setEditingEventId] = useState(null);
 
   const items = useMemo(() => {
     const now = new Date();
@@ -33,11 +32,12 @@ export default function TodayAgenda() {
           title: task?.title || 'Untitled task',
           link: task?.link || null,
           isMissed: isBlockMissed(b, task, today, nowMinutes),
+          isDueToday: task?.dueDate === today,
         };
       });
     const eventItems = (events || [])
       .filter((e) => e.date === today)
-      .map((e) => ({ id: e.id, startTime: e.startTime, endTime: e.endTime, title: e.title, isMissed: false }));
+      .map((e) => ({ id: e.id, eventId: e.id, startTime: e.startTime, endTime: e.endTime, title: e.title, isMissed: false }));
     return [...blockItems, ...eventItems].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   }, [blocks, events, taskById]);
 
@@ -71,21 +71,26 @@ export default function TodayAgenda() {
       <ul className="today-agenda-list" ref={listRef}>
         {items.map((item) => {
           const isCurrent = currentId === item.id;
-          const isOpenable = !!item.taskId;
+          const openItem = item.taskId
+            ? () => setEditingTaskId(item.taskId)
+            : item.eventId
+              ? () => setEditingEventId(item.eventId)
+              : null;
+          const isOpenable = !!openItem;
           return (
             <li
               key={item.id}
               ref={isCurrent ? currentItemRef : null}
-              className={`today-agenda-item ${isCurrent ? 'is-current' : ''} ${item.isMissed ? 'is-missed' : ''} ${isOpenable ? 'is-openable' : ''}`}
+              className={`today-agenda-item ${isCurrent ? 'is-current' : ''} ${item.isMissed ? 'is-missed' : item.isDueToday ? 'is-due-today' : ''} ${isOpenable ? 'is-openable' : ''}`}
               role={isOpenable ? 'button' : undefined}
               tabIndex={isOpenable ? 0 : undefined}
-              onClick={isOpenable ? () => setEditingTaskId(item.taskId) : undefined}
+              onClick={isOpenable ? openItem : undefined}
               onKeyDown={
                 isOpenable
                   ? (e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setEditingTaskId(item.taskId);
+                        openItem();
                       }
                     }
                   : undefined
@@ -112,6 +117,7 @@ export default function TodayAgenda() {
                 <span className="today-agenda-title">{item.title}</span>
               )}
               {item.isMissed && <span className="today-agenda-missed-label">Missed</span>}
+              {!item.isMissed && item.isDueToday && <span className="today-agenda-due-label">Due today</span>}
             </li>
           );
         })}
@@ -119,6 +125,10 @@ export default function TodayAgenda() {
       {editingTaskId && (() => {
         const task = tasks.find((t) => t.id === editingTaskId);
         return task ? <TaskDetailModal task={task} onClose={() => setEditingTaskId(null)} /> : null;
+      })()}
+      {editingEventId && (() => {
+        const event = (events || []).find((e) => e.id === editingEventId);
+        return event ? <EventDetailModal event={event} onClose={() => setEditingEventId(null)} /> : null;
       })()}
     </div>
   );

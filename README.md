@@ -185,7 +185,7 @@ worth knowing:
 - **Re-running the import upserts, never duplicates.** Projects/Sections/
   Tasks already imported (matched by id) get their Todoist-sourced fields
   (title, notes, estimated hours, priority, due date, recurrence,
-  project/section, labels, subtasks) refreshed from the latest fetch, while
+  project/section, labels, parent task) refreshed from the latest fetch, while
   app-only fields you've since set locally (lock state, completion,
   min/max chunk hours, dependencies, passive flag, earliest date, enforce
   due date, link, scheduling progress) are left alone; anything new is
@@ -208,11 +208,14 @@ worth knowing:
 - **Labels** are resolved by name onto TaskFlow's own Label records,
   creating any that don't already exist — a label attached to several
   imported tasks is only created once.
-- **Subtasks** (Todoist items with a parent) are grouped under their parent
-  as a checklist in the task detail modal — never scheduled as independent
-  blocks. Todoist allows nesting subtasks arbitrarily deep; anything below
-  the first level is flattened onto the top-level task's checklist rather
-  than dropped.
+- **Sub-tasks** (Todoist items with a parent) come in as standalone tasks
+  linked via `parentId`, listed under their parent in the task detail modal
+  and nested under it in the Tasks list — they're only ever scheduled if
+  they carry their own due date (an undated sub-task shows up everywhere
+  except the calendar, same as any other undated task). Todoist allows
+  nesting subtasks arbitrarily deep; anything below the first level is
+  flattened onto the top-level task's `parentId` rather than preserving the
+  intermediate grouping.
 
 ### Google Calendar
 
@@ -339,8 +342,7 @@ See `src/types/index.js` for full JSDoc typedefs.
 
 | Type | Purpose |
 |---|---|
-| `Task` | Hours, priority, due date, lock/complete state, optional section + subtasks, optional `dependsOn` and `isPassive`. Always has a `dueDate`. |
-| `Subtask` | A Todoist child item, grouped under its parent `Task` |
+| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, to arbitrary depth), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed). |
 | `Section` | A Todoist Section — Board view column |
 | `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar |
 | `ScheduledBlock` | A concrete dated/timed slice of a `Task` on the calendar |
@@ -364,9 +366,9 @@ src/
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
-│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal, BlockDetailModal, EventDetailModal, SubtaskDetailModal
+│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal
 │   ├── Nav/                   # Sidebar — desktop/tablet nav + project list (pin/rename/delete via ProjectActionsMenu); BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + topbar)
-│   ├── Tutorial/               # TutorialModal + its step content
+│   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
 │   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, DependencyPicker, LabelPicker, DetailField
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── TaskListPanel.jsx
@@ -385,7 +387,8 @@ src/
 │   ├── useComboboxMultiSelect.js  # Shared open/close/query state for DependencyPicker + LabelPicker
 │   └── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
 ├── migrations/
-│   └── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
+│   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
+│   └── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
 │   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull)
@@ -460,6 +463,13 @@ hidden, only reorganized.
     (adding requires a due date); open a task to edit every field, manage
     subtasks, set dependencies, mark it as able to run unattended, or force
     it to be scheduled entirely on its due date ("Enforce due date").
+    Every task also has a Todoist-style **comment thread** — post text,
+    a file (image, PDF, or common office doc, 10MB max), or both; image
+    attachments show as a clickable thumbnail (opens full-size), other
+    files as a name/size chip linking to the file. Attachments upload to
+    Firebase Storage (requires being signed in — see [Account &
+    cross-device sync](#account--cross-device-sync)) and sync/back up
+    alongside the rest of the task, same as every other field.
   - **Board** — Todoist-style Kanban board, one column per Section plus a
     leading "No Section" column (or a flat list if the project has no
     Sections yet). Rename/delete columns, add sections, drag cards between
