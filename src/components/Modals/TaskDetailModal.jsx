@@ -88,13 +88,14 @@ import {
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTimers, getLiveRemaining, getDefaultDurationSeconds, formatTimerDuration } from '../../context/TimerContext';
+import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
 import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { parseRecurrenceRule, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
+import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { getIneligibleDependencyIds } from '../../utils/dependencyUtils';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours } from '../../utils/formatHours';
+import { formatHours, formatHoursLong } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -106,6 +107,8 @@ import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
+import SmartDurationInput from '../Common/SmartDurationInput';
+import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 import { faviconUrl } from '../Dashboard/pinnedLinksModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
 import SmartParseGuideModal from './SmartParseGuideModal';
@@ -153,13 +156,13 @@ export default function TaskDetailModal({ task, onClose }) {
     projects,
     labels,
     getOrCreateLabelIds,
-    completeTask,
     uncompleteTask,
     addComment,
     deleteComment,
   } = useScheduler();
   const { user } = useAuth();
   const { getTimerForTask, startTimer, pauseTimer, resumeTimer, stopTimer } = useTimers();
+  const { requestComplete } = useCompleteTask();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -178,6 +181,10 @@ export default function TaskDetailModal({ task, onClose }) {
   // count/unit so a smart-parsed or previously-imported weekday-specific
   // recurrence isn't silently collapsed to a generic cadence on save.
   const [recurrenceDays, setRecurrenceDays] = useState(initialRule.days || null);
+  // Free-text override shown in place of the day-specific "Every ... on ..."
+  // label while the user is editing it (see Repeat DetailField below) — null
+  // means "not editing", so the plain read-only label renders instead.
+  const [repeatEditText, setRepeatEditText] = useState(null);
   const [projectId, setProjectId] = useState(task.projectId || '');
   const [sectionId, setSectionId] = useState(task.sectionId || '');
   // Separate from the projectId/sectionId untouched-comparisons below: a
@@ -387,6 +394,7 @@ export default function TaskDetailModal({ task, onClose }) {
     setFixedTime(task.fixedTime || '');
     setLabelIds(task.labelIds || []);
     resetSmartState();
+    lastSmartEstimatedHoursRef.current = null;
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
@@ -433,6 +441,7 @@ export default function TaskDetailModal({ task, onClose }) {
   // matches the value the task loaded with — the moment the user directly
   // touches that field's own widget it stops being "untouched" and smart
   // parse leaves it alone (same idea as handleNotesBlur's hours check below).
+  const lastSmartEstimatedHoursRef = useRef(null);
   const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle, resetSmartState } = useSmartTaskTitle({
     tasks,
     projects,
@@ -471,9 +480,23 @@ export default function TaskDetailModal({ task, onClose }) {
         revert: () => setPriority(task.priority),
       },
       estimatedHours: {
-        isUntouched: () => Number(estimatedHours) === Number(task.estimatedHours),
-        apply: (match) => setEstimatedHours(match.hours),
-        revert: () => setEstimatedHours(task.estimatedHours),
+        // Smart parse's own apply() moves estimatedHours away from
+        // task.estimatedHours, which would otherwise permanently look
+        // "touched" and block re-parsing later edits to the duration phrase
+        // (e.g. "5 min" -> "50 min"). Track the last value *we* set so it
+        // still counts as untouched until the user edits the Duration field
+        // itself, at which point it genuinely diverges from both values.
+        isUntouched: () =>
+          Number(estimatedHours) === Number(task.estimatedHours) ||
+          (lastSmartEstimatedHoursRef.current !== null && Number(estimatedHours) === Number(lastSmartEstimatedHoursRef.current)),
+        apply: (match) => {
+          lastSmartEstimatedHoursRef.current = match.hours;
+          setEstimatedHours(match.hours);
+        },
+        revert: () => {
+          lastSmartEstimatedHoursRef.current = null;
+          setEstimatedHours(task.estimatedHours);
+        },
       },
       unattended: {
         isUntouched: () => isPassive === !!task.isPassive,
@@ -512,6 +535,22 @@ export default function TaskDetailModal({ task, onClose }) {
   function handleTitleChange(value) {
     setTitle(value);
     handleSmartTitleChange(value);
+  }
+
+  // Commits the free-text repeat edit (see Repeat DetailField below) by
+  // running it through the same phrase parser the title field's smart-parse
+  // uses — reusing that parser instead of a bespoke day/unit picker for the
+  // day-specific case, since the text already spells out the days. Leaves
+  // the previous rule untouched if the text doesn't parse, rather than
+  // silently clearing the repeat.
+  function commitRepeatEditText() {
+    const match = findRecurrencePhrase(repeatEditText || '');
+    if (match) {
+      setRecurrenceCount(match.rule.count);
+      setRecurrenceUnit(match.rule.unit);
+      setRecurrenceDays(match.rule.days || null);
+    }
+    setRepeatEditText(null);
   }
 
   const smartChips = [
@@ -795,6 +834,7 @@ export default function TaskDetailModal({ task, onClose }) {
     setFixedTime(snap.fixedTime);
     setLabelIds(snap.labelIds);
     resetSmartState();
+    lastSmartEstimatedHoursRef.current = null;
   }
 
   function handleDelete() {
@@ -972,11 +1012,17 @@ export default function TaskDetailModal({ task, onClose }) {
                     className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
                     onClick={() => {
                       if (!task.isCompleted) {
-                        completeTask(task.id);
-                        // Close immediately rather than leaving this screen open showing
-                        // stale local state (e.g. the pre-completion due date for a
-                        // recurring task, which completeTask advances underneath us).
-                        requestClose();
+                        // requestComplete only completes synchronously (returning true)
+                        // when there's no tracked-time popup to show first — a task with
+                        // a timer instead surfaces CompleteTaskConfirmModal above this
+                        // modal and leaves this screen open until the user decides.
+                        const completedImmediately = requestComplete(task.id);
+                        if (completedImmediately) {
+                          // Close immediately rather than leaving this screen open showing
+                          // stale local state (e.g. the pre-completion due date for a
+                          // recurring task, which completeTask advances underneath us).
+                          requestClose();
+                        }
                       } else {
                         // Already completed — clicking again restores it (mirrors the
                         // "Completed" tab's restore action in TaskListPanel).
@@ -1122,7 +1168,7 @@ export default function TaskDetailModal({ task, onClose }) {
                         // normal task's row (TaskListPanel) — reused as-is
                         // rather than hand-rolling a new toggle path.
                         onChange={() => {
-                          if (!child.isCompleted) completeTask(child.id);
+                          if (!child.isCompleted) requestComplete(child.id);
                         }}
                       />
                       <button
@@ -1350,17 +1396,12 @@ export default function TaskDetailModal({ task, onClose }) {
                 )}
               </DetailField>
 
-              <DetailField icon={Clock} label="Estimated hours">
-                <input
-                  type="number"
-                  min="0.0833"
-                  step="0.0833"
-                  // Round only unedited numeric values (defaults/smart-parse) to avoid
-                  // floating-point noise like "0.0833333333333333"; user-typed strings
-                  // pass through untouched so typing a decimal point isn't clobbered.
-                  value={typeof estimatedHours === 'number' ? Math.round(estimatedHours * 10000) / 10000 : estimatedHours}
-                  onChange={(e) => setEstimatedHours(e.target.value)}
-                />
+              <DetailField icon={Clock} label="Estimated time">
+                <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} />
+                <p className="form-hint">{formatHoursLong(estimatedHours)}</p>
+                {typeof task.actualHours === 'number' && (
+                  <p className="form-hint">Actually spent: {formatHours(task.actualHours)} (tracked via timer)</p>
+                )}
               </DetailField>
 
               <DetailField icon={Timer} label="Timer">
@@ -1375,13 +1416,50 @@ export default function TaskDetailModal({ task, onClose }) {
               </DetailField>
 
               <DetailField icon={Repeat} label="Repeat">
-                {isRecurring ? (
-                  <div className="detail-recurrence-toggle detail-recurrence-toggle-active">
-                    {recurrenceDays && recurrenceDays.length > 0
-                      ? `Every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
+                {isRecurring && recurrenceDays && recurrenceDays.length > 0 ? (
+                  repeatEditText !== null ? (
+                    <SmartRecurrenceInput
+                      value={repeatEditText}
+                      autoFocus
+                      onChange={(e) => setRepeatEditText(e.target.value)}
+                      onBlur={commitRepeatEditText}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur();
+                        if (e.key === 'Escape') setRepeatEditText(null);
+                      }}
+                    />
+                  ) : (
+                    <div className="detail-field-inline">
+                      <button
+                        type="button"
+                        className="detail-recurrence-toggle"
+                        style={{ flex: 1 }}
+                        onClick={() =>
+                          setRepeatEditText(
+                            `every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
+                              .map((d) => WEEKDAY_LABELS[d])
+                              .join(', ')}`
+                          )
+                        }
+                      >
+                        {`Every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
                           .map((d) => WEEKDAY_LABELS[d])
-                          .join(', ')}`
-                      : `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`}
+                          .join(', ')}`}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-icon detail-recurrence-clear"
+                        onClick={() => setIsRecurring(false)}
+                        aria-label="Turn off repeat"
+                        title="Does not repeat"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )
+                ) : isRecurring ? (
+                  <div className="detail-recurrence-toggle detail-recurrence-toggle-active">
+                    {`Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`}
                   </div>
                 ) : (
                   <button
@@ -1393,7 +1471,7 @@ export default function TaskDetailModal({ task, onClose }) {
                     Does not repeat
                   </button>
                 )}
-                {isRecurring && (
+                {isRecurring && !(recurrenceDays && recurrenceDays.length > 0) && (
                   <div className="detail-field-inline" style={{ marginTop: 6 }}>
                     <input
                       type="number"

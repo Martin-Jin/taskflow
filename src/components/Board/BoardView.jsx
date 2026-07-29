@@ -47,6 +47,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import AddTaskModal from '../Modals/AddTaskModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
@@ -64,12 +65,12 @@ export default function BoardView({ projectId, onProjectChange }) {
     projects,
     labels,
     searchQuery,
-    completeTask,
     addSection,
     renameSection,
     deleteSection,
     updateTask,
   } = useScheduler();
+  const { requestComplete } = useCompleteTask();
   // Track only the id — deriving the task object live from `tasks` (below)
   // ensures edits made in the modal (e.g. removing a subtask) show up
   // immediately instead of requiring a close/reopen.
@@ -235,7 +236,7 @@ export default function BoardView({ projectId, onProjectChange }) {
           title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
           onClick={(e) => {
             e.stopPropagation();
-            completeTask(task.id);
+            requestComplete(task.id);
           }}
         >
           <Circle size={16} strokeWidth={1.75} />

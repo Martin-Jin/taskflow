@@ -21,6 +21,10 @@
  * @property {string} [notes]                - Optional free-text notes/description.
  * @property {Array<{url: string, matchedText: string}>} [noteLinks] - Smart-parsed link phrases stripped out of `notes` (TaskDetailModal), persisted so they can still be rendered as pills after the raw phrase is gone from the notes text.
  * @property {number} estimatedHours         - Total hours required to complete the task.
+ * @property {number|null} [actualHours]     - Hours actually spent working the task, set only when completing a
+ *                                              task that had a Pomodoro timer running/paused (see TimerContext +
+ *                                              CompleteTaskContext.requestComplete). Undefined for every other
+ *                                              task — never backfilled retroactively.
  * @property {number} remainingHours         - Hours not yet scheduled/completed (drives re-scheduling).
  * @property {Priority} priority             - Task priority, drives allocation order.
  * @property {string|null} dueDate           - ISO date string (YYYY-MM-DD) or null if no deadline. OPTIONAL: a task

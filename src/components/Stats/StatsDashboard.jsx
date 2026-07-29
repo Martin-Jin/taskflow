@@ -52,6 +52,11 @@ export default function StatsDashboard() {
     const activeTasks = tasks.filter((t) => !t.isCompleted);
     const totalHoursLeft = activeTasks.reduce((sum, t) => sum + t.remainingHours, 0);
 
+    // Only set on tasks completed via a tracked Pomodoro timer (see
+    // CompleteTaskContext) — most completed tasks have no `actualHours` at
+    // all, so this only sums the ones that do rather than assuming 0.
+    const totalActualHours = tasks.reduce((sum, t) => sum + (typeof t.actualHours === 'number' ? t.actualHours : 0), 0);
+
     const weekStart = addDays(today, -dayOfWeek(today));
     const weekEnd = addDays(weekStart, 6);
 
@@ -70,7 +75,7 @@ export default function StatsDashboard() {
       return effectiveDeadline < today && t.remainingHours > 0;
     });
 
-    return { totalHoursLeft, scheduledToday, scheduledThisWeek, freeCapacityThisWeek, overdueRiskTasks };
+    return { totalHoursLeft, totalActualHours, scheduledToday, scheduledThisWeek, freeCapacityThisWeek, overdueRiskTasks };
   }, [tasks, blocks, routines, events, rules, today]);
 
   // ---- Hours planned per day (bar chart) -----------------------------------
@@ -116,6 +121,9 @@ export default function StatsDashboard() {
           value={stats.freeCapacityThisWeek.toFixed(1) + 'h'}
           accent={stats.freeCapacityThisWeek < 2 ? 'var(--color-warning)' : 'var(--color-success)'}
         />
+        {stats.totalActualHours > 0 && (
+          <StatCard label="Time logged" value={stats.totalActualHours.toFixed(1) + 'h'} sublabel="tracked via timer, on completed tasks" />
+        )}
       </div>
 
       {stats.overdueRiskTasks.length > 0 && (
