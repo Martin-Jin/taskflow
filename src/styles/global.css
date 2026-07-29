@@ -422,9 +422,21 @@ select:focus-visible,
       'main';
   }
 
+  /* Topbar only renders on the Dashboard tab (see App.jsx) — every other
+     tab reclaims that 56px row instead of leaving a gap sized for a header
+     that isn't mounted. */
+  .app-shell.is-mobile.no-topbar {
+    grid-template-rows: 1fr;
+    grid-template-areas: 'main';
+  }
+
   .app-shell.is-mobile .main-content {
     padding: var(--space-3);
     padding-bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+  }
+
+  .app-shell.is-mobile.no-topbar .main-content {
+    padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0));
   }
 
   .app-shell.is-mobile .topbar {
@@ -1204,6 +1216,14 @@ input.search-bar-input {
 
 .search-bar-dropdown-item:hover {
   background: var(--color-bg-surface-hover);
+}
+
+.search-bar-dropdown-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .chip {

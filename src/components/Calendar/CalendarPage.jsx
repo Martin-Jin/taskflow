@@ -10,7 +10,7 @@
  */
 
 import React, { useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Zap, CalendarPlus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Zap, CalendarPlus, RefreshCw } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import BlockDetailModal from '../Modals/BlockDetailModal';
@@ -47,7 +47,7 @@ export default function CalendarPage() {
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [creatingEvent, setCreatingEvent] = useState(null); // { date, startTime, endTime } while the "block time" modal is open
-  const { blocks, events, runRebalance, isLoading } = useScheduler();
+  const { blocks, events, runRebalance, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
   const touchStartX = useRef(null);
   // _v2: the zoom level table gained more zoom-in steps above the original
   // max, so a v1 key persisted from before that change would pin returning
@@ -106,11 +106,24 @@ export default function CalendarPage() {
   }
 
   function handleTouchStart(e) {
+    // A second finger joining mid-gesture means this is a pinch (zoom),
+    // not a swipe — WeekView's own touch listeners own that gesture, so
+    // bail out here and don't treat the eventual lift-off as a swipe.
+    if (e.touches.length !== 1) {
+      touchStartX.current = null;
+      return;
+    }
     touchStartX.current = e.touches[0].clientX;
   }
 
   function handleTouchEnd(e) {
     if (touchStartX.current === null) return;
+    // Still-active touches after this one lifts means a pinch is (or was)
+    // in progress — same reasoning as handleTouchStart above.
+    if (e.touches.length > 0) {
+      touchStartX.current = null;
+      return;
+    }
     const deltaX = e.changedTouches[0].clientX - touchStartX.current;
     touchStartX.current = null;
     if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX) return;
@@ -178,6 +191,23 @@ export default function CalendarPage() {
             <Zap size={14} />
             Re-balance schedule
           </button>
+          {/* Only useful once Google Calendar is actually connected — hidden
+              rather than shown-but-disabled, matching how Settings' own
+              Google controls are gated on googleConnected. Shares isSyncing
+              with Settings' "Sync now"/"Push to Google Calendar" so this
+              button, that button, and any other sync action all show a
+              consistent busy state if one is already running. */}
+          {googleConnected && (
+            <button
+              className="btn btn-icon"
+              onClick={syncNow}
+              disabled={isSyncing}
+              aria-label="Refresh Google Calendar events"
+              title="Refresh Google Calendar events"
+            >
+              <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -202,7 +232,7 @@ export default function CalendarPage() {
             dayCount={dayCount}
             isMobile={isMobile}
             pxPerMin={pxPerMin}
-            onZoomDelta={isMobile ? undefined : handleZoomDelta}
+            onZoomDelta={handleZoomDelta}
             onSelectBlock={(block) => setSelectedBlockId(block.id)}
             onSelectEvent={(evt) => setSelectedEventId(evt.id)}
             onCreateEvent={(date, startTime, endTime) => setCreatingEvent({ date, startTime, endTime })}

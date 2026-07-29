@@ -221,7 +221,7 @@ function AppShell() {
   );
 
   return (
-    <div className={`app-shell ${isMobile ? 'is-mobile' : ''}`}>
+    <div className={`app-shell ${isMobile ? 'is-mobile' : ''} ${isMobile && tab !== 'dashboard' ? 'no-topbar' : ''}`}>
       {!isMobile && (
         <Sidebar
           tabs={TABS}
@@ -245,7 +245,7 @@ function AppShell() {
         />
       )}
 
-      {isMobile && (
+      {isMobile && tab === 'dashboard' && (
         <header className="topbar">
           <div className="brand" data-tour="brand">
             <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="brand-mark" />
@@ -271,6 +271,7 @@ function AppShell() {
               onResolveBoardProject={resolveBoardProject}
               onOpenManageProjects={openManageProjects}
               openAddTaskSignal={addTaskSignal}
+              onOpenSettings={() => setTab('settings')}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}

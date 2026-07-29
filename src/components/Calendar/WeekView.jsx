@@ -20,9 +20,10 @@
  *   - Click the lock icon -> toggleBlockLock() so the rebalance engine will
  *     never move it again. Events have no lock concept.
  *   - Click a block/event -> opens its detail modal for full editing.
- *   - Two or more overlapping blocks/events pack into side-by-side lanes on
- *     desktop, or collapse into a single "N events" chip on mobile (too
- *     narrow for side-by-side slices) — see layoutDayItems.
+ *   - Two or more overlapping blocks/events pack into side-by-side lanes;
+ *     any that are shorter than 30min collapse into a single "N events"
+ *     chip instead (mobile's narrow columns make this matter most, but the
+ *     same 30min cutoff applies on desktop too) — see layoutDayItems.
  * ============================================================================
  */
 
@@ -51,6 +52,14 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 const SHORT_BLOCK_MAX_MIN = 15; // blocks this short (or shorter) are cluster-eligible
 const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
+
+// Within an overlap group (see layoutDayItems), an item this long or longer
+// always gets its own visible side-by-side lane, even if it overlaps
+// something shorter. Items below this duration are candidates to fold into
+// an "N events" chip alongside other short items they actually overlap.
+// Applies to a whole `kind: 'cluster'` run's own span, not its individual
+// blocks — a cluster is already one unit by the time layoutDayItems sees it.
+const LONG_ITEM_MIN = 30;
 
 // Floor height for any single block/cluster, and the breathing room left
 // between two boxes stacked back-to-back in the same lane — see packLane.
@@ -138,13 +147,23 @@ function clusterShortBlocks(items) {
  * (blocks and events already merged, see dayItemsByDay) — the caller is
  * responsible for computing `start`/`end` via timeToMinutes beforehand.
  *
- * On mobile, side-by-side lanes are too narrow to read — so instead of
- * assigning per-item lanes, any overlap group with more than one item
- * collapses into a single synthetic `kind: 'mobileOverlap'` item (a
- * tappable "N events" chip, see WeekView's render). Groups of exactly one
- * item are unaffected either way — there's nothing to collapse.
+ * Side-by-side lanes get thin on both mobile and (to a lesser extent)
+ * desktop once 3+ items overlap, so within each overlap group, items whose
+ * OWN duration is under LONG_ITEM_MIN are further split out and re-grouped
+ * by mutual overlap *among themselves* (a gap between two short items is
+ * only "one group" if a long item happens to bridge them into the same
+ * overlap group — removing the long item can split them into two
+ * time-disjoint short-runs, which must become two separate chips, not one
+ * spanning the gap). Each short-run of 2+ collapses into a single synthetic
+ * `kind: 'overlapChip'` item (a tappable "N events" chip, see WeekView's
+ * render); a short-run of exactly 1 stays a normal item — nothing to
+ * collapse into. Items >= LONG_ITEM_MIN always keep an individual lane,
+ * whether that's alongside something shorter or another long item.
+ * Long items and chips are then lane-packed together in one pass (sorted by
+ * start) so a chip that overlaps a long item in time still gets a distinct
+ * lane rather than visually colliding with it.
  */
-function layoutDayItems(dayItems, isMobile) {
+function layoutDayItems(dayItems) {
   const items = [...dayItems].sort((a, b) => a.start - b.start || a.end - b.end);
 
   const clustered = clusterShortBlocks(items);
@@ -153,22 +172,9 @@ function layoutDayItems(dayItems, isMobile) {
   let overlapGroup = [];
   let groupEnd = -Infinity;
 
-  function flushGroup() {
-    if (overlapGroup.length === 0) return;
-    if (isMobile && overlapGroup.length > 1) {
-      results.push({
-        kind: 'mobileOverlap',
-        items: overlapGroup.map((g) => ({ type: g.type, data: g.data, kind: g.kind, blocks: g.blocks })),
-        start: Math.min(...overlapGroup.map((g) => g.start)),
-        end: Math.max(...overlapGroup.map((g) => g.end)),
-        lane: 0,
-        totalLanes: 1,
-      });
-      overlapGroup = [];
-      return;
-    }
+  function packLanes(laneItems) {
     const laneEnds = []; // end minute of the last item placed in each lane
-    for (const item of overlapGroup) {
+    for (const item of laneItems) {
       let lane = laneEnds.findIndex((end) => end <= item.start);
       if (lane === -1) {
         lane = laneEnds.length;
@@ -179,7 +185,49 @@ function layoutDayItems(dayItems, isMobile) {
       results.push({ ...item, lane });
     }
     const totalLanes = laneEnds.length;
-    for (let i = results.length - overlapGroup.length; i < results.length; i++) results[i].totalLanes = totalLanes;
+    for (let i = results.length - laneItems.length; i < results.length; i++) results[i].totalLanes = totalLanes;
+  }
+
+  function flushGroup() {
+    if (overlapGroup.length === 0) return;
+
+    const longItems = overlapGroup.filter((it) => it.end - it.start >= LONG_ITEM_MIN);
+    const shortItems = overlapGroup.filter((it) => it.end - it.start < LONG_ITEM_MIN);
+
+    // Re-sweep just the short items (already start-sorted, as a subsequence
+    // of `clustered`) for their own mutual-overlap runs, independent of any
+    // long item(s) that pulled them into the same overlapGroup.
+    const laneItems = [...longItems];
+    let shortRun = [];
+    let shortRunEnd = -Infinity;
+    function flushShortRun() {
+      if (shortRun.length === 0) return;
+      if (shortRun.length === 1) {
+        laneItems.push(shortRun[0]);
+      } else {
+        laneItems.push({
+          kind: 'overlapChip',
+          items: shortRun.map((g) => ({ type: g.type, data: g.data, kind: g.kind, blocks: g.blocks })),
+          start: Math.min(...shortRun.map((g) => g.start)),
+          end: Math.max(...shortRun.map((g) => g.end)),
+        });
+      }
+      shortRun = [];
+    }
+    for (const item of shortItems) {
+      if (shortRun.length === 0 || item.start < shortRunEnd) {
+        shortRun.push(item);
+        shortRunEnd = Math.max(shortRunEnd, item.end);
+      } else {
+        flushShortRun();
+        shortRun = [item];
+        shortRunEnd = item.end;
+      }
+    }
+    flushShortRun();
+
+    laneItems.sort((a, b) => a.start - b.start);
+    packLanes(laneItems);
     overlapGroup = [];
   }
 
@@ -304,8 +352,10 @@ export default function WeekView({
   }, [events, days]);
   // Blocks and events are laid out together (one lane-packing pass sees
   // both) so an overlapping block+event pair packs into side-by-side lanes
-  // (or, on mobile, collapses into one "N events" chip) exactly like two
-  // overlapping blocks would — see layoutDayItems.
+  // (or, if short enough, collapses into one "N events" chip) exactly like
+  // two overlapping blocks would — see layoutDayItems. isMobile isn't part
+  // of this computation itself (both platforms share the same lane/chip
+  // layout now) — only the render below branches on it, for styling.
   const dayItemsByDay = useMemo(() => {
     const map = new Map();
     for (const day of days) {
@@ -322,10 +372,10 @@ export default function WeekView({
         end: timeToMinutes(e.endTime),
       }));
       const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
-      map.set(day, computeDayPositions(layoutDayItems(merged, isMobile), pxPerMin));
+      map.set(day, computeDayPositions(layoutDayItems(merged), pxPerMin));
     }
     return map;
-  }, [days, blocksByDay, eventsByDay, pxPerMin, isMobile]);
+  }, [days, blocksByDay, eventsByDay, pxPerMin]);
 
   const [dragState, setDragState] = useState(null); // { id, type, mode: 'move'|'resize' }
   const [dragOverDay, setDragOverDay] = useState(null);
@@ -346,6 +396,54 @@ export default function WeekView({
     }
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
+  }, [onZoomDelta]);
+
+  // Two-finger pinch zoom (mobile). Mirrors the ctrl+wheel path above but
+  // driven by the distance between the two touch points instead of wheel
+  // delta — each time that distance grows/shrinks past a fixed ratio from
+  // where it last stepped, we bump the zoom index by one and reset the
+  // baseline, so a long pinch can walk through several zoom levels.
+  const pinchRef = useRef(null); // { lastDist } while exactly 2 touches are down
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || !onZoomDelta) return;
+    const PINCH_STEP_RATIO = 1.15;
+    function touchDist(touches) {
+      const [a, b] = touches;
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
+    function onTouchStart(e) {
+      if (e.touches.length === 2) pinchRef.current = { lastDist: touchDist(e.touches) };
+    }
+    function onTouchMove(e) {
+      if (e.touches.length !== 2 || !pinchRef.current) return;
+      // Non-passive so this can actually stop the browser's own page-zoom
+      // gesture from firing alongside our own (see the wheel handler above
+      // for the same passive-listener caveat).
+      if (e.cancelable) e.preventDefault();
+      const dist = touchDist(e.touches);
+      const ratio = dist / pinchRef.current.lastDist;
+      if (ratio >= PINCH_STEP_RATIO) {
+        onZoomDelta(1);
+        pinchRef.current.lastDist = dist;
+      } else if (ratio <= 1 / PINCH_STEP_RATIO) {
+        onZoomDelta(-1);
+        pinchRef.current.lastDist = dist;
+      }
+    }
+    function onTouchEnd(e) {
+      if (e.touches.length < 2) pinchRef.current = null;
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
   }, [onZoomDelta]);
 
   // Transient "48px/hr" pill, shown whenever pxPerMin actually changes (i.e.
@@ -733,8 +831,8 @@ export default function WeekView({
               const { lane, totalLanes } = item;
               // Items side-by-side within an overlap group — see
               // layoutDayItems above. totalLanes is 1 for the common case
-              // (no overlap, or a collapsed mobileOverlap chip), so this is
-              // a no-op then.
+              // (no overlap, or a lone item next to a collapsed overlapChip),
+              // so this is a no-op then.
               const laneWidthPct = 100 / totalLanes;
               const laneStyle =
                 totalLanes > 1
@@ -789,7 +887,7 @@ export default function WeekView({
                 );
               }
 
-              if (item.kind === 'mobileOverlap') {
+              if (item.kind === 'overlapChip') {
                 const chipKey = `${day}_overlap_${item.start}`;
                 const { top, height } = item;
                 const isOpen = openCluster?.key === chipKey;
@@ -805,7 +903,7 @@ export default function WeekView({
                 return (
                   <div
                     key={chipKey}
-                    className={`cal-block cal-mobile-overlap ${isOpen ? 'is-open' : ''}`}
+                    className={`cal-block cal-overlap-chip ${isOpen ? 'is-open' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}

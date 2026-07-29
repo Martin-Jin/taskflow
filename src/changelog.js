@@ -17,6 +17,43 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.6',
+    date: '2026-07-30',
+    title: 'Calendar refreshes itself when you come back to the tab',
+    changes: [
+      'Google Calendar events now refresh automatically when you switch back to the app after being away, instead of waiting up to 5 minutes for the next background poll.',
+      'Added a refresh button next to "Re-balance schedule" on the Calendar page to pull the latest Google Calendar events on demand, without needing to go to Settings.',
+    ],
+  },
+  {
+    version: '1.15.5',
+    date: '2026-07-30',
+    title: 'Search now suggests tasks, not just projects and tags',
+    changes: [
+      'Typing in the search bar (Tasks list or Board) now also suggests matching tasks in a dropdown — click one to jump straight into its edit view.',
+      'Typing a bare "#" now shows a project picker right away, without needing to type a project name first; typing a space cancels it back to task suggestions.',
+    ],
+  },
+  {
+    version: '1.15.4',
+    date: '2026-07-30',
+    title: 'Calendar overlap chips now respect event length',
+    changes: [
+      'Overlapping events/tasks shorter than 30 minutes still collapse into a tappable "N events" chip, but anything 30 minutes or longer now always gets its own visible spot next to it, on both mobile and desktop, instead of being folded into the chip.',
+      'Desktop now also collapses runs of short overlapping items into a chip, matching how mobile already handled it, instead of always cramming them into unreadably thin side-by-side slices.',
+    ],
+  },
+  {
+    version: '1.15.3',
+    date: '2026-07-30',
+    title: 'Search fix, pinch-to-zoom, and a leaner mobile header',
+    changes: [
+      'Fixed the Tasks page search bar so it searches every task in the current project, instead of only the ones already matching the active status filter chip.',
+      'Two-finger pinch on the mobile calendar now zooms the time grid in and out, like the desktop trackpad-pinch/ctrl-scroll zoom already did.',
+      'The mobile top bar (logo + account avatar) now only shows on the Dashboard tab, freeing up space on Tasks, Calendar, Stats, and Settings. The Tasks page keeps a one-tap account/settings button in its own header row.',
+    ],
+  },
+  {
     version: '1.15.2',
     date: '2026-07-30',
     title: 'Fixed smart-parsed links in sub-tasks and descriptions',

@@ -7,7 +7,12 @@
 
 export const GUIDED_TOUR_STEPS = [
   {
-    tab: null,
+    // The mobile topbar (and its data-tour="brand" mark) only renders on the
+    // Dashboard tab now (see App.jsx) — pin this step there explicitly
+    // rather than `tab: null`, so replaying the tour from Settings still
+    // lands on a tab where the brand mark actually exists instead of
+    // falling back to a spotlight-less centered tooltip.
+    tab: 'dashboard',
     selector: '[data-tour="brand"]',
     placement: 'right',
     title: 'Welcome to TaskFlow',
