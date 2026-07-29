@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.0',
+    date: '2026-07-30',
+    title: 'AI Quick Add',
+    changes: [
+      'New "AI Quick Add" button (sparkle icon) next to Add Task in the Tasks list and Board view — type a free-form description, or attach a screenshot, and have AI (your choice of Claude or Gemini) turn it into a new task or calendar event automatically.',
+      'Requires deploying a small companion Cloudflare Worker (free tier) that holds the API keys server-side — see the README for setup. If not set up, the button simply stays hidden.',
+    ],
+  },
+  {
     version: '1.15.10',
     date: '2026-07-30',
     title: 'Quieter startup',

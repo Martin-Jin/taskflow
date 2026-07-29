@@ -35,11 +35,17 @@ jobs:
       # identify the OAuth client, not a credential, and Google's own
       # "Authorized JavaScript origins" restriction is what actually secures
       # them (set it to https://<owner>.github.io in Cloud Console).
+      # VITE_AI_QUICKADD_WORKER_URL is likewise just a URL, not a credential —
+      # the real Anthropic/Gemini keys live in the Worker's own secrets, never
+      # here. Lock the Worker's ALLOWED_ORIGIN down to this Pages origin (see
+      # cloudflare-worker/README.md) so a public build can't be used to spend
+      # your API credits from anywhere else.
       - name: Build
         env:
           GH_PAGES: true
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
+          VITE_AI_QUICKADD_WORKER_URL: ${{ secrets.VITE_AI_QUICKADD_WORKER_URL }}
         run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
