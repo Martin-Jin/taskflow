@@ -4,20 +4,44 @@
  * ============================================================================
  * Client-side wrapper around the companion Cloudflare Worker (see
  * cloudflare-worker/) that turns free-form text/screenshot into a structured
- * Task or CalendarEvent via Claude or Gemini. The actual Anthropic/Gemini API
- * keys never touch the browser — this only ever talks to the Worker URL,
- * configured via VITE_AI_QUICKADD_WORKER_URL (see .env.example).
+ * Task or CalendarEvent via Claude or Gemini.
  *
- * The Worker is stateless and has no knowledge of the user's existing
- * projects/labels or today's date, so callers pass those as `context` —
- * without a reference date the model can't resolve "tomorrow"/"next Friday"
- * mentions, and without existing project/label names it can only guess at
- * `projectName`/`labelNames` rather than matching real ones (see
- * `resolveProjectAndLabels` below, used by AIQuickAddModal).
+ * Bring-your-own-key (BYOK): each user pastes their own Anthropic/Gemini API
+ * key into Settings (mirrors the Todoist token pattern — see
+ * SettingsPanel.jsx and utils/persistence.js), persisted only in that
+ * browser's localStorage. This service reads it here at request time and
+ * sends it to the Worker as `apiKey`, alongside the existing `provider`/
+ * `text`/`image`/`context` fields; the Worker itself holds no secrets and
+ * just forwards whatever key it's given straight to the provider. See
+ * cloudflare-worker/README.md for the full rationale.
+ *
+ * `VITE_ANTHROPIC_API_KEY` / `VITE_GEMINI_API_KEY` are read first purely for
+ * local `npm run dev` convenience (same reasoning as
+ * `VITE_TODOIST_API_TOKEN` in SchedulerContext) — never present in the
+ * public GitHub Pages build, since there's no `.env` at build time there.
+ *
+ * The Worker is otherwise stateless and has no knowledge of the user's
+ * existing projects/labels or today's date, so callers pass those as
+ * `context` — without a reference date the model can't resolve "tomorrow"/
+ * "next Friday" mentions, and without existing project/label names it can
+ * only guess at `projectName`/`labelNames` rather than matching real ones
+ * (see `resolveProjectAndLabels` below, used by AIQuickAddModal).
  * ============================================================================
  */
 
+import { loadPersisted } from '../utils/persistence';
+
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB, matches the Worker's base64 size cap
+
+// localStorage keys the AI Quick Add Settings section saves to (see SettingsPanel.jsx).
+const AI_KEY_STORAGE = { anthropic: 'aiAnthropicApiKey', gemini: 'aiGeminiApiKey' };
+const PROVIDER_LABEL = { anthropic: 'Anthropic', gemini: 'Gemini' };
+
+/** Reads the user's own API key for `provider` — local-dev `.env` fallback, then localStorage. */
+export function getStoredApiKey(provider) {
+  const envKey = provider === 'anthropic' ? import.meta.env.VITE_ANTHROPIC_API_KEY : import.meta.env.VITE_GEMINI_API_KEY;
+  return envKey || loadPersisted(AI_KEY_STORAGE[provider], null);
+}
 
 /** Whether the AI Quick Add entry point should be shown at all. */
 export function isAIQuickAddConfigured() {
@@ -57,6 +81,11 @@ export async function parseWithAI({ provider, text, imageFile, context }) {
     throw new Error('AI Quick Add is not configured — no worker URL set.');
   }
 
+  const apiKey = getStoredApiKey(provider);
+  if (!apiKey) {
+    throw new Error(`Add your ${PROVIDER_LABEL[provider]} API key in Settings first.`);
+  }
+
   let image;
   if (imageFile) {
     if (imageFile.size > MAX_IMAGE_BYTES) {
@@ -70,7 +99,7 @@ export async function parseWithAI({ provider, text, imageFile, context }) {
     res = await fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, text: text || '', image, context }),
+      body: JSON.stringify({ provider, apiKey, text: text || '', image, context }),
     });
   } catch {
     throw new Error('Could not reach the AI Quick Add worker — check your connection and the configured worker URL.');

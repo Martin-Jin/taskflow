@@ -2,11 +2,10 @@ name = "taskflow-ai-quickadd"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# No KV/D1/Durable Object bindings needed — the only state this worker
-# touches is the two API-key secrets below, set via `wrangler secret put`
-# (never committed here):
-#   ANTHROPIC_API_KEY
-#   GEMINI_API_KEY
+# No KV/D1/Durable Object bindings needed, and no secrets either — this
+# worker is bring-your-own-key (BYOK): each request carries the caller's own
+# Anthropic/Gemini API key, forwarded straight through and never persisted
+# (see src/index.js). The only config here is CORS.
 #
 # ALLOWED_ORIGIN controls CORS (see src/index.js). Defaults to "*" if unset,
 # which is fine for local development but should be locked down to your

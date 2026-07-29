@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.1',
+    date: '2026-07-30',
+    title: 'AI Quick Add now uses your own API key',
+    changes: [
+      'AI Quick Add now runs on your own Anthropic/Gemini API key (added in Settings → Integrations → AI Quick Add) instead of a shared one — nothing changes for you if you haven\'t tried the feature yet.',
+      'The companion Cloudflare Worker no longer holds any API keys at all, so it now only needs to be deployed once, with no ongoing cost to whoever hosts it.',
+    ],
+  },
+  {
     version: '1.16.0',
     date: '2026-07-30',
     title: 'AI Quick Add',
