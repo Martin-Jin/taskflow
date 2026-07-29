@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.11.1',
+    date: '2026-07-29',
+    title: 'Fixed the "new task" shortcut',
+    changes: [
+      'Fixed the New task shortcut sometimes reopening "Add task" by itself when switching back to the Tasks tab.',
+      'Changed the New task shortcut\'s default from Ctrl+N to Alt+N — Ctrl+N is reserved by the browser (it opened a new browser window alongside the dialog). Rebind it from Settings → Keyboard shortcuts if you\'d like something else.',
+    ],
+  },
+  {
     version: '1.11.0',
     date: '2026-07-29',
     title: 'Sound effects, settings search, and shortcut feedback',

@@ -27,7 +27,7 @@
  * looked like the moment the modal opened.)
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
@@ -76,12 +76,21 @@ export default function TaskListPanel({
   const { requestComplete } = useCompleteTask();
   const { playUncomplete, playSelect } = useSound();
   const [showAddModal, setShowAddModal] = useState(false);
-  // Ctrl+N (see useKeyboardShortcuts in App.jsx) bumps this from anywhere in
-  // the app to open "Add task" here, since this modal's open state is local
-  // to the Tasks tab rather than lifted — App.jsx switches to this tab and
-  // increments the signal, this just reacts to the change.
+  // The "new task" shortcut (see useKeyboardShortcuts in App.jsx) bumps this
+  // from anywhere in the app to open "Add task" here, since this modal's open
+  // state is local to the Tasks tab rather than lifted — App.jsx switches to
+  // this tab and increments the signal, this just reacts to the change.
+  // lastHandledSignalRef starts at the *current* signal value (not 0) so that
+  // remounting this component (e.g. switching away from and back to the Tasks
+  // tab) doesn't immediately reopen the modal just because the signal was
+  // already bumped earlier in the session — only a genuine new increment
+  // after this mount should open it.
+  const lastHandledSignalRef = useRef(openAddTaskSignal);
   useEffect(() => {
-    if (openAddTaskSignal) setShowAddModal(true);
+    if (openAddTaskSignal !== lastHandledSignalRef.current) {
+      lastHandledSignalRef.current = openAddTaskSignal;
+      setShowAddModal(true);
+    }
   }, [openAddTaskSignal]);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filter, setFilter] = useState('active'); // active | completed | all | noDueDate

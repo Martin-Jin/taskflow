@@ -93,9 +93,10 @@ function AppShell() {
   const [showChangelog, setShowChangelog] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = usePersistedState('lastSeenChangelogVersion', null);
   const [manageProjectsAutoAdd, setManageProjectsAutoAdd] = useState(false);
-  // Bumped by the Ctrl+N shortcut below to signal TaskListPanel (which owns
-  // "Add task" modal state locally) to open it, even when Ctrl+N is pressed
-  // from a different tab — see the effect on this prop in TaskListPanel.
+  // Bumped by the "new task" shortcut below to signal TaskListPanel (which
+  // owns "Add task" modal state locally) to open it, even when the shortcut
+  // is pressed from a different tab — see the effect on this prop in
+  // TaskListPanel.
   const [addTaskSignal, setAddTaskSignal] = useState(0);
   const isMobile = useIsMobile();
   const {
