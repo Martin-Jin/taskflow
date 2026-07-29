@@ -600,10 +600,11 @@ export function SchedulerProvider({ children }) {
               // eventSyncService.js for the full merge/reconcile policy.
               setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
               if (failedCalendars.length > 0) {
-                setNotification({
-                  type: 'warning',
-                  message: `Couldn't load events from: ${failedCalendars.join(', ')}. Check that you still have access to these calendars.`,
-                });
+                // Silent, like the catch block below — this is the automatic
+                // load-on-mount fetch, not a user-initiated action, so a
+                // partial failure here shouldn't pop a toast before the user
+                // has done anything.
+                console.warn(`[SchedulerContext] Couldn't load events from: ${failedCalendars.join(', ')}`);
               }
             }
           } else if (!cancelled) {
@@ -842,8 +843,10 @@ export function SchedulerProvider({ children }) {
     pullFromCloud(user.uid)
       .catch((err) => {
         if (cancelled) return;
+        // Silent — this is the automatic pull that runs on sign-in/initial
+        // load, not a user-initiated sync, so a failure here shouldn't pop
+        // a toast before the user has done anything.
         console.error('[SchedulerContext] Cloud sync failed to load', err);
-        setNotification({ type: 'warning', message: "Signed in, but couldn't reach cloud storage to sync your data." });
       })
       .then(() => {
         // Chained onto pullFromCloud rather than a separate effect on the

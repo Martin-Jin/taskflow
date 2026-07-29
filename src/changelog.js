@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.15.10',
+    date: '2026-07-30',
+    title: 'Quieter startup',
+    changes: [
+      "Removed the warning toasts that could pop up right when the app loads (e.g. from the automatic Google Calendar refresh or cloud sync) — those failures are now only logged quietly instead of interrupting you before you've done anything.",
+    ],
+  },
+  {
     version: '1.15.9',
     date: '2026-07-30',
     title: 'Fix: #project smart parse being ignored',
