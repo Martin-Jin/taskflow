@@ -1,21 +1,35 @@
 /**
- * soundService — short, percussive "pop"/"thock" sound effects synthesized
- * with the Web Audio API (no binary audio assets). Modeled after Todoist's
- * task-complete sound: fast attack, very fast decay, no ringing sustain —
- * a tactile click rather than a musical chime/bell/ding.
+ * soundService — plays short, licensed sound-effect files (Mixkit Sound
+ * Effects Free License, commercial/personal use, no attribution required —
+ * see src/assets/sounds/) for the app's task actions (add/complete/
+ * uncomplete/delete).
  *
- * Each sound layers two things:
- *   - a short filtered-noise burst (a `BufferSource` of white noise through a
- *     bandpass/lowpass filter) for the "thock" texture, and
- *   - a quick pitched tone blip (an oscillator with an exponential decay)
- *     for a bit of tonal character to distinguish actions.
- * Both layers decay to (near) silence in well under 200ms, so nothing here
- * ever sustains or rings like a notification sound.
+ * Uses the Web Audio API (AudioContext + decodeAudioData + BufferSource)
+ * rather than plain <audio> elements: each source file is fetched and
+ * decoded ONCE (cached as a shared AudioBuffer promise), then every play
+ * call spins up a fresh BufferSourceNode from that buffer. That gives
+ * low-latency, overlap-safe playback — rapid task-row clicks each get their
+ * own source node and can layer/retrigger without cutting an earlier one
+ * off, which a shared <audio> element (single playback position) can't do.
+ *
+ * There's no separate "uncomplete" audio file — playUncompleteSound reuses
+ * whichever file playCompleteSound plays (see SOUND_URLS below), just at a
+ * slightly lower playbackRate, so unchecking a task sounds like a
+ * related-but-distinct variant of the same click.
  *
  * A single AudioContext is created lazily on first play — browsers block
  * autoplay until a user gesture, and every call site here (task actions) is
  * itself triggered by a click, so lazy creation naturally satisfies that.
  */
+
+import addUrl from '../assets/sounds/add.mp3';
+import completeUrl from '../assets/sounds/complete.mp3';
+import deleteUrl from '../assets/sounds/delete.mp3';
+
+// Swapped on purpose: Mixkit's "complete.mp3" ("Modern click box check") now
+// plays for adding a task, and "add.mp3" ("Opening software interface") now
+// plays for completing one — better tonal fit than the original pairing.
+const SOUND_URLS = { add: completeUrl, complete: addUrl, delete: deleteUrl };
 
 let audioCtx = null;
 
@@ -28,89 +42,60 @@ function getContext() {
   return audioCtx;
 }
 
-// Short noise burst through a bandpass filter — the percussive "pop" body.
-function playNoiseBurst(ctx, { duration = 0.06, filterFreq = 1200, filterQ = 0.7, gain = 0.25, startAt = 0 } = {}) {
-  const startTime = ctx.currentTime + startAt;
-  const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * duration));
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+// Decoded-buffer cache, keyed by sound name — each file is fetched+decoded
+// at most once per page load, regardless of how many times/how soon after
+// each other it's played.
+const bufferPromises = {};
 
-  const noise = ctx.createBufferSource();
-  noise.buffer = buffer;
-
-  const filter = ctx.createBiquadFilter();
-  filter.type = 'bandpass';
-  filter.frequency.value = filterFreq;
-  filter.Q.value = filterQ;
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(gain, startTime);
-  noiseGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-
-  noise.connect(filter);
-  filter.connect(noiseGain);
-  noiseGain.connect(ctx.destination);
-
-  noise.start(startTime);
-  noise.stop(startTime + duration);
+function loadBuffer(ctx, key) {
+  if (!bufferPromises[key]) {
+    bufferPromises[key] = fetch(SOUND_URLS[key])
+      .then((res) => res.arrayBuffer())
+      .then((data) => ctx.decodeAudioData(data));
+  }
+  return bufferPromises[key];
 }
 
-// Quick pitched tone blip with a fast decay envelope — no sustain/release,
-// so it reads as a tap rather than a note.
-function playToneBlip(ctx, { freqStart = 440, freqEnd = null, duration = 0.09, gain = 0.2, type = 'sine', startAt = 0 } = {}) {
-  const startTime = ctx.currentTime + startAt;
-  const osc = ctx.createOscillator();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freqStart, startTime);
-  if (freqEnd != null) osc.frequency.exponentialRampToValueAtTime(freqEnd, startTime + duration);
+function playBuffer(ctx, buffer, { volume = 1, playbackRate = 1 } = {}) {
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.playbackRate.value = playbackRate;
 
-  const oscGain = ctx.createGain();
-  oscGain.gain.setValueAtTime(gain, startTime);
-  oscGain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+  const gainNode = ctx.createGain();
+  gainNode.gain.value = Math.max(0, Math.min(1, volume));
 
-  osc.connect(oscGain);
-  oscGain.connect(ctx.destination);
-
-  osc.start(startTime);
-  osc.stop(startTime + duration);
+  source.connect(gainNode);
+  gainNode.connect(ctx.destination);
+  source.start(0);
 }
 
-/** Adding a task: a bright, quick upward pop — something was just created. */
-export function playAddSound() {
+async function playSound(key, volume, opts) {
   const ctx = getContext();
   if (!ctx) return;
-  playNoiseBurst(ctx, { duration: 0.05, filterFreq: 1500, gain: 0.2 });
-  playToneBlip(ctx, { freqStart: 420, freqEnd: 640, duration: 0.09, gain: 0.18, type: 'triangle' });
+  try {
+    const buffer = await loadBuffer(ctx, key);
+    playBuffer(ctx, buffer, { volume, ...opts });
+  } catch (err) {
+    console.warn(`[soundService] Failed to play "${key}" sound`, err);
+  }
 }
 
-/** Completing a task: Todoist-style soft "pop" — brighter/higher than add. */
-export function playCompleteSound() {
-  const ctx = getContext();
-  if (!ctx) return;
-  playNoiseBurst(ctx, { duration: 0.05, filterFreq: 1800, gain: 0.22 });
-  playToneBlip(ctx, { freqStart: 520, freqEnd: 780, duration: 0.1, gain: 0.2, type: 'sine' });
+/** Adding a task. `volume` (0-1) comes from the shared soundVolume setting. */
+export function playAddSound(volume = 1) {
+  playSound('add', volume);
 }
 
-/** Uncompleting a task: same "pop" family as complete, pitched a bit lower. */
-export function playUncompleteSound() {
-  const ctx = getContext();
-  if (!ctx) return;
-  playNoiseBurst(ctx, { duration: 0.05, filterFreq: 1400, gain: 0.2 });
-  playToneBlip(ctx, { freqStart: 460, freqEnd: 340, duration: 0.1, gain: 0.18, type: 'sine' });
+/** Completing a task. */
+export function playCompleteSound(volume = 1) {
+  playSound('complete', volume);
 }
 
-/** Deleting a task: duller/lower and slightly longer — a "thud" not a pop. */
-export function playDeleteSound() {
-  const ctx = getContext();
-  if (!ctx) return;
-  playNoiseBurst(ctx, { duration: 0.08, filterFreq: 600, filterQ: 0.5, gain: 0.22 });
-  playToneBlip(ctx, { freqStart: 300, freqEnd: 160, duration: 0.13, gain: 0.16, type: 'sine' });
+/** Uncompleting a task — same file as complete, pitched down slightly so it reads as a related-but-distinct variant. */
+export function playUncompleteSound(volume = 1) {
+  playSound('complete', volume, { playbackRate: 0.85 });
 }
 
-/** Selecting/opening a task: very subtle — this fires often (every row click). */
-export function playSelectSound() {
-  const ctx = getContext();
-  if (!ctx) return;
-  playNoiseBurst(ctx, { duration: 0.03, filterFreq: 2000, gain: 0.09 });
+/** Deleting a task. */
+export function playDeleteSound(volume = 1) {
+  playSound('delete', volume);
 }

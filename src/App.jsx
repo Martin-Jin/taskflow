@@ -312,15 +312,15 @@ export default function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <SoundProvider>
-          <SchedulerProvider>
+        <SchedulerProvider>
+          <SoundProvider>
             <TimerProvider>
               <CompleteTaskProvider>
                 <AppShell />
               </CompleteTaskProvider>
             </TimerProvider>
-          </SchedulerProvider>
-        </SoundProvider>
+          </SoundProvider>
+        </SchedulerProvider>
       </ThemeProvider>
     </AuthProvider>
   );

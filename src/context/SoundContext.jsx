@@ -1,37 +1,50 @@
 /**
- * SoundContext — the on/off toggle for Taskflow's synthesized sound effects
- * (see src/services/soundService.js) plus the play* wrappers every call site
- * uses, so no consumer needs to remember to check `soundEnabled` itself.
+ * SoundContext — thin wrapper around soundService.js's play* functions for
+ * every consumer EXCEPT SchedulerContext itself (which calls soundService
+ * directly — see its own comment on why: SoundProvider is rendered inside
+ * SchedulerProvider so it can read `soundEnabled`/`soundVolume` from
+ * useScheduler(), which means SchedulerContext can't call back into
+ * useSound() without a circular provider dependency).
  *
- * Persisted via usePersistedState (localStorage-only, like the theme toggle
- * used to be before it gained cloud sync) — a personal on/off preference
- * doesn't need to follow the user across devices.
+ * `soundEnabled`/`soundVolume` themselves are NOT owned here — they live in
+ * SchedulerContext as plain synced/backed-up state (see BACKUP_FIELDS),
+ * exactly like `routines`/`rules`, so they participate in cloud sync and
+ * backup/restore like every other setting. This context just reads them
+ * from useScheduler() and exposes the same play* / setSoundEnabled API
+ * consumers already use, so nothing else in the app needs to change.
  */
 
 import React, { createContext, useCallback, useContext, useMemo } from 'react';
-import { usePersistedState } from '../hooks/usePersistedState';
+import { useScheduler } from './SchedulerContext';
 import {
   playAddSound,
   playCompleteSound,
   playUncompleteSound,
   playDeleteSound,
-  playSelectSound,
 } from '../services/soundService';
 
 const SoundContext = createContext(null);
 
 export function SoundProvider({ children }) {
-  const [soundEnabled, setSoundEnabled] = usePersistedState('soundEnabled', true);
+  const { soundEnabled, setSoundEnabled, soundVolume, setSoundVolume } = useScheduler();
 
-  const playAdd = useCallback(() => { if (soundEnabled) playAddSound(); }, [soundEnabled]);
-  const playComplete = useCallback(() => { if (soundEnabled) playCompleteSound(); }, [soundEnabled]);
-  const playUncomplete = useCallback(() => { if (soundEnabled) playUncompleteSound(); }, [soundEnabled]);
-  const playDelete = useCallback(() => { if (soundEnabled) playDeleteSound(); }, [soundEnabled]);
-  const playSelect = useCallback(() => { if (soundEnabled) playSelectSound(); }, [soundEnabled]);
+  const playAdd = useCallback(() => { if (soundEnabled) playAddSound(soundVolume); }, [soundEnabled, soundVolume]);
+  const playComplete = useCallback(() => { if (soundEnabled) playCompleteSound(soundVolume); }, [soundEnabled, soundVolume]);
+  const playUncomplete = useCallback(() => { if (soundEnabled) playUncompleteSound(soundVolume); }, [soundEnabled, soundVolume]);
+  const playDelete = useCallback(() => { if (soundEnabled) playDeleteSound(soundVolume); }, [soundEnabled, soundVolume]);
 
   const value = useMemo(
-    () => ({ soundEnabled, setSoundEnabled, playAdd, playComplete, playUncomplete, playDelete, playSelect }),
-    [soundEnabled, setSoundEnabled, playAdd, playComplete, playUncomplete, playDelete, playSelect]
+    () => ({
+      soundEnabled,
+      setSoundEnabled,
+      soundVolume,
+      setSoundVolume,
+      playAdd,
+      playComplete,
+      playUncomplete,
+      playDelete,
+    }),
+    [soundEnabled, setSoundEnabled, soundVolume, setSoundVolume, playAdd, playComplete, playUncomplete, playDelete]
   );
 
   return <SoundContext.Provider value={value}>{children}</SoundContext.Provider>;
