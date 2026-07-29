@@ -35,12 +35,14 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { useScheduler } from './SchedulerContext';
 import { useTimers, getLiveRemaining } from './TimerContext';
+import { useSound } from './SoundContext';
 
 const CompleteTaskContext = createContext(null);
 
 export function CompleteTaskProvider({ children }) {
   const { tasks, completeTask } = useScheduler();
   const { getTimerForTask, stopTimer } = useTimers();
+  const { playComplete } = useSound();
   // { taskId, taskTitle, elapsedHours } | null — at most one pending
   // confirmation at a time (completion is a discrete user click, not
   // something fired concurrently from multiple places).
@@ -51,19 +53,21 @@ export function CompleteTaskProvider({ children }) {
       const timer = getTimerForTask(taskId);
       if (!timer) {
         completeTask(taskId);
+        playComplete();
         return true;
       }
       const task = tasks.find((t) => t.id === taskId);
       if (task?.isRecurring) {
         stopTimer(taskId);
         completeTask(taskId);
+        playComplete();
         return true;
       }
       const elapsedSeconds = Math.max(0, timer.durationSeconds - getLiveRemaining(timer));
       setPending({ taskId, taskTitle: timer.taskTitle, elapsedHours: elapsedSeconds / 3600 });
       return false;
     },
-    [getTimerForTask, completeTask, tasks, stopTimer]
+    [getTimerForTask, completeTask, tasks, stopTimer, playComplete]
   );
 
   const confirmComplete = useCallback(
@@ -71,9 +75,10 @@ export function CompleteTaskProvider({ children }) {
       if (!pending) return;
       stopTimer(pending.taskId);
       completeTask(pending.taskId, actualHours);
+      playComplete();
       setPending(null);
     },
-    [pending, stopTimer, completeTask]
+    [pending, stopTimer, completeTask, playComplete]
   );
 
   const cancelComplete = useCallback(() => setPending(null), []);

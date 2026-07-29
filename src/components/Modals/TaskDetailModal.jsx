@@ -89,6 +89,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTimers, getLiveRemaining, getDefaultDurationSeconds, formatTimerDuration } from '../../context/TimerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
+import { useSound } from '../../context/SoundContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
 import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
@@ -163,6 +164,7 @@ export default function TaskDetailModal({ task, onClose }) {
   const { user } = useAuth();
   const { getTimerForTask, startTimer, pauseTimer, resumeTimer, stopTimer } = useTimers();
   const { requestComplete } = useCompleteTask();
+  const { playUncomplete } = useSound();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -1116,6 +1118,7 @@ export default function TaskDetailModal({ task, onClose }) {
                         // Already completed — clicking again restores it (mirrors the
                         // "Completed" tab's restore action in TaskListPanel).
                         uncompleteTask(task.id);
+                        playUncomplete();
                       }
                     }}
                     title={task.isCompleted ? 'Click to restore to active' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}

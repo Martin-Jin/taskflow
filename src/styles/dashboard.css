@@ -1070,6 +1070,55 @@
   color: var(--color-text-secondary);
 }
 
+.changelog-fixes {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.changelog-fixes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.changelog-fixes-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.changelog-fixes-chevron {
+  transition: transform var(--duration-base) var(--ease-decelerate);
+}
+
+.changelog-fixes-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.changelog-fixes-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.changelog-fix-entry {
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border);
+}
+
+.changelog-fix-meta {
+  margin-bottom: 4px;
+}
+
 /* -------------------------------------------------------------------- */
 /* ShortcutsModal (Settings → Keyboard shortcuts)                        */
 /* -------------------------------------------------------------------- */

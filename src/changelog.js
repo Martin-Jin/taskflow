@@ -17,6 +17,17 @@
 
 export const CHANGELOG = [
   {
+    version: '1.11.0',
+    date: '2026-07-29',
+    title: 'Sound effects, settings search, and shortcut feedback',
+    changes: [
+      'Added satisfying sound effects for adding, completing, uncompleting, and deleting tasks, and for opening a task\'s details — short, soft "pop" sounds rather than a bell or chime. Toggle them off anytime in Settings → Appearance.',
+      'Added a search bar at the top of Settings to jump straight to a section instead of scrolling.',
+      'Keyboard shortcuts (undo, redo, new task) now show a brief confirmation toast when pressed, so you always get feedback even if nothing visibly changes.',
+      'The "What\'s New" list in Settings → Versions now groups patch-level bugfix updates under the feature release they belong to, instead of listing every point release separately.',
+    ],
+  },
+  {
     version: '1.10.1',
     date: '2026-07-29',
     title: 'Fixes for the repeat field, estimated time, and live undo',

@@ -49,6 +49,7 @@ import { useHistoryState } from '../hooks/useHistoryState';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
+import { useSound } from './SoundContext';
 import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackups, getBackup, deleteBackup } from '../services/firestoreSync';
 import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
@@ -289,6 +290,7 @@ const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export function SchedulerProvider({ children }) {
   const { user } = useAuth();
+  const { playAdd, playDelete } = useSound();
 
   // tasks/blocks: seeded from whatever was last saved locally (falling back
   // to mock data on first-ever run). Whether the initial-load effect below
@@ -1052,8 +1054,9 @@ export function SchedulerProvider({ children }) {
         ...taskInput,
       };
       commit({ tasks: [...tasks, newTask], blocks }, `Added task "${newTask.title}"`);
+      playAdd();
     },
-    [tasks, blocks, commit]
+    [tasks, blocks, commit, playAdd]
   );
 
   /**
@@ -1111,8 +1114,9 @@ export function SchedulerProvider({ children }) {
           });
       }
       commit({ tasks: newTasks, blocks: newBlocks }, `Deleted task`);
+      playDelete();
     },
-    [tasks, blocks, commit, user]
+    [tasks, blocks, commit, user, playDelete]
   );
 
   /**
@@ -1923,6 +1927,7 @@ export function SchedulerProvider({ children }) {
       lastTodoistImport,
       lastOverflow,
       notification,
+      setNotification,
       canUndo,
       canRedo,
       currentActionLabel,
@@ -1997,6 +2002,7 @@ export function SchedulerProvider({ children }) {
       lastTodoistImport,
       lastOverflow,
       notification,
+      setNotification,
       canUndo,
       canRedo,
       currentActionLabel,

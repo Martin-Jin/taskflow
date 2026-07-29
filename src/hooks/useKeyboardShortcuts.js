@@ -96,13 +96,20 @@ function isEditableTarget(el) {
  * a shortcut that's currently disabled (e.g. undo with nothing to undo)
  * should still no-op inside its handler rather than being omitted, so the
  * reserved combo doesn't fall through to the browser's own binding for it.
+ *
+ * `onTrigger(def)`, if given, fires right after a handler runs — used by
+ * App.jsx to pop a small "Undo" / "Redo" / "New task" confirmation toast so
+ * pressing a shortcut always gives *some* visible feedback, the same way
+ * clicking the equivalent button would.
  */
-export function useKeyboardShortcuts(handlers) {
+export function useKeyboardShortcuts(handlers, onTrigger) {
   // Ref so the listener (registered once) always calls the latest closures
   // without re-subscribing on every render — same pattern as useModalA11y's
   // onCloseRef.
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+  const onTriggerRef = useRef(onTrigger);
+  onTriggerRef.current = onTrigger;
 
   useEffect(() => {
     function handleKeyDown(e) {
@@ -116,6 +123,7 @@ export function useKeyboardShortcuts(handlers) {
         if ((bindings[def.id] || def.defaultCombo) === combo) {
           e.preventDefault();
           handler();
+          onTriggerRef.current?.(def);
           return;
         }
       }

@@ -19,6 +19,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { SoundProvider } from './context/SoundContext';
 import { AuthProvider } from './context/AuthContext';
 import { TimerProvider } from './context/TimerContext';
 import { CompleteTaskProvider } from './context/CompleteTaskContext';
@@ -103,6 +104,7 @@ function AppShell() {
     canUndo,
     canRedo,
     notification,
+    setNotification,
     clearNotification,
     actionToast,
     dismissActionToast,
@@ -193,14 +195,29 @@ function AppShell() {
     setHasSeenTutorial(true);
   }
 
-  useKeyboardShortcuts({
-    undo: () => canUndo && undo(),
-    redo: () => canRedo && redo(),
-    newTask: () => {
-      setTab('tasks');
-      setAddTaskSignal((n) => n + 1);
+  // Every shortcut press gets a small confirmation toast (no Undo button —
+  // that's ActionToast's job for actual undoable actions) purely so the user
+  // knows the keypress registered, e.g. when nothing is visibly different
+  // (undo/redo with nothing left to do, or newTask firing from a tab where
+  // the resulting dialog isn't immediately visible).
+  useKeyboardShortcuts(
+    {
+      undo: () => canUndo && undo(),
+      redo: () => canRedo && redo(),
+      newTask: () => {
+        setTab('tasks');
+        setAddTaskSignal((n) => n + 1);
+      },
     },
-  });
+    (def) => {
+      const messages = {
+        undo: canUndo ? 'Undid last action' : 'Nothing to undo',
+        redo: canRedo ? 'Redid last action' : 'Nothing to redo',
+        newTask: 'Opening new task',
+      };
+      setNotification({ type: 'info', message: messages[def.id] || `${def.label} shortcut used` });
+    }
+  );
 
   return (
     <div className={`app-shell ${isMobile ? 'is-mobile' : ''}`}>
@@ -294,13 +311,15 @@ export default function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <SchedulerProvider>
-          <TimerProvider>
-            <CompleteTaskProvider>
-              <AppShell />
-            </CompleteTaskProvider>
-          </TimerProvider>
-        </SchedulerProvider>
+        <SoundProvider>
+          <SchedulerProvider>
+            <TimerProvider>
+              <CompleteTaskProvider>
+                <AppShell />
+              </CompleteTaskProvider>
+            </TimerProvider>
+          </SchedulerProvider>
+        </SoundProvider>
       </ThemeProvider>
     </AuthProvider>
   );

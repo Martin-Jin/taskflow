@@ -368,7 +368,7 @@ select:focus-visible,
   /* Replaces the old desktop topbar row — page content just starts a bit
      lower instead of a dedicated header housing Undo/Redo. Mobile
      overrides this below since it still has the brand topbar row. */
-  padding-top: 32px;
+  padding-top: 40px;
   /* Grid tracks default to min-width: auto — same trap as flexbox — so a
      wide-content descendant (Board's row of columns) can force this 1fr
      track wider instead of ever triggering its own scrollbar. Without
@@ -1107,6 +1107,12 @@ input.search-bar-input {
   .search-bar {
     max-width: none;
   }
+}
+
+/* Settings page's "jump to section" search — full width like the rest of
+   the settings column, instead of SearchBar's own 320px toolbar cap. */
+.settings-search-bar {
+  max-width: none;
 }
 
 .search-bar-dropdown {

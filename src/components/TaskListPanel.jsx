@@ -31,6 +31,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
+import { useSound } from '../context/SoundContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
 import BoardView from './Board/BoardView';
@@ -73,6 +74,7 @@ export default function TaskListPanel({
 }) {
   const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const { requestComplete } = useCompleteTask();
+  const { playUncomplete, playSelect } = useSound();
   const [showAddModal, setShowAddModal] = useState(false);
   // Ctrl+N (see useKeyboardShortcuts in App.jsx) bumps this from anywhere in
   // the app to open "Add task" here, since this modal's open state is local
@@ -232,7 +234,10 @@ export default function TaskListPanel({
         <div
           className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
           style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
-          onClick={() => setEditingTaskId(task.id)}
+          onClick={() => {
+            setEditingTaskId(task.id);
+            playSelect();
+          }}
         >
           {hasChildren ? (
             <button
@@ -328,6 +333,7 @@ export default function TaskListPanel({
               onClick={(e) => {
                 e.stopPropagation();
                 uncompleteTask(task.id);
+                playUncomplete();
               }}
               title="Restore to active"
               aria-label={`Restore ${task.title}`}
