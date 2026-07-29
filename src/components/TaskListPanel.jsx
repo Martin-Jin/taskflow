@@ -449,6 +449,7 @@ export default function TaskListPanel({
             {isAIQuickAddConfigured() && (
               <button
                 className="btn btn-icon"
+                data-tour="ai-quick-add"
                 onClick={() => setShowAIQuickAdd(true)}
                 aria-label="AI Quick Add"
                 title="AI Quick Add"

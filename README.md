@@ -303,6 +303,12 @@ var unset and the AI Quick Add button simply doesn't appear. Even once it's
 configured, each visitor still needs to add their own API key in Settings
 before they can actually use it.
 
+In-app help is built in too: the guided tour (Settings → Help → Show
+tutorial) has a step pointing at the sparkle button, and the button "?" in
+the top-right of the AI Quick Add panel itself opens a fuller guide covering
+where to get a key and how to use the feature — no need to come back to this
+README for either.
+
 ## How the scheduler works
 
 The engine lives in `src/algorithms/` as three layers of plain

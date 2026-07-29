@@ -17,7 +17,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Sparkles, X, ImagePlus, Loader2 } from 'lucide-react';
+import { Sparkles, X, ImagePlus, Loader2, HelpCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -25,6 +25,7 @@ import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { loadPersisted, savePersisted } from '../../utils/persistence';
 import { toISODate } from '../../utils/dateUtils';
 import { parseWithAI, resolveProjectId } from '../../services/aiQuickAddService';
+import AIQuickAddGuideModal from './AIQuickAddGuideModal';
 
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes — same fallback AddTaskModal uses for an un-estimated task.
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -46,6 +47,7 @@ export default function AIQuickAddModal({ onClose }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showGuide, setShowGuide] = useState(false);
   const fileInputRef = useRef(null);
 
   // Revoke the previous preview's object URL whenever it changes/unmounts,
@@ -175,9 +177,19 @@ export default function AIQuickAddModal({ onClose }) {
           <h3 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <Sparkles size={16} aria-hidden="true" /> AI Quick Add
           </h3>
-          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
-            <X size={16} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button
+              className="btn btn-icon"
+              onClick={() => setShowGuide(true)}
+              aria-label="How does this work?"
+              title="How does this work?"
+            >
+              <HelpCircle size={16} />
+            </button>
+            <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <p className="form-hint" style={{ marginTop: -4, marginBottom: 12 }}>
@@ -261,6 +273,7 @@ export default function AIQuickAddModal({ onClose }) {
           </div>
         </div>
       </div>
+      {showGuide && <AIQuickAddGuideModal onClose={() => setShowGuide(false)} />}
     </div>
   );
 }

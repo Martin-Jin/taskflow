@@ -63,6 +63,13 @@ export const GUIDED_TOUR_STEPS = [
   },
   {
     tab: 'tasks',
+    selector: '[data-tour="ai-quick-add"]',
+    placement: 'bottom',
+    title: 'AI Quick Add',
+    body: 'Type — or paste a screenshot of an email, text, or flyer — and let AI turn it into a Task or Event for you. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
+  },
+  {
+    tab: 'tasks',
     selector: '[data-tour="tasks-view-switch"]',
     placement: 'bottom',
     title: 'Switch views',
