@@ -2,11 +2,14 @@
  * ============================================================================
  * WeekView
  * ============================================================================
- * The primary interactive calendar surface. Renders a 7-day time grid
- * (06:00-24:00, the full day) with ScheduledBlocks and CalendarEvents
- * positioned absolutely by time.
+ * The primary interactive calendar surface. Renders a 1/3/7-day time grid
+ * (06:00-24:00, the full day; column count set by `dayCount` — Day/3 Day/
+ * Week in CalendarPage all render this same component) with ScheduledBlocks
+ * and CalendarEvents positioned absolutely by time.
  *
  * Interaction model:
+ *   - Click a day-of-week/day-of-month header -> onSelectDay jumps the
+ *     calendar into Day view on that date, same as MonthView's day cells.
  *   - Drag a block or event to a new day/time -> updateBlock()/updateEvent()
  *     with new date/times. Desktop uses native HTML5 DnD (mouse); mobile has
  *     no such API, so touch gets its own long-press-then-drag path instead
@@ -316,6 +319,7 @@ export default function WeekView({
   onSelectBlock,
   onSelectEvent,
   onCreateEvent,
+  onSelectDay,
 }) {
   const { tasks, blocks, events, updateBlock, toggleBlockLock, updateEvent } = useScheduler();
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
@@ -763,7 +767,19 @@ export default function WeekView({
       {zoomHint && <div className="zoom-hint">{zoomHint}</div>}
       <div className="time-gutter-cell" />
       {days.map((day, i) => (
-        <div key={day} className={`day-header ${day === todayIso ? 'today' : ''} ${i === days.length - 1 ? 'is-last-col' : ''}`}>
+        <div
+          key={day}
+          className={`day-header ${day === todayIso ? 'today' : ''} ${i === days.length - 1 ? 'is-last-col' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelectDay?.(day)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onSelectDay?.(day);
+            }
+          }}
+        >
           <div className="dow">{DOW_LABELS[dayOfWeek(day)]}</div>
           <div className="dom">{day.slice(8, 10)}</div>
         </div>

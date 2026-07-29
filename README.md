@@ -437,25 +437,29 @@ hidden, only reorganized.
   a **this week's progress** ring, and **Pinned links** — bookmark-bar-style
   shortcuts organized into folders, with a "Jump back in" row of recently
   opened links and an "Open all" button per folder.
-- **Calendar** — Month / Week / Day views. Both scheduled task blocks and
-  calendar events (Google-sourced or created in TaskFlow via **New event**)
-  support drag-to-move and drag-edge-to-resize, on desktop with the mouse
-  and on mobile via long-press-then-drag/resize by touch — any event you
-  create counts as busy time the scheduler avoids, there's no separate
-  "blocked time" concept anymore. Overlapping events/blocks render
-  side-by-side in columns on desktop; on mobile, where there's no room for
-  columns, they collapse into a single tappable "N events" chip instead.
-  Week/Day view clusters runs of short back-to-back tasks into a single "N
-  short tasks" chip (click to expand) and packs every block/chip with a
-  guaranteed non-overlapping layout, so a densely scheduled day always
-  stays legible no matter how many short tasks land close together. Hold
-  Ctrl and scroll (or pinch on a trackpad) over the grid to zoom the time
-  axis in/out. Month view shows a density overview (chips per day,
-  clustering short tasks, "+N more" on busy days) and clicking a day
-  drills into Day view for the full time grid, matching how most calendar
-  apps handle month → day navigation. Tap the lock icon on a block to
-  protect it from future rebalances. **Re-balance schedule** re-runs the
-  engine while preserving locked blocks.
+- **Calendar** — Month / Week / 3 Day / Day views, picked from the hamburger
+  menu next to the date title (tap the date itself to drop down a
+  Google-Calendar-style month-strip date picker and jump to any day).
+  Clicking a day-of-week header in Week/3 Day view jumps straight into Day
+  view for that date, same as clicking a day number in Month view. Both
+  scheduled task blocks and calendar events (Google-sourced or created in
+  TaskFlow via the floating **+** button) support drag-to-move and
+  drag-edge-to-resize, on desktop with the mouse and on mobile via
+  long-press-then-drag/resize by touch — any event you create counts as
+  busy time the scheduler avoids, there's no separate "blocked time" concept
+  anymore. Overlapping events/blocks render side-by-side in columns on
+  desktop; on mobile, where there's no room for columns, they collapse into
+  a single tappable "N events" chip instead. Week/3 Day/Day view clusters
+  runs of short back-to-back tasks into a single "N short tasks" chip (click
+  to expand) and packs every block/chip with a guaranteed non-overlapping
+  layout, so a densely scheduled day always stays legible no matter how many
+  short tasks land close together. Hold Ctrl and scroll (or pinch on a
+  trackpad) over the grid to zoom the time axis in/out. Month view shows a
+  density overview (chips per day, clustering short tasks, "+N more" on busy
+  days) and clicking a day drills into Day view for the full time grid,
+  matching how most calendar apps handle month → day navigation. Tap the
+  lock icon on a block to protect it from future rebalances. **Re-balance
+  schedule** re-runs the engine while preserving locked blocks.
 - **Tasks** — one page, three views via its own List/Board/Gantt switch, all
   scoped to one project at a time (or "All Tasks"). Switch projects from the
   sidebar, the project picker shown above List/Board, or the search bar;
