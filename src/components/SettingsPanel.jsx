@@ -25,13 +25,22 @@ import {
   Sparkles,
   Keyboard,
   Search,
+  Share,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
 import { useSound } from '../context/SoundContext';
 import { useAuth } from '../context/AuthContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { clearAllPersisted, loadPersisted, savePersisted } from '../utils/persistence';
 import { getStoredApiKey } from '../services/aiQuickAddService';
+import {
+  getInstallPrompt,
+  subscribeInstallPrompt,
+  triggerInstallPrompt,
+  IS_IOS,
+  isRunningStandalone,
+} from '../utils/installPrompt';
 import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
 import LabelsModal from './Modals/LabelsModal';
@@ -52,6 +61,7 @@ const SETTINGS_SECTIONS = [
   { id: 'calendarOverrides', label: 'Calendar event overrides' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'tags', label: 'Tags' },
+  { id: 'installApp', label: 'Install app' },
   { id: 'help', label: 'Help' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
   { id: 'versions', label: 'Versions' },
@@ -85,6 +95,12 @@ export default function SettingsPanel({ onOpenTour }) {
   const sectionSearchRef = useRef(null);
   const sectionRefs = useRef({});
   const fileInputRef = useRef(null);
+  const isMobile = useIsMobile();
+  const [installPromptEvent, setInstallPromptEvent] = useState(() => getInstallPrompt());
+  useEffect(() => subscribeInstallPrompt(setInstallPromptEvent), []);
+  function handleInstallClick() {
+    triggerInstallPrompt();
+  }
   const { theme, setTheme } = useTheme();
   const { soundEnabled, setSoundEnabled, soundVolume, setSoundVolume, playComplete } = useSound();
   const { user, authLoading, login, logout } = useAuth();
@@ -859,6 +875,34 @@ export default function SettingsPanel({ onOpenTour }) {
           View all tags
         </button>
       </div>
+
+      {isMobile && !isRunningStandalone() && (
+        <div className="card" ref={(el) => (sectionRefs.current.installApp = el)}>
+          <h3 style={{ marginTop: 0 }}>Install app</h3>
+          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
+            Add TaskFlow to your home screen to launch it full-screen, without the browser's address bar.
+          </p>
+          {IS_IOS ? (
+            <p style={{ fontSize: 12, marginBottom: 0 }}>
+              Tap the Share icon <Share size={12} style={{ verticalAlign: -1 }} /> in Safari, then "Add to Home
+              Screen".
+            </p>
+          ) : installPromptEvent ? (
+            <button
+              className="btn"
+              onClick={handleInstallClick}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Download size={14} />
+              Add to home screen
+            </button>
+          ) : (
+            <p style={{ fontSize: 12, marginBottom: 0 }}>
+              Open your browser's menu and look for "Add to Home screen" or "Install app".
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="card" ref={(el) => (sectionRefs.current.help = el)}>
         <h3 style={{ marginTop: 0 }}>Help</h3>

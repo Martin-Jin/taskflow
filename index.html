@@ -6,14 +6,22 @@
     <title>TaskFlow — Intelligent Task Auto-Scheduler</title>
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
     <link rel="manifest" href="%BASE_URL%manifest.json" />
-    <meta name="theme-color" content="#0F6E56" />
+    <!-- Matches the app's default (dark) --color-bg-page — ThemeContext
+         updates this at runtime when the user switches theme, so the
+         status bar/home-indicator strip always blends with the app instead
+         of showing a fixed brand color that clashes with either theme. -->
+    <meta name="theme-color" content="#1c1b17" />
     <!-- iOS ignores manifest.json's display mode — these are required
          separately for a home-screen-launched icon to run without Safari
          chrome (see public/manifest.json for the Android/Chrome equivalent). -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="TaskFlow" />
-    <link rel="apple-touch-icon" href="%BASE_URL%favicon.svg" />
+    <!-- PNG, not favicon.svg: iOS doesn't reliably rasterize an SVG here —
+         it silently falls back to a generic/blank home-screen icon. Full
+         bleed square (iOS applies its own rounded-corner mask; a
+         pre-rounded source would show transparent corners under it). -->
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

@@ -32,6 +32,14 @@ export function ThemeProvider({ children }) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    // Keep the mobile status-bar/home-indicator color (index.html's
+    // <meta name="theme-color">) in sync with --color-bg-page — otherwise
+    // it stays pinned to whichever value was in the static HTML and clashes
+    // with the theme the user actually has active.
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute('content', theme === 'dark' ? '#1c1b17' : '#fafaf9');
+    }
   }, [theme]);
 
   useEffect(() => {

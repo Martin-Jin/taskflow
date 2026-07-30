@@ -213,6 +213,11 @@ body {
      lets the page overscroll past its real content. */
   overflow: hidden;
   overscroll-behavior-y: none;
+  /* Matches body's own background below. Needed on <html> too: in
+     standalone/PWA mode on iOS, the strip behind the home-indicator safe
+     area can show the default (white) canvas color instead of body's if
+     only body sets it, since that inset sits outside normal layout. */
+  background: var(--color-bg-page);
 }
 
 html {

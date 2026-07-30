@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.6',
+    date: '2026-07-30',
+    title: 'Fixed home-screen install visuals, added an install prompt',
+    changes: [
+      'Fixed a white strip below the bottom nav bar and a green strip at the top that clashed with the app background when TaskFlow was installed to a phone home screen.',
+      "Fixed the home-screen icon showing blank on iOS instead of TaskFlow's logo.",
+      'Mobile visitors now see a one-time reminder that TaskFlow can be added to their home screen for a full-screen app experience, with instructions for their platform (also available anytime from Settings → Install app).',
+    ],
+  },
+  {
     version: '1.16.5',
     date: '2026-07-30',
     title: 'Backup and recurrence fixes, plus internal cleanup',
