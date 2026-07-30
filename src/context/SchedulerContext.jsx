@@ -56,6 +56,7 @@ import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackup
 import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
 import { rebalance } from '../algorithms/rebalanceEngine';
+import { areDependenciesMet } from '../utils/dependencyUtils';
 import { computeNextDueDate } from '../utils/recurrence';
 import {
   fetchTasks as fetchTodoistTasks,
@@ -1458,11 +1459,37 @@ export function SchedulerProvider({ children }) {
    * completion never sets `isCompleted: true` in the first place, so there's
    * nowhere meaningful to record it there (see requestComplete, which resets
    * that timer silently instead of prompting).
+   *
+   * DEPENDENCY GUARD: refuses to complete a task whose `dependsOn` isn't
+   * fully satisfied yet (areDependenciesMet), popping the same toast
+   * notification used for sync/backup errors instead of silently no-op'ing —
+   * otherwise a task could be marked done while the thing it depends on still
+   * isn't. Returns `false` in that case (and `true` on an actual completion)
+   * so callers — namely CompleteTaskContext.requestComplete, whose own return
+   * value callers like TaskDetailModal treat as "did this finish
+   * synchronously" — don't act as if the task completed when it didn't.
    */
   const completeTask = useCallback(
     (taskId, actualHours) => {
       const existing = tasks.find((t) => t.id === taskId);
-      if (!existing) return;
+      if (!existing) return false;
+
+      const taskById = new Map(tasks.map((t) => [t.id, t]));
+      if (!areDependenciesMet(existing, taskById)) {
+        const blockers = (existing.dependsOn || [])
+          .map((id) => taskById.get(id))
+          .filter((t) => t && !t.isCompleted)
+          .map((t) => t.title);
+        setNotification({
+          type: 'warning',
+          message:
+            blockers.length > 0
+              ? `Can't complete "${existing.title}" — finish "${blockers.join('", "')}" first.`
+              : `Can't complete "${existing.title}" — its dependencies aren't done yet.`,
+        });
+        return false;
+      }
+
       const descendantIds = new Set(getDescendantIds(taskId, tasks));
 
       if (existing.isRecurring && existing.dueDate) {
@@ -1489,10 +1516,15 @@ export function SchedulerProvider({ children }) {
         // other tasks are untouched.
         const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked);
         commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
-        return;
+        return true;
       }
 
       const nowIso = new Date().toISOString();
+      // Any other task that depended on this one (or one of its completed
+      // descendants) is no longer blocked, so scrub those now-satisfied ids
+      // out of dependsOn — same cleanup deleteTask does when a dependency
+      // disappears, just triggered by it being *done* instead of gone.
+      const completedIds = new Set([taskId, ...descendantIds]);
       const newTasks = tasks.map((t) => {
         if (t.id === taskId) {
           return {
@@ -1506,11 +1538,15 @@ export function SchedulerProvider({ children }) {
         if (descendantIds.has(t.id)) {
           return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 };
         }
+        if (t.dependsOn?.some((id) => completedIds.has(id))) {
+          return { ...t, dependsOn: t.dependsOn.filter((id) => !completedIds.has(id)) };
+        }
         return t;
       });
       commit({ tasks: newTasks, blocks }, `Completed task`);
+      return true;
     },
-    [tasks, blocks, commit]
+    [tasks, blocks, commit, setNotification]
   );
 
   /**

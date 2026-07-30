@@ -105,7 +105,7 @@ import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../ser
 import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
 import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
-import { getIneligibleDependencyIds } from '../../utils/dependencyUtils';
+import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
@@ -180,6 +180,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     uncompleteTask,
     addComment,
     deleteComment,
+    setNotification,
   } = useScheduler();
 
   // Which task this modal instance currently displays. Starts as the task it
@@ -983,6 +984,33 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           tabIndex={-1}
         >
           <div className="detail-topbar">
+            {(parentTask || childTasks.length > 0) && (
+              <div className="detail-hierarchy">
+                {parentTask ? (
+                  <>
+                    <button
+                      type="button"
+                      className="detail-hierarchy-link"
+                      onClick={() => setActiveTaskId(parentTask.id)}
+                      title={`Open parent task: ${parentTask.title}`}
+                    >
+                      {parentTask.title}
+                    </button>
+                    <ChevronRight size={12} className="detail-hierarchy-sep" aria-hidden="true" />
+                    <span className="detail-hierarchy-current">{task.title}</span>
+                  </>
+                ) : (
+                  <span className="detail-hierarchy-current">
+                    <Layers size={12} aria-hidden="true" />
+                    {task.title}
+                    <span className="detail-hierarchy-count">
+                      {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'}
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="detail-menu">
               <button
                 type="button"
@@ -1126,33 +1154,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   document.body
                 )}
             </div>
-
-            {(parentTask || childTasks.length > 0) && (
-              <div className="detail-hierarchy">
-                {parentTask ? (
-                  <>
-                    <button
-                      type="button"
-                      className="detail-hierarchy-link"
-                      onClick={() => setActiveTaskId(parentTask.id)}
-                      title={`Open parent task: ${parentTask.title}`}
-                    >
-                      {parentTask.title}
-                    </button>
-                    <ChevronRight size={12} className="detail-hierarchy-sep" aria-hidden="true" />
-                    <span className="detail-hierarchy-current">{task.title}</span>
-                  </>
-                ) : (
-                  <span className="detail-hierarchy-current">
-                    <Layers size={12} aria-hidden="true" />
-                    {task.title}
-                    <span className="detail-hierarchy-count">
-                      {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'}
-                    </span>
-                  </span>
-                )}
-              </div>
-            )}
 
             <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
               <X size={16} />
@@ -1586,7 +1587,23 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 <TaskTimerControl
                   durationSeconds={getDefaultDurationSeconds({ ...task, estimatedHours })}
                   timer={getTimerForTask(task.id)}
-                  onStart={(seconds) => startTimer(task, seconds)}
+                  onStart={(seconds) => {
+                    if (!areDependenciesMet(task, taskById)) {
+                      const blockers = (task.dependsOn || [])
+                        .map((id) => taskById.get(id))
+                        .filter((t) => t && !t.isCompleted)
+                        .map((t) => t.title);
+                      setNotification({
+                        type: 'warning',
+                        message:
+                          blockers.length > 0
+                            ? `Can't start the timer for "${task.title}" — finish "${blockers.join('", "')}" first.`
+                            : `Can't start the timer for "${task.title}" — its dependencies aren't done yet.`,
+                      });
+                      return;
+                    }
+                    startTimer(task, seconds);
+                  }}
                   onPause={() => pauseTimer(task.id)}
                   onResume={() => resumeTimer(task.id)}
                   onStop={() => stopTimer(task.id)}

@@ -17,6 +17,18 @@
 
 export const CHANGELOG = [
   {
+    version: '1.17.6',
+    date: '2026-07-30',
+    title: 'Task dependencies are now actually enforced',
+    changes: [
+      'Checking off a task that\'s still blocked on an unfinished dependency (the "blocked by dependency" badge) no longer silently completes it — it now shows a message naming what needs finishing first.',
+      'Starting the Pomodoro timer on a blocked task is blocked too, with the same "finish X first" message — timing a task that can\'t be worked on yet doesn\'t make sense.',
+      'Completing a task automatically clears it from any other task\'s dependency list, since it no longer needs to block anything once done.',
+      'Clicking a scheduled block on the calendar now has a button to jump straight to the full task editor.',
+      'Straightened out the task detail header: the parent/sub-task path now sits flush left, with the "..." menu moved next to the close button.',
+    ],
+  },
+  {
     version: '1.17.5',
     date: '2026-07-30',
     title: 'AI Quick Add button regrouped, mobile speed-dial',

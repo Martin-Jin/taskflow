@@ -52,16 +52,18 @@ export function CompleteTaskProvider({ children }) {
     (taskId) => {
       const timer = getTimerForTask(taskId);
       if (!timer) {
-        completeTask(taskId);
-        playComplete();
-        return true;
+        // completeTask can refuse (unmet dependency) — only celebrate/report
+        // success when it actually went through.
+        const completed = completeTask(taskId);
+        if (completed) playComplete();
+        return completed;
       }
       const task = tasks.find((t) => t.id === taskId);
       if (task?.isRecurring) {
         stopTimer(taskId);
-        completeTask(taskId);
-        playComplete();
-        return true;
+        const completed = completeTask(taskId);
+        if (completed) playComplete();
+        return completed;
       }
       const elapsedSeconds = Math.max(0, timer.durationSeconds - getLiveRemaining(timer));
       setPending({ taskId, taskTitle: timer.taskTitle, elapsedHours: elapsedSeconds / 3600 });
@@ -73,8 +75,14 @@ export function CompleteTaskProvider({ children }) {
   const confirmComplete = useCallback(
     (actualHours) => {
       if (!pending) return;
+      // Blocked by an unmet dependency (completeTask pops its own toast
+      // explaining why) — leave the timer running rather than stopping it
+      // for a task that didn't actually finish.
+      if (!completeTask(pending.taskId, actualHours)) {
+        setPending(null);
+        return;
+      }
       stopTimer(pending.taskId);
-      completeTask(pending.taskId, actualHours);
       playComplete();
       setPending(null);
     },
