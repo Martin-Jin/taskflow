@@ -4,6 +4,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { linkify, containsLink } from '../../utils/linkify';
 import { nextLabelColor } from '../../utils/labelColor';
 import Linkified from '../Common/Linkified';
+import NoteViewModal from '../Modals/NoteViewModal';
 import {
   DEFAULT_FOLDER_ID,
   faviconUrl,
@@ -39,6 +40,7 @@ export default function NotesCard() {
   const [editTitle, setEditTitle] = useState('');
   const [editBody, setEditBody] = useState('');
   const [noteQuery, setNoteQuery] = useState('');
+  const [viewingNote, setViewingNote] = useState(null);
   const [importMessage, setImportMessage] = useState('');
   const fileInputRef = useRef(null);
 
@@ -309,7 +311,13 @@ export default function NotesCard() {
                 >
                   <Pencil size={12} />
                 </button>
-                <div className="note-tile-content">
+                <div
+                  className="note-tile-content note-tile-content-clickable"
+                  onClick={(e) => {
+                    if (e.target.closest('a')) return; // let link clicks open the link, not the modal
+                    setViewingNote(note);
+                  }}
+                >
                   <div className="note-tile-title">{note.title}</div>
                   {note.body &&
                     (containsLink(note.body) ? (
@@ -357,6 +365,8 @@ export default function NotesCard() {
           </div>
         )}
       </div>
+
+      {viewingNote && <NoteViewModal note={viewingNote} onClose={() => setViewingNote(null)} />}
     </div>
   );
 }

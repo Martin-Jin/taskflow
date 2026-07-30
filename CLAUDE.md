@@ -164,8 +164,14 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
 - For UI or frontend changes, start the dev server and use the feature in a
   browser before reporting the task as complete. Test the golden path and edge
   cases, and watch for regressions in other features.
-- You may install and use Playwright to test, but only for a big change that
-  genuinely needs browser automation to verify.
+- **Do not reach for Playwright/browser automation on small or contained UI
+  changes** (a modal, a button, a single component) — it's disproportionate
+  setup cost for the size of the change, and this repo's real auth flow
+  (Google sign-in via Firebase) isn't scriptable through it anyway. For these,
+  rely on `npm run build`, a careful read-through of the diff, and/or asking
+  the user to click through it themselves. Reserve Playwright for a genuinely
+  large change where browser automation is the only practical way to verify
+  it (e.g. a multi-step flow across several views).
 
 ## Code review checklist
 
