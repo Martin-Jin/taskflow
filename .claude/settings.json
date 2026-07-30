@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm init *)",
+      "Bash(npm run *)",
+      "Bash(netstat -ano)",
+      "Bash(pkill -f \"vite --port\")",
+      "Bash(lsof -ti:5173 -sTCP:LISTEN)",
+      "Bash(xargs -r kill)",
+      "Bash(npx --yes playwright --version)",
+      "Bash(npx playwright *)",
+      "WebSearch",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:support.google.com)",
+      "WebFetch(domain:mixkit.co)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ]
+  }
+}
