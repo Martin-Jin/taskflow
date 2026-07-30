@@ -236,14 +236,12 @@
     justify-content: center;
   }
 
-  /* Today (and the prev/next arrows, both desktop-only — see CalendarPage.jsx)
-     are absent from this row on mobile, so what's left is just the date
-     dropdown + hamburger view-menu button. Today gets its own row below
-     instead, as .calendar-today-btn-solo, so it still has a dedicated tap
-     target once the user has navigated away from today. */
+  /* The prev/next arrows are desktop-only (see CalendarPage.jsx) — Today
+     stands in for them on mobile, sitting directly left of the date
+     dropdown in the same row, and only shows once the user has actually
+     navigated away from today. */
   .calendar-today-btn-solo {
     width: auto;
-    align-self: center;
   }
 
   .calendar-toolbar-actions {

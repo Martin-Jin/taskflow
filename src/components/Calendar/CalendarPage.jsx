@@ -199,6 +199,15 @@ export default function CalendarPage() {
               </button>
             </>
           )}
+          {/* Only worth showing once the user has actually navigated away from
+              the current day/week/month — tapping it when it's already
+              showing today would be a no-op. Sits directly to the left of the
+              date dropdown so it reads as part of the same control cluster. */}
+          {isMobile && !isViewingToday && (
+            <button className="btn calendar-today-btn-solo" onClick={goToday}>
+              Today
+            </button>
+          )}
           <div className="calendar-title-wrap" ref={dateWrapRef}>
             <button
               className={`calendar-toolbar-title-btn ${showDatePicker ? 'is-open' : ''}`}
@@ -247,14 +256,6 @@ export default function CalendarPage() {
             )}
           </div>
         </div>
-        {/* Only worth showing once the user has actually navigated away from
-            the current day/week/month — tapping it when it's already
-            showing today would be a no-op. */}
-        {isMobile && !isViewingToday && (
-          <button className="btn calendar-today-btn-solo" onClick={goToday}>
-            Today
-          </button>
-        )}
         <div className="calendar-toolbar-actions">
           <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
             <Zap size={14} />
