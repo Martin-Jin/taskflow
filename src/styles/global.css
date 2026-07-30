@@ -987,6 +987,19 @@ select:focus-visible,
     inset: -4px;
   }
 
+  /* "Push scheduled blocks to Google Calendar" is long enough that it wraps
+     to two lines at mobile widths — buttons default to text-align: center,
+     so a wrapped label centers each line independently and reads as a
+     jagged pyramid. Stack it full-width in its row instead (so it gets the
+     same available width as "Connect Google Calendar" above it, same
+     padding either way since both share .btn) and left-align the label so
+     the wrapped lines read like normal text. */
+  .google-calendar-push-btn {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
   .nav-item,
   .bottom-tab-item {
     min-height: 44px;
@@ -1625,6 +1638,33 @@ input[type='checkbox']:checked::after {
   }
   100% {
     transform: scale(1);
+  }
+}
+
+/* "Rejected" feedback — a quick horizontal shake, e.g. tapping AI Quick Add
+   with no API key saved yet (see AddTaskFabGroup). One-shot: the class is
+   added on the failed attempt and removed on animationend, so it replays
+   every time rather than only once. */
+.shake-error {
+  animation: shake-error var(--duration-slow) var(--ease-standard);
+}
+
+@keyframes shake-error {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(1px);
   }
 }
 

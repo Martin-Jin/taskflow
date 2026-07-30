@@ -1,8 +1,10 @@
 /**
- * soundService — plays short, licensed sound-effect files (Mixkit Sound
- * Effects Free License, commercial/personal use, no attribution required —
- * see src/assets/sounds/) for the app's task actions (add/complete/
- * uncomplete/delete).
+ * soundService — plays short sound effects for the app's task actions
+ * (add/complete/uncomplete/delete). Add/complete play licensed Mixkit files
+ * (Sound Effects Free License, commercial/personal use, no attribution
+ * required — see src/assets/sounds/); delete is synthesized live at play
+ * time via Web Audio oscillators/noise rather than a decoded file (see
+ * playDeleteSound below).
  *
  * Uses the Web Audio API (AudioContext + decodeAudioData + BufferSource)
  * rather than plain <audio> elements: each source file is fetched and
@@ -24,12 +26,11 @@
 
 import addUrl from '../assets/sounds/add.mp3';
 import completeUrl from '../assets/sounds/complete.mp3';
-import deleteUrl from '../assets/sounds/delete.mp3';
 
 // Swapped on purpose: Mixkit's "complete.mp3" ("Modern click box check") now
 // plays for adding a task, and "add.mp3" ("Opening software interface") now
 // plays for completing one — better tonal fit than the original pairing.
-const SOUND_URLS = { add: completeUrl, complete: addUrl, delete: deleteUrl };
+const SOUND_URLS = { add: completeUrl, complete: addUrl };
 
 let audioCtx = null;
 
@@ -95,7 +96,68 @@ export function playUncompleteSound(volume = 1) {
   playSound('complete', volume, { playbackRate: 0.85 });
 }
 
-/** Deleting a task. */
+/**
+ * Deleting a task — synthesized live (no audio file) rather than decoded
+ * from a Mixkit asset like the others. A crisp noise "clack" transient plus
+ * a short pitched "thock" underneath it, modeled on a satisfying mechanical
+ * keyboard switch (the same tactile quality the complete/add clicks have),
+ * just pitched a bit lower/darker so it still reads as distinct from them.
+ */
 export function playDeleteSound(volume = 1) {
-  playSound('delete', volume);
+  const ctx = getContext();
+  if (!ctx) return;
+  try {
+    playDeleteClick(ctx, Math.max(0, Math.min(1, volume)));
+  } catch (err) {
+    console.warn('[soundService] Failed to play "delete" sound', err);
+  }
+}
+
+function playDeleteClick(ctx, volume) {
+  const now = ctx.currentTime;
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = volume;
+  masterGain.connect(ctx.destination);
+
+  // Transient "clack" — a very short burst of highpass-filtered noise for
+  // the sharp attack of a key switch snapping.
+  const clickDuration = 0.02;
+  const noiseBuffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * clickDuration), ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) noiseData[i] = Math.random() * 2 - 1;
+
+  const noiseSource = ctx.createBufferSource();
+  noiseSource.buffer = noiseBuffer;
+
+  const clickFilter = ctx.createBiquadFilter();
+  clickFilter.type = 'highpass';
+  clickFilter.frequency.value = 2800;
+
+  const clickGain = ctx.createGain();
+  clickGain.gain.setValueAtTime(0.9, now);
+  clickGain.gain.exponentialRampToValueAtTime(0.001, now + clickDuration);
+
+  noiseSource.connect(clickFilter);
+  clickFilter.connect(clickGain);
+  clickGain.connect(masterGain);
+  noiseSource.start(now);
+  noiseSource.stop(now + clickDuration);
+
+  // Body "thock" — a short pitched tone right under the transient, like the
+  // switch bottoming out. Lower and darker than the add/complete clicks so
+  // delete still reads as its own, distinct sound.
+  const bodyOsc = ctx.createOscillator();
+  bodyOsc.type = 'triangle';
+  bodyOsc.frequency.setValueAtTime(420, now);
+  bodyOsc.frequency.exponentialRampToValueAtTime(210, now + 0.05);
+
+  const bodyGain = ctx.createGain();
+  bodyGain.gain.setValueAtTime(0, now);
+  bodyGain.gain.linearRampToValueAtTime(0.55, now + 0.004);
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+
+  bodyOsc.connect(bodyGain);
+  bodyGain.connect(masterGain);
+  bodyOsc.start(now);
+  bodyOsc.stop(now + 0.09);
 }

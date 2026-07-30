@@ -351,7 +351,7 @@ export default function SettingsPanel({ onOpenTour }) {
         >
           Calendar
         </h4>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="google-calendar-actions" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             className="btn"
             onClick={connectGoogleCalendar}
@@ -374,7 +374,7 @@ export default function SettingsPanel({ onOpenTour }) {
               'Connect Google Calendar'
             )}
           </button>
-          <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
+          <button className="btn btn-primary google-calendar-push-btn" onClick={pushToGoogleCalendar} disabled={isSyncing}>
             {isSyncing ? 'Syncing…' : 'Push scheduled blocks to Google Calendar'}
           </button>
           {googleConnected && (
