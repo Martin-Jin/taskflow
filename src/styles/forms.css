@@ -350,17 +350,18 @@
 }
 
 /* Todoist-style parent/child breadcrumb — only rendered when the open task
-   actually has a parent or sub-tasks (see TaskDetailModal). Sits between the
-   "..." trigger and the close button on the same row; flex:1 both centers it
-   in the remaining space and lets it ellipsis instead of wrapping/pushing
-   the close button off the row on narrow screens. */
+   actually has a parent or sub-tasks (see TaskDetailModal). Sits first in the
+   row (left-aligned); flex:1 lets it fill the remaining space so the "..."
+   trigger and close button stay pinned together on the right, and lets the
+   breadcrumb ellipsis instead of wrapping/pushing them off the row on narrow
+   screens. */
 .detail-hierarchy {
   display: flex;
   align-items: center;
   gap: 4px;
   flex: 1;
   min-width: 0;
-  justify-content: center;
+  justify-content: flex-start;
   font-size: 12px;
   color: var(--color-text-secondary);
   overflow: hidden;

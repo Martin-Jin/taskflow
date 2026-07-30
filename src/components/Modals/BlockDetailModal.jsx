@@ -9,13 +9,13 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Lock, Unlock, X, CalendarClock, Clock } from 'lucide-react';
+import { Lock, Unlock, X, CalendarClock, Clock, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import DetailField from '../Common/DetailField';
 
-export default function BlockDetailModal({ block, onClose }) {
+export default function BlockDetailModal({ block, onClose, onOpenTask }) {
   const { tasks, updateBlock, deleteBlock, toggleBlockLock } = useScheduler();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
@@ -44,6 +44,10 @@ export default function BlockDetailModal({ block, onClose }) {
     requestClose();
   }
 
+  function handleOpenTask() {
+    onOpenTask?.(block.taskId);
+  }
+
   return (
     <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
@@ -58,6 +62,11 @@ export default function BlockDetailModal({ block, onClose }) {
       >
         <div className="detail-header">
           <h3 id="block-detail-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', flex: 1 }}>{task.title}</h3>
+          {onOpenTask && (
+            <button className="btn btn-icon" onClick={handleOpenTask} aria-label="Open task" title="Open task">
+              <ExternalLink size={16} />
+            </button>
+          )}
           <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
             <X size={16} />
           </button>

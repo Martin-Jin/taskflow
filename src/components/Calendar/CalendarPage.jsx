@@ -18,6 +18,7 @@ import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
 import BlockDetailModal from '../Modals/BlockDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
+import TaskDetailModal from '../Modals/TaskDetailModal';
 import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
 import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -50,12 +51,13 @@ export default function CalendarPage() {
   const [view, setView] = useState(() => (isMobile ? 'day' : 'week'));
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [selectedEventId, setSelectedEventId] = useState(null);
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [creatingEvent, setCreatingEvent] = useState(null); // { date, startTime, endTime } while the "block time" modal is open
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
-  const { blocks, events, runRebalance, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
+  const { blocks, events, tasks, runRebalance, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
   const touchStartX = useRef(null);
 
   // Close the date-picker/view-menu dropdowns on an outside click — each ref
@@ -90,6 +92,15 @@ export default function CalendarPage() {
   }
 
   const selectedBlock = selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) || null : null;
+  const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) || null : null;
+
+  // Jump from a block's placement modal into the full task edit modal —
+  // closes BlockDetailModal first rather than stacking both, matching how
+  // this app avoids nested modals elsewhere.
+  function handleOpenTask(taskId) {
+    setSelectedBlockId(null);
+    setSelectedTaskId(taskId);
+  }
   // selectedEventId may be a VIRTUAL id (`${masterId}::${date}`) — every
   // displayed recurring Google Calendar event (a true RRULE series is
   // stored as one master row, expanded to virtual per-day instances only
@@ -326,9 +337,12 @@ export default function CalendarPage() {
         <Plus size={22} />
       </button>
 
-      {selectedBlock && <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} />}
+      {selectedBlock && (
+        <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} onOpenTask={handleOpenTask} />
+      )}
       {selectedEvent && <EventDetailModal event={selectedEvent} onClose={() => setSelectedEventId(null)} />}
       {creatingEvent && <EventDetailModal event={null} initial={creatingEvent} onClose={() => setCreatingEvent(null)} />}
+      {selectedTask && <TaskDetailModal task={selectedTask} onClose={() => setSelectedTaskId(null)} />}
     </div>
   );
 }
