@@ -167,3 +167,119 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
 
   return { blocks: finalBlocks, overflow, stats };
 }
+
+/**
+ * ============================================================================
+ * PLAN TODAY
+ * ============================================================================
+ * A lighter, day-scoped sibling of rebalance() above, for the "Plan today"
+ * action: instead of recalibrating the whole visible horizon, it only clears
+ * and re-plans TODAY's unlocked blocks, leaving every other day — past AND
+ * future — completely untouched (rebalance(), by contrast, wipes and
+ * replans every unlocked block from today through the end of the horizon).
+ *
+ * This deliberately does NOT reuse allocateTasks' normal multi-day pacing:
+ * feeding it a single-day capacity map while leaving a task's real (multi-
+ * day) due-date window in place would dilute today's placement based on
+ * "ideal daily share" math that assumes runway the caller can't actually see
+ * here, and would misreport tasks as unschedulable overflow just because
+ * their later days aren't in view. Instead this calls allocateTasks with
+ * `{ dayScoped: true }` (see allocator.js), which greedily fills today's
+ * capacity in priority order for every task, exactly like the allocator's
+ * existing "blocker" fast-path.
+ *
+ * IMPORTANT: because future blocks are left untouched here (unlike
+ * rebalance(), which wipes and replans them), their hours must still count
+ * as "spent" against a task's remainingHours — otherwise a task with, say,
+ * a block already sitting on tomorrow would get its full remaining hours
+ * crammed into today ON TOP OF what's already booked later, double-
+ * scheduling it.
+ *
+ * @param {Object} params
+ * @param {import('../types').Task[]} params.tasks
+ * @param {import('../types').ScheduledBlock[]} params.existingBlocks
+ * @param {import('../types').FixedRoutine[]} params.routines
+ * @param {import('../types').CalendarEvent[]} params.events
+ * @param {import('../types').SchedulingRules} params.rules
+ * @param {string} [params.fromDate] - Defaults to today; the one day this touches.
+ * @returns {{ blocks: import('../types').ScheduledBlock[], unfitToday: Array<{taskId:string,unplacedHours:number}>, stats: Object }}
+ */
+export function planToday({ tasks, existingBlocks, routines, events, rules, fromDate }) {
+  const today = fromDate || toISODate(new Date());
+
+  // 1. Partition blocks: only TODAY's blocks are ever touched. Every other
+  //    date — past (historical) or future — is left alone unconditionally,
+  //    regardless of lock state (that's the whole point of "today only").
+  const otherBlocks = existingBlocks.filter((b) => b.date !== today);
+  const todaysBlocks = existingBlocks.filter((b) => b.date === today);
+  const todaysLocked = todaysBlocks.filter((b) => b.isLocked);
+  const clearedBlockIds = new Set(todaysBlocks.filter((b) => !b.isLocked).map((b) => b.id));
+
+  // 2. Recompute remainingHours per task: estimatedHours minus hours already
+  //    committed elsewhere — historical + future blocks (untouched by this
+  //    run, see above) + today's locked blocks. Today's UNLOCKED blocks are
+  //    NOT counted as spent since they're about to be cleared and replanned,
+  //    same as rebalance()'s treatment of its cleared blocks.
+  const spentHoursByTask = new Map();
+  for (const b of [...otherBlocks, ...todaysLocked]) {
+    spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
+  }
+
+  const tasksWithRemaining = tasks.map((t) => {
+    const spent = spentHoursByTask.get(t.id) || 0;
+    const remaining = t.isLocked ? 0 : Math.max(0, t.estimatedHours - spent);
+    return { ...t, remainingHours: remaining };
+  });
+
+  // 3. Compute capacity for TODAY ONLY, treating today's locked blocks as
+  //    busy. nowClamp mirrors rebalance()'s: only meaningful for a live run
+  //    (fromDate unset or equal to the real current date) so planning at
+  //    5pm doesn't open up capacity earlier in the day.
+  const now = new Date();
+  const nowClamp = !fromDate || fromDate === toISODate(now) ? { date: today, minutes: now.getHours() * 60 + now.getMinutes() } : null;
+  const capacityMap = computeHorizonCapacity(today, 1, {
+    routines,
+    events,
+    blocks: todaysLocked,
+    rules,
+    nowClamp,
+  });
+
+  // 4. Same eligibility rules as rebalance() (see its step 4 for the
+  //    reasoning behind each): container parents and undated top-level
+  //    tasks are never directly schedulable, and a task with unmet
+  //    dependencies is held back until they're complete.
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const parentIds = new Set(tasks.filter((t) => t.parentId).map((t) => t.parentId));
+  const schedulable = tasksWithRemaining.filter(
+    (t) =>
+      !t.isLocked &&
+      !t.isCompleted &&
+      t.remainingHours > 0 &&
+      !parentIds.has(t.id) &&
+      (!!t.dueDate || !!t.parentId)
+  );
+  const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
+  const blockedByDependencies = schedulable.length - eligibleTasks.length;
+  const { blocks: newBlocks, overflow: unfitToday } = allocateTasks(eligibleTasks, capacityMap, rules, today, taskById, { dayScoped: true });
+
+  // 5. Merge: everything else (untouched) + today's locked (untouched) +
+  //    freshly allocated for today.
+  const finalBlocks = [...otherBlocks, ...todaysLocked, ...newBlocks];
+
+  const stats = {
+    tasksRescheduled: eligibleTasks.length,
+    blocksCleared: clearedBlockIds.size,
+    blocksCreated: newBlocks.length,
+    blocksPreservedLocked: todaysLocked.length,
+    // Note: unlike rebalance()'s overflowTaskCount, this does NOT mean "at
+    // risk of missing its deadline" — it just means the task didn't fully
+    // fit in today's remaining capacity, which may be entirely expected
+    // (plenty of runway on later days). Callers must not reuse rebalance's
+    // "at risk" copy for this.
+    unfitTodayCount: unfitToday.length,
+    blockedByDependencies,
+  };
+
+  return { blocks: finalBlocks, unfitToday, stats };
+}

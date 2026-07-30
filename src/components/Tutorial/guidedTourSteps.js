@@ -47,6 +47,13 @@ export const GUIDED_TOUR_STEPS = [
     body: 'Whenever due dates, priorities, or capacity change, hit this to re-plan all unlocked work across your work hours and buffer days.',
   },
   {
+    tab: 'calendar',
+    selector: '[data-tour="plan-today"]',
+    placement: 'bottom',
+    title: 'Plan today',
+    body: "A lighter version of Re-balance that only fills today's remaining free time, leaving every other day exactly as it was. You can also drag a task straight out of the Unscheduled list above the calendar onto any day to place it yourself.",
+  },
+  {
     tab: 'tasks',
     view: 'list',
     selector: '[data-tour="nav-tasks"]',
