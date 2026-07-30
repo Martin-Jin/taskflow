@@ -40,6 +40,17 @@
  * button, and a trailing "+ Add section" column creates a new one — all
  * synced to Todoist via SchedulerContext when a token is configured.
  *
+ * CARD MOTION: cards are framer-motion elements so that a card leaving a
+ * column (completed, deleted, dragged to another column, filtered out) lets
+ * the ones below it slide up into place instead of snapping — the same FLIP
+ * treatment TaskListPanel's rows get, and skipped entirely when motion is
+ * off (see useMotionEnabled). A cross-column drag is deliberately NOT a
+ * shared-layout (`layoutId`) transition: the card unmounts from one column
+ * and remounts in another, so a shared layout animation would need both
+ * copies alive at once, which fights AnimatePresence's exit and misbehaves
+ * inside the columns' own scroll containers. It fades out of the old column
+ * and in to the new one instead, with the survivors closing the gap.
+ *
  * LIVE-UPDATING EDIT MODAL: only the editing task's *id* is tracked in
  * state; the task object itself is derived fresh from `tasks` on every
  * render (see `editingTask` below), so background changes (subtask
@@ -49,10 +60,12 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useMotionEnabled } from '../../hooks/useMotionEnabled';
 import AddTaskModal from '../Modals/AddTaskModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
@@ -64,6 +77,13 @@ import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 import { getEffectiveRemainingHours } from '../../utils/taskHierarchy';
+
+// Card reorder/removal motion — see CARD MOTION above. Mirrors
+// TaskListPanel's row timings (the CSS --duration-base/--ease-standard
+// tokens), and `layout: 'position'` keeps a card's own box from being
+// scaled mid-animation.
+const CARD_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
+const CARD_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
 
 export default function BoardView({ projectId, onProjectChange, filter = 'all' }) {
   const {
@@ -91,6 +111,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
   // Native HTML5 DnD for cross-column moves (mirrors WeekView's block drag)
   // — disabled on mobile, where there's no drag gesture to hook into.
   const isMobile = useIsMobile();
+  const motionEnabled = useMotionEnabled();
   const [dragTaskId, setDragTaskId] = useState(null);
   const [dragOverColumnId, setDragOverColumnId] = useState(undefined); // undefined = none, null = "No Section" column
 
@@ -221,12 +242,19 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
     // meta line below so the two lines' text shares the same left edge.
     const titleIconOffset = (task.isRecurring ? 17 : 0) + (task.isPassive ? 17 : 0);
     return (
-      <div
+      <motion.div
         key={task.id}
+        layout={motionEnabled ? 'position' : false}
+        transition={CARD_TRANSITION}
+        exit={motionEnabled ? CARD_EXIT : undefined}
         className={`board-card ${dragTaskId === task.id ? 'is-dragging' : ''}`}
         style={{ borderLeftColor: priorityColor(task.priority) }}
         role="button"
         tabIndex={0}
+        // framer-motion normally swallows onDragStart/onDragEnd (they're its
+        // own gesture props) — it only forwards them to the DOM when
+        // `draggable` is set, which is exactly the desktop case below, so
+        // native HTML5 DnD keeps working. Mobile passes neither.
         draggable={!isMobile}
         onDragStart={isMobile ? undefined : (e) => handleCardDragStart(e, task)}
         onDragEnd={isMobile ? undefined : () => setDragTaskId(null)}
@@ -303,7 +331,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
             <span className={`badge ${task.priority}`}>{task.priority}</span>
           </div>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -320,7 +348,10 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
         </div>
       ) : !hasSections ? (
         <div className="board-flat-list">
-          {flatTasks.map((task) => renderCard(task))}
+          {/* `initial={false}` leaves the first paint alone — the cards
+              already there keep the plain `.board-card` CSS enter animation
+              rather than all animating in through framer. */}
+          <AnimatePresence initial={false}>{flatTasks.map((task) => renderCard(task))}</AnimatePresence>
           {flatTasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
           <div className="board-flat-list-footer">
             {addingSection ? (
@@ -418,7 +449,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
                 onDragLeave={isMobile ? undefined : () => setDragOverColumnId(undefined)}
                 onDrop={isMobile ? undefined : (e) => handleColumnDrop(e, col)}
               >
-                {col.tasks.map((task) => renderCard(task))}
+                <AnimatePresence initial={false}>{col.tasks.map((task) => renderCard(task))}</AnimatePresence>
                 {col.tasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
               </div>
 

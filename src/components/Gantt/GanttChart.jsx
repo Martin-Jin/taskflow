@@ -36,7 +36,7 @@
  * ============================================================================
  */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Wind, Ban, Zap } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, diffDays, toISODate, dayOfWeek } from '../../utils/dateUtils';
@@ -45,17 +45,34 @@ import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { hasChildTasks } from '../../utils/taskHierarchy';
 import { priorityColor } from '../../utils/priorityColor';
 import { filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
+import HoverPreviewCard from '../Calendar/HoverPreviewCard';
 
 const HORIZON_DAYS = 28;
 const LABEL_COL_WIDTH_DESKTOP = 220;
 const LABEL_COL_WIDTH_MOBILE = 140;
 
 export default function GanttChart({ activeProjectId, filter = 'all' }) {
-  const { tasks, blocks, runRebalance, isLoading } = useScheduler();
+  const { tasks, blocks, projects, runRebalance, isLoading } = useScheduler();
   const isMobile = useIsMobile();
   const labelColWidth = isMobile ? LABEL_COL_WIDTH_MOBILE : LABEL_COL_WIDTH_DESKTOP;
   const today = toISODate(new Date());
   const days = useMemo(() => dateRange(today, HORIZON_DAYS), [today]);
+  const projectById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
+
+  // Desktop-only hover preview (see HoverPreviewCard) for a row's title,
+  // which truncates in the fixed-width label column (see .gantt-row-title) —
+  // same delayed-show/cancel pattern as WeekView's own hoverPreview state.
+  const [hoverPreview, setHoverPreview] = useState(null);
+  const hoverTimer = useRef(null);
+  function scheduleHoverPreview(rect, content) {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHoverPreview({ rect, ...content }), 350);
+  }
+  function cancelHoverPreview() {
+    clearTimeout(hoverTimer.current);
+    setHoverPreview(null);
+  }
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
 
   // A container (has ≥1 sub-task, at any depth) never gets its own row —
   // only leaf tasks do, so a sub-task gets a row exactly like a normal
@@ -164,7 +181,27 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
 
           return (
             <div className="gantt-row" key={task.id} style={{ gridTemplateColumns: `${labelColWidth}px 1fr` }}>
-              <div className="gantt-row-header" title={waitingLabel ? `Waiting on: ${waitingLabel}` : headerTitle}>
+              <div
+                className="gantt-row-header"
+                // Desktop gets the richer HoverPreviewCard instead (see
+                // below) — mobile has no hover, so it keeps the native
+                // tooltip fallback.
+                title={isMobile ? (waitingLabel ? `Waiting on: ${waitingLabel}` : headerTitle) : undefined}
+                onMouseEnter={
+                  isMobile
+                    ? undefined
+                    : (e) =>
+                        scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
+                          title: task.title,
+                          priority: task.priority,
+                          projectName: projectById[task.projectId]?.name,
+                          parentTitle: parentTask?.title,
+                          isPassive: task.isPassive,
+                          timeText: waitingLabel ? `Waiting on: ${waitingLabel}` : undefined,
+                        })
+                }
+                onMouseLeave={isMobile ? undefined : cancelHoverPreview}
+              >
                 <div className="gantt-row-title">
                   <span className={`priority-dot ${task.priority}`} />
                   {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginRight: 4 }} title="Can run unattended" />}
@@ -209,6 +246,8 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
           style={{ left: `${labelColWidth}px`, top: 0, bottom: 0 }}
         />
       </div>
+
+      {hoverPreview && <HoverPreviewCard {...hoverPreview} />}
     </div>
   );
 }

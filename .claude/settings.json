@@ -16,7 +16,8 @@
       "WebFetch(domain:support.google.com)",
       "WebFetch(domain:mixkit.co)",
       "Skill(update-config)",
-      "Skill(update-config:*)"
+      "Skill(update-config:*)",
+      "PowerShell(shutdown /s /t 1800 /c \"Scheduled shutdown in 30 minutes\")"
     ]
   }
 }
