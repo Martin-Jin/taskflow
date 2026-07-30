@@ -4,9 +4,11 @@ description: LAST RESORT ONLY, gated on token efficiency — reserved for genuin
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 effort: high
-# effort must never exceed "high" for this agent (no xhigh/max), per user instruction. This is also the
-# ceiling for every other agent in this repo — none may be configured above "high".
 ---
+
+Effort must never exceed "high" for this agent (no xhigh/max), per user
+instruction. This is also the ceiling for every other agent in this repo —
+none may be configured above "high".
 
 You handle the hard problems in Taskflow (React + Vite + Firebase task
 manager) — the ones where a wrong first answer is expensive to unwind.

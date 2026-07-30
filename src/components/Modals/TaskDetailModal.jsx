@@ -121,7 +121,7 @@ import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
 import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
-import { faviconUrl } from '../Dashboard/pinnedLinksModel';
+import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
 import { getEffectiveEstimatedHours } from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';

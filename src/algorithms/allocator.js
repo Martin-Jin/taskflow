@@ -107,6 +107,7 @@
  */
 
 import { addDays, diffDays, dateRange, timeToMinutes, minutesToTime } from '../utils/dateUtils';
+import { getDependentsMap } from '../utils/dependencyUtils';
 
 const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
 // "Close enough to zero" threshold for hour comparisons below. Placements
@@ -168,11 +169,70 @@ function getEffectiveDeadline(task, bufferDays, taskById) {
   return task.enforceDueDate && task.dueDate ? task.dueDate : addDays(dueDate, -bufferDays);
 }
 
-/** Compute a single sortable urgency+priority score for a task, relative to `today`. */
-export function scoreTask(task, today, bufferDays, taskById) {
+/**
+ * Backward urgency propagation: a task's OWN deadline pressure should also
+ * fall on whatever it depends on, since a blocker running late makes every
+ * task waiting on it late too (transitively — chains can be >1 hop). Returns
+ * a Map<taskId, ISODate|null> of each task's "effective" deadline for scoring
+ * purposes: the earliest of its own resolved deadline and every (incomplete)
+ * direct/indirect dependent's effective deadline.
+ *
+ * This only propagates the DEADLINE, not the whole priority*urgency score —
+ * a blocker still uses its own priority weight in scoreTask, just evaluated
+ * against a potentially-tighter borrowed deadline. That keeps "urgent B
+ * depends on low-priority A" from making A outrank genuinely urgent
+ * unrelated work; it only makes A no longer look falsely non-urgent.
+ *
+ * Walks the full task list (via `taskById` if given, since a gated-out
+ * dependent — one whose own deps aren't met yet — still needs its urgency
+ * counted here even though it's excluded from the schedulable list the
+ * caller hands to prioritizeTasks/allocateTasks). Defensive against cycles
+ * via a per-chain `stack` set (mirrors findAncestorDueDate's pattern above) —
+ * a scheduling pass must never hang on bad dependency data, even though the
+ * UI (getIneligibleDependencyIds) already stops one from being created.
+ */
+function computeEffectiveDeadlines(tasks, bufferDays, taskById) {
+  const allTasks = taskById ? [...taskById.values()] : tasks;
+  const dependentsOf = getDependentsMap(allTasks);
+  const cache = new Map();
+
+  function resolve(task, stack) {
+    if (cache.has(task.id)) return cache.get(task.id);
+    if (stack.has(task.id)) return null; // cycle guard: don't let this chain contribute further
+
+    stack.add(task.id);
+    let deadline = getEffectiveDeadline(task, bufferDays, taskById);
+    for (const dependentId of dependentsOf.get(task.id) || []) {
+      const dependent = taskById ? taskById.get(dependentId) : allTasks.find((t) => t.id === dependentId);
+      if (!dependent || dependent.isCompleted) continue; // a finished dependent no longer applies pressure
+      const dependentDeadline = resolve(dependent, stack);
+      if (dependentDeadline && (!deadline || dependentDeadline < deadline)) deadline = dependentDeadline;
+    }
+    stack.delete(task.id);
+
+    cache.set(task.id, deadline);
+    return deadline;
+  }
+
+  const result = new Map();
+  for (const task of allTasks) result.set(task.id, resolve(task, new Set()));
+  return result;
+}
+
+/**
+ * Compute a single sortable urgency+priority score for a task, relative to
+ * `today`. `effectiveDeadlines`, if given, is a precomputed
+ * computeEffectiveDeadlines() map — pass it from prioritizeTasks so a whole
+ * batch of tasks shares one graph walk instead of repeating it per task.
+ * Omit it (as any standalone caller may) to fall back to just this task's
+ * own resolved deadline, with no backward propagation.
+ */
+export function scoreTask(task, today, bufferDays, taskById, effectiveDeadlines) {
   const weight = PRIORITY_WEIGHT[task.priority] ?? 1;
 
-  const effectiveDeadline = getEffectiveDeadline(task, bufferDays, taskById);
+  const effectiveDeadline = effectiveDeadlines
+    ? effectiveDeadlines.get(task.id) ?? null
+    : getEffectiveDeadline(task, bufferDays, taskById);
   if (effectiveDeadline === null) {
     return weight * 1; // no deadline (own or borrowed) -> baseline urgency multiplier of 1
   }
@@ -191,14 +251,22 @@ export function scoreTask(task, today, bufferDays, taskById) {
  * task now, dated or not — an undated sub-task scores via the same baseline
  * urgency (or a borrowed ancestor deadline, see getEffectiveDeadline) every
  * other undated task gets, rather than being excluded outright. `taskById`
- * (the full task list, not just this eligible subset) is only used for that
- * ancestor lookup.
+ * (the full task list, not just this eligible subset) is used both for that
+ * ancestor lookup and to walk the full dependency graph for backward urgency
+ * propagation (see computeEffectiveDeadlines) — a blocker task's urgency
+ * rises to match whatever depends on it, not just its own deadline.
  */
 export function prioritizeTasks(tasks, today, bufferDays, taskById) {
+  const effectiveDeadlines = computeEffectiveDeadlines(tasks, bufferDays, taskById);
+  const scoreCache = new Map();
+  const scoreOf = (task) => {
+    if (!scoreCache.has(task.id)) scoreCache.set(task.id, scoreTask(task, today, bufferDays, taskById, effectiveDeadlines));
+    return scoreCache.get(task.id);
+  };
   return [...tasks]
     .filter((t) => !t.isCompleted && t.remainingHours > 0)
     .sort((a, b) => {
-      const scoreDiff = scoreTask(b, today, bufferDays, taskById) - scoreTask(a, today, bufferDays, taskById);
+      const scoreDiff = scoreOf(b) - scoreOf(a);
       if (scoreDiff !== 0) return scoreDiff;
       // Equal score (e.g. two default-priority, undated sibling sub-tasks) —
       // tiebreak by creation order so whichever was added first schedules
