@@ -12,7 +12,7 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 const SECTIONS = [
   {
     title: 'What it does',
-    body: 'Type a free-form description — or attach/paste a screenshot of an email, text message, or flyer — and AI reads it and creates a Task or Event for you, instead of filling in the form field by field. "Lunch with Sam at 1pm Friday" becomes a calendar Event; "renew car rego" becomes a Task. It fills in the due date, time, priority, duration, and project it can figure out along the way.',
+    body: 'Type a free-form description — or attach/paste a screenshot of an email, text message, or flyer — and the AI proposes a plan of changes: creating tasks/events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving things between projects/sections, even renaming or deleting things. Nothing is applied straight away — you always get a review screen listing every proposed change with a checkbox, so you can uncheck anything you don\'t want before applying.',
   },
   {
     title: 'Bring your own key',
@@ -24,7 +24,7 @@ const SECTIONS = [
   },
   {
     title: 'How to use it',
-    body: 'Click the sparkle button next to "Add task" (Tasks list or Board view), type or paste your description — or attach/paste a screenshot — pick Claude or Gemini, then click Create. Review the result and edit it like any other task or event afterwards.',
+    body: 'Click the sparkle button next to "Add task" (Tasks list or Board view), type or paste your description — or attach/paste a screenshot — pick Claude or Gemini, then click "Plan changes". Review every proposed change on the next screen, uncheck anything you don\'t want, then Apply.',
   },
 ];
 

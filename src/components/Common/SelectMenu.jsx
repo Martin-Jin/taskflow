@@ -58,6 +58,7 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
   }
 
   function choose(optionValue) {
+    if (options.find((o) => o.value === optionValue)?.disabled) return;
     onChange(optionValue);
     setIsOpen(false);
     buttonRef.current?.focus();
@@ -132,8 +133,11 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
                     type="button"
                     role="option"
                     aria-selected={o.value === value}
-                    className={`select-menu-option ${i === highlightedIndex ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''}`}
-                    onMouseEnter={() => setHighlightedIndex(i)}
+                    aria-disabled={o.disabled || undefined}
+                    disabled={o.disabled}
+                    title={o.disabledReason}
+                    className={`select-menu-option ${i === highlightedIndex ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''} ${o.disabled ? 'is-disabled' : ''}`}
+                    onMouseEnter={() => !o.disabled && setHighlightedIndex(i)}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => choose(o.value)}
                   >

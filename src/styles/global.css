@@ -648,6 +648,16 @@ select:focus-visible,
   opacity: 1;
 }
 
+/* On the active (green) row, the trigger's default neutral gray hover
+   (--color-bg-surface-hover) reads as a mismatched patch sitting on top of
+   the green background instead of a natural part of it. Tint the hover/open
+   state with the accent color itself instead, same recipe forms.css uses
+   for hover states on accent-tinted surfaces. */
+.sidebar-project-row-wrap.active .project-actions-trigger:hover:not(:disabled),
+.sidebar-project-row-wrap.active .project-actions-trigger[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--color-accent-border) 26%, transparent);
+}
+
 .sidebar-project-rename-input {
   flex: 1;
   min-width: 0;

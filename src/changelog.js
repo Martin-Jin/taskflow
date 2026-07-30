@@ -17,6 +17,18 @@
 
 export const CHANGELOG = [
   {
+    version: '1.18.0',
+    date: '2026-07-30',
+    title: 'AI Quick Add can now plan and organize your whole workspace',
+    changes: [
+      'AI Quick Add went from creating one task or event at a time to proposing a full set of changes in one request: creating tasks and events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving tasks between projects/sections, and creating/renaming/deleting projects, sections, and labels.',
+      'Nothing is applied automatically — every request opens a new review screen listing each proposed change individually with a checkbox, so you can uncheck anything you don\'t want before applying.',
+      'The AI now defaults to creating tasks (even ones with a deadline) rather than calendar events — events are reserved for things that must happen at a fixed real-world time regardless of workload (an appointment, meeting, flight), since this app\'s own scheduler already decides when task work actually gets done.',
+      'Added a model picker next to the provider choice, defaulting to the fastest/cheapest model with reasoning enabled for each provider (Claude Haiku 4.5 / Gemini 3.5 Flash-Lite) — pick a stronger model from the same dropdown for harder requests. A provider you haven\'t added an API key for yet is disabled instead of erroring after the fact.',
+      'Shows an approximate token count before you submit, and gives a specific message (with a "switch provider" shortcut where it helps) when a request hits a rate limit, quota, or context-size limit, instead of one generic failure.',
+    ],
+  },
+  {
     version: '1.17.6',
     date: '2026-07-30',
     title: 'Task dependencies are now actually enforced',

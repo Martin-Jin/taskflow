@@ -1,17 +1,20 @@
 /**
  * ============================================================================
- * AI QUICK ADD SERVICE
+ * AI ASSISTANT SERVICE
  * ============================================================================
  * Client-side wrapper around the companion Cloudflare Worker (see
- * cloudflare-worker/) that turns free-form text/screenshot into a structured
- * Task or CalendarEvent via Claude or Gemini.
+ * cloudflare-worker/) that turns a free-form request/screenshot plus a full
+ * workspace snapshot (`contextMarkdown`, see services/aiContextService.js)
+ * into a PROPOSED PLAN — see services/aiPlanService.js for how that plan is
+ * validated/resolved and services/AIPlanConfirmModal.jsx (via
+ * AIQuickAddModal) for how it's confirmed and applied. This service itself
+ * only does the network call — it never applies anything.
  *
  * Bring-your-own-key (BYOK): each user pastes their own Anthropic/Gemini API
  * key into Settings (mirrors the Todoist token pattern — see
  * SettingsPanel.jsx and utils/persistence.js), persisted only in that
  * browser's localStorage. This service reads it here at request time and
- * sends it to the Worker as `apiKey`, alongside the existing `provider`/
- * `text`/`image`/`context` fields; the Worker itself holds no secrets and
+ * sends it to the Worker as `apiKey`; the Worker itself holds no secrets and
  * just forwards whatever key it's given straight to the provider. See
  * cloudflare-worker/README.md for the full rationale.
  *
@@ -19,13 +22,6 @@
  * local `npm run dev` convenience (same reasoning as
  * `VITE_TODOIST_API_TOKEN` in SchedulerContext) — never present in the
  * public GitHub Pages build, since there's no `.env` at build time there.
- *
- * The Worker is otherwise stateless and has no knowledge of the user's
- * existing projects/labels or today's date, so callers pass those as
- * `context` — without a reference date the model can't resolve "tomorrow"/
- * "next Friday" mentions, and without existing project/label names it can
- * only guess at `projectName`/`labelNames` rather than matching real ones
- * (see `resolveProjectAndLabels` below, used by AIQuickAddModal).
  * ============================================================================
  */
 
@@ -61,35 +57,52 @@ function fileToBase64(file) {
   });
 }
 
+/** Thrown by requestAIPlan on any failure. `kind` mirrors the worker's errorKind (see cloudflare-worker/src/index.js's classifyProviderError) so callers can branch on it — e.g. offering a "switch provider" shortcut for quota_exhausted. */
+export class AIRequestError extends Error {
+  constructor(message, kind) {
+    super(message);
+    this.kind = kind || 'unknown';
+  }
+}
+
+function messageForFailure(body, status) {
+  const base = body?.error || `AI Assistant request failed (HTTP ${status}).`;
+  if (body?.errorKind === 'rate_limit' && body?.retryAfterSeconds) {
+    return `${base} (retry in about ${body.retryAfterSeconds}s)`;
+  }
+  return base;
+}
+
 /**
- * Sends free-form text/image to the Worker and returns the parsed result.
- * Throws with a user-facing message on any failure — network error, worker
- * not configured, or an error surfaced from the worker's own `error` field
- * (bad input, upstream AI error, missing API key secret).
+ * Sends a free-form request/image and the current workspace context to the
+ * Worker and returns the proposed plan's raw operations. Throws AIRequestError
+ * with a user-facing message on any failure — network error, worker not
+ * configured, or an error surfaced from the worker's own `error` field.
  *
  * @param {{
  *   provider: 'anthropic'|'gemini',
  *   text: string,
  *   imageFile?: File|null,
- *   context?: { today?: string, projectNames?: string[], labelNames?: string[] },
+ *   contextMarkdown: string,
+ *   model?: string,
  * }} params
- * @returns {Promise<{type: 'task'|'event', data: object}>}
+ * @returns {Promise<{ operations: Array<Object>, rejected?: string[] }>}
  */
-export async function parseWithAI({ provider, text, imageFile, context }) {
+export async function requestAIPlan({ provider, text, imageFile, contextMarkdown, model }) {
   const workerUrl = import.meta.env.VITE_AI_QUICKADD_WORKER_URL;
   if (!workerUrl) {
-    throw new Error('AI Quick Add is not configured — no worker URL set.');
+    throw new AIRequestError('AI Quick Add is not configured — no worker URL set.', 'not_configured');
   }
 
   const apiKey = getStoredApiKey(provider);
   if (!apiKey) {
-    throw new Error(`Add your ${PROVIDER_LABEL[provider]} API key in Settings first.`);
+    throw new AIRequestError(`Add your ${PROVIDER_LABEL[provider]} API key in Settings first.`, 'no_api_key');
   }
 
   let image;
   if (imageFile) {
     if (imageFile.size > MAX_IMAGE_BYTES) {
-      throw new Error('Image is too large — please use one under 5MB.');
+      throw new AIRequestError('Image is too large — please use one under 5MB.', 'image_too_large');
     }
     image = { data: await fileToBase64(imageFile), mimeType: imageFile.type || 'image/png' };
   }
@@ -99,39 +112,24 @@ export async function parseWithAI({ provider, text, imageFile, context }) {
     res = await fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey, text: text || '', image, context }),
+      body: JSON.stringify({ provider, apiKey, text: text || '', image, contextMarkdown, model }),
     });
   } catch {
-    throw new Error('Could not reach the AI Quick Add worker — check your connection and the configured worker URL.');
+    throw new AIRequestError(
+      'Could not reach the AI Assistant worker — check your connection and the configured worker URL.',
+      'network_error'
+    );
   }
 
   let body;
   try {
     body = await res.json();
   } catch {
-    throw new Error('The AI Quick Add worker returned an unexpected response.');
+    throw new AIRequestError('The AI Assistant worker returned an unexpected response.', 'bad_response');
   }
 
   if (!res.ok || body.error) {
-    throw new Error(body.error || `AI Quick Add failed (HTTP ${res.status}).`);
+    throw new AIRequestError(messageForFailure(body, res.status), body.errorKind || 'upstream_error');
   }
   return body;
-}
-
-/**
- * Resolves the AI's freeform `projectName`/`labelNames` hints (see
- * cloudflare-worker/src/index.js's TASK_FIELDS) against the user's actual
- * Projects/Labels — the worker has no access to Firestore, so it can only
- * echo back a name, never a real id. Matching is deliberately simple
- * (case-insensitive exact match, falling back to a unique substring match)
- * rather than reusing utils/smartParse.js's own matcher, which is private to
- * that unrelated feature.
- */
-export function resolveProjectId(projectName, projects) {
-  if (!projectName) return null;
-  const name = projectName.trim().toLowerCase();
-  const exact = projects.find((p) => p.name.toLowerCase() === name);
-  if (exact) return exact.id;
-  const partial = projects.filter((p) => p.name.toLowerCase().includes(name) || name.includes(p.name.toLowerCase()));
-  return partial.length === 1 ? partial[0].id : null;
 }
