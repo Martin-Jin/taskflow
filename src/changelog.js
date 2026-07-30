@@ -30,7 +30,7 @@ export const CHANGELOG = [
     date: '2026-07-30',
     title: 'Email notifications (self-hosted) and notification polish',
     changes: [
-      'The notification system now has a server-side email half to go with in-app alerts: a Cloud Function can email you a task starting soon, overdue, or due today, even while TaskFlow isn\'t open. This is opt-in infrastructure you deploy yourself (see functions/README.md) with a free Resend account — it\'s not turned on by default for a fresh install.',
+      'The notification system now has a server-side email half to go with in-app alerts: a scheduled backend worker can email you a task starting soon, overdue, or due today, even while TaskFlow isn\'t open. This is opt-in infrastructure you set up yourself (see notify-worker/README.md) with a free Resend account — it\'s not turned on by default for a fresh install.',
       'Confirmed the in-app and (self-deployed) email notifications always agree: same toggles, same "starting soon" threshold, same overdue re-notify pace, so switching a setting behaves identically on both channels.',
     ],
   },

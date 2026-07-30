@@ -934,8 +934,9 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
           Choose which channels and task events can notify you. In-app notifications fire while TaskFlow
           is open, via your browser's notification popup (falling back to an in-app toast if that's not
-          available/permitted). Email notifications require a one-time self-deploy of a Cloud Function
-          (see functions/README.md) — turning this on here does nothing until that's set up.
+          available/permitted). Email notifications require a one-time self-hosted setup of a GitHub
+          Actions scheduled workflow (see notify-worker/README.md) — turning this on here does nothing
+          until that's set up.
         </p>
         <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input

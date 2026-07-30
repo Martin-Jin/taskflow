@@ -1,0 +1,16 @@
+{
+  "name": "taskflow-notify-worker",
+  "description": "TaskFlow scheduled email notifications, run as a plain Node script via GitHub Actions cron (TODO.md #10, Phase 3)",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "resend": "^4.0.1"
+  }
+}
