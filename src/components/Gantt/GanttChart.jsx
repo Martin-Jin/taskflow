@@ -51,7 +51,7 @@ const LABEL_COL_WIDTH_DESKTOP = 220;
 const LABEL_COL_WIDTH_MOBILE = 140;
 
 export default function GanttChart({ activeProjectId, filter = 'all' }) {
-  const { tasks, blocks } = useScheduler();
+  const { tasks, blocks, runRebalance, isLoading } = useScheduler();
   const isMobile = useIsMobile();
   const labelColWidth = isMobile ? LABEL_COL_WIDTH_MOBILE : LABEL_COL_WIDTH_DESKTOP;
   const today = toISODate(new Date());
@@ -127,14 +127,13 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
         </div>
         <h3 style={{ margin: '10px 0 4px', fontFamily: 'var(--font-display)' }}>Nothing scheduled yet</h3>
         <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, maxWidth: 360, margin: '0 auto' }}>
-          The Gantt view shows a burn-down bar per task once work is on the calendar. Head to the Calendar tab and
-          run{' '}
-          <strong style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            <Zap size={13} />
-            Re-balance schedule
-          </strong>{' '}
-          to populate it.
+          The Gantt view shows a burn-down bar per task once work is on the calendar. Re-balance your schedule to
+          populate it.
         </p>
+        <button className="btn btn-primary" style={{ marginTop: 10 }} onClick={runRebalance} disabled={isLoading}>
+          <Zap size={14} />
+          Re-balance schedule
+        </button>
       </div>
     );
   }
