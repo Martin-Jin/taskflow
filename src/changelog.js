@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.7',
+    date: '2026-07-31',
+    title: 'Fix: notification timing for users outside UTC',
+    changes: [
+      "Email and in-app notifications (overdue, due today, starting soon) now use your device's own timezone instead of always assuming UTC, so they no longer fire on the wrong day or at the wrong time if you're not in UTC.",
+    ],
+  },
+  {
     version: '1.33.6',
     date: '2026-07-31',
     title: 'Fixed broken drag on mobile calendar',

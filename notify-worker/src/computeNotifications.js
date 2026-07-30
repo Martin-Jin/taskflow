@@ -16,29 +16,85 @@
  * irrelevant here — this only ever runs for users with emailEnabled true
  * (see index.js's query), and only checks the per-TYPE toggles.
  *
- * TIMEZONE CAVEAT (read before trusting exact due-today/overdue boundaries):
- * the client evaluates "today" / "overdue" / "starting soon" against the
- * user's own browser-local clock (src/utils/dateUtils.js's toISODate is
- * explicitly local-time, not UTC). Nothing in this app currently stores a
- * per-user IANA timezone (checked AuthContext.jsx, notificationSettings'
- * shape, and SchedulerContext.jsx — none exist), so this server-side pass
- * has no way to know it and necessarily uses UTC "now" instead. For a user
- * whose local timezone isn't UTC, this can shift which calendar day counts
- * as "today" (so overdue/due-today can fire up to ~UTC-offset hours early or
- * late) and shift the exact "starting soon" window by the same amount. This
- * is a real gap, not a rounding error — flagged here rather than silently
- * shipped as if it were correct. Fixing it properly needs a stored per-user
- * timezone (e.g. captured once client-side via
- * `Intl.DateTimeFormat().resolvedOptions().timeZone`), which is a Phase 1/2
- * data-model change out of scope for this Phase 3 pass — left as an open
- * question alongside TODO.md #10's existing ones.
+ * TIMEZONE: the client evaluates "today" / "overdue" / "starting soon"
+ * against the user's own browser-local clock (src/utils/dateUtils.js's
+ * toISODate is explicitly local-time, not UTC). This used to be an
+ * unfixable gap server-side — nothing stored a per-user IANA timezone — but
+ * `notificationSettings.timezone` (captured client-side via
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone`, see
+ * src/utils/dateUtils.js's getBrowserTimeZone and its resync effect in
+ * SchedulerContext.jsx) now carries it into Firestore, so this pass can
+ * compute "today" and convert each block's stored local wall-clock
+ * date/time into the correct UTC instant for that specific user, instead of
+ * assuming UTC. `settings.timezone` is defensively defaulted to 'UTC' below
+ * (existing users who haven't loaded a client build new enough to have
+ * stamped it yet, or an invalid/unrecognized zone string) rather than
+ * crashing — no backfill needed, since the client lazily fills it in on next
+ * login. One residual imprecision: the UTC-offset used for a given instant
+ * is looked up via that instant's OWN naive (UTC-assumed) reading rather
+ * than iteratively resolved, so a block/boundary landing in the handful of
+ * hours around a DST transition can be off by up to that zone's DST shift
+ * (typically 1 hour) — accepted as a rare edge case given this worker's
+ * already-approximate 5-minute cron granularity (see index.js).
  * ============================================================================
  */
 
 const { OVERDUE_RENOTIFY_MS } = require('./constants');
 
-function toISODateUTC(epochMs) {
-  return new Date(epochMs).toISOString().slice(0, 10);
+/** Falls back to UTC for a missing/invalid IANA zone name instead of throwing. */
+function resolveTimeZone(timeZone) {
+  if (!timeZone) return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return timeZone;
+  } catch {
+    return 'UTC';
+  }
+}
+
+/**
+ * The UTC-offset (in ms, positive = east of UTC) in effect for `date` in
+ * `timeZone` — e.g. +12h for Pacific/Auckland in NZST. Derived by formatting
+ * the instant in that zone and diffing the resulting wall-clock numbers
+ * (read as if they were themselves a UTC instant) against the real UTC
+ * instant.
+ */
+function getTimeZoneOffsetMs(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+    .formatToParts(date)
+    .reduce((acc, { type, value }) => {
+      if (type !== 'literal') acc[type] = value;
+      return acc;
+    }, {});
+  const wallClockAsUTC = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+  return wallClockAsUTC - date.getTime();
+}
+
+/** Today's calendar date (YYYY-MM-DD) as seen from `timeZone` at `epochMs`. */
+function todayISOInZone(epochMs, timeZone) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(epochMs));
+}
+
+/**
+ * Converts a stored local wall-clock date/time (as entered by the user, no
+ * offset attached) into the actual UTC epoch ms it represents in `timeZone`
+ * — the inverse of todayISOInZone. Approximates the zone's offset using the
+ * naive (UTC-assumed) instant rather than resolving it exactly, which is
+ * exact except within the DST-transition window itself (see file-header
+ * comment).
+ */
+function zonedWallTimeToEpochMs(dateStr, timeStr, timeZone) {
+  const naiveMs = Date.parse(`${dateStr}T${timeStr}:00Z`);
+  return naiveMs - getTimeZoneOffsetMs(new Date(naiveMs), timeZone);
 }
 
 /**
@@ -50,18 +106,19 @@ function toISODateUTC(epochMs) {
 function computeCandidates({ tasks, blocks, settings, now }) {
   const toNotify = [];
   const toClear = [];
-  const todayISO = toISODateUTC(now);
+  const timeZone = resolveTimeZone(settings.timezone);
+  const todayISO = todayISOInZone(now, timeZone);
   const tasksById = new Map(tasks.map((t) => [t.id, t]));
 
   if (settings.taskStartingSoon) {
     const thresholdMs = (settings.startingSoonMinutes || 10) * 60 * 1000;
     for (const block of blocks) {
       if (block.status !== 'scheduled') continue;
-      // Stored date/startTime is the user's local wall-clock time (see
-      // timezone caveat above) — treated as UTC here for lack of a stored
-      // per-user offset, consistent with `now` also being UTC.
-      const start = new Date(`${block.date}T${block.startTime}:00Z`);
-      const diffMs = start.getTime() - now;
+      // Stored date/startTime is the user's local wall-clock time — convert
+      // it to the actual UTC instant using their own stored timezone (see
+      // file-header comment) so it's comparable to `now`.
+      const startMs = zonedWallTimeToEpochMs(block.date, block.startTime, timeZone);
+      const diffMs = startMs - now;
       if (diffMs <= 0 || diffMs > thresholdMs) continue;
       const task = tasksById.get(block.taskId);
       if (!task || task.isCompleted) continue;
@@ -99,4 +156,4 @@ function computeCandidates({ tasks, blocks, settings, now }) {
   return { toNotify, toClear };
 }
 
-module.exports = { computeCandidates, toISODateUTC, OVERDUE_RENOTIFY_MS };
+module.exports = { computeCandidates, todayISOInZone, OVERDUE_RENOTIFY_MS };
