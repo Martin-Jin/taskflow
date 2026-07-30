@@ -48,6 +48,7 @@ export function migrateSubtasksToTasks(tasks) {
         dueDate: null,
         isRecurring: false,
         recurrenceString: null,
+        recurrenceRule: null,
         projectId: task.projectId ?? null,
         sectionId: task.sectionId ?? null,
         sectionName: task.sectionName ?? null,

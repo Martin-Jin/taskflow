@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.1',
+    date: '2026-07-31',
+    title: 'Recurring tasks now schedule every day they repeat',
+    changes: [
+      'A recurring task (e.g. "every Mon/Wed/Fri" or "every day") now actually gets scheduled on each of those days, instead of only showing up once per cycle.',
+      'The task detail view now shows a small "completed X of the last 7 days" readout for recurring tasks, so you can see recent completion activity at a glance.',
+    ],
+  },
+  {
     version: '1.32.2',
     date: '2026-07-31',
     title: 'Cleaner Google Calendar settings row',

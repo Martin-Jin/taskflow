@@ -563,6 +563,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // rebalanceEngine.js) — its own estimatedHours/remainingHours stop being
   // directly editable and become a live rollup of its children's instead.
   const isContainer = childTasks.length > 0;
+  // Count of the last 7 days' completions for a recurring task, from the
+  // trimmed `completedDates` list SchedulerContext.completeTask maintains.
+  const recentCompletionCount = useMemo(() => {
+    if (!task.isRecurring || !task.completedDates?.length) return 0;
+    const today = new Date();
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() - 6);
+    const cutoffISO = toISODate(cutoff);
+    return task.completedDates.filter((d) => d >= cutoffISO).length;
+  }, [task.isRecurring, task.completedDates]);
   const effectiveEstimatedHours = useMemo(() => (isContainer ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours), [
     isContainer,
     task,
@@ -1769,6 +1779,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 )}
                 {isRecurring && (
                   <p className="form-hint">Marking this complete advances the due date instead of moving it to Completed.</p>
+                )}
+                {task.isRecurring && (
+                  <p className="form-hint">
+                    Completed {recentCompletionCount} of the last 7 days
+                  </p>
                 )}
                 {!dueDate && <p className="form-hint">Needs a due date first.</p>}
               </DetailField>

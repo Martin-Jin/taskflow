@@ -53,6 +53,27 @@
  *                                              weeks"), imported verbatim from Todoist's `due.string` when present.
  *                                              Used by utils/recurrence.js to compute the next due date locally.
  *                                              Null/undefined for non-recurring tasks.
+ * @property {{unit: 'day'|'week'|'month'|'year', count: number, days?: number[]}|null} [recurrenceRule] - Cached/
+ *                                              derived parse of `recurrenceString` (utils/recurrence.js's
+ *                                              parseRecurrenceRule, recomputed via deriveRecurrenceRule whenever
+ *                                              `recurrenceString` is set/changed/cleared — see every call site that
+ *                                              touches it: SchedulerContext's addTask/updateTask, todoistService,
+ *                                              migrateSubtasksToTasks, mockData). Purely internal/derived — never
+ *                                              shown or edited directly in the UI. Used by rebalanceEngine.js's
+ *                                              generateTaskOccurrences to expand a recurring task into every day (or
+ *                                              specific weekday) it actually repeats on, instead of only its single
+ *                                              current `dueDate`. Null/undefined for non-recurring tasks (or a
+ *                                              recurring task whose `recurrenceString` doesn't parse).
+ * @property {string[]} [completedDates]     - ISO dates (YYYY-MM-DD) this recurring task's occurrence was completed
+ *                                              on, most recent first, trimmed to the last 7 days (older entries roll
+ *                                              into `completionHistory` instead of being dropped — see
+ *                                              SchedulerContext.completeTask). Only meaningful for `isRecurring`
+ *                                              tasks; undefined for everything else.
+ * @property {Record<string, number>} [completionHistory] - Monthly aggregate of completions once trimmed out of
+ *                                              `completedDates`, keyed by `"YYYY-MM"` (e.g. `{"2026-07": 23}`), so a
+ *                                              trend/streak view can show history arbitrarily far back without
+ *                                              keeping every raw date forever. Only meaningful for `isRecurring`
+ *                                              tasks; undefined for everything else.
  * @property {string} [projectId]            - Todoist project id, if synced.
  * @property {'todoist'|'manual'} source     - Where the task originated.
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.
