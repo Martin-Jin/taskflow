@@ -28,6 +28,7 @@ export const SHORTCUT_DEFS = [
   { id: 'undo', label: 'Undo', description: 'Undo the last change', defaultCombo: 'Ctrl+Z', editable: true },
   { id: 'redo', label: 'Redo', description: 'Redo the last undone change', defaultCombo: 'Ctrl+Shift+Z', editable: true },
   { id: 'newTask', label: 'New task', description: 'Open the "Add task" dialog', defaultCombo: 'Alt+N', editable: true },
+  { id: 'commandPalette', label: 'Command palette', description: 'Jump to a view, project, task, or action', defaultCombo: 'Ctrl+K', editable: true },
   { id: 'closeDialog', label: 'Close dialog', description: 'Close the open modal or popup menu', defaultCombo: 'Esc', editable: false },
 ];
 
