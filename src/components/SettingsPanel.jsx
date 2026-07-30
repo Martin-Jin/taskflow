@@ -26,6 +26,7 @@ import {
   Keyboard,
   Search,
   Share,
+  RefreshCw,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
@@ -114,9 +115,12 @@ export default function SettingsPanel({ onOpenTour }) {
     setAllRecurringIgnored,
     connectGoogleCalendar,
     googleConnected,
+    googleNeedsReconnect,
     pushToGoogleCalendar,
+    pullFromGoogleCalendar,
     isSyncing,
     isBackingUp,
+    isPullingGoogleEvents,
     cloudBackups,
     todoistEnabled,
     setTodoistApiToken,
@@ -348,10 +352,23 @@ export default function SettingsPanel({ onOpenTour }) {
           Calendar
         </h4>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn" onClick={connectGoogleCalendar} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <button
+            className="btn"
+            onClick={connectGoogleCalendar}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              ...(googleNeedsReconnect ? { color: 'var(--color-warning)', borderColor: 'var(--color-warning)' } : {}),
+            }}
+          >
             {googleConnected ? (
               <>
                 <Check size={13} /> Google Calendar connected
+              </>
+            ) : googleNeedsReconnect ? (
+              <>
+                <AlertTriangle size={13} /> Google Calendar disconnected — reconnect
               </>
             ) : (
               'Connect Google Calendar'
@@ -360,10 +377,24 @@ export default function SettingsPanel({ onOpenTour }) {
           <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
             {isSyncing ? 'Syncing…' : 'Push scheduled blocks to Google Calendar'}
           </button>
+          {googleConnected && (
+            <button
+              className="btn"
+              onClick={pullFromGoogleCalendar}
+              disabled={isPullingGoogleEvents}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <RefreshCw size={13} />
+              {isPullingGoogleEvents ? 'Pulling…' : 'Pull from Google Calendar'}
+            </button>
+          )}
         </div>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>
-          Connect Google Calendar to push scheduled blocks to it with one click — it asks Google directly for
-          permission, TaskFlow never sees your Google password.
+          {googleNeedsReconnect
+            ? "Google's sign-in expires periodically and can't always silently renew itself in the background — reconnecting takes one click and doesn't lose anything."
+            : 'Connect Google Calendar to push scheduled blocks to it with one click — it asks Google directly for permission, TaskFlow never sees your Google password.'}
+          {googleConnected &&
+            ' "Pull from Google Calendar" immediately re-fetches your Google events, overwriting any local changes to synced events with what Google currently has.'}
         </p>
 
         <div

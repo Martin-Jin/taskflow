@@ -332,7 +332,12 @@ export function SchedulerProvider({ children }) {
   const [actionToast, setActionToast] = useState(null);
   const seenActionIdsRef = useRef(new Set([currentActionId]));
   useEffect(() => {
-    if (seenActionIdsRef.current.has(currentActionId)) {
+    // overwritePresent() (cloud sync / initial load) mints a fresh
+    // `sync_...` id every time rather than reusing one we've already seen,
+    // so it can't be caught by the "seen before" check below — skip it
+    // explicitly instead, or every sync would pop a stale Undo toast.
+    if (currentActionId.startsWith('sync_') || seenActionIdsRef.current.has(currentActionId)) {
+      seenActionIdsRef.current.add(currentActionId);
       setActionToast(null);
       return;
     }
@@ -390,6 +395,25 @@ export function SchedulerProvider({ children }) {
   // manual "Connect" click every time.
   const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
 
+  // Set whenever an AUTOMATIC (silent re-auth on load, or periodic poll)
+  // Google Calendar reconnect attempt fails and falls back to disconnected —
+  // as opposed to the user never having connected at all. Google's
+  // Identity Services implicit-token flow has no refresh token to persist;
+  // the cached access token (see googleCalendarService's TOKEN_STORAGE_KEY)
+  // only covers repeat opens within its own ~1hr lifetime, so this WILL
+  // legitimately happen periodically (token expired while the tab was
+  // closed, third-party-cookie/FedCM restrictions blocking a truly silent
+  // GIS request, grant revoked, etc.) — there's no way to make the silent
+  // path succeed 100% of the time within this OAuth model. Rather than
+  // pretend otherwise (the previous behavior: quietly flip back to
+  // `googleConnected: false` with only a console.warn, which looks
+  // identical in the UI to "never connected"), this flag lets Settings show
+  // a distinct "disconnected, reconnect?" state and pops one dismissible
+  // notification — deliberately NOT session-persisted, since the very next
+  // successful connectGoogleCalendar() call (or the next mount's silent
+  // retry, if it happens to succeed) clears it back to a normal state.
+  const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
+
   // Guards the one-time migrateBlockedTimeToEvents backfill below so it only
   // ever runs once per device instead of re-running (harmlessly, but
   // pointlessly) on every load. See src/migrations/migrateBlockedTimeToEvents.js.
@@ -426,6 +450,9 @@ export function SchedulerProvider({ children }) {
   // Backups button reading "Syncing…" (or vice versa) if a user ever
   // triggers both around the same time.
   const [isBackingUp, setIsBackingUp] = useState(false);
+  // True only while a manual "Pull from Google Calendar" is in flight
+  // (distinct from isSyncing, which covers the periodic/automatic pulls).
+  const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);
   // Metadata-only list (see firestoreSync.listBackups) for the Settings
   // "cloud backups" picker — never holds full task/block/etc payloads for
   // more than the one backup actively being restored.
@@ -575,8 +602,10 @@ export function SchedulerProvider({ children }) {
   // this effect does is Google Calendar events, attempted SILENTLY (no
   // consent popup) if the user previously connected (persisted
   // `googleConnected`), so re-opening the app doesn't require signing in
-  // again. If the silent attempt fails, we quietly fall back to "not
-  // connected" rather than throwing an error at the user.
+  // again. If the silent attempt fails, we fall back to "not connected" —
+  // this is expected to happen periodically (see `googleNeedsReconnect`'s
+  // doc comment above), so it's surfaced as one dismissible notification
+  // plus a lingering Settings-panel indicator, not a blocking error.
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -611,11 +640,17 @@ export function SchedulerProvider({ children }) {
             setGoogleConnected(false);
           }
         } catch (err) {
-          // Silent refresh failed — the grant likely expired or was
-          // revoked. Don't show an error; just fall back to "disconnected"
-          // so the Settings panel invites a normal manual reconnect.
+          // Silent refresh failed — the grant likely expired (GIS's implicit
+          // flow has no refresh token, so this is expected roughly hourly
+          // for a reopened tab, not just on revocation) — fall back to
+          // "disconnected" and tell the user plainly instead of leaving
+          // sync quietly dead with no clue why (see `googleNeedsReconnect`).
           console.warn('[SchedulerContext] Silent Google Calendar re-auth failed, falling back to disconnected.', err);
-          if (!cancelled) setGoogleConnected(false);
+          if (!cancelled) {
+            setGoogleConnected(false);
+            setGoogleNeedsReconnect(true);
+            setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+          }
         }
       }
 
@@ -662,8 +697,14 @@ export function SchedulerProvider({ children }) {
           // above) instead of letting it keep firing with no access token,
           // which would otherwise silently fall back to mock sample events
           // being merged into the user's real calendar every 5 minutes.
+          // Surfaced to the user (see `googleNeedsReconnect`'s doc comment)
+          // instead of a bare console.warn — this is a real, actionable
+          // state change (sync was working, now it's stopped), not a
+          // mount-time hiccup.
           console.warn('[SchedulerContext] Google Calendar auth expired during poll, disconnecting.', err);
           setGoogleConnected(false);
+          setGoogleNeedsReconnect(true);
+          setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
           return;
         }
         // A missed poll just means the next one (5 minutes later) tries
@@ -1140,6 +1181,7 @@ export function SchedulerProvider({ children }) {
       }
       await requestAccessToken(false); // explicit user action — show consent screen if needed
       setGoogleConnected(true);
+      setGoogleNeedsReconnect(false); // a fresh connect/reconnect clears any prior "disconnected" indicator
       const rangeStartIso = toISODate(new Date());
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
@@ -1161,6 +1203,39 @@ export function SchedulerProvider({ children }) {
       setNotification({ type: 'error', message: `Google Calendar connection failed: ${reason}` });
     }
   }, [setGoogleConnected]);
+
+  /**
+   * Manual, on-demand re-pull of Google Calendar events — for when a user
+   * suspects drift or wants to discard local edits to synced events. Uses
+   * the same fetch window and the same mergePulledGoogleEvents policy as
+   * connectGoogleCalendar/the periodic sync (Google always wins for
+   * anything it returns), just triggered explicitly instead of on
+   * mount/connect/interval.
+   */
+  const pullFromGoogleCalendar = useCallback(async () => {
+    if (!googleConnected) return;
+    setIsPullingGoogleEvents(true);
+    try {
+      const rangeStartIso = toISODate(new Date());
+      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
+      if (failedCalendars.length > 0) {
+        setNotification({
+          type: 'warning',
+          message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.`,
+        });
+      } else {
+        setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
+      }
+    } catch (err) {
+      console.error(err);
+      const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
+      setNotification({ type: 'error', message: `Pull from Google Calendar failed: ${reason}` });
+    } finally {
+      setIsPullingGoogleEvents(false);
+    }
+  }, [googleConnected]);
 
   // ---- Core action: run the rebalance/reschedule engine -------------------
   const runRebalance = useCallback(() => {
@@ -1863,10 +1938,89 @@ export function SchedulerProvider({ children }) {
       // 'following'-scope split; only used when scope is actually
       // 'following', but cheap enough to just always compute.
       const splitId = `evt_split_${Date.now()}`;
+      // `events` as it stood BEFORE this edit (this callback closed over it
+      // at call time) — kept around for the Undo toast below, which reverts
+      // to this exact snapshot rather than trying to unwind whatever
+      // scope-specific transform just ran (in-place edit, override-map entry,
+      // or a 'following' series split into two rows).
+      const prevEventsSnapshot = events;
+      const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
+
       setEvents((prev) => applyEventScopeUpdate(prev, eventId, stamped, scope, splitId).events);
 
+      // ---- Undo toast -----------------------------------------------------
+      // Calendar events are a separate array from tasks/blocks (see this
+      // file's doc comment) and deliberately NOT wired through
+      // useHistoryState's commit()/undo stack — this pops the same
+      // bottom-corner toast tasks/blocks actions use (see `actionToast`
+      // above), but carries its own `undo` thunk instead of relying on the
+      // shared tasks/blocks `undo()`. On Undo:
+      //   - Local state always reverts to `prevEventsSnapshot` verbatim —
+      //     trivially correct for every scope, including a 'following' split
+      //     (just discards the new row) or an 'all' edit across every row of
+      //     a synthetic series.
+      //   - A single-occurrence edit on a true-RRULE series ('this' scope on
+      //     a virtual id) never touches a top-level row — it's pushed to
+      //     Google via the deterministic per-instance id instead of
+      //     `pushTargets`, so its revert re-pushes the occurrence's pre-edit
+      //     override the same way.
+      //   - Everything else re-pushes the PRE-edit version of whatever
+      //     `pushTargets` says changed, using its original googleEventId, so
+      //     Google ends up back at its pre-edit content. A 'following'
+      //     split's newly-created master has no pre-edit counterpart — that
+      //     row is DELETED from Google instead (using whatever googleEventId
+      //     it's picked up by the time Undo is clicked; if the fire-and-forget
+      //     insert is still in flight, this is a no-op and leaves an orphan
+      //     event on Google — rare enough, and cheap enough to remove by
+      //     hand, not to justify blocking Undo on a network round trip).
+      setActionToast({
+        id: `evt_${Date.now()}`,
+        label: 'Updated event',
+        undo: () => {
+          if (googleConnected) {
+            if (isVirtual && scope === 'this') {
+              const master = prevEventsSnapshot.find((e) => e.id === masterId);
+              if (master?.googleEventId) {
+                const originalOverride = master.overrides?.[occurrenceDate];
+                const originalFields = { ...master, ...originalOverride, date: originalOverride?.date || occurrenceDate };
+                pushEventInstanceUpdate(master, occurrenceDate, originalFields).catch((err) =>
+                  console.error('[SchedulerContext] Failed to revert single-occurrence Google edit on undo', err)
+                );
+              }
+            } else {
+              const { pushTargets } = applyEventScopeUpdate(prevEventsSnapshot, eventId, stamped, scope, splitId);
+              if (pushTargets.length > 0) {
+                setEvents((latest) => {
+                  for (const target of pushTargets) {
+                    const before = prevEventsSnapshot.find((e) => e.id === target.id);
+                    if (before) {
+                      pushEventToCalendar(before).catch((err) =>
+                        console.error('[SchedulerContext] Failed to revert Google event on undo', err)
+                      );
+                    } else {
+                      // Only reachable for a 'following' split's newly-created
+                      // master (see doc comment above) — delete it from
+                      // Google instead of updating, since undo removes the
+                      // row entirely.
+                      const inserted = latest.find((e) => e.id === target.id);
+                      if (inserted?.googleEventId) {
+                        deleteCalendarEvent(inserted.googleEventId, inserted.calendarId).catch((err) =>
+                          console.error('[SchedulerContext] Failed to delete split-series event from Google on undo', err)
+                        );
+                      }
+                    }
+                  }
+                  return prevEventsSnapshot;
+                });
+                return; // already restored state via the functional setEvents above
+              }
+            }
+          }
+          setEvents(prevEventsSnapshot);
+        },
+      });
+
       if (!googleConnected) return;
-      const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
 
       if (isVirtual && scope === 'this') {
         // Single-occurrence edit on a true-RRULE series: push via the
@@ -2081,8 +2235,10 @@ export function SchedulerProvider({ children }) {
       isLoading,
       isSyncing,
       isBackingUp,
+      isPullingGoogleEvents,
       cloudBackups,
       googleConnected,
+      googleNeedsReconnect,
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
@@ -2141,6 +2297,7 @@ export function SchedulerProvider({ children }) {
       setEventIgnored,
       setAllRecurringIgnored,
       connectGoogleCalendar,
+      pullFromGoogleCalendar,
       pushToGoogleCalendar,
       syncNow,
       exportBackup,
@@ -2166,8 +2323,10 @@ export function SchedulerProvider({ children }) {
       isLoading,
       isSyncing,
       isBackingUp,
+      isPullingGoogleEvents,
       cloudBackups,
       googleConnected,
+      googleNeedsReconnect,
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
@@ -2217,6 +2376,7 @@ export function SchedulerProvider({ children }) {
       setEventIgnored,
       setAllRecurringIgnored,
       connectGoogleCalendar,
+      pullFromGoogleCalendar,
       pushToGoogleCalendar,
       syncNow,
       exportBackup,
