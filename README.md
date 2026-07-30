@@ -478,6 +478,15 @@ tab bar (Dashboard / Calendar / Tasks / Stats / Settings). Tablet widths
 keep the full sidebar. Every view is fully usable at any width — nothing is
 hidden, only reorganized.
 
+TaskFlow is installable as a PWA — adding it to your phone's home screen
+(iOS: Safari's Share sheet → "Add to Home Screen"; Android: Chrome's
+"Install app"/"Add to Home screen") launches it full-screen, without the
+browser's address bar. Mobile visitors see a one-time dismissible banner
+with the exact steps for their platform; it's also always available from
+**Settings → Install app** afterwards. See `index.html`/`public/manifest.json`
+for the underlying setup and `src/utils/installPrompt.js` for how the
+Android/Chrome native install prompt is captured and re-triggered.
+
 - **Dashboard** — the default landing tab: a stats strip (due today,
   overdue, hours scheduled this week), **Right now** (the block currently
   in progress, or what's next, with a live countdown), **Today's agenda**,

@@ -33,6 +33,7 @@ import StatsDashboard from './components/Stats/StatsDashboard';
 import SettingsPanel from './components/SettingsPanel';
 import Toast from './components/Common/Toast';
 import ActionToast from './components/Common/ActionToast';
+import InstallAppBanner from './components/Common/InstallAppBanner';
 import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
@@ -283,7 +284,8 @@ function AppShell() {
 
       <div className="floating-notifications">
         <Toast notification={notification} onDismiss={clearNotification} />
-        <ActionToast toast={actionToast} onUndo={undo} onDismiss={dismissActionToast} />
+        <ActionToast toast={actionToast} onUndo={() => (actionToast?.undo ? actionToast.undo() : undo())} onDismiss={dismissActionToast} />
+        <InstallAppBanner />
         <TimerWidget />
       </div>
       {showManageProjects && (

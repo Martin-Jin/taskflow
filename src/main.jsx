@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './utils/installPrompt'; // starts listening for beforeinstallprompt as early as possible — see its own comment
 import './styles/global.css';
 import './styles/calendar.css';
 import './styles/gantt.css';
