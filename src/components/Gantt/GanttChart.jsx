@@ -15,6 +15,13 @@
  * renders as one uninterrupted block regardless of how the hours land day to
  * day within it.
  *
+ * SUB-TASKS: a container (any task with ≥1 sub-task, at any depth) never
+ * gets its own row — only leaf tasks do, so a sub-task gets a row just like
+ * a normal top-level task (see `hasChildTasks` below). A sub-task's row
+ * names its parent as a muted subtitle under the title, mirroring the
+ * calendar view's block treatment (see WeekView's `parentTask`), since the
+ * title alone wouldn't say which goal it belongs to.
+ *
  * DEPENDENCIES: the scheduler (rebalanceEngine) refuses to place any blocks
  * for a task until every task in its `dependsOn` list is complete, so a
  * dependent task's bar naturally starts after its prerequisite's — there's
@@ -35,6 +42,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, diffDays, toISODate, dayOfWeek } from '../../utils/dateUtils';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
+import { hasChildTasks } from '../../utils/taskHierarchy';
 import { priorityColor } from '../../utils/priorityColor';
 import { filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 
@@ -49,13 +57,20 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
   const today = toISODate(new Date());
   const days = useMemo(() => dateRange(today, HORIZON_DAYS), [today]);
 
-  // Sub-tasks (parentId set) are rolled up into their parent elsewhere (see
-  // BoardView's progress badge) rather than getting their own row here —
-  // Gantt has no such badge, so they're simply excluded from this flat list.
+  // A container (has ≥1 sub-task, at any depth) never gets its own row —
+  // only leaf tasks do, so a sub-task gets a row exactly like a normal
+  // top-level task (see the file-level SUB-TASKS note above). Checked
+  // against the full `tasks` list, not the project/status-filtered one,
+  // since a task's children determine whether it's a container regardless
+  // of what's currently filtered out.
   // `filter` defaults to "all" (every non-completed task, dated or not),
   // matching Gantt's original behavior — see filterTasksByStatus.
   const activeTasks = useMemo(
-    () => filterTasksByStatus(filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId), filter),
+    () =>
+      filterTasksByStatus(
+        filterTasksByProject(tasks, activeProjectId).filter((t) => !hasChildTasks(t.id, tasks)),
+        filter
+      ),
     [tasks, activeProjectId, filter]
   );
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
@@ -143,14 +158,21 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
           const endOffset = Math.min(HORIZON_DAYS - 1, diffDays(today, lastDate));
           const span = Math.max(1, endOffset - startOffset + 1);
           const waitingLabel = waitingOn?.length ? waitingOn.map((d) => d.title).join(', ') : '';
+          const parentTask = task.parentId ? taskById.get(task.parentId) : null;
+          const headerTitle = parentTask
+            ? `${task.title} (sub-task of ${parentTask.title})`
+            : undefined;
 
           return (
             <div className="gantt-row" key={task.id} style={{ gridTemplateColumns: `${labelColWidth}px 1fr` }}>
-              <div className="gantt-row-header" title={waitingLabel ? `Waiting on: ${waitingLabel}` : undefined}>
-                <span className={`priority-dot ${task.priority}`} />
-                {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginRight: 4 }} title="Can run unattended" />}
-                {task.title}
-                {blocked && <Ban size={13} style={{ color: 'var(--color-danger)', verticalAlign: -2, marginLeft: 4 }} />}
+              <div className="gantt-row-header" title={waitingLabel ? `Waiting on: ${waitingLabel}` : headerTitle}>
+                <div className="gantt-row-title">
+                  <span className={`priority-dot ${task.priority}`} />
+                  {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginRight: 4 }} title="Can run unattended" />}
+                  {task.title}
+                  {blocked && <Ban size={13} style={{ color: 'var(--color-danger)', verticalAlign: -2, marginLeft: 4 }} />}
+                </div>
+                {parentTask && <div className="gantt-row-parent">{parentTask.title}</div>}
               </div>
               <div className="gantt-track">
                 <div className="gantt-day-cols">

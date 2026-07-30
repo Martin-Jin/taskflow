@@ -30,15 +30,40 @@
   font-size: 12.5px;
   font-weight: 600;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
   overflow: hidden;
-  text-overflow: ellipsis;
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-surface);
   position: sticky;
   left: 0;
+}
+
+.gantt-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sub-task rows only (see GanttChart's parentTask) — names the parent task
+   right under the title, same treatment as the calendar view's block
+   subtitle (cal-block-parent), so the goal it belongs to is readable
+   without hovering for the tooltip. */
+.gantt-row-parent {
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 400;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gantt-track {
