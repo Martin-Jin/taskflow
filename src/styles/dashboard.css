@@ -1119,6 +1119,15 @@
   margin-bottom: 4px;
 }
 
+.changelog-see-more {
+  justify-content: center;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  font-size: var(--text-sm);
+  border-top: 1px solid var(--color-border);
+}
+
 /* -------------------------------------------------------------------- */
 /* ShortcutsModal (Settings → Keyboard shortcuts)                        */
 /* -------------------------------------------------------------------- */

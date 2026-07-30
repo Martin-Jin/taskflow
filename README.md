@@ -252,8 +252,19 @@ Google issues is cached locally and reused for its full ~1 hour lifetime, so
 reopening or refreshing the app repeatedly doesn't re-trigger Google's
 sign-in flow each time. Once that cached token expires, TaskFlow falls back
 to silently refreshing it (no popup) as long as the underlying Google grant
-is still valid. If you revoke access from your Google Account settings, the
-refresh fails quietly and Settings just shows "Connect Google Calendar" again.
+is still valid. Google's implicit-token flow has no refresh token, though,
+so this silent refresh is expected to fail periodically for reasons outside
+the app's control (token expiry while the tab was closed, third-party-cookie/
+FedCM restrictions, a revoked grant) — when it does, Settings flags it
+distinctly as "Google Calendar disconnected — reconnect" (rather than looking
+identical to never having connected) and a toast fires the moment it
+happens; reconnecting is one click and doesn't lose anything.
+
+Settings → Integrations also has a **Pull from Google Calendar** button
+(shown once connected), for forcing an on-demand resync instead of waiting
+for the next automatic poll or accepting local drift — it re-fetches your
+Google events and overwrites any local changes to synced events with
+whatever Google currently has, same as any other pull.
 
 > The app uses Google Identity Services' token client (implicit OAuth2
 > flow), which is appropriate for a client-only SPA. For a multi-tenant
@@ -807,12 +818,18 @@ restrictions, if using Google Calendar sync from that hostname.
 - Silent Google token refresh depends on the underlying OAuth grant still
   being valid; Google may occasionally require interactive re-consent
   (e.g. after long inactivity or a security-related grant reset) that a
-  backend-less SPA can't fully suppress. A server-side OAuth flow with
-  refresh tokens (see the Google Calendar setup note above) removes this
-  edge case if it becomes a problem in practice.
-- Undo/Redo (`useHistoryState`) only covers `tasks` and `blocks`. Board
-  sections, Todoist projects, and labels live in their own `useState` and
-  are not undoable — renaming/deleting a Board column or clearing all data
-  cannot currently be undone, only the task-side effects of those actions
-  can.
+  backend-less SPA can't fully suppress — when it happens, Settings surfaces
+  a distinct "reconnect" prompt (see [Google
+  Calendar](#google-calendar) above) rather than failing silently. A
+  server-side OAuth flow with refresh tokens (see the Google Calendar setup
+  note above) removes this edge case entirely if it becomes a problem in
+  practice.
+- Undo/Redo (`useHistoryState`) only covers `tasks` and `blocks`. Calendar
+  events get the same Undo-toast affordance through a parallel mechanism
+  (editing, dragging, or resizing one — including reverting the matching
+  Google Calendar push — can be undone), but they're not part of the same
+  transactional stack as tasks/blocks. Board sections, Todoist projects, and
+  labels live in their own `useState` and are not undoable at all —
+  renaming/deleting a Board column or clearing all data cannot currently be
+  undone, only the task-side effects of those actions can.
 </content>

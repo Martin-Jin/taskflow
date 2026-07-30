@@ -17,123 +17,50 @@
 
 export const CHANGELOG = [
   {
-    version: '1.16.10',
+    version: '1.17.3',
     date: '2026-07-30',
-    title: 'Fixed AI Quick Add button alignment',
+    title: 'Shorter "What\'s New" panel by default',
     changes: [
-      'The AI Quick Add sparkle button next to the search bar sat noticeably shorter than the "Add task" button beside it — fixed to match height.',
-      'On mobile, the same button no longer stretches to fill the full row width.',
+      'Settings → Versions now only shows the 2 newest versions by default, with a "See more versions" button to load the full history instead of always scrolling through everything at once.',
     ],
   },
   {
-    version: '1.16.9',
+    version: '1.17.2',
     date: '2026-07-30',
-    title: 'Fixed a calendar drag accidentally paging to the next/prev day',
-    changes: [
-      'Dragging a calendar event or block sideways on mobile could also trigger day-swipe navigation on release, unexpectedly paging the view — fixed.',
-      'Moved the mobile "Today" button up into the main toolbar row, next to the date dropdown.',
-    ],
-  },
-  {
-    version: '1.16.8',
-    date: '2026-07-30',
-    title: 'Manual "Pull from Google Calendar" resync button',
-    changes: [
-      'Settings → Integrations now has a "Pull from Google Calendar" button (shown once connected) for manually re-fetching your Google events on demand — useful if you suspect drift or want to discard local changes to a synced event and get back exactly what Google has.',
-    ],
-  },
-  {
-    version: '1.16.7',
-    date: '2026-07-30',
-    title: 'Google Calendar reconnect prompt, and Undo for calendar event edits',
+    title: 'Google Calendar reconnect prompt, sync/backup fixes, and small polish',
     changes: [
       "Google's sign-in can't always silently renew itself in the background (it periodically expires and there's no way around a real reconnect within Google's security model) — Settings now clearly flags when this happens and offers a one-click reconnect, instead of sync just quietly going stale with no explanation.",
       'Editing a calendar event — dragging it to a new time, resizing it, or saving changes in its detail view — now shows an Undo toast just like task edits do, including undoing the corresponding push back to Google Calendar when connected.',
-    ],
-  },
-  {
-    version: '1.16.6',
-    date: '2026-07-30',
-    title: 'Fixed home-screen install visuals, added an install prompt',
-    changes: [
-      'Fixed a white strip below the bottom nav bar and a green strip at the top that clashed with the app background when TaskFlow was installed to a phone home screen.',
-      "Fixed the home-screen icon showing blank on iOS instead of TaskFlow's logo.",
-      'Mobile visitors now see a one-time reminder that TaskFlow can be added to their home screen for a full-screen app experience, with instructions for their platform (also available anytime from Settings → Install app).',
-    ],
-  },
-  {
-    version: '1.16.5',
-    date: '2026-07-30',
-    title: 'Backup and recurrence fixes, plus internal cleanup',
-    changes: [
-      'Fixed a bug where "Back up now" (Settings → Backups) could save a cloud backup that silently turned interface animations off when later restored.',
-      'Restoring a backup no longer risks reintroducing duplicate calendar events.',
+      'Added a "Pull from Google Calendar" button (Settings → Integrations, shown once connected) for manually re-fetching your Google events on demand — useful if you suspect drift or want to discard local changes to a synced event.',
+      'Fixed a bug where "Back up now" (Settings → Backups) could save a cloud backup that silently turned interface animations off when later restored, and a bug where restoring a backup risked reintroducing duplicate calendar events.',
       'Fixed a bug in Add Task where editing the repeat count/unit for a weekday-specific recurrence (e.g. "every Sat and Sun") could silently downgrade it to a generic weekly repeat.',
-      'Add Task now shows the same explanatory hints as the task detail view for "Lock to a day" and "Unattended".',
+      'Fixed dragging a calendar event or block sideways on mobile sometimes also triggering day-swipe navigation on release, unexpectedly paging the view. Moved the mobile "Today" button up into the main toolbar row, next to the date dropdown.',
+      'Fixed the AI Quick Add sparkle button sitting noticeably shorter than the "Add task" button beside it, and stretching to fill the full row width on mobile.',
     ],
   },
   {
-    version: '1.16.4',
+    version: '1.17.1',
     date: '2026-07-30',
-    title: 'App now runs full-screen when installed to your home screen',
+    title: 'Home-screen install support',
     changes: [
       'Launching TaskFlow from a phone home-screen icon now hides the browser address bar/chrome, so it feels like a native app.',
+      'Mobile visitors now see a one-time reminder that TaskFlow can be added to their home screen for a full-screen app experience, with instructions for their platform (also available anytime from Settings → Install app).',
+      'Fixed a white strip below the bottom nav bar and a green strip at the top that clashed with the app background when installed to a phone home screen, and fixed the home-screen icon showing blank on iOS instead of TaskFlow\'s logo.',
     ],
   },
   {
-    version: '1.16.3',
-    date: '2026-07-30',
-    title: 'Fix: "#project" smart parse missing multi-word/ambiguous projects',
-    changes: [
-      'Typing "#" followed by a multi-word project name (e.g. "#Work Trip") now resolves to that exact project instead of silently matching a shorter, differently-named project that happened to share its first word (e.g. "Work").',
-      'A "#project" or "@label" mention typed after an "after <task>"/"depends on <task>" dependency phrase is no longer swallowed into the dependency match — both are now detected together.',
-    ],
-  },
-  {
-    version: '1.16.2',
-    date: '2026-07-30',
-    title: 'AI Quick Add now has an in-app guide',
-    changes: [
-      'The guided tour now points out the AI Quick Add sparkle button.',
-      'A new "?" button inside the AI Quick Add panel opens a guide covering what it does, where to get a free Anthropic/Gemini API key, and how to use it.',
-    ],
-  },
-  {
-    version: '1.16.1',
-    date: '2026-07-30',
-    title: 'AI Quick Add now uses your own API key',
-    changes: [
-      'AI Quick Add now runs on your own Anthropic/Gemini API key (added in Settings → Integrations → AI Quick Add) instead of a shared one — nothing changes for you if you haven\'t tried the feature yet.',
-      'The companion Cloudflare Worker no longer holds any API keys at all, so it now only needs to be deployed once, with no ongoing cost to whoever hosts it.',
-    ],
-  },
-  {
-    version: '1.16.0',
+    version: '1.17.0',
     date: '2026-07-30',
     title: 'AI Quick Add',
     changes: [
       'New "AI Quick Add" button (sparkle icon) next to Add Task in the Tasks list and Board view — type a free-form description, or attach a screenshot, and have AI (your choice of Claude or Gemini) turn it into a new task or calendar event automatically.',
-      'Requires deploying a small companion Cloudflare Worker (free tier) that holds the API keys server-side — see the README for setup. If not set up, the button simply stays hidden.',
+      'Runs on your own Anthropic/Gemini API key, added in Settings → Integrations → AI Quick Add, rather than a shared one. Requires deploying a small companion Cloudflare Worker (free tier, holds no API keys of its own) — see the README for setup; if not set up, the button simply stays hidden.',
+      'The guided tour now points out the sparkle button, and a "?" button inside the AI Quick Add panel opens a guide covering what it does, where to get a free key, and how to use it.',
+      'Fixed "#project" smart parse resolving to the wrong, shorter-named project when typing a multi-word project name (e.g. "#Work Trip" no longer matches "Work"), and fixed a "#project"/"@label" mention typed after an "after <task>"/"depends on <task>" phrase being swallowed into the dependency match.',
     ],
   },
   {
-    version: '1.15.10',
-    date: '2026-07-30',
-    title: 'Quieter startup',
-    changes: [
-      "Removed the warning toasts that could pop up right when the app loads (e.g. from the automatic Google Calendar refresh or cloud sync) — those failures are now only logged quietly instead of interrupting you before you've done anything.",
-    ],
-  },
-  {
-    version: '1.15.9',
-    date: '2026-07-30',
-    title: 'Fix: #project smart parse being ignored',
-    changes: [
-      'Fixed a bug where typing "#project" in a new task\'s title would silently do nothing if the Add Task dialog had already been opened from within a specific project or board column — smart parse can now still switch the project when you type a different one.',
-    ],
-  },
-  {
-    version: '1.15.8',
+    version: '1.16.0',
     date: '2026-07-30',
     title: 'Calendar redesigned to feel like Google Calendar mobile',
     changes: [
@@ -146,68 +73,19 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.15.7',
-    date: '2026-07-30',
-    title: 'See and jump between a task and its parent/sub-tasks',
-    changes: [
-      'Opening a sub-task now shows a "Parent > Sub-task" link at the top of the edit view — click the parent\'s name to jump straight to it.',
-      'Opening a task that has sub-tasks now shows a sub-task count in the same spot.',
-      'Clicking through a parent/sub-task chain now reuses the same edit window instead of opening a new one on top.',
-    ],
-  },
-  {
-    version: '1.15.6',
-    date: '2026-07-30',
-    title: 'Calendar refreshes itself when you come back to the tab',
-    changes: [
-      'Google Calendar events now refresh automatically when you switch back to the app after being away, instead of waiting up to 5 minutes for the next background poll.',
-      'Added a refresh button next to "Re-balance schedule" on the Calendar page to pull the latest Google Calendar events on demand, without needing to go to Settings.',
-    ],
-  },
-  {
-    version: '1.15.5',
-    date: '2026-07-30',
-    title: 'Search now suggests tasks, not just projects and tags',
-    changes: [
-      'Typing in the search bar (Tasks list or Board) now also suggests matching tasks in a dropdown — click one to jump straight into its edit view.',
-      'Typing a bare "#" now shows a project picker right away, without needing to type a project name first; typing a space cancels it back to task suggestions.',
-    ],
-  },
-  {
-    version: '1.15.4',
-    date: '2026-07-30',
-    title: 'Calendar overlap chips now respect event length',
-    changes: [
-      'Overlapping events/tasks shorter than 30 minutes still collapse into a tappable "N events" chip, but anything 30 minutes or longer now always gets its own visible spot next to it, on both mobile and desktop, instead of being folded into the chip.',
-      'Desktop now also collapses runs of short overlapping items into a chip, matching how mobile already handled it, instead of always cramming them into unreadably thin side-by-side slices.',
-    ],
-  },
-  {
-    version: '1.15.3',
-    date: '2026-07-30',
-    title: 'Search fix, pinch-to-zoom, and a leaner mobile header',
-    changes: [
-      'Fixed the Tasks page search bar so it searches every task in the current project, instead of only the ones already matching the active status filter chip.',
-      'Two-finger pinch on the mobile calendar now zooms the time grid in and out, like the desktop trackpad-pinch/ctrl-scroll zoom already did.',
-      'The mobile top bar (logo + account avatar) now only shows on the Dashboard tab, freeing up space on Tasks, Calendar, Stats, and Settings. The Tasks page keeps a one-tap account/settings button in its own header row.',
-    ],
-  },
-  {
-    version: '1.15.2',
-    date: '2026-07-30',
-    title: 'Fixed smart-parsed links in sub-tasks and descriptions',
-    changes: [
-      'A sub-task whose name gets auto-turned into a link now shows that link in the parent task\'s sub-task list, not just in its own edit view.',
-      'Re-opening a task title for editing no longer keeps stale link highlighting after the link was already saved.',
-      'A link previously detected in a task\'s description no longer disappears when you click back into the description to edit it.',
-    ],
-  },
-  {
     version: '1.15.1',
-    date: '2026-07-30',
-    title: 'Fixed undo sometimes needing a second try',
+    date: '2026-07-29',
+    title: 'Search, calendar, and sync polish',
     changes: [
-      "Undoing a change right after making it could occasionally get silently reverted a moment later by background cloud sync, making it look like the undo didn't work until you pressed it again. Undo now sticks on the first try.",
+      "Undoing a change right after making it could occasionally get silently reverted a moment later by background cloud sync, making it look like the undo didn't work until you pressed it again — undo now sticks on the first try.",
+      'Fixed smart-parsed links not showing or persisting correctly: in a sub-task\'s entry in its parent\'s list, after re-opening a title whose link was already saved, and after clicking back into a description that already had a link detected.',
+      'Tasks page search now searches every task in the current project, instead of only the ones already matching the active status filter chip. Typing in the search bar (Tasks list or Board) now also suggests matching tasks, not just projects and tags; a bare "#" now shows a project picker right away.',
+      'Two-finger pinch on the mobile calendar now zooms the time grid in and out, like the desktop trackpad-pinch/ctrl-scroll zoom already did. The mobile top bar (logo + account avatar) now only shows on the Dashboard tab, freeing up space on Tasks, Calendar, Stats, and Settings.',
+      'Overlapping events/tasks shorter than 30 minutes still collapse into a tappable "N events" chip, but anything 30 minutes or longer now always gets its own visible spot next to it; desktop now also collapses runs of short overlapping items into a chip, matching mobile.',
+      'Google Calendar events now refresh automatically when you switch back to the app after being away, instead of waiting up to 5 minutes for the next background poll. Added a refresh button next to "Re-balance schedule" on the Calendar page.',
+      'Opening a sub-task now shows a "Parent > Sub-task" link at the top — click the parent\'s name to jump straight to it. Opening a task with sub-tasks shows a sub-task count in the same spot, and clicking through a parent/sub-task chain reuses the same edit window instead of opening a new one on top.',
+      'Fixed a bug where typing "#project" in a new task\'s title would silently do nothing if the Add Task dialog had already been opened from within a specific project or board column.',
+      "Removed the warning toasts that could pop up right when the app loads (e.g. from the automatic Google Calendar refresh or cloud sync) — those failures are now only logged quietly instead of interrupting you before you've done anything.",
     ],
   },
   {
@@ -230,66 +108,28 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.13.1',
+    version: '1.13.0',
     date: '2026-07-29',
-    title: 'More settings now follow you across devices',
+    title: 'Combined view/filter menu, more settings synced across devices',
     changes: [
+      'Replaced the List/Board/Gantt tab bar and the separate Active/Completed/All/No due date filter row with a single "View" dropdown in the top-right corner, next to the "⋯" project menu.',
+      'Each view now remembers its own filter independently — switching from List to Board no longer resets or shares the filter you had set.',
+      'Board and Gantt can now be filtered by Scheduled/No due date/Completed too, not just List.',
       'Pinned links and custom keyboard shortcut rebindings now sync across your signed-in devices and are included in backups, like your other settings.',
       'Your light/dark theme choice is now included in backups too — it already synced live across devices, but restoring a backup previously wouldn\'t bring it back.',
     ],
   },
   {
-    version: '1.13.0',
-    date: '2026-07-29',
-    title: 'Combined view and filter into one menu',
-    changes: [
-      'Replaced the List/Board/Gantt tab bar and the separate Active/Completed/All/No due date filter row with a single "View" dropdown in the top-right corner, next to the "⋯" project menu.',
-      'Each view now remembers its own filter independently — switching from List to Board no longer resets or shares the filter you had set.',
-      'Board and Gantt can now be filtered by Scheduled/No due date/Completed too, not just List.',
-    ],
-  },
-  {
-    version: '1.12.3',
-    date: '2026-07-29',
-    title: 'Gantt view now has a project switcher',
-    changes: [
-      'The Gantt view now shows the project name/dropdown and the "⋯" project actions menu, matching List and Board — and its bars now scope to the selected project instead of always showing every task.',
-    ],
-  },
-  {
-    version: '1.12.2',
-    date: '2026-07-29',
-    title: 'Moved project management into the sidebar',
-    changes: [
-      'The "Add project" button in the sidebar is now "Manage projects" — it opens the same projects list/search/rename/pin/delete view as before, plus adding new ones.',
-      'Removed the separate "Manage projects" button from the Tasks page; use the sidebar (or the project picker\'s "See / manage all projects" option) instead.',
-    ],
-  },
-  {
-    version: '1.12.1',
-    date: '2026-07-29',
-    title: 'Reordered task tabs',
-    changes: [
-      'Reordered the task filter tabs to All, Scheduled, No due date, Completed.',
-    ],
-  },
-  {
     version: '1.12.0',
     date: '2026-07-29',
-    title: 'Real sound effects and a volume control',
+    title: 'Real sound effects, reordered tabs, and project management moved to sidebar',
     changes: [
       'Replaced the synthesized "beep" sound effects with real, higher-quality click sounds for adding, completing, uncompleting, and deleting tasks.',
       'Added a volume slider in Settings → Appearance so you can adjust (or mute) sound effects independently of turning them off entirely.',
       'Sound settings now sync across your devices and are included in backups, just like your other preferences.',
-    ],
-  },
-  {
-    version: '1.11.1',
-    date: '2026-07-29',
-    title: 'Fixed the "new task" shortcut',
-    changes: [
-      'Fixed the New task shortcut sometimes reopening "Add task" by itself when switching back to the Tasks tab.',
-      'Changed the New task shortcut\'s default from Ctrl+N to Alt+N — Ctrl+N is reserved by the browser (it opened a new browser window alongside the dialog). Rebind it from Settings → Keyboard shortcuts if you\'d like something else.',
+      'Reordered the task filter tabs to All, Scheduled, No due date, Completed.',
+      'The "Add project" button in the sidebar is now "Manage projects" — it opens the same projects list/search/rename/pin/delete view as before, plus adding new ones. Removed the separate "Manage projects" button from the Tasks page.',
+      'The Gantt view now shows the project name/dropdown and the "⋯" project actions menu, matching List and Board — and its bars now scope to the selected project instead of always showing every task.',
     ],
   },
   {
@@ -301,22 +141,14 @@ export const CHANGELOG = [
       'Added a search bar at the top of Settings to jump straight to a section instead of scrolling.',
       'Keyboard shortcuts (undo, redo, new task) now show a brief confirmation toast when pressed, so you always get feedback even if nothing visibly changes.',
       'The "What\'s New" list in Settings → Versions now groups patch-level bugfix updates under the feature release they belong to, instead of listing every point release separately.',
-    ],
-  },
-  {
-    version: '1.10.1',
-    date: '2026-07-29',
-    title: 'Fixes for the repeat field, estimated time, and live undo',
-    changes: [
-      'Fixed a day-specific repeat (e.g. "every week on Sun, Sat") not being recognized when typed or edited directly — it now highlights and saves correctly instead of silently losing the selected days.',
-      'The Estimated time field now shows the plain-English duration ("20 minutes") in place, instead of a duplicate line underneath, and swaps to the short editable form when you click in. Clearing the field now actually sets the estimate to 0 instead of snapping back to the old value.',
-      'Undoing a change (via the bottom-corner Undo notification) now updates an already-open task edit screen immediately, instead of requiring you to close and reopen it to see the reverted value.',
+      'Fixed the New task shortcut sometimes reopening "Add task" by itself when switching back to the Tasks tab.',
+      'Changed the New task shortcut\'s default from Ctrl+N to Alt+N — Ctrl+N is reserved by the browser (it opened a new browser window alongside the dialog). Rebind it from Settings → Keyboard shortcuts if you\'d like something else.',
     ],
   },
   {
     version: '1.10.0',
     date: '2026-07-29',
-    title: 'Keyboard shortcuts, smarter time & repeat fields, and timer-aware completion',
+    title: 'Keyboard shortcuts, timer-aware task completion, and smarter time/repeat fields',
     changes: [
       'Removed the desktop top bar (Undo/Redo buttons) in favor of keyboard shortcuts — Ctrl+Z / Ctrl+Shift+Z for undo/redo, Ctrl+N to add a task from anywhere. Settings → Keyboard shortcuts lists every shortcut, searchable and rebindable.',
       'Completing a task with a Pomodoro timer running or paused now stops it automatically. If a timer was tracking that task, you\'ll be asked to confirm (and can edit) the actual time spent, which is logged on the task and shown as a new "Time logged" stat on the Stats page.',
@@ -326,6 +158,9 @@ export const CHANGELOG = [
       'The mobile top bar now shows the TaskFlow logo and name; removed the redundant tutorial button there (replay the guided tour from Settings instead).',
       'Floating notifications (toasts, undo prompt, timer widget) now stack neatly bottom-right instead of overlapping at opposite corners.',
       'Fixed "All Tasks" sometimes instantly redirecting to a different project if Board view had ever gotten stuck as its remembered view — the Board option is now hidden while All Tasks is active, since Board needs a single project to show.',
+      'Fixed a day-specific repeat (e.g. "every week on Sun, Sat") not being recognized when typed or edited directly — it now highlights and saves correctly instead of silently losing the selected days.',
+      'The Estimated time field now shows the plain-English duration ("20 minutes") in place, instead of a duplicate line underneath, and swaps to the short editable form when you click in. Clearing the field now actually sets the estimate to 0 instead of snapping back to the old value.',
+      'Undoing a change (via the bottom-corner Undo notification) now updates an already-open task edit screen immediately, instead of requiring you to close and reopen it to see the reverted value.',
     ],
   },
   {
