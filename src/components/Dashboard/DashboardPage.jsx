@@ -4,7 +4,7 @@ import { usePersistedState } from '../../hooks/usePersistedState';
 import NowNextCard from './NowNextCard';
 import TodayAgenda from './TodayAgenda';
 import DashboardStats from './DashboardStats';
-import PinnedLinks from './PinnedLinks';
+import NotesCard from './NotesCard';
 import WeeklyProgressRing from './WeeklyProgressRing';
 import TodayProgressRing from './TodayProgressRing';
 import DashboardCustomizeMenu from './DashboardCustomizeMenu';
@@ -34,7 +34,7 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar }) {
     setWidgets((prev) => ({ ...prev, [key]: prev[key] === false }));
   }
   const showMain = widgets.nowNext !== false || widgets.todayAgenda !== false;
-  const showSide = widgets.pinnedLinks !== false || widgets.progressRings !== false;
+  const showSide = widgets.notes !== false || widgets.progressRings !== false;
 
   return (
     <div className="dashboard-page">
@@ -61,7 +61,7 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar }) {
           )}
           {showSide && (
             <div className="dashboard-grid-side">
-              {widgets.pinnedLinks !== false && <PinnedLinks />}
+              {widgets.notes !== false && <NotesCard />}
               {widgets.progressRings !== false && (
                 <div className="progress-ring-row">
                   <TodayProgressRing />

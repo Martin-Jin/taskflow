@@ -23,7 +23,7 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="nav-dashboard"]',
     placement: 'right',
     title: 'Dashboard',
-    body: 'Your home base — what\'s due, what you\'re doing right now, today\'s agenda, this week\'s progress, and your pinned links, all at a glance.',
+    body: 'Your home base — what\'s due, what you\'re doing right now, today\'s agenda, this week\'s progress, and your notes, all at a glance.',
   },
   {
     tab: 'calendar',

@@ -16,6 +16,25 @@ export function areDependenciesMet(task, taskById) {
 }
 
 /**
+ * Map from a task's id to the ids of tasks that directly list it in their
+ * own `dependsOn` (its direct "dependents" — tasks blocked on it finishing).
+ * Shared by the cycle check below and by allocator.js's backward urgency
+ * propagation (a blocker's effective urgency rises to match its dependents').
+ * @param {import('../types').Task[]} tasks
+ * @returns {Map<string, string[]>}
+ */
+export function getDependentsMap(tasks) {
+  const dependents = new Map();
+  for (const t of tasks) {
+    for (const depId of t.dependsOn || []) {
+      if (!dependents.has(depId)) dependents.set(depId, []);
+      dependents.get(depId).push(t.id);
+    }
+  }
+  return dependents;
+}
+
+/**
  * IDs that must NOT be offered as a dependency for `taskId`: itself, plus
  * every task that (directly or transitively) already depends on it. Picking
  * one of those would create a cycle — two tasks each waiting on the other to
@@ -25,13 +44,7 @@ export function areDependenciesMet(task, taskById) {
  * @returns {Set<string>}
  */
 export function getIneligibleDependencyIds(taskId, tasks) {
-  const dependents = new Map(); // taskId -> ids of tasks that list it in their own dependsOn
-  for (const t of tasks) {
-    for (const depId of t.dependsOn || []) {
-      if (!dependents.has(depId)) dependents.set(depId, []);
-      dependents.get(depId).push(t.id);
-    }
-  }
+  const dependents = getDependentsMap(tasks);
 
   const blocked = new Set([taskId]);
   const queue = [taskId];
