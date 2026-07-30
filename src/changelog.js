@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.4',
+    date: '2026-07-31',
+    title: 'Fix: stale Gantt bars showing at "today"',
+    changes: [
+      'A task with only overdue/stale scheduled blocks no longer shows a misleading 1-day bar sitting at today on the Gantt chart — it\'s now omitted instead.',
+    ],
+  },
+  {
     version: '1.33.3',
     date: '2026-07-31',
     title: 'Fix: decimal durations misread as dates',
