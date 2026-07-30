@@ -48,6 +48,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
+import { getEffectiveEstimatedHours, getEffectiveRemainingHours } from '../utils/taskHierarchy';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -308,7 +309,10 @@ export default function TaskListPanel({
               }}
             >
               <span>
-                {formatHours(task.remainingHours)} remaining of {formatHours(task.estimatedHours)}
+                {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
+                    frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
+                {formatHours(hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours)} remaining of{' '}
+                {formatHours(hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours)}
                 {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
                 {task.sectionName ? ` · ${task.sectionName}` : ''}
               </span>

@@ -20,17 +20,31 @@
  * @property {string} title                  - Human readable task title.
  * @property {string} [notes]                - Optional free-text notes/description.
  * @property {Array<{url: string, matchedText: string}>} [noteLinks] - Smart-parsed link phrases stripped out of `notes` (TaskDetailModal), persisted so they can still be rendered as pills after the raw phrase is gone from the notes text.
- * @property {number} estimatedHours         - Total hours required to complete the task.
+ * @property {number} estimatedHours         - Total hours required to complete the task. ONCE THIS TASK HAS ≥1
+ *                                              sub-task (see `parentId` below), this stops being a directly-editable
+ *                                              number and becomes a live rollup of its children's own effective
+ *                                              estimatedHours instead (cascading — a child that itself has children
+ *                                              returns ITS rollup) — see utils/taskHierarchy.js. TaskDetailModal
+ *                                              disables the field and shows the computed total once that's true.
  * @property {number|null} [actualHours]     - Hours actually spent working the task, set only when completing a
  *                                              task that had a Pomodoro timer running/paused (see TimerContext +
  *                                              CompleteTaskContext.requestComplete). Undefined for every other
  *                                              task — never backfilled retroactively.
- * @property {number} remainingHours         - Hours not yet scheduled/completed (drives re-scheduling).
- * @property {Priority} priority             - Task priority, drives allocation order.
- * @property {string|null} dueDate           - ISO date string (YYYY-MM-DD) or null if no deadline. OPTIONAL: a task
- *                                              with no due date still shows up normally in the Tasks list and Board
- *                                              view (matching Todoist) — it simply has no planning window, so the
- *                                              allocator/rebalance engine never place it on the calendar.
+ * @property {number} remainingHours         - Hours not yet scheduled/completed (drives re-scheduling). Subject to
+ *                                              the same container-parent rollup as `estimatedHours` above once this
+ *                                              task has ≥1 sub-task.
+ * @property {Priority} priority             - Task priority, drives allocation order. Stays independently editable
+ *                                              even once a task becomes a container (see `parentId`) — unlike hours,
+ *                                              this doesn't inherently derive from children.
+ * @property {string|null} dueDate           - ISO date string (YYYY-MM-DD) or null if no deadline. OPTIONAL for a
+ *                                              top-level task: it still shows up normally in the Tasks list and
+ *                                              Board view (matching Todoist), but has no planning window, so the
+ *                                              allocator/rebalance engine never place it on the calendar. A SUB-TASK
+ *                                              (see `parentId`) is schedulable with or without one — an undated
+ *                                              sub-task borrows its nearest ancestor's `dueDate` as urgency pressure
+ *                                              instead (see allocator.js's resolveDueDate). On a CONTAINER task (≥1
+ *                                              sub-task of its own), this due date is never scheduled directly
+ *                                              either way — it's purely an input into its children's urgency.
  * @property {boolean} [isRecurring]         - True if this task repeats (imported from Todoist's `due.is_recurring`,
  *                                              or set directly for a locally-created task). Completing a recurring
  *                                              task advances `dueDate` to the next occurrence instead of setting
@@ -53,13 +67,19 @@
  * @property {string} updatedAt              - ISO datetime.
  * @property {string|null} [sectionId]       - Todoist Section id this task lives in (board view column), or null.
  * @property {string|null} [sectionName]     - Denormalized section display name, or null for "No Section".
- * @property {string} [parentId]             - Id of this task's parent, if this task is a sub-task of another (nested
- *                                              to arbitrary depth). Absent for top-level tasks. A sub-task is a
- *                                              normal, independently-editable Task — it's only excluded from the
- *                                              scheduler when it has no `dueDate` (see allocator.js's
- *                                              prioritizeTasks) and from Board/Gantt's own top-level card/row lists
- *                                              (see BoardView.jsx / GanttChart.jsx), which roll it up into its
- *                                              parent's progress badge instead.
+ * @property {string} [parentId]             - Id of this task's parent, if this task is a sub-task of another.
+ *                                              Absent for top-level tasks. UI-enforced nesting cap of 2 levels deep
+ *                                              (task -> sub-task -> sub-task of that sub-task — see
+ *                                              TaskDetailModal's handleAddSubtask/isAtMaxSubtaskDepth), forward-only
+ *                                              (no backfill against pre-existing data). A sub-task is a normal,
+ *                                              independently-schedulable Task — it competes for calendar capacity
+ *                                              like any other task, dated or not (see allocator.js's
+ *                                              prioritizeTasks/resolveDueDate) — UNLESS it itself has ≥1 sub-task of
+ *                                              its own, in which case it becomes a schedule-container (see
+ *                                              rebalanceEngine.js and `estimatedHours` above) rather than ever
+ *                                              getting its own calendar block. Excluded from Board/Gantt's own
+ *                                              top-level card/row lists (see BoardView.jsx / GanttChart.jsx), which
+ *                                              roll it up into its parent's progress badge instead.
  * @property {string} [todoistId]            - The task's raw numeric/string id in Todoist (source === 'todoist' only). Used to push edits back via todoistService.
  * @property {string[]} [dependsOn]          - IDs of other Tasks that must be completed before this one is eligible
  *                                              for auto-scheduling. Empty/absent means no dependencies. Checked by

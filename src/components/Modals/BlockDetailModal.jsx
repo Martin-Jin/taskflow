@@ -20,6 +20,9 @@ export default function BlockDetailModal({ block, onClose, onOpenTask }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const task = tasks.find((t) => t.id === block.taskId);
+  // Sub-task blocks show which parent task they belong to — the block's own
+  // title is the sub-task's, which reads as orphaned context without this.
+  const parentTask = task?.parentId ? tasks.find((t) => t.id === task.parentId) || null : null;
   const [startTime, setStartTime] = useState(block.startTime);
   const [endTime, setEndTime] = useState(block.endTime);
   const [date, setDate] = useState(block.date);
@@ -61,7 +64,14 @@ export default function BlockDetailModal({ block, onClose, onOpenTask }) {
         tabIndex={-1}
       >
         <div className="detail-header">
-          <h3 id="block-detail-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', flex: 1 }}>{task.title}</h3>
+          <div style={{ flex: 1 }}>
+            <h3 id="block-detail-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)' }}>{task.title}</h3>
+            {parentTask && (
+              <p style={{ margin: '2px 0 0', fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+                Sub-task of {parentTask.title}
+              </p>
+            )}
+          </div>
           {onOpenTask && (
             <button className="btn btn-icon" onClick={handleOpenTask} aria-label="Open task" title="Open task">
               <ExternalLink size={16} />

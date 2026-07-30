@@ -17,6 +17,17 @@
 
 export const CHANGELOG = [
   {
+    version: '1.19.0',
+    date: '2026-07-30',
+    title: 'Sub-tasks can now be scheduled onto your calendar on their own',
+    changes: [
+      "Sub-tasks are now scheduled individually, even without their own due date — they compete for calendar time just like any other task, and borrow their parent task's due date as urgency if they don't have one.",
+      'A task that has sub-tasks becomes a container for them: it no longer gets its own calendar block, and its estimated/remaining hours are now automatically computed from its sub-tasks instead of being editable directly.',
+      "Calendar blocks for a sub-task now show which parent task they belong to, so you don't lose that context without opening it.",
+      'Sub-task nesting is now capped at 2 levels deep.',
+    ],
+  },
+  {
     version: '1.18.3',
     date: '2026-07-30',
     title: 'Balanced sound effect volumes',

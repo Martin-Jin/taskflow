@@ -123,14 +123,28 @@ import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 import { faviconUrl } from '../Dashboard/pinnedLinksModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
+import { getEffectiveEstimatedHours } from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';
 
 // Default estimated hours for a quick-added sub-task — matches
 // AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
 // an un-estimated sub-task doesn't eat an oversized chunk of capacity
-// either (moot until it gets a due date — see allocator.js's
-// prioritizeTasks — but keeps the two "new task" entry points consistent).
+// either (it's schedulable immediately, due date or not — see
+// allocator.js's prioritizeTasks — but keeps the two "new task" entry
+// points consistent).
 const DEFAULT_SUBTASK_ESTIMATED_HOURS = 5 / 60;
+
+// Sub-task nesting is capped at 2 levels (task -> sub-task -> sub-task of
+// that sub-task), enforced going forward only (no migration/backfill for
+// any pre-existing data that might already violate it — see TaskDetailModal's
+// handleAddSubtask). A task is already at the max depth once ITS OWN parent
+// is itself a sub-task (i.e. `task` is a depth-2 sub-task already); adding a
+// child to it would create a depth-3 grandchild.
+function isAtMaxSubtaskDepth(task, tasks) {
+  if (!task.parentId) return false;
+  const parent = tasks.find((t) => t.id === task.parentId);
+  return !!(parent && parent.parentId);
+}
 
 // Smart-parsed link phrases (e.g. "check out example.com") get stripped out
 // of notes text on load/save so the raw phrase doesn't linger once it's
@@ -545,6 +559,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // parent, navigating to it re-renders this same label against the new
   // `task`, so an arbitrarily deep chain is walked one hop at a time.
   const parentTask = task.parentId ? tasks.find((t) => t.id === task.parentId) || null : null;
+  // Once a task has ≥1 sub-task it becomes schedule-container-only (see
+  // rebalanceEngine.js) — its own estimatedHours/remainingHours stop being
+  // directly editable and become a live rollup of its children's instead.
+  const isContainer = childTasks.length > 0;
+  const effectiveEstimatedHours = useMemo(() => (isContainer ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours), [
+    isContainer,
+    task,
+    tasks,
+  ]);
+  const atMaxSubtaskDepth = useMemo(() => isAtMaxSubtaskDepth(task, tasks), [task, tasks]);
 
   // Sections belong to a project — once a project is chosen, only show
   // that project's sections (matching Todoist's own board picker).
@@ -792,11 +816,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   function handleAddSubtask() {
     const trimmed = newSubtaskTitle.trim();
-    if (!trimmed) return;
+    if (!trimmed || atMaxSubtaskDepth) return;
     // A sub-task is just a top-level task with `parentId` set — created via
     // the same addTask every other task uses. `dueDate` is deliberately left
-    // unset so it isn't auto-scheduled (see allocator.js's prioritizeTasks —
-    // a parentId-bearing task needs its own due date to be schedulable).
+    // unset — an undated sub-task is still immediately schedulable (see
+    // allocator.js's prioritizeTasks), it just competes for capacity at
+    // baseline urgency (or its nearest ancestor's due date, if any) instead
+    // of a deadline of its own.
     addTask({
       title: trimmed,
       parentId: task.id,
@@ -857,8 +883,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       // text — otherwise a reload has nothing left to re-detect them from
       // (see getInitialNoteLinks above).
       noteLinks: notesLinkMatches.map(({ url, matchedText }) => ({ url, matchedText })),
-      estimatedHours: nextEstimatedHours,
-      remainingHours: nextRemainingHours,
+      // A container task's estimatedHours/remainingHours are a computed
+      // rollup of its children (see isContainer/effectiveEstimatedHours
+      // above), not a directly-editable value — the Estimated time field is
+      // disabled for one below, but skip persisting these here too as a
+      // second guard against ever writing a stale independent number onto
+      // it (e.g. via a smart-parsed duration phrase in the title).
+      ...(isContainer ? {} : { estimatedHours: nextEstimatedHours, remainingHours: nextRemainingHours }),
       priority,
       dueDate: nextDueDate,
       isRecurring: nextIsRecurring,
@@ -872,7 +903,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       // Only meaningful once a due date exists — clear it rather than
       // persisting a flag that has nothing to enforce.
       enforceDueDate: enforceDueDate && !!nextDueDate,
-      fixedTime: fixedTime || null,
+      // A container is never scheduled directly, so a fixed time-of-day has
+      // nothing to apply to — skip persisting it, same guard as
+      // estimatedHours/remainingHours above.
+      fixedTime: isContainer ? null : fixedTime || null,
       labelIds: finalLabelIds,
     });
 
@@ -1123,19 +1157,25 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
                       <li role="none">
                         <DetailField icon={Clock} label="Fixed time">
-                          <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                          <label className="form-checkbox-row" style={{ cursor: isContainer ? 'not-allowed' : 'pointer' }}>
                             <input
                               type="checkbox"
                               checked={!!fixedTime}
+                              disabled={isContainer}
                               onChange={(e) => setFixedTime(e.target.checked ? '09:00' : '')}
                             />
                             {fixedTime ? `At ${fixedTime}` : 'Not fixed'}
                           </label>
-                          {fixedTime && (
+                          {fixedTime && !isContainer && (
                             <>
                               <input type="time" value={fixedTime} onChange={(e) => setFixedTime(e.target.value)} style={{ marginTop: 6 }} />
                               <p className="form-hint">Scheduled blocks for this task will always start at this time.</p>
                             </>
+                          )}
+                          {isContainer && (
+                            <p className="form-hint">
+                              This task is never scheduled directly once it has sub-tasks — set a fixed time on the sub-task itself instead.
+                            </p>
                           )}
                         </DetailField>
                       </li>
@@ -1370,7 +1410,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       </button>
                     </div>
                   ))}
-                  {isAddingSubtask ? (
+                  {atMaxSubtaskDepth ? (
+                    <p className="form-hint">
+                      Sub-tasks are capped at 2 levels deep — this task is already a sub-task of a sub-task, so it can't have its own.
+                    </p>
+                  ) : isAddingSubtask ? (
                     <div className="subtask-add-row">
                       <input
                         autoFocus
@@ -1552,7 +1596,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
               <DetailField icon={CalendarClock} label="Due date">
                 <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                {!dueDate && <p className="form-hint">Won't be auto-scheduled without a due date.</p>}
+                {isContainer ? (
+                  <p className="form-hint">
+                    A container's own due date isn't scheduled directly — it feeds urgency for sub-tasks that don't have their own.
+                  </p>
+                ) : !dueDate && task.parentId ? (
+                  <p className="form-hint">
+                    Still schedulable without one — it'll use its parent's due date (if any) or default priority/urgency.
+                  </p>
+                ) : (
+                  !dueDate && <p className="form-hint">Won't be auto-scheduled without a due date.</p>
+                )}
               </DetailField>
 
               <DetailField icon={Flag} label="Priority">
@@ -1577,7 +1631,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               </DetailField>
 
               <DetailField icon={Clock} label="Estimated time">
-                <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} />
+                {isContainer ? (
+                  <>
+                    <p style={{ margin: 0, fontWeight: 600 }}>{formatHours(effectiveEstimatedHours)}</p>
+                    <p className="form-hint">
+                      Computed from {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'} — not directly editable.
+                    </p>
+                  </>
+                ) : (
+                  <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} />
+                )}
                 {typeof task.actualHours === 'number' && (
                   <p className="form-hint">Actually spent: {formatHours(task.actualHours)} (tracked via timer)</p>
                 )}

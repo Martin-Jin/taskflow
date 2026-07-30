@@ -16,10 +16,10 @@
  * subtask's own `id` (so it stays stable across the migration and nothing
  * that referenced it — e.g. a Todoist `todoistId` mapping — breaks), and
  * fills in the Task fields a Subtask never had with conservative defaults.
- * `dueDate` is deliberately left null so a migrated subtask doesn't
- * suddenly get auto-scheduled the moment this migration runs (see
- * allocator.js's prioritizeTasks — a `parentId`-bearing task is only
- * schedulable once a due date is explicitly set).
+ * `dueDate` is deliberately left null — a migrated subtask is still
+ * immediately schedulable at baseline urgency without one (see
+ * allocator.js's prioritizeTasks/resolveDueDate), it just doesn't jump the
+ * queue the way an explicitly-dated task would.
  *
  * Idempotent: a no-op on any task with no (or an empty) `subtasks` array,
  * which is every task after the first run.

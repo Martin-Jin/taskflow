@@ -21,20 +21,34 @@
  * This guarantees "recalibrates future days without destroying manually
  * locked task blocks" from the requirements.
  *
- * TASKS WITH NO DUE DATE ARE NEVER SCHEDULED HERE. They still show up
- * normally in the Tasks list and Board view (see todoistService.fetchTasks
- * + AddTaskModal), but an undated task has no real deadline to plan
+ * A TOP-LEVEL TASK WITH NO DUE DATE IS NEVER SCHEDULED HERE. It still shows
+ * up normally in the Tasks list and Board view (see todoistService.fetchTasks
+ * + AddTaskModal), but an undated top-level task has no real deadline to plan
  * against — think a running checklist item like "Eggs" or "Meat" on a
  * shopping list, as opposed to time-blocked work. Handing one to the
  * allocator without a due date used to make it fall back to "spread
  * across the whole planning horizon" (see allocator.js's getTaskWindow),
  * which silently put grocery-list-style items on the calendar as if they
  * were real work blocks — not what a due-date-less task means. So the
- * eligibility filter below explicitly requires `dueDate` before a task is
- * ever handed to the allocator; any existing blocks for an undated task
- * are otherwise left alone (locked ones are always preserved; unlocked
- * ones are cleared like any other unlocked block, and since the task is
- * never re-eligible it simply won't be replaced).
+ * eligibility filter below excludes an undated TOP-LEVEL task from ever
+ * being handed to the allocator; any existing blocks for one are otherwise
+ * left alone (locked ones are always preserved; unlocked ones are cleared
+ * like any other unlocked block, and since the task is never re-eligible it
+ * simply won't be replaced).
+ *
+ * A SUB-TASK (`parentId` set), by contrast, IS schedulable even with no due
+ * date of its own — it's a concrete step toward its parent's goal, not a
+ * checklist item, so it competes for capacity like any other undated task
+ * (see allocator.js's prioritizeTasks/scoreTask; its parent's own due date,
+ * if any, feeds in as urgency pressure — see allocator.js's resolveDueDate).
+ *
+ * A CONTAINER PARENT (any task with ≥1 sub-task of its own, at any depth)
+ * is excluded from allocation entirely, regardless of whether it has its
+ * own due date — only its leaf sub-tasks ever get calendar blocks. Its own
+ * due date instead becomes an input into its children's urgency (see
+ * above), and its own estimatedHours/remainingHours become a live rollup of
+ * its children's — see utils/taskHierarchy.js — rather than something the
+ * allocator ever schedules directly.
  * ============================================================================
  */
 
@@ -104,10 +118,16 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     nowClamp,
   });
 
-  // 4. Allocate remaining work for unlocked, incomplete, DATED tasks only.
-  //    A task with no `dueDate` is a checklist-style item, not schedulable
-  //    work — see the module doc comment above for why it's excluded here
-  //    rather than just left to the allocator's own window logic.
+  // 4. Allocate remaining work for unlocked, incomplete, schedulable tasks.
+  //    Two eligibility rules beyond the basics (unlocked/incomplete/hours
+  //    remaining) — see the module doc comment above for the reasoning
+  //    behind both:
+  //      - A CONTAINER PARENT (has ≥1 sub-task of its own) is never
+  //        directly schedulable, dated or not — only its leaf sub-tasks are.
+  //      - A TOP-LEVEL task (no `parentId`) with no `dueDate` is a
+  //        checklist-style item, not schedulable work. A SUB-TASK with no
+  //        `dueDate` IS schedulable (it borrows its parent's due date as
+  //        urgency pressure instead — see allocator.js's resolveDueDate).
   //
   //    A task with unfinished dependencies (task.dependsOn) is also excluded
   //    entirely — it simply doesn't get a slot until every task it depends
@@ -116,14 +136,22 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   //    than fixed start times. Lookups use the FULL `tasks` list (not just
   //    the schedulable subset) since a dependency might be locked, undated,
   //    or otherwise ineligible for allocation while still being relevant to
-  //    check for completion.
+  //    check for completion. This same full-list map is also threaded into
+  //    allocateTasks so it can resolve a sub-task's ancestor due date even
+  //    when that ancestor (e.g. a container parent) isn't itself schedulable.
   const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const parentIds = new Set(tasks.filter((t) => t.parentId).map((t) => t.parentId));
   const schedulable = tasksWithRemaining.filter(
-    (t) => !t.isLocked && !t.isCompleted && t.remainingHours > 0 && !!t.dueDate
+    (t) =>
+      !t.isLocked &&
+      !t.isCompleted &&
+      t.remainingHours > 0 &&
+      !parentIds.has(t.id) &&
+      (!!t.dueDate || !!t.parentId)
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
   const blockedByDependencies = schedulable.length - eligibleTasks.length;
-  const { blocks: newBlocks, overflow } = allocateTasks(eligibleTasks, capacityMap, rules, today);
+  const { blocks: newBlocks, overflow } = allocateTasks(eligibleTasks, capacityMap, rules, today, taskById);
 
   // 5. Merge: historical (untouched) + locked (untouched) + freshly allocated.
   const finalBlocks = [...historicalBlocks, ...lockedBlocks, ...newBlocks];
