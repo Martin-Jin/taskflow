@@ -740,7 +740,7 @@ export default function WeekView({
    * existing block/event) and the unscheduled-task tray's chip drag below
    * (placing a brand new block).
    */
-  function trackTouchDragToColumn(e, duration, onDrop) {
+  function trackTouchDragToColumn(e, duration, dragIdentity, onDrop) {
     const touch = e.touches?.[0];
     if (!touch) return;
     const startX = touch.clientX;
@@ -753,7 +753,7 @@ export default function WeekView({
       dragging = true;
       // Same "this item is in the air" styling the mouse path gets — the
       // long press is the only feedback the user has otherwise.
-      setDragState({ id: item.data.id, type: item.type, duration });
+      setDragState({ ...dragIdentity, duration });
     }, LONG_PRESS_MS);
 
     function cleanup() {
@@ -812,7 +812,7 @@ export default function WeekView({
     // never ran, hence stopping propagation here rather than on end).
     e.stopPropagation();
     const duration = timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime);
-    trackTouchDragToColumn(e, duration, (day, relY) => applyDrop(item.type, item.data.id, day, relY));
+    trackTouchDragToColumn(e, duration, { id: item.data.id, type: item.type }, (day, relY) => applyDrop(item.type, item.data.id, day, relY));
   }
 
   /** Long-press-drag a chip from the "Unscheduled" tray onto a day column —
@@ -821,7 +821,7 @@ export default function WeekView({
   function handleTaskChipTouchStart(e, task) {
     e.stopPropagation();
     const durationHours = Math.max(task.minChunkHours ?? 0.5, Math.min(task.unplacedHours || 1, task.maxChunkHours ?? 4));
-    trackTouchDragToColumn(e, Math.round(durationHours * 60), (day, relY) => applyDrop('task', task.id, day, relY));
+    trackTouchDragToColumn(e, Math.round(durationHours * 60), { id: task.id, type: 'task' }, (day, relY) => applyDrop('task', task.id, day, relY));
   }
 
   // --- Resize handlers (vertical only; mouse OR touch) ------------------------

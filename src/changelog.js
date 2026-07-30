@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.6',
+    date: '2026-07-31',
+    title: 'Fixed broken drag on mobile calendar',
+    changes: [
+      'Fixed a bug where long-pressing a calendar block, event, or unscheduled task on a phone or tablet to drag it could fail silently instead of starting the drag.',
+    ],
+  },
+  {
     version: '1.33.5',
     date: '2026-07-31',
     title: 'Smoother scrolling on mobile',
