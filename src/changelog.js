@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.31.0',
+    date: '2026-07-30',
+    title: '"Plan today" — a lighter re-balance for just today, plus drag-to-schedule',
+    changes: [
+      'New "Plan today" button next to Re-balance schedule (Calendar toolbar, and the mobile FAB) fills only today\'s remaining free time by priority, without touching anything already scheduled on other days.',
+      'You can now drag a task straight out of the new "Unscheduled" tray above the calendar grid onto any day to schedule it manually — works with touch (long-press to drag) too.',
+    ],
+  },
+  {
     version: '1.30.0',
     date: '2026-07-30',
     title: 'Email notifications (self-hosted) and notification polish',
