@@ -47,6 +47,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useNotificationChecker } from '../hooks/useNotificationChecker';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
 import { useTheme } from './ThemeContext';
@@ -84,6 +85,21 @@ import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 const SchedulerContext = createContext(null);
 
 const EVENTS_HORIZON_DAYS = 28;
+
+// Default notification settings (TODO.md #10, Phase 1) — master toggles for
+// each channel plus per-trigger-type toggles (applying to whichever
+// channel(s) are enabled) and the customizable "starting soon" threshold.
+// Email defaults to off since there's no email-sending backend yet (Phase 3).
+function getDefaultNotificationSettings() {
+  return {
+    inAppEnabled: true,
+    emailEnabled: false,
+    taskStartingSoon: true,
+    taskOverdue: true,
+    taskDueToday: true,
+    startingSoonMinutes: 10,
+  };
+}
 
 // Monotonic counter appended to every locally-generated id below, so two
 // entities created in the same millisecond (e.g. the AI Assistant applying a
@@ -421,13 +437,16 @@ export function SchedulerProvider({ children }) {
   // Applied to the DOM via the effect below (mirrors ThemeContext's
   // data-theme attribute) so global.css can key off it.
   const [animationsEnabled, setAnimationsEnabled] = usePersistedState('animationsEnabled', true);
-  // TODO (TODO.md #10, not yet implemented): notification settings (per-type
-  // in-app/email toggles, customizable "starting soon" threshold) should
-  // follow this exact usePersistedState + synced-setting pattern — and then
-  // be threaded through every place soundEnabled/soundVolume appear in this
-  // file (applyRemoteData, the cloud-push payload + its dependency arrays,
-  // the local backup payload, restoreFromBackup, and the context value
-  // returned below), plus BACKUP_FIELDS in backupService.js.
+  // Notification settings (TODO.md #10). In-app firing logic lives in
+  // useNotificationChecker (Phase 2); emailEnabled is inert client-side and
+  // waits on a Cloud Functions backend (Phase 3). Kept as one object (rather
+  // than separate usePersistedState calls per toggle) since these are all
+  // facets of a single feature that's always read/written together — same
+  // synced-setting treatment as sound/animations above, following it through
+  // the same list of places (applyRemoteData, the cloud-push payload + its
+  // dependency arrays, the local backup payload, restoreFromBackup, and the
+  // context value below), plus BACKUP_FIELDS in backupService.js.
+  const [notificationSettings, setNotificationSettings] = usePersistedState('notificationSettings', getDefaultNotificationSettings);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-animations', animationsEnabled ? 'on' : 'off');
@@ -546,6 +565,14 @@ export function SchedulerProvider({ children }) {
   }, []);
 
   const { tasks, blocks } = state;
+
+  // In-app notification checker (TODO.md #10, Phase 2) — scans tasks/blocks
+  // on an interval and fires a native Notification (or Toast fallback) per
+  // notificationSettings' toggles. Fully inert when in-app notifications are
+  // off. Lives in its own hook rather than inline here since this file is
+  // already large — see hooks/useNotificationChecker.js for the trigger/
+  // dedupe logic.
+  useNotificationChecker({ tasks, blocks, notificationSettings, setNotification });
 
   // Async Todoist-sync continuations (the `.then()` after a create call)
   // resolve after the fact, potentially after other commits have landed —
@@ -851,6 +878,7 @@ export function SchedulerProvider({ children }) {
       if ('soundEnabled' in remote) setSoundEnabled(remote.soundEnabled);
       if ('soundVolume' in remote) setSoundVolume(remote.soundVolume);
       if ('animationsEnabled' in remote) setAnimationsEnabled(remote.animationsEnabled);
+      if ('notificationSettings' in remote) setNotificationSettings(remote.notificationSettings);
       if ('notes' in remote) setNotes(remote.notes);
       else if ('pinnedLinks' in remote) setNotes(migrateLinksToNotes(remote.pinnedLinks)); // legacy remote doc, see notesModel.js migration note
       if ('shortcutBindings' in remote) {
@@ -873,6 +901,7 @@ export function SchedulerProvider({ children }) {
       setSoundEnabled,
       setSoundVolume,
       setAnimationsEnabled,
+      setNotificationSettings,
       setNotes,
       setShortcutBindings,
     ]
@@ -903,6 +932,7 @@ export function SchedulerProvider({ children }) {
           soundEnabled,
           soundVolume,
           animationsEnabled,
+          notificationSettings,
           notes,
           shortcutBindings,
         };
@@ -910,7 +940,7 @@ export function SchedulerProvider({ children }) {
         lastSyncedSnapshotRef.current = computeSyncFingerprint(seedPayload);
       }
     },
-    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notes, shortcutBindings]
+    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]
   );
 
   /**
@@ -947,6 +977,7 @@ export function SchedulerProvider({ children }) {
           soundEnabled,
           soundVolume,
           animationsEnabled,
+          notificationSettings,
           theme,
           notes,
           shortcutBindings,
@@ -959,7 +990,7 @@ export function SchedulerProvider({ children }) {
         console.warn('[SchedulerContext] Auto-backup check failed', err);
       }
     },
-    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, notes, shortcutBindings]
+    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, theme, notes, shortcutBindings]
   );
 
   useEffect(() => {
@@ -1027,7 +1058,7 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     if (!initialPullDoneRef.current) return; // wait for this sign-in's pull to settle first — see initialPullDoneRef's comment
-    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notes, shortcutBindings };
+    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings };
     const fingerprint = computeSyncFingerprint(payload);
     if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
     const handle = setTimeout(() => {
@@ -1041,7 +1072,7 @@ export function SchedulerProvider({ children }) {
       });
     }, 1500);
     return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notes, shortcutBindings]);
+  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]);
 
   /**
    * Manual re-pull for Settings' "Sync now" button — covers the gap this
@@ -1105,6 +1136,7 @@ export function SchedulerProvider({ children }) {
       if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
       if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
       if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
+      if ('notificationSettings' in payload) setNotificationSettings(payload.notificationSettings);
       if ('theme' in payload) setTheme(payload.theme);
       if ('notes' in payload) setNotes(payload.notes);
       else if ('pinnedLinks' in payload) setNotes(migrateLinksToNotes(payload.pinnedLinks)); // legacy backup file, see notesModel.js migration note
@@ -1115,8 +1147,6 @@ export function SchedulerProvider({ children }) {
         // context's own React-state mirror.
         savePersisted('shortcutBindings', payload.shortcutBindings);
       }
-      // TODO (TODO.md #10, not yet implemented): once notification settings
-      // exist, restore them here too, following the soundEnabled pattern above.
     },
     [
       commit,
@@ -1129,6 +1159,7 @@ export function SchedulerProvider({ children }) {
       setSoundEnabled,
       setSoundVolume,
       setAnimationsEnabled,
+      setNotificationSettings,
       setTheme,
       setNotes,
       setShortcutBindings,
@@ -1149,12 +1180,13 @@ export function SchedulerProvider({ children }) {
       soundEnabled,
       soundVolume,
       animationsEnabled,
+      notificationSettings,
       theme,
       notes,
       shortcutBindings,
     });
     downloadBackupFile(payload);
-  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, notes, shortcutBindings]);
+  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, theme, notes, shortcutBindings]);
 
   /** Reads a backup .json file the user picked and restores it — works signed-out, matching exportBackup. */
   const importBackupFromFile = useCallback(
@@ -1205,6 +1237,7 @@ export function SchedulerProvider({ children }) {
         soundEnabled,
         soundVolume,
         animationsEnabled,
+        notificationSettings,
         theme,
         notes,
         shortcutBindings,
@@ -1218,7 +1251,7 @@ export function SchedulerProvider({ children }) {
     } finally {
       setIsBackingUp(false);
     }
-  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, notes, shortcutBindings, refreshCloudBackups]);
+  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, theme, notes, shortcutBindings, refreshCloudBackups]);
 
   /** Fetches one cloud backup's full payload by id and restores it. */
   const restoreCloudBackup = useCallback(
@@ -2410,6 +2443,8 @@ export function SchedulerProvider({ children }) {
       setSoundVolume,
       animationsEnabled,
       setAnimationsEnabled,
+      notificationSettings,
+      setNotificationSettings,
       notes,
       setNotes,
       shortcutBindings,
@@ -2494,6 +2529,7 @@ export function SchedulerProvider({ children }) {
       soundEnabled,
       soundVolume,
       animationsEnabled,
+      notificationSettings,
       notes,
       shortcutBindings,
       undo,
