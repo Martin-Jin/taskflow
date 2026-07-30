@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.21.0',
+    date: '2026-07-30',
+    title: 'Push-to-Google-Calendar button no longer stretches unnecessarily on mobile',
+    changes: [
+      'Fixed the "Push scheduled blocks to Google Calendar" button stretching full-width (with a large empty gap after the label) on most mobile screen sizes — it now only goes full-width on the narrow range of screens where its label actually wraps to two lines.',
+    ],
+  },
+  {
     version: '1.20.0',
     date: '2026-07-30',
     title: 'A more satisfying delete sound, a few new animations, and a couple of fixes',
