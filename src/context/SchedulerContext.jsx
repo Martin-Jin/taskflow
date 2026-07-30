@@ -58,7 +58,7 @@ import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBacku
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
 import { rebalance, planToday } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { computeNextDueDate } from '../utils/recurrence';
+import { computeNextDueDate, deriveRecurrenceRule } from '../utils/recurrence';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -118,7 +118,7 @@ function generateLocalId(prefix) {
 // shaped new records instead of the batch path silently drifting from what
 // a manually-created task/event looks like.
 function buildNewTaskObject(taskInput, id) {
-  return {
+  const merged = {
     id,
     remainingHours: taskInput.estimatedHours,
     isLocked: false,
@@ -138,6 +138,10 @@ function buildNewTaskObject(taskInput, id) {
     source: 'manual',
     ...taskInput,
   };
+  // recurrenceRule is a derived cache of recurrenceString (see
+  // utils/recurrence.js) — recompute it here so it's never possible to
+  // create a task with the two out of sync.
+  return { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
 }
 
 function buildNewEventObject(eventInput, id) {
@@ -1451,7 +1455,14 @@ export function SchedulerProvider({ children }) {
       // Function form — see addTask's comment just above.
       commit(
         (current) => ({
-          tasks: current.tasks.map((t) => (t.id === taskId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)),
+          tasks: current.tasks.map((t) => {
+            if (t.id !== taskId) return t;
+            const merged = { ...t, ...updates, updatedAt: new Date().toISOString() };
+            // recurrenceRule is a derived cache of recurrenceString (see
+            // utils/recurrence.js) — recompute it whenever a caller touches
+            // recurrenceString so the two can never drift apart.
+            return 'recurrenceString' in updates ? { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) } : merged;
+          }),
           blocks: current.blocks,
         }),
         `Updated task`
@@ -1651,21 +1662,48 @@ export function SchedulerProvider({ children }) {
         const baseDate = existing.dueDate < todayIso ? todayIso : existing.dueDate;
         const nextDueDate = computeNextDueDate(baseDate, existing.recurrenceString);
         const nowIso = new Date().toISOString();
+
+        // Record this occurrence's completion, then trim anything older than
+        // 7 days out of the raw `completedDates` list into the monthly
+        // `completionHistory` aggregate instead of dropping it outright — see
+        // types/index.js's Task typedef.
+        const sevenDaysAgoIso = addDays(todayIso, -7);
+        const keptDates = [];
+        const nextHistory = { ...(existing.completionHistory || {}) };
+        for (const d of [baseDate, ...(existing.completedDates || [])]) {
+          if (d >= sevenDaysAgoIso) {
+            keptDates.push(d);
+          } else {
+            const monthKey = d.slice(0, 7); // "YYYY-MM"
+            nextHistory[monthKey] = (nextHistory[monthKey] || 0) + 1;
+          }
+        }
+
         const newTasks = tasks.map((t) => {
           if (t.id === taskId) {
-            return { ...t, dueDate: nextDueDate, remainingHours: t.estimatedHours, isCompleted: false, updatedAt: nowIso };
+            return {
+              ...t,
+              dueDate: nextDueDate,
+              remainingHours: t.estimatedHours,
+              isCompleted: false,
+              completedDates: keptDates,
+              completionHistory: nextHistory,
+              updatedAt: nowIso,
+            };
           }
           if (descendantIds.has(t.id)) {
             return { ...t, isCompleted: false, dueDate: null, updatedAt: nowIso };
           }
           return t;
         });
-        // Drop any *unlocked* blocks scheduled for the just-finished
-        // occurrence — a fresh planning window starts from the new due date
-        // on the next rebalance. Locked blocks are protected the same way a
-        // rebalance protects them (see rebalanceEngine), and blocks for
-        // other tasks are untouched.
-        const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked);
+        // Drop only *unlocked* blocks for the occurrence actually being
+        // closed out (date <= baseDate) — blocks for LATER dates belong to
+        // future occurrences already placed by the last rebalance (each
+        // occurrence gets its own block now, see rebalanceEngine's
+        // generateTaskOccurrences expansion) and must survive. Locked blocks
+        // are protected the same way a rebalance protects them, and blocks
+        // for other tasks are untouched.
+        const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date > baseDate);
         commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
         return true;
       }

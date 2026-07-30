@@ -167,8 +167,16 @@ function generateWeeklyByDayDates(dtstartIso, interval, byDay, count, hardStop, 
  * [rangeStartIso, hardStop] (hardStop already folds in UNTIL, see caller),
  * honoring COUNT relative to DTSTART (occurrences before rangeStart still
  * count against COUNT, they're just not returned).
+ *
+ * Exported (originally file-private) so utils/recurrence.js's
+ * generateTaskOccurrences can reuse this same date-walking/BYDAY logic for
+ * expanding recurring TASK occurrences, instead of duplicating it — see that
+ * module's doc comment for why the two recurrence systems (RRULE-based
+ * CalendarEvents vs. natural-language Task due dates) still share this one
+ * piece of math. No behavior change for this module's own CalendarEvent
+ * callers below.
  */
-function generateOccurrenceDates(dtstartIso, rule, rangeStartIso, hardStop) {
+export function generateRuleOccurrences(dtstartIso, rule, rangeStartIso, hardStop) {
   const { freq, interval, byDay, count } = rule;
 
   if (freq === 'WEEKLY' && byDay) {
@@ -258,7 +266,7 @@ export function ruleEndDate(dtstartIso, ruleStr) {
   if (!rule || (!rule.count && !rule.until)) return null;
   if (rule.until && !rule.count) return rule.until;
   const farStop = rule.until || addMonthsClamped(dtstartIso, 240); // ~20yr safety cap when only COUNT bounds it
-  const dates = generateOccurrenceDates(dtstartIso, rule, dtstartIso, farStop);
+  const dates = generateRuleOccurrences(dtstartIso, rule, dtstartIso, farStop);
   return dates.length ? dates[dates.length - 1] : null;
 }
 
@@ -324,7 +332,7 @@ export function expandRecurringEvent(masterEvent, rangeStartIso, rangeEndIso) {
   const hardStop = rule.until && rule.until < rangeEndIso ? rule.until : rangeEndIso;
   const overrides = masterEvent.overrides || {};
 
-  const occurrenceDates = hardStop < masterEvent.date ? [] : generateOccurrenceDates(masterEvent.date, rule, rangeStartIso, hardStop);
+  const occurrenceDates = hardStop < masterEvent.date ? [] : generateRuleOccurrences(masterEvent.date, rule, rangeStartIso, hardStop);
 
   // Occurrences whose ORIGINAL date the RRULE wouldn't naturally place in
   // this range, but whose override moved them INTO it (or, symmetrically,
