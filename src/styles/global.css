@@ -1153,7 +1153,14 @@ select:focus-visible,
    actually win. */
 input.search-bar-input {
   width: 100%;
-  padding: 7px 30px 7px 32px;
+  /* Matches .btn/.btn-icon's computed height (32px: 8px padding + 1px
+     border on each side) exactly, rather than leaving it to fall out of
+     padding + the input's own line-height — the two were a couple px
+     apart (30px vs 32px) despite matching padding values, since a plain
+     <input> doesn't pick up .btn's line-height:1 fix and unstyled inputs
+     get a browser-default "normal" line-height instead. */
+  height: 32px;
+  padding: 0 30px 0 32px;
   background: var(--color-bg-surface-raised);
   border: none;
   border-radius: var(--radius-sm);
