@@ -15,6 +15,17 @@ export default function Toast({ notification, onDismiss }) {
     <div className={`toast ${notification.type} ${isClosing ? 'is-closing' : ''}`}>
       <Icon size={16} strokeWidth={2} />
       <span style={{ flex: 1 }}>{notification.message}</span>
+      {notification.actionLabel && (
+        <button
+          className="btn-link"
+          onClick={() => {
+            notification.onAction?.();
+            close();
+          }}
+        >
+          {notification.actionLabel}
+        </button>
+      )}
       <button className="btn btn-icon" style={{ padding: 2, border: 'none', background: 'none' }} onClick={close}>
         <X size={14} />
       </button>
