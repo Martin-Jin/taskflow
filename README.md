@@ -594,7 +594,9 @@ cached copy.
     Sections yet). Rename/delete columns, add sections, drag cards between
     them on desktop/tablet (on mobile, open a card and change its Section
     field instead, since there's no drag gesture to hook into).
-  - **Gantt** — multi-week burn-down: one row per task, bar spans from first
+  - **Gantt** — multi-week burn-down: one row per leaf task (a task with
+    sub-tasks gets no row of its own — each sub-task gets its own row
+    instead, with the parent named as a subtitle), bar spans from first
     scheduled block to due date, colored by priority; blocked tasks get a
     hollow dashed marker, passive tasks get a striped overlay.
 - **Stats** — live Total Hours Left, Scheduled Today/This Week, Free

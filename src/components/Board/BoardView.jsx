@@ -15,8 +15,9 @@
  * SUB-TASKS: a task with `parentId` set is never its own card here — it's
  * rolled up into its parent's "x/y" progress badge instead (see
  * `childrenByParentId`/renderCard below). Unlike TaskListPanel (which now
- * renders sub-tasks as nested rows under their parent), Board and Gantt
- * keep this rolled-up-only presentation.
+ * renders sub-tasks as nested rows under their parent), Board keeps this
+ * rolled-up-only presentation. Gantt differs: a sub-task gets its own row
+ * there (its container parent gets none) — see GanttChart's SUB-TASKS note.
  *
  * If the project has NO sections at all, the board renders as a single flat
  * task list instead of a one-column kanban — a project the user hasn't
