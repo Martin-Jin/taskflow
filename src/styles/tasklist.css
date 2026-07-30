@@ -388,7 +388,10 @@
   /* AI Quick Add / Add task mini-FABs, shown above the main button only
      while the group is expanded (see AddTaskFabGroup) — smaller and round
      rather than the main button's square-block shape, so the hierarchy
-     between "the" action and its alternatives stays visually clear. */
+     between "the" action and its alternatives stays visually clear. Each
+     pops in on mount (React only renders these while `expanded`, so mount
+     timing = expand timing) with the second one slightly delayed, so they
+     read as unfurling from the main button rather than snapping into place. */
   .fab-mini {
     width: 44px;
     height: 44px;
@@ -396,5 +399,17 @@
     border-radius: 50%;
     justify-content: center;
     box-shadow: var(--shadow-elevated);
+    animation: fab-mini-in var(--duration-base) var(--ease-decelerate);
+  }
+
+  .fab-mini + .fab-mini {
+    animation-delay: 40ms;
+  }
+}
+
+@keyframes fab-mini-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.7);
   }
 }

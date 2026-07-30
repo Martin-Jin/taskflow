@@ -17,6 +17,17 @@
 
 export const CHANGELOG = [
   {
+    version: '1.20.0',
+    date: '2026-07-30',
+    title: 'A more satisfying delete sound, a few new animations, and a couple of fixes',
+    changes: [
+      'Replaced the delete sound effect with a crisper, more satisfying click.',
+      'Added small polish animations: AI Quick Add\'s mobile mini-buttons now pop in instead of appearing instantly, and tapping AI Quick Add without an API key saved gives a quick "shake" alongside the reminder toast.',
+      'AI Quick Add is no longer allowed to open without an API key saved (on mobile it previously could) — the button stays visible either way, but now shows a reminder toast instead of opening a modal that would just fail later.',
+      'Fixed the "Push scheduled blocks to Google Calendar" button wrapping into a centered, jagged two-line label on mobile — it now stacks full-width and left-aligns.',
+    ],
+  },
+  {
     version: '1.19.0',
     date: '2026-07-30',
     title: 'Sub-tasks can now be scheduled onto your calendar on their own',
