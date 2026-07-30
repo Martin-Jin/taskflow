@@ -32,23 +32,24 @@
  *
  * SUBTASKS: Todoist tasks with a `parent_id` become standalone Tasks here,
  * just like any top-level task, linked back to their parent via `parentId`
- * (see types/index.js). They're only schedulable once they carry their own
- * `dueDate` — see allocator.js's prioritizeTasks — so an undated sub-task
- * shows up in the Tasks/Board UI (nested under its parent) without ever
- * being allocated calendar time. Todoist allows nesting subtasks arbitrarily
- * deep; anything below the first level is flattened onto the nearest
- * top-level ancestor's `parentId` rather than preserving the intermediate
- * grouping (see `fetchTasks`'s `resolveTopAncestorId`).
+ * (see types/index.js). Unlike a top-level task, they're schedulable even
+ * with no `dueDate` of their own — see allocator.js's prioritizeTasks/
+ * resolveDueDate — so an undated imported sub-task still competes for
+ * calendar capacity (at baseline urgency, or its parent's due date if any)
+ * rather than being calendar-invisible. Todoist allows nesting subtasks
+ * arbitrarily deep; anything below the first level is flattened onto the
+ * nearest top-level ancestor's `parentId` rather than preserving the
+ * intermediate grouping (see `fetchTasks`'s `resolveTopAncestorId`) — so an
+ * imported sub-task is never more than 1 level deep either way.
  *
  * TASKS WITH NO DUE DATE: previously excluded entirely on import, since the
  * allocator can't compute a planning window for them. They are now KEPT —
  * Tasks list and Board view should mirror Todoist 1:1 regardless of
- * schedulability, and an undated task simply never gets scheduled onto the
- * calendar (the allocator/rebalance engine already skip tasks with no
- * `dueDate` — see allocator.js's `getTaskWindow`, which only special-cases
- * a due date if one is present, and rebalanceEngine, which only allocates
- * `remainingHours > 0` work within a computed window). No due date just
- * means "shows up everywhere except the calendar."
+ * schedulability. For a TOP-LEVEL task, no due date just means "shows up
+ * everywhere except the calendar" (the allocator/rebalance engine skip an
+ * undated top-level task entirely — see allocator.js's `getTaskWindow` and
+ * rebalanceEngine's eligibility filter). A SUB-TASK is the exception — see
+ * SUBTASKS above.
  *
  * RECURRING TASKS: Todoist tasks can carry a recurrence rule on `due`
  * (`due.is_recurring` + a natural-language `due.string`, e.g. "every day",

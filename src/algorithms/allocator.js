@@ -6,6 +6,9 @@
  *   - a list of Tasks (with estimatedHours / remainingHours, priority, dueDate)
  *   - a Map<date, DayCapacity> describing free hours per day
  *   - SchedulingRules (buffer days, pacing preference, chunk sizes)
+ *   - a `taskById` lookup covering the FULL task list (including tasks not
+ *     in the eligible list above, e.g. a container parent — see
+ *     resolveDueDate below), needed to walk a sub-task's `parentId` chain
  *
  * ...it produces a list of new ScheduledBlocks that place every possible
  * hour of remaining task work into free capacity, respecting:
@@ -38,12 +41,19 @@
  *
  *       urgencyMultiplier = 1 + ( 1 / max(1, daysUntilEffectiveDeadline) ) * 10
  *
- *   Tasks with no due date get a fixed low urgency multiplier (1) so they
- *   fill in the gaps around deadline-driven work rather than crowding it out.
+ *   Tasks with no due date of their own AND no ancestor due date to borrow
+ *   (see resolveDueDate) get a fixed low urgency multiplier (1) so they fill
+ *   in the gaps around deadline-driven work rather than crowding it out. A
+ *   sub-task with no due date of its own instead borrows the nearest
+ *   ancestor's due date — the parent goal's deadline pressures its steps
+ *   even when they aren't individually dated — see resolveDueDate.
  *
- *   Final sort: descending score. This single score elegantly captures both
- *   "priority" and "due date" as required, instead of a brittle nested
- *   if/else cascade.
+ *   Final sort: descending score, then (for an exact tie — e.g. two
+ *   default-priority, undated sibling sub-tasks with no ancestor deadline
+ *   either) ascending `createdAt` as a stable tiebreak, so whichever sibling
+ *   was created first schedules first rather than an arbitrary/unstable
+ *   ordering. This single score elegantly captures both "priority" and "due
+ *   date" as required, instead of a brittle nested if/else cascade.
  *
  * Step 2 — DETERMINE EACH TASK'S PLANNING WINDOW:
  *   effectiveDeadline = dueDate - bufferDays   (finish 1 day early, by default)
@@ -107,24 +117,64 @@ const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
 const EPSILON_HOURS = 1 / 120;
 
 /**
+ * Walk up `task.parentId` (arbitrarily deep — nesting is capped at 2 levels
+ * by the UI, but this walk stays general/defensive rather than assuming
+ * that) to find the nearest ancestor's own `dueDate`. `taskById` must cover
+ * the FULL task list (not just the eligible/schedulable subset), since an
+ * ancestor — especially a container parent — is often excluded from
+ * scheduling entirely and wouldn't be in a filtered list. `visited` guards
+ * against a hand-edited/corrupted backup introducing a cycle, mirroring the
+ * same defensive pattern used elsewhere for parentId walks (e.g.
+ * SchedulerContext's getDescendantIds).
+ */
+function findAncestorDueDate(task, taskById) {
+  if (!taskById || !task.parentId) return null;
+  const visited = new Set([task.id]);
+  let current = task;
+  while (current.parentId) {
+    const parent = taskById.get(current.parentId);
+    if (!parent || visited.has(parent.id)) return null;
+    if (parent.dueDate) return parent.dueDate;
+    visited.add(parent.id);
+    current = parent;
+  }
+  return null;
+}
+
+/**
+ * A task's own `dueDate` if it has one, otherwise the nearest ancestor's
+ * `dueDate` it can borrow (see findAncestorDueDate) — the "goal deadline" a
+ * sub-task inherits when it has none of its own. Returns null if neither
+ * exists (a top-level task with no due date, or a sub-task whose whole
+ * ancestor chain is also undated).
+ */
+function resolveDueDate(task, taskById) {
+  return task.dueDate || findAncestorDueDate(task, taskById);
+}
+
+/**
  * The date by which a task's remaining hours must effectively be finished:
  * the buffer-shrunk deadline normally, but the raw due date itself when
  * `enforceDueDate` is set (the buffer doesn't apply — there's no "finish
  * early" cushion once the whole window is collapsed onto the due date).
- * Returns null for tasks with no due date at all.
+ * `enforceDueDate` only ever applies against the task's OWN due date (per
+ * its typedef) — never against a borrowed ancestor deadline, which is a
+ * softer "pressure" signal, not a hard collapse-the-window override.
+ * Returns null if there's no due date to resolve at all (see resolveDueDate).
  */
-function getEffectiveDeadline(task, bufferDays) {
-  if (!task.dueDate) return null;
-  return task.enforceDueDate ? task.dueDate : addDays(task.dueDate, -bufferDays);
+function getEffectiveDeadline(task, bufferDays, taskById) {
+  const dueDate = resolveDueDate(task, taskById);
+  if (!dueDate) return null;
+  return task.enforceDueDate && task.dueDate ? task.dueDate : addDays(dueDate, -bufferDays);
 }
 
 /** Compute a single sortable urgency+priority score for a task, relative to `today`. */
-export function scoreTask(task, today, bufferDays) {
+export function scoreTask(task, today, bufferDays, taskById) {
   const weight = PRIORITY_WEIGHT[task.priority] ?? 1;
 
-  const effectiveDeadline = getEffectiveDeadline(task, bufferDays);
+  const effectiveDeadline = getEffectiveDeadline(task, bufferDays, taskById);
   if (effectiveDeadline === null) {
-    return weight * 1; // no deadline -> baseline urgency multiplier of 1
+    return weight * 1; // no deadline (own or borrowed) -> baseline urgency multiplier of 1
   }
 
   const daysRemaining = Math.max(1, diffDays(today, effectiveDeadline));
@@ -137,30 +187,40 @@ export function scoreTask(task, today, bufferDays) {
  * Sort tasks by descending schedulability score. Pure function, does not
  * mutate input.
  *
- * A sub-task (`parentId` set) is only eligible once it has its own
- * `dueDate` — unlike a top-level task, an undated sub-task is excluded
- * entirely rather than merely deprioritized, since it has no planning
- * window at all yet and shouldn't compete with dated work for capacity.
+ * A sub-task (`parentId` set) competes for capacity exactly like any other
+ * task now, dated or not — an undated sub-task scores via the same baseline
+ * urgency (or a borrowed ancestor deadline, see getEffectiveDeadline) every
+ * other undated task gets, rather than being excluded outright. `taskById`
+ * (the full task list, not just this eligible subset) is only used for that
+ * ancestor lookup.
  */
-export function prioritizeTasks(tasks, today, bufferDays) {
+export function prioritizeTasks(tasks, today, bufferDays, taskById) {
   return [...tasks]
-    .filter((t) => !t.isCompleted && t.remainingHours > 0 && (!t.parentId || t.dueDate))
-    .sort((a, b) => scoreTask(b, today, bufferDays) - scoreTask(a, today, bufferDays));
+    .filter((t) => !t.isCompleted && t.remainingHours > 0)
+    .sort((a, b) => {
+      const scoreDiff = scoreTask(b, today, bufferDays, taskById) - scoreTask(a, today, bufferDays, taskById);
+      if (scoreDiff !== 0) return scoreDiff;
+      // Equal score (e.g. two default-priority, undated sibling sub-tasks) —
+      // tiebreak by creation order so whichever was added first schedules
+      // first, instead of an arbitrary/unstable ordering.
+      return new Date(a.createdAt) - new Date(b.createdAt);
+    });
 }
 
 /**
  * Compute the [windowStart, windowEnd] ISO date pair a task's remaining
  * hours must be placed within.
  */
-function getTaskWindow(task, today, horizonEnd, bufferDays) {
+function getTaskWindow(task, today, horizonEnd, bufferDays, taskById) {
   // enforceDueDate collapses the ENTIRE window onto the due date itself —
   // more restrictive than (and takes precedence over) earliestDate/
   // bufferDays, which only ever clamp the window's edges. Only meaningful
-  // when a due date actually exists; otherwise falls through to the normal
-  // undated-task handling below. If the due date has already passed, this
-  // intentionally leaves the window in the past (outside the capacity map),
-  // so the task's hours simply report as overflow like any other task that
-  // no longer fits its window — no special catch-up behavior invented here.
+  // when the task has its OWN due date; otherwise falls through to the
+  // normal undated-task handling below. If the due date has already
+  // passed, this intentionally leaves the window in the past (outside the
+  // capacity map), so the task's hours simply report as overflow like any
+  // other task that no longer fits its window — no special catch-up
+  // behavior invented here.
   if (task.enforceDueDate && task.dueDate) {
     return { windowStart: task.dueDate, windowEnd: task.dueDate };
   }
@@ -171,13 +231,18 @@ function getTaskWindow(task, today, horizonEnd, bufferDays) {
   // into the past).
   const windowStart = task.earliestDate && task.earliestDate > today ? task.earliestDate : today;
   let windowEnd = horizonEnd;
-  if (task.dueDate) {
-    const effectiveDeadline = getEffectiveDeadline(task, bufferDays);
+  // A sub-task with no due date of its own uses its nearest ancestor's due
+  // date here too (see resolveDueDate) — the parent goal's deadline paces
+  // its steps, not just their relative ordering (scoreTask above).
+  const dueDate = resolveDueDate(task, taskById);
+  if (dueDate) {
+    const effectiveDeadline = getEffectiveDeadline(task, bufferDays, taskById);
     // If the buffer pushes the deadline back past windowStart, the buffer
-    // can't be honored in full — fall back to the actual due date (clamped
-    // to the horizon) rather than collapsing the window to windowStart
-    // alone, which would exclude the due date itself from consideration.
-    windowEnd = effectiveDeadline < windowStart ? (task.dueDate < horizonEnd ? task.dueDate : horizonEnd) : effectiveDeadline;
+    // can't be honored in full — fall back to the resolved due date
+    // (clamped to the horizon) rather than collapsing the window to
+    // windowStart alone, which would exclude the due date itself from
+    // consideration.
+    windowEnd = effectiveDeadline < windowStart ? (dueDate < horizonEnd ? dueDate : horizonEnd) : effectiveDeadline;
     if (windowEnd < windowStart) windowEnd = windowStart;
   }
   return { windowStart, windowEnd };
@@ -335,9 +400,12 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  * @param {Map<string, import('../types').DayCapacity>} capacityMap - date -> DayCapacity (freeIntervals in "HH:MM" pairs)
  * @param {import('../types').SchedulingRules} rules
  * @param {string} today - ISO date, the scheduling run's "now".
+ * @param {Map<string, import('../types').Task>} [taskById] - FULL task-id lookup (not just `tasks` above), used to
+ *   resolve a due-date-less sub-task's nearest ancestor deadline (see resolveDueDate). Omit only if the caller
+ *   knows none of `tasks` are ever due-date-less sub-tasks.
  * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number}> }}
  */
-export function allocateTasks(tasks, capacityMap, rules, today) {
+export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   const dates = [...capacityMap.keys()].sort();
   const horizonEnd = dates[dates.length - 1];
 
@@ -356,12 +424,12 @@ export function allocateTasks(tasks, capacityMap, rules, today) {
     passiveTemplate.set(date, minuteIntervals.map((iv) => ({ ...iv })));
   }
 
-  const prioritized = prioritizeTasks(tasks, today, rules.bufferDays);
+  const prioritized = prioritizeTasks(tasks, today, rules.bufferDays, taskById);
   const newBlocks = [];
   const overflow = [];
 
   for (const task of prioritized) {
-    const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays);
+    const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
     const frontLoad = rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
     const dayWeights = buildDayWeights(windowStart, windowEnd, frontLoad);
 
@@ -411,14 +479,21 @@ export function allocateTasks(tasks, capacityMap, rules, today) {
     // exhausting the buffer-shrunk window, spill into the days between that
     // window and the actual due date (still never touching the due date's
     // own day past its end, and never past the horizon) before giving up.
-    if (remaining > EPSILON_HOURS && task.dueDate) {
-      const dueWindowEnd = task.dueDate < horizonEnd ? task.dueDate : horizonEnd;
-      if (dueWindowEnd > windowEnd) {
-        const extraDays = dateRange(addDays(windowEnd, 1), diffDays(windowEnd, dueWindowEnd));
-        for (const date of extraDays) {
-          if (remaining <= EPSILON_HOURS) break;
-          if (!freeForTask.has(date)) continue;
-          remaining -= placeAndRecordBlocks(task, date, remaining, freeForTask.get(date), newBlocks, '_overflow');
+    // Uses the resolved due date (own, or a borrowed ancestor deadline — see
+    // resolveDueDate) so an undated sub-task gets the same soft-buffer
+    // spillover room as a dated task, consistent with how its window was
+    // computed above.
+    if (remaining > EPSILON_HOURS) {
+      const dueDate = resolveDueDate(task, taskById);
+      if (dueDate) {
+        const dueWindowEnd = dueDate < horizonEnd ? dueDate : horizonEnd;
+        if (dueWindowEnd > windowEnd) {
+          const extraDays = dateRange(addDays(windowEnd, 1), diffDays(windowEnd, dueWindowEnd));
+          for (const date of extraDays) {
+            if (remaining <= EPSILON_HOURS) break;
+            if (!freeForTask.has(date)) continue;
+            remaining -= placeAndRecordBlocks(task, date, remaining, freeForTask.get(date), newBlocks, '_overflow');
+          }
         }
       }
     }

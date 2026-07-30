@@ -57,6 +57,11 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 // (SHORT_BLOCK_MAX_MIN itself lives in calendarGrouping.js, shared with MonthView.)
 const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
+// A sub-task's block gets an extra "parent task" subtitle line (see the
+// block render below) — below this height there isn't room for title +
+// parent line + time line together, so the time line is dropped in favor
+// of the parent context, which is the more useful of the two at a glance.
+const THREE_LINE_MIN_HEIGHT = 50;
 
 // Within an overlap group (see layoutDayItems), an item this long or longer
 // always gets its own visible side-by-side lane, even if it overlaps
@@ -969,7 +974,12 @@ export default function WeekView({
               const { top, height } = item;
               const task = taskById[block.taskId];
               if (!task) return null;
-              const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
+              // A sub-task's block gets a second, muted line naming its parent task
+              // right under the title, so which goal it belongs to is readable
+              // without opening the block — see THREE_LINE_MIN_HEIGHT above.
+              const parentTask = task.parentId ? taskById[task.parentId] : null;
+              const showParentLine = !!parentTask && height >= TWO_LINE_MIN_HEIGHT;
+              const showTimeLine = height >= (parentTask ? THREE_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT);
               return (
                 <div
                   key={block.id}
@@ -993,7 +1003,7 @@ export default function WeekView({
                       onSelectBlock?.(block);
                     }
                   }}
-                  title={`${task.title}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`}
+                  title={`${task.title}${parentTask ? ` (sub-task of ${parentTask.title})` : ''}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`}
                 >
                   <button
                     className="lock-indicator"
@@ -1009,6 +1019,7 @@ export default function WeekView({
                     {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
                     {task.title}
                   </div>
+                  {showParentLine && <div className="cal-block-parent">{parentTask.title}</div>}
                   {showTimeLine && (
                     <div className="cal-block-time">
                       {block.startTime}–{block.endTime}

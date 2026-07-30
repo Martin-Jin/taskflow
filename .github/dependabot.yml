@@ -9,11 +9,32 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      npm-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "npm"
     directory: "/cloudflare-worker"
     schedule:
       interval: "weekly"
+    groups:
+      npm-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

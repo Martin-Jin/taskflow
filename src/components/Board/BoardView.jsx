@@ -62,6 +62,7 @@ import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
+import { getEffectiveRemainingHours } from '../../utils/taskHierarchy';
 
 export default function BoardView({ projectId, onProjectChange, filter = 'all' }) {
   const {
@@ -273,7 +274,9 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
             style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 3, paddingLeft: titleIconOffset }}
           >
             <span>
-              {formatHours(task.remainingHours)} left
+              {/* A container (has sub-tasks — see subtaskTotal above) shows its rolled-up remaining
+                  hours here rather than its own frozen/independent number — see utils/taskHierarchy.js. */}
+              {formatHours(subtaskTotal > 0 ? getEffectiveRemainingHours(task, tasks) : task.remainingHours)} left
               {task.dueDate ? (
                 <span className="board-card-due"> · due {formatDisplayDate(task.dueDate)}</span>
               ) : (

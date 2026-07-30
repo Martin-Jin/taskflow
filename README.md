@@ -210,12 +210,13 @@ worth knowing:
   imported tasks is only created once.
 - **Sub-tasks** (Todoist items with a parent) come in as standalone tasks
   linked via `parentId`, listed under their parent in the task detail modal
-  and nested under it in the Tasks list — they're only ever scheduled if
-  they carry their own due date (an undated sub-task shows up everywhere
-  except the calendar, same as any other undated task). Todoist allows
-  nesting subtasks arbitrarily deep; anything below the first level is
-  flattened onto the top-level task's `parentId` rather than preserving the
-  intermediate grouping.
+  and nested under it in the Tasks list — they're schedulable with or
+  without their own due date, same as a locally-created sub-task (see "How
+  the scheduler works" below). Todoist allows nesting subtasks arbitrarily
+  deep; anything below the first level is flattened onto the top-level
+  task's `parentId` rather than preserving the intermediate grouping (which
+  also means an imported sub-task is never more than 1 level deep, well
+  under the app's own 2-level nesting cap for locally-created sub-tasks).
 
 ### Google Calendar
 
@@ -356,7 +357,17 @@ $$\text{score} = \text{priorityWeight} \times \left(1 + \frac{10}{\max(1,\ \text
 where `priorityWeight` is `urgent=4, high=3, medium=2, low=1` and
 `effectiveDeadline = dueDate − bufferDays`. Tasks are processed in
 descending score order, so a task due tomorrow at medium priority still
-outranks a task due in six weeks at high priority.
+outranks a task due in six weeks at high priority. Equal scores (e.g. two
+default-priority, undated sibling sub-tasks) tiebreak on creation order —
+whichever sub-task was added first schedules first.
+
+A sub-task with no due date of its own borrows its nearest ancestor's due
+date for this calculation instead of falling back to the baseline "no
+deadline" urgency — the parent goal's deadline pressures its steps even
+when they aren't individually dated (see `resolveDueDate`). A **container**
+task (any task with ≥1 sub-task of its own) is never scored or scheduled
+directly at all, regardless of whether it has a due date — see "Sub-tasks
+and containers" below.
 
 The **planning window** is `[today, dueDate − bufferDays]` — the buffer
 targets finishing a day early by default, but it's a soft preference: if
@@ -389,6 +400,25 @@ unlocked-future (cleared and re-planned); recomputes each task's
 remainder; merges everything back together. Locked blocks are never
 destroyed by a rebalance.
 
+### Sub-tasks and containers
+
+A sub-task (`parentId` set) is scheduled exactly like a top-level task —
+same scoring, same pacing, same placement passes — with one twist: if it
+has no due date of its own, it borrows its nearest ancestor's due date as
+urgency pressure instead of the flat "no deadline" baseline (see
+`resolveDueDate` above). Nesting is capped at 2 levels (task → sub-task →
+sub-task of that sub-task), enforced going forward only.
+
+The moment a task has ≥1 sub-task, it becomes a **container**: it never
+gets its own calendar block again, no matter its own due date or hours —
+only its leaf sub-tasks (or deeper leaves, if nested) do. Its
+`estimatedHours`/`remainingHours` become a live rollup of its children's
+own effective hours instead of an independently-editable number (see
+`utils/taskHierarchy.js`), and its own due date becomes purely an input
+into its children's urgency rather than something scheduled directly.
+Everything else on it (priority, lock state, min/max chunk hours, labels)
+stays independently editable, same as before.
+
 ### Dependencies and passive tasks
 
 A task can list other tasks it `dependsOn`. `rebalanceEngine` simply excludes
@@ -409,7 +439,7 @@ See `src/types/index.js` for full JSDoc typedefs.
 
 | Type | Purpose |
 |---|---|
-| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, to arbitrary depth), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed). |
+| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, capped at 2 levels deep — see "Sub-tasks and containers"), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed). |
 | `Section` | A Todoist Section — Board view column |
 | `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar |
 | `ScheduledBlock` | A concrete dated/timed slice of a `Task` on the calendar |
