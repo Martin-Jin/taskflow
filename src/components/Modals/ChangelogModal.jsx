@@ -12,6 +12,10 @@
  * x.y.0 feature entry is shown up front, with any later patches collapsed
  * into a "N patch fixes" dropdown underneath it. A query match inside a
  * collapsed patch auto-expands that group so search still finds it.
+ *
+ * Only the 2 newest major.minor groups are shown by default, with a
+ * "See N more versions" button to reveal the rest — searching bypasses
+ * this cap so older matches are never hidden.
  */
 
 import React, { useMemo, useState } from 'react';
@@ -56,6 +60,7 @@ export default function ChangelogModal({ onClose }) {
   const modalRef = useModalA11y(requestClose);
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
+  const [showAllVersions, setShowAllVersions] = useState(false);
 
   const groups = useMemo(() => groupChangelog(CHANGELOG), []);
 
@@ -71,6 +76,10 @@ export default function ChangelogModal({ onClose }) {
       })
       .filter(Boolean);
   }, [groups, query]);
+
+  const isSearching = query.trim().length > 0;
+  const displayedGroups = !isSearching && !showAllVersions ? filteredGroups.slice(0, 2) : filteredGroups;
+  const hiddenCount = filteredGroups.length - displayedGroups.length;
 
   function toggleExpanded(key) {
     setExpanded((prev) => {
@@ -115,7 +124,7 @@ export default function ChangelogModal({ onClose }) {
           <div className="now-empty">No updates match "{query}".</div>
         ) : (
           <ul className="missed-tasks-list stat-list-modal-list changelog-list">
-            {filteredGroups.map((group) => {
+            {displayedGroups.map((group) => {
               const isOpen = group.forceExpand || expanded.has(group.key);
               return (
                 <li key={group.key} className="changelog-entry">
@@ -166,6 +175,17 @@ export default function ChangelogModal({ onClose }) {
               );
             })}
           </ul>
+        )}
+
+        {!isSearching && hiddenCount > 0 && (
+          <button
+            type="button"
+            className="changelog-fixes-toggle changelog-see-more"
+            onClick={() => setShowAllVersions(true)}
+          >
+            <ChevronDown size={13} />
+            See {hiddenCount} more version{hiddenCount === 1 ? '' : 's'}
+          </button>
         )}
       </div>
     </div>
