@@ -26,6 +26,11 @@
  *   7. task.fixedTime ("HH:MM"), when set, pins every block placed for that
  *      task to start at that exact time of day instead of wherever first-fit
  *      would land — see placeFixedTimeInDay below.
+ *   8. A "blocker" task (one with at least one other incomplete task
+ *      depending on it — see computeBlockerIds) skips even-pacing/front-load
+ *      entirely and greedily claims as much of each day's capacity as it can,
+ *      so it finishes ASAP instead of splitting days evenly with unrelated
+ *      work — the whole point of unblocking whatever's waiting on it.
  *
  * --------------------------------------------------------------------------
  * ALGORITHM WALKTHROUGH
@@ -55,6 +60,14 @@
  *   ordering. This single score elegantly captures both "priority" and "due
  *   date" as required, instead of a brittle nested if/else cascade.
  *
+ *   A task with at least one incomplete dependent (see computeBlockerIds) is
+ *   flagged as a "blocker" — it still sorts by the score above, but Steps 3
+ *   and 4 below treat it differently once it's up: it skips even-pacing/
+ *   front-load and instead greedily consumes each day's capacity in
+ *   chronological order until its remaining hours are cleared or its window
+ *   runs out, so it clears out of the way as fast as possible for whatever's
+ *   waiting on it.
+ *
  * Step 2 — DETERMINE EACH TASK'S PLANNING WINDOW:
  *   effectiveDeadline = dueDate - bufferDays   (finish 1 day early, by default)
  *   windowStart = today (or task.earliestDate if later — a user-set "don't
@@ -78,7 +91,10 @@
  *
  * Step 4 — GREEDY CAPACITY-AWARE PLACEMENT:
  *   Walk the task's window day-by-day (in bias order), and for each day:
- *     - Determine target hours for that day (from Step 3's distribution)
+ *     - Determine target hours for that day (from Step 3's distribution) —
+ *       except a blocker task (see computeBlockerIds), which targets ALL of
+ *       its remaining hours every day instead of an ideal share, so it
+ *       greedily consumes whatever capacity that day actually has.
  *     - Clamp to [minChunkHours, maxChunkHours] and to remaining day capacity
  *     - Slice from the day's free intervals (first-fit)
  *     - Deduct from both the task's remainingHours and the day's capacity
@@ -217,6 +233,34 @@ function computeEffectiveDeadlines(tasks, bufferDays, taskById) {
   const result = new Map();
   for (const task of allTasks) result.set(task.id, resolve(task, new Set()));
   return result;
+}
+
+/**
+ * IDs of tasks that are "blockers": they have at least one other, still-
+ * incomplete task depending on them (directly, via that task's `dependsOn`).
+ * A completed dependent doesn't count — nothing is actually waiting on the
+ * blocker anymore. Used by allocateTasks to make a blocker greedily consume
+ * a day's capacity instead of pacing evenly (see the module doc comment,
+ * Step 4) — the goal is to clear the blocker out of the way as fast as
+ * possible, not to spread it thin alongside unrelated work. `taskById`, when
+ * given, should cover the FULL task graph (not just the eligible/schedulable
+ * subset) so a dependent that isn't itself being scheduled this run (e.g.
+ * already locked) still counts.
+ */
+function computeBlockerIds(tasks, taskById) {
+  const allTasks = taskById ? [...taskById.values()] : tasks;
+  const dependentsOf = getDependentsMap(allTasks);
+  const byId = taskById || new Map(allTasks.map((t) => [t.id, t]));
+  const blockerIds = new Set();
+  for (const task of allTasks) {
+    const dependents = dependentsOf.get(task.id) || [];
+    const hasIncompleteDependent = dependents.some((depId) => {
+      const dep = byId.get(depId);
+      return dep && !dep.isCompleted;
+    });
+    if (hasIncompleteDependent) blockerIds.add(task.id);
+  }
+  return blockerIds;
 }
 
 /**
@@ -493,12 +537,14 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   }
 
   const prioritized = prioritizeTasks(tasks, today, rules.bufferDays, taskById);
+  const blockerIds = computeBlockerIds(tasks, taskById);
   const newBlocks = [];
   const overflow = [];
 
   for (const task of prioritized) {
+    const isBlocker = blockerIds.has(task.id);
     const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
-    const frontLoad = rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
+    const frontLoad = !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
     const dayWeights = buildDayWeights(windowStart, windowEnd, frontLoad);
 
     // Order of attack: front-loaded tasks try deadline-adjacent days FIRST
@@ -520,7 +566,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       if (!freeForTask.has(date)) continue; // outside computed horizon
 
       const idealShare = task.remainingHours * (weight / totalWeight);
-      const targetHours = Math.max(Math.min(idealShare, remaining), 0);
+      const targetHours = isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
       if (targetHours < (task.minChunkHours ?? 0.5) - EPSILON_HOURS) continue;
 
       remaining -= placeAndRecordBlocks(task, date, targetHours, freeForTask.get(date), newBlocks);

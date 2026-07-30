@@ -32,6 +32,10 @@ export const BACKUP_FIELDS = [
   'theme',
   'notes',
   'shortcutBindings',
+  // TODO (TODO.md #10, not yet implemented): add the new notification
+  // settings field(s) here once that feature lands — see SchedulerContext's
+  // usePersistedState block for the full list of other places a new synced
+  // setting also needs to be wired in.
 ];
 
 /** Recurring tasks never reach isCompleted: true (completing one just advances dueDate — see types/index.js), so this only ever drops finished one-off tasks. */
