@@ -260,7 +260,10 @@ export function findDuePhrase(text, referenceDate = new Date()) {
   }
 
   // Numeric dates: "24/03/2025", "2/3/25", "24-03-2025", "24.03". Year optional.
-  m = s.match(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b/);
+  // Excludes matches immediately followed by a duration unit word ("3.5 hours",
+  // "1.5 hrs") — otherwise a decimal-hour estimate typed into the title gets
+  // misdetected as a "24.03"-style date and never reaches findDurationPhrase.
+  m = s.match(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b(?!\s*(?:h|hrs?|hours?|m|mins?|minutes?)\b)/);
   if (m) {
     const a = Number(m[1]);
     const b = Number(m[2]);
