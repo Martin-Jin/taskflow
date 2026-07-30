@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.3',
+    date: '2026-07-31',
+    title: 'Fix: decimal durations misread as dates',
+    changes: [
+      'Titles like "Read chapter 4 for 3.5 hours" no longer have the "3.5" mistaken for a date (e.g. 3rd of May) and silently stripped out as a due date instead of being read as a duration.',
+    ],
+  },
+  {
     version: '1.33.2',
     date: '2026-07-31',
     title: 'Fix: Board view not showing on mobile',
