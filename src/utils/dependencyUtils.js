@@ -18,8 +18,9 @@ export function areDependenciesMet(task, taskById) {
 /**
  * Map from a task's id to the ids of tasks that directly list it in their
  * own `dependsOn` (its direct "dependents" — tasks blocked on it finishing).
- * Shared by the cycle check below and by allocator.js's backward urgency
- * propagation (a blocker's effective urgency rises to match its dependents').
+ * Shared by the cycle check below and by allocator.js, which uses it both to
+ * detect blocker tasks (for greedy blocker-clearing) and to propagate a
+ * dependent's urgency backward onto its blocker.
  * @param {import('../types').Task[]} tasks
  * @returns {Map<string, string[]>}
  */

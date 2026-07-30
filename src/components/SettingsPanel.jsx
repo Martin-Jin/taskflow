@@ -62,6 +62,10 @@ const SETTINGS_SECTIONS = [
   { id: 'calendarOverrides', label: 'Calendar event overrides' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'tags', label: 'Tags' },
+  // TODO (TODO.md #10, not yet implemented): add a 'notifications' entry
+  // here, plus a matching `.card` section below with the per-type in-app/
+  // email toggles and the customizable "starting soon" threshold, once
+  // that feature lands — otherwise it won't be findable via settings search.
   { id: 'installApp', label: 'Install app' },
   { id: 'help', label: 'Help' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
