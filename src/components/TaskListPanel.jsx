@@ -17,6 +17,17 @@
  * toggle. (Board/Gantt keep the older rolled-up-badge presentation instead —
  * see BoardView.jsx/GanttChart.jsx.)
  *
+ * ROW MOTION: rows are framer-motion elements so that reordering (a
+ * priority change, a new sort/filter, a task completing and leaving the
+ * list) slides the survivors into their new positions instead of snapping
+ * them there — a FLIP animation, which is the one thing plain CSS can't do
+ * since it needs the before/after positions measured across a re-render.
+ * `flattenRows` exists for the same reason: AnimatePresence only tracks its
+ * own direct children, so the recursive parent/sub-task render has to be
+ * flattened into one keyed list (which is what the DOM already was — see
+ * SUB-TASKS above). All of it is skipped when motion is off (see
+ * useMotionEnabled), leaving plain divs behind.
+ *
  * LIVE-UPDATING EDIT MODAL: we track only the *id* of the task being
  * edited, not a snapshot of the task object itself. The actual task object
  * passed to TaskDetailModal is derived fresh from `tasks` on every render
@@ -28,7 +39,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw, Inbox } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useSound } from '../context/SoundContext';
@@ -45,6 +57,7 @@ import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
 import AccountButton from './Nav/AccountButton';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useMotionEnabled } from '../hooks/useMotionEnabled';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -52,6 +65,15 @@ import { getEffectiveEstimatedHours, getEffectiveRemainingHours } from '../utils
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+// Row reorder/removal motion (see the ROW MOTION note above). `layout:
+// 'position'` animates a row's position only, never its size — a row whose
+// text reflows would otherwise visibly squash/stretch mid-animation. Timing
+// mirrors the CSS tokens (--duration-base / --ease-standard) everything else
+// in the app animates with, and exit is deliberately quicker than the
+// reflow so a completed row is gone before the gap closes behind it.
+const ROW_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
+const ROW_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
 
 // The Tasks page's own view switch — List/Board/Gantt are three
 // presentations of the same underlying tasks, so they live under one nav
@@ -82,6 +104,7 @@ export default function TaskListPanel({
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const isMobile = useIsMobile();
+  const motionEnabled = useMotionEnabled();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAIQuickAdd, setShowAIQuickAdd] = useState(false);
   // The "new task" shortcut (see useKeyboardShortcuts in App.jsx) bumps this
@@ -229,132 +252,149 @@ export default function TaskListPanel({
   }, [visibleTasks, showGroups]);
 
   /**
-   * Renders a task row and, recursively, every descendant nested beneath it
-   * (see childrenByParentId) — `depth` drives both the indent (a
-   * `--space-5` multiple, matching this codebase's spacing scale) and
-   * whether the row gets the full `.card` container (depth 0, top-level) or
-   * the flatter `.task-row-child` styling (depth > 0, a sub-task) so the
-   * hierarchy reads as a checklist rather than a stack of equal-weight cards.
+   * Expands a top-level task into the flat, in-order list of rows it
+   * contributes — itself, then (unless collapsed) every descendant
+   * depth-first, each tagged with its nesting `depth`. Rows have always been
+   * rendered as flat siblings (the indent is a marginLeft, not real DOM
+   * nesting), so this is the same output order the old recursive render
+   * produced, just as data instead of JSX — which is what lets every row be
+   * a direct child of one AnimatePresence (see ROW MOTION above).
    */
-  function renderTaskRow(task, depth = 0) {
+  function flattenRows(task, depth = 0, out = []) {
+    out.push({ task, depth });
+    if (!collapsedIds.has(task.id)) {
+      for (const child of childrenByParentId.get(task.id) || []) flattenRows(child, depth + 1, out);
+    }
+    return out;
+  }
+
+  /**
+   * Renders one task row. `depth` drives both the indent (a `--space-5`
+   * multiple, matching this codebase's spacing scale) and whether the row
+   * gets the full `.card` container (depth 0, top-level) or the flatter
+   * `.task-row-child` styling (depth > 0, a sub-task) so the hierarchy reads
+   * as a checklist rather than a stack of equal-weight cards.
+   */
+  function renderTaskRow({ task, depth }) {
     const children = childrenByParentId.get(task.id) || [];
     const hasChildren = children.length > 0;
     const isCollapsed = collapsedIds.has(task.id);
     return (
-      <React.Fragment key={task.id}>
-        <div
-          className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
-          style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
-          onClick={() => setEditingTaskId(task.id)}
-        >
-          {hasChildren ? (
-            <button
-              type="button"
-              className="btn btn-icon task-row-collapse"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleCollapsed(task.id);
-              }}
-              aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
-              aria-expanded={!isCollapsed}
-            >
-              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-            </button>
-          ) : (
-            depth > 0 && <span className="task-row-collapse-spacer" aria-hidden="true" />
-          )}
+      <motion.div
+        key={task.id}
+        layout={motionEnabled ? 'position' : false}
+        transition={ROW_TRANSITION}
+        exit={motionEnabled ? ROW_EXIT : undefined}
+        className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
+        style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
+        onClick={() => setEditingTaskId(task.id)}
+      >
+        {hasChildren ? (
           <button
-            className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+            type="button"
+            className="btn btn-icon task-row-collapse"
             onClick={(e) => {
               e.stopPropagation();
-              if (!task.isCompleted) requestComplete(task.id);
+              toggleCollapsed(task.id);
             }}
-            disabled={task.isCompleted}
-            title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-            aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
+            aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
+            aria-expanded={!isCollapsed}
           >
-            {task.isCompleted && <Check size={12} aria-hidden="true" />}
+            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
           </button>
-          <div className="task-row-main">
-            <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
-              {task.link ? (
-                <a
-                  href={task.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="task-title-link"
-                  onClick={(e) => e.stopPropagation()}
-                  title={`Open link: ${task.link}`}
-                >
-                  {task.title}
-                  <ExternalLink size={11} aria-hidden="true" />
-                </a>
-              ) : (
-                task.title
-              )}
-              {task.isRecurring && (
-                <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
-              )}
-              {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--color-text-secondary)',
-                marginTop: 2,
-                display: 'flex',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: 3,
-              }}
-            >
-              <span>
-                {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
-                    frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
-                {formatHours(hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours)} remaining of{' '}
-                {formatHours(hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours)}
-                {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
-                {task.sectionName ? ` · ${task.sectionName}` : ''}
-              </span>
-              {!task.isCompleted && !areDependenciesMet(task, taskById) && (
-                <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                  {' · '}
-                  <Ban size={12} />
-                  blocked by dependency
-                </span>
-              )}
-            </div>
-            <div className="task-row-badges">
-              <span className={`badge ${task.priority}`}>{task.priority}</span>
-              {(task.labelIds || []).map((labelId) => {
-                const label = labelById.get(labelId);
-                if (!label) return null;
-                return (
-                  <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
-                    {label.name}
-                  </span>
-                );
-              })}
-            </div>
+        ) : (
+          depth > 0 && <span className="task-row-collapse-spacer" aria-hidden="true" />
+        )}
+        <button
+          className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!task.isCompleted) requestComplete(task.id);
+          }}
+          disabled={task.isCompleted}
+          title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+          aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
+        >
+          {task.isCompleted && <Check size={12} aria-hidden="true" />}
+        </button>
+        <div className="task-row-main">
+          <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
+            {task.link ? (
+              <a
+                href={task.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="task-title-link"
+                onClick={(e) => e.stopPropagation()}
+                title={`Open link: ${task.link}`}
+              >
+                {task.title}
+                <ExternalLink size={11} aria-hidden="true" />
+              </a>
+            ) : (
+              task.title
+            )}
+            {task.isRecurring && (
+              <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
+            )}
+            {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
           </div>
-          {task.isCompleted && (
-            <button
-              type="button"
-              className="btn btn-icon task-row-restore"
-              onClick={(e) => {
-                e.stopPropagation();
-                uncompleteTask(task.id);
-                playUncomplete();
-              }}
-              title="Restore to active"
-              aria-label={`Restore ${task.title}`}
-            >
-              <RotateCcw size={14} />
-            </button>
-          )}
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--color-text-secondary)',
+              marginTop: 2,
+              display: 'flex',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 3,
+            }}
+          >
+            <span>
+              {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
+                  frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
+              {formatHours(hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours)} remaining of{' '}
+              {formatHours(hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours)}
+              {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
+              {task.sectionName ? ` · ${task.sectionName}` : ''}
+            </span>
+            {!task.isCompleted && !areDependenciesMet(task, taskById) && (
+              <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                {' · '}
+                <Ban size={12} />
+                blocked by dependency
+              </span>
+            )}
+          </div>
+          <div className="task-row-badges">
+            <span className={`badge ${task.priority}`}>{task.priority}</span>
+            {(task.labelIds || []).map((labelId) => {
+              const label = labelById.get(labelId);
+              if (!label) return null;
+              return (
+                <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
+                  {label.name}
+                </span>
+              );
+            })}
+          </div>
         </div>
-        {hasChildren && !isCollapsed && children.map((child) => renderTaskRow(child, depth + 1))}
-      </React.Fragment>
+        {task.isCompleted && (
+          <button
+            type="button"
+            className="btn btn-icon task-row-restore"
+            onClick={(e) => {
+              e.stopPropagation();
+              uncompleteTask(task.id);
+              playUncomplete();
+            }}
+            title="Restore to active"
+            aria-label={`Restore ${task.title}`}
+          >
+            <RotateCcw size={14} />
+          </button>
+        )}
+      </motion.div>
     );
   }
 
@@ -456,9 +496,14 @@ export default function TaskListPanel({
           <div className="tasklist-rows">
             {visibleTasks.length === 0 && (
               <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                <Inbox size={22} className="empty-state-icon" aria-hidden="true" />
                 No tasks {searchQuery ? 'match your search' : 'here yet'}.
               </div>
             )}
+            {/* `initial={false}` so the rows already on screen when the list
+                first mounts don't all animate in — only rows added later do
+                (and even then via the shared `.card` CSS enter animation),
+                while removals still get their exit animation. */}
             {taskGroups
               ? taskGroups.map((group) => (
                 <div key={group.key} className="tasklist-section">
@@ -466,10 +511,16 @@ export default function TaskListPanel({
                     {group.label}
                     <span className="tasklist-section-count">{group.tasks.length}</span>
                   </h3>
-                  {group.tasks.map((task) => renderTaskRow(task))}
+                  <AnimatePresence initial={false}>
+                    {group.tasks.flatMap((task) => flattenRows(task)).map(renderTaskRow)}
+                  </AnimatePresence>
                 </div>
               ))
-              : visibleTasks.map((task) => renderTaskRow(task))}
+              : (
+                <AnimatePresence initial={false}>
+                  {visibleTasks.flatMap((task) => flattenRows(task)).map(renderTaskRow)}
+                </AnimatePresence>
+              )}
           </div>
 
           {showAddModal && (

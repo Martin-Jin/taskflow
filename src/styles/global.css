@@ -392,6 +392,19 @@ select:focus-visible,
      track wider instead of ever triggering its own scrollbar. Without
      this, the overflow bubbles all the way up past .app-shell. */
   min-width: 0;
+  /* Subtle depth wash behind the page content — a soft accent-tinted glow
+     fixed near the top of the scroll container rather than full-bleed
+     color, so it reads as ambient depth instead of a loud background.
+     color-mix keeps it theme-aware (accent-200's per-theme value already
+     picks a readable-strength stop) without hardcoding an rgba. Cards/
+     modals paint their own opaque --color-bg-surface(-raised) on top, so
+     this never affects text contrast. */
+  background-image: radial-gradient(
+    ellipse 900px 480px at 50% -80px,
+    color-mix(in srgb, var(--color-accent-200) 10%, transparent),
+    transparent 70%
+  );
+  background-repeat: no-repeat;
 }
 
 .tab-panel {
@@ -1058,8 +1071,11 @@ select:focus-visible,
   }
 }
 
+/* No `transform` transition here: TaskListPanel animates row reordering with
+   framer-motion, which writes transforms to this element's inline style every
+   frame — a CSS transition on transform would lag one behind and fight it. */
 .task-row {
-  transition: background var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+  transition: background var(--duration-fast) var(--ease-standard);
 }
 
 .task-row:hover {
@@ -1686,6 +1702,30 @@ input[type='checkbox']:checked::after {
   }
   100% {
     transform: scale(1);
+  }
+}
+
+/* Small looping float+fade on empty-state icons (empty task list, "nothing
+   scheduled" dashboard card, empty notes folder, ...) — a restrained cue that
+   the app is alive rather than a dead-end. Gated for free by the
+   data-animations='off'/prefers-reduced-motion rules above (both force
+   animation-duration to ~0), so no extra JS check is needed here. */
+.empty-state-icon {
+  display: block;
+  margin: 0 auto var(--space-2);
+  color: var(--color-text-muted);
+  animation: empty-state-float 3.2s ease-in-out infinite;
+}
+
+@keyframes empty-state-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-4px);
+    opacity: 0.9;
   }
 }
 

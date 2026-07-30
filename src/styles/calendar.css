@@ -473,7 +473,7 @@
   border-left: 3px solid;
   background: var(--color-bg-surface-raised);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.12s ease;
+  transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
 }
 
 .cal-block:hover {
@@ -487,8 +487,36 @@
   z-index: 5;
 }
 
-.cal-block.dragging {
-  opacity: 0.5;
+/* The item currently being dragged. With native HTML5 DnD (mouse) the
+   browser drags a frozen snapshot and leaves the real element sitting in
+   the grid, and the touch long-press path never moves the element either —
+   so in both cases this is the "you picked this up" cue, lifted and faded
+   while .cal-event-ghost shows where it will land. */
+.cal-block.is-dragging,
+.cal-event.is-dragging {
+  opacity: 0.55;
+  transform: scale(1.02);
+  box-shadow: var(--shadow-card);
+  z-index: 7;
+}
+
+/* Being resized by its bottom edge (see WeekView's resizePreview): outlined
+   and raised above its neighbours, with the 15-minute height steps eased so
+   the edge follows the pointer smoothly instead of jumping. The transition
+   only exists while this class is on, so it can't affect a height change
+   from anything else (zooming the time axis, say). */
+.cal-block.is-resizing,
+.cal-event.is-resizing {
+  box-shadow: 0 0 0 1px var(--color-accent-border), var(--shadow-card);
+  transition: box-shadow 0.12s ease, height 0.09s linear;
+  z-index: 7;
+}
+
+/* The live start–end readout while dragging/resizing — accented so it's
+   readable as "this is what it's becoming", not the block's saved time. */
+.cal-block-time.is-live {
+  color: var(--color-accent);
+  font-weight: 600;
 }
 
 .cal-block.locked {
@@ -596,6 +624,74 @@
   text-overflow: ellipsis;
 }
 
+/* Desktop-only hover preview for a truncated block/event title (see
+   WeekView's hoverPreview state + HoverPreviewCard) — a fixed-position
+   portal to <body> so it escapes the scrolling week/day grid rather than
+   being clipped inside it, positioned near the hovered item's own rect.
+   pointer-events: none is the important bit: the card can visually sit on
+   top of neighbouring blocks without ever stealing a click meant for them.
+   The fade-in is gated for free by the data-animations='off'/
+   prefers-reduced-motion rules in global.css, same as every other
+   animation here. */
+.cal-hover-preview {
+  z-index: 1000;
+  pointer-events: none;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+  animation: hover-preview-in var(--duration-fast) var(--ease-standard);
+}
+
+@keyframes hover-preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+.cal-hover-preview-title {
+  font-weight: 600;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.cal-hover-preview-parent {
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--color-text-secondary);
+}
+
+.cal-hover-preview-time {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+
+.cal-hover-preview-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+
+.cal-hover-preview-priority {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-hover-preview-project {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-bg-surface-hover);
+}
+
 .cal-block-title {
   font-weight: 600;
   white-space: nowrap;
@@ -641,7 +737,7 @@
   border-left: 3px solid var(--color-accent-border);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.12s ease;
+  transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
   overflow: hidden;
 }
 
@@ -735,8 +831,11 @@
   box-shadow: 0 0 0 1px var(--color-accent-soft), var(--shadow-card);
 }
 
-/* Drag-to-block-out-time ghost preview, shown while the mouse is held down
-   on empty grid space (see WeekView.handleColumnMouseDown). */
+/* Ghost preview of where something will land: shown while the mouse is held
+   down on empty grid space to block out time, and while an existing block/
+   event is being dragged to a new slot (see WeekView.renderGhost). Carries
+   the live snapped start–end time, so both the label and the time line
+   inherit the accent color rather than their usual muted/padded look. */
 .cal-event-ghost {
   position: absolute;
   left: 3px;
@@ -747,8 +846,18 @@
   background: var(--color-accent-soft);
   border: 1px dashed var(--color-accent-border);
   color: var(--color-accent);
+  overflow: hidden;
   pointer-events: none;
   z-index: 4;
+}
+
+.cal-event-ghost .cal-block-title {
+  padding-right: 0;
+}
+
+.cal-event-ghost .cal-block-time {
+  color: inherit;
+  font-weight: 600;
 }
 
 /* Live current-time indicator, mirroring Google Calendar's own "now" line —

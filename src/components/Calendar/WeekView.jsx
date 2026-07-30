@@ -41,6 +41,7 @@ import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
+import HoverPreviewCard from './HoverPreviewCard';
 
 const GRID_START_MIN = 6 * 60; // 06:00
 const GRID_END_MIN = 24 * 60; // 24:00
@@ -329,11 +330,12 @@ export default function WeekView({
   onCreateEvent,
   onSelectDay,
 }) {
-  const { tasks, blocks, events, updateBlock, toggleBlockLock, updateEvent, scheduleTaskManually } = useScheduler();
+  const { tasks, blocks, events, projects, updateBlock, toggleBlockLock, updateEvent, scheduleTaskManually } = useScheduler();
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
   const taskById = useMemo(() => Object.fromEntries(tasks.map((t) => [t.id, t])), [tasks]);
+  const projectById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
 
   // "Unscheduled" tray (below) — tasks with unplaced work the user can drag
   // (or, on touch, long-press-drag) straight onto a day column to place a
@@ -409,10 +411,17 @@ export default function WeekView({
     return map;
   }, [days, blocksByDay, eventsByDay, pxPerMin]);
 
-  const [dragState, setDragState] = useState(null); // { id, type, mode: 'move'|'resize' }
+  // Live drag/resize feedback state. `dragState` marks the item currently
+  // being moved (mouse or touch) so it can be styled as lifted out of the
+  // grid, and carries its duration so a drop target's ghost knows how tall
+  // to be; `dragPreview` is that ghost — the snapped slot the item would
+  // land in, labelled with its would-be start–end time; `resizePreview`
+  // drives the live height and time readout of the item being resized.
+  const [dragState, setDragState] = useState(null); // { id, type, duration }
   const [dragOverDay, setDragOverDay] = useState(null);
   const [createDrag, setCreateDrag] = useState(null); // { day, startMin, currentMin } — drag-to-block-out-time
-  const [touchDragPreview, setTouchDragPreview] = useState(null); // { day, startMin, duration } — see handleItemTouchStart
+  const [dragPreview, setDragPreview] = useState(null); // { day, startMin, duration }
+  const [resizePreview, setResizePreview] = useState(null); // { id, type, endMin }
   const gridRef = useRef(null);
 
   // Ctrl+scroll / trackpad-pinch zoom. JSX's onWheel is attached passively by
@@ -530,6 +539,40 @@ export default function WeekView({
     };
   }, [openCluster]);
 
+  // Desktop-only hover preview (see HoverPreviewCard) for a single block/event
+  // whose title may be truncated in its compact grid box — shows the full
+  // title/time/priority/project without opening the detail modal. Mobile has
+  // no hover concept, so this is only ever wired up when !isMobile below.
+  // A short delay avoids a flash of preview cards while the pointer merely
+  // passes over several densely-packed items on its way somewhere else.
+  const [hoverPreview, setHoverPreview] = useState(null); // { rect, ...content }
+  const hoverTimer = useRef(null);
+  const HOVER_DELAY_MS = 350;
+  function scheduleHoverPreview(rect, content) {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHoverPreview({ rect, ...content }), HOVER_DELAY_MS);
+  }
+  function cancelHoverPreview() {
+    clearTimeout(hoverTimer.current);
+    setHoverPreview(null);
+  }
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+  // The card is anchored to a rect captured at hover time — once the grid (or
+  // the page) scrolls, that rect is stale, so just drop the preview rather
+  // than let it float away from the item it's describing.
+  useEffect(() => {
+    if (!hoverPreview) return;
+    function onScroll() {
+      cancelHoverPreview();
+    }
+    gridRef.current?.addEventListener('scroll', onScroll);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      gridRef.current?.removeEventListener('scroll', onScroll);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [hoverPreview]);
+
   // Live "now" line — recomputed every 30s so it visibly creeps down the
   // current day's column like Google Calendar's own current-time indicator.
   const [now, setNow] = useState(() => new Date());
@@ -557,6 +600,7 @@ export default function WeekView({
   // move/resize math, only branching on `type` at the point they call back
   // into SchedulerContext (updateBlock vs updateEvent).
   function handleDragStart(e, item) {
+    cancelHoverPreview();
     if (item.type === 'block' && item.data.isLocked) {
       e.preventDefault();
       return;
@@ -570,12 +614,37 @@ export default function WeekView({
       return;
     }
     e.dataTransfer.setData('text/plain', JSON.stringify({ id: item.data.id, type: item.type }));
-    setDragState({ id: item.data.id, type: item.type, mode: 'move' });
+    setDragState({
+      id: item.data.id,
+      type: item.type,
+      duration: timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime),
+    });
+  }
+
+  function endDrag() {
+    setDragOverDay(null);
+    setDragState(null);
+    setDragPreview(null);
   }
 
   function handleDragOverDay(e, day) {
     e.preventDefault();
     setDragOverDay(day);
+    // The payload isn't readable during dragover (only on drop), so the
+    // ghost's size comes from dragState instead — which also means a drag
+    // that didn't start in this grid simply gets no preview.
+    if (!dragState) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const startMin = computeSnappedStartMinute(e.clientY - rect.top, pxPerMin, dragState.duration);
+    // dragover fires continuously for as long as the pointer is over the
+    // column; returning the previous object unchanged when the snapped slot
+    // hasn't actually moved lets React bail out of the re-render entirely,
+    // so the whole grid only reconciles once per 15-minute step.
+    setDragPreview((prev) =>
+      prev && prev.day === day && prev.startMin === startMin && prev.duration === dragState.duration
+        ? prev
+        : { day, startMin, duration: dragState.duration }
+    );
   }
 
   /** Drag source for an "Unscheduled" tray chip — see applyDrop's 'task'
@@ -635,7 +704,7 @@ export default function WeekView({
 
   function handleDropOnDay(e, day) {
     e.preventDefault();
-    setDragOverDay(null);
+    endDrag();
     let payload;
     try {
       payload = JSON.parse(e.dataTransfer.getData('text/plain'));
@@ -682,13 +751,15 @@ export default function WeekView({
 
     const longPressTimer = setTimeout(() => {
       dragging = true;
+      // Same "this item is in the air" styling the mouse path gets — the
+      // long press is the only feedback the user has otherwise.
+      setDragState({ id: item.data.id, type: item.type, duration });
     }, LONG_PRESS_MS);
 
     function cleanup() {
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onEnd);
-      setDragOverDay(null);
-      setTouchDragPreview(null);
+      endDrag();
     }
 
     function onMove(moveEvent) {
@@ -713,7 +784,7 @@ export default function WeekView({
       lastDay = day;
       lastRelY = relY;
       setDragOverDay(day);
-      setTouchDragPreview({ day, startMin: computeSnappedStartMinute(relY, pxPerMin, duration), duration });
+      setDragPreview({ day, startMin: computeSnappedStartMinute(relY, pxPerMin, duration), duration });
     }
 
     function onEnd(endEvent) {
@@ -754,28 +825,40 @@ export default function WeekView({
   }
 
   // --- Resize handlers (vertical only; mouse OR touch) ------------------------
+  // The live height is driven by `resizePreview` state (rather than poking
+  // the element's style.height directly, as this used to) so the box can also
+  // show its new end time as it grows/shrinks — a direct DOM write would be
+  // undone by the very next React render of the grid anyway. It only ever
+  // re-renders when the snapped 15-minute end actually changes, not on every
+  // pointer move.
   function handleResizeStart(e, item) {
     e.stopPropagation();
     e.preventDefault();
+    cancelHoverPreview();
     const startY = getClientY(e);
     const originalEndMin = timeToMinutes(item.data.endTime);
-    const elId = item.type === 'block' ? `block-${item.data.id}` : `event-${item.data.id}`;
+    const startMin = timeToMinutes(item.data.startTime);
+
+    /** Snapped end minute for a pointer position, clamped to at least one
+     * snap step long and to the bottom of the grid. */
+    function endMinuteFor(evt) {
+      const deltaMin = Math.round((getClientY(evt) - startY) / pxPerMin / SNAP_MIN) * SNAP_MIN;
+      return Math.min(Math.max(startMin + SNAP_MIN, originalEndMin + deltaMin), GRID_END_MIN);
+    }
 
     function onMove(moveEvent) {
       if (moveEvent.cancelable) moveEvent.preventDefault();
-      const deltaY = getClientY(moveEvent) - startY;
-      const deltaMin = Math.round(deltaY / pxPerMin / SNAP_MIN) * SNAP_MIN;
-      let newEndMin = originalEndMin + deltaMin;
-      newEndMin = Math.min(Math.max(timeToMinutes(item.data.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
-      const el = document.getElementById(elId);
-      if (el) el.style.height = `${(newEndMin - timeToMinutes(item.data.startTime)) * pxPerMin}px`;
+      const endMin = endMinuteFor(moveEvent);
+      setResizePreview((prev) =>
+        prev && prev.id === item.data.id && prev.type === item.type && prev.endMin === endMin
+          ? prev
+          : { id: item.data.id, type: item.type, endMin }
+      );
     }
 
     function onUp(upEvent) {
-      const deltaY = getClientY(upEvent) - startY;
-      const deltaMin = Math.round(deltaY / pxPerMin / SNAP_MIN) * SNAP_MIN;
-      let newEndMin = originalEndMin + deltaMin;
-      newEndMin = Math.min(Math.max(timeToMinutes(item.data.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
+      const newEndMin = endMinuteFor(upEvent);
+      setResizePreview(null);
       if (item.type === 'block') {
         updateBlock(item.data.id, { endTime: minutesToTime(newEndMin), isAutoScheduled: false });
       } else {
@@ -831,6 +914,52 @@ export default function WeekView({
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  }
+
+  /**
+   * Live drag/resize state for a single block/event: whether it's the item
+   * currently in the air (so it can be styled as lifted out of the grid),
+   * and — while it's being resized — the height and end time it should
+   * render at instead of its packed ones. Neighbours deliberately keep
+   * their packed positions during a resize; nothing repacks until the
+   * resize is committed.
+   */
+  function itemLiveState(item) {
+    const isDragging = dragState?.type === item.type && dragState.id === item.data.id;
+    const isResizing = resizePreview?.type === item.type && resizePreview.id === item.data.id;
+    const height = isResizing
+      ? Math.max(MIN_BLOCK_HEIGHT_PX, (resizePreview.endMin - timeToMinutes(item.data.startTime)) * pxPerMin)
+      : item.height;
+    return {
+      isDragging,
+      isResizing,
+      height,
+      endTime: isResizing ? minutesToTime(resizePreview.endMin) : item.data.endTime,
+      // A box resized down to a sliver has room for exactly one line, and
+      // mid-resize the live time is the more useful one — so the title gives
+      // way to it there, the same trade-off renderGhost makes.
+      liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
+    };
+  }
+
+  /**
+   * The dashed "this is where it lands" box, shared by the drag-to-create
+   * and drag-to-move previews — labelled with the live snapped time range,
+   * which is the point of it: the browser's own drag image is a frozen
+   * snapshot taken at dragstart, so this ghost is the only thing that can
+   * tell the user what time they're actually about to drop on. Below
+   * TWO_LINE_MIN_HEIGHT there's only room for one line, and the time is
+   * the more useful of the two (same trade-off the blocks themselves make).
+   */
+  function renderGhost(startMin, endMin, label) {
+    const height = Math.max(20, (endMin - startMin) * pxPerMin);
+    const timeText = `${minutesToTime(startMin)}–${minutesToTime(endMin)}`;
+    return (
+      <div className="cal-event-ghost" style={{ top: timeToY(minutesToTime(startMin)), height }}>
+        {height >= TWO_LINE_MIN_HEIGHT && <div className="cal-block-title">{label}</div>}
+        <div className="cal-block-time">{timeText}</div>
+      </div>
+    );
   }
 
   return (
@@ -927,32 +1056,17 @@ export default function WeekView({
               </div>
             )}
 
-            {createDrag && createDrag.day === day && (
-              <div
-                className="cal-event-ghost"
-                style={{
-                  top: timeToY(minutesToTime(Math.min(createDrag.startMin, createDrag.currentMin))),
-                  height: Math.max(
-                    20,
-                    (Math.max(createDrag.startMin, createDrag.currentMin) - Math.min(createDrag.startMin, createDrag.currentMin)) * pxPerMin
-                  ),
-                }}
-              >
-                New event
-              </div>
-            )}
+            {createDrag &&
+              createDrag.day === day &&
+              renderGhost(
+                Math.min(createDrag.startMin, createDrag.currentMin),
+                Math.max(createDrag.startMin, createDrag.currentMin),
+                'New event'
+              )}
 
-            {touchDragPreview && touchDragPreview.day === day && (
-              <div
-                className="cal-event-ghost"
-                style={{
-                  top: timeToY(minutesToTime(touchDragPreview.startMin)),
-                  height: Math.max(20, touchDragPreview.duration * pxPerMin),
-                }}
-              >
-                Move here
-              </div>
-            )}
+            {dragPreview &&
+              dragPreview.day === day &&
+              renderGhost(dragPreview.startMin, dragPreview.startMin + dragPreview.duration, 'Move here')}
 
             {dayItems.map((item) => {
               const { lane, totalLanes } = item;
@@ -1055,18 +1169,34 @@ export default function WeekView({
 
               if (item.type === 'event') {
                 const evt = item.data;
-                const { top, height } = item;
+                const { top } = item;
+                const { isDragging, isResizing, endTime, height, liveTimeOnly } = itemLiveState(item);
                 return (
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''}`}
+                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
                     style={{ top, height, ...laneStyle }}
-                    title={evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title}
+                    // Desktop gets the richer HoverPreviewCard instead (see
+                    // below) — mobile has no hover, so it keeps the native
+                    // title tooltip (which does nothing there anyway, but
+                    // costs nothing to leave as an accessibility fallback).
+                    title={isMobile ? (evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title) : undefined}
                     draggable={!isMobile && evt.canEdit !== false}
                     onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
+                    onDragEnd={isMobile ? undefined : endDrag}
                     onTouchStart={(e) => handleItemTouchStart(e, item)}
                     onClick={() => onSelectEvent?.(evt)}
+                    onMouseEnter={
+                      isMobile
+                        ? undefined
+                        : (e) =>
+                            scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
+                              title: evt.title,
+                              timeText: `${evt.startTime}–${evt.endTime}`,
+                            })
+                    }
+                    onMouseLeave={isMobile ? undefined : cancelHoverPreview}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
@@ -1076,7 +1206,14 @@ export default function WeekView({
                       }
                     }}
                   >
-                    {evt.title}
+                    {!liveTimeOnly && evt.title}
+                    {/* Events have no permanent time line (the title is all
+                        that fits), so the live one only appears mid-resize. */}
+                    {isResizing && (
+                      <div className="cal-block-time is-live">
+                        {evt.startTime}–{endTime}
+                      </div>
+                    )}
                     {evt.canEdit !== false && (
                       <div
                         className="resize-handle"
@@ -1089,7 +1226,8 @@ export default function WeekView({
               }
 
               const block = item.data;
-              const { top, height } = item;
+              const { top } = item;
+              const { isDragging, isResizing, endTime, height, liveTimeOnly } = itemLiveState(item);
               const task = taskById[block.taskId];
               if (!task) return null;
               // A sub-task's block gets a second, muted line naming its parent task
@@ -1102,7 +1240,7 @@ export default function WeekView({
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''}`}
+                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
                   style={{
                     top,
                     height,
@@ -1111,8 +1249,23 @@ export default function WeekView({
                   }}
                   draggable={!isMobile && !block.isLocked}
                   onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
+                  onDragEnd={isMobile ? undefined : endDrag}
                   onTouchStart={(e) => handleItemTouchStart(e, item)}
                   onClick={() => onSelectBlock?.(block)}
+                  onMouseEnter={
+                    isMobile
+                      ? undefined
+                      : (e) =>
+                          scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
+                            title: task.title,
+                            timeText: `${block.startTime}–${block.endTime}`,
+                            priority: task.priority,
+                            projectName: projectById[task.projectId]?.name,
+                            parentTitle: parentTask?.title,
+                            isPassive: block.isPassive,
+                          })
+                  }
+                  onMouseLeave={isMobile ? undefined : cancelHoverPreview}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
@@ -1121,7 +1274,13 @@ export default function WeekView({
                       onSelectBlock?.(block);
                     }
                   }}
-                  title={`${task.title}${parentTask ? ` (sub-task of ${parentTask.title})` : ''}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`}
+                  // Desktop gets the richer HoverPreviewCard instead (see
+                  // below) — mobile keeps this as its native tooltip fallback.
+                  title={
+                    isMobile
+                      ? `${task.title}${parentTask ? ` (sub-task of ${parentTask.title})` : ''}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`
+                      : undefined
+                  }
                 >
                   <button
                     className="lock-indicator"
@@ -1133,14 +1292,19 @@ export default function WeekView({
                   >
                     {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
                   </button>
-                  <div className="cal-block-title">
-                    {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
-                    {task.title}
-                  </div>
+                  {!liveTimeOnly && (
+                    <div className="cal-block-title">
+                      {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
+                      {task.title}
+                    </div>
+                  )}
                   {showParentLine && <div className="cal-block-parent">{parentTask.title}</div>}
-                  {showTimeLine && (
-                    <div className="cal-block-time">
-                      {block.startTime}–{block.endTime}
+                  {/* Mid-resize this is the live readout of the new end time
+                      (see itemLiveState), highlighted so the change is
+                      obvious — otherwise it's the block's own time range. */}
+                  {(showTimeLine || isResizing) && (
+                    <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
+                      {block.startTime}–{endTime}
                     </div>
                   )}
                   {!block.isLocked && (
@@ -1205,6 +1369,8 @@ export default function WeekView({
           document.body
         )}
       </div>
+
+      {hoverPreview && <HoverPreviewCard {...hoverPreview} />}
     </div>
   );
 }

@@ -17,6 +17,18 @@
 
 export const CHANGELOG = [
   {
+    version: '1.32.0',
+    date: '2026-07-31',
+    title: 'A more polished feel: motion, hover previews, and a bit of depth',
+    changes: [
+      'Task list rows and board cards now glide into place when you complete, reorder, or filter tasks instead of snapping.',
+      'Dragging or resizing a calendar block shows a live start–end time readout and a lifted "picked up" look while you drag.',
+      'Hovering a calendar block, event, or Gantt row (desktop only) now shows a quick preview card with the full title, time, priority, and project when the text is too long to fit.',
+      'Empty lists and widgets (no tasks, nothing scheduled, no notes) show a small icon instead of bare text, and the main view has a touch of background depth.',
+      'All of the above is skipped automatically if you have Interface animations turned off in Settings.',
+    ],
+  },
+  {
     version: '1.31.0',
     date: '2026-07-30',
     title: '"Plan today" — a lighter re-balance for just today, plus drag-to-schedule',

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, X, Clock, FolderPlus, Pencil, Search, Upload } from 'lucide-react';
+import { Plus, X, Clock, FolderPlus, Pencil, Search, Upload, StickyNote } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { linkify, containsLink } from '../../utils/linkify';
 import { nextLabelColor } from '../../utils/labelColor';
@@ -361,6 +361,7 @@ export default function NotesCard() {
 
         {filteredNotes.length === 0 && !isAdding && (
           <div className="notes-empty">
+            <StickyNote size={20} className="empty-state-icon" aria-hidden="true" />
             {noteQuery ? 'No notes match your search.' : 'Jot down anything — paste a link to keep it clickable.'}
           </div>
         )}
