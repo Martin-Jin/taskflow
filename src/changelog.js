@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.28.0',
+    date: '2026-07-30',
+    title: 'Command palette: jump to anything with Ctrl+K',
+    changes: [
+      'Press Ctrl+K (or Cmd+K on Mac) anywhere to open a command palette that searches views, projects, and tasks, and runs quick actions like Add task, Re-balance schedule, and Toggle theme.',
+      'On mobile, tap the new search icon in the Dashboard topbar to open the same palette.',
+      "The shortcut is listed and customizable from Settings → Keyboard shortcuts, same as the others.",
+    ],
+  },
+  {
     version: '1.27.0',
     date: '2026-07-30',
     title: 'Click a note to read the whole thing',

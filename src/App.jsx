@@ -18,7 +18,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
-import { ThemeProvider } from './context/ThemeContext';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { SoundProvider } from './context/SoundContext';
 import { AuthProvider } from './context/AuthContext';
 import { TimerProvider } from './context/TimerContext';
@@ -37,6 +37,8 @@ import InstallAppBanner from './components/Common/InstallAppBanner';
 import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
+import TaskDetailModal from './components/Modals/TaskDetailModal';
+import CommandPalette from './components/CommandPalette';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -50,6 +52,7 @@ import {
   CheckSquare,
   TrendingUp,
   Settings,
+  Search,
 } from 'lucide-react';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
@@ -99,7 +102,10 @@ function AppShell() {
   // is pressed from a different tab — see the effect on this prop in
   // TaskListPanel.
   const [addTaskSignal, setAddTaskSignal] = useState(0);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [paletteTaskId, setPaletteTaskId] = useState(null);
   const isMobile = useIsMobile();
+  const { toggleTheme } = useTheme();
   const {
     undo,
     redo,
@@ -117,6 +123,8 @@ function AppShell() {
     togglePinProject,
     deleteProject,
     touchProjectVisited,
+    tasks,
+    runRebalance,
   } = useScheduler();
 
   // Shared by the sidebar, List view, and Board view — selecting a project
@@ -211,6 +219,7 @@ function AppShell() {
         setTab('tasks');
         setAddTaskSignal((n) => n + 1);
       },
+      commandPalette: () => setShowCommandPalette(true),
     },
     (def) => {
       const messages = {
@@ -218,9 +227,26 @@ function AppShell() {
         redo: canRedo ? 'Redid last action' : 'Nothing to redo',
         newTask: 'Opening new task',
       };
+      // Opening the palette is instantly visible on screen, unlike the
+      // others above (which may fire from a tab where the result isn't) —
+      // no toast needed for it.
+      if (def.id === 'commandPalette') return;
       setNotification({ type: 'info', message: messages[def.id] || `${def.label} shortcut used` });
     }
   );
+
+  function openTaskFromPalette(taskId) {
+    setPaletteTaskId(taskId);
+  }
+
+  const paletteTask = paletteTaskId ? tasks.find((t) => t.id === paletteTaskId) : null;
+
+  const paletteActions = [
+    { id: 'addTask', label: 'Add task', run: () => { setTab('tasks'); setAddTaskSignal((n) => n + 1); } },
+    { id: 'rebalance', label: 'Re-balance schedule', run: runRebalance },
+    { id: 'toggleTheme', label: 'Toggle light/dark theme', run: toggleTheme },
+    { id: 'manageProjects', label: 'Manage projects', run: () => openManageProjects() },
+  ];
 
   // Lets components outside SettingsPanel (e.g. an error toast/modal) jump
   // straight to a Settings section via requestSettingsSection — mirrors
@@ -260,7 +286,15 @@ function AppShell() {
             <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="brand-mark" />
             <span className="brand-name">TaskFlow</span>
           </div>
-          <AccountButton compact menuAlign="down" onOpenAccountSettings={() => setTab('settings')} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {/* Mobile has no keyboard for Ctrl+K, so this is its only entry point
+                to the command palette — placed here since Dashboard is the
+                mobile home tab, reachable from anywhere via BottomTabBar. */}
+            <button className="btn btn-icon" onClick={() => setShowCommandPalette(true)} aria-label="Open command palette" title="Search / commands">
+              <Search size={18} />
+            </button>
+            <AccountButton compact menuAlign="down" onOpenAccountSettings={() => setTab('settings')} />
+          </div>
         </header>
       )}
 
@@ -313,6 +347,20 @@ function AppShell() {
         <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onViewChange={setTaskView} onFinish={closeTour} />
       )}
       {showChangelog && <ChangelogModal onClose={closeChangelog} />}
+      {showCommandPalette && (
+        <CommandPalette
+          tabs={TABS}
+          activeTab={tab}
+          onSelectTab={setTab}
+          projects={projects}
+          onSelectProject={selectProject}
+          tasks={tasks}
+          onOpenTask={openTaskFromPalette}
+          actions={paletteActions}
+          onClose={() => setShowCommandPalette(false)}
+        />
+      )}
+      {paletteTask && <TaskDetailModal task={paletteTask} onClose={() => setPaletteTaskId(null)} />}
       <CompleteTaskConfirmModal />
     </div>
   );

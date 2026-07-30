@@ -1272,6 +1272,48 @@ input.search-bar-input {
   min-width: 0;
 }
 
+/* -------------------------------------------------------------------- */
+/* CommandPalette (Ctrl+K) — reuses .modal-stat-list's shell and the     */
+/* .search-bar-dropdown-* row styles above, just without the absolute-   */
+/* positioned dropdown wrapper since it IS the modal body here.          */
+/* -------------------------------------------------------------------- */
+@media (min-width: 640px) {
+  .modal-command-palette {
+    width: 560px;
+  }
+}
+
+.command-palette-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.command-palette-search-row input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.command-palette-search-row input:focus {
+  outline: none;
+}
+
+.command-palette-list {
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+}
+
+.command-palette-item.active {
+  background: var(--color-bg-surface-hover);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
