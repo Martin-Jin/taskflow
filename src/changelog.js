@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.18.1',
+    date: '2026-07-30',
+    title: 'AI Quick Add: fixed a plan-review crash and a wrong error message',
+    changes: [
+      'Fixed a bug where a proposed plan containing a dependency cycle (e.g. two tasks each depending on the other) could crash the review screen entirely instead of just flagging the cyclic tasks as invalid.',
+      'A rejected Gemini API key now shows the same "check it in Settings" message as other providers, instead of a generic upstream-error message.',
+    ],
+  },
+  {
     version: '1.18.0',
     date: '2026-07-30',
     title: 'AI Quick Add can now plan and organize your whole workspace',
