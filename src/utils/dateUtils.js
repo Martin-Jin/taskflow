@@ -9,6 +9,22 @@
  * ============================================================================
  */
 
+/**
+ * The browser's current IANA timezone (e.g. "Pacific/Auckland"), used to
+ * stamp notificationSettings.timezone so the server-side notify-worker can
+ * compute "today"/overdue/starting-soon against the same wall-clock day the
+ * user actually sees, instead of blindly assuming UTC (see
+ * notify-worker/src/computeNotifications.js). Falls back to 'UTC' on the
+ * rare runtime that doesn't support Intl's timezone resolution.
+ */
+export function getBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
 /** Convert a Date object to an ISO "YYYY-MM-DD" string (local time, not UTC). */
 export function toISODate(date) {
   const y = date.getFullYear();
