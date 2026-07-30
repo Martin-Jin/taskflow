@@ -28,6 +28,7 @@
  */
 
 import { addDays, addMonthsClamped } from './dateUtils';
+import { generateRuleOccurrences } from './recurrenceExpansion';
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -310,6 +311,21 @@ export function parseRecurrenceRule(str) {
 }
 
 /**
+ * Thin, named wrapper over parseRecurrenceRule for call sites that are
+ * (re)computing Task.recurrenceRule — the cached/derived copy of the parsed
+ * rule stored alongside `recurrenceString` (see types/index.js). Named
+ * distinctly from parseRecurrenceRule so those call sites read as "recompute
+ * the hidden rule field" rather than a generic parse — every place that sets
+ * `recurrenceString` on a Task must call this alongside it so the two never
+ * drift out of sync.
+ * @param {string|null|undefined} recurrenceString
+ * @returns {{unit: 'day'|'week'|'month'|'year', count: number, days?: number[]}|null}
+ */
+export function deriveRecurrenceRule(recurrenceString) {
+  return parseRecurrenceRule(recurrenceString);
+}
+
+/**
  * Locate a recurrence phrase anywhere inside a longer piece of text (e.g. a
  * task title being typed), rather than requiring the whole string to BE the
  * recurrence phrase like parseRecurrenceRule does. Used by smartParse.js to
@@ -389,6 +405,65 @@ export function computeNextDueDate(currentDueDate, recurrenceString) {
     default:
       return addDays(currentDueDate, 1);
   }
+}
+
+/**
+ * Every occurrence date of a recurring task within [rangeStartIso,
+ * rangeEndIso] (inclusive), anchored at the task's own `dueDate` (the first/
+ * defining occurrence — see Task.recurrenceRule). Used by rebalanceEngine.js
+ * to actually place a recurring task on every day (or specific weekday) it
+ * repeats, instead of only ever seeing its single current `dueDate` window.
+ *
+ * We only ever need FUTURE occurrences here (scheduling), never historical
+ * reconstruction of past ones — so this always walks forward from
+ * `task.dueDate`, same as computeNextDueDate's own contract.
+ *
+ * Reuses recurrenceExpansion.js's `generateRuleOccurrences` (the same
+ * BYDAY-walking date generator CalendarEvent expansion already relies on)
+ * rather than reimplementing that math here — see this module's header
+ * comment for why these are two distinct recurrence systems (natural-
+ * language Task due dates vs. RRULE CalendarEvents) that still share this one
+ * piece of date-walking logic. `month`/`year` map to a MONTHLY step (interval
+ * = count, or count*12 for year) since neither supports a `days` filter
+ * today, matching computeNextDueDate's own year-as-12-months convention.
+ *
+ * @param {import('../types').Task} task - must have `dueDate` and `recurrenceRule` set; returns [] otherwise.
+ * @param {string} rangeStartIso - "YYYY-MM-DD"
+ * @param {string} rangeEndIso - "YYYY-MM-DD"
+ * @returns {string[]} ISO occurrence dates, ascending, including `task.dueDate` itself if it falls in range.
+ */
+export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
+  const rule = task?.recurrenceRule;
+  if (!rule || !task.dueDate) return [];
+  if (rangeEndIso < task.dueDate) return []; // task's first occurrence hasn't happened yet within this range
+
+  let freq;
+  let interval;
+  let byDay = null;
+  switch (rule.unit) {
+    case 'day':
+      freq = 'DAILY';
+      interval = rule.count;
+      break;
+    case 'week':
+      freq = 'WEEKLY';
+      interval = rule.count;
+      byDay = rule.days && rule.days.length ? rule.days : null;
+      break;
+    case 'month':
+      freq = 'MONTHLY';
+      interval = rule.count;
+      break;
+    case 'year':
+      freq = 'MONTHLY';
+      interval = rule.count * 12;
+      break;
+    default:
+      return [];
+  }
+
+  const expansionRule = { freq, interval: Math.max(1, interval), byDay, count: null };
+  return generateRuleOccurrences(task.dueDate, expansionRule, rangeStartIso, rangeEndIso);
 }
 
 /** Options for the "Repeats every N ___" unit <select> in AddTaskModal/TaskDetailModal. */

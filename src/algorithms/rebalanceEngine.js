@@ -54,8 +54,109 @@
 
 import { computeHorizonCapacity } from './capacityEngine';
 import { allocateTasks } from './allocator';
-import { toISODate, dateRange } from '../utils/dateUtils';
+import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { areDependenciesMet } from '../utils/dependencyUtils';
+import { generateTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
+
+/**
+ * A recurring task is only eligible for the per-occurrence expansion below if
+ * it has both a `dueDate` (the anchor occurrence) and a rule that actually
+ * parses. `recurrenceRule` is normally cached on the task already (see
+ * SchedulerContext's addTask/updateTask), but this also derives it on the fly
+ * as a fallback — a task persisted before this field existed (or hand-edited
+ * data) shouldn't silently lose real multi-day scheduling just because the
+ * cache hasn't been (re)computed yet.
+ */
+function resolveTaskRecurrenceRule(task) {
+  if (!task.isRecurring || !task.dueDate) return null;
+  return task.recurrenceRule || deriveRecurrenceRule(task.recurrenceString);
+}
+
+/**
+ * Splits `eligibleTasks` into normal tasks (unchanged) and a fresh array of
+ * VIRTUAL per-occurrence pseudo-tasks for every recurring task, one per
+ * occurrence date within [today, horizonEnd] (see utils/recurrence.js's
+ * generateTaskOccurrences). Each virtual task reuses allocator.js's existing
+ * `enforceDueDate` window-collapse (a single fixed block sized to the task's
+ * full estimatedHours, on that exact day — no new allocator logic needed) by
+ * setting `dueDate` to the occurrence date and `enforceDueDate: true`. Its id
+ * gets a `::occurrenceDate` suffix so distinct occurrences of the same real
+ * task don't collide as allocateTasks inputs — callers MUST strip this back
+ * off (see stripOccurrenceSuffix below) before any block/overflow entry
+ * referencing it reaches persisted state.
+ *
+ * `spentHoursByTaskDate` (built by the caller from the SAME historical/locked
+ * block source it already uses for its whole-task `spentHoursByTask` map, just
+ * keyed by `${taskId}::${date}` instead of `taskId`) is what makes each
+ * occurrence's remaining hours independent: without it, a locked/historical
+ * block sitting on one occurrence's date would otherwise double-count against
+ * every other occurrence of the same recurring task, since a plain
+ * `estimatedHours - (whole-task spent)` calculation (see tasksWithRemaining
+ * below) assumes a single shared window, which is no longer true once each
+ * occurrence gets its own independent block. A future occurrence with nothing
+ * yet placed on its date naturally comes out fresh at its full estimatedHours.
+ *
+ * The real (unexpanded) recurring task itself must NOT also be handed to
+ * allocateTasks — the caller excludes it from `normal` before merging back,
+ * since it's entirely superseded by its virtual occurrences here.
+ */
+function expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizonEnd) {
+  const normal = [];
+  const virtualOccurrences = [];
+  for (const task of eligibleTasks) {
+    const rule = resolveTaskRecurrenceRule(task);
+    if (!rule) {
+      normal.push(task);
+      continue;
+    }
+    const recurringTask = task.recurrenceRule ? task : { ...task, recurrenceRule: rule };
+    const occurrenceDates = generateTaskOccurrences(recurringTask, today, horizonEnd);
+    for (const date of occurrenceDates) {
+      const spent = spentHoursByTaskDate.get(`${task.id}::${date}`) || 0;
+      const remainingHours = Math.max(0, task.estimatedHours - spent);
+      if (remainingHours <= 0) continue; // this occurrence is already fully covered by a locked/historical block
+      virtualOccurrences.push({ ...recurringTask, id: `${task.id}::${date}`, dueDate: date, enforceDueDate: true, remainingHours });
+    }
+  }
+  return { normal, virtualOccurrences };
+}
+
+/**
+ * allocator.js's scoreTask/computeEffectiveDeadlines/computeBlockerIds all
+ * resolve a task's urgency by looking it up in `taskById` (see allocator.js's
+ * computeEffectiveDeadlines: `taskById ? [...taskById.values()] : tasks`) —
+ * without an entry there, a virtual occurrence id would silently score as
+ * "no deadline" (baseline urgency) regardless of how close its occurrence
+ * date actually is, since the real recurring task is only ever registered
+ * under its own plain id. Returns a copy of `taskById` with every virtual
+ * occurrence ALSO registered under its own `::date`-suffixed id, so urgency
+ * scoring sees each occurrence's own (enforceDueDate-collapsed) deadline
+ * correctly.
+ */
+function withVirtualEntries(taskById, virtualOccurrences) {
+  const expanded = new Map(taskById);
+  for (const occ of virtualOccurrences) expanded.set(occ.id, occ);
+  return expanded;
+}
+
+/** Strips a `${realTaskId}::${occurrenceDate}` virtual id back to the real task id — a no-op for a non-virtual id. */
+function stripOccurrenceSuffix(id) {
+  const sepIdx = id.indexOf('::');
+  return sepIdx === -1 ? id : id.slice(0, sepIdx);
+}
+
+/**
+ * Strip the `::occurrenceDate` virtual-id suffix off every returned block's
+ * (and overflow entry's) `taskId` — this must never leak into persisted
+ * state. The block's own `date` field (already set to the occurrence date by
+ * expandRecurringTasks above) is what distinguishes one occurrence's block
+ * from another everywhere else in the app.
+ */
+function stripVirtualIds(newBlocks, overflow) {
+  const blocks = newBlocks.map((b) => (b.taskId.includes('::') ? { ...b, taskId: stripOccurrenceSuffix(b.taskId) } : b));
+  const strippedOverflow = overflow.map((o) => (o.taskId.includes('::') ? { ...o, taskId: stripOccurrenceSuffix(o.taskId) } : o));
+  return { blocks, overflow: strippedOverflow };
+}
 
 /**
  * @param {Object} params
@@ -86,11 +187,28 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // 2. Recompute remainingHours per task: estimatedHours minus hours already
   //    "spent" in historical + locked blocks (i.e. committed, immovable work).
   const spentHoursByTask = new Map();
+  // Per (taskId, date) spent hours, from the same untouched blocks — needed
+  // for a recurring task's per-occurrence remaining-hours accounting (see
+  // expandRecurringTasks above); irrelevant/unused for non-recurring tasks.
+  const spentHoursByTaskDate = new Map();
   for (const b of [...historicalBlocks, ...lockedBlocks]) {
     spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
+    const dateKey = `${b.taskId}::${b.date}`;
+    spentHoursByTaskDate.set(dateKey, (spentHoursByTaskDate.get(dateKey) || 0) + b.durationHours);
   }
 
+  // A recurring task with a usable rule is expanded into independent
+  // per-occurrence pseudo-tasks below (see expandRecurringTasks), each with
+  // its own remaining-hours accounting keyed to its own date. The flat
+  // "estimatedHours minus this task's WHOLE historical+locked spend across
+  // every date it's ever had a block on" model just below only makes sense
+  // for a single shared window — for a long-lived recurring task (years of
+  // historical blocks, one per past occurrence) it would zero out
+  // remainingHours almost immediately and wrongly exclude the task from
+  // `schedulable` before it ever reaches expansion. So a recurring task
+  // always keeps its full estimatedHours here instead.
   const tasksWithRemaining = tasks.map((t) => {
+    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
     const spent = spentHoursByTask.get(t.id) || 0;
     const remaining = t.isLocked
       ? 0 // fully locked tasks are excluded from re-allocation entirely
@@ -151,7 +269,22 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
   const blockedByDependencies = schedulable.length - eligibleTasks.length;
-  const { blocks: newBlocks, overflow } = allocateTasks(eligibleTasks, capacityMap, rules, today, taskById);
+
+  // A recurring task (isRecurring && dueDate, already guaranteed once it's
+  // schedulable) is expanded into one virtual pseudo-task per occurrence date
+  // across the whole horizon instead of being scheduled as a single window —
+  // see expandRecurringTasks above. The real task row is excluded from what's
+  // handed to allocateTasks; its occurrences supersede it entirely.
+  const horizonEnd = addDays(today, horizonDays - 1);
+  const { normal: normalEligible, virtualOccurrences } = expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizonEnd);
+  const { blocks: rawBlocks, overflow: rawOverflow } = allocateTasks(
+    [...normalEligible, ...virtualOccurrences],
+    capacityMap,
+    rules,
+    today,
+    withVirtualEntries(taskById, virtualOccurrences)
+  );
+  const { blocks: newBlocks, overflow } = stripVirtualIds(rawBlocks, rawOverflow);
 
   // 5. Merge: historical (untouched) + locked (untouched) + freshly allocated.
   const finalBlocks = [...historicalBlocks, ...lockedBlocks, ...newBlocks];
@@ -221,11 +354,22 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   //    NOT counted as spent since they're about to be cleared and replanned,
   //    same as rebalance()'s treatment of its cleared blocks.
   const spentHoursByTask = new Map();
+  // Per (taskId, date) spent hours, from the same untouched blocks — needed
+  // for a recurring task's per-occurrence remaining-hours accounting (see
+  // rebalanceEngine's expandRecurringTasks above); irrelevant/unused for
+  // non-recurring tasks.
+  const spentHoursByTaskDate = new Map();
   for (const b of [...otherBlocks, ...todaysLocked]) {
     spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
+    const dateKey = `${b.taskId}::${b.date}`;
+    spentHoursByTaskDate.set(dateKey, (spentHoursByTaskDate.get(dateKey) || 0) + b.durationHours);
   }
 
+  // See rebalance()'s identical guard (resolveTaskRecurrenceRule) for why a
+  // recurring task always keeps its full estimatedHours here instead of the
+  // whole-task spent-hours subtraction below.
   const tasksWithRemaining = tasks.map((t) => {
+    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
     const spent = spentHoursByTask.get(t.id) || 0;
     const remaining = t.isLocked ? 0 : Math.max(0, t.estimatedHours - spent);
     return { ...t, remainingHours: remaining };
@@ -261,7 +405,21 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
   const blockedByDependencies = schedulable.length - eligibleTasks.length;
-  const { blocks: newBlocks, overflow: unfitToday } = allocateTasks(eligibleTasks, capacityMap, rules, today, taskById, { dayScoped: true });
+
+  // Same recurring-task expansion as rebalance() (see expandRecurringTasks
+  // above), just scoped to a single-day [today, today] range — a recurring
+  // task whose recurrence doesn't land on today simply produces no
+  // occurrence here, same as any other task not due today.
+  const { normal: normalEligible, virtualOccurrences } = expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, today);
+  const { blocks: rawBlocks, overflow: rawUnfitToday } = allocateTasks(
+    [...normalEligible, ...virtualOccurrences],
+    capacityMap,
+    rules,
+    today,
+    withVirtualEntries(taskById, virtualOccurrences),
+    { dayScoped: true }
+  );
+  const { blocks: newBlocks, overflow: unfitToday } = stripVirtualIds(rawBlocks, rawUnfitToday);
 
   // 5. Merge: everything else (untouched) + today's locked (untouched) +
   //    freshly allocated for today.

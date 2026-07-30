@@ -74,7 +74,7 @@
 
 import { getMockTasks, getMockSections, getMockProjects } from './mockData';
 import { extractDurationHours } from '../utils/durationParser';
-import { isRecurringDue } from '../utils/recurrence';
+import { isRecurringDue, deriveRecurrenceRule } from '../utils/recurrence';
 
 const TODOIST_API_BASE = 'https://api.todoist.com/api/v1';
 
@@ -144,6 +144,11 @@ function normalizeTodoistTask(raw, sectionsById, parentId) {
     // on completion (utils/recurrence.js) and to show a repeat icon in the
     // UI. Null for non-recurring tasks.
     recurrenceString: isRecurring ? raw.due?.string ?? null : null,
+    // Derived cache of recurrenceString (see utils/recurrence.js) — recomputed
+    // here since this task object bypasses SchedulerContext's addTask/
+    // updateTask (which recompute it themselves), going straight into state
+    // via importFromTodoist.
+    recurrenceRule: isRecurring ? deriveRecurrenceRule(raw.due?.string) : null,
     projectId: raw.project_id != null ? String(raw.project_id) : null,
     // Stringified to match fetchSections()'s String(s.id) keys below — the
     // API doesn't consistently return section_id as the same type (string vs
