@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.8',
+    date: '2026-07-31',
+    title: 'Floating "Add task" button on desktop',
+    changes: [
+      'The "Add task" and "AI Quick Add" buttons in the Tasks list and Board views now float in the bottom-right corner on desktop too, matching the mobile layout, instead of sitting inline in the toolbar.',
+    ],
+  },
+  {
     version: '1.33.7',
     date: '2026-07-31',
     title: 'Fix: notification timing for users outside UTC',

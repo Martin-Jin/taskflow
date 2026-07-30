@@ -133,14 +133,67 @@
   flex-wrap: wrap;
 }
 
-/* AI Quick Add + Add task grouped together (see AddTaskFabGroup) so they sit
-   adjacent, right next to each other, with the toolbar's own space-between
-   putting all the flexible leftover width between this group and the search
-   bar instead of splitting it between the two buttons. */
+/* AI Quick Add + Add task (see AddTaskFabGroup) render as a floating FAB
+   stack on every breakpoint — fixed to the bottom-right corner rather than
+   inline in the toolbar, matching the mobile FAB styling this used to be
+   exclusive to. The bottom offset skips --bottom-bar-height here since the
+   mobile tab bar isn't present at this width; the mobile media query below
+   adds it back in. */
 .add-task-fab-group {
+  position: fixed;
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  z-index: 120;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+}
+
+.add-task-btn {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  justify-content: center;
+  box-shadow: var(--shadow-elevated);
+}
+
+.add-task-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.add-task-btn-label {
+  display: none;
+}
+
+/* AI Quick Add / Add task mini-FABs, shown above the main button only while
+   the group is expanded (see AddTaskFabGroup) — smaller and round rather
+   than the main button's square-block shape, so the hierarchy between "the"
+   action and its alternatives stays visually clear. Each pops in on mount
+   (React only renders these while `expanded`, so mount timing = expand
+   timing) with the second one slightly delayed, so they read as unfurling
+   from the main button rather than snapping into place. */
+.fab-mini {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+  box-shadow: var(--shadow-elevated);
+  animation: fab-mini-in var(--duration-base) var(--ease-decelerate);
+}
+
+.fab-mini + .fab-mini {
+  animation-delay: 40ms;
+}
+
+@keyframes fab-mini-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.7);
+  }
 }
 
 .tasklist-rows {
@@ -309,13 +362,6 @@
     flex: 1 1 100%;
   }
 
-  /* AI Quick Add + Add task (see AddTaskFabGroup) become one floating FAB
-     stack instead of stretching across this row like the search bar above —
-     exempted from the full-width rule and positioned below instead. */
-  .add-task-fab-group {
-    flex: 0 0 auto;
-  }
-
   .taskpage-project-title,
   .taskpage-project-title-input {
     font-size: 18px;
@@ -349,67 +395,9 @@
     gap: 10px;
   }
 
-  /* The fab group itself (not the individual buttons) carries the fixed
-     bottom-right positioning, so "Add task" and, once expanded, its AI Quick
-     Add / Add task mini-FABs stack as one anchored unit — replacing the
-     full-width toolbar row on mobile where horizontal space is tight. The
-     group keeps its normal in-flow toolbar placement above 640px. Column
-     order matches DOM order (AI mini, Add mini, then the main button last),
-     which is exactly top-to-bottom the way they should stack. */
+  /* Below 640px the bottom tab bar (nav.css) occupies the corner the FAB
+     would otherwise sit in, so its offset grows to clear it. */
   .add-task-fab-group {
-    position: fixed;
-    right: calc(var(--space-4) + env(safe-area-inset-right, 0));
     bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
-    z-index: 120;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .add-task-btn {
-    width: 56px;
-    height: 56px;
-    padding: 0;
-    border-radius: var(--radius-lg);
-    justify-content: center;
-    box-shadow: var(--shadow-elevated);
-  }
-
-  .add-task-btn svg {
-    width: 22px;
-    height: 22px;
-  }
-
-  .add-task-btn-label {
-    display: none;
-  }
-
-  /* AI Quick Add / Add task mini-FABs, shown above the main button only
-     while the group is expanded (see AddTaskFabGroup) — smaller and round
-     rather than the main button's square-block shape, so the hierarchy
-     between "the" action and its alternatives stays visually clear. Each
-     pops in on mount (React only renders these while `expanded`, so mount
-     timing = expand timing) with the second one slightly delayed, so they
-     read as unfurling from the main button rather than snapping into place. */
-  .fab-mini {
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border-radius: 50%;
-    justify-content: center;
-    box-shadow: var(--shadow-elevated);
-    animation: fab-mini-in var(--duration-base) var(--ease-decelerate);
-  }
-
-  .fab-mini + .fab-mini {
-    animation-delay: 40ms;
-  }
-}
-
-@keyframes fab-mini-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.7);
   }
 }

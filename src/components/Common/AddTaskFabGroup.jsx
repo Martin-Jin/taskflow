@@ -2,33 +2,29 @@
  * AddTaskFabGroup — the "Add task" + "AI Quick Add" button pair shown at the
  * top of the Tasks list and Board views (TaskListPanel.jsx, BoardView.jsx).
  *
- * Desktop: both render inline, side by side, right where they've always been.
+ * Renders as a floating FAB fixed to the bottom-right corner on every
+ * breakpoint (see .add-task-btn in tasklist.css). With AI Quick Add also
+ * configured, tapping it doesn't open "Add task" directly — it expands into
+ * two stacked mini-FABs (AI Quick Add above, Add task below) so both entry
+ * points stay reachable without a second permanent floating button crowding
+ * the corner. Tapping a mini-FAB, the main FAB again, or anywhere outside
+ * collapses it.
  *
- * Mobile: "Add task" alone becomes a floating FAB (see .add-task-btn's mobile
- * rule in tasklist.css). With AI Quick Add also configured, tapping that FAB
- * no longer opens "Add task" directly — it expands into two stacked mini-FABs
- * (AI Quick Add above, Add task below) so both entry points stay reachable
- * without a second permanent floating button crowding the corner. Tapping a
- * mini-FAB, the main FAB again, or anywhere outside collapses it.
- *
- * The AI Quick Add button/mini-FAB is shown whenever the feature is
- * configured (`isAIQuickAddConfigured`), regardless of whether the user has
- * actually saved a provider API key yet — deliberately not hidden on either
- * desktop or mobile. If no key is saved, tapping it shows a toast pointing
- * at Settings instead of opening the modal (see handleAIQuickAdd).
+ * The AI Quick Add mini-FAB is shown whenever the feature is configured
+ * (`isAIQuickAddConfigured`), regardless of whether the user has actually
+ * saved a provider API key yet. If no key is saved, tapping it shows a toast
+ * pointing at Settings instead of opening the modal (see handleAIQuickAdd).
  */
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Sparkles, X } from 'lucide-react';
 import { isAIQuickAddConfigured, getStoredApiKey } from '../../services/aiQuickAddService';
-import { useIsMobile } from '../../hooks/useIsMobile';
 import { useScheduler } from '../../context/SchedulerContext';
 
 export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
-  const isMobile = useIsMobile();
   const { setNotification, requestSettingsSection } = useScheduler();
   const aiConfigured = isAIQuickAddConfigured();
-  const speedDial = isMobile && aiConfigured;
+  const speedDial = aiConfigured;
   const [expanded, setExpanded] = useState(false);
   const [aiShake, setAiShake] = useState(false);
   const rootRef = useRef(null);
@@ -78,18 +74,6 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
 
   return (
     <div className="add-task-fab-group" ref={rootRef}>
-      {aiConfigured && !speedDial && (
-        <button
-          className={`btn btn-icon ${aiShake ? 'shake-error' : ''}`}
-          data-tour="ai-quick-add"
-          onClick={handleAIQuickAdd}
-          onAnimationEnd={() => setAiShake(false)}
-          aria-label="AI Quick Add"
-          title="AI Quick Add"
-        >
-          <Sparkles size={14} />
-        </button>
-      )}
       {speedDial && expanded && (
         <>
           <button
