@@ -76,7 +76,7 @@ import {
 } from '../services/googleCalendarService';
 import { mergePulledGoogleEvents } from '../services/eventSyncService';
 import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects } from '../services/mockData';
-import { toISODate, addDays, timeToMinutes, minutesToTime } from '../utils/dateUtils';
+import { toISODate, addDays, timeToMinutes, minutesToTime, getBrowserTimeZone } from '../utils/dateUtils';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
 import { nextLabelColor } from '../utils/labelColor';
 import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
@@ -90,6 +90,12 @@ const EVENTS_HORIZON_DAYS = 28;
 // each channel plus per-trigger-type toggles (applying to whichever
 // channel(s) are enabled) and the customizable "starting soon" threshold.
 // Email defaults to off since there's no email-sending backend yet (Phase 3).
+// `timezone` (IANA name, e.g. "Pacific/Auckland") is stamped in immediately
+// from the browser rather than left undefined, so even a brand-new device's
+// very first localStorage write already carries it — see the resync effect
+// near notificationSettings' declaration below for how it stays current
+// after that (device changes, travel, or an existing user who predates this
+// field).
 function getDefaultNotificationSettings() {
   return {
     inAppEnabled: true,
@@ -98,6 +104,7 @@ function getDefaultNotificationSettings() {
     taskOverdue: true,
     taskDueToday: true,
     startingSoonMinutes: 10,
+    timezone: getBrowserTimeZone(),
   };
 }
 
@@ -451,6 +458,23 @@ export function SchedulerProvider({ children }) {
   // dependency arrays, the local backup payload, restoreFromBackup, and the
   // context value below), plus BACKUP_FIELDS in backupService.js.
   const [notificationSettings, setNotificationSettings] = usePersistedState('notificationSettings', getDefaultNotificationSettings);
+
+  // Keep notificationSettings.timezone resynced to the browser's own IANA
+  // timezone on every load — covers both an existing user who predates this
+  // field (it's simply undefined until this runs once) and a returning user
+  // who's switched devices or traveled since their last sync. Deliberately
+  // unconditional (not gated on `user`) so it applies for signed-out/local-
+  // only usage too. Runs before the cloud-sync effects further down, so a
+  // remote pull that follows (see applyRemoteData) still gets the last word
+  // for a signed-in user — it re-applies this same detected value there too,
+  // ensuring the freshly-detected browser zone always wins over whatever's
+  // stored locally or in the cloud, rather than a stale value from another
+  // device sticking around.
+  useEffect(() => {
+    const detected = getBrowserTimeZone();
+    setNotificationSettings((prev) => (prev.timezone === detected ? prev : { ...prev, timezone: detected }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-animations', animationsEnabled ? 'on' : 'off');
@@ -886,7 +910,12 @@ export function SchedulerProvider({ children }) {
       if ('soundEnabled' in remote) setSoundEnabled(remote.soundEnabled);
       if ('soundVolume' in remote) setSoundVolume(remote.soundVolume);
       if ('animationsEnabled' in remote) setAnimationsEnabled(remote.animationsEnabled);
-      if ('notificationSettings' in remote) setNotificationSettings(remote.notificationSettings);
+      // This device's own browser timezone always wins over whatever
+      // timezone the remote doc carries (another device's, possibly stale) —
+      // see the resync effect near notificationSettings' declaration above.
+      if ('notificationSettings' in remote) {
+        setNotificationSettings({ ...remote.notificationSettings, timezone: getBrowserTimeZone() });
+      }
       if ('notes' in remote) setNotes(remote.notes);
       else if ('pinnedLinks' in remote) setNotes(migrateLinksToNotes(remote.pinnedLinks)); // legacy remote doc, see notesModel.js migration note
       if ('shortcutBindings' in remote) {
@@ -1144,7 +1173,12 @@ export function SchedulerProvider({ children }) {
       if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
       if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
       if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
-      if ('notificationSettings' in payload) setNotificationSettings(payload.notificationSettings);
+      // Same reasoning as applyRemoteData above — a restored backup's stored
+      // timezone could be old/from another device, so this device's current
+      // browser timezone still wins rather than reintroducing a stale one.
+      if ('notificationSettings' in payload) {
+        setNotificationSettings({ ...payload.notificationSettings, timezone: getBrowserTimeZone() });
+      }
       if ('theme' in payload) setTheme(payload.theme);
       if ('notes' in payload) setNotes(payload.notes);
       else if ('pinnedLinks' in payload) setNotes(migrateLinksToNotes(payload.pinnedLinks)); // legacy backup file, see notesModel.js migration note
