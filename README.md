@@ -419,6 +419,18 @@ unlocked-future (cleared and re-planned); recomputes each task's
 remainder; merges everything back together. Locked blocks are never
 destroyed by a rebalance.
 
+**Plan today** (same file, `planToday()`) is a lighter sibling: it only
+clears and re-plans *today's* unlocked blocks — every other day, past or
+future, is left untouched. It can't just reuse `allocateTasks`'s normal
+multi-day pacing against a one-day capacity map (that would dilute today's
+placement based on due-date runway it can no longer see, and misreport
+plenty-of-time tasks as overflow) — instead it calls `allocateTasks` with
+`{ dayScoped: true }`, which greedily targets each task's full remaining
+hours against today alone (the same fast-path the allocator already used
+for "blocker" tasks — see above). Future blocks aren't touched, so their
+hours still count as already-spent when recomputing `remainingHours`, or a
+task with work already booked tomorrow would get double-scheduled.
+
 ### Sub-tasks and containers
 
 A sub-task (`parentId` set) is scheduled exactly like a top-level task —
@@ -584,7 +596,11 @@ cached copy.
   drag-edge-to-resize, on desktop with the mouse and on mobile via
   long-press-then-drag/resize by touch — any event you create counts as
   busy time the scheduler avoids, there's no separate "blocked time" concept
-  anymore. Overlapping events/blocks render side-by-side in columns on
+  anymore. Any task with unplaced hours shows up as a draggable chip in the
+  "Unscheduled" tray above the grid — drag (or long-press-drag on touch) one
+  straight onto a day to place a block manually, sized to the task's own
+  chunk-size rules, without waiting for Re-balance/Plan today. Overlapping
+  events/blocks render side-by-side in columns on
   desktop; on mobile, where there's no room for columns, they collapse into
   a single tappable "N events" chip instead. Week/3 Day/Day view clusters
   runs of short back-to-back tasks into a single "N short tasks" chip (click
@@ -596,7 +612,10 @@ cached copy.
   days) and clicking a day drills into Day view for the full time grid,
   matching how most calendar apps handle month → day navigation. Tap the
   lock icon on a block to protect it from future rebalances. **Re-balance
-  schedule** re-runs the engine while preserving locked blocks.
+  schedule** re-runs the engine while preserving locked blocks. **Plan
+  today**, next to it, only clears and re-plans today's unlocked blocks,
+  leaving every other day exactly as it was — useful when you just want to
+  fill in today's gaps without disturbing the rest of the week.
 - **Tasks** — one page, three views via its own List/Board/Gantt switch, all
   scoped to one project at a time (or "All Tasks"). Switch projects from the
   sidebar, the project picker shown above List/Board, or the search bar;

@@ -304,6 +304,71 @@
   }
 }
 
+/* "Unscheduled" tray — draggable chips for tasks with unplaced remaining
+   hours, sitting above the day grid so they can be dragged (or, on touch,
+   long-press-dragged) straight onto a day column. See WeekView's
+   unscheduledTasks/applyDrop for the scheduling logic. */
+.unscheduled-tray {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
+.unscheduled-tray-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.unscheduled-tray-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.unscheduled-tray-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+}
+
+.unscheduled-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  max-width: 220px;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid;
+  background: var(--color-bg-surface-raised);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  cursor: grab;
+}
+
+.unscheduled-chip-grip {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.unscheduled-chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unscheduled-chip-hours {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .week-grid {
   position: relative;
   display: grid;

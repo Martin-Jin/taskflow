@@ -12,7 +12,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -63,7 +63,7 @@ export default function CalendarPage() {
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
-  const { blocks, events, tasks, runRebalance, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
+  const { blocks, events, tasks, runRebalance, runPlanToday, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
   const touchStartX = useRef(null);
 
   // Close the date-picker/view-menu dropdowns on an outside click — each ref
@@ -286,10 +286,20 @@ export default function CalendarPage() {
           {/* Desktop only — on mobile this moves into the FAB speed-dial
               below (see .calendar-fab) instead of wrapping onto its own row. */}
           {!isMobile && (
-            <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
-              <Zap size={14} />
-              Re-balance schedule
-            </button>
+            <>
+              <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
+                <Zap size={14} />
+                Re-balance schedule
+              </button>
+              {/* Lighter sibling of Re-balance: only touches today's unlocked
+                  blocks instead of the whole visible horizon — see
+                  algorithms/rebalanceEngine.planToday for why this can't just
+                  reuse the full rebalance and discard the rest. */}
+              <button className="btn" data-tour="plan-today" onClick={runPlanToday} disabled={isLoading}>
+                <Sunrise size={14} />
+                Plan today
+              </button>
+            </>
           )}
           {/* Only useful once Google Calendar is actually connected — hidden
               rather than shown-but-disabled, matching how Settings' own
@@ -342,10 +352,10 @@ export default function CalendarPage() {
           toolbar button, matching TaskListPanel's "Add task" FAB style
           (see .calendar-fab in calendar.css, mirroring .add-task-btn). On
           desktop it still opens "New event" directly with a single click. On
-          mobile it expands into a two-item speed-dial (Re-balance schedule +
-          New event) instead, since Re-balance schedule was removed from the
-          mobile toolbar above to save vertical space — mirrors
-          AddTaskFabGroup's mobile expand/collapse pattern. */}
+          mobile it expands into a three-item speed-dial (Re-balance schedule +
+          Plan today + New event) instead, since those toolbar buttons were
+          removed from the mobile toolbar above to save vertical space —
+          mirrors AddTaskFabGroup's mobile expand/collapse pattern. */}
       <div className="calendar-fab-group" ref={fabGroupRef}>
         {isMobile && fabExpanded && (
           <>
@@ -361,6 +371,19 @@ export default function CalendarPage() {
               title="Re-balance schedule"
             >
               <Zap size={16} />
+            </button>
+            <button
+              className="btn btn-primary fab-mini"
+              data-tour="plan-today"
+              onClick={() => {
+                setFabExpanded(false);
+                runPlanToday();
+              }}
+              disabled={isLoading}
+              aria-label="Plan today"
+              title="Plan today"
+            >
+              <Sunrise size={16} />
             </button>
             <button
               className="btn btn-primary fab-mini"

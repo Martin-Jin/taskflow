@@ -515,9 +515,22 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  * @param {Map<string, import('../types').Task>} [taskById] - FULL task-id lookup (not just `tasks` above), used to
  *   resolve a due-date-less sub-task's nearest ancestor deadline (see resolveDueDate). Omit only if the caller
  *   knows none of `tasks` are ever due-date-less sub-tasks.
+ * @param {Object} [options]
+ * @param {boolean} [options.dayScoped] - "Plan today" mode (see rebalanceEngine's planToday). When true, EVERY
+ *   task's window collapses to just `today` (skipping the normal due-date-driven getTaskWindow resolution) and
+ *   every task targets its FULL remaining hours on that single day instead of an ideal per-day share — i.e. the
+ *   existing "blocker" greedy-fill behavior (see module doc comment, point 8) is extended to apply to all tasks,
+ *   not just blockers. This deliberately bypasses even-pacing/front-loading rather than trying to approximate it
+ *   over a truncated horizon: computing an "ideal share" against a task's real multi-day due-date window while
+ *   only exposing one day of capacity would dilute today's placement based on runway the caller isn't offering
+ *   anyway, and would report false overflow for tasks that have plenty of time on days simply not in this
+ *   `capacityMap`. Callers should pass a `capacityMap` covering only `today` in this mode, both so passes 2/3
+ *   below can't spill into other days and so this stays simple (nothing here filters placements by date beyond
+ *   what `capacityMap` already contains).
  * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number}> }}
  */
-export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
+export function allocateTasks(tasks, capacityMap, rules, today, taskById, options = {}) {
+  const { dayScoped = false } = options;
   const dates = [...capacityMap.keys()].sort();
   const horizonEnd = dates[dates.length - 1];
 
@@ -543,8 +556,10 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
 
   for (const task of prioritized) {
     const isBlocker = blockerIds.has(task.id);
-    const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
-    const frontLoad = !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
+    const { windowStart, windowEnd } = dayScoped
+      ? { windowStart: today, windowEnd: today }
+      : getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
+    const frontLoad = !dayScoped && !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
     const dayWeights = buildDayWeights(windowStart, windowEnd, frontLoad);
 
     // Order of attack: front-loaded tasks try deadline-adjacent days FIRST
@@ -566,7 +581,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       if (!freeForTask.has(date)) continue; // outside computed horizon
 
       const idealShare = task.remainingHours * (weight / totalWeight);
-      const targetHours = isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
+      const targetHours = dayScoped || isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
       if (targetHours < (task.minChunkHours ?? 0.5) - EPSILON_HOURS) continue;
 
       remaining -= placeAndRecordBlocks(task, date, targetHours, freeForTask.get(date), newBlocks);

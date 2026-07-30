@@ -33,13 +33,14 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Lock, Unlock, Wind } from 'lucide-react';
+import { Lock, Unlock, Wind, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, formatDisplayDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
 import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
+import { areDependenciesMet } from '../../utils/dependencyUtils';
 
 const GRID_START_MIN = 6 * 60; // 06:00
 const GRID_END_MIN = 24 * 60; // 24:00
@@ -328,11 +329,53 @@ export default function WeekView({
   onCreateEvent,
   onSelectDay,
 }) {
-  const { tasks, blocks, events, updateBlock, toggleBlockLock, updateEvent } = useScheduler();
+  const { tasks, blocks, events, updateBlock, toggleBlockLock, updateEvent, scheduleTaskManually } = useScheduler();
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
   const taskById = useMemo(() => Object.fromEntries(tasks.map((t) => [t.id, t])), [tasks]);
+
+  // "Unscheduled" tray (below) — tasks with unplaced work the user can drag
+  // (or, on touch, long-press-drag) straight onto a day column to place a
+  // block manually, instead of waiting for Re-balance/Plan today. Mirrors
+  // rebalanceEngine's own schedulability rules (container parents and
+  // undated top-level tasks are never directly schedulable; a task with
+  // unmet dependencies is held back) so this tray never offers something the
+  // engine itself wouldn't consider real, placeable work.
+  //
+  // IMPORTANT: `task.remainingHours` is NOT live-updated as blocks get
+  // placed (rebalance/planToday only ever recompute a throwaway local value
+  // for their own allocation math — see rebalanceEngine.js — the persisted
+  // field only changes on task create/complete/estimate-edit). Using it
+  // directly here would keep every task in the tray forever, even once it's
+  // fully covered by existing blocks. Instead, `unplacedHours` below is
+  // computed fresh from `estimatedHours` minus whatever's ALREADY on the
+  // calendar for that task (any block, any date, locked or not) — the same
+  // "spent hours" idea rebalanceEngine uses, just against every existing
+  // block rather than only historical+locked ones, since (unlike a full
+  // rebalance) nothing here is about to wipe and replan those blocks.
+  const unscheduledTasks = useMemo(() => {
+    const parentIds = new Set(tasks.filter((t) => t.parentId).map((t) => t.parentId));
+    const taskByIdMap = new Map(tasks.map((t) => [t.id, t])); // areDependenciesMet needs a Map, unlike the plain-object taskById above
+    const scheduledHoursByTask = new Map();
+    for (const b of blocks) {
+      scheduledHoursByTask.set(b.taskId, (scheduledHoursByTask.get(b.taskId) || 0) + b.durationHours);
+    }
+    return tasks
+      .filter(
+        (t) =>
+          !t.isLocked &&
+          !t.isCompleted &&
+          !parentIds.has(t.id) &&
+          (!!t.dueDate || !!t.parentId) &&
+          areDependenciesMet(t, taskByIdMap)
+      )
+      .map((t) => ({ ...t, unplacedHours: Math.max(0, t.estimatedHours - (scheduledHoursByTask.get(t.id) || 0)) }))
+      .filter((t) => t.unplacedHours > 0)
+      .sort((a, b) => (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31'));
+  }, [tasks, blocks]);
+  const unscheduledTaskById = useMemo(() => new Map(unscheduledTasks.map((t) => [t.id, t])), [unscheduledTasks]);
+  const [trayExpanded, setTrayExpanded] = useState(true);
 
   // Group once per `blocks`/`events` change rather than filtering the full
   // array once per visible day, and pre-compute each day's cluster/lane
@@ -535,6 +578,12 @@ export default function WeekView({
     setDragOverDay(day);
   }
 
+  /** Drag source for an "Unscheduled" tray chip — see applyDrop's 'task'
+   * branch for what happens on drop. */
+  function handleTaskChipDragStart(e, task) {
+    e.dataTransfer.setData('text/plain', JSON.stringify({ id: task.id, type: 'task' }));
+  }
+
   /** Shared by the mouse-drop handler and the touch-drag-end handler — looks
    * up the dragged block/event, applies the same snap/clamp math, and calls
    * the right updater for its type. `id` may be a VIRTUAL event id
@@ -547,6 +596,19 @@ export default function WeekView({
    * defaults to 'this' scope, so dragging one occurrence only moves that
    * occurrence, same as dragging any single event. */
   function applyDrop(type, id, day, relY) {
+    // A dragged-in unscheduled task (see the "Unscheduled" tray below) has no
+    // existing block to move — it creates a brand new one instead, sized to
+    // whatever's left of its remaining hours (clamped to its own chunk-size
+    // rules, same clamp the allocator itself uses when placing a single
+    // day's worth of work — see allocator.js's placeAndRecordBlocks).
+    if (type === 'task') {
+      const task = unscheduledTaskById.get(id);
+      if (!task) return;
+      const durationHours = Math.max(task.minChunkHours ?? 0.5, Math.min(task.unplacedHours || 1, task.maxChunkHours ?? 4));
+      const newStartMin = computeSnappedStartMinute(relY, pxPerMin, Math.round(durationHours * 60));
+      scheduleTaskManually(id, day, minutesToTime(newStartMin), durationHours);
+      return;
+    }
     let source;
     if (type === 'block') {
       source = blocks.find((b) => b.id === id);
@@ -598,22 +660,22 @@ export default function WeekView({
   // scroll and the drag is aborted with no side effects.
   const LONG_PRESS_MS = 250;
   const DRAG_START_THRESHOLD_PX = 8;
-  function handleItemTouchStart(e, item) {
-    if (item.type === 'block' && item.data.isLocked) return;
-    if (item.type === 'event' && item.data.canEdit === false) return;
-    // Stop this touch from bubbling up to CalendarPage's swipe-navigation
-    // listener — without this, dragging an item sideways across columns
-    // also reads as a horizontal swipe there, so releasing the drag could
-    // additionally page the view to the next/prev day (touchend keeps
-    // targeting this same element per the touch event spec, but the guard
-    // in CalendarPage's handleTouchEnd only holds if its handleTouchStart
-    // never ran, hence stopping propagation here rather than on end).
-    e.stopPropagation();
+
+  /**
+   * Shared core of the touch-drag path: long-press `e`'s starting touch,
+   * then track the finger across day columns via `elementFromPoint` (there's
+   * no native touch drag-and-drop API) until release, calling `onDrop(day,
+   * relY)` with the final column/offset. `duration` (minutes) only affects
+   * the live snap preview (touchDragPreview) — the actual placement math is
+   * entirely up to `onDrop`. Used by both handleItemTouchStart (moving an
+   * existing block/event) and the unscheduled-task tray's chip drag below
+   * (placing a brand new block).
+   */
+  function trackTouchDragToColumn(e, duration, onDrop) {
     const touch = e.touches?.[0];
     if (!touch) return;
     const startX = touch.clientX;
     const startY = touch.clientY;
-    const duration = timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime);
     let dragging = false;
     let lastDay = null;
     let lastRelY = null;
@@ -658,13 +720,37 @@ export default function WeekView({
       clearTimeout(longPressTimer);
       if (dragging && lastDay != null && lastRelY != null) {
         if (endEvent.cancelable) endEvent.preventDefault();
-        applyDrop(item.type, item.data.id, lastDay, lastRelY);
+        onDrop(lastDay, lastRelY);
       }
       cleanup();
     }
 
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onEnd);
+  }
+
+  function handleItemTouchStart(e, item) {
+    if (item.type === 'block' && item.data.isLocked) return;
+    if (item.type === 'event' && item.data.canEdit === false) return;
+    // Stop this touch from bubbling up to CalendarPage's swipe-navigation
+    // listener — without this, dragging an item sideways across columns
+    // also reads as a horizontal swipe there, so releasing the drag could
+    // additionally page the view to the next/prev day (touchend keeps
+    // targeting this same element per the touch event spec, but the guard
+    // in CalendarPage's handleTouchEnd only holds if its handleTouchStart
+    // never ran, hence stopping propagation here rather than on end).
+    e.stopPropagation();
+    const duration = timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime);
+    trackTouchDragToColumn(e, duration, (day, relY) => applyDrop(item.type, item.data.id, day, relY));
+  }
+
+  /** Long-press-drag a chip from the "Unscheduled" tray onto a day column —
+   * the touch-input equivalent of dragging it via native HTML5 DnD (see
+   * the tray's `draggable` chips below and applyDrop's 'task' branch). */
+  function handleTaskChipTouchStart(e, task) {
+    e.stopPropagation();
+    const durationHours = Math.max(task.minChunkHours ?? 0.5, Math.min(task.unplacedHours || 1, task.maxChunkHours ?? 4));
+    trackTouchDragToColumn(e, Math.round(durationHours * 60), (day, relY) => applyDrop('task', task.id, day, relY));
   }
 
   // --- Resize handlers (vertical only; mouse OR touch) ------------------------
@@ -748,9 +834,41 @@ export default function WeekView({
   }
 
   return (
-    <div
-      className="week-grid"
-      ref={gridRef}
+    // A single flex-column wrapper — CalendarPage's own wrapping div lays
+    // WeekView out as one flex ROW child (sized via .week-grid's flex:1), so
+    // the tray needs its own outer element here (not a bare Fragment) to
+    // stack above the grid vertically without fighting that outer layout.
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+      {unscheduledTasks.length > 0 && (
+        <div className="unscheduled-tray">
+          <button className="unscheduled-tray-toggle" onClick={() => setTrayExpanded((v) => !v)}>
+            {trayExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            Unscheduled ({unscheduledTasks.length})
+          </button>
+          {trayExpanded && (
+            <div className="unscheduled-tray-chips">
+              {unscheduledTasks.map((task) => (
+                <div
+                  key={task.id}
+                  className="unscheduled-chip"
+                  style={{ borderLeftColor: priorityColor(task.priority) }}
+                  draggable={!isMobile}
+                  onDragStart={isMobile ? undefined : (e) => handleTaskChipDragStart(e, task)}
+                  onTouchStart={(e) => handleTaskChipTouchStart(e, task)}
+                  title={`Drag onto a day to schedule "${task.title}" (${formatHours(task.unplacedHours)} unplaced)`}
+                >
+                  <GripVertical size={12} className="unscheduled-chip-grip" />
+                  <span className="unscheduled-chip-title">{task.title}</span>
+                  <span className="unscheduled-chip-hours">{formatHours(task.unplacedHours)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div
+        className="week-grid"
+        ref={gridRef}
       style={{
         gridTemplateRows: `auto ${gridHeight}px`,
         gridTemplateColumns: `56px repeat(${dayCount}, 1fr)`,
@@ -1086,6 +1204,7 @@ export default function WeekView({
           </div>,
           document.body
         )}
+      </div>
     </div>
   );
 }

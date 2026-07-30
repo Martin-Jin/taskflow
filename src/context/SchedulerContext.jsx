@@ -56,7 +56,7 @@ import { playAddSound, playDeleteSound } from '../services/soundService';
 import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackups, getBackup, deleteBackup } from '../services/firestoreSync';
 import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
-import { rebalance } from '../algorithms/rebalanceEngine';
+import { rebalance, planToday } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { computeNextDueDate } from '../utils/recurrence';
 import {
@@ -76,7 +76,7 @@ import {
 } from '../services/googleCalendarService';
 import { mergePulledGoogleEvents } from '../services/eventSyncService';
 import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects } from '../services/mockData';
-import { toISODate, addDays } from '../utils/dateUtils';
+import { toISODate, addDays, timeToMinutes, minutesToTime } from '../utils/dateUtils';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
 import { nextLabelColor } from '../utils/labelColor';
 import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
@@ -553,6 +553,10 @@ export function SchedulerProvider({ children }) {
   // more than the one backup actively being restored.
   const [cloudBackups, setCloudBackups] = useState([]);
   const [lastOverflow, setLastOverflow] = useState([]);
+  // Separate from lastOverflow: planToday's "didn't fit today" list carries a
+  // different meaning (see runPlanToday below) and must never be conflated
+  // with rebalance's "at risk of missing its deadline" overflow.
+  const [lastUnfitToday, setLastUnfitToday] = useState([]);
   const [notification, setNotification] = useState(null);
   // Ephemeral cross-component "jump to a Settings section" signal — not
   // persisted/synced/backed-up, just a bumped-counter request (mirrors the
@@ -1379,6 +1383,32 @@ export function SchedulerProvider({ children }) {
     return result;
   }, [tasks, blocks, routines, events, rules, commit]);
 
+  /**
+   * Lighter, day-scoped sibling of runRebalance: only clears and replans
+   * TODAY's unlocked blocks (see algorithms/rebalanceEngine.planToday for
+   * why this can't just be "run the normal rebalance and keep today's
+   * slice" — the pacing math needs a dedicated greedy mode). Every other
+   * day, past or future, is left exactly as it was.
+   */
+  const runPlanToday = useCallback(() => {
+    const result = planToday({ tasks, existingBlocks: blocks, routines, events, rules });
+    commit({ tasks, blocks: result.blocks }, `Planned today (${result.stats.blocksCreated} blocks placed)`);
+    setLastUnfitToday(result.unfitToday);
+    const blockedNote =
+      result.stats.blockedByDependencies > 0
+        ? ` ${result.stats.blockedByDependencies} task(s) held back pending dependencies.`
+        : '';
+    if (result.unfitToday.length > 0) {
+      setNotification({
+        type: 'warning',
+        message: `${result.unfitToday.length} task(s) didn't fully fit in today's remaining capacity — they'll get picked up on a later plan/re-balance.${blockedNote}`,
+      });
+    } else {
+      setNotification({ type: 'success', message: `Today planned: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
+    }
+    return result;
+  }, [tasks, blocks, routines, events, rules, commit]);
+
   // ---- Task CRUD -----------------------------------------------------------
 
   /**
@@ -2005,6 +2035,40 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
+  /**
+   * Manually place a task directly onto the calendar (drag from the task
+   * list onto a day column — see WeekView's task-drop handling). Like any
+   * other manual placement (dragging/resizing an existing block — see
+   * WeekView/BlockDetailModal), this is `isAutoScheduled: false` so a later
+   * rebalance/plan-today run leaves it exactly where the user put it unless
+   * they explicitly lock it; `isLocked` stays at its default `false`,
+   * matching every other freshly-created block/event in this file (locking
+   * is always a separate, explicit user action via toggleBlockLock).
+   */
+  const scheduleTaskManually = useCallback(
+    (taskId, date, startTime, durationHours) => {
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const startMin = timeToMinutes(startTime);
+      const endMin = startMin + Math.round(durationHours * 60);
+      const newBlock = {
+        id: generateLocalId('blk_manual'),
+        taskId,
+        date,
+        startTime,
+        endTime: minutesToTime(endMin),
+        durationHours,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+        googleEventId: null,
+        isPassive: !!task.isPassive,
+      };
+      commit({ tasks, blocks: [...blocks, newBlock] }, `Scheduled "${task.title}"`);
+    },
+    [tasks, blocks, commit]
+  );
+
   // ---- Push all auto-scheduled, unpushed blocks to Google Calendar --------
   const pushToGoogleCalendar = useCallback(async () => {
     setIsSyncing(true);
@@ -2425,6 +2489,7 @@ export function SchedulerProvider({ children }) {
       importFromTodoist,
       lastTodoistImport,
       lastOverflow,
+      lastUnfitToday,
       notification,
       setNotification,
       settingsSectionRequest,
@@ -2453,6 +2518,7 @@ export function SchedulerProvider({ children }) {
       undo,
       redo,
       runRebalance,
+      runPlanToday,
       addTask,
       updateTask,
       deleteTask,
@@ -2475,6 +2541,7 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      scheduleTaskManually,
       addManualEvent,
       updateEvent,
       deleteEvent,
@@ -2517,6 +2584,7 @@ export function SchedulerProvider({ children }) {
       importFromTodoist,
       lastTodoistImport,
       lastOverflow,
+      lastUnfitToday,
       notification,
       setNotification,
       settingsSectionRequest,
@@ -2535,6 +2603,7 @@ export function SchedulerProvider({ children }) {
       undo,
       redo,
       runRebalance,
+      runPlanToday,
       addTask,
       updateTask,
       deleteTask,
@@ -2557,6 +2626,7 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      scheduleTaskManually,
       addManualEvent,
       updateEvent,
       deleteEvent,
