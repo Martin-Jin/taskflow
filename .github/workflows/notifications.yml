@@ -1,0 +1,35 @@
+name: Notifications
+
+on:
+  # Every 5 minutes — GitHub Actions enforces this as the shortest interval
+  # a scheduled workflow can run at regardless of cron expression, so this is
+  # the tightest cadence available (the original Firebase Cloud Function this
+  # replaced ran every 1 minute; see notify-worker/index.js's run-frequency
+  # comment for the tradeoff this floor implies for very short "starting
+  # soon" thresholds). GitHub also auto-disables a scheduled workflow after
+  # 60 days with no commits to the repo — see notify-worker/README.md.
+  schedule:
+    - cron: '*/5 * * * *'
+  # Lets the workflow be triggered manually from the Actions tab, for testing.
+  workflow_dispatch:
+
+jobs:
+  check-and-send:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: notify-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      - name: Check and send notifications
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: npm start
