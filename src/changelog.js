@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.5',
+    date: '2026-07-31',
+    title: 'Smoother scrolling on mobile',
+    changes: [
+      'Reduced background blur behind modals on smaller screens, which was making scrolling inside them (e.g. the task detail view) feel slightly laggy.',
+      'General performance tuning for the task detail modal and task list so editing a task no longer causes the whole list underneath it to redo unnecessary work.',
+    ],
+  },
+  {
     version: '1.33.4',
     date: '2026-07-31',
     title: 'Fix: stale Gantt bars showing at "today"',
