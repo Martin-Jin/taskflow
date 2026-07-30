@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.25.0',
+    date: '2026-07-30',
+    title: 'Scheduler clears blocking tasks faster',
+    changes: [
+      "A task that other work depends on now greedily fills each day's free time instead of splitting it evenly with unrelated tasks of similar priority — so it finishes sooner and unblocks whatever's waiting on it.",
+    ],
+  },
+  {
     version: '1.24.0',
     date: '2026-07-30',
     title: 'Pinned links are now Notes',

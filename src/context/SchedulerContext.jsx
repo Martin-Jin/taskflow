@@ -421,6 +421,13 @@ export function SchedulerProvider({ children }) {
   // Applied to the DOM via the effect below (mirrors ThemeContext's
   // data-theme attribute) so global.css can key off it.
   const [animationsEnabled, setAnimationsEnabled] = usePersistedState('animationsEnabled', true);
+  // TODO (TODO.md #10, not yet implemented): notification settings (per-type
+  // in-app/email toggles, customizable "starting soon" threshold) should
+  // follow this exact usePersistedState + synced-setting pattern — and then
+  // be threaded through every place soundEnabled/soundVolume appear in this
+  // file (applyRemoteData, the cloud-push payload + its dependency arrays,
+  // the local backup payload, restoreFromBackup, and the context value
+  // returned below), plus BACKUP_FIELDS in backupService.js.
 
   useEffect(() => {
     document.documentElement.setAttribute('data-animations', animationsEnabled ? 'on' : 'off');
@@ -1099,6 +1106,8 @@ export function SchedulerProvider({ children }) {
         // context's own React-state mirror.
         savePersisted('shortcutBindings', payload.shortcutBindings);
       }
+      // TODO (TODO.md #10, not yet implemented): once notification settings
+      // exist, restore them here too, following the soundEnabled pattern above.
     },
     [
       commit,
