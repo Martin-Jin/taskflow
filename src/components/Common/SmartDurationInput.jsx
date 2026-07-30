@@ -25,7 +25,10 @@ import React, { useRef, useState } from 'react';
 import { findDurationPhrase } from '../../utils/durationParser';
 import { formatHours, formatHoursLong } from '../../utils/formatHours';
 
-export default function SmartDurationInput({ hours, onChange, placeholder }) {
+// Wrapped in memo — `hours`/`onChange` are a stable primitive/setState pair
+// at TaskDetailModal's call site, so this skips re-rendering on unrelated
+// keystrokes (title/notes) elsewhere in the modal.
+function SmartDurationInput({ hours, onChange, placeholder }) {
   const inputRef = useRef(null);
   const [editing, setEditing] = useState(false);
   const [rawText, setRawText] = useState('');
@@ -92,3 +95,5 @@ export default function SmartDurationInput({ hours, onChange, placeholder }) {
     </div>
   );
 }
+
+export default React.memo(SmartDurationInput);

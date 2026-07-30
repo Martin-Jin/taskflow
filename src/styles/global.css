@@ -1395,6 +1395,10 @@ input.search-bar-input {
   animation: modal-in var(--duration-base) var(--ease-decelerate);
   scrollbar-width: none; /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
   -ms-overflow-style: none;
+  /* Own compositor layer so scrolling/animating the modal doesn't force the
+     browser to recomposite it together with the overlay's backdrop-filter
+     blur behind it — that pairing is what tanks scroll framerate on mobile. */
+  will-change: transform;
 }
 
 .modal::-webkit-scrollbar {
@@ -1488,6 +1492,12 @@ input.search-bar-input {
   .modal-overlay {
     align-items: flex-start;
     padding: calc(env(safe-area-inset-top, 0) + var(--space-3)) var(--space-3);
+    /* Blurring behind the modal is expensive to recomposite on mobile GPUs
+       and drags down scroll framerate inside the modal itself. Drop the
+       blur and compensate with a slightly darker solid overlay so the
+       backdrop still reads as dimmed rather than merely tinted. */
+    background: rgba(10, 11, 15, 0.72);
+    backdrop-filter: none;
   }
 
   .modal {
