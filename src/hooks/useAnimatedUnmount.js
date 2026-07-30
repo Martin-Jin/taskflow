@@ -10,17 +10,16 @@
  * When motion is off there's no exit animation to wait for, so the delay is
  * skipped entirely and onClose fires immediately — otherwise closing would
  * still lag by exitDuration even though the modal vanished instantly. The
- * check reads the same `data-animations` attribute (and reduced-motion query)
- * the CSS gates on, so there's one source of truth for "motion is off".
+ * check reads the same `data-animations` attribute the CSS gates on (see
+ * useMotionEnabled for why the explicit Settings toggle wins over the OS
+ * reduced-motion preference), so there's one source of truth for "motion is
+ * off".
  */
 
 import { useEffect, useRef, useState } from 'react';
 
 function motionDisabled() {
-  return (
-    document.documentElement.getAttribute('data-animations') === 'off' ||
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
+  return document.documentElement.getAttribute('data-animations') === 'off';
 }
 
 export function useAnimatedUnmount(onClose, exitDuration = 160) {
