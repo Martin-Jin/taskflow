@@ -412,6 +412,11 @@ function classifyProviderError(status, bodyText, headers) {
       retryAfterSeconds,
     };
   }
+  // Gemini reports a bad API key as HTTP 400 (not 401/403 like Anthropic), so
+  // that case has to be caught by message text here too.
+  if (status === 400 && (text.includes('api key not valid') || text.includes('api_key_invalid'))) {
+    return { kind: 'invalid_api_key', message: 'The API key was rejected — check it in Settings.' };
+  }
   if (status === 400 && (text.includes('too long') || text.includes('too large') || text.includes('exceeds') || text.includes('maximum context') || text.includes('maximum number of tokens'))) {
     return {
       kind: 'context_too_large',

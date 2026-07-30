@@ -136,35 +136,47 @@ export function resolvePlan(operations, context) {
     };
   });
 
-  // Pass 3: cascading invalidation — an operation referencing a local id whose
+  // Collects every new:<n> local id an operation's target/ref fields point at.
+  function collectLocalRefs(op, shape) {
+    const refIds = [];
+    if (shape.target && isLocalId(op[shape.target.field])) refIds.push(op[shape.target.field]);
+    for (const ref of shape.refFields) {
+      const raw = op[ref.field];
+      if (raw === undefined) continue;
+      for (const id of ref.multi ? raw : [raw]) if (isLocalId(id)) refIds.push(id);
+    }
+    return refIds;
+  }
+
+  // Cascading invalidation — an operation referencing a local id whose
   // declaring create-operation is itself invalid can never actually apply.
   // Fixed-point loop since invalidity can cascade transitively (a chain of
-  // dependent creates).
-  let changed = true;
-  let iterations = 0;
-  while (changed && iterations < operations.length + 1) {
-    changed = false;
-    iterations += 1;
-    for (const entry of entries) {
-      if (!entry.valid) continue;
-      const shape = OP_SHAPES[entry.operation.op];
-      const refIds = [];
-      if (shape.target && isLocalId(entry.operation[shape.target.field])) refIds.push(entry.operation[shape.target.field]);
-      for (const ref of shape.refFields) {
-        const raw = entry.operation[ref.field];
-        if (raw === undefined) continue;
-        for (const id of ref.multi ? raw : [raw]) if (isLocalId(id)) refIds.push(id);
-      }
-      for (const id of refIds) {
-        const owner = localIdOwner.get(id);
-        if (owner && !entries[owner.index].valid) {
-          entry.valid = false;
-          entry.errors.push(`Depends on "${id}", which failed validation and will not be created.`);
-          changed = true;
+  // dependent creates). Run once after Pass 2's structural checks (as Pass 3)
+  // and again after Pass 4's cycle detection below, since a cycle can itself
+  // invalidate a create-operation that other, non-cyclic operations rely on.
+  function cascadeInvalidation() {
+    let changed = true;
+    let iterations = 0;
+    while (changed && iterations < operations.length + 1) {
+      changed = false;
+      iterations += 1;
+      for (const entry of entries) {
+        if (!entry.valid) continue;
+        const shape = OP_SHAPES[entry.operation.op];
+        for (const id of collectLocalRefs(entry.operation, shape)) {
+          const owner = localIdOwner.get(id);
+          if (owner && !entries[owner.index].valid) {
+            entry.valid = false;
+            entry.errors.push(`Depends on "${id}", which failed validation and will not be created.`);
+            changed = true;
+          }
         }
       }
     }
   }
+
+  // Pass 3.
+  cascadeInvalidation();
 
   // Pass 4: dependency/parent cycle detection over the MERGED graph — existing
   // tasks overlaid with this plan's create_task/update_task changes. Only
@@ -244,6 +256,10 @@ export function resolvePlan(operations, context) {
         entry.errors.push('Part of a subtask/parent cycle — a task cannot be its own ancestor.');
       }
     }
+    // A cycle can invalidate a create-operation that other, non-cyclic
+    // operations reference by local id — re-cascade so those are invalidated
+    // too, rather than left valid while pointing at something invalid.
+    cascadeInvalidation();
   }
 
   // Pass 5: human-readable description + changed-field list, using real
@@ -279,20 +295,17 @@ export function resolvePlan(operations, context) {
   // reference to a deleted-in-plan id, so deletes never need to precede
   // anything valid.
   const validIndices = entries.filter((e) => e.valid).map((e) => e.index);
+  const validIndexSet = new Set(validIndices);
   const dependsOnOp = new Map(validIndices.map((i) => [i, new Set()])); // opIndex -> set of opIndex it must follow
   for (const i of validIndices) {
     const op = operations[i];
     const shape = OP_SHAPES[op.op];
-    const refIds = [];
-    if (shape.target && isLocalId(op[shape.target.field])) refIds.push(op[shape.target.field]);
-    for (const ref of shape.refFields) {
-      const raw = op[ref.field];
-      if (raw === undefined) continue;
-      for (const id of ref.multi ? raw : [raw]) if (isLocalId(id)) refIds.push(id);
-    }
-    for (const id of refIds) {
+    for (const id of collectLocalRefs(op, shape)) {
       const owner = localIdOwner.get(id);
-      if (owner && owner.index !== i) dependsOnOp.get(i).add(owner.index);
+      // The cascade above already invalidates anything referencing an invalid
+      // owner, so `owner` should always be valid here — guard anyway rather
+      // than recursing into an index `dependsOnOp` has no entry for.
+      if (owner && owner.index !== i && validIndexSet.has(owner.index)) dependsOnOp.get(i).add(owner.index);
     }
   }
   const applyOrder = [];
