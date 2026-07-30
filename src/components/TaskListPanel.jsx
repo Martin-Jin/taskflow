@@ -28,17 +28,17 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Sparkles, Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
+import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useSound } from '../context/SoundContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import AIQuickAddModal from './Modals/AIQuickAddModal';
 import TaskDetailModal from './Modals/TaskDetailModal';
-import { isAIQuickAddConfigured } from '../services/aiQuickAddService';
 import BoardView from './Board/BoardView';
 import GanttChart from './Gantt/GanttChart';
 import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
+import AddTaskFabGroup from './Common/AddTaskFabGroup';
 import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import ViewFilterMenu from './Common/ViewFilterMenu';
@@ -446,26 +446,7 @@ export default function TaskListPanel({
         <>
           <div className="tasklist-toolbar">
             <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
-            {isAIQuickAddConfigured() && (
-              <button
-                className="btn btn-icon"
-                data-tour="ai-quick-add"
-                onClick={() => setShowAIQuickAdd(true)}
-                aria-label="AI Quick Add"
-                title="AI Quick Add"
-              >
-                <Sparkles size={14} />
-              </button>
-            )}
-            <button
-              className="btn btn-primary add-task-btn"
-              data-tour="add-task"
-              onClick={() => setShowAddModal(true)}
-              aria-label="Add task"
-            >
-              <Plus size={14} />
-              <span className="add-task-btn-label">Add task</span>
-            </button>
+            <AddTaskFabGroup onAddTask={() => setShowAddModal(true)} onAIQuickAdd={() => setShowAIQuickAdd(true)} />
           </div>
 
           <div className="tasklist-rows">

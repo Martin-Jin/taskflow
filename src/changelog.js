@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.17.5',
+    date: '2026-07-30',
+    title: 'AI Quick Add button regrouped, mobile speed-dial',
+    changes: [
+      'The AI Quick Add sparkle button now sits directly next to "Add task" instead of floating with a gap between them.',
+      'On mobile, the floating "Add task" button now expands into two mini-buttons (AI Quick Add and Add task) when tapped, instead of AI Quick Add needing its own separate spot in the toolbar.',
+    ],
+  },
+  {
     version: '1.17.4',
     date: '2026-07-30',
     title: 'Fixed remaining toolbar height mismatch',
