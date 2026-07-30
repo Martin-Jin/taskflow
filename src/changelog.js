@@ -17,6 +17,22 @@
 
 export const CHANGELOG = [
   {
+    version: '1.18.3',
+    date: '2026-07-30',
+    title: 'Balanced sound effect volumes',
+    changes: [
+      'Normalized the loudness of the add/complete/delete sound effects so none plays noticeably louder or quieter than the others at the same volume setting.',
+    ],
+  },
+  {
+    version: '1.18.2',
+    date: '2026-07-30',
+    title: 'Home-screen icon fixes for Android/Chrome installs',
+    changes: [
+      'Added proper 192x192 and 512x512 app icons to the install manifest, so Android/Chrome "Add to Home Screen" installs get a real icon instead of falling back to a generic one.',
+    ],
+  },
+  {
     version: '1.18.1',
     date: '2026-07-30',
     title: 'AI Quick Add: fixed a plan-review crash and a wrong error message',
