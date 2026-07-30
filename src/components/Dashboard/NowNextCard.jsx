@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, ArrowRight, ExternalLink } from 'lucide-react';
+import { Play, ArrowRight, ExternalLink, Coffee } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { timeToMinutes, toISODate, formatTime12h as formatTime } from '../../utils/dateUtils';
@@ -56,7 +56,10 @@ export default function NowNextCard() {
           </div>
         </div>
       ) : (
-        <div className="now-empty">Nothing scheduled right now — enjoy the gap.</div>
+        <div className="now-empty">
+          <Coffee size={20} className="empty-state-icon" aria-hidden="true" />
+          Nothing scheduled right now — enjoy the gap.
+        </div>
       )}
 
       {next && (
