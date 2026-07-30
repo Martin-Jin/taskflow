@@ -636,6 +636,10 @@
   padding-right: 20px; /* leave room for the remove/edit buttons in the top-right corner */
 }
 
+.note-tile-content-clickable {
+  cursor: pointer;
+}
+
 .note-tile-title {
   font-size: var(--text-xs);
   font-weight: 600;
@@ -981,6 +985,19 @@
   font-size: var(--text-md);
   font-weight: 600;
   margin: 0;
+}
+
+/* NoteViewModal's body — same content as .note-tile-body but unclamped,
+   since the modal exists specifically to show the full text. */
+.note-view-body {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.note-view-body a {
+  color: var(--color-accent);
 }
 
 /* Overdue rows show a due date instead of a time — wider than the 74px

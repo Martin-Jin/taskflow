@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.27.0',
+    date: '2026-07-30',
+    title: 'Click a note to read the whole thing',
+    changes: [
+      "Note tiles truncate long bodies to 2 lines — clicking a tile's text now opens it in a read-only modal showing the full title and body, links still clickable. Editing and removing a note still work the same way via their corner buttons.",
+    ],
+  },
+  {
     version: '1.26.0',
     date: '2026-07-30',
     title: 'Dead-end fixes: AI Quick Add and Gantt now point you to the fix',
