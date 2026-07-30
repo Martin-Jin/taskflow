@@ -5,11 +5,6 @@
  * the component so copy edits don't require touching positioning logic.
  */
 
-// TODO (TODO.md #10, not yet implemented): once the Notifications settings
-// section exists (see SettingsPanel.jsx's SETTINGS_SECTIONS), add a step
-// here pointing at its `[data-tour="..."]` mark, per CLAUDE.md's "update the
-// tutorial when a change affects what it documents".
-
 export const GUIDED_TOUR_STEPS = [
   {
     // The mobile topbar (and its data-tour="brand" mark) only renders on the

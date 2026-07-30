@@ -17,6 +17,25 @@
 
 export const CHANGELOG = [
   {
+    version: '1.30.0',
+    date: '2026-07-30',
+    title: 'Email notifications (self-hosted) and notification polish',
+    changes: [
+      'The notification system now has a server-side email half to go with in-app alerts: a Cloud Function can email you a task starting soon, overdue, or due today, even while TaskFlow isn\'t open. This is opt-in infrastructure you deploy yourself (see functions/README.md) with a free Resend account — it\'s not turned on by default for a fresh install.',
+      'Confirmed the in-app and (self-deployed) email notifications always agree: same toggles, same "starting soon" threshold, same overdue re-notify pace, so switching a setting behaves identically on both channels.',
+    ],
+  },
+  {
+    version: '1.29.0',
+    date: '2026-07-30',
+    title: 'In-app notifications',
+    changes: [
+      'New Settings → Notifications section: turn on in-app alerts for a task starting soon (with a customizable "how many minutes ahead" threshold), a task becoming overdue, or a task due today.',
+      "Alerts show up as your browser's native notification popup when permitted, falling back to TaskFlow's in-app toast otherwise — works whether the tab is focused or in the background.",
+      'An overdue high/urgent priority task keeps re-notifying periodically until it\'s completed or rescheduled; lower-priority overdue tasks only notify once.',
+    ],
+  },
+  {
     version: '1.28.0',
     date: '2026-07-30',
     title: 'Command palette: jump to anything with Ctrl+K',

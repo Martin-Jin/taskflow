@@ -35,6 +35,7 @@ import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { clearAllPersisted, loadPersisted, savePersisted } from '../utils/persistence';
 import { getStoredApiKey } from '../services/aiQuickAddService';
+import { requestNotificationPermission } from '../services/notificationService';
 import {
   getInstallPrompt,
   subscribeInstallPrompt,
@@ -62,10 +63,7 @@ const SETTINGS_SECTIONS = [
   { id: 'calendarOverrides', label: 'Calendar event overrides' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'tags', label: 'Tags' },
-  // TODO (TODO.md #10, not yet implemented): add a 'notifications' entry
-  // here, plus a matching `.card` section below with the per-type in-app/
-  // email toggles and the customizable "starting soon" threshold, once
-  // that feature lands — otherwise it won't be findable via settings search.
+  { id: 'notifications', label: 'Notifications' },
   { id: 'installApp', label: 'Install app' },
   { id: 'help', label: 'Help' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
@@ -140,7 +138,19 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     clearAllData,
     animationsEnabled,
     setAnimationsEnabled,
+    notificationSettings,
+    setNotificationSettings,
   } = useScheduler();
+
+  // Updates a notificationSettings field, requesting browser Notification
+  // permission right here if a toggle is being turned ON — this is a direct
+  // user action, so prompting now (rather than on some later app load) is
+  // never a surprise. requestNotificationPermission itself no-ops if the
+  // API is unavailable or the user already granted/denied it previously.
+  function updateNotificationSetting(field, value) {
+    setNotificationSettings({ ...notificationSettings, [field]: value });
+    if (value === true) requestNotificationPermission();
+  }
 
   function submitToken(e) {
     e.preventDefault();
@@ -917,6 +927,90 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           <Tag size={14} />
           View all tags
         </button>
+      </div>
+
+      <div className="card" ref={(el) => (sectionRefs.current.notifications = el)}>
+        <h3 style={{ marginTop: 0 }}>Notifications</h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
+          Choose which channels and task events can notify you. In-app notifications fire while TaskFlow
+          is open, via your browser's notification popup (falling back to an in-app toast if that's not
+          available/permitted). Email notifications require a one-time self-deploy of a Cloud Function
+          (see functions/README.md) — turning this on here does nothing until that's set up.
+        </p>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            id="notifInApp"
+            checked={notificationSettings.inAppEnabled}
+            onChange={(e) => updateNotificationSetting('inAppEnabled', e.target.checked)}
+          />
+          <label htmlFor="notifInApp" style={{ margin: 0 }}>
+            In-app notifications
+          </label>
+        </div>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+          <input
+            type="checkbox"
+            id="notifEmail"
+            checked={notificationSettings.emailEnabled}
+            onChange={(e) => setNotificationSettings({ ...notificationSettings, emailEnabled: e.target.checked })}
+          />
+          <label htmlFor="notifEmail" style={{ margin: 0 }}>
+            Email notifications
+          </label>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 12, marginBottom: 6 }}>
+          Notify me when:
+        </p>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            id="notifStartingSoon"
+            checked={notificationSettings.taskStartingSoon}
+            onChange={(e) => updateNotificationSetting('taskStartingSoon', e.target.checked)}
+          />
+          <label htmlFor="notifStartingSoon" style={{ margin: 0 }}>
+            A task is starting soon
+          </label>
+        </div>
+        <div className="form-row" style={{ marginTop: 8, maxWidth: 220 }}>
+          <label htmlFor="notifStartingSoonMinutes" style={{ opacity: notificationSettings.taskStartingSoon ? 1 : 0.5 }}>
+            "Starting soon" threshold (minutes)
+          </label>
+          <input
+            type="number"
+            id="notifStartingSoonMinutes"
+            min="1"
+            max="180"
+            value={notificationSettings.startingSoonMinutes}
+            disabled={!notificationSettings.taskStartingSoon}
+            onChange={(e) =>
+              setNotificationSettings({ ...notificationSettings, startingSoonMinutes: Number(e.target.value) })
+            }
+          />
+        </div>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+          <input
+            type="checkbox"
+            id="notifOverdue"
+            checked={notificationSettings.taskOverdue}
+            onChange={(e) => updateNotificationSetting('taskOverdue', e.target.checked)}
+          />
+          <label htmlFor="notifOverdue" style={{ margin: 0 }}>
+            A task becomes overdue
+          </label>
+        </div>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+          <input
+            type="checkbox"
+            id="notifDueToday"
+            checked={notificationSettings.taskDueToday}
+            onChange={(e) => updateNotificationSetting('taskDueToday', e.target.checked)}
+          />
+          <label htmlFor="notifDueToday" style={{ margin: 0 }}>
+            A task is due today
+          </label>
+        </div>
       </div>
 
       {isMobile && !isRunningStandalone() && (
