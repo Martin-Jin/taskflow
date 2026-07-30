@@ -498,6 +498,13 @@ with the exact steps for their platform; it's also always available from
 for the underlying setup and `src/utils/installPrompt.js` for how the
 Android/Chrome native install prompt is captured and re-triggered.
 
+This is a manifest-only PWA — there is deliberately **no service worker**
+(nothing under `navigator.serviceWorker`, no Workbox/`vite-plugin-pwa`).
+Installing just gives a chrome-less launch icon; there's no offline caching
+layer, so a stale-looking page after a deploy is ordinary browser/CDN HTTP
+caching (hard-refresh fixes it), never a service worker serving an old
+cached copy.
+
 - **Dashboard** — the default landing tab: a stats strip (due today,
   overdue, hours scheduled this week), **Right now** (the block currently
   in progress, or what's next, with a live countdown), **Today's agenda**,
