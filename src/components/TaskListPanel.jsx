@@ -38,7 +38,7 @@
  * looked like the moment the modal opened.)
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw, Inbox } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
@@ -157,14 +157,25 @@ export default function TaskListPanel({
     return map;
   }, [tasks]);
 
-  function toggleCollapsed(taskId) {
+  // Stable callback refs (useCallback) so TaskRow's React.memo below actually
+  // bails on unrelated re-renders instead of seeing a fresh function prop
+  // every time this panel re-renders (e.g. while TaskDetailModal's debounced
+  // autosave is firing for a task on screen underneath it).
+  const toggleCollapsed = useCallback((taskId) => {
     setCollapsedIds((prev) => {
       const next = new Set(prev);
       if (next.has(taskId)) next.delete(taskId);
       else next.add(taskId);
       return next;
     });
-  }
+  }, []);
+  const handleUncomplete = useCallback(
+    (taskId) => {
+      uncompleteTask(taskId);
+      playUncomplete();
+    },
+    [uncompleteTask, playUncomplete]
+  );
   const activeProject = activeProjectId === ALL_TASKS_PROJECT_ID ? null : projects.find((p) => p.id === activeProjectId);
 
   // If activeProjectId points at a project that no longer exists (e.g.
@@ -269,132 +280,31 @@ export default function TaskListPanel({
   }
 
   /**
-   * Renders one task row. `depth` drives both the indent (a `--space-5`
-   * multiple, matching this codebase's spacing scale) and whether the row
-   * gets the full `.card` container (depth 0, top-level) or the flatter
-   * `.task-row-child` styling (depth > 0, a sub-task) so the hierarchy reads
-   * as a checklist rather than a stack of equal-weight cards.
+   * Builds the (memo-friendly) props for one task row and hands off to
+   * <TaskRow> — see that component's doc comment for why values like
+   * `dependenciesMet`/effective hours are resolved here as plain
+   * booleans/numbers rather than passed down as the `tasks`/`taskById`
+   * they're derived from.
    */
   function renderTaskRow({ task, depth }) {
-    const children = childrenByParentId.get(task.id) || [];
-    const hasChildren = children.length > 0;
-    const isCollapsed = collapsedIds.has(task.id);
+    const hasChildren = (childrenByParentId.get(task.id) || []).length > 0;
     return (
-      <motion.div
+      <TaskRow
         key={task.id}
-        layout={motionEnabled ? 'position' : false}
-        transition={ROW_TRANSITION}
-        exit={motionEnabled ? ROW_EXIT : undefined}
-        className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
-        style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
-        onClick={() => setEditingTaskId(task.id)}
-      >
-        {hasChildren ? (
-          <button
-            type="button"
-            className="btn btn-icon task-row-collapse"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleCollapsed(task.id);
-            }}
-            aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
-            aria-expanded={!isCollapsed}
-          >
-            {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-          </button>
-        ) : (
-          depth > 0 && <span className="task-row-collapse-spacer" aria-hidden="true" />
-        )}
-        <button
-          className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!task.isCompleted) requestComplete(task.id);
-          }}
-          disabled={task.isCompleted}
-          title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-          aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
-        >
-          {task.isCompleted && <Check size={12} aria-hidden="true" />}
-        </button>
-        <div className="task-row-main">
-          <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
-            {task.link ? (
-              <a
-                href={task.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="task-title-link"
-                onClick={(e) => e.stopPropagation()}
-                title={`Open link: ${task.link}`}
-              >
-                {task.title}
-                <ExternalLink size={11} aria-hidden="true" />
-              </a>
-            ) : (
-              task.title
-            )}
-            {task.isRecurring && (
-              <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
-            )}
-            {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
-          </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: 'var(--color-text-secondary)',
-              marginTop: 2,
-              display: 'flex',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: 3,
-            }}
-          >
-            <span>
-              {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
-                  frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
-              {formatHours(hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours)} remaining of{' '}
-              {formatHours(hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours)}
-              {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
-              {task.sectionName ? ` · ${task.sectionName}` : ''}
-            </span>
-            {!task.isCompleted && !areDependenciesMet(task, taskById) && (
-              <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                {' · '}
-                <Ban size={12} />
-                blocked by dependency
-              </span>
-            )}
-          </div>
-          <div className="task-row-badges">
-            <span className={`badge ${task.priority}`}>{task.priority}</span>
-            {(task.labelIds || []).map((labelId) => {
-              const label = labelById.get(labelId);
-              if (!label) return null;
-              return (
-                <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
-                  {label.name}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-        {task.isCompleted && (
-          <button
-            type="button"
-            className="btn btn-icon task-row-restore"
-            onClick={(e) => {
-              e.stopPropagation();
-              uncompleteTask(task.id);
-              playUncomplete();
-            }}
-            title="Restore to active"
-            aria-label={`Restore ${task.title}`}
-          >
-            <RotateCcw size={14} />
-          </button>
-        )}
-      </motion.div>
+        task={task}
+        depth={depth}
+        hasChildren={hasChildren}
+        isCollapsed={collapsedIds.has(task.id)}
+        motionEnabled={motionEnabled}
+        labelById={labelById}
+        dependenciesMet={areDependenciesMet(task, taskById)}
+        effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours}
+        effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
+        onToggleCollapse={toggleCollapsed}
+        onOpen={setEditingTaskId}
+        onComplete={requestComplete}
+        onUncomplete={handleUncomplete}
+      />
     );
   }
 
@@ -533,3 +443,153 @@ export default function TaskListPanel({
     </div>
   );
 }
+
+/**
+ * One task row (see TaskListPanel's ROW MOTION note for the framer-motion
+ * `layout="position"` behavior this relies on). Wrapped in React.memo so a
+ * row whose own `task` object is unchanged skips both the JSX diff and the
+ * layout-measuring `getBoundingClientRect` framer-motion does for
+ * `layout="position"` — otherwise every row remeasures on any re-render of
+ * the list (e.g. TaskDetailModal's debounced sidebar autosave firing for a
+ * task shown underneath it), even though only one row actually changed.
+ *
+ * For this memo to actually pay off, every prop below is either the `task`
+ * object itself (individual task objects keep their identity across an
+ * unrelated `updateTask` call — see SchedulerContext's `tasks.map`, which
+ * only replaces the one task that changed) or a plain primitive/stable
+ * callback resolved by the caller — never the raw `tasks` array or a
+ * `taskById`/`childrenByParentId` Map, both of which get a new identity on
+ * every task update anywhere and would defeat the memo for every row.
+ * `labelById` is the one Map passed through directly since it's keyed off
+ * `labels`, which changes far less often than `tasks` does.
+ */
+const TaskRow = React.memo(function TaskRow({
+  task,
+  depth,
+  hasChildren,
+  isCollapsed,
+  motionEnabled,
+  labelById,
+  dependenciesMet,
+  effectiveRemainingHours,
+  effectiveEstimatedHours,
+  onToggleCollapse,
+  onOpen,
+  onComplete,
+  onUncomplete,
+}) {
+  return (
+    <motion.div
+      layout={motionEnabled ? 'position' : false}
+      transition={ROW_TRANSITION}
+      exit={motionEnabled ? ROW_EXIT : undefined}
+      className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
+      style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
+      onClick={() => onOpen(task.id)}
+    >
+      {hasChildren ? (
+        <button
+          type="button"
+          className="btn btn-icon task-row-collapse"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse(task.id);
+          }}
+          aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
+          aria-expanded={!isCollapsed}
+        >
+          {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </button>
+      ) : (
+        depth > 0 && <span className="task-row-collapse-spacer" aria-hidden="true" />
+      )}
+      <button
+        className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!task.isCompleted) onComplete(task.id);
+        }}
+        disabled={task.isCompleted}
+        title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+        aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
+      >
+        {task.isCompleted && <Check size={12} aria-hidden="true" />}
+      </button>
+      <div className="task-row-main">
+        <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
+          {task.link ? (
+            <a
+              href={task.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="task-title-link"
+              onClick={(e) => e.stopPropagation()}
+              title={`Open link: ${task.link}`}
+            >
+              {task.title}
+              <ExternalLink size={11} aria-hidden="true" />
+            </a>
+          ) : (
+            task.title
+          )}
+          {task.isRecurring && (
+            <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
+          )}
+          {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--color-text-secondary)',
+            marginTop: 2,
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 3,
+          }}
+        >
+          <span>
+            {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
+                frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
+            {formatHours(effectiveRemainingHours)} remaining of {formatHours(effectiveEstimatedHours)}
+            {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
+            {task.sectionName ? ` · ${task.sectionName}` : ''}
+          </span>
+          {!task.isCompleted && !dependenciesMet && (
+            <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              {' · '}
+              <Ban size={12} />
+              blocked by dependency
+            </span>
+          )}
+        </div>
+        <div className="task-row-badges">
+          <span className={`badge ${task.priority}`}>{task.priority}</span>
+          {(task.labelIds || []).map((labelId) => {
+            const label = labelById.get(labelId);
+            if (!label) return null;
+            return (
+              <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
+                {label.name}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      {task.isCompleted && (
+        <button
+          type="button"
+          className="btn btn-icon task-row-restore"
+          onClick={(e) => {
+            e.stopPropagation();
+            onUncomplete(task.id);
+          }}
+          title="Restore to active"
+          aria-label={`Restore ${task.title}`}
+        >
+          <RotateCcw size={14} />
+        </button>
+      )}
+    </motion.div>
+  );
+});

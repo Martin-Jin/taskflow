@@ -11,7 +11,11 @@ import React, { useMemo } from 'react';
 import { X, Plus } from 'lucide-react';
 import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
 
-export default function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder = 'Add a tag…' }) {
+// Wrapped in memo: its own re-renders are otherwise driven by every keystroke
+// in TaskDetailModal's title/notes fields, which don't touch this picker's
+// props at all — see call sites for the useCallback/useMemo needed to keep
+// `selectedIds`/`onCreateLabel` reference-stable so memo actually pays off.
+function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder = 'Add a tag…' }) {
   const { query, setQuery, isOpen, highlightedIndex, setHighlightedIndex, inputRef, handleBlur, handleFocus, resetQuery } =
     useComboboxMultiSelect();
 
@@ -152,3 +156,5 @@ export default function LabelPicker({ labels, selectedIds, onChange, onCreateLab
     </div>
   );
 }
+
+export default React.memo(LabelPicker);

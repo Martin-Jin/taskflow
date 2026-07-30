@@ -20,7 +20,9 @@ import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
 import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
 
-export default function DependencyPicker({ options, selectedIds, onChange, placeholder = 'Search tasks…' }) {
+// Wrapped in memo — see LabelPicker's equivalent note; callers must keep
+// `options`/`selectedIds`/`onChange` reference-stable for this to help.
+function DependencyPicker({ options, selectedIds, onChange, placeholder = 'Search tasks…' }) {
   const { query, setQuery, isOpen, highlightedIndex, setHighlightedIndex, inputRef, handleBlur, handleFocus, resetQuery } =
     useComboboxMultiSelect();
 
@@ -129,3 +131,5 @@ export default function DependencyPicker({ options, selectedIds, onChange, place
     </div>
   );
 }
+
+export default React.memo(DependencyPicker);

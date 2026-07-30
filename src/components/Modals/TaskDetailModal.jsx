@@ -59,7 +59,7 @@
  * the modal (subtask checklist, subtask counts, etc.).
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Repeat,
@@ -170,6 +170,14 @@ function mergeNoteLinks(text, prevMatches) {
   const byUrl = new Map((prevMatches || []).map((m) => [m.url, m]));
   detected.forEach((m) => byUrl.set(m.url, m));
   return [...byUrl.values()];
+}
+
+// Shallow "same contents" check for the small arrays (recurrenceDays,
+// dependsOn, labelIds) compared against the saved snapshot in a few places
+// below — order-sensitive, which is fine since none of these arrays are
+// re-sorted independently of their contents changing.
+function jsonArrayEq(a, b) {
+  return JSON.stringify(a || []) === JSON.stringify(b || []);
 }
 
 // On load, seeds notesLinkMatches from whatever's freshly detectable in the
@@ -402,11 +410,15 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // task that (directly or transitively) already depends on it — either
   // would create a cycle the scheduler could never resolve.
   const ineligibleDependencyIds = useMemo(() => getIneligibleDependencyIds(task.id, tasks), [task.id, tasks]);
-  const dependencyOptions = tasks.filter((t) => !ineligibleDependencyIds.has(t.id) && !t.isCompleted);
+  const dependencyOptions = useMemo(
+    () => tasks.filter((t) => !ineligibleDependencyIds.has(t.id) && !t.isCompleted),
+    [tasks, ineligibleDependencyIds]
+  );
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
-  const incompleteDependencies = (task.dependsOn || [])
-    .map((depId) => taskById.get(depId))
-    .filter((dep) => dep && !dep.isCompleted);
+  const incompleteDependencies = useMemo(
+    () => (task.dependsOn || []).map((depId) => taskById.get(depId)).filter((dep) => dep && !dep.isCompleted),
+    [task.dependsOn, taskById]
+  );
 
   // Reset local form state whenever a *different* task is opened (not on
   // every re-render, or in-progress typing would get clobbered by
@@ -523,26 +535,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       }
     });
     const taskRecurrenceDays = rule.days || null;
-    if (
-      JSON.stringify(recurrenceDays || []) === JSON.stringify(snap.recurrenceDays || []) &&
-      JSON.stringify(taskRecurrenceDays || []) !== JSON.stringify(snap.recurrenceDays || [])
-    ) {
+    if (jsonArrayEq(recurrenceDays, snap.recurrenceDays) && !jsonArrayEq(taskRecurrenceDays, snap.recurrenceDays)) {
       setRecurrenceDays(taskRecurrenceDays);
       snap.recurrenceDays = taskRecurrenceDays;
     }
     const taskDependsOn = task.dependsOn || [];
-    if (
-      JSON.stringify(dependsOn) === JSON.stringify(snap.dependsOn) &&
-      JSON.stringify(taskDependsOn) !== JSON.stringify(snap.dependsOn)
-    ) {
+    if (jsonArrayEq(dependsOn, snap.dependsOn) && !jsonArrayEq(taskDependsOn, snap.dependsOn)) {
       setDependsOn(taskDependsOn);
       snap.dependsOn = taskDependsOn;
     }
     const taskLabelIds = task.labelIds || [];
-    if (
-      JSON.stringify(labelIds) === JSON.stringify(snap.labelIds) &&
-      JSON.stringify(taskLabelIds) !== JSON.stringify(snap.labelIds)
-    ) {
+    if (jsonArrayEq(labelIds, snap.labelIds) && !jsonArrayEq(taskLabelIds, snap.labelIds)) {
       setLabelIds(taskLabelIds);
       snap.labelIds = taskLabelIds;
     }
@@ -582,7 +585,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   // Sections belong to a project — once a project is chosen, only show
   // that project's sections (matching Todoist's own board picker).
-  const availableSections = sections.filter((s) => !projectId || s.projectId === projectId);
+  const availableSections = useMemo(
+    () => sections.filter((s) => !projectId || s.projectId === projectId),
+    [sections, projectId]
+  );
 
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);
@@ -591,6 +597,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       setSectionId('');
     }
   }
+
+  // Stable reference (getOrCreateLabelIds itself is already useCallback'd in
+  // SchedulerContext) so LabelPicker's React.memo isn't defeated by a fresh
+  // inline function every render.
+  const handleCreateLabel = useCallback((name) => getOrCreateLabelIds([name])[0], [getOrCreateLabelIds]);
 
   // Smart-parse: a field only counts as "safe to auto-fill" while it still
   // matches the value the task loaded with — the moment the user directly
@@ -708,38 +719,46 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setRepeatEditText(null);
   }
 
-  const smartChips = [
-    smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
-    smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
-    smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
-    smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
-    smartDetected.estimatedHours && { type: 'estimatedHours', icon: Clock, label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}` },
-    smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
-    smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
-    smartDetected.dependency &&
-      (smartDetected.dependency.task
-        ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
-        : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
-    smartDetected.project &&
-      (smartDetected.project.project
-        ? {
-            type: 'project',
-            icon: smartDetected.project.sectionFragment && !smartDetected.project.section ? HelpCircle : Folder,
-            label: smartDetected.project.sectionFragment
-              ? smartDetected.project.section
-                ? `Project: ${smartDetected.project.project.name} → ${smartDetected.project.section.name}`
-                : `${smartDetected.project.project.name}: no section match for "${smartDetected.project.sectionFragment}"`
-              : `Project: ${smartDetected.project.project.name}`,
-          }
-        : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
-    ...(smartDetected.labels || []).map((m) => ({
-      type: 'labels',
-      key: `labels:${m.matchedText}`,
-      icon: Tag,
-      label: `#${m.name}`,
-      match: m,
-    })),
-  ].filter(Boolean);
+  const smartChips = useMemo(
+    () =>
+      [
+        smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
+        smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
+        smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
+        smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
+        smartDetected.estimatedHours && {
+          type: 'estimatedHours',
+          icon: Clock,
+          label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}`,
+        },
+        smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
+        smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
+        smartDetected.dependency &&
+          (smartDetected.dependency.task
+            ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
+            : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
+        smartDetected.project &&
+          (smartDetected.project.project
+            ? {
+                type: 'project',
+                icon: smartDetected.project.sectionFragment && !smartDetected.project.section ? HelpCircle : Folder,
+                label: smartDetected.project.sectionFragment
+                  ? smartDetected.project.section
+                    ? `Project: ${smartDetected.project.project.name} → ${smartDetected.project.section.name}`
+                    : `${smartDetected.project.project.name}: no section match for "${smartDetected.project.sectionFragment}"`
+                  : `Project: ${smartDetected.project.project.name}`,
+              }
+            : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
+        ...(smartDetected.labels || []).map((m) => ({
+          type: 'labels',
+          key: `labels:${m.matchedText}`,
+          icon: Tag,
+          label: `#${m.name}`,
+          match: m,
+        })),
+      ].filter(Boolean),
+    [smartDetected]
+  );
 
   // Drives the inline Save/Cancel row rendered under the description
   // (Todoist-style, replacing a permanent footer) — only worth showing once
@@ -767,7 +786,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     isRecurring !== initialSnapshotRef.current.isRecurring ||
     recurrenceCount !== initialSnapshotRef.current.recurrenceCount ||
     recurrenceUnit !== initialSnapshotRef.current.recurrenceUnit ||
-    JSON.stringify(recurrenceDays || []) !== JSON.stringify(initialSnapshotRef.current.recurrenceDays || []) ||
+    !jsonArrayEq(recurrenceDays, initialSnapshotRef.current.recurrenceDays) ||
     projectId !== initialSnapshotRef.current.projectId ||
     sectionId !== initialSnapshotRef.current.sectionId ||
     isPassive !== initialSnapshotRef.current.isPassive ||
@@ -1633,7 +1652,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   labels={labels}
                   selectedIds={labelIds}
                   onChange={setLabelIds}
-                  onCreateLabel={(name) => getOrCreateLabelIds([name])[0]}
+                  onCreateLabel={handleCreateLabel}
                 />
                 {(smartDetected.labels || []).length > 0 && (
                   <p className="form-hint">Pending from the title: {smartDetected.labels.map((m) => `#${m.name}`).join(', ')}</p>
