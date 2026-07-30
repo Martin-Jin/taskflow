@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.32.2',
+    date: '2026-07-31',
+    title: 'Cleaner Google Calendar settings row',
+    changes: [
+      'The "Push scheduled blocks to Google Calendar" button is now just labeled "Push", and only shows up once you\'ve actually connected Google Calendar.',
+      'Fixed the Connect/Push buttons looking inconsistent — they now sit left-aligned together instead of Push stretching across the full row.',
+    ],
+  },
+  {
     version: '1.32.1',
     date: '2026-07-31',
     title: 'Interface animations now override reduced-motion at the OS level',

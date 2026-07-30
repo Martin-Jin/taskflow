@@ -1010,25 +1010,6 @@ select:focus-visible,
   }
 }
 
-/* "Push scheduled blocks to Google Calendar" is long enough that it wraps
-   to two lines once the button's available width drops below ~299px
-   (measured: fits on one line at 355px+ viewports, wraps at 354px and
-   below) — narrower than the general 639px mobile breakpoint above.
-   Buttons default to text-align: center, so a wrapped label centers each
-   line independently and reads as a jagged pyramid: stack it full-width
-   in its row instead (same available width as "Connect Google Calendar"
-   above it) and left-align the label so the wrapped lines read like
-   normal text. Scoped to just the range where it actually wraps — forcing
-   full-width across the whole 639px mobile range left a gap after the
-   left-aligned single-line label at every width in between. */
-@media (max-width: 354px) {
-  .google-calendar-push-btn {
-    flex-basis: 100%;
-    justify-content: flex-start;
-    text-align: left;
-  }
-}
-
 .card {
   background: var(--color-bg-surface);
   border-radius: var(--radius-md);

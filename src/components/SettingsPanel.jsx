@@ -396,9 +396,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               'Connect Google Calendar'
             )}
           </button>
-          <button className="btn btn-primary google-calendar-push-btn" onClick={pushToGoogleCalendar} disabled={isSyncing}>
-            {isSyncing ? 'Syncing…' : 'Push scheduled blocks to Google Calendar'}
-          </button>
+          {googleConnected && (
+            <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
+              {isSyncing ? 'Syncing…' : 'Push'}
+            </button>
+          )}
           {googleConnected && (
             <button
               className="btn"
