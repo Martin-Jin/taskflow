@@ -291,11 +291,18 @@
 
   /* Stack columns vertically on mobile instead of horizontal swipe-scroll
      — each column gets its own full-width section, scrolled the same way
-     as the rest of the page, rather than needing a horizontal gesture. */
+     as the rest of the page, rather than needing a horizontal gesture.
+     Single `overflow: visible` (not separate overflow-x/overflow-y) is
+     deliberate: per the CSS overflow spec, setting one axis to a
+     non-visible value (e.g. overflow-x: hidden) while the other stays
+     visible silently promotes the visible axis to auto — turning this
+     into its own internal scroll container clipped to .board-page's
+     flex-constrained height instead of letting .main-content's real
+     page scrollbar show the stacked columns, which is what made the
+     board effectively disappear on mobile. */
   .board-columns {
     flex-direction: column;
-    overflow-x: hidden;
-    overflow-y: visible;
+    overflow: visible;
   }
 
   .board-column {
@@ -310,11 +317,24 @@
     margin-bottom: 14px;
   }
 
+  /* Desktop's sticky header relies on .board-column-body being its own
+     scroll container — once that's gone on mobile (see .board-columns
+     above), "sticky" instead sticks to .main-content, the page's real
+     scroller, so every stacked column's header piles up opaquely at the
+     top as you scroll. A plain static header per column reads correctly
+     here since the whole page scrolls past it instead. */
+  .board-column-header {
+    position: static;
+  }
+
   .board-column-body {
     /* Column bodies were capped by the desktop board's shared height
        (flex:1 inside a fixed-height row) — on mobile each column is its
-       own full-height section instead, so let it size to its cards. */
-    overflow-y: visible;
+       own full-height section instead, so let it size to its cards.
+       `overflow: visible` (both axes) for the same reason as
+       .board-columns above — the base rule's overflow-x: hidden would
+       otherwise silently promote this back to a clipped auto scrollbar. */
+    overflow: visible;
     max-height: none;
   }
 

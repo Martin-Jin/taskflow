@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.2',
+    date: '2026-07-31',
+    title: 'Fix: Board view not showing on mobile',
+    changes: [
+      'Board view (Tasks → Board) now displays correctly on phone-width screens — a CSS quirk was collapsing it into a near-invisible scroll box instead of showing the stacked columns on the page.',
+    ],
+  },
+  {
     version: '1.33.1',
     date: '2026-07-31',
     title: 'Recurring tasks now schedule every day they repeat',
