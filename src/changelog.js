@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.32.1',
+    date: '2026-07-31',
+    title: 'Interface animations now override reduced-motion at the OS level',
+    changes: [
+      'Turning on Settings → Interface animations now shows motion even if your device has a system-wide "reduce motion" preference on — previously the OS setting silently won and animations stayed off no matter what.',
+    ],
+  },
+  {
     version: '1.32.0',
     date: '2026-07-31',
     title: 'A more polished feel: motion, hover previews, and a bit of depth',

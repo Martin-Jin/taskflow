@@ -166,10 +166,14 @@
   color-scheme: dark;
 }
 
+/* :root:not([data-animations='on']) — the explicit Settings toggle wins over
+   this OS-level query, same reasoning as useMotionEnabled's JS-side check:
+   someone who turns interface animations on wants them in this app
+   specifically, regardless of an OS-wide reduced-motion preference. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root:not([data-animations='on']) *,
+  :root:not([data-animations='on']) *::before,
+  :root:not([data-animations='on']) *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
