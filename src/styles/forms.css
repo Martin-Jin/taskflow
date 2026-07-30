@@ -961,6 +961,16 @@
   font-weight: 600;
 }
 
+.select-menu-option.is-disabled {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.select-menu-option.is-disabled:hover {
+  background: transparent;
+}
+
 .select-menu-footer-wrap {
   margin-top: 4px;
   padding-top: 4px;
@@ -1763,28 +1773,34 @@
   width: 480px;
 }
 
+.modal-ai-quickadd textarea {
+  resize: none; /* height auto-grows via useAutosizeTextarea; no manual drag handle */
+}
+
 .ai-quickadd-provider-row {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 4px;
+  /* Compensates for .select-menu-trigger's own 8px left padding, so the
+     "Claude"/"Gemini" label text lines up with the plain paragraph text
+     above/below this row instead of looking indented relative to it. */
+  margin-left: -8px;
 }
 
-.ai-quickadd-provider-btn {
-  flex: 1;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-page);
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
+/* Deliberately left at SelectMenu's default ghost/transparent trigger look
+   (no visible border/background at rest) rather than a bordered "chip" —
+   a visible box here fights the -8px margin above (the box edge would hang
+   left of the surrounding paragraph text instead of the text itself lining
+   up), and every other SelectMenu in the app already looks like this. */
+
+.ai-quickadd-help-btn {
+  border-color: transparent;
+  background: transparent;
 }
 
-.ai-quickadd-provider-btn.is-active {
-  border-color: var(--color-accent-border);
-  color: var(--color-text-primary);
-  background: var(--color-accent-soft, var(--color-bg-surface-hover));
+.ai-quickadd-help-btn:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
 }
 
 .ai-quickadd-dropzone {
@@ -1831,6 +1847,118 @@
 
 @media (max-width: 639px) {
   .modal-ai-quickadd {
+    width: 100%;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   AIPlanConfirmModal — per-operation accept/reject checklist shown before
+   any AI Assistant change is applied. Reuses the same modal shell classes
+   as AIQuickAddModal above.
+   ---------------------------------------------------------------------- */
+.modal-ai-plan-confirm {
+  width: 560px;
+  max-width: 100%;
+}
+
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  color: var(--color-text-primary);
+}
+
+.ai-plan-select-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.ai-plan-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.ai-plan-group + .ai-plan-group {
+  margin-top: 10px;
+}
+
+.ai-plan-group-heading {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+}
+
+.ai-plan-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.ai-plan-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.ai-plan-item input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.ai-plan-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.ai-plan-item-desc {
+  word-break: break-word;
+}
+
+.ai-plan-item.is-destructive .ai-plan-item-desc {
+  color: var(--color-danger);
+}
+
+.ai-plan-item.is-invalid {
+  cursor: default;
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+}
+
+.ai-plan-item.is-invalid .ai-plan-item-desc {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+}
+
+.ai-plan-item-error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+@media (max-width: 639px) {
+  .modal-ai-plan-confirm {
     width: 100%;
   }
 }

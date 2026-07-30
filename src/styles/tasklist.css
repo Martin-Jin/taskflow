@@ -229,6 +229,17 @@
 .task-row-collapse {
   flex-shrink: 0;
   align-self: flex-start;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-top: 1px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.task-row-collapse:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
 }
 
 .task-row-collapse-spacer {
@@ -243,6 +254,13 @@
 .task-row-restore {
   flex-shrink: 0;
   align-self: flex-start;
+  border-color: transparent;
+  background: transparent;
+}
+
+.task-row-restore:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
 }
 
 .task-row-main {

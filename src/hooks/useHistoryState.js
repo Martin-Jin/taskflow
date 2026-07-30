@@ -39,8 +39,27 @@ export function useHistoryState(initialState) {
     future: [],
   }));
 
-  const commit = useCallback((newTasksAndBlocks, actionLabel) => {
+  /**
+   * `newTasksAndBlocksOrUpdater` is normally a precomputed `{tasks, blocks}`
+   * object — fine for the common case of one commit() per user action. But
+   * when several commit() calls happen synchronously in the same tick with
+   * no re-render in between (e.g. the AI Assistant applying a multi-op plan
+   * — see aiPlanService.js/SchedulerContext.applyAIPlan), every caller that
+   * precomputed its object from a closed-over `tasks`/`blocks` variable was
+   * working off the SAME stale snapshot, so each commit's payload silently
+   * overwrote the previous one's addition instead of building on it — only
+   * the last call in the batch would actually survive. Passing a function
+   * `(current) => ({tasks, blocks})` instead lets the caller compute off
+   * `current`, which this always derives from the latest queued `h.present`
+   * (React processes queued setState updaters in order), fixing that for
+   * any same-tick sequence of commits, not just this one call site.
+   */
+  const commit = useCallback((newTasksAndBlocksOrUpdater, actionLabel) => {
     setHistory((h) => {
+      const newTasksAndBlocks =
+        typeof newTasksAndBlocksOrUpdater === 'function'
+          ? newTasksAndBlocksOrUpdater({ tasks: h.present.tasksSnapshot, blocks: h.present.blocksSnapshot })
+          : newTasksAndBlocksOrUpdater;
       const entry = {
         id: `hist_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         timestamp: Date.now(),

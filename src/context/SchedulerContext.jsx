@@ -85,6 +85,63 @@ const SchedulerContext = createContext(null);
 
 const EVENTS_HORIZON_DAYS = 28;
 
+// Monotonic counter appended to every locally-generated id below, so two
+// entities created in the same millisecond (e.g. the AI Assistant applying a
+// multi-operation plan in one synchronous batch — see aiPlanService.js)
+// never collide the way a bare `${prefix}_${Date.now()}` could.
+let localIdSequence = 0;
+function generateLocalId(prefix) {
+  localIdSequence += 1;
+  return `${prefix}_${Date.now()}_${localIdSequence}`;
+}
+
+// Pure default-field builders shared between the normal one-at-a-time
+// mutators below (addTask/addManualEvent) and the AI Assistant's batch-apply
+// path (see aiPlanService.js's computePlanEffects, invoked from
+// applyAIPlan below) — kept in one place so both paths produce identically-
+// shaped new records instead of the batch path silently drifting from what
+// a manually-created task/event looks like.
+function buildNewTaskObject(taskInput, id) {
+  return {
+    id,
+    remainingHours: taskInput.estimatedHours,
+    isLocked: false,
+    isCompleted: false,
+    isRecurring: false,
+    recurrenceString: null,
+    minChunkHours: 0.5,
+    maxChunkHours: 4,
+    dependsOn: [],
+    isPassive: false,
+    earliestDate: null,
+    enforceDueDate: false,
+    fixedTime: null,
+    link: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    source: 'manual',
+    ...taskInput,
+  };
+}
+
+function buildNewEventObject(eventInput, id) {
+  return {
+    id,
+    title: eventInput.title?.trim() || 'Untitled event',
+    date: eventInput.date,
+    startTime: eventInput.startTime,
+    endTime: eventInput.endTime,
+    description: eventInput.description?.trim() || '',
+    location: eventInput.location?.trim() || '',
+    isFreeTime: false,
+    isRecurring: false,
+    recurrenceRule: null,
+    googleEventId: null,
+    seriesId: null,
+    source: 'manual',
+  };
+}
+
 /**
  * Collapses events that represent the same real-world occurrence (same
  * title/date/time) down to one. Needed on top of googleCalendarService's
@@ -1271,31 +1328,17 @@ export function SchedulerProvider({ children }) {
    */
   const addTask = useCallback(
     (taskInput) => {
-      const localId = `task_${Date.now()}`;
-      const newTask = {
-        id: localId,
-        remainingHours: taskInput.estimatedHours,
-        isLocked: false,
-        isCompleted: false,
-        isRecurring: false,
-        recurrenceString: null,
-        minChunkHours: 0.5,
-        maxChunkHours: 4,
-        dependsOn: [],
-        isPassive: false,
-        earliestDate: null,
-        enforceDueDate: false,
-        fixedTime: null,
-        link: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        source: 'manual',
-        ...taskInput,
-      };
-      commit({ tasks: [...tasks, newTask], blocks }, `Added task "${newTask.title}"`);
+      const newTask = buildNewTaskObject(taskInput, generateLocalId('task'));
+      // Function form (see useHistoryState's commit doc comment) so several
+      // addTask calls in the same synchronous tick — e.g. the AI Assistant
+      // applying a multi-task plan — each build on the previous call's
+      // result instead of each computing from the same stale `tasks` closure
+      // and silently clobbering all but the last one.
+      commit((current) => ({ tasks: [...current.tasks, newTask], blocks: current.blocks }), `Added task "${newTask.title}"`);
       if (soundEnabled) playAddSound(soundVolume);
+      return newTask;
     },
-    [tasks, blocks, commit, soundEnabled, soundVolume]
+    [commit, soundEnabled, soundVolume]
   );
 
   /**
@@ -1311,10 +1354,16 @@ export function SchedulerProvider({ children }) {
    */
   const updateTask = useCallback(
     (taskId, updates) => {
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t));
-      commit({ tasks: newTasks, blocks }, `Updated task`);
+      // Function form — see addTask's comment just above.
+      commit(
+        (current) => ({
+          tasks: current.tasks.map((t) => (t.id === taskId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)),
+          blocks: current.blocks,
+        }),
+        `Updated task`
+      );
     },
-    [tasks, blocks, commit]
+    [commit]
   );
 
   /**
@@ -1330,14 +1379,6 @@ export function SchedulerProvider({ children }) {
       // that no longer exists and, since areDependenciesMet() treats a
       // missing dependency as unmet, it would stay permanently blocked with
       // no way to fix it in the UI.
-      const newTasks = tasks
-        .filter((t) => !idsToDelete.has(t.id))
-        .map((t) =>
-          t.dependsOn?.some((id) => idsToDelete.has(id))
-            ? { ...t, dependsOn: t.dependsOn.filter((id) => !idsToDelete.has(id)) }
-            : t
-        );
-      const newBlocks = blocks.filter((b) => !idsToDelete.has(b.taskId));
       // Best-effort — deleted tasks' comment attachments would otherwise
       // stay orphaned in Storage forever. Fire-and-forget, not awaited: the
       // task deletion itself shouldn't wait on Storage round-trips. Skipped
@@ -1352,10 +1393,26 @@ export function SchedulerProvider({ children }) {
             if (c.attachment) deleteCommentAttachment(c.attachment.path);
           });
       }
-      commit({ tasks: newTasks, blocks: newBlocks }, `Deleted task`);
+      // Function form — see addTask's comment above. The actual array
+      // transform runs against `current`, not the closed-over `tasks`/
+      // `blocks`, so this is safe even when several deletes/creates happen
+      // in the same synchronous batch.
+      commit(
+        (current) => ({
+          tasks: current.tasks
+            .filter((t) => !idsToDelete.has(t.id))
+            .map((t) =>
+              t.dependsOn?.some((id) => idsToDelete.has(id))
+                ? { ...t, dependsOn: t.dependsOn.filter((id) => !idsToDelete.has(id)) }
+                : t
+            ),
+          blocks: current.blocks.filter((b) => !idsToDelete.has(b.taskId)),
+        }),
+        `Deleted task`
+      );
       if (soundEnabled) playDeleteSound(soundVolume);
     },
-    [tasks, blocks, commit, user, soundEnabled, soundVolume]
+    [tasks, commit, user, soundEnabled, soundVolume]
   );
 
   /**
@@ -1763,9 +1820,9 @@ export function SchedulerProvider({ children }) {
   const addProject = useCallback((name) => {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false };
-    const localId = `proj_${Date.now()}`;
-    setProjects((prev) => [...prev, { id: localId, name: trimmed, order: prev.length + 1 }]);
-    return { ok: true };
+    const id = generateLocalId('proj');
+    setProjects((prev) => [...prev, { id, name: trimmed, order: prev.length + 1 }]);
+    return { ok: true, id };
   }, []);
 
   /**
@@ -1785,12 +1842,18 @@ export function SchedulerProvider({ children }) {
     (projectId) => {
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
       setSections((prev) => prev.filter((s) => s.projectId !== projectId));
-      const newTasks = tasks.map((t) =>
-        t.projectId === projectId ? { ...t, projectId: null, sectionId: null, sectionName: null } : t
+      // Function form — see addTask's comment above.
+      commit(
+        (current) => ({
+          tasks: current.tasks.map((t) =>
+            t.projectId === projectId ? { ...t, projectId: null, sectionId: null, sectionName: null } : t
+          ),
+          blocks: current.blocks,
+        }),
+        `Deleted project`
       );
-      commit({ tasks: newTasks, blocks }, `Deleted project`);
     },
-    [tasks, blocks, commit]
+    [commit]
   );
 
   const togglePinProject = useCallback((projectId) => {
@@ -1806,10 +1869,10 @@ export function SchedulerProvider({ children }) {
   const addSection = useCallback(
     (projectId, name) => {
       const trimmed = name.trim();
-      if (!trimmed || !projectId) return;
-      const localId = `sec_${Date.now()}`;
-      const newSection = { id: localId, name: trimmed, projectId, order: sections.length + 1 };
+      if (!trimmed || !projectId) return null;
+      const newSection = { id: generateLocalId('sec'), name: trimmed, projectId, order: sections.length + 1 };
       setSections((prev) => [...prev, newSection]);
+      return newSection;
     },
     [sections.length]
   );
@@ -1819,21 +1882,38 @@ export function SchedulerProvider({ children }) {
       const trimmed = name.trim();
       if (!trimmed) return;
       setSections((prev) => prev.map((s) => (s.id === sectionId ? { ...s, name: trimmed } : s)));
-      // Denormalized sectionName on any task currently in this section stays in sync too.
-      const newTasks = tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionName: trimmed } : t));
-      if (newTasks.some((t, i) => t !== tasks[i])) commit({ tasks: newTasks, blocks }, `Renamed section`);
+      // Denormalized sectionName on any task currently in this section stays
+      // in sync too. Function form — see addTask's comment above — always
+      // commits rather than skipping when no task happens to reference this
+      // section, since "did anything change" can't be checked ahead of time
+      // against `current` (only known once the updater runs); a harmless
+      // no-op-content undo entry in that rare case beats risking a lost
+      // write in a same-tick batch.
+      commit(
+        (current) => ({
+          tasks: current.tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionName: trimmed } : t)),
+          blocks: current.blocks,
+        }),
+        `Renamed section`
+      );
     },
-    [tasks, blocks, commit]
+    [commit]
   );
 
   const deleteSection = useCallback(
     (sectionId) => {
       setSections((prev) => prev.filter((s) => s.id !== sectionId));
-      // Tasks in the deleted section fall back to "No Section", matching what Todoist does.
-      const newTasks = tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionId: null, sectionName: null } : t));
-      commit({ tasks: newTasks, blocks }, `Deleted section`);
+      // Tasks in the deleted section fall back to "No Section", matching
+      // what Todoist does. Function form — see addTask's comment above.
+      commit(
+        (current) => ({
+          tasks: current.tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionId: null, sectionName: null } : t)),
+          blocks: current.blocks,
+        }),
+        `Deleted section`
+      );
     },
-    [tasks, blocks, commit]
+    [commit]
   );
 
   // ---- Block CRUD (manual drag/resize/lock) --------------------------------
@@ -1902,7 +1982,7 @@ export function SchedulerProvider({ children }) {
   const addManualEvent = useCallback(
     ({ title, date, startTime, endTime, description = '', location = '' }) => {
       const newEvent = {
-        id: `evt_manual_${Date.now()}`,
+        id: generateLocalId('evt_manual'),
         title: title?.trim() || 'Untitled event',
         date,
         startTime,
