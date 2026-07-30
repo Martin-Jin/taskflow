@@ -26,7 +26,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 
 export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
   const isMobile = useIsMobile();
-  const { setNotification } = useScheduler();
+  const { setNotification, requestSettingsSection } = useScheduler();
   const aiConfigured = isAIQuickAddConfigured();
   const speedDial = isMobile && aiConfigured;
   const [expanded, setExpanded] = useState(false);
@@ -63,7 +63,12 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
     // on screen to actually shake — collapsing first would unmount it.
     const hasKey = !!getStoredApiKey('anthropic') || !!getStoredApiKey('gemini');
     if (!hasKey) {
-      setNotification({ type: 'error', message: 'Add an Anthropic or Gemini API key in Settings → Integrations first.' });
+      setNotification({
+        type: 'error',
+        message: 'Add an Anthropic or Gemini API key in Settings → Integrations first.',
+        actionLabel: 'Open Settings',
+        onAction: () => requestSettingsSection('integrations'),
+      });
       setAiShake(true);
       return;
     }

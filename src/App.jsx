@@ -108,6 +108,7 @@ function AppShell() {
     notification,
     setNotification,
     clearNotification,
+    settingsSectionRequest,
     actionToast,
     dismissActionToast,
     projects,
@@ -221,6 +222,13 @@ function AppShell() {
     }
   );
 
+  // Lets components outside SettingsPanel (e.g. an error toast/modal) jump
+  // straight to a Settings section via requestSettingsSection — mirrors
+  // addTaskSignal above. SettingsPanel itself watches the same prop to scroll.
+  useEffect(() => {
+    if (settingsSectionRequest?.requestId) setTab('settings');
+  }, [settingsSectionRequest?.requestId]);
+
   return (
     <div className={`app-shell ${isMobile ? 'is-mobile' : ''} ${isMobile && tab !== 'dashboard' ? 'no-topbar' : ''}`}>
       {!isMobile && (
@@ -276,7 +284,7 @@ function AppShell() {
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
-          {tab === 'settings' && <SettingsPanel onOpenTour={openTour} />}
+          {tab === 'settings' && <SettingsPanel onOpenTour={openTour} settingsSectionRequest={settingsSectionRequest} />}
         </div>
       </main>
 

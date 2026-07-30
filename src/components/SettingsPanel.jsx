@@ -75,7 +75,7 @@ const SETTINGS_SECTIONS = [
 ];
 
 /** @param {{ onOpenTour: () => void }} props — replays the app-level guided tour (see App.jsx), which needs to be able to switch tabs as it advances. */
-export default function SettingsPanel({ onOpenTour }) {
+export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenDraft, setTokenDraft] = useState('');
   // AI Quick Add keys (BYOK) — read/written directly via persistence.js, same
@@ -225,6 +225,14 @@ export default function SettingsPanel({ onOpenTour }) {
     setSectionQuery('');
     setIsSectionSearchFocused(false);
   }
+
+  // Component remounts on every navigation into the Settings tab (see the
+  // `{tab === 'settings' && <SettingsPanel ... />}` guard in App.jsx), so this
+  // fires fresh each time a caller elsewhere requests a section via
+  // requestSettingsSection.
+  useEffect(() => {
+    if (settingsSectionRequest?.section) goToSection(settingsSectionRequest.section);
+  }, [settingsSectionRequest?.requestId]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>

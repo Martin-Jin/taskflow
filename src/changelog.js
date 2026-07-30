@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.26.0',
+    date: '2026-07-30',
+    title: 'Dead-end fixes: AI Quick Add and Gantt now point you to the fix',
+    changes: [
+      "AI Quick Add's \"no API key\" message now has an \"Open Settings\" button that jumps straight to Integrations, instead of just telling you where to go.",
+      "Gantt view's empty state now has a working \"Re-balance schedule\" button, so you don't have to switch to Calendar to populate it.",
+    ],
+  },
+  {
     version: '1.25.0',
     date: '2026-07-30',
     title: 'Scheduler clears blocking tasks faster',

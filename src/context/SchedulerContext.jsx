@@ -535,6 +535,15 @@ export function SchedulerProvider({ children }) {
   const [cloudBackups, setCloudBackups] = useState([]);
   const [lastOverflow, setLastOverflow] = useState([]);
   const [notification, setNotification] = useState(null);
+  // Ephemeral cross-component "jump to a Settings section" signal — not
+  // persisted/synced/backed-up, just a bumped-counter request (mirrors the
+  // addTaskSignal pattern in App.jsx) so components outside SettingsPanel can
+  // switch to the Settings tab and scroll to a specific section.
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState(null);
+
+  const requestSettingsSection = useCallback((section) => {
+    setSettingsSectionRequest((prev) => ({ section, requestId: prev ? prev.requestId + 1 : 1 }));
+  }, []);
 
   const { tasks, blocks } = state;
 
@@ -2385,6 +2394,8 @@ export function SchedulerProvider({ children }) {
       lastOverflow,
       notification,
       setNotification,
+      settingsSectionRequest,
+      requestSettingsSection,
       canUndo,
       canRedo,
       currentActionLabel,
@@ -2473,6 +2484,8 @@ export function SchedulerProvider({ children }) {
       lastOverflow,
       notification,
       setNotification,
+      settingsSectionRequest,
+      requestSettingsSection,
       canUndo,
       canRedo,
       currentActionLabel,

@@ -311,8 +311,22 @@ export default function AIQuickAddModal({ onClose }) {
         {error && (
           <p className="form-error">
             {error}
-            {(errorKind === 'no_api_key' || errorKind === 'invalid_api_key') &&
-              ' You can add it under Settings → Integrations → AI Quick Add.'}
+            {(errorKind === 'no_api_key' || errorKind === 'invalid_api_key') && (
+              <>
+                {' '}
+                You can add it under Settings → Integrations → AI Quick Add.{' '}
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => {
+                    requestClose();
+                    scheduler.requestSettingsSection('integrations');
+                  }}
+                >
+                  Open Settings
+                </button>
+              </>
+            )}
             {errorKind === 'context_too_large' &&
               ' Completing or archiving some older tasks will shrink the workspace sent with each request.'}
             {SWITCHABLE_ERROR_KINDS.has(errorKind) && (
