@@ -323,17 +323,6 @@
     width: 100%;
   }
 
-  /* The board-wide "+ Add task" button (top-right) sits in .board-toolbar,
-     which the rule above stretches every child to flex: 1 1 100% — full
-     width is fine for the search input, but it squashed this button's
-     horizontal padding/label. Give it its own sizing so it reads as a
-     normal button instead of a stretched, squished bar. */
-  .board-toolbar .add-task-btn {
-    flex: none;
-    width: auto;
-    align-self: flex-end;
-  }
-
   .board-flat-list-footer {
     max-width: 100%;
   }

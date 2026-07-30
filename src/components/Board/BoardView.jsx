@@ -48,15 +48,15 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Sparkles, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
+import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import AddTaskModal from '../Modals/AddTaskModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
-import { isAIQuickAddConfigured } from '../../services/aiQuickAddService';
 import SearchBar, { taskMatchesQuery } from '../Common/SearchBar';
+import AddTaskFabGroup from '../Common/AddTaskFabGroup';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
@@ -307,15 +307,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
     <div className="board-page">
       <div className="board-toolbar tasklist-toolbar">
         <SearchBar placeholder="Search board…" onSelectTask={setEditingTaskId} />
-        {isAIQuickAddConfigured() && (
-          <button className="btn btn-icon" data-tour="ai-quick-add" onClick={() => setShowAIQuickAdd(true)} aria-label="AI Quick Add" title="AI Quick Add">
-            <Sparkles size={14} />
-          </button>
-        )}
-        <button className="btn btn-primary add-task-btn" onClick={() => setAddingToSectionId('')} aria-label="Add task">
-          <Plus size={14} />
-          <span className="add-task-btn-label">Add task</span>
-        </button>
+        <AddTaskFabGroup onAddTask={() => setAddingToSectionId('')} onAIQuickAdd={() => setShowAIQuickAdd(true)} />
       </div>
 
       {!selectedProject ? (
