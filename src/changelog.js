@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.22.0',
+    date: '2026-07-30',
+    title: 'Sub-tasks now show up on the Gantt chart',
+    changes: [
+      "Fixed sub-tasks (and their parent tasks) disappearing entirely from the Gantt view — each sub-task now gets its own row, showing its parent task's name underneath for context. The parent itself no longer gets a row, since it has no scheduled work of its own.",
+    ],
+  },
+  {
     version: '1.21.0',
     date: '2026-07-30',
     title: 'Push-to-Google-Calendar button no longer stretches unnecessarily on mobile',
