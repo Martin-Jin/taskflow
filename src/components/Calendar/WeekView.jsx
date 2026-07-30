@@ -596,6 +596,14 @@ export default function WeekView({
   function handleItemTouchStart(e, item) {
     if (item.type === 'block' && item.data.isLocked) return;
     if (item.type === 'event' && item.data.canEdit === false) return;
+    // Stop this touch from bubbling up to CalendarPage's swipe-navigation
+    // listener — without this, dragging an item sideways across columns
+    // also reads as a horizontal swipe there, so releasing the drag could
+    // additionally page the view to the next/prev day (touchend keeps
+    // targeting this same element per the touch event spec, but the guard
+    // in CalendarPage's handleTouchEnd only holds if its handleTouchStart
+    // never ran, hence stopping propagation here rather than on end).
+    e.stopPropagation();
     const touch = e.touches?.[0];
     if (!touch) return;
     const startX = touch.clientX;
