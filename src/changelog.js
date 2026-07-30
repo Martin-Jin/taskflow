@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.17.4',
+    date: '2026-07-30',
+    title: 'Fixed remaining toolbar height mismatch',
+    changes: [
+      'The search bar next to the AI Quick Add and Add task buttons was still a couple pixels shorter than both, despite an earlier alignment fix — now matches their height exactly.',
+    ],
+  },
+  {
     version: '1.17.3',
     date: '2026-07-30',
     title: 'Shorter "What\'s New" panel by default',
