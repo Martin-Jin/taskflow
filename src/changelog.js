@@ -17,6 +17,32 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.9',
+    date: '2026-07-30',
+    title: 'Fixed a calendar drag accidentally paging to the next/prev day',
+    changes: [
+      'Dragging a calendar event or block sideways on mobile could also trigger day-swipe navigation on release, unexpectedly paging the view — fixed.',
+      'Moved the mobile "Today" button up into the main toolbar row, next to the date dropdown.',
+    ],
+  },
+  {
+    version: '1.16.8',
+    date: '2026-07-30',
+    title: 'Manual "Pull from Google Calendar" resync button',
+    changes: [
+      'Settings → Integrations now has a "Pull from Google Calendar" button (shown once connected) for manually re-fetching your Google events on demand — useful if you suspect drift or want to discard local changes to a synced event and get back exactly what Google has.',
+    ],
+  },
+  {
+    version: '1.16.7',
+    date: '2026-07-30',
+    title: 'Google Calendar reconnect prompt, and Undo for calendar event edits',
+    changes: [
+      "Google's sign-in can't always silently renew itself in the background (it periodically expires and there's no way around a real reconnect within Google's security model) — Settings now clearly flags when this happens and offers a one-click reconnect, instead of sync just quietly going stale with no explanation.",
+      'Editing a calendar event — dragging it to a new time, resizing it, or saving changes in its detail view — now shows an Undo toast just like task edits do, including undoing the corresponding push back to Google Calendar when connected.',
+    ],
+  },
+  {
     version: '1.16.6',
     date: '2026-07-30',
     title: 'Fixed home-screen install visuals, added an install prompt',
