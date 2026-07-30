@@ -30,7 +30,7 @@ export const BACKUP_FIELDS = [
   'soundVolume',
   'animationsEnabled',
   'theme',
-  'pinnedLinks',
+  'notes',
   'shortcutBindings',
 ];
 
@@ -51,10 +51,19 @@ export function buildBackupPayload(state) {
   return payload;
 }
 
-/** True if `payload` has every backupable field — rejects an unrelated JSON file instead of silently restoring mostly-undefined state. */
+/**
+ * True if `payload` has every backupable field — rejects an unrelated JSON
+ * file instead of silently restoring mostly-undefined state.
+ *
+ * ONE-TIME MIGRATION NOTE — safe to delete the `'pinnedLinks' in payload`
+ * fallback once old-format backup files (pre-Notes, `notes` field didn't
+ * exist yet) are no longer expected to show up in "Restore from file"; see
+ * notesModel.js's migrateLinksToNotes, which restoreFromBackup/
+ * applyRemoteData call on such a payload.
+ */
 export function isValidBackupPayload(payload) {
   if (!payload || typeof payload !== 'object') return false;
-  return BACKUP_FIELDS.every((field) => field in payload);
+  return BACKUP_FIELDS.every((field) => field in payload || (field === 'notes' && 'pinnedLinks' in payload));
 }
 
 /** Triggers a browser download of `payload` as a formatted .json file — an in-memory Blob + a throwaway link, no server round trip. */

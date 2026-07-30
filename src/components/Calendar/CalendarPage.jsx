@@ -12,7 +12,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -55,8 +55,14 @@ export default function CalendarPage() {
   const [creatingEvent, setCreatingEvent] = useState(null); // { date, startTime, endTime } while the "block time" modal is open
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showViewMenu, setShowViewMenu] = useState(false);
+  // Mobile-only speed-dial state for the bottom-right FAB (see .calendar-fab
+  // below) — expands into "Re-balance schedule" + "New event" mini-FABs
+  // instead of the desktop FAB's single always-visible "New event" action,
+  // mirroring AddTaskFabGroup's mobile expand/collapse pattern.
+  const [fabExpanded, setFabExpanded] = useState(false);
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
+  const fabGroupRef = useRef(null);
   const { blocks, events, tasks, runRebalance, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
   const touchStartX = useRef(null);
 
@@ -81,6 +87,15 @@ export default function CalendarPage() {
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, [showViewMenu]);
+
+  useEffect(() => {
+    if (!fabExpanded) return undefined;
+    function onDocMouseDown(e) {
+      if (fabGroupRef.current && !fabGroupRef.current.contains(e.target)) setFabExpanded(false);
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [fabExpanded]);
   // _v2: the zoom level table gained more zoom-in steps above the original
   // max, so a v1 key persisted from before that change would pin returning
   // users to what is now a mid-range level instead of the new top/default.
@@ -268,10 +283,14 @@ export default function CalendarPage() {
           </div>
         </div>
         <div className="calendar-toolbar-actions">
-          <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
-            <Zap size={14} />
-            Re-balance schedule
-          </button>
+          {/* Desktop only — on mobile this moves into the FAB speed-dial
+              below (see .calendar-fab) instead of wrapping onto its own row. */}
+          {!isMobile && (
+            <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
+              <Zap size={14} />
+              Re-balance schedule
+            </button>
+          )}
           {/* Only useful once Google Calendar is actually connected — hidden
               rather than shown-but-disabled, matching how Settings' own
               Google controls are gated on googleConnected. Shares isSyncing
@@ -319,23 +338,68 @@ export default function CalendarPage() {
         )}
       </div>
 
-      {/* Floating "+" action button — replaces the old inline "New event"
+      {/* Floating action button — replaces the old inline "New event"
           toolbar button, matching TaskListPanel's "Add task" FAB style
-          (see .calendar-fab in calendar.css, mirroring .add-task-btn). */}
-      <button
-        className="btn btn-primary calendar-fab"
-        data-tour="new-event"
-        onClick={() =>
-          setCreatingEvent({
-            date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()),
-            startTime: '',
-            endTime: '',
-          })
-        }
-        aria-label="New event"
-      >
-        <Plus size={22} />
-      </button>
+          (see .calendar-fab in calendar.css, mirroring .add-task-btn). On
+          desktop it still opens "New event" directly with a single click. On
+          mobile it expands into a two-item speed-dial (Re-balance schedule +
+          New event) instead, since Re-balance schedule was removed from the
+          mobile toolbar above to save vertical space — mirrors
+          AddTaskFabGroup's mobile expand/collapse pattern. */}
+      <div className="calendar-fab-group" ref={fabGroupRef}>
+        {isMobile && fabExpanded && (
+          <>
+            <button
+              className="btn btn-primary fab-mini"
+              data-tour="rebalance"
+              onClick={() => {
+                setFabExpanded(false);
+                runRebalance();
+              }}
+              disabled={isLoading}
+              aria-label="Re-balance schedule"
+              title="Re-balance schedule"
+            >
+              <Zap size={16} />
+            </button>
+            <button
+              className="btn btn-primary fab-mini"
+              data-tour="new-event"
+              onClick={() => {
+                setFabExpanded(false);
+                setCreatingEvent({
+                  date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()),
+                  startTime: '',
+                  endTime: '',
+                });
+              }}
+              aria-label="New event"
+              title="New event"
+            >
+              <Plus size={16} />
+            </button>
+          </>
+        )}
+        <button
+          className="btn btn-primary calendar-fab"
+          data-tour={isMobile ? undefined : 'new-event'}
+          onClick={() => {
+            if (isMobile) {
+              setFabExpanded((v) => !v);
+            } else {
+              setCreatingEvent({
+                date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()),
+                startTime: '',
+                endTime: '',
+              });
+            }
+          }}
+          aria-label={isMobile && fabExpanded ? 'Close' : 'New event'}
+          aria-expanded={isMobile ? fabExpanded : undefined}
+        >
+          {isMobile ? fabExpanded ? <X size={22} /> : <PenSquare size={22} /> : <Plus size={22} />}
+        </button>
+      </div>
 
       {selectedBlock && (
         <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} onOpenTask={handleOpenTask} />

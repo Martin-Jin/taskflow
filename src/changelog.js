@@ -17,6 +17,25 @@
 
 export const CHANGELOG = [
   {
+    version: '1.24.0',
+    date: '2026-07-30',
+    title: 'Pinned links are now Notes',
+    changes: [
+      "Replaced the dashboard's Pinned Links widget with Notes: each note is a title plus a freeform text body instead of just a bookmark, still organized into the same folders. Paste a link into a note's body and it still auto-formats into a clickable link, just like in a task's description.",
+      'Existing pinned links and folders migrate automatically into notes the first time you load this version — nothing to do on your end.',
+      'Importing a browser bookmarks export still works, now creating one note per bookmark.',
+    ],
+  },
+  {
+    version: '1.23.0',
+    date: '2026-07-30',
+    title: 'Smarter scheduling around task dependencies, tidier mobile calendar toolbar',
+    changes: [
+      "The scheduler now factors dependencies into urgency, not just as an on/off gate: if a task is blocking something due soon, that pressure carries back onto the blocker so it gets scheduled sooner instead of waiting behind unrelated equal-priority work.",
+      'On mobile, moved the "Re-balance schedule" button off the calendar toolbar (it was eating a full row) and into the "+" button in the bottom-right, which now expands into a small menu with Re-balance schedule and New event options.',
+    ],
+  },
+  {
     version: '1.22.0',
     date: '2026-07-30',
     title: 'Sub-tasks now show up on the Gantt chart',

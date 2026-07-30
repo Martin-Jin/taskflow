@@ -50,7 +50,7 @@ import { usePersistedState } from '../hooks/usePersistedState';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
 import { useTheme } from './ThemeContext';
-import { DEFAULT_PINNED_LINKS } from '../components/Dashboard/pinnedLinksModel';
+import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { playAddSound, playDeleteSound } from '../services/soundService';
 import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackups, getBackup, deleteBackup } from '../services/firestoreSync';
 import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
@@ -426,11 +426,22 @@ export function SchedulerProvider({ children }) {
     document.documentElement.setAttribute('data-animations', animationsEnabled ? 'on' : 'off');
   }, [animationsEnabled]);
 
-  // Bookmark-bar-style pinned links (see Dashboard/PinnedLinks.jsx) — lifted
-  // up here (rather than that component's own local usePersistedState) so
-  // this user-created content follows them across devices and survives a
-  // backup restore, same as routines/rules/sound settings.
-  const [pinnedLinks, setPinnedLinks] = usePersistedState('pinnedLinks', DEFAULT_PINNED_LINKS);
+  // Folder-organized sticky notes (see Dashboard/NotesCard.jsx) — lifted up
+  // here (rather than that component's own local usePersistedState) so this
+  // user-created content follows them across devices and survives a backup
+  // restore, same as routines/rules/sound settings.
+  //
+  // ONE-TIME MIGRATION — safe to delete this lazy initializer's fallback
+  // (and just pass DEFAULT_NOTES directly) once no user's localStorage can
+  // still have data under the old `pinnedLinks` key, i.e. once every active
+  // user has loaded a version with this migration at least once. Reads the
+  // old bookmark-style pinned-links shape directly (bypassing usePersistedState,
+  // which only reads the *new* 'notes' key) and converts it once; from then
+  // on 'notes' exists and this branch is never taken again.
+  const [notes, setNotes] = usePersistedState('notes', () => {
+    const legacy = loadPersisted('pinnedLinks', null);
+    return legacy ? migrateLinksToNotes(legacy) : DEFAULT_NOTES;
+  });
   // Custom keyboard-shortcut rebindings — the SOURCE OF TRUTH for these still
   // lives in localStorage under this exact same key, written directly by
   // useKeyboardShortcuts.js's setShortcutBinding/resetShortcutBinding (its
@@ -824,7 +835,8 @@ export function SchedulerProvider({ children }) {
       if ('soundEnabled' in remote) setSoundEnabled(remote.soundEnabled);
       if ('soundVolume' in remote) setSoundVolume(remote.soundVolume);
       if ('animationsEnabled' in remote) setAnimationsEnabled(remote.animationsEnabled);
-      if ('pinnedLinks' in remote) setPinnedLinks(remote.pinnedLinks);
+      if ('notes' in remote) setNotes(remote.notes);
+      else if ('pinnedLinks' in remote) setNotes(migrateLinksToNotes(remote.pinnedLinks)); // legacy remote doc, see notesModel.js migration note
       if ('shortcutBindings' in remote) {
         setShortcutBindings(remote.shortcutBindings);
         // Also write localStorage directly (not just React state) so the
@@ -845,7 +857,7 @@ export function SchedulerProvider({ children }) {
       setSoundEnabled,
       setSoundVolume,
       setAnimationsEnabled,
-      setPinnedLinks,
+      setNotes,
       setShortcutBindings,
     ]
   );
@@ -875,14 +887,14 @@ export function SchedulerProvider({ children }) {
           soundEnabled,
           soundVolume,
           animationsEnabled,
-          pinnedLinks,
+          notes,
           shortcutBindings,
         };
         await pushUserData(uid, seedPayload);
         lastSyncedSnapshotRef.current = computeSyncFingerprint(seedPayload);
       }
     },
-    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings]
+    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notes, shortcutBindings]
   );
 
   /**
@@ -920,7 +932,7 @@ export function SchedulerProvider({ children }) {
           soundVolume,
           animationsEnabled,
           theme,
-          pinnedLinks,
+          notes,
           shortcutBindings,
         });
         await createBackup(uid, payload);
@@ -931,7 +943,7 @@ export function SchedulerProvider({ children }) {
         console.warn('[SchedulerContext] Auto-backup check failed', err);
       }
     },
-    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, pinnedLinks, shortcutBindings]
+    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, notes, shortcutBindings]
   );
 
   useEffect(() => {
@@ -999,7 +1011,7 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     if (!user) return;
     if (!initialPullDoneRef.current) return; // wait for this sign-in's pull to settle first — see initialPullDoneRef's comment
-    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings };
+    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notes, shortcutBindings };
     const fingerprint = computeSyncFingerprint(payload);
     if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
     const handle = setTimeout(() => {
@@ -1013,7 +1025,7 @@ export function SchedulerProvider({ children }) {
       });
     }, 1500);
     return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, pinnedLinks, shortcutBindings]);
+  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notes, shortcutBindings]);
 
   /**
    * Manual re-pull for Settings' "Sync now" button — covers the gap this
@@ -1078,7 +1090,8 @@ export function SchedulerProvider({ children }) {
       if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
       if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
       if ('theme' in payload) setTheme(payload.theme);
-      if ('pinnedLinks' in payload) setPinnedLinks(payload.pinnedLinks);
+      if ('notes' in payload) setNotes(payload.notes);
+      else if ('pinnedLinks' in payload) setNotes(migrateLinksToNotes(payload.pinnedLinks)); // legacy backup file, see notesModel.js migration note
       if ('shortcutBindings' in payload) {
         setShortcutBindings(payload.shortcutBindings);
         // Same reasoning as applyRemoteData above — keep the hot keydown
@@ -1099,7 +1112,7 @@ export function SchedulerProvider({ children }) {
       setSoundVolume,
       setAnimationsEnabled,
       setTheme,
-      setPinnedLinks,
+      setNotes,
       setShortcutBindings,
     ]
   );
@@ -1119,11 +1132,11 @@ export function SchedulerProvider({ children }) {
       soundVolume,
       animationsEnabled,
       theme,
-      pinnedLinks,
+      notes,
       shortcutBindings,
     });
     downloadBackupFile(payload);
-  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, pinnedLinks, shortcutBindings]);
+  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, notes, shortcutBindings]);
 
   /** Reads a backup .json file the user picked and restores it — works signed-out, matching exportBackup. */
   const importBackupFromFile = useCallback(
@@ -1175,7 +1188,7 @@ export function SchedulerProvider({ children }) {
         soundVolume,
         animationsEnabled,
         theme,
-        pinnedLinks,
+        notes,
         shortcutBindings,
       });
       await createBackup(user.uid, payload);
@@ -1187,7 +1200,7 @@ export function SchedulerProvider({ children }) {
     } finally {
       setIsBackingUp(false);
     }
-  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, pinnedLinks, shortcutBindings, refreshCloudBackups]);
+  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, theme, notes, shortcutBindings, refreshCloudBackups]);
 
   /** Fetches one cloud backup's full payload by id and restores it. */
   const restoreCloudBackup = useCallback(
@@ -2377,8 +2390,8 @@ export function SchedulerProvider({ children }) {
       setSoundVolume,
       animationsEnabled,
       setAnimationsEnabled,
-      pinnedLinks,
-      setPinnedLinks,
+      notes,
+      setNotes,
       shortcutBindings,
       setShortcutBindings,
       setSearchQuery,
@@ -2459,7 +2472,7 @@ export function SchedulerProvider({ children }) {
       soundEnabled,
       soundVolume,
       animationsEnabled,
-      pinnedLinks,
+      notes,
       shortcutBindings,
       undo,
       redo,

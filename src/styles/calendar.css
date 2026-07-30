@@ -279,6 +279,29 @@
   .calendar-fab {
     bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
   }
+
+  /* On mobile the main FAB expands into a "Re-balance schedule" + "New
+     event" speed-dial (see CalendarPage.jsx) instead of opening "New event"
+     directly — Re-balance schedule was removed from the toolbar above to
+     save vertical space. Positioning here mirrors .add-task-fab-group in
+     tasklist.css: the group itself carries the fixed bottom-right placement
+     so the main button no longer needs its own, letting it stack in normal
+     flow with the mini-FABs above it (DOM order = rebalance, new event, main
+     button — top-to-bottom the way they should read). */
+  .calendar-fab-group {
+    position: fixed;
+    right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+    bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
+    z-index: 120;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .calendar-fab-group .calendar-fab {
+    position: static;
+  }
 }
 
 .week-grid {

@@ -369,6 +369,20 @@ task (any task with ≥1 sub-task of its own) is never scored or scheduled
 directly at all, regardless of whether it has a due date — see "Sub-tasks
 and containers" below.
 
+A task's `effectiveDeadline` also absorbs pressure from anything that
+`dependsOn` it: if B depends on A and B is due soon, A is scored as if it
+had B's (tighter) deadline too — a blocker being late makes everything
+waiting on it late, so it's treated with the same urgency, using its own
+priority weight rather than borrowing B's. This propagates transitively
+through chains of any length (A→B→C) and is defensive against a corrupted
+dependency cycle (it can't hang a rebalance even on bad data), though the
+Edit modal already stops a cycle from being created in the first place.
+This only changes *when* a blocker gets scheduled relative to unrelated
+work of similar priority — it doesn't attempt full job-shop-style makespan
+minimization (e.g. deliberately clearing a blocker's hours before touching
+any other task of equal priority); that's a bigger structural change than
+this heuristic scheduler currently makes.
+
 The **planning window** is `[today, dueDate − bufferDays]` — the buffer
 targets finishing a day early by default, but it's a soft preference: if
 the buffer-shrunk window can't fit a task's remaining hours, the engine
@@ -421,10 +435,13 @@ stays independently editable, same as before.
 
 ### Dependencies and passive tasks
 
-A task can list other tasks it `dependsOn`. `rebalanceEngine` simply excludes
-a task from allocation until every dependency is complete — there's no
-separate "must start after" logic, a blocked task just has zero eligible
-hours. The Edit modal blocks picking a dependency that would create a cycle.
+A task can list other tasks it `dependsOn`. `rebalanceEngine` excludes a task
+from allocation until every dependency is complete — a blocked task just has
+zero eligible hours. Beyond that gate, a dependency also feeds backward into
+scoring: a blocker's effective urgency rises to match whatever depends on it
+(see "Allocation" above), so a blocker due soon *because* something urgent is
+waiting on it gets scheduled earlier, not just eventually. The Edit modal
+blocks picking a dependency that would create a cycle.
 
 A task marked **"can run unattended"** (`isPassive` — laundry, something
 baking) gets its own capacity track: it's placed against a fresh copy of
@@ -458,7 +475,7 @@ src/
 │   ├── allocator.js          # Priority/deadline-aware hour distribution
 │   └── rebalanceEngine.js    # Orchestrates capacity+allocator, preserves locks
 ├── components/
-│   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, WeeklyProgressRing, PinnedLinks (+ pinnedLinksModel.js)
+│   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, WeeklyProgressRing, NotesCard (+ notesModel.js)
 │   ├── Calendar/              # WeekView (day/week time-grid, drag/resize), MonthView (density overview), CalendarPage
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
@@ -546,9 +563,12 @@ cached copy.
 - **Dashboard** — the default landing tab: a stats strip (due today,
   overdue, hours scheduled this week), **Right now** (the block currently
   in progress, or what's next, with a live countdown), **Today's agenda**,
-  a **this week's progress** ring, and **Pinned links** — bookmark-bar-style
-  shortcuts organized into folders, with a "Jump back in" row of recently
-  opened links and an "Open all" button per folder.
+  a **this week's progress** ring, and **Notes** — folder-organized sticky
+  notes (a title plus a freeform text body) for jotting anything down; a note
+  that's just a pasted link auto-formats and stays clickable, and a
+  "Recently edited" row surfaces whichever notes you touched last regardless
+  of folder. Bookmark files exported from a browser can still be imported,
+  one note per bookmark.
 - **Calendar** — Month / Week / 3 Day / Day views, picked from the hamburger
   menu next to the date title (tap the date itself to drop down a
   Google-Calendar-style month-strip date picker and jump to any day).

@@ -44,8 +44,8 @@ export function filterTasksByStatus(tasks, filter) {
 /**
  * Sidebar project ordering: pinned projects first (alphabetical), then
  * unpinned projects by most-recently-visited (undefined `lastVisitedAt`
- * sorts last) — mirrors the "Jump back in" recency pattern already used for
- * Pinned Links (see pinnedLinksModel.js).
+ * sorts last) — mirrors the recency pattern already used for Notes'
+ * "Recently edited" strip (see notesModel.js).
  */
 export function sortProjectsForSidebar(projects) {
   const pinned = projects.filter((p) => p.isPinned).sort((a, b) => a.name.localeCompare(b.name));
