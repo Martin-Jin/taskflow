@@ -96,6 +96,7 @@ DEV_NOTES.md
 # ==========================
 # Claude
 # ==========================
-.claude/
+# .claude/settings.json and CLAUDE.md are tracked (shared team config/docs).
+# settings.local.json stays personal/machine-specific — never commit it.
+.claude/settings.local.json
 CLAUDE.local.md
-CLAUDE.md

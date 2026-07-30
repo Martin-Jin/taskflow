@@ -10,18 +10,27 @@
  * (AI Quick Add above, Add task below) so both entry points stay reachable
  * without a second permanent floating button crowding the corner. Tapping a
  * mini-FAB, the main FAB again, or anywhere outside collapses it.
+ *
+ * The AI Quick Add button/mini-FAB is shown whenever the feature is
+ * configured (`isAIQuickAddConfigured`), regardless of whether the user has
+ * actually saved a provider API key yet — deliberately not hidden on either
+ * desktop or mobile. If no key is saved, tapping it shows a toast pointing
+ * at Settings instead of opening the modal (see handleAIQuickAdd).
  */
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Sparkles, X } from 'lucide-react';
-import { isAIQuickAddConfigured } from '../../services/aiQuickAddService';
+import { isAIQuickAddConfigured, getStoredApiKey } from '../../services/aiQuickAddService';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useScheduler } from '../../context/SchedulerContext';
 
 export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
   const isMobile = useIsMobile();
+  const { setNotification } = useScheduler();
   const aiConfigured = isAIQuickAddConfigured();
   const speedDial = isMobile && aiConfigured;
   const [expanded, setExpanded] = useState(false);
+  const [aiShake, setAiShake] = useState(false);
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -47,6 +56,17 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
   }
 
   function handleAIQuickAdd() {
+    // The button itself stays visible either way (see file header) — it's
+    // the modal that's gated, with a toast pointing at where to fix it,
+    // rather than the entry point silently disappearing. Checked before
+    // collapsing the mobile speed-dial (not after) so the mini-FAB is still
+    // on screen to actually shake — collapsing first would unmount it.
+    const hasKey = !!getStoredApiKey('anthropic') || !!getStoredApiKey('gemini');
+    if (!hasKey) {
+      setNotification({ type: 'error', message: 'Add an Anthropic or Gemini API key in Settings → Integrations first.' });
+      setAiShake(true);
+      return;
+    }
     setExpanded(false);
     onAIQuickAdd();
   }
@@ -54,13 +74,27 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
   return (
     <div className="add-task-fab-group" ref={rootRef}>
       {aiConfigured && !speedDial && (
-        <button className="btn btn-icon" data-tour="ai-quick-add" onClick={handleAIQuickAdd} aria-label="AI Quick Add" title="AI Quick Add">
+        <button
+          className={`btn btn-icon ${aiShake ? 'shake-error' : ''}`}
+          data-tour="ai-quick-add"
+          onClick={handleAIQuickAdd}
+          onAnimationEnd={() => setAiShake(false)}
+          aria-label="AI Quick Add"
+          title="AI Quick Add"
+        >
           <Sparkles size={14} />
         </button>
       )}
       {speedDial && expanded && (
         <>
-          <button className="btn btn-icon fab-mini" data-tour="ai-quick-add" onClick={handleAIQuickAdd} aria-label="AI Quick Add" title="AI Quick Add">
+          <button
+            className={`btn btn-icon fab-mini ${aiShake ? 'shake-error' : ''}`}
+            data-tour="ai-quick-add"
+            onClick={handleAIQuickAdd}
+            onAnimationEnd={() => setAiShake(false)}
+            aria-label="AI Quick Add"
+            title="AI Quick Add"
+          >
             <Sparkles size={16} />
           </button>
           <button className="btn btn-primary fab-mini" onClick={handleAdd} aria-label="Add task" title="Add task">
