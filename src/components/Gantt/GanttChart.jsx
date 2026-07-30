@@ -129,6 +129,11 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
         // for it — an overdue task (dueDate before its last block) would
         // otherwise get truncated at dueDate, hiding real scheduled work.
         const lastDate = task.dueDate && task.dueDate > lastScheduledDate ? task.dueDate : lastScheduledDate;
+        // Stale scheduled blocks that were never cleaned up (or an overdue
+        // task not yet rebalanced) can leave every block in the past —
+        // skip the row rather than rendering a misleading 1-day bar at
+        // "today" for work that isn't actually happening now.
+        if (lastDate < today) return null;
         const hoursByDate = {};
         for (const b of taskBlocks) hoursByDate[b.date] = (hoursByDate[b.date] || 0) + b.durationHours;
         return { task, firstDate, lastDate, hoursByDate, blocked: false, waitingOn };
