@@ -867,6 +867,11 @@ select:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 8px 15px;
+  /* Without this, the button's height follows the page's 1.5 line-height
+     instead of its own font-size — an icon-only .btn-icon (no text, so no
+     line box to inflate) ends up several px shorter than a text .btn next
+     to it in the same toolbar row, even though both share the same padding. */
+  line-height: 1;
   border-radius: var(--radius-sm);
   /* A visible border, not just a fill — .btn's background sits so close in
      tone to the surfaces it's placed on (modals, cards) that fill contrast

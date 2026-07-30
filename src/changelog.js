@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.16.10',
+    date: '2026-07-30',
+    title: 'Fixed AI Quick Add button alignment',
+    changes: [
+      'The AI Quick Add sparkle button next to the search bar sat noticeably shorter than the "Add task" button beside it — fixed to match height.',
+      'On mobile, the same button no longer stretches to fill the full row width.',
+    ],
+  },
+  {
     version: '1.16.9',
     date: '2026-07-30',
     title: 'Fixed a calendar drag accidentally paging to the next/prev day',
