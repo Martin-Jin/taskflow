@@ -281,6 +281,15 @@
     flex: 1 1 100%;
   }
 
+  /* Exempt the icon-only AI Quick Add trigger from the full-width stacking
+     above — stretching a square icon button across the row leaves it a
+     mostly-empty rectangle. Add task already leaves this row entirely below
+     (becomes a fixed FAB), so this sits alone beside/under the search bar
+     at its natural size instead. */
+  .tasklist-toolbar .btn-icon {
+    flex: 0 0 auto;
+  }
+
   .taskpage-project-title,
   .taskpage-project-title-input {
     font-size: 18px;
