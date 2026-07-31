@@ -670,7 +670,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       },
       enforceDueDate: {
         isUntouched: () => enforceDueDate === !!task.enforceDueDate,
-        apply: () => setEnforceDueDate(true),
+        apply: (match, detected) => {
+          setEnforceDueDate(true);
+          // "Enforce due date" is inert without a due date — commitChanges
+          // below persists `enforceDueDate: enforceDueDate && !!nextDueDate`,
+          // so applying the flag alone (with no due date set) gets silently
+          // zeroed back to false on the next autosave, which then echoes
+          // back through the sync effect above and instantly un-checks the
+          // box the user just saw get checked. Set one, same as recurrence.
+          if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
+        },
         revert: () => setEnforceDueDate(!!task.enforceDueDate),
       },
       dependency: {

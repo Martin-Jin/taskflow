@@ -48,8 +48,8 @@ export function buildBackupPayload(state) {
   BACKUP_FIELDS.forEach((field) => {
     payload[field] = state[field];
   });
-  Object.assign(payload, excludeCompletedTasks(payload.tasks, payload.blocks));
-  return payload;
+  const { tasks, blocks } = excludeCompletedTasks(payload.tasks, payload.blocks);
+  return { ...payload, tasks, blocks };
 }
 
 /**

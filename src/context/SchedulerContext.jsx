@@ -22,25 +22,17 @@
  *     field is ever pushed back to Todoist, and re-running the import
  *     later just upserts (updates existing imported items by id, adds new
  *     ones) rather than wiping out local edits by replacing everything.
- *   - If Google Calendar was connected in a previous session,
- *     `googleConnected` persists and the load effect attempts a SILENT
- *     token refresh (no popup) so the user isn't asked to sign in again
- *     every time they open the app. If the silent refresh fails (token
- *     revoked, grant expired), we fall back to `googleConnected: false`
- *     and the user just clicks "Connect" again — no error state, no
- *     forced popup on load.
  *
  * RECURRING TASKS: a Task can carry `isRecurring` + `recurrenceString`
  * (captured from Todoist's `due.is_recurring` / `due.string` on import, or
  * set directly when adding/editing a local task). Completing a recurring
  * task does NOT set `isCompleted` — mirroring Todoist's own behavior —
  * instead its due date advances to the next occurrence, computed locally
- * via `utils/recurrence.js` (handles "every month", "monthly", "every 1
- * month", Todoist's non-shifting "every!" marker, multi-weekday phrases
- * like "every sat and sun", "every weekday", "every other week", etc.) —
- * there's no Todoist round trip to defer to anymore, so this local
- * computation is now the only source of truth for the next date, not just
- * a same-session convenience ahead of the next sync.
+ * via `utils/recurrence.js`.
+ *
+ * Google Calendar sync and Firestore cloud sync have been extracted into
+ * useGoogleCalendarSync and useCloudSync hooks respectively — see
+ * src/hooks/ for those files.
  * ============================================================================
  */
 
@@ -48,13 +40,13 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { useHistoryState } from '../hooks/useHistoryState';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useNotificationChecker } from '../hooks/useNotificationChecker';
+import { useGoogleCalendarSync } from '../hooks/useGoogleCalendarSync';
+import { useCloudSync } from '../hooks/useCloudSync';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
 import { useTheme } from './ThemeContext';
 import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { playAddSound, playDeleteSound } from '../services/soundService';
-import { pullUserData, pushUserData, subscribeUserData, createBackup, listBackups, getBackup, deleteBackup } from '../services/firestoreSync';
-import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile, BACKUP_FIELDS } from '../services/backupService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
 import { rebalance, planToday } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -65,37 +57,21 @@ import {
   fetchProjects as fetchTodoistProjects,
 } from '../services/todoistService';
 import {
-  fetchEvents as fetchGoogleEvents,
-  pushBlockToCalendar,
   pushEventToCalendar,
   deleteCalendarEvent,
   pushEventInstanceUpdate,
   deleteCalendarEventInstance,
-  initGoogleCalendar,
-  requestAccessToken,
 } from '../services/googleCalendarService';
-import { mergePulledGoogleEvents } from '../services/eventSyncService';
 import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects } from '../services/mockData';
 import { toISODate, addDays, timeToMinutes, minutesToTime, getBrowserTimeZone } from '../utils/dateUtils';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
+import { dedupeEventsByOccurrence } from '../utils/eventUtils';
 import { nextLabelColor } from '../utils/labelColor';
 import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
 import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 
 const SchedulerContext = createContext(null);
 
-const EVENTS_HORIZON_DAYS = 28;
-
-// Default notification settings (TODO.md #10, Phase 1) — master toggles for
-// each channel plus per-trigger-type toggles (applying to whichever
-// channel(s) are enabled) and the customizable "starting soon" threshold.
-// Email defaults to off since there's no email-sending backend yet (Phase 3).
-// `timezone` (IANA name, e.g. "Pacific/Auckland") is stamped in immediately
-// from the browser rather than left undefined, so even a brand-new device's
-// very first localStorage write already carries it — see the resync effect
-// near notificationSettings' declaration below for how it stays current
-// after that (device changes, travel, or an existing user who predates this
-// field).
 function getDefaultNotificationSettings() {
   return {
     inAppEnabled: true,
@@ -108,22 +84,12 @@ function getDefaultNotificationSettings() {
   };
 }
 
-// Monotonic counter appended to every locally-generated id below, so two
-// entities created in the same millisecond (e.g. the AI Assistant applying a
-// multi-operation plan in one synchronous batch — see aiPlanService.js)
-// never collide the way a bare `${prefix}_${Date.now()}` could.
 let localIdSequence = 0;
 function generateLocalId(prefix) {
   localIdSequence += 1;
   return `${prefix}_${Date.now()}_${localIdSequence}`;
 }
 
-// Pure default-field builders shared between the normal one-at-a-time
-// mutators below (addTask/addManualEvent) and the AI Assistant's batch-apply
-// path (see aiPlanService.js's computePlanEffects, invoked from
-// applyAIPlan below) — kept in one place so both paths produce identically-
-// shaped new records instead of the batch path silently drifting from what
-// a manually-created task/event looks like.
 function buildNewTaskObject(taskInput, id) {
   const merged = {
     id,
@@ -145,77 +111,7 @@ function buildNewTaskObject(taskInput, id) {
     source: 'manual',
     ...taskInput,
   };
-  // recurrenceRule is a derived cache of recurrenceString (see
-  // utils/recurrence.js) — recompute it here so it's never possible to
-  // create a task with the two out of sync.
   return { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
-}
-
-function buildNewEventObject(eventInput, id) {
-  return {
-    id,
-    title: eventInput.title?.trim() || 'Untitled event',
-    date: eventInput.date,
-    startTime: eventInput.startTime,
-    endTime: eventInput.endTime,
-    description: eventInput.description?.trim() || '',
-    location: eventInput.location?.trim() || '',
-    isFreeTime: false,
-    isRecurring: false,
-    recurrenceRule: null,
-    googleEventId: null,
-    seriesId: null,
-    source: 'manual',
-  };
-}
-
-/**
- * Collapses events that represent the same real-world occurrence (same
- * title/date/time) down to one. Needed on top of googleCalendarService's
- * own fetch-time dedup because `events` isn't only ever set from a fresh
- * fetch — it's also seeded from localStorage on boot and pulled verbatim
- * from the Firestore cloud doc on every sign-in (see pullFromCloud below),
- * either of which can reintroduce duplicate copies that were already
- * cached/synced before the fetch-time fix existed. Prefers googleEventId
- * when present (the reliable identity for a synced event) and only falls
- * back to the date/time/title composite key for manual events that have
- * no googleEventId at all.
- */
-function dedupeEventsByOccurrence(events) {
-  if (!Array.isArray(events)) return events;
-  const seen = new Set();
-  return events.filter((e) => {
-    const key = e.googleEventId ? `g:${e.googleEventId}` : `m:${e.date}|${e.startTime}|${e.endTime}|${e.title}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-/**
- * `theme` is in BACKUP_FIELDS (so point-in-time backups capture it) but is
- * deliberately NOT part of SchedulerContext's own live push/pull/listener
- * payloads — it's synced independently by ThemeContext on the same
- * users/{uid} doc (see that file). If the fingerprint below included it,
- * every comparison against a freshly-pulled/live-listener `remote` (which
- * always carries ThemeContext's real value) vs. this context's own payload
- * (which never sets a `theme` key at all) would mismatch on that field
- * alone — permanently defeating the "is this just our own write echoing
- * back" check further down and ping-ponging pushes/re-applies forever.
- * Excluded here for that reason; kept in BACKUP_FIELDS for backups.
- */
-const SYNC_FINGERPRINT_FIELDS = BACKUP_FIELDS.filter((field) => field !== 'theme');
-
-/**
- * Deterministic, field-order-independent fingerprint of the syncable
- * state — used to tell "the cloud doc actually changed" apart from "the
- * live listener is just echoing back a write we made ourselves." Keys off
- * SYNC_FINGERPRINT_FIELDS (BACKUP_FIELDS minus fields synced elsewhere —
- * see its comment) so any field added to BACKUP_FIELDS that SchedulerContext
- * itself also pushes/pulls is automatically covered here too.
- */
-function computeSyncFingerprint(source) {
-  return JSON.stringify(SYNC_FINGERPRINT_FIELDS.map((field) => source[field]));
 }
 
 /**
@@ -383,18 +279,12 @@ function getDescendantIds(taskId, tasks) {
   return descendants;
 }
 
-// How long a signed-in session waits since the last cloud backup before
-// silently taking a new one on sign-in — frequent enough that a bad week
-// never costs more than a day of data, infrequent enough that the
-// `backups` subcollection doesn't fill up with near-duplicate snapshots
-// from every reload/tab reopen.
-const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
 export function SchedulerProvider({ children }) {
   const { user } = useAuth();
   // Owned live by ThemeContext (which wraps this provider — see App.jsx) —
-  // only read/written here for the backup-payload/restoreFromBackup paths
-  // (see SYNC_FINGERPRINT_FIELDS' comment for why it's excluded from live sync).
+  // only read/written here so the backup payload (exportBackup/
+  // createCloudBackup, both in useCloudSync) can capture it and a restore
+  // (importBackup/restoreCloudBackup, also in useCloudSync) can apply it back.
   const { theme, setTheme } = useTheme();
 
   // tasks/blocks: seeded from whatever was last saved locally (falling back
@@ -454,9 +344,9 @@ export function SchedulerProvider({ children }) {
   // than separate usePersistedState calls per toggle) since these are all
   // facets of a single feature that's always read/written together — same
   // synced-setting treatment as sound/animations above, following it through
-  // the same list of places (applyRemoteData, the cloud-push payload + its
-  // dependency arrays, the local backup payload, restoreFromBackup, and the
-  // context value below), plus BACKUP_FIELDS in backupService.js.
+  // the same list of places (useCloudSync's applyRemoteData/applyBackupPayload,
+  // its cloud-push payload, and the context value below), plus BACKUP_FIELDS
+  // in backupService.js.
   const [notificationSettings, setNotificationSettings] = usePersistedState('notificationSettings', getDefaultNotificationSettings);
 
   // Keep notificationSettings.timezone resynced to the browser's own IANA
@@ -510,33 +400,6 @@ export function SchedulerProvider({ children }) {
   // total mystery each time ("last imported 3 tasks, 2 days ago").
   const [lastTodoistImport, setLastTodoistImport] = usePersistedState('lastTodoistImport', null);
 
-  // Whether the user has connected Google Calendar in *some* previous
-  // session. The actual OAuth access token is short-lived and lives only
-  // in googleCalendarService's module state (tokens shouldn't be persisted
-  // to localStorage), but THIS flag persisting is what lets the load
-  // effect know it should attempt a silent re-auth instead of requiring a
-  // manual "Connect" click every time.
-  const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
-
-  // Set whenever an AUTOMATIC (silent re-auth on load, or periodic poll)
-  // Google Calendar reconnect attempt fails and falls back to disconnected —
-  // as opposed to the user never having connected at all. Google's
-  // Identity Services implicit-token flow has no refresh token to persist;
-  // the cached access token (see googleCalendarService's TOKEN_STORAGE_KEY)
-  // only covers repeat opens within its own ~1hr lifetime, so this WILL
-  // legitimately happen periodically (token expired while the tab was
-  // closed, third-party-cookie/FedCM restrictions blocking a truly silent
-  // GIS request, grant revoked, etc.) — there's no way to make the silent
-  // path succeed 100% of the time within this OAuth model. Rather than
-  // pretend otherwise (the previous behavior: quietly flip back to
-  // `googleConnected: false` with only a console.warn, which looks
-  // identical in the UI to "never connected"), this flag lets Settings show
-  // a distinct "disconnected, reconnect?" state and pops one dismissible
-  // notification — deliberately NOT session-persisted, since the very next
-  // successful connectGoogleCalendar() call (or the next mount's silent
-  // retry, if it happens to succeed) clears it back to a normal state.
-  const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
-
   // Guards the one-time migrateBlockedTimeToEvents backfill below so it only
   // ever runs once per device instead of re-running (harmlessly, but
   // pointlessly) on every load. See src/migrations/migrateBlockedTimeToEvents.js.
@@ -572,14 +435,11 @@ export function SchedulerProvider({ children }) {
   // TaskFlow talking to its own storage. Keeping them distinct avoids a
   // Backups button reading "Syncing…" (or vice versa) if a user ever
   // triggers both around the same time.
+  // Busy flag specifically for the cloud-backup create/restore actions below
+  // (createCloudBackup/restoreCloudBackup, both from useCloudSync) — that
+  // hook doesn't track its own busy state for these, so it's tracked here,
+  // right around the two call sites that wrap them.
   const [isBackingUp, setIsBackingUp] = useState(false);
-  // True only while a manual "Pull from Google Calendar" is in flight
-  // (distinct from isSyncing, which covers the periodic/automatic pulls).
-  const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);
-  // Metadata-only list (see firestoreSync.listBackups) for the Settings
-  // "cloud backups" picker — never holds full task/block/etc payloads for
-  // more than the one backup actively being restored.
-  const [cloudBackups, setCloudBackups] = useState([]);
   const [lastOverflow, setLastOverflow] = useState([]);
   // Separate from lastOverflow: planToday's "didn't fit today" list carries a
   // different meaning (see runPlanToday below) and must never be conflated
@@ -616,31 +476,6 @@ export function SchedulerProvider({ children }) {
     stateRef.current = state;
   }, [state]);
 
-
-  // Content fingerprint of whatever's already reconciled with the cloud
-  // doc — either the last payload we successfully pushed, or the last
-  // remote payload we applied. The debounced push effect and the live
-  // listener effect below both check against this before doing anything,
-  // which is what stops the two from ping-ponging the same data back and
-  // forth between devices forever (device A pushes -> device B's listener
-  // applies it -> B's local state change re-triggers B's own push effect
-  // -> ...).
-  const lastSyncedSnapshotRef = useRef(null);
-
-  // Guards the push effect below against racing the initial pull-on-sign-in.
-  // Without this, a device that's been offline/closed a while (still holding
-  // stale local data) schedules its debounced push at mount time — same tick
-  // as the pull kicking off — purely because `lastSyncedSnapshotRef` starts
-  // at null on every sign-in, which looks like "unsynced local changes" even
-  // when there aren't any. Normally the pull (fast) resolves and rewrites
-  // local state before the debounce timer fires, cancelling it — but on a
-  // slow/flaky connection (exactly when this matters most: a device just
-  // coming back online) the stale push can fire FIRST and clobber genuinely
-  // newer data another device already wrote to the cloud doc. False until
-  // the current sign-in's pull settles (success or failure), so the push
-  // effect simply can't fire before this device has seen the latest remote
-  // state at least once.
-  const initialPullDoneRef = useRef(false);
 
   // The Todoist token: a per-visitor personal API token entered in Settings
   // (see setTodoistApiToken below), persisted to THIS BROWSER's localStorage
@@ -740,479 +575,38 @@ export function SchedulerProvider({ children }) {
   }, []);
 
   // ---- Initial data load ---------------------------------------------------
-  // Runs once on mount. Todoist is NOT part of this — it's a one-time
-  // import the user explicitly triggers from Settings (see
-  // importFromTodoist below), never fetched automatically. The only thing
-  // this effect does is Google Calendar events, attempted SILENTLY (no
-  // consent popup) if the user previously connected (persisted
-  // `googleConnected`), so re-opening the app doesn't require signing in
-  // again. If the silent attempt fails, we fall back to "not connected" —
-  // this is expected to happen periodically (see `googleNeedsReconnect`'s
-  // doc comment above), so it's surfaced as one dismissible notification
-  // plus a lingering Settings-panel indicator, not a blocking error.
+  // Google Calendar's own silent re-auth/pull now runs inside
+  // useGoogleCalendarSync (below), so there's nothing left to block on here —
+  // this just clears the loading flag once the one-time migration/sweep
+  // effects above have run.
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setIsLoading(true);
-
-      if (googleConnected) {
-        try {
-          const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-          const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-          const { enabled } = await initGoogleCalendar(clientId, apiKey);
-          if (enabled) {
-            await requestAccessToken(true); // silent — no consent popup
-            const rangeStartIso = toISODate(new Date());
-            const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-            if (!cancelled) {
-              // MERGE, not replace — a plain setEvents(fetchedEvents) here used
-              // to wholesale replace the entire events array with only the
-              // freshly-fetched Google events, silently deleting every
-              // manual (source:'manual') event on every load. See
-              // eventSyncService.js for the full merge/reconcile policy.
-              setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
-              if (failedCalendars.length > 0) {
-                // Silent, like the catch block below — this is the automatic
-                // load-on-mount fetch, not a user-initiated action, so a
-                // partial failure here shouldn't pop a toast before the user
-                // has done anything.
-                console.warn(`[SchedulerContext] Couldn't load events from: ${failedCalendars.join(', ')}`);
-              }
-            }
-          } else if (!cancelled) {
-            setGoogleConnected(false);
-          }
-        } catch (err) {
-          // Silent refresh failed — the grant likely expired (GIS's implicit
-          // flow has no refresh token, so this is expected roughly hourly
-          // for a reopened tab, not just on revocation) — fall back to
-          // "disconnected" and tell the user plainly instead of leaving
-          // sync quietly dead with no clue why (see `googleNeedsReconnect`).
-          console.warn('[SchedulerContext] Silent Google Calendar re-auth failed, falling back to disconnected.', err);
-          if (!cancelled) {
-            setGoogleConnected(false);
-            setGoogleNeedsReconnect(true);
-            setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
-          }
-        }
-      }
-
-      if (!cancelled) setIsLoading(false);
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setIsLoading(false);
   }, []);
 
-  // ---- Periodic Google Calendar polling ------------------------------------
-  // While connected, re-fetch and merge Google events every few minutes so
-  // edits/deletes/new events made directly in Google Calendar (from another
-  // device, or the web UI) converge into TaskFlow without requiring a full
-  // page reload or a manual "Sync now" click — this is IN ADDITION to the
-  // load-on-mount effect above and the manual syncNow path below, not a
-  // replacement for either.
-  const googlePollInFlightRef = useRef(false);
-  // Timestamp (ms) of the last poll attempt (interval tick OR visibility-
-  // triggered refresh below) — lets the visibilitychange listener throttle
-  // itself against both without needing a second in-flight flag.
-  const lastGooglePollAtRef = useRef(0);
-  const pollGoogleEventsRef = useRef(null);
-  useEffect(() => {
-    if (!googleConnected) return undefined;
+  // ---- Google Calendar sync -------------------------------------------------
+  // Connection state, silent re-auth, periodic polling, visibility-refresh,
+  // and connect/pull/push actions all live in this hook now — see its own
+  // doc comment (src/hooks/useGoogleCalendarSync.js).
+  const {
+    googleConnected,
+    googleNeedsReconnect,
+    isPullingGoogleEvents,
+    connectGoogleCalendar,
+    pullFromGoogleCalendar,
+    pushToGoogleCalendar,
+  } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, setActionToast });
 
-    const poll = async () => {
-      // A slow previous poll (or the initial load effect) still in flight —
-      // skip this tick rather than let two fetches race and merge out of order.
-      if (googlePollInFlightRef.current) return;
-      googlePollInFlightRef.current = true;
-      lastGooglePollAtRef.current = Date.now();
-      try {
-        const rangeStartIso = toISODate(new Date());
-        const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-        const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
-      } catch (err) {
-        if (err?.isGoogleAuthError) {
-          // The token was already invalidated by fetchEvents — disconnecting
-          // here too stops this interval (see the `googleConnected` guard/dep
-          // above) instead of letting it keep firing with no access token,
-          // which would otherwise silently fall back to mock sample events
-          // being merged into the user's real calendar every 5 minutes.
-          // Surfaced to the user (see `googleNeedsReconnect`'s doc comment)
-          // instead of a bare console.warn — this is a real, actionable
-          // state change (sync was working, now it's stopped), not a
-          // mount-time hiccup.
-          console.warn('[SchedulerContext] Google Calendar auth expired during poll, disconnecting.', err);
-          setGoogleConnected(false);
-          setGoogleNeedsReconnect(true);
-          setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
-          return;
-        }
-        // A missed poll just means the next one (5 minutes later) tries
-        // again — not worth surfacing to the user as an error.
-        console.warn('[SchedulerContext] Periodic Google Calendar poll failed', err);
-      } finally {
-        googlePollInFlightRef.current = false;
-      }
-    };
-    // Exposed via ref so the visibilitychange effect below (and anything
-    // else that wants "the same poll, on demand") can reuse this exact
-    // function/in-flight-guard instead of duplicating the fetch+merge logic.
-    pollGoogleEventsRef.current = poll;
-
-    const handle = setInterval(poll, 5 * 60 * 1000);
-    return () => clearInterval(handle);
-  }, [googleConnected]);
-
-  // Refresh Google events when the tab/app regains visibility (e.g. the user
-  // alt-tabs back after being away) — otherwise a stale calendar can sit
-  // around for up to the full 5-minute poll interval after switching back.
-  // Throttled against the periodic poll above (shared timestamp ref) so
-  // rapid tab-switching doesn't trigger a fetch every time; only fires if
-  // it's been at least VISIBILITY_REFRESH_THROTTLE_MS since the last poll
-  // (interval-driven or visibility-driven) of either kind.
-  useEffect(() => {
-    if (!googleConnected) return undefined;
-
-    const VISIBILITY_REFRESH_THROTTLE_MS = 60 * 1000;
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (Date.now() - lastGooglePollAtRef.current < VISIBILITY_REFRESH_THROTTLE_MS) return;
-      pollGoogleEventsRef.current?.();
-    };
-
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, [googleConnected]);
-
-  // ---- Cloud sync (Firestore) ----------------------------------------------
-  /**
-   * Apply a full remote payload — from either the one-time sign-in pull or
-   * the live listener below — onto local state, and stamp
-   * `lastSyncedSnapshotRef` with what was just applied so the debounced
-   * push effect doesn't immediately re-push the very data it just received.
-   */
-  const applyRemoteData = useCallback(
-    (remote) => {
-      lastSyncedSnapshotRef.current = computeSyncFingerprint(remote);
-      if ('tasks' in remote || 'blocks' in remote) {
-        overwritePresent({ tasks: remote.tasks ?? stateRef.current.tasks, blocks: remote.blocks ?? stateRef.current.blocks });
-      }
-      if ('sections' in remote) setSections(remote.sections);
-      if ('projects' in remote) setProjects(remote.projects);
-      if ('labels' in remote) setLabels(remote.labels);
-      if ('routines' in remote) setRoutines(remote.routines);
-      if ('rules' in remote) setRules(remote.rules);
-      if ('events' in remote) setEvents(dedupeEventsByOccurrence(remote.events));
-      if ('soundEnabled' in remote) setSoundEnabled(remote.soundEnabled);
-      if ('soundVolume' in remote) setSoundVolume(remote.soundVolume);
-      if ('animationsEnabled' in remote) setAnimationsEnabled(remote.animationsEnabled);
-      // This device's own browser timezone always wins over whatever
-      // timezone the remote doc carries (another device's, possibly stale) —
-      // see the resync effect near notificationSettings' declaration above.
-      if ('notificationSettings' in remote) {
-        setNotificationSettings({ ...remote.notificationSettings, timezone: getBrowserTimeZone() });
-      }
-      if ('notes' in remote) setNotes(remote.notes);
-      else if ('pinnedLinks' in remote) setNotes(migrateLinksToNotes(remote.pinnedLinks)); // legacy remote doc, see notesModel.js migration note
-      if ('shortcutBindings' in remote) {
-        setShortcutBindings(remote.shortcutBindings);
-        // Also write localStorage directly (not just React state) so the
-        // hot keydown listener (see useKeyboardShortcuts.js) picks up an
-        // incoming remote binding immediately, not just on this device's
-        // next local rebind.
-        savePersisted('shortcutBindings', remote.shortcutBindings);
-      }
-    },
-    [
-      overwritePresent,
-      setSections,
-      setProjects,
-      setLabels,
-      setRoutines,
-      setRules,
-      setEvents,
-      setSoundEnabled,
-      setSoundVolume,
-      setAnimationsEnabled,
-      setNotificationSettings,
-      setNotes,
-      setShortcutBindings,
-    ]
-  );
-
-  /**
-   * One-time pull for a fresh sign-in: applies whatever's already synced,
-   * or — if this is the very first device to ever sign in for this
-   * account — seeds the cloud doc from this device's current local data.
-   * Ongoing convergence after this point is handled by the live listener
-   * effect further down, not by this function.
-   */
-  const pullFromCloud = useCallback(
-    async (uid) => {
-      const remote = await pullUserData(uid);
-      if (remote) {
-        applyRemoteData(remote);
-      } else {
-        const seedPayload = {
-          tasks: stateRef.current.tasks,
-          blocks: stateRef.current.blocks,
-          sections,
-          projects,
-          labels,
-          routines,
-          rules,
-          events,
-          soundEnabled,
-          soundVolume,
-          animationsEnabled,
-          notificationSettings,
-          notes,
-          shortcutBindings,
-        };
-        await pushUserData(uid, seedPayload);
-        lastSyncedSnapshotRef.current = computeSyncFingerprint(seedPayload);
-      }
-    },
-    [applyRemoteData, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]
-  );
-
-  /**
-   * Checks whether this signed-in user's most recent cloud backup is older
-   * than AUTO_BACKUP_INTERVAL_MS and, if so, silently takes a new one —
-   * this is the "regularly auto-backed-up" half of the feature; the manual
-   * "Back up now" button (see backupToCloud below) is the other half.
-   * Deliberately quiet on success (no toast) matching how the debounced
-   * push effect below never notifies on every write either — only load
-   * failures are worth surfacing, not routine background activity.
-   */
-  const maybeAutoBackup = useCallback(
-    async (uid) => {
-      try {
-        const list = await listBackups(uid);
-        setCloudBackups(list);
-        const mostRecent = list[0];
-        const mostRecentMs = mostRecent?.createdAt?.toMillis
-          ? mostRecent.createdAt.toMillis()
-          : mostRecent?.exportedAt
-          ? new Date(mostRecent.exportedAt).getTime()
-          : 0;
-        if (mostRecent && Date.now() - mostRecentMs < AUTO_BACKUP_INTERVAL_MS) return;
-
-        const payload = buildBackupPayload({
-          tasks: stateRef.current.tasks,
-          blocks: stateRef.current.blocks,
-          sections,
-          projects,
-          labels,
-          routines,
-          rules,
-          events,
-          soundEnabled,
-          soundVolume,
-          animationsEnabled,
-          notificationSettings,
-          theme,
-          notes,
-          shortcutBindings,
-        });
-        await createBackup(uid, payload);
-        setCloudBackups(await listBackups(uid));
-      } catch (err) {
-        // Never surface this to the user — an auto-backup miss just means
-        // it'll be retried on the next sign-in, not a lost write.
-        console.warn('[SchedulerContext] Auto-backup check failed', err);
-      }
-    },
-    [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, theme, notes, shortcutBindings]
-  );
-
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    lastSyncedSnapshotRef.current = null;
-    initialPullDoneRef.current = false;
-    pullFromCloud(user.uid)
-      .catch((err) => {
-        if (cancelled) return;
-        // Silent — this is the automatic pull that runs on sign-in/initial
-        // load, not a user-initiated sync, so a failure here shouldn't pop
-        // a toast before the user has done anything.
-        console.error('[SchedulerContext] Cloud sync failed to load', err);
-      })
-      .then(() => {
-        // Chained onto pullFromCloud rather than a separate effect on the
-        // same [user] dep: two effects with the same deps fire in the same
-        // tick with no ordering guarantee between their async work, so a
-        // sibling effect could snapshot THIS device's pre-sync local state
-        // for the backup instead of whatever pullFromCloud just converged
-        // onto. Chaining guarantees the backup (if any) always reflects
-        // post-sync state.
-        if (cancelled) return;
-        return maybeAutoBackup(user.uid);
-      })
-      .finally(() => {
-        // Set even if the pull failed (offline etc.) — otherwise a
-        // persistent failure would permanently block this device from ever
-        // pushing local edits again for the rest of the session. See
-        // initialPullDoneRef's own comment for what this guards against.
-        if (!cancelled) initialPullDoneRef.current = true;
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Deliberately only re-runs when the signed-in user changes — this pulls
-    // once per sign-in, not on every local state change (that's the push
-    // effect below).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-  
-  // Live convergence — same idea as ThemeContext's own listener on this same
-  // users/{uid} doc. Without this, a change pushed from another signed-in
-  // device only ever arrives here on next sign-in/reload/manual "Sync now".
-  useEffect(() => {
-    if (!user) return undefined;
-    const unsubscribe = subscribeUserData(
-      user.uid,
-      (remote) => {
-        const fingerprint = computeSyncFingerprint(remote);
-        if (fingerprint === lastSyncedSnapshotRef.current) return; // our own write echoing back
-        applyRemoteData(remote);
-      },
-      (err) => console.error('[SchedulerContext] Live sync listener failed', err)
-    );
-    return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  // Pushes local data up to the cloud doc whenever it changes, so the NEXT
-  // device to sign in (or this device's next reload) picks up the latest
-  // state. Debounced so a burst of edits (typing, dragging) doesn't fire a
-  // write per keystroke.
-  useEffect(() => {
-    if (!user) return;
-    if (!initialPullDoneRef.current) return; // wait for this sign-in's pull to settle first — see initialPullDoneRef's comment
-    const payload = { tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings };
-    const fingerprint = computeSyncFingerprint(payload);
-    if (fingerprint === lastSyncedSnapshotRef.current) return; // already matches what's synced
-    const handle = setTimeout(() => {
-      // Stamp the ref before sending, not after resolution — otherwise a local
-      // change (e.g. undo) made while this write is in flight can race the
-      // listener above, which would mistake the server echo for a genuine
-      // remote change and stomp the undo.
-      lastSyncedSnapshotRef.current = fingerprint;
-      pushUserData(user.uid, payload).catch((err) => {
-        console.error('[SchedulerContext] Cloud sync failed to save', err);
-      });
-    }, 1500);
-    return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]);
-
-  /**
-   * Manual re-pull for Settings' "Sync now" button — covers the gap this
-   * app's sync model deliberately leaves open (no live listener; see
-   * firestoreSync.js): if another device pushed changes while this tab was
-   * already open and signed in, those changes only arrive on next sign-in
-   * or reload unless the user asks for them explicitly here.
-   */
-  const syncNow = useCallback(async () => {
-    if (!user) return;
-    setIsSyncing(true);
-    try {
-      await pullFromCloud(user.uid);
-      // Also refetch+merge Google Calendar events, so one "Sync now" click
-      // covers both Firestore AND Google Calendar instead of just the former.
-      if (googleConnected) {
-        const rangeStartIso = toISODate(new Date());
-        const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-        const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
-      }
-      setNotification({ type: 'success', message: 'Synced with your account.' });
-    } catch (err) {
-      console.error('[SchedulerContext] Manual cloud sync failed', err);
-      setNotification({ type: 'error', message: `Sync failed: ${err.message || err}` });
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [user, pullFromCloud, googleConnected]);
-
-  // ---- Backup / restore -----------------------------------------------------
-
-  /**
-   * Applies a full backup payload (from a local file import or a cloud
-   * backup — same shape either way, see backupService.js) onto current
-   * state. Mirrors applyRemoteData's field-by-field apply above, but routes
-   * tasks/blocks through commit() so a restore is itself one undoable
-   * action, matching clearAllData's precedent. A payload missing a field
-   * (an older/partial backup) leaves that field untouched rather than
-   * wiping it.
-   */
-  const restoreFromBackup = useCallback(
-    (payload) => {
-      if (!payload) return;
-      if ('tasks' in payload || 'blocks' in payload) {
-        commit(
-          { tasks: payload.tasks ?? stateRef.current.tasks, blocks: payload.blocks ?? stateRef.current.blocks },
-          'Restored from backup'
-        );
-      }
-      if ('sections' in payload) setSections(payload.sections);
-      if ('projects' in payload) setProjects(payload.projects);
-      if ('labels' in payload) setLabels(payload.labels);
-      if ('routines' in payload) setRoutines(payload.routines);
-      if ('rules' in payload) setRules(payload.rules);
-      // Deduped the same way applyRemoteData/the boot-time load already are —
-      // a backup can carry duplicate copies of the same event occurrence for
-      // the same reasons localStorage/Firestore can (see dedupeEventsByOccurrence's
-      // own comment), so restoring one shouldn't reintroduce them.
-      if ('events' in payload) setEvents(dedupeEventsByOccurrence(payload.events));
-      if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
-      if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
-      if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
-      // Same reasoning as applyRemoteData above — a restored backup's stored
-      // timezone could be old/from another device, so this device's current
-      // browser timezone still wins rather than reintroducing a stale one.
-      if ('notificationSettings' in payload) {
-        setNotificationSettings({ ...payload.notificationSettings, timezone: getBrowserTimeZone() });
-      }
-      if ('theme' in payload) setTheme(payload.theme);
-      if ('notes' in payload) setNotes(payload.notes);
-      else if ('pinnedLinks' in payload) setNotes(migrateLinksToNotes(payload.pinnedLinks)); // legacy backup file, see notesModel.js migration note
-      if ('shortcutBindings' in payload) {
-        setShortcutBindings(payload.shortcutBindings);
-        // Same reasoning as applyRemoteData above — keep the hot keydown
-        // listener's localStorage source in sync immediately, not just this
-        // context's own React-state mirror.
-        savePersisted('shortcutBindings', payload.shortcutBindings);
-      }
-    },
-    [
-      commit,
-      setSections,
-      setProjects,
-      setLabels,
-      setRoutines,
-      setRules,
-      setEvents,
-      setSoundEnabled,
-      setSoundVolume,
-      setAnimationsEnabled,
-      setNotificationSettings,
-      setTheme,
-      setNotes,
-      setShortcutBindings,
-    ]
-  );
-
-  /** Downloads a full backup of current state as a local .json file — works signed-out, since it never touches Firestore. */
-  const exportBackup = useCallback(() => {
-    const payload = buildBackupPayload({
-      tasks: stateRef.current.tasks,
-      blocks: stateRef.current.blocks,
+  // ---- Cloud sync (Firestore) ------------------------------------------------
+  // Pull/push/listener/fingerprint/backup/restore logic all lives in this
+  // hook now — see its own doc comment (src/hooks/useCloudSync.js).
+  // `cloudSyncState`/`cloudStateRef` bundle every field this sync (and local/
+  // cloud backups) cover — everything BACKUP_FIELDS lists except `theme`,
+  // which the hook takes as a separate param (see its own JSDoc), since live
+  // sync deliberately leaves `theme` to ThemeContext's own independent sync.
+  const cloudSyncState = useMemo(
+    () => ({
+      tasks,
+      blocks,
       sections,
       projects,
       labels,
@@ -1223,183 +617,99 @@ export function SchedulerProvider({ children }) {
       soundVolume,
       animationsEnabled,
       notificationSettings,
-      theme,
       notes,
       shortcutBindings,
-    });
-    downloadBackupFile(payload);
-  }, [sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, theme, notes, shortcutBindings]);
-
-  /** Reads a backup .json file the user picked and restores it — works signed-out, matching exportBackup. */
-  const importBackupFromFile = useCallback(
-    async (file) => {
-      try {
-        const payload = await readBackupFile(file);
-        if (!isValidBackupPayload(payload)) {
-          setNotification({ type: 'error', message: "That file doesn't look like a TaskFlow backup." });
-          return { ok: false };
-        }
-        restoreFromBackup(payload);
-        setNotification({ type: 'success', message: 'Restored from backup file.' });
-        return { ok: true };
-      } catch (err) {
-        console.error('[SchedulerContext] Restore from file failed', err);
-        setNotification({ type: 'error', message: `Restore failed: ${err.message || err}` });
-        return { ok: false };
-      }
-    },
-    [restoreFromBackup]
+    }),
+    [tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]
   );
+  const cloudStateRef = useRef(cloudSyncState);
+  useEffect(() => {
+    cloudStateRef.current = cloudSyncState;
+  }, [cloudSyncState]);
 
-  /** Re-fetches the signed-in user's cloud backup list (metadata only) for Settings' backups picker. */
-  const refreshCloudBackups = useCallback(async () => {
+  const {
+    cloudBackups,
+    pullFromCloud,
+    exportBackup,
+    importBackup,
+    createCloudBackup,
+    loadCloudBackups,
+    restoreCloudBackup: restoreCloudBackupRaw,
+    removeCloudBackup,
+  } = useCloudSync({
+    state: cloudSyncState,
+    stateRef: cloudStateRef,
+    setNotification,
+    commit,
+    overwritePresent,
+    setSections,
+    setProjects,
+    setLabels,
+    setRoutines,
+    setRules,
+    setEvents,
+    setSoundEnabled,
+    setSoundVolume,
+    setAnimationsEnabled,
+    setNotificationSettings,
+    setNotes,
+    setShortcutBindings,
+    theme,
+    setTheme,
+  });
+
+  /**
+   * Manual re-sync for Settings' "Sync now" button — covers the gap this
+   * app's sync model deliberately leaves open (no live listener would ever
+   * fire for a device that's just idly sitting open): if another device
+   * pushed changes while this tab was already open and signed in, those
+   * changes only arrive on next sign-in/reload/manual sync. Covers both
+   * Firestore (useCloudSync's pullFromCloud) and Google Calendar
+   * (useGoogleCalendarSync's pullFromGoogleCalendar) in one click; each pops
+   * its own success/error toast, so this doesn't layer on a third.
+   */
+  const syncNow = useCallback(async () => {
     if (!user) return;
+    setIsSyncing(true);
     try {
-      setCloudBackups(await listBackups(user.uid));
-    } catch (err) {
-      console.error('[SchedulerContext] Failed to list cloud backups', err);
-      setNotification({ type: 'error', message: `Couldn't load cloud backups: ${err.message || err}` });
+      await pullFromCloud();
+      if (googleConnected) await pullFromGoogleCalendar();
+    } finally {
+      setIsSyncing(false);
     }
-  }, [user]);
+  }, [user, pullFromCloud, googleConnected, pullFromGoogleCalendar]);
 
-  /** Settings' "Back up now" button — an explicit, immediate cloud backup on top of the silent sign-in cadence in maybeAutoBackup. */
+  /** Settings' "Back up now" button — wraps useCloudSync's createCloudBackup with a busy flag that hook doesn't track itself. */
   const backupToCloud = useCallback(async () => {
-    if (!user) return;
     setIsBackingUp(true);
     try {
-      const payload = buildBackupPayload({
-        tasks: stateRef.current.tasks,
-        blocks: stateRef.current.blocks,
-        sections,
-        projects,
-        labels,
-        routines,
-        rules,
-        events,
-        soundEnabled,
-        soundVolume,
-        animationsEnabled,
-        notificationSettings,
-        theme,
-        notes,
-        shortcutBindings,
-      });
-      await createBackup(user.uid, payload);
-      await refreshCloudBackups();
-      setNotification({ type: 'success', message: 'Backed up to your account.' });
-    } catch (err) {
-      console.error('[SchedulerContext] Cloud backup failed', err);
-      setNotification({ type: 'error', message: `Backup failed: ${err.message || err}` });
+      await createCloudBackup();
     } finally {
       setIsBackingUp(false);
     }
-  }, [user, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, theme, notes, shortcutBindings, refreshCloudBackups]);
+  }, [createCloudBackup]);
 
-  /** Fetches one cloud backup's full payload by id and restores it. */
+  /** Settings' cloud-backups picker "Restore" action — same busy-flag wrapping as backupToCloud above. */
   const restoreCloudBackup = useCallback(
     async (backupId) => {
-      if (!user) return;
       setIsBackingUp(true);
       try {
-        const payload = await getBackup(user.uid, backupId);
-        if (!payload) {
-          setNotification({ type: 'error', message: 'That backup no longer exists.' });
-          return;
-        }
-        restoreFromBackup(payload);
-        setNotification({ type: 'success', message: 'Restored from cloud backup.' });
-      } catch (err) {
-        console.error('[SchedulerContext] Cloud restore failed', err);
-        setNotification({ type: 'error', message: `Restore failed: ${err.message || err}` });
+        await restoreCloudBackupRaw(backupId);
       } finally {
         setIsBackingUp(false);
       }
     },
-    [user, restoreFromBackup]
+    [restoreCloudBackupRaw]
   );
 
-  /** Deletes one cloud backup by id. */
-  const deleteCloudBackup = useCallback(
-    async (backupId) => {
-      if (!user) return;
-      try {
-        await deleteBackup(user.uid, backupId);
-        setCloudBackups((prev) => prev.filter((b) => b.id !== backupId));
-      } catch (err) {
-        console.error('[SchedulerContext] Delete cloud backup failed', err);
-        setNotification({ type: 'error', message: `Couldn't delete backup: ${err.message || err}` });
-      }
-    },
-    [user]
-  );
+  /** Settings' "Restore from file" action — matches old importBackupFromFile's name. */
+  const importBackupFromFile = useCallback((file) => importBackup(file), [importBackup]);
 
-  // ---- Google Calendar connection ----------------------------------------
-  const connectGoogleCalendar = useCallback(async () => {
-    try {
-      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-      const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-      const { enabled } = await initGoogleCalendar(clientId, apiKey);
-      if (!enabled) {
-        setNotification({ type: 'info', message: 'Google Calendar not configured — see README for setup. Using mock events.' });
-        return;
-      }
-      await requestAccessToken(false); // explicit user action — show consent screen if needed
-      setGoogleConnected(true);
-      setGoogleNeedsReconnect(false); // a fresh connect/reconnect clears any prior "disconnected" indicator
-      const rangeStartIso = toISODate(new Date());
-      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      // MERGE, not replace — see the load effect above / eventSyncService.js
-      // for why a plain setEvents(fetchedEvents) here would silently delete
-      // every manual event on every manual (re)connect.
-      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
-      if (failedCalendars.length > 0) {
-        setNotification({
-          type: 'warning',
-          message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.`,
-        });
-      } else {
-        setNotification({ type: 'success', message: 'Connected to Google Calendar.' });
-      }
-    } catch (err) {
-      console.error(err);
-      const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
-      setNotification({ type: 'error', message: `Google Calendar connection failed: ${reason}` });
-    }
-  }, [setGoogleConnected]);
+  /** Settings' cloud-backups picker open action — matches old refreshCloudBackups' name. */
+  const refreshCloudBackups = useCallback(() => loadCloudBackups(), [loadCloudBackups]);
 
-  /**
-   * Manual, on-demand re-pull of Google Calendar events — for when a user
-   * suspects drift or wants to discard local edits to synced events. Uses
-   * the same fetch window and the same mergePulledGoogleEvents policy as
-   * connectGoogleCalendar/the periodic sync (Google always wins for
-   * anything it returns), just triggered explicitly instead of on
-   * mount/connect/interval.
-   */
-  const pullFromGoogleCalendar = useCallback(async () => {
-    if (!googleConnected) return;
-    setIsPullingGoogleEvents(true);
-    try {
-      const rangeStartIso = toISODate(new Date());
-      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
-      if (failedCalendars.length > 0) {
-        setNotification({
-          type: 'warning',
-          message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.`,
-        });
-      } else {
-        setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
-      }
-    } catch (err) {
-      console.error(err);
-      const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
-      setNotification({ type: 'error', message: `Pull from Google Calendar failed: ${reason}` });
-    } finally {
-      setIsPullingGoogleEvents(false);
-    }
-  }, [googleConnected]);
+  /** Settings' cloud-backups picker "Delete" action — matches old deleteCloudBackup's name. */
+  const deleteCloudBackup = useCallback((backupId) => removeCloudBackup(backupId), [removeCloudBackup]);
 
   // ---- Core action: run the rebalance/reschedule engine -------------------
   const runRebalance = useCallback(() => {
@@ -2141,37 +1451,6 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
-  // ---- Push all auto-scheduled, unpushed blocks to Google Calendar --------
-  const pushToGoogleCalendar = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      const toPush = blocks.filter((b) => !b.googleEventId);
-      const pushedEventIdsByBlockId = new Map();
-      for (const block of toPush) {
-        const task = tasks.find((t) => t.id === block.taskId);
-        if (!task) continue;
-        const eventId = await pushBlockToCalendar(block, task);
-        if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
-      }
-      // Apply the pushed googleEventIds onto the LATEST blocks (via
-      // stateRef), not the `blocks` closed over at call time — the network
-      // round-trip above can take a while per block, and any edit/delete
-      // that lands while it's in flight would otherwise be clobbered by
-      // committing the stale array wholesale.
-      const latestBlocks = stateRef.current.blocks;
-      const updated = latestBlocks.map((b) =>
-        pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
-      );
-      commit({ tasks: stateRef.current.tasks, blocks: updated }, `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar`);
-      setNotification({ type: 'success', message: `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar.` });
-    } catch (err) {
-      console.error(err);
-      setNotification({ type: 'error', message: `Push to Google Calendar failed: ${err.message || err}` });
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [blocks, tasks, commit]);
-
   // ---- Manual blocked-time CRUD --------------------------------------------
   // A "manual" CalendarEvent has no Google counterpart — it's the user
   // saying "block this time out" directly (e.g. plans changed, doing
@@ -2629,7 +1908,6 @@ export function SchedulerProvider({ children }) {
       backupToCloud,
       restoreCloudBackup,
       deleteCloudBackup,
-      restoreFromBackup,
       clearNotification,
       clearAllData,
     }),
@@ -2714,7 +1992,6 @@ export function SchedulerProvider({ children }) {
       backupToCloud,
       restoreCloudBackup,
       deleteCloudBackup,
-      restoreFromBackup,
       clearNotification,
       clearAllData,
     ]

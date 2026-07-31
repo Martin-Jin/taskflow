@@ -197,16 +197,46 @@ function findProjectPhrase(text, projects, sections) {
 
     const consumed = prefixMatch[0];
     const rest = tail.slice(consumed.length);
-    const slashMatch = rest.match(/^\s*\/\s*([^@#]*)/);
+    const slashLead = rest.match(/^\s*\/\s*/);
     let sectionFragment;
     let section = null;
     let matchedTail = consumed;
-    if (slashMatch) {
-      sectionFragment = slashMatch[1].trim() || undefined;
-      matchedTail = consumed + slashMatch[0];
-      if (sectionFragment) {
-        const projectSections = sections.filter((s) => s.projectId === project.id);
-        section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
+    if (slashLead) {
+      const afterSlash = rest.slice(slashLead[0].length);
+      // Same longest-full-name-first approach as the project match above —
+      // stop at the end of whichever known section name is actually spelled
+      // out, rather than swallowing every character up to the next "@"/"#"/
+      // end of string. Without this bound, once a section resolves, any
+      // further words typed on the same line (a new sentence, another
+      // "#project" mention with no "@"/"#" yet before it, etc.) kept getting
+      // folded into the match and highlighted/stripped as if they were still
+      // part of the section name.
+      const projectSections = sections.filter((s) => s.projectId === project.id);
+      const sectionsByNameLengthDesc = [...projectSections].sort((a, b) => b.name.length - a.name.length);
+      let sectionConsumed = null;
+      for (const candidate of sectionsByNameLengthDesc) {
+        const candidateName = candidate.name.trim();
+        if (!candidateName) continue;
+        const sectionPrefixMatch = afterSlash.match(new RegExp(`^${escapeRegExp(candidateName)}(?=\\s|$)`, 'i'));
+        if (sectionPrefixMatch) {
+          sectionConsumed = sectionPrefixMatch[0];
+          section = candidate;
+          break;
+        }
+      }
+      if (sectionConsumed !== null) {
+        sectionFragment = sectionConsumed.trim() || undefined;
+        matchedTail = consumed + slashLead[0] + sectionConsumed;
+      } else {
+        // No known section name is fully spelled out yet — fall back to a
+        // single fuzzy-matchable word (mirrors the project fallback below)
+        // instead of the unbounded rest-of-string capture.
+        const wordFallback = afterSlash.match(/^[^\s@#]*/);
+        sectionFragment = wordFallback[0].trim() || undefined;
+        matchedTail = consumed + slashLead[0] + wordFallback[0];
+        if (sectionFragment) {
+          section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
+        }
       }
     }
     return { project, section, fragment: name, sectionFragment, matchedText: `#${matchedTail}`, index: hashIndex };
