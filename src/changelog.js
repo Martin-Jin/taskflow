@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.27',
+    date: '2026-08-01',
+    title: 'Fixed completed tasks disappearing from Today\'s Agenda after rescheduling',
+    changes: [
+      'Completing a task today, then hitting "Reschedule" or "Plan today", used to wipe that task\'s block for today entirely — it vanished from Today\'s Agenda and its calendar event instead of staying visible as completed. Rescheduling now leaves a completed task\'s block for today untouched.',
+    ],
+  },
+  {
     version: '1.33.26',
     date: '2026-08-01',
     title: 'Fixed "Invalid backup file" on every backup restore',
