@@ -44,7 +44,7 @@ const SCOPE_OPTIONS = [
   { value: 'all', label: 'All events in the series' },
 ];
 
-export default function EventDetailModal({ event, initial, onClose }) {
+export default function EventDetailModal({ event, initial, onClose, onDeleted }) {
   const { addManualEvent, updateEvent, deleteEvent, setEventIgnored } = useScheduler();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
@@ -113,6 +113,20 @@ export default function EventDetailModal({ event, initial, onClose }) {
     // below) — deleteEvent defaults to 'all' for anything else, so passing
     // it through unconditionally is safe for non-recurring events too.
     deleteEvent(event.id, scope);
+    // Defense in depth: the optimistic local delete above changes `events`,
+    // which can make the caller's own "which event is selected" derivation
+    // go null in this same render pass and force this modal to unmount
+    // outright — which races out requestClose's animated onClose below (its
+    // pending timeout gets cancelled by useAnimatedUnmount's own unmount
+    // cleanup before it ever fires). Left alone, that means the "selected
+    // event id" the caller is tracking never actually gets cleared, so if a
+    // later Google Calendar re-sync merges this event back in (e.g. a poll
+    // racing ahead of the delete's propagation on Google's side — see
+    // SchedulerContext.deleteEvent), the caller would recompute a match
+    // against that stale id and silently reopen this same modal. Callers
+    // that track a selected-event id should pass onDeleted to clear it here,
+    // synchronously, regardless of which unmount path ends up winning.
+    onDeleted?.();
     requestClose();
   }
 

@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.21',
+    date: '2026-08-01',
+    title: 'Fix a deleted Google Calendar event reappearing and reopening',
+    changes: [
+      'Deleting a Google Calendar-synced event could occasionally reappear a few seconds later and pop its edit window back open, if a calendar refresh landed before Google had finished processing the delete — deleting one now sticks the first time.',
+    ],
+  },
+  {
     version: '1.33.20',
     date: '2026-07-31',
     title: 'Smart-parsed fixed times, and a proper "Fixed time" checkbox',

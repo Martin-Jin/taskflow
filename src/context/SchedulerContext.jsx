@@ -663,6 +663,8 @@ export function SchedulerProvider({ children }) {
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
+    markGoogleEventDeleted,
+    unmarkGoogleEventDeleted,
   } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast });
 
   // ---- Cloud sync (Firestore) ------------------------------------------------
@@ -1797,9 +1799,20 @@ export function SchedulerProvider({ children }) {
         const target = events.find((e) => e.id === eventId);
         setEvents((prev) => prev.filter((e) => e.id !== eventId));
         if (googleConnected && target?.googleEventId) {
-          deleteCalendarEvent(target.googleEventId, target.calendarId).catch((err) =>
-            console.error('[SchedulerContext] Failed to delete event from Google Calendar', err)
-          );
+          // Suppress this id from being merged back in by a poll/pull that
+          // lands before Google's own delete has propagated (see
+          // eventSyncService.mergePulledGoogleEvents) — the fire-and-forget
+          // delete call below isn't awaited, so without this a pull racing
+          // ahead of it would see the event as still live and resurrect it.
+          markGoogleEventDeleted(target.googleEventId);
+          deleteCalendarEvent(target.googleEventId, target.calendarId).catch((err) => {
+            console.error('[SchedulerContext] Failed to delete event from Google Calendar', err);
+            // The delete never actually happened on Google's side — stop
+            // suppressing pulls for this id so the next poll/pull can merge
+            // in its (still-live) real state rather than continuing to hide
+            // it locally for the rest of the suppression window.
+            unmarkGoogleEventDeleted(target.googleEventId);
+          });
         }
         if (target) {
           pushActionToast({
@@ -1807,6 +1820,12 @@ export function SchedulerProvider({ children }) {
             label: 'Deleted event',
             undo: () => {
               setEvents(prevEventsSnapshot);
+              // The user undid the delete — this id shouldn't be suppressed
+              // from merges anymore (it's no longer "recently deleted" from
+              // the user's point of view), otherwise a pull landing before
+              // the recreate below finishes could drop the restored event
+              // right back out as an out-of-band Google-side delete.
+              if (target.googleEventId) unmarkGoogleEventDeleted(target.googleEventId);
               // The Google copy was deleted above — recreate it (a fresh
               // insert, not a revert-in-place) rather than trying to
               // resurrect the same googleEventId.
