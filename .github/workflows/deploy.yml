@@ -49,7 +49,7 @@ jobs:
           VITE_AI_QUICKADD_WORKER_URL: ${{ secrets.VITE_AI_QUICKADD_WORKER_URL }}
         run: npm run build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
