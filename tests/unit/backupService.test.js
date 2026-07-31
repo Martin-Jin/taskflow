@@ -25,7 +25,7 @@ function makeSampleState() {
     projects: [{ id: 'p1', name: 'Taskflow' }],
     labels: [{ id: 'l1', name: 'urgent' }],
     routines: [{ id: 'r1', name: 'Morning routine' }],
-    rules: [{ id: 'rule1', type: 'workingHours' }],
+    rules: { bufferDays: 1, workDayStart: '07:00', workDayEnd: '23:00' },
     events: [{ id: 'e1', source: 'manual', title: 'Meeting' }],
     soundEnabled: true,
     soundVolume: 0.5,
@@ -176,6 +176,16 @@ describe('isValidBackupPayload', () => {
 
   it('rejects an unrelated JSON object (e.g. some other app export) with none of the required fields', () => {
     expect(isValidBackupPayload({ hello: 'world', foo: [1, 2, 3] })).toBe(false);
+  });
+
+  // Regression guard: `rules` (getDefaultRules in mockData.js) is a single
+  // scheduling-config object, not a list of rule entries — FIELD_TYPES once
+  // declared it 'array', which meant every real export failed its own
+  // isValidBackupPayload check on import ("Invalid backup file.").
+  it('accepts `rules` as a plain object, matching its actual runtime shape', () => {
+    const payload = buildBackupPayload(makeSampleState());
+    expect(Array.isArray(payload.rules)).toBe(false);
+    expect(isValidBackupPayload(payload)).toBe(true);
   });
 });
 

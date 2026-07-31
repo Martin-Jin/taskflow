@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.26',
+    date: '2026-08-01',
+    title: 'Fixed "Invalid backup file" on every backup restore',
+    changes: [
+      'Restoring a downloaded backup always failed with "Invalid backup file", even right after exporting it — scheduling rules were checked against the wrong internal shape. Backup export/import now works again.',
+    ],
+  },
+  {
     version: '1.33.25',
     date: '2026-08-01',
     title: 'Fixed old account data carrying over after switching accounts',

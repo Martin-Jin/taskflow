@@ -52,7 +52,7 @@ export const FIELD_TYPES = {
   projects: 'array',
   labels: 'array',
   routines: 'array',
-  rules: 'array',
+  rules: 'object',
   events: 'array',
   soundEnabled: 'boolean',
   soundVolume: 'number',
