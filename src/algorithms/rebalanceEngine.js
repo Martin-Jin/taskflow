@@ -58,6 +58,7 @@ import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { generateTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
 import { expandEventsForRange } from '../utils/recurrenceExpansion';
+import { isBlockTaskCompleted } from '../utils/missedTasks';
 
 /**
  * A recurring task is only eligible for the per-occurrence expansion below if
@@ -180,10 +181,23 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // not the real wall-clock date) — NOT real-world isPast(), so a rebalance
   // pinned to a past/future fromDate still treats everything before it as
   // untouchable history, per this function's documented contract above.
+  const taskByIdForCompletion = new Map(tasks.map((t) => [t.id, t]));
   const historicalBlocks = existingBlocks.filter((b) => b.date < today);
   const futureBlocks = existingBlocks.filter((b) => b.date >= today);
   const lockedBlocks = futureBlocks.filter((b) => b.isLocked);
-  const clearedBlockIds = new Set(futureBlocks.filter((b) => !b.isLocked).map((b) => b.id));
+  // A block whose task is already completed (or, for a recurring task, whose
+  // occurrence date is already completed) is a historical record even though
+  // it's dated today/future and unlocked — it must survive rebalance the same
+  // way completeTask itself preserves it (see SchedulerContext.completeTask),
+  // otherwise "Reschedule"/"Plan today" wipes a just-completed task's block
+  // off Today's Agenda and the calendar since a completed task is never
+  // re-eligible for allocation and nothing regenerates it.
+  const completedBlocks = futureBlocks.filter(
+    (b) => !b.isLocked && isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
+  );
+  const clearedBlockIds = new Set(
+    futureBlocks.filter((b) => !b.isLocked && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))).map((b) => b.id)
+  );
 
   // 2. Recompute remainingHours per task: estimatedHours minus hours already
   //    "spent" in historical + locked blocks (i.e. committed, immovable work).
@@ -192,7 +206,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // for a recurring task's per-occurrence remaining-hours accounting (see
   // expandRecurringTasks above); irrelevant/unused for non-recurring tasks.
   const spentHoursByTaskDate = new Map();
-  for (const b of [...historicalBlocks, ...lockedBlocks]) {
+  for (const b of [...historicalBlocks, ...lockedBlocks, ...completedBlocks]) {
     spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
     const dateKey = `${b.taskId}::${b.date}`;
     spentHoursByTaskDate.set(dateKey, (spentHoursByTaskDate.get(dateKey) || 0) + b.durationHours);
@@ -239,7 +253,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   const capacityMap = computeHorizonCapacity(today, horizonDays, {
     routines,
     events: expandedEvents,
-    blocks: lockedBlocks,
+    blocks: [...lockedBlocks, ...completedBlocks],
     rules,
     nowClamp,
   });
@@ -294,8 +308,9 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   );
   const { blocks: newBlocks, overflow } = stripVirtualIds(rawBlocks, rawOverflow);
 
-  // 5. Merge: historical (untouched) + locked (untouched) + freshly allocated.
-  const finalBlocks = [...historicalBlocks, ...lockedBlocks, ...newBlocks];
+  // 5. Merge: historical (untouched) + locked (untouched) + completed
+  //    (untouched) + freshly allocated.
+  const finalBlocks = [...historicalBlocks, ...lockedBlocks, ...completedBlocks, ...newBlocks];
 
   const stats = {
     tasksRescheduled: eligibleTasks.length,
@@ -351,10 +366,19 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   // 1. Partition blocks: only TODAY's blocks are ever touched. Every other
   //    date — past (historical) or future — is left alone unconditionally,
   //    regardless of lock state (that's the whole point of "today only").
+  const taskByIdForCompletion = new Map(tasks.map((t) => [t.id, t]));
   const otherBlocks = existingBlocks.filter((b) => b.date !== today);
   const todaysBlocks = existingBlocks.filter((b) => b.date === today);
   const todaysLocked = todaysBlocks.filter((b) => b.isLocked);
-  const clearedBlockIds = new Set(todaysBlocks.filter((b) => !b.isLocked).map((b) => b.id));
+  // See rebalance()'s identical guard: a completed task's (or completed
+  // recurring occurrence's) block for today is a historical record even
+  // though it's unlocked, and must survive being cleared/replanned here too.
+  const todaysCompleted = todaysBlocks.filter(
+    (b) => !b.isLocked && isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
+  );
+  const clearedBlockIds = new Set(
+    todaysBlocks.filter((b) => !b.isLocked && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))).map((b) => b.id)
+  );
 
   // 2. Recompute remainingHours per task: estimatedHours minus hours already
   //    committed elsewhere — historical + future blocks (untouched by this
@@ -367,7 +391,7 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   // rebalanceEngine's expandRecurringTasks above); irrelevant/unused for
   // non-recurring tasks.
   const spentHoursByTaskDate = new Map();
-  for (const b of [...otherBlocks, ...todaysLocked]) {
+  for (const b of [...otherBlocks, ...todaysLocked, ...todaysCompleted]) {
     spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
     const dateKey = `${b.taskId}::${b.date}`;
     spentHoursByTaskDate.set(dateKey, (spentHoursByTaskDate.get(dateKey) || 0) + b.durationHours);
@@ -395,7 +419,7 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   const capacityMap = computeHorizonCapacity(today, 1, {
     routines,
     events: expandedEvents,
-    blocks: todaysLocked,
+    blocks: [...todaysLocked, ...todaysCompleted],
     rules,
     nowClamp,
   });
@@ -438,8 +462,8 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   const { blocks: newBlocks, overflow: unfitToday } = stripVirtualIds(rawBlocks, rawUnfitToday);
 
   // 5. Merge: everything else (untouched) + today's locked (untouched) +
-  //    freshly allocated for today.
-  const finalBlocks = [...otherBlocks, ...todaysLocked, ...newBlocks];
+  //    today's completed (untouched) + freshly allocated for today.
+  const finalBlocks = [...otherBlocks, ...todaysLocked, ...todaysCompleted, ...newBlocks];
 
   const stats = {
     tasksRescheduled: eligibleTasks.length,
