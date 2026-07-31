@@ -412,7 +412,12 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
       !t.isCompleted &&
       t.remainingHours > 0 &&
       !parentIds.has(t.id) &&
-      (!!t.dueDate || !!t.parentId)
+      (!!t.dueDate || !!t.parentId) &&
+      // allocateTasks below runs with dayScoped: true, which forces every
+      // task's window to [today, today] regardless of getTaskWindow — that
+      // would silently override an enforceDueDate task's real due date, so
+      // exclude it here unless today actually is that due date.
+      (!t.enforceDueDate || t.dueDate === today)
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
   const blockedByDependencies = schedulable.length - eligibleTasks.length;
