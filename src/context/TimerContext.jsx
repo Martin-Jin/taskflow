@@ -18,6 +18,13 @@
  * this is what makes a running timer read correctly immediately after a
  * page refresh, instead of resuming from whatever `remainingSeconds` was at
  * the moment of the last write.
+ *
+ * Intentionally local-only: `timers` is persisted via localStorage only and
+ * is deliberately excluded from cloud sync (`cloudSyncState`) and from
+ * export/import + cloud backup (`BACKUP_FIELDS`), same as theme and
+ * dashboard widget visibility. An in-progress Pomodoro is tied to whatever
+ * device you're sitting at right now, not something worth restoring on a
+ * different device or after a backup restore.
  * ============================================================================
  */
 
@@ -62,7 +69,8 @@ export function TimerProvider({ children }) {
   useEffect(() => {
     const hasRunning = Object.values(timers).some((t) => t.status === 'running');
     if (!hasRunning) return;
-    const id = setInterval(() => {
+
+    function tick() {
       setTick((n) => n + 1);
       const now = Date.now();
       setTimers((prev) => {
@@ -76,8 +84,24 @@ export function TimerProvider({ children }) {
         }
         return changed ? next : prev;
       });
-    }, 1000);
-    return () => clearInterval(id);
+    }
+
+    const id = setInterval(tick, 1000);
+    // Backgrounded tabs get throttled to ~once/minute by the browser (a
+    // long-standing spec'd behavior, not a bug in this interval) — the
+    // underlying wall-clock math in getLiveRemaining is still correct the
+    // instant it runs, but the running->done transition and the widget's
+    // countdown otherwise visibly lag until the throttled interval happens
+    // to fire again. Running the same tick immediately when the tab
+    // regains visibility catches it up right away instead of waiting.
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') tick();
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [timers]);
 
   const startTimer = useCallback((task, durationSeconds) => {

@@ -53,7 +53,7 @@ import {
 import { useScheduler } from '../../context/SchedulerContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
+import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -346,6 +346,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             onChange={(e) => setNotes(e.target.value)}
             onBlur={handleNotesBlur}
             placeholder="Description (optional)"
+            maxLength={10000}
           />
         </div>
 
@@ -473,11 +474,12 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                   <input
                     type="number"
                     min="1"
+                    max={MAX_RECURRENCE_COUNT}
                     step="1"
                     value={recurrenceCount}
                     onChange={(e) => {
                       setHasEditedRecurrence(true);
-                      setRecurrenceCount(Math.max(1, Number(e.target.value) || 1));
+                      setRecurrenceCount(Math.min(MAX_RECURRENCE_COUNT, Math.max(1, Number(e.target.value) || 1)));
                       setRecurrenceDays(null);
                     }}
                     style={{ width: 56 }}

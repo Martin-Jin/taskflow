@@ -39,10 +39,10 @@ const EVENTS_HORIZON_DAYS = 28;
  * @param {Array} deps.tasks - Current tasks
  * @param {Function} deps.commit - useHistoryState's commit
  * @param {React.MutableRefObject} deps.stateRef - Ref to latest state
- * @param {Function} deps.setActionToast - Toast with undo support
+ * @param {Function} deps.pushActionToast - Queues a toast with undo support
  * @returns {Object} Google Calendar state and callbacks
  */
-export function useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, setActionToast }) {
+export function useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast }) {
   const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
   const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
   const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);

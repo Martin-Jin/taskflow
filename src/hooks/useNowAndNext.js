@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toISODate, timeToMinutes } from '../utils/dateUtils';
+import { isBlockTaskCompleted } from '../utils/missedTasks';
 
 /**
  * Derives "what should I be doing right now" from the scheduler's blocks:
@@ -25,8 +26,13 @@ export function useNowAndNext(tasks, blocks) {
     const today = toISODate(now);
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
+    // Excludes blocks whose occurrence is already completed (e.g. a recurring
+    // task finished early — see isBlockTaskCompleted) so a done task doesn't
+    // still show up as "in progress" here.
+    const isDone = (b) => isBlockTaskCompleted(b, taskById.get(b.taskId));
+
     const todaysBlocks = blocks
-      .filter((b) => b.date === today)
+      .filter((b) => b.date === today && !isDone(b))
       .slice()
       .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
@@ -37,7 +43,7 @@ export function useNowAndNext(tasks, blocks) {
     let nextBlock = todaysBlocks.find((b) => timeToMinutes(b.startTime) > nowMinutes);
     if (!nextBlock) {
       const future = blocks
-        .filter((b) => b.date > today)
+        .filter((b) => b.date > today && !isDone(b))
         .slice()
         .sort((a, b) => (a.date === b.date ? timeToMinutes(a.startTime) - timeToMinutes(b.startTime) : a.date < b.date ? -1 : 1));
       nextBlock = future[0];

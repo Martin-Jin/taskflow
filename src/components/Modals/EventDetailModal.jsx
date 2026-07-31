@@ -35,6 +35,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
+import { timeToMinutes } from '../../utils/dateUtils';
 import DetailField from '../Common/DetailField';
 
 const SCOPE_OPTIONS = [
@@ -62,11 +63,23 @@ export default function EventDetailModal({ event, initial, onClose }) {
   const [endTime, setEndTime] = useState(event?.endTime || initial?.endTime || '');
   const [ignored, setIgnored] = useState(!!event?.isFreeTime);
   const [scope, setScope] = useState('this');
+  const [error, setError] = useState('');
 
   const descriptionRef = useRef(null);
   useAutosizeTextarea(descriptionRef, description, { maxLines: 4.5 });
 
   function handleSave() {
+    if (!isReadOnly) {
+      if (!date || !startTime || !endTime) {
+        setError('Date, start time, and end time are all required.');
+        return;
+      }
+      if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+        setError('End time must be after start time.');
+        return;
+      }
+    }
+    setError('');
     if (isCreate) {
       addManualEvent({ title, description, location, date, startTime, endTime });
     } else {
@@ -123,6 +136,8 @@ export default function EventDetailModal({ event, initial, onClose }) {
             <X size={16} />
           </button>
         </div>
+
+        {error && <p className="form-error">{error}</p>}
 
         {!isCreate && event.calendarName && event.calendarName !== 'primary' && (
           <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>Synced from {event.calendarName}</p>

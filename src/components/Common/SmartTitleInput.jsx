@@ -285,6 +285,7 @@ export default function SmartTitleInput({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         rows={1}
+        maxLength={500}
       />
       {mention.isOpen && (
         <MentionDropdown

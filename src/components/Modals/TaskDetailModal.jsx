@@ -103,7 +103,7 @@ import { useSound } from '../../context/SoundContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
 import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
+import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
@@ -1297,6 +1297,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         }}
                         onScroll={syncNotesBackdropScroll}
                         placeholder="Description"
+                        maxLength={10000}
                       />
                     </div>
                     {notesLinkMatches.length > 0 && (
@@ -1739,10 +1740,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     <input
                       type="number"
                       min="1"
+                      max={MAX_RECURRENCE_COUNT}
                       step="1"
                       value={recurrenceCount}
                       onChange={(e) => {
-                        setRecurrenceCount(Math.max(1, Number(e.target.value) || 1));
+                        setRecurrenceCount(Math.min(MAX_RECURRENCE_COUNT, Math.max(1, Number(e.target.value) || 1)));
                         setRecurrenceDays(null);
                       }}
                       style={{ width: 56 }}
