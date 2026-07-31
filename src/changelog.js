@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.28',
+    date: '2026-08-01',
+    title: 'Fixed deleted tasks leaving stale Google Calendar events behind',
+    changes: [
+      'Deleting a task whose scheduled block had synced to Google Calendar removed it from Taskflow but left the event on Google Calendar, which could then reappear locally and need deleting a second time. Deleting a task now also removes its Google Calendar event.',
+    ],
+  },
+  {
     version: '1.33.27',
     date: '2026-08-01',
     title: 'Fixed completed tasks disappearing from Today\'s Agenda after rescheduling',
