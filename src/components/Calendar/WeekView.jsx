@@ -308,7 +308,11 @@ function computeDayPositions(items, pxPerMin) {
  * string (e.g. "24:15") that corrupts every downstream time comparison.
  */
 function computeSnappedStartMinute(relY, pxPerMin, duration) {
-  let newStartMin = GRID_START_MIN + relY / pxPerMin;
+  // relY is the cursor/finger's Y position, which should land at the
+  // dragged block's CENTER rather than its top edge — otherwise the block
+  // visibly jumps to put its top under the cursor, offset by however far
+  // below the top the user originally grabbed it.
+  let newStartMin = GRID_START_MIN + relY / pxPerMin - duration / 2;
   newStartMin = Math.round(newStartMin / SNAP_MIN) * SNAP_MIN;
   return Math.min(Math.max(newStartMin, GRID_START_MIN), GRID_END_MIN - duration);
 }
