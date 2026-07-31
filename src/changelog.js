@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.25',
+    date: '2026-08-01',
+    title: 'Fixed old account data carrying over after switching accounts',
+    changes: [
+      'Signing out and signing into a different account no longer leaves the previous account\'s tasks/settings behind — signing out now clears local data so the next sign-in starts clean.',
+    ],
+  },
+  {
     version: '1.33.24',
     date: '2026-08-01',
     title: 'Fixed email notifications not actually sending',
