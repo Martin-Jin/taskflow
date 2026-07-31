@@ -494,10 +494,10 @@
    while .cal-event-ghost shows where it will land. */
 .cal-block.is-dragging,
 .cal-event.is-dragging {
-  opacity: 0.55;
+  opacity: 0.3;
   transform: scale(1.02);
   box-shadow: var(--shadow-card);
-  z-index: 7;
+  z-index: 3;
 }
 
 /* Being resized by its bottom edge (see WeekView's resizePreview): outlined
@@ -868,11 +868,12 @@
   padding: 4px 7px;
   font-size: 11px;
   background: var(--color-accent-soft);
-  border: 1px dashed var(--color-accent-border);
+  border: 2px dashed var(--color-accent);
   color: var(--color-accent);
   overflow: hidden;
   pointer-events: none;
-  z-index: 4;
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+  z-index: 8;
 }
 
 .cal-event-ghost .cal-block-title {

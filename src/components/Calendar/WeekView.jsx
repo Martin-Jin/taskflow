@@ -1223,11 +1223,9 @@ export default function WeekView({
                       }
                     }}
                   >
-                    {!liveTimeOnly && evt.title}
-                    {/* Events have no permanent time line (the title is all
-                        that fits), so the live one only appears mid-resize. */}
-                    {isResizing && (
-                      <div className="cal-block-time is-live">
+                    {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
+                    {(height >= TWO_LINE_MIN_HEIGHT || isResizing) && (
+                      <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
                         {evt.startTime}–{endTime}
                       </div>
                     )}

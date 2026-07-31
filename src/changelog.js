@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.22',
+    date: '2026-08-01',
+    title: 'Calendar event times, and an easier-to-see drag preview',
+    changes: [
+      'Events on the calendar now show their time range under the title, matching how scheduled task blocks already look.',
+      'Dragging an event or task block to reschedule it now makes the item you\'re dragging more transparent and highlights the drop-target preview more clearly, so it\'s easier to see where it will land.',
+    ],
+  },
+  {
     version: '1.33.21',
     date: '2026-08-01',
     title: 'Fix a deleted Google Calendar event reappearing and reopening',
