@@ -916,6 +916,23 @@ export function SchedulerProvider({ children }) {
             if (c.attachment) deleteCommentAttachment(c.attachment.path);
           });
       }
+      // Blocks belonging to a deleted task are dropped from local state
+      // below, but any block already pushed to Google Calendar carries a
+      // googleEventId that would otherwise be orphaned on Google's side —
+      // and resurrected locally by the next poll/pull, since only
+      // deleteEvent's suppression (markGoogleEventDeleted) prevents that.
+      // Mirrors deleteEvent's cleanup (see below).
+      if (googleConnected) {
+        blocks
+          .filter((b) => idsToDelete.has(b.taskId) && b.googleEventId)
+          .forEach((b) => {
+            markGoogleEventDeleted(b.googleEventId);
+            deleteCalendarEvent(b.googleEventId, b.calendarId).catch((err) => {
+              console.error('[SchedulerContext] Failed to delete task block from Google Calendar', err);
+              unmarkGoogleEventDeleted(b.googleEventId);
+            });
+          });
+      }
       // Function form — see addTask's comment above. The actual array
       // transform runs against `current`, not the closed-over `tasks`/
       // `blocks`, so this is safe even when several deletes/creates happen
@@ -935,7 +952,7 @@ export function SchedulerProvider({ children }) {
       );
       if (soundEnabled) playDeleteSound(soundVolume);
     },
-    [tasks, commit, user, soundEnabled, soundVolume]
+    [tasks, blocks, commit, user, soundEnabled, soundVolume, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted]
   );
 
   /**
