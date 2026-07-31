@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.18',
+    date: '2026-07-31',
+    title: 'Completed tasks hidden from search by default',
+    changes: [
+      'Searching from the List view or the Ctrl+K command palette no longer surfaces completed tasks unless you\'re already viewing the "Completed" tab in List view.',
+      'The search bar\'s suggestion dropdown now shows a "Show completed tasks" option when a search has completed matches, so you can still find one if you need to.',
+    ],
+  },
+  {
     version: '1.33.17',
     date: '2026-07-31',
     title: 'Undo event creation, fix recurring completions vanishing, dashboard/stats stat tiles',

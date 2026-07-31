@@ -40,6 +40,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask }) {
   const { searchQuery, setSearchQuery, projects, labels, tasks } = useScheduler();
   const [isFocused, setIsFocused] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -49,6 +50,13 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
+
+  // Reset the completed-tasks toggle whenever the query changes, so opting
+  // in for one search doesn't silently carry over and surface completed
+  // tasks in an unrelated later search.
+  useEffect(() => {
+    setShowCompleted(false);
+  }, [searchQuery]);
 
   const trimmedQuery = searchQuery.trim();
   const allTokens = trimmedQuery.length ? trimmedQuery.split(/\s+/) : [];
@@ -85,14 +93,19 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
   // Default suggestion mode: plain text, not currently inside a "#"/"@"
   // token. Matches against the whole query (not just the active word) via
   // the same predicate the List/Board views use for in-place filtering.
-  // Completed tasks are excluded here — jumping to a finished task from
-  // search isn't a useful action, unlike the List/Board views where seeing
-  // a completed match in place is still informative.
-  const matchingTasks =
-    !activeWordIsProject && !activeWordIsTag && trimmedQuery.length > 0
-      ? tasks.filter((t) => !t.isCompleted && taskMatchesQuery(t, trimmedQuery, labels)).slice(0, 5)
-      : [];
-  const showDropdown = isFocused && (matchingProjects.length > 0 || matchingLabels.length > 0 || matchingTasks.length > 0);
+  // Completed tasks are excluded by default — jumping to a finished task
+  // from search isn't usually the intent — but the "Show completed" toggle
+  // below lets the user opt back in for the rare case they're hunting for
+  // one.
+  const inTaskSuggestionMode = !activeWordIsProject && !activeWordIsTag && trimmedQuery.length > 0;
+  const matchingTasks = inTaskSuggestionMode
+    ? tasks.filter((t) => (showCompleted || !t.isCompleted) && taskMatchesQuery(t, trimmedQuery, labels)).slice(0, 5)
+    : [];
+  const hasHiddenCompletedMatches =
+    !showCompleted &&
+    inTaskSuggestionMode &&
+    tasks.some((t) => t.isCompleted && taskMatchesQuery(t, trimmedQuery, labels));
+  const showDropdown = isFocused && (matchingProjects.length > 0 || matchingLabels.length > 0 || matchingTasks.length > 0 || hasHiddenCompletedMatches);
 
   function removeTagToken(token) {
     setSearchQuery(allTokens.filter((t) => t !== token).join(' '));
@@ -150,7 +163,7 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
 
       {showDropdown && (
         <div className="search-bar-dropdown">
-          {matchingTasks.length > 0 && (
+          {(matchingTasks.length > 0 || hasHiddenCompletedMatches) && (
             <div className="search-bar-dropdown-group">
               <div className="search-bar-dropdown-label">Tasks</div>
               {matchingTasks.map((t) => (
@@ -165,6 +178,17 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
                   <span className="search-bar-dropdown-item-label">{t.title}</span>
                 </button>
               ))}
+              {hasHiddenCompletedMatches && (
+                <button
+                  type="button"
+                  className="search-bar-dropdown-item search-bar-dropdown-show-completed"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setShowCompleted(true)}
+                >
+                  <CheckSquare size={13} />
+                  <span className="search-bar-dropdown-item-label">Show completed tasks</span>
+                </button>
+              )}
             </div>
           )}
           {matchingProjects.length > 0 && (
