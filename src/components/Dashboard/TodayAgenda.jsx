@@ -144,7 +144,13 @@ export default function TodayAgenda() {
       })()}
       {editingEventId && (() => {
         const event = (events || []).find((e) => e.id === editingEventId);
-        return event ? <EventDetailModal event={event} onClose={() => setEditingEventId(null)} /> : null;
+        return event ? (
+          <EventDetailModal
+            event={event}
+            onClose={() => setEditingEventId(null)}
+            onDeleted={() => setEditingEventId(null)}
+          />
+        ) : null;
       })()}
     </div>
   );

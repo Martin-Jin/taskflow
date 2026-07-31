@@ -26,7 +26,7 @@ import {
   initGoogleCalendar,
   requestAccessToken,
 } from '../services/googleCalendarService';
-import { mergePulledGoogleEvents } from '../services/eventSyncService';
+import { mergePulledGoogleEvents, RECENTLY_DELETED_TTL_MS } from '../services/eventSyncService';
 
 const EVENTS_HORIZON_DAYS = 28;
 
@@ -51,6 +51,32 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   const lastGooglePollAtRef = useRef(0);
   const pollGoogleEventsRef = useRef(null);
 
+  // googleEventId -> timestamp this app instance issued a delete for it.
+  // Consulted (and pruned of expired entries) by every mergePulledGoogleEvents
+  // call below so a poll/pull that lands before Google's own delete has
+  // propagated can't resurrect an event we just deleted (see
+  // eventSyncService.mergePulledGoogleEvents and SchedulerContext.deleteEvent).
+  const recentlyDeletedGoogleEventIdsRef = useRef(new Map());
+
+  const markGoogleEventDeleted = useCallback((googleEventId) => {
+    if (!googleEventId) return;
+    const map = recentlyDeletedGoogleEventIdsRef.current;
+    const cutoff = Date.now() - RECENTLY_DELETED_TTL_MS;
+    for (const [id, ts] of map) {
+      if (ts < cutoff) map.delete(id);
+    }
+    map.set(googleEventId, Date.now());
+  }, []);
+
+  // Called if the Google-side delete call itself fails — stop suppressing
+  // pulls for this id so the next poll/pull can correctly reflect that the
+  // event is (still) live on Google, rather than silently hiding it from the
+  // user for up to RECENTLY_DELETED_TTL_MS after a delete that never happened.
+  const unmarkGoogleEventDeleted = useCallback((googleEventId) => {
+    if (!googleEventId) return;
+    recentlyDeletedGoogleEventIdsRef.current.delete(googleEventId);
+  }, []);
+
   // ---- Initial silent re-auth on mount ------------------------------------
   useEffect(() => {
     let cancelled = false;
@@ -66,7 +92,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
           const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
           const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
           if (!cancelled) {
-            setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
+            setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
             if (failedCalendars.length > 0) {
               console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
             }
@@ -100,7 +126,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
         const rangeStartIso = toISODate(new Date());
         const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
         const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
+        setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
       } catch (err) {
         if (err?.isGoogleAuthError) {
           console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
@@ -153,7 +179,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       const rangeStartIso = toISODate(new Date());
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
+      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
@@ -177,7 +203,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       const rangeStartIso = toISODate(new Date());
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso));
+      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
@@ -229,5 +255,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
+    markGoogleEventDeleted,
+    unmarkGoogleEventDeleted,
   };
 }

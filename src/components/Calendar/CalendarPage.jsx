@@ -560,7 +560,13 @@ export default function CalendarPage() {
       {selectedBlock && (
         <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} onOpenTask={handleOpenTask} />
       )}
-      {selectedEvent && <EventDetailModal event={selectedEvent} onClose={() => setSelectedEventId(null)} />}
+      {selectedEvent && (
+        <EventDetailModal
+          event={selectedEvent}
+          onClose={() => setSelectedEventId(null)}
+          onDeleted={() => setSelectedEventId(null)}
+        />
+      )}
       {creatingEvent && <EventDetailModal event={null} initial={creatingEvent} onClose={() => setCreatingEvent(null)} />}
       {selectedTask && <TaskDetailModal task={selectedTask} onClose={() => setSelectedTaskId(null)} />}
     </div>
