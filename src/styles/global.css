@@ -1306,6 +1306,11 @@ input.search-bar-input {
   min-width: 0;
 }
 
+.search-bar-dropdown-show-completed {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
 /* -------------------------------------------------------------------- */
 /* CommandPalette (Ctrl+K) — reuses .modal-stat-list's shell and the     */
 /* .search-bar-dropdown-* row styles above, just without the absolute-   */

@@ -202,13 +202,18 @@ export default function TaskListPanel({
     // 30 days after completion, see SchedulerContext's retention sweep) —
     // see filterTasksByStatus for what each filter key means.
     let list = filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId);
-    // A non-empty search query bypasses the active/completed/all/noDueDate
-    // filter chip entirely — search should be able to surface any matching
-    // task from the whole project (including e.g. a completed task while
-    // viewing "Active"), not just the subset the current chip already
-    // narrowed down to. Project scope still applies (filterTasksByProject
-    // above); only the status chip is skipped.
-    if (!searchQuery) list = filterTasksByStatus(list, filter);
+    // A non-empty search query bypasses the active/all/noDueDate filter
+    // chip's due-date narrowing — search should surface any matching task
+    // from the whole project regardless of due date, not just the subset
+    // the current chip already narrowed down to. Completed tasks are the
+    // one exception: they only ever show up in search while the
+    // "Completed" chip itself is active, matching every other search
+    // surface in the app (SearchBar dropdown, Command Palette) where
+    // completed tasks stay hidden unless the user has explicitly asked to
+    // see completed items.
+    if (filter === 'completed') list = filterTasksByStatus(list, 'completed');
+    else if (searchQuery) list = list.filter((t) => !t.isCompleted);
+    else list = filterTasksByStatus(list, filter);
     list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
   }, [tasks, activeProjectId, filter, searchQuery, labels]);

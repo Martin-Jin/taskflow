@@ -97,7 +97,11 @@ export default function CommandPalette({
     ).map((p) => ({ key: `project-${p.id}`, label: p.name, icon: Folder, run: () => onSelectProject(p.id) }));
 
     const taskItems = q
-      ? fuzzyFilter(tasks, q, (t) => t.title)
+      ? fuzzyFilter(
+          tasks.filter((t) => !t.isCompleted),
+          q,
+          (t) => t.title
+        )
           .slice(0, 8)
           .map((t) => ({ key: `task-${t.id}`, label: t.title, icon: CheckSquare2, run: () => onOpenTask(t.id) }))
       : [];
