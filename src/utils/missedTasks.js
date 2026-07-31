@@ -10,13 +10,26 @@
  * twice.
  * ============================================================================
  */
-import { toISODate, timeToMinutes } from './dateUtils';
+import { toISODate, timeToMinutes, fromISODate } from './dateUtils';
 
 /** Is `block` (joined with its `task`) missed, given `today`/`nowMinutes`? */
 export function isBlockMissed(block, task, today, nowMinutes) {
   if (!task || task.isCompleted) return false;
   if (block.date !== today) return false;
   return timeToMinutes(block.endTime) <= nowMinutes;
+}
+
+/**
+ * Was `task` (already completed) marked done after `block`'s scheduled end
+ * time had already elapsed? Used to give "completed late" a visually distinct
+ * look from a plain on-time completion.
+ */
+export function isBlockCompletedLate(block, task) {
+  if (!task?.isCompleted || !task.completedAt) return false;
+  const blockEnd = fromISODate(block.date);
+  const [h, m] = block.endTime.split(':').map(Number);
+  blockEnd.setHours(h, m, 0, 0);
+  return new Date(task.completedAt) > blockEnd;
 }
 
 /**
