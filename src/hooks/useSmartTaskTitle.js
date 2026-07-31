@@ -25,7 +25,24 @@
  */
 
 import { useState } from 'react';
+import {
+  Repeat,
+  Wind,
+  CalendarClock,
+  CalendarCheck,
+  Flag,
+  Link2,
+  HelpCircle,
+  Folder,
+  Tag,
+  Clock,
+  Link as LinkIcon,
+} from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
+import { formatDisplayDate } from '../utils/dateUtils';
+import { linkLabel } from '../utils/linkify';
+import { PRIORITY_LABELS } from '../utils/priorityColor';
+import { formatHours } from '../utils/formatHours';
 
 const SCALAR_FIELD_TYPES = [
   'link',
@@ -144,4 +161,49 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields 
   }
 
   return { smartDetected, handleTitleChange, dismissSmartChip, buildFinalTitle, resetSmartState };
+}
+
+/**
+ * Turns a `smartDetected` map into the chip objects `SmartChips` renders —
+ * shared by AddTaskModal and TaskDetailModal so their smart-parse chip UI
+ * can't drift apart (see this file's doc comment for how detection itself
+ * is centralized; this covers the display side).
+ */
+export function buildSmartChips(smartDetected) {
+  return [
+    smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
+    smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
+    smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
+    smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
+    smartDetected.estimatedHours && {
+      type: 'estimatedHours',
+      icon: Clock,
+      label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}`,
+    },
+    smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
+    smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
+    smartDetected.dependency &&
+      (smartDetected.dependency.task
+        ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
+        : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
+    smartDetected.project &&
+      (smartDetected.project.project
+        ? {
+            type: 'project',
+            icon: smartDetected.project.sectionFragment && !smartDetected.project.section ? HelpCircle : Folder,
+            label: smartDetected.project.sectionFragment
+              ? smartDetected.project.section
+                ? `Project: ${smartDetected.project.project.name} → ${smartDetected.project.section.name}`
+                : `${smartDetected.project.project.name}: no section match for "${smartDetected.project.sectionFragment}"`
+              : `Project: ${smartDetected.project.project.name}`,
+          }
+        : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
+    ...(smartDetected.labels || []).map((m) => ({
+      type: 'labels',
+      key: `labels:${m.matchedText}`,
+      icon: Tag,
+      label: `#${m.name}`,
+      match: m,
+    })),
+  ].filter(Boolean);
 }

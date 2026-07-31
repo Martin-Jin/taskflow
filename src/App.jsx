@@ -69,6 +69,8 @@ const TABS = [
 
 function AppShell() {
   const [tab, setTab] = useState('dashboard');
+  // Device-local UI state (which project/view is selected) — not user data,
+  // so deliberately left out of BACKUP_FIELDS.
   const [activeProjectId, setActiveProjectId] = usePersistedState('activeProjectId', ALL_TASKS_PROJECT_ID);
   // Tasks page's own sub-view ('list' | 'board' | 'gantt'), remembered PER
   // PROJECT (keyed by projectId, including the ALL_TASKS_PROJECT_ID pseudo

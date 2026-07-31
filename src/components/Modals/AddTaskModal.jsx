@@ -43,13 +43,11 @@ import {
   CalendarX2,
   Flag,
   Link2,
-  HelpCircle,
   Folder,
   Layers,
   Tag,
   Clock,
   MoreHorizontal,
-  Link as LinkIcon,
   X,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -57,11 +55,10 @@ import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/da
 import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
-import { useSmartTaskTitle } from '../../hooks/useSmartTaskTitle';
+import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import DependencyPicker from '../Common/DependencyPicker';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
@@ -218,38 +215,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     handleSmartTitleChange(value);
   }
 
-  const smartChips = [
-    smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
-    smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
-    smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
-    smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
-    smartDetected.estimatedHours && { type: 'estimatedHours', icon: Clock, label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}` },
-    smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
-    smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
-    smartDetected.dependency &&
-      (smartDetected.dependency.task
-        ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
-        : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
-    smartDetected.project &&
-      (smartDetected.project.project
-        ? {
-            type: 'project',
-            icon: smartDetected.project.sectionFragment && !smartDetected.project.section ? HelpCircle : Folder,
-            label: smartDetected.project.sectionFragment
-              ? smartDetected.project.section
-                ? `Project: ${smartDetected.project.project.name} → ${smartDetected.project.section.name}`
-                : `${smartDetected.project.project.name}: no section match for "${smartDetected.project.sectionFragment}"`
-              : `Project: ${smartDetected.project.project.name}`,
-          }
-        : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
-    ...(smartDetected.labels || []).map((m) => ({
-      type: 'labels',
-      key: `labels:${m.matchedText}`,
-      icon: Tag,
-      label: `#${m.name}`,
-      match: m,
-    })),
-  ].filter(Boolean);
+  const smartChips = buildSmartChips(smartDetected);
 
   function handleNotesBlur() {
     const parsed = parseDurationHours(notes);

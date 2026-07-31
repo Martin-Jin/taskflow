@@ -167,7 +167,7 @@ function normalizeTodoistTask(raw, sectionsById, parentId) {
     isLocked: false,
     isCompleted: false,
     minChunkHours: 0.5,
-    maxChunkHours: Math.min(4, durationHours),
+    maxChunkHours: Math.max(0.5, Math.min(4, durationHours)),
     createdAt: raw.added_at || raw.created_at || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     parentId,

@@ -72,7 +72,6 @@ import {
   CalendarCheck,
   Flag,
   Link2,
-  HelpCircle,
   CalendarX2,
   Folder,
   Layers,
@@ -111,7 +110,7 @@ import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
-import { useSmartTaskTitle } from '../../hooks/useSmartTaskTitle';
+import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import DependencyPicker from '../Common/DependencyPicker';
@@ -719,46 +718,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setRepeatEditText(null);
   }
 
-  const smartChips = useMemo(
-    () =>
-      [
-        smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
-        smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
-        smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
-        smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
-        smartDetected.estimatedHours && {
-          type: 'estimatedHours',
-          icon: Clock,
-          label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}`,
-        },
-        smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
-        smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
-        smartDetected.dependency &&
-          (smartDetected.dependency.task
-            ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
-            : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
-        smartDetected.project &&
-          (smartDetected.project.project
-            ? {
-                type: 'project',
-                icon: smartDetected.project.sectionFragment && !smartDetected.project.section ? HelpCircle : Folder,
-                label: smartDetected.project.sectionFragment
-                  ? smartDetected.project.section
-                    ? `Project: ${smartDetected.project.project.name} → ${smartDetected.project.section.name}`
-                    : `${smartDetected.project.project.name}: no section match for "${smartDetected.project.sectionFragment}"`
-                  : `Project: ${smartDetected.project.project.name}`,
-              }
-            : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
-        ...(smartDetected.labels || []).map((m) => ({
-          type: 'labels',
-          key: `labels:${m.matchedText}`,
-          icon: Tag,
-          label: `#${m.name}`,
-          match: m,
-        })),
-      ].filter(Boolean),
-    [smartDetected]
-  );
+  const smartChips = useMemo(() => buildSmartChips(smartDetected), [smartDetected]);
 
   // Drives the inline Save/Cancel row rendered under the description
   // (Todoist-style, replacing a permanent footer) — only worth showing once
