@@ -19,9 +19,9 @@ const SECTIONS = [
   },
   {
     title: 'Fixed time',
-    examples: ['at 5pm', 'at 9am', 'at 12:30', 'at 17:00'],
+    examples: ['at 5pm', 'at 9am', 'at 12:30', 'at 17:00', '5pm', '9:10pm'],
     description:
-      'Pins the task to start at exactly that time of day, independent of any due date — same as the "Fixed time" field. A bare hour/minute with no am/pm is read as 24-hour time.',
+      'Pins the task to start at exactly that time of day, independent of any due date — same as the "Fixed time" field. The "at" is optional, but a bare hour with no am/pm and no minutes (e.g. just "9") is never read as a time.',
   },
   {
     title: 'Recurrence',

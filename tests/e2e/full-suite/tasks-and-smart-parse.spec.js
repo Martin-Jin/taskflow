@@ -429,6 +429,80 @@ test.describe('Smart parse', () => {
 
     expectNoErrors(errors);
   });
+
+  test('a bare number is never smart-parsed as a fixed time, with or without "at"', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const titleInput = page.getByPlaceholder('Task name');
+    const chipsRow = page.locator('.smart-chip-row');
+
+    // "at 9" — bare hour, no am/pm, no minutes: must not match (previously
+    // misread as 24hr "09:00").
+    await titleInput.fill('Task at 9');
+    await page.waitForTimeout(300);
+    await expect(chipsRow.getByText(/^At /)).toHaveCount(0);
+
+    // Bare "17:30" with no "at" and no am/pm must also not match — only the
+    // "at"-prefixed form is allowed the bare-24hr reading, and even that
+    // requires minutes or am/pm (covered above).
+    await titleInput.fill('Task 17:30');
+    await page.waitForTimeout(300);
+    await expect(chipsRow.getByText(/^At /)).toHaveCount(0);
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
+  test('a standalone time with am/pm (no "at") is still detected as a fixed time', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const titleInput = page.getByPlaceholder('Task name');
+    await titleInput.fill('Call dentist 9:10pm');
+    await page.waitForTimeout(300);
+
+    await expect(page.locator('.smart-chip-row')).toContainText('At 9:10 PM');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
+  test('re-arms after dismissing a fixed-time chip, editing to a different valid time, then coming back to the original phrase', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const titleInput = page.getByPlaceholder('Task name');
+    const chipsRow = page.locator('.smart-chip-row');
+
+    await titleInput.fill('Task at 9pm');
+    await page.waitForTimeout(300);
+    await expect(chipsRow).toContainText('At 9:00 PM');
+
+    // Dismiss the chip.
+    await page.getByRole('button', { name: /dismiss.*9:00 pm/i }).click();
+    await page.waitForTimeout(300);
+    await expect(chipsRow.getByText(/^At /)).toHaveCount(0);
+
+    // Edit straight to a DIFFERENT valid time phrase — this transition never
+    // passes through a "no match" state, which is what used to leave the
+    // original dismissal stuck forever (see useSmartTaskTitle.js).
+    await titleInput.fill('Task at 10pm');
+    await page.waitForTimeout(300);
+    await expect(chipsRow).toContainText('At 10:00 PM');
+
+    // Coming back to the originally-dismissed phrase should re-arm and show
+    // the chip again, not stay silently suppressed.
+    await titleInput.fill('Task at 9pm');
+    await page.waitForTimeout(300);
+    await expect(chipsRow).toContainText('At 9:00 PM');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Validation edge cases', () => {
@@ -442,6 +516,26 @@ test.describe('Validation edge cases', () => {
     await page.waitForTimeout(300);
 
     await expect(page.getByText(/give the task a title/i)).toBeVisible();
+    await expect(page.getByRole('dialog')).toBeVisible(); // modal stayed open
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
+  test('checking "Fixed time" without picking a time blocks submission', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    await page.getByPlaceholder('Task name').fill(`E2E Fixed Time Edge ${RUN_ID}`);
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(3).click(); // More options
+    await page.getByRole('checkbox', { name: 'Not fixed' }).check();
+    // No time picked yet — the time <input type="time"> defaults to blank.
+    await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
+    await page.waitForTimeout(300);
+
+    await expect(page.getByText(/pick a time.*fixed time/i)).toBeVisible();
     await expect(page.getByRole('dialog')).toBeVisible(); // modal stayed open
 
     await closeAnyModal(page);

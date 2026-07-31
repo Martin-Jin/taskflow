@@ -3,12 +3,16 @@ name: hard-problem-solver
 description: LAST RESORT ONLY, gated on token efficiency — reserved for genuinely hard problems in this repo where feature-worker would likely need multiple expensive retry/rework passes (or produce a subtly wrong result that's costly to unwind), such that paying for one higher-effort pass up front is the cheaper path overall: tricky concurrency/sync bugs (e.g. Firebase sync conflicts), recurrence-parsing logic, or cross-cutting refactors touching many files. This agent is materially more expensive (Sonnet at high effort) than feature-worker — that cost must be justified by expected savings elsewhere (avoided rework, avoided a hard-to-find bug shipped), not just by the task "sounding hard". Do not use for routine feature work, normal-sized bug fixes, or anything feature-worker's own description covers — those must go to feature-worker instead. If genuinely unsure which tier a task needs, default to feature-worker and only escalate here if it visibly struggles.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
-effort: high
+effort: medium
 ---
 
-Effort must never exceed "high" for this agent (no xhigh/max), per user
-instruction. This is also the ceiling for every other agent in this repo —
-none may be configured above "high".
+TEMPORARY LIMIT (see CLAUDE.md "Temporary model/effort cap"): effort is
+capped at "medium" and model at "sonnet" until the user lifts it. Do not
+raise either, even though this agent's normal design intent is high effort.
+
+Effort must never exceed "high" for this agent (no xhigh/max) once the cap
+is lifted, per user instruction. This is also the ceiling for every other
+agent in this repo — none may be configured above "high".
 
 You handle the hard problems in Taskflow (React + Vite + Firebase task
 manager) — the ones where a wrong first answer is expensive to unwind.

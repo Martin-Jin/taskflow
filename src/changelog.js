@@ -17,6 +17,17 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.20',
+    date: '2026-07-31',
+    title: 'Smart-parsed fixed times, and a proper "Fixed time" checkbox',
+    changes: [
+      'A bare number in a task title (e.g. "at 9") is no longer misread as a fixed time — a time now needs an am/pm (e.g. "9pm") or minutes to be detected.',
+      'A standalone time with am/pm now works without the word "at" too — e.g. typing "5pm" or "9:10pm" anywhere in the title sets the task\'s fixed time.',
+      'Fixed a bug where dismissing a smart-parsed suggestion, then editing to a different value of the same kind, could leave the original suggestion permanently stuck and unable to re-trigger.',
+      'Checking the "Fixed time" box no longer silently defaults to 9:00am — it starts blank, and Add/Save now blocks with a message until you actually pick a time.',
+    ],
+  },
+  {
     version: '1.33.19',
     date: '2026-07-31',
     title: 'Fix "must be done on due date" tasks getting scheduled today',
