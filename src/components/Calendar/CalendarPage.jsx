@@ -225,6 +225,20 @@ export default function CalendarPage() {
   const swipeCenterBase = view === 'month' ? monthStart : rangeStart;
   const swipeNextBase = view === 'month' ? addMonths(monthStart, 1) : addDays(rangeStart, step);
 
+  // Memoized so an unrelated CalendarPage re-render (selecting a block,
+  // opening a modal — neither touches SchedulerContext at all) doesn't
+  // re-render the two OFF-SCREEN pages' full WeekView/MonthView trees, each
+  // with their own drag/touch effects. Only the visible center page below
+  // re-renders on every render, same as the desktop (non-swipe) path always
+  // has. Deliberately omits renderCalendarPage/the onSelect*/onCreateEvent
+  // callbacks it closes over from the dep list — they only ever call stable
+  // setState setters, so a stale closure reference behaves identically to a
+  // fresh one and isn't worth invalidating the memo over.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const swipePrevPage = useMemo(() => renderCalendarPage(swipePrevBase), [swipePrevBase, view, dayCount, isMobile, pxPerMin]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const swipeNextPage = useMemo(() => renderCalendarPage(swipeNextBase), [swipeNextBase, view, dayCount, isMobile, pxPerMin]);
+
   // Native (non-passive) listeners, same reasoning as WeekView's own touch
   // handlers (see its wheel/touch effects) — React's synthetic onTouchMove is
   // passive by default, so preventDefault() there is silently ignored and
@@ -457,9 +471,9 @@ export default function CalendarPage() {
               style={{ transform: 'translateX(-33.3333%)' }}
               onTransitionEnd={handleSwipeTransitionEnd}
             >
-              <div className="calendar-swipe-page">{renderCalendarPage(swipePrevBase)}</div>
+              <div className="calendar-swipe-page">{swipePrevPage}</div>
               <div className="calendar-swipe-page">{renderCalendarPage(swipeCenterBase)}</div>
-              <div className="calendar-swipe-page">{renderCalendarPage(swipeNextBase)}</div>
+              <div className="calendar-swipe-page">{swipeNextPage}</div>
             </div>
           </div>
         ) : (

@@ -72,6 +72,11 @@ import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 
 const SchedulerContext = createContext(null);
 
+// Cap on simultaneously-queued bottom-corner action toasts (see
+// `actionToasts` below) — a burst of quick actions drops the oldest rather
+// than growing the stack unbounded.
+const MAX_ACTION_TOASTS = 3;
+
 function getDefaultNotificationSettings() {
   return {
     inAppEnabled: true,
@@ -90,10 +95,53 @@ function generateLocalId(prefix) {
   return `${prefix}_${Date.now()}_${localIdSequence}`;
 }
 
+// Matches the same short fallback used elsewhere for "no reliable duration
+// estimate" (AddTaskModal, todoistService, aiPlanService each define their
+// own copy of this same 5-minute value rather than sharing an export).
+const DEFAULT_TASK_ESTIMATED_HOURS = 5 / 60;
+
+/**
+ * Sanitizes just the two task fields whose shape assumptions cascade into
+ * either NaN/Infinity math (estimatedHours — see rebalanceEngine.js's
+ * `estimatedHours - spent`) or a hard TypeError (dependsOn — several call
+ * sites call `.some()`/`.filter()` on it) elsewhere in the app if a bad
+ * shape slips in from a UI bug, an AI-assistant plan, or a Todoist import.
+ * Not a full schema validator — just the fields already known to matter.
+ * `fallback` supplies what to use when a field is present but invalid:
+ * the app-wide default for a brand new task (buildNewTaskObject has no
+ * existing value to fall back to), or the task's own current value for an
+ * update (sanitizeTaskUpdate below) so a bad partial edit doesn't wipe out
+ * an otherwise-good existing estimate/dependency list.
+ */
+function sanitizeTaskFields(fields, fallback) {
+  const sanitized = { ...fields };
+  if ('estimatedHours' in sanitized) {
+    const hours = Number(sanitized.estimatedHours);
+    sanitized.estimatedHours = Number.isFinite(hours) && hours > 0 ? hours : fallback.estimatedHours;
+  }
+  if ('dependsOn' in sanitized) {
+    sanitized.dependsOn = Array.isArray(sanitized.dependsOn)
+      ? sanitized.dependsOn.filter((id) => typeof id === 'string')
+      : fallback.dependsOn;
+  }
+  return sanitized;
+}
+
+/** sanitizeTaskFields for a brand new task — no existing task to fall back to, so an invalid value uses the app-wide default instead. */
+function sanitizeNewTaskFields(taskInput) {
+  return sanitizeTaskFields(taskInput, { estimatedHours: DEFAULT_TASK_ESTIMATED_HOURS, dependsOn: [] });
+}
+
+/** sanitizeTaskFields for a partial update — an invalid value falls back to the task's own current (already-sanitized) value rather than resetting it. */
+function sanitizeTaskUpdate(updates, existingTask) {
+  return sanitizeTaskFields(updates, existingTask);
+}
+
 function buildNewTaskObject(taskInput, id) {
+  const sanitizedInput = sanitizeNewTaskFields(taskInput);
   const merged = {
     id,
-    remainingHours: taskInput.estimatedHours,
+    remainingHours: sanitizedInput.estimatedHours,
     isLocked: false,
     isCompleted: false,
     isRecurring: false,
@@ -109,7 +157,7 @@ function buildNewTaskObject(taskInput, id) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     source: 'manual',
-    ...taskInput,
+    ...sanitizedInput,
   };
   return { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
 }
@@ -297,15 +345,34 @@ export function SchedulerProvider({ children }) {
     tasks: loadPersisted('tasks', null) ?? getMockTasks(),
     blocks: loadPersisted('blocks', null) ?? [],
   });
+  // Mirrors currentActionId for useCloudSync's async pull/listener effects
+  // (see their own comments there) — they need to detect "did a genuinely
+  // new local commit land while I was waiting on the network" from inside
+  // an async callback/closure, where the `currentActionId` render value
+  // would otherwise be stale.
+  const currentActionIdRef = useRef(currentActionId);
+  useEffect(() => {
+    currentActionIdRef.current = currentActionId;
+  }, [currentActionId]);
 
-  // Bottom-corner "Task added"/"Event saved"-style toast with an inline
-  // Undo, replacing the old always-on topbar text label. `currentActionId`
-  // only changes to a value we haven't seen before when commit() lands a
+  // Bottom-corner "Task added"/"Event saved"-style toasts with an inline
+  // Undo, replacing the old always-on topbar text label. A small queue
+  // rather than a single slot, so two toast-producing actions in quick
+  // succession (e.g. add an event, then complete a task) each get their own
+  // Undo opportunity instead of the newer one silently overwriting the
+  // older. Capped at MAX_ACTION_TOASTS, dropping the oldest, so a burst of
+  // actions can't paper the corner of the screen. `currentActionId` only
+  // changes to a value we haven't seen before when commit() lands a
   // genuinely new action — undo/redo revisit an id already in this set (so
-  // they clear any stale toast instead of popping a new one), and the
-  // cloud-sync `overwritePresent` path never touches it at all.
-  const [actionToast, setActionToast] = useState(null);
+  // they clear any still-showing history toast instead of popping a new
+  // one), and the cloud-sync `overwritePresent` path never touches it at all.
+  const [actionToasts, setActionToasts] = useState([]);
   const seenActionIdsRef = useRef(new Set([currentActionId]));
+  const pushActionToast = useCallback(
+    (toast) => setActionToasts((prev) => [...prev, toast].slice(-MAX_ACTION_TOASTS)),
+    []
+  );
+  const dismissActionToast = useCallback((id) => setActionToasts((prev) => prev.filter((t) => t.id !== id)), []);
   useEffect(() => {
     // overwritePresent() (cloud sync / initial load) mints a fresh
     // `sync_...` id every time rather than reusing one we've already seen,
@@ -313,13 +380,15 @@ export function SchedulerProvider({ children }) {
     // explicitly instead, or every sync would pop a stale Undo toast.
     if (currentActionId.startsWith('sync_') || seenActionIdsRef.current.has(currentActionId)) {
       seenActionIdsRef.current.add(currentActionId);
-      setActionToast(null);
+      // Only clear the history-commit toast (no `.undo` of its own — it
+      // relies on the shared undo()/redo() below), not any independent
+      // event-undo toasts still queued.
+      setActionToasts((prev) => prev.filter((t) => t.undo));
       return;
     }
     seenActionIdsRef.current.add(currentActionId);
-    setActionToast({ id: currentActionId, label: currentActionLabel });
-  }, [currentActionId, currentActionLabel]);
-  const dismissActionToast = useCallback(() => setActionToast(null), []);
+    pushActionToast({ id: currentActionId, label: currentActionLabel });
+  }, [currentActionId, currentActionLabel, pushActionToast]);
 
   // Pure user preferences — persisted verbatim, no Todoist/Google
   // equivalent to fall back on, so these must survive a refresh or every
@@ -594,7 +663,7 @@ export function SchedulerProvider({ children }) {
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
-  } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, setActionToast });
+  } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast });
 
   // ---- Cloud sync (Firestore) ------------------------------------------------
   // Pull/push/listener/fingerprint/backup/restore logic all lives in this
@@ -639,6 +708,7 @@ export function SchedulerProvider({ children }) {
   } = useCloudSync({
     state: cloudSyncState,
     stateRef: cloudStateRef,
+    currentActionIdRef,
     setNotification,
     commit,
     overwritePresent,
@@ -801,7 +871,7 @@ export function SchedulerProvider({ children }) {
         (current) => ({
           tasks: current.tasks.map((t) => {
             if (t.id !== taskId) return t;
-            const merged = { ...t, ...updates, updatedAt: new Date().toISOString() };
+            const merged = { ...t, ...sanitizeTaskUpdate(updates, t), updatedAt: new Date().toISOString() };
             // recurrenceRule is a derived cache of recurrenceString (see
             // utils/recurrence.js) — recompute it whenever a caller touches
             // recurrenceString so the two can never drift apart.
@@ -1466,6 +1536,15 @@ export function SchedulerProvider({ children }) {
   // will move any unlocked task work out from under it.
   const addManualEvent = useCallback(
     ({ title, date, startTime, endTime, description = '', location = '' }) => {
+      // Belt-and-suspenders: EventDetailModal already validates this before
+      // calling in, but a reversed/zero-length interval here would silently
+      // fail to block any time (subtractIntervals doesn't special-case
+      // start > end), so a caller that bypasses the modal (e.g. a future AI
+      // assistant integration) can't slip one through.
+      if (!date || !startTime || !endTime || timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+        setNotification({ type: 'error', message: 'Invalid event time range.' });
+        return;
+      }
       const newEvent = {
         id: generateLocalId('evt_manual'),
         title: title?.trim() || 'Untitled event',
@@ -1506,7 +1585,7 @@ export function SchedulerProvider({ children }) {
       // deletes it there too (using the latest events, since the Google push
       // above may still be in flight and hasn't patched a googleEventId in
       // yet by the time Undo is clicked).
-      setActionToast({
+      pushActionToast({
         id: `evt_add_${Date.now()}`,
         label: 'Added event',
         undo: () => {
@@ -1575,7 +1654,7 @@ export function SchedulerProvider({ children }) {
       // Calendar events are a separate array from tasks/blocks (see this
       // file's doc comment) and deliberately NOT wired through
       // useHistoryState's commit()/undo stack — this pops the same
-      // bottom-corner toast tasks/blocks actions use (see `actionToast`
+      // bottom-corner toast tasks/blocks actions use (see `actionToasts`
       // above), but carries its own `undo` thunk instead of relying on the
       // shared tasks/blocks `undo()`. On Undo:
       //   - Local state always reverts to `prevEventsSnapshot` verbatim —
@@ -1596,7 +1675,7 @@ export function SchedulerProvider({ children }) {
       //     insert is still in flight, this is a no-op and leaves an orphan
       //     event on Google — rare enough, and cheap enough to remove by
       //     hand, not to justify blocking Undo on a network round trip).
-      setActionToast({
+      pushActionToast({
         id: `evt_${Date.now()}`,
         label: 'Updated event',
         undo: () => {
@@ -1723,7 +1802,7 @@ export function SchedulerProvider({ children }) {
           );
         }
         if (target) {
-          setActionToast({
+          pushActionToast({
             id: `evt_del_${Date.now()}`,
             label: 'Deleted event',
             undo: () => {
@@ -1766,7 +1845,7 @@ export function SchedulerProvider({ children }) {
             console.error('[SchedulerContext] Failed to delete single occurrence from Google Calendar', err)
           );
         }
-        setActionToast({
+        pushActionToast({
           id: `evt_del_${Date.now()}`,
           label: 'Deleted event',
           undo: () => {
@@ -1797,7 +1876,7 @@ export function SchedulerProvider({ children }) {
           })
           .catch((err) => console.error('[SchedulerContext] Failed to push truncated series to Google Calendar', err));
       }
-      setActionToast({
+      pushActionToast({
         id: `evt_del_${Date.now()}`,
         label: 'Deleted events',
         undo: () => {
@@ -1936,7 +2015,7 @@ export function SchedulerProvider({ children }) {
       canUndo,
       canRedo,
       currentActionLabel,
-      actionToast,
+      actionToasts,
       dismissActionToast,
       setRoutines,
       setEvents,
@@ -2030,7 +2109,7 @@ export function SchedulerProvider({ children }) {
       canUndo,
       canRedo,
       currentActionLabel,
-      actionToast,
+      actionToasts,
       dismissActionToast,
       soundEnabled,
       soundVolume,

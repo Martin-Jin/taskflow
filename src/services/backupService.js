@@ -35,6 +35,53 @@ export const BACKUP_FIELDS = [
   'shortcutBindings',
 ];
 
+/**
+ * Expected runtime shape per BACKUP_FIELDS entry — used both by
+ * isValidBackupPayload (reject a payload outright) and by
+ * useCloudSync.js's applyRemoteData/applyBackupPayload (fall back to the
+ * current value field-by-field instead of trusting whatever shape a single
+ * bad field arrived in). A hand-edited/corrupted backup, tampered Firestore
+ * doc, or malformed live sync value with the right keys but wrong value
+ * types used to sail through `field in payload` and crash later at render
+ * time (e.g. `sections.map` on a string) instead of failing cleanly.
+ */
+export const FIELD_TYPES = {
+  tasks: 'array',
+  blocks: 'array',
+  sections: 'array',
+  projects: 'array',
+  labels: 'array',
+  routines: 'array',
+  rules: 'array',
+  events: 'array',
+  soundEnabled: 'boolean',
+  soundVolume: 'number',
+  animationsEnabled: 'boolean',
+  notificationSettings: 'object',
+  theme: 'string',
+  // { folders: [...], notes: [...] } — see notesModel.js's DEFAULT_NOTES.
+  notes: 'object',
+  shortcutBindings: 'object',
+};
+
+/** Does `value` match the runtime shape FIELD_TYPES declares for `field`? */
+export function isValidFieldValue(field, value) {
+  switch (FIELD_TYPES[field]) {
+    case 'array':
+      return Array.isArray(value);
+    case 'object':
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'string':
+      return typeof value === 'string';
+    default:
+      return true;
+  }
+}
+
 /** Recurring tasks never reach isCompleted: true (completing one just advances dueDate — see types/index.js), so this only ever drops finished one-off tasks. */
 function excludeCompletedTasks(tasks, blocks) {
   const keptTasks = tasks.filter((task) => !task.isCompleted);
@@ -59,12 +106,18 @@ export function buildBackupPayload(state) {
  * ONE-TIME MIGRATION NOTE — safe to delete the `'pinnedLinks' in payload`
  * fallback once old-format backup files (pre-Notes, `notes` field didn't
  * exist yet) are no longer expected to show up in "Restore from file"; see
- * notesModel.js's migrateLinksToNotes, which restoreFromBackup/
+ * notesModel.js's migrateLinksToNotes, which applyBackupPayload/
  * applyRemoteData call on such a payload.
  */
 export function isValidBackupPayload(payload) {
   if (!payload || typeof payload !== 'object') return false;
-  return BACKUP_FIELDS.every((field) => field in payload || (field === 'notes' && 'pinnedLinks' in payload));
+  return BACKUP_FIELDS.every((field) => {
+    if (field in payload) return isValidFieldValue(field, payload[field]);
+    // Legacy pre-Notes backup: accept a present-but-differently-shaped
+    // `pinnedLinks` in place of `notes` (see the migration note above) — its
+    // own shape is checked by migrateLinksToNotes at apply time, not here.
+    return field === 'notes' && 'pinnedLinks' in payload;
+  });
 }
 
 /** Triggers a browser download of `payload` as a formatted .json file — an in-memory Blob + a throwaway link, no server round trip. */

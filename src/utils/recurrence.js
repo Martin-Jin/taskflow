@@ -35,6 +35,19 @@ const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 /** Short display labels for DAY_NAMES indices (0=Sun..6=Sat), used to build a readable recurrenceString. */
 export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Ceiling on a recurrence's `count` (as in "every N days/weeks/months/years").
+// Without this, a huge count (typed directly, or arriving via a Todoist
+// due.string with no UI involved at all) overflows Date arithmetic
+// (addDays/addMonthsClamped) into Invalid Date, which then serializes to
+// "NaN-NaN-NaN" and syncs to Firestore. 999 is comfortably above any
+// legitimate recurrence a user would set.
+export const MAX_RECURRENCE_COUNT = 999;
+
+/** Clamp a recurrence count to [1, MAX_RECURRENCE_COUNT], defaulting to 1 for non-numeric input. */
+function clampRecurrenceCount(value) {
+  return Math.min(MAX_RECURRENCE_COUNT, Math.max(1, Number(value) || 1));
+}
+
 // Canonical unit -> aliases Todoist (or a user typing a custom recurrence)
 // might use. Longest/most-specific first isn't required here since we
 // build a single alternation and rely on \b word boundaries. Exported so
@@ -118,7 +131,7 @@ function extractDaysFromSpan(span) {
 function extractOrdinalCountFromSpan(span) {
   const m = span.match(new RegExp(`\\b(?:(\\d+)(?:st|nd|rd|th)|(${ordinalAliasPattern()}))\\b`));
   if (!m) return 1;
-  return m[1] ? Number(m[1]) : ORDINAL_ALIASES[m[2]];
+  return m[1] ? clampRecurrenceCount(m[1]) : ORDINAL_ALIASES[m[2]];
 }
 
 /**
@@ -140,7 +153,7 @@ function findOnDaysSpan(s) {
   if (!m) return null;
   const days = extractDaysFromSpan(m[0]);
   if (!days.length) return null;
-  return { rule: { unit: 'week', count: Math.max(1, Number(m[1]) || 1), days }, matchedText: m[0], index: m.index };
+  return { rule: { unit: 'week', count: clampRecurrenceCount(m[1]), days }, matchedText: m[0], index: m.index };
 }
 
 /**
@@ -268,7 +281,7 @@ export function parseRecurrenceRule(str) {
   const numericMatch = s.match(new RegExp(`(?:${LEAD_WORD})!?\\s+(\\d+)\\s*(${unitAlt})\\b`));
   if (numericMatch) {
     const unit = resolveCanonicalUnit(numericMatch[2]);
-    if (unit) return { unit, count: Math.max(1, Number(numericMatch[1])) };
+    if (unit) return { unit, count: clampRecurrenceCount(numericMatch[1]) };
   }
 
   // "every weekday" (Mon-Fri shortcut) and "every other <unit>" (= every 2
@@ -348,7 +361,7 @@ export function findRecurrencePhrase(text) {
   if (numericMatch) {
     const unit = resolveCanonicalUnit(numericMatch[2]);
     if (unit) {
-      return { rule: { unit, count: Math.max(1, Number(numericMatch[1])) }, matchedText: numericMatch[0], index: numericMatch.index };
+      return { rule: { unit, count: clampRecurrenceCount(numericMatch[1]) }, matchedText: numericMatch[0], index: numericMatch.index };
     }
   }
 
@@ -484,7 +497,7 @@ export const RECURRENCE_UNITS = [
  * below for the round-trip back into { unit, count, days }.
  */
 export function buildRecurrenceString(count, unit, days) {
-  const n = Math.max(1, Number(count) || 1);
+  const n = clampRecurrenceCount(count);
   if (unit === 'week' && Array.isArray(days) && days.length > 0) {
     const dayLabels = days.map((d) => WEEKDAY_LABELS[d]).join(', ');
     return `every ${n === 1 ? '' : `${n} `}week${n === 1 ? '' : 's'} on ${dayLabels}`;

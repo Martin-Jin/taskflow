@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { usePersistedState } from './usePersistedState';
-import { buildBackupPayload, isValidBackupPayload, downloadBackupFile, readBackupFile } from '../services/backupService';
+import { buildBackupPayload, isValidBackupPayload, isValidFieldValue, downloadBackupFile, readBackupFile } from '../services/backupService';
 import {
   pullUserData,
   pushUserData,
@@ -33,6 +33,19 @@ import { savePersisted } from '../utils/persistence.js';
 const PUSH_DEBOUNCE_MS = 1500;
 
 /**
+ * `value` if it matches `field`'s expected shape (see backupService's
+ * FIELD_TYPES), otherwise `fallback` (always the current in-app value for
+ * that field). Guards every field applied by applyRemoteData/
+ * applyBackupPayload below against a malformed source — a tampered
+ * Firestore doc, corrupted/hand-edited backup file, or partial live-sync
+ * write — so one bad field falls back to what's already on screen instead
+ * of crashing later at render time (e.g. `sections.map` on a string).
+ */
+function pickValid(field, value, fallback) {
+  return isValidFieldValue(field, value) ? value : fallback;
+}
+
+/**
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/events/soundEnabled/soundVolume/
@@ -42,6 +55,11 @@ const PUSH_DEBOUNCE_MS = 1500;
  * @param {React.MutableRefObject} deps.stateRef - Ref mirroring `state`, read
  *   from async callbacks (the debounced push, backup builders) that need the
  *   LATEST snapshot rather than whatever was closed over when they were created.
+ * @param {React.MutableRefObject} deps.currentActionIdRef - Ref mirroring
+ *   useHistoryState's currentActionId, read by the initial-pull/live-listener
+ *   effects below to detect a local commit landing during their async gap
+ *   (see their own comments) — same "ref so an async callback sees the
+ *   latest value" reasoning as stateRef.
  * @param {Function} deps.setNotification - Toast notification setter
  * @param {Function} deps.commit - useHistoryState's commit (tasks/blocks, undoable)
  * @param {Function} deps.overwritePresent - useHistoryState's overwritePresent
@@ -67,6 +85,7 @@ const PUSH_DEBOUNCE_MS = 1500;
 export function useCloudSync({
   state,
   stateRef,
+  currentActionIdRef,
   setNotification,
   commit,
   overwritePresent,
@@ -99,7 +118,6 @@ export function useCloudSync({
   const pushTimerRef = useRef(null);
   const lastPushedFingerprintRef = useRef(null);
   const unsubscribeRef = useRef(null);
-  const isApplyingRemoteRef = useRef(false);
 
   // ---- Compute a fingerprint of the current state to detect echo -----------
   const computeFingerprint = useCallback((source) => {
@@ -131,6 +149,7 @@ export function useCloudSync({
       const fingerprint = computeFingerprint(currentState);
       if (fingerprint === lastPushedFingerprintRef.current) return; // no change
       setIsPushingCloud(true);
+      const previousFingerprint = lastPushedFingerprintRef.current;
       try {
         // Stamp the ref before the write resolves, not after — otherwise a
         // local change made while this push is in flight can race the live
@@ -140,11 +159,19 @@ export function useCloudSync({
         await pushUserData(user.uid, currentState);
       } catch (err) {
         console.warn('[useCloudSync] Push failed', err);
+        // Roll back the optimistic stamp — otherwise this fingerprint looks
+        // "already pushed" even though the write never landed, so if the
+        // user makes no further edit, every future schedulePush sees "no
+        // change" and this edit is silently dropped from Firestore forever.
+        // Restoring the previous value means the very next state change
+        // (including one identical to this failed push) will retry it.
+        lastPushedFingerprintRef.current = previousFingerprint;
+        setNotification({ type: 'error', message: 'Failed to sync to the cloud. Your changes are saved locally and will retry on your next edit.' });
       } finally {
         setIsPushingCloud(false);
       }
     }, PUSH_DEBOUNCE_MS);
-  }, [user, stateRef, computeFingerprint]);
+  }, [user, stateRef, computeFingerprint, setNotification]);
 
   // ---- Apply remote data (from Firestore snapshot or an initial pull) ------
   // Mirrors applyBackupPayload below field-for-field, but routes tasks/blocks
@@ -152,38 +179,65 @@ export function useCloudSync({
   // elsewhere, not a local user action — it shouldn't be undoable, and
   // shouldn't consume a redo slot. A field missing from `remoteData` (an
   // older/partial doc) leaves that field untouched rather than wiping it.
-  const applyRemoteData = useCallback((remoteData) => {
-    isApplyingRemoteRef.current = true;
-    if ('tasks' in remoteData || 'blocks' in remoteData) {
-      overwritePresent({ tasks: remoteData.tasks ?? stateRef.current.tasks, blocks: remoteData.blocks ?? stateRef.current.blocks });
+  //
+  // `skipTasksBlocks` (set by the initial-pull/live-listener effects below,
+  // see their own comments) means a genuinely newer local commit landed
+  // while this remoteData was in flight — applying its tasks/blocks here
+  // would silently discard that newer edit with a stale one, so this skips
+  // just that part. Every OTHER field still applies normally: they're
+  // plain setState with no undo-stack/history concept, so there's no
+  // equivalent "this local value is newer" signal to check them against.
+  const applyRemoteData = useCallback((remoteData, { skipTasksBlocks = false } = {}) => {
+    if (!skipTasksBlocks && ('tasks' in remoteData || 'blocks' in remoteData)) {
+      overwritePresent({
+        tasks: pickValid('tasks', remoteData.tasks, stateRef.current.tasks),
+        blocks: pickValid('blocks', remoteData.blocks, stateRef.current.blocks),
+      });
     }
-    if ('sections' in remoteData) setSections(remoteData.sections);
-    if ('projects' in remoteData) setProjects(remoteData.projects);
-    if ('labels' in remoteData) setLabels(remoteData.labels);
-    if ('routines' in remoteData) setRoutines(remoteData.routines);
-    if ('rules' in remoteData) setRules(remoteData.rules);
-    if ('events' in remoteData) setEvents(dedupeEventsByOccurrence(remoteData.events));
-    if ('soundEnabled' in remoteData) setSoundEnabled(remoteData.soundEnabled);
-    if ('soundVolume' in remoteData) setSoundVolume(remoteData.soundVolume);
-    if ('animationsEnabled' in remoteData) setAnimationsEnabled(remoteData.animationsEnabled);
+    if ('sections' in remoteData) setSections(pickValid('sections', remoteData.sections, stateRef.current.sections));
+    if ('projects' in remoteData) setProjects(pickValid('projects', remoteData.projects, stateRef.current.projects));
+    if ('labels' in remoteData) setLabels(pickValid('labels', remoteData.labels, stateRef.current.labels));
+    if ('routines' in remoteData) setRoutines(pickValid('routines', remoteData.routines, stateRef.current.routines));
+    if ('rules' in remoteData) setRules(pickValid('rules', remoteData.rules, stateRef.current.rules));
+    if ('events' in remoteData) {
+      setEvents(dedupeEventsByOccurrence(pickValid('events', remoteData.events, stateRef.current.events)));
+    }
+    if ('soundEnabled' in remoteData) setSoundEnabled(pickValid('soundEnabled', remoteData.soundEnabled, stateRef.current.soundEnabled));
+    if ('soundVolume' in remoteData) setSoundVolume(pickValid('soundVolume', remoteData.soundVolume, stateRef.current.soundVolume));
+    if ('animationsEnabled' in remoteData) {
+      setAnimationsEnabled(pickValid('animationsEnabled', remoteData.animationsEnabled, stateRef.current.animationsEnabled));
+    }
     // This device's own browser timezone always wins over whatever timezone
     // the remote doc carries (another device's, possibly stale).
     if ('notificationSettings' in remoteData) {
-      setNotificationSettings({ ...remoteData.notificationSettings, timezone: getBrowserTimeZone() });
+      const notificationSettings = pickValid('notificationSettings', remoteData.notificationSettings, stateRef.current.notificationSettings);
+      setNotificationSettings({ ...notificationSettings, timezone: getBrowserTimeZone() });
     }
-    if ('notes' in remoteData) setNotes(remoteData.notes);
-    else if ('pinnedLinks' in remoteData) setNotes(migrateLinksToNotes(remoteData.pinnedLinks)); // legacy remote doc, see notesModel.js migration note
+    if ('notes' in remoteData) setNotes(pickValid('notes', remoteData.notes, stateRef.current.notes));
+    else if ('pinnedLinks' in remoteData) {
+      // legacy remote doc, see notesModel.js migration note
+      const migrated = migrateLinksToNotes(remoteData.pinnedLinks);
+      if (migrated) setNotes(migrated);
+    }
     if ('shortcutBindings' in remoteData) {
-      setShortcutBindings(remoteData.shortcutBindings);
+      const shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, stateRef.current.shortcutBindings);
+      setShortcutBindings(shortcutBindings);
       // Also write localStorage directly (not just React state) so the hot
       // keydown listener (see useKeyboardShortcuts.js) picks up an incoming
       // remote binding immediately, not just on this device's next local rebind.
-      savePersisted('shortcutBindings', remoteData.shortcutBindings);
+      savePersisted('shortcutBindings', shortcutBindings);
     }
     // Stamp what we just applied as "already synced" so the debounced push
-    // effect doesn't immediately echo this same data straight back to Firestore.
-    lastPushedFingerprintRef.current = computeFingerprint(remoteData);
-    isApplyingRemoteRef.current = false;
+    // effect doesn't immediately echo this same data straight back to
+    // Firestore — but only when tasks/blocks were actually applied as-is.
+    // When skipTasksBlocks is true, our local tasks/blocks now differ from
+    // remoteData's (we kept the newer local edit), so stamping remoteData's
+    // fingerprint would claim a state we never actually applied — leaving
+    // it unstamped means the next schedulePush correctly sees a real change
+    // and pushes the newer local edit up instead of assuming it's already synced.
+    if (!skipTasksBlocks) {
+      lastPushedFingerprintRef.current = computeFingerprint(remoteData);
+    }
   }, [
     overwritePresent,
     stateRef,
@@ -208,26 +262,42 @@ export function useCloudSync({
   // `theme`, which live sync deliberately leaves to ThemeContext.
   const applyBackupPayload = useCallback((payload) => {
     if ('tasks' in payload || 'blocks' in payload) {
-      commit({ tasks: payload.tasks ?? stateRef.current.tasks, blocks: payload.blocks ?? stateRef.current.blocks }, 'Restored from backup');
+      commit(
+        {
+          tasks: pickValid('tasks', payload.tasks, stateRef.current.tasks),
+          blocks: pickValid('blocks', payload.blocks, stateRef.current.blocks),
+        },
+        'Restored from backup'
+      );
     }
-    if ('sections' in payload) setSections(payload.sections);
-    if ('projects' in payload) setProjects(payload.projects);
-    if ('labels' in payload) setLabels(payload.labels);
-    if ('routines' in payload) setRoutines(payload.routines);
-    if ('rules' in payload) setRules(payload.rules);
-    if ('events' in payload) setEvents(dedupeEventsByOccurrence(payload.events));
-    if ('soundEnabled' in payload) setSoundEnabled(payload.soundEnabled);
-    if ('soundVolume' in payload) setSoundVolume(payload.soundVolume);
-    if ('animationsEnabled' in payload) setAnimationsEnabled(payload.animationsEnabled);
+    if ('sections' in payload) setSections(pickValid('sections', payload.sections, stateRef.current.sections));
+    if ('projects' in payload) setProjects(pickValid('projects', payload.projects, stateRef.current.projects));
+    if ('labels' in payload) setLabels(pickValid('labels', payload.labels, stateRef.current.labels));
+    if ('routines' in payload) setRoutines(pickValid('routines', payload.routines, stateRef.current.routines));
+    if ('rules' in payload) setRules(pickValid('rules', payload.rules, stateRef.current.rules));
+    if ('events' in payload) {
+      setEvents(dedupeEventsByOccurrence(pickValid('events', payload.events, stateRef.current.events)));
+    }
+    if ('soundEnabled' in payload) setSoundEnabled(pickValid('soundEnabled', payload.soundEnabled, stateRef.current.soundEnabled));
+    if ('soundVolume' in payload) setSoundVolume(pickValid('soundVolume', payload.soundVolume, stateRef.current.soundVolume));
+    if ('animationsEnabled' in payload) {
+      setAnimationsEnabled(pickValid('animationsEnabled', payload.animationsEnabled, stateRef.current.animationsEnabled));
+    }
     if ('notificationSettings' in payload) {
-      setNotificationSettings({ ...payload.notificationSettings, timezone: getBrowserTimeZone() });
+      const notificationSettings = pickValid('notificationSettings', payload.notificationSettings, stateRef.current.notificationSettings);
+      setNotificationSettings({ ...notificationSettings, timezone: getBrowserTimeZone() });
     }
-    if ('theme' in payload) setTheme(payload.theme);
-    if ('notes' in payload) setNotes(payload.notes);
-    else if ('pinnedLinks' in payload) setNotes(migrateLinksToNotes(payload.pinnedLinks)); // legacy backup file, see notesModel.js migration note
+    if ('theme' in payload) setTheme(pickValid('theme', payload.theme, theme));
+    if ('notes' in payload) setNotes(pickValid('notes', payload.notes, stateRef.current.notes));
+    else if ('pinnedLinks' in payload) {
+      // legacy backup file, see notesModel.js migration note
+      const migrated = migrateLinksToNotes(payload.pinnedLinks);
+      if (migrated) setNotes(migrated);
+    }
     if ('shortcutBindings' in payload) {
-      setShortcutBindings(payload.shortcutBindings);
-      savePersisted('shortcutBindings', payload.shortcutBindings);
+      const shortcutBindings = pickValid('shortcutBindings', payload.shortcutBindings, stateRef.current.shortcutBindings);
+      setShortcutBindings(shortcutBindings);
+      savePersisted('shortcutBindings', shortcutBindings);
     }
   }, [
     commit,
@@ -243,6 +313,7 @@ export function useCloudSync({
     setAnimationsEnabled,
     setNotificationSettings,
     setTheme,
+    theme,
     setNotes,
     setShortcutBindings,
   ]);
@@ -251,12 +322,25 @@ export function useCloudSync({
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
 
+    // Baseline local action as of the moment this listener (re)subscribes —
+    // only its FIRST delivered snapshot can race a local edit made in the
+    // real-world gap between mount (localStorage-seeded UI renders
+    // immediately) and that first delivery, mirroring the initial-pull
+    // effect below. Once a first snapshot has landed the app is past that
+    // startup window, so every later snapshot is trusted normally — that's
+    // the accepted steady-state model this file already uses elsewhere
+    // (the fingerprint-based echo check just below).
+    const actionIdAtSubscribe = currentActionIdRef.current;
+    let receivedFirstSnapshot = false;
     const unsubscribe = subscribeUserData(user.uid, (remoteData) => {
       if (!remoteData) return;
       const fingerprint = computeFingerprint(stateRef.current);
       const remoteFingerprint = computeFingerprint(remoteData);
       if (fingerprint === remoteFingerprint) return; // echo of our own push
-      applyRemoteData(remoteData);
+      const isFirstSnapshot = !receivedFirstSnapshot;
+      receivedFirstSnapshot = true;
+      const localEditLandedFirst = isFirstSnapshot && currentActionIdRef.current !== actionIdAtSubscribe;
+      applyRemoteData(remoteData, { skipTasksBlocks: localEditLandedFirst });
     });
     unsubscribeRef.current = unsubscribe;
     return () => unsubscribe();
@@ -268,12 +352,22 @@ export function useCloudSync({
     if (!user || !cloudSynced) return;
 
     let cancelled = false;
+    // Baseline local action as of the moment this pull starts — if a
+    // genuinely new local commit lands (e.g. the user edits a task) before
+    // this Firestore round-trip resolves, the fetched snapshot is stale
+    // relative to that edit. Applying its tasks/blocks via overwritePresent
+    // would silently discard the newer local edit, so that part is skipped
+    // in that case (see applyRemoteData's skipTasksBlocks) — the debounced
+    // push effect already fires on any state change, so the newer local
+    // edit still reaches Firestore on its own; nothing is lost either way.
+    const actionIdAtStart = currentActionIdRef.current;
     (async () => {
       setIsPullingCloud(true);
       try {
         const remoteData = await pullUserData(user.uid);
         if (!cancelled && remoteData) {
-          applyRemoteData(remoteData);
+          const localEditLandedDuringPull = currentActionIdRef.current !== actionIdAtStart;
+          applyRemoteData(remoteData, { skipTasksBlocks: localEditLandedDuringPull });
         }
       } catch (err) {
         console.warn('[useCloudSync] Initial pull failed', err);
@@ -448,6 +542,5 @@ export function useCloudSync({
     loadCloudBackups,
     restoreCloudBackup,
     removeCloudBackup,
-    isApplyingRemoteRef,
   };
 }

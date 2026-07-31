@@ -117,7 +117,7 @@ function AppShell() {
     setNotification,
     clearNotification,
     settingsSectionRequest,
-    actionToast,
+    actionToasts,
     dismissActionToast,
     projects,
     addProject,
@@ -339,7 +339,14 @@ function AppShell() {
 
       <div className="floating-notifications">
         <Toast notification={notification} onDismiss={clearNotification} />
-        <ActionToast toast={actionToast} onUndo={() => (actionToast?.undo ? actionToast.undo() : undo())} onDismiss={dismissActionToast} />
+        {actionToasts.map((toast) => (
+          <ActionToast
+            key={toast.id}
+            toast={toast}
+            onUndo={() => (toast.undo ? toast.undo() : undo())}
+            onDismiss={() => dismissActionToast(toast.id)}
+          />
+        ))}
         <InstallAppBanner />
         <TimerWidget />
       </div>
