@@ -409,7 +409,9 @@ export function SchedulerProvider({ children }) {
   const [animationsEnabled, setAnimationsEnabled] = usePersistedState('animationsEnabled', true);
   // Notification settings (TODO.md #10). In-app firing logic lives in
   // useNotificationChecker (Phase 2); emailEnabled is inert client-side and
-  // waits on a Cloud Functions backend (Phase 3). Kept as one object (rather
+  // only takes effect via the self-hosted notify-worker GitHub Actions job
+  // (Phase 3, see notify-worker/README.md) — a single fixed recipient set in
+  // that workflow, not a per-account email. Kept as one object (rather
   // than separate usePersistedState calls per toggle) since these are all
   // facets of a single feature that's always read/written together — same
   // synced-setting treatment as sound/animations above, following it through

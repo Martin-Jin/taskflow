@@ -783,10 +783,32 @@ this section covers how the pieces talk to each other.
 ## Testing
 
 `npm run build` is the main correctness check for everything in this repo
-(catches type/import/build errors) — there's no unit test suite.
+(catches type/import/build errors).
 
-`npm run test:e2e` runs a [Playwright](https://playwright.dev) suite
-(`tests/e2e/todoist-parity.spec.js`) that checks TaskFlow's smart-parse
+Two additional suites cover more than the build check can:
+
+```bash
+npm run test:unit                              # Vitest, ~3s, no setup needed
+npm run test:e2e -- tests/e2e/full-suite       # Playwright, boots its own dev server
+```
+
+`npm run test:unit` runs [Vitest](https://vitest.dev) over `tests/unit/` —
+pure-logic coverage (date/recurrence math, natural-language parsing,
+backup/restore, dependency-cycle detection, cloud-sync merge/race-guard
+logic). Output (pass/fail counts per file) prints straight to the terminal
+when it finishes.
+
+`npm run test:e2e -- tests/e2e/full-suite` runs the tracked
+[Playwright](https://playwright.dev) suite covering user-facing behavior
+(tasks, views, dashboard, settings/backups, search/shortcuts/undo, timer).
+It works headless against seeded `localStorage` mock data, no login
+required; `playwright.config.js`'s `webServer` block starts the dev server
+automatically (or reuses one already on port 5183). Pass/fail results print
+to the terminal; on failure, Playwright also writes an HTML report you can
+open with `npx playwright show-report`.
+
+`npm run test:e2e` (no path) runs everything under `tests/e2e/`, including
+`tests/e2e/todoist-parity.spec.js`, which checks TaskFlow's smart-parse
 (`utils/smartParse.js`) against real Todoist's own quick-add parsing for a
 table of representative phrases. It needs a logged-in Todoist session,
 since quick-add's natural-language parsing only runs for a signed-in

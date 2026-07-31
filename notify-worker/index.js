@@ -7,10 +7,13 @@ const { computeCandidates } = require('./src/computeNotifications');
 const { claimNotification, clearNotificationState } = require('./src/notificationState');
 const { buildNotificationEmail } = require('./src/emailTemplate');
 
-// Resend's no-setup shared sender. Safe with zero domain verification only
-// because this script ever emails exactly one address per user: that
-// user's own Firebase Auth account email (fetched below via the Admin SDK),
-// never a third party — see TODO.md #10's confirmed decisions.
+// Resend's no-setup shared sender. Without a verified custom domain, Resend's
+// sandbox mode restricts this address to sending ONLY to the Resend
+// account's own verified owner email — never a per-user Firebase Auth email,
+// which is why NOTIFICATION_RECIPIENT below is a single fixed address rather
+// than looked up per user. This app is personal/single-user, so that's not a
+// real limitation; if it's ever needed for other recipients, verify a domain
+// at resend.com/domains and change this to an address on that domain.
 const SENDER = 'TaskFlow <onboarding@resend.dev>';
 
 /**
@@ -51,6 +54,13 @@ async function main() {
   if (!resendApiKey) {
     throw new Error('RESEND_API_KEY env var is not set');
   }
+  // Fixed recipient, not a per-user lookup — see SENDER's comment above for
+  // why: Resend's sandbox mode only delivers to the account's own verified
+  // address regardless of which TaskFlow user the notification is for.
+  const notificationRecipient = process.env.NOTIFICATION_RECIPIENT;
+  if (!notificationRecipient) {
+    throw new Error('NOTIFICATION_RECIPIENT env var is not set');
+  }
 
   const serviceAccount = JSON.parse(serviceAccountJson);
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
@@ -83,15 +93,6 @@ async function main() {
 
     if (toNotify.length === 0) continue;
 
-    let email;
-    try {
-      email = (await admin.auth().getUser(uid)).email;
-    } catch (err) {
-      console.error(`could not resolve auth email for user ${uid}, skipping`, err);
-      continue;
-    }
-    if (!email) continue;
-
     for (const candidate of toNotify) {
       let claimed;
       try {
@@ -106,7 +107,14 @@ async function main() {
       const { subject, html } = buildNotificationEmail(candidate.type, candidate.task, buildDetailLine(candidate));
 
       try {
-        await resend.emails.send({ from: SENDER, to: email, subject, html });
+        // The Resend SDK resolves (never throws) on API-level rejections —
+        // it returns { data, error } instead. Only network/transport
+        // failures land in the catch block below, so `error` must be
+        // checked explicitly or a rejected send (e.g. sandbox sender
+        // restricted to the account's own verified address) is silently
+        // treated as a success.
+        const { error } = await resend.emails.send({ from: SENDER, to: notificationRecipient, subject, html });
+        if (error) throw error;
       } catch (err) {
         // State is already marked "sent" (the transaction already
         // committed) — a failed send here is a skipped email, not a
