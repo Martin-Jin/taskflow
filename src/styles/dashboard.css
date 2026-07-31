@@ -355,6 +355,30 @@
   white-space: nowrap;
 }
 
+/* A completed item is no longer "on track" or "missed" — it's just done —
+   so it gets its own muted label instead of the red/orange ones above,
+   with a distinct amber variant when it was finished after the block's
+   scheduled end time (see isBlockCompletedLate). */
+.today-agenda-completed-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-success);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.today-agenda-completed-late-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-warning);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .today-agenda-time {
   color: var(--color-text-secondary);
   font-size: var(--text-xs);

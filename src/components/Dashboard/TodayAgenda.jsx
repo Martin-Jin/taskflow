@@ -3,7 +3,7 @@ import { ExternalLink, AlertCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime } from '../../utils/dateUtils';
-import { isBlockMissed } from '../../utils/missedTasks';
+import { isBlockMissed, isBlockCompletedLate } from '../../utils/missedTasks';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 
@@ -33,6 +33,8 @@ export default function TodayAgenda() {
           link: task?.link || null,
           isMissed: isBlockMissed(b, task, today, nowMinutes),
           isDueToday: task?.dueDate === today,
+          isCompleted: !!task?.isCompleted,
+          isCompletedLate: isBlockCompletedLate(b, task),
         };
       });
     const eventItems = (events || [])
@@ -81,7 +83,7 @@ export default function TodayAgenda() {
             <li
               key={item.id}
               ref={isCurrent ? currentItemRef : null}
-              className={`today-agenda-item ${isCurrent ? 'is-current' : ''} ${item.isMissed ? 'is-missed' : item.isDueToday ? 'is-due-today' : ''} ${isOpenable ? 'is-openable' : ''}`}
+              className={`today-agenda-item ${isCurrent ? 'is-current' : ''} ${item.isMissed ? 'is-missed' : item.isDueToday ? 'is-due-today' : ''} ${isOpenable ? 'is-openable' : ''} ${item.isCompleted ? 'is-completed' : ''}`}
               role={isOpenable ? 'button' : undefined}
               tabIndex={isOpenable ? 0 : undefined}
               onClick={isOpenable ? openItem : undefined}
@@ -97,7 +99,7 @@ export default function TodayAgenda() {
               }
             >
               {isCurrent && <span className="today-agenda-pulse" />}
-              {item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}
+              {!item.isCompleted && item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}
               <span className="today-agenda-time">
                 {formatTime(item.startTime)} – {formatTime(item.endTime)}
               </span>
@@ -109,15 +111,29 @@ export default function TodayAgenda() {
                   className="today-agenda-title task-title-link"
                   title={`Open link: ${item.link}`}
                   onClick={(e) => e.stopPropagation()}
+                  style={item.isCompleted ? { textDecoration: 'line-through', opacity: 0.55 } : undefined}
                 >
                   {item.title}
                   <ExternalLink size={11} aria-hidden="true" />
                 </a>
               ) : (
-                <span className="today-agenda-title">{item.title}</span>
+                <span
+                  className="today-agenda-title"
+                  style={item.isCompleted ? { textDecoration: 'line-through', opacity: 0.55 } : undefined}
+                >
+                  {item.title}
+                </span>
               )}
-              {item.isMissed && <span className="today-agenda-missed-label">Missed</span>}
-              {!item.isMissed && item.isDueToday && <span className="today-agenda-due-label">Due today</span>}
+              {item.isCompleted ? (
+                <span className={item.isCompletedLate ? 'today-agenda-completed-late-label' : 'today-agenda-completed-label'}>
+                  {item.isCompletedLate ? 'Completed late' : 'Completed'}
+                </span>
+              ) : (
+                <>
+                  {item.isMissed && <span className="today-agenda-missed-label">Missed</span>}
+                  {!item.isMissed && item.isDueToday && <span className="today-agenda-due-label">Due today</span>}
+                </>
+              )}
             </li>
           );
         })}

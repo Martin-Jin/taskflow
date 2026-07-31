@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.9',
+    date: '2026-07-31',
+    title: 'Completed tasks stay visible on the calendar',
+    changes: [
+      "Completed tasks now stay visible (with a crossed-out, faded style) on Today's Agenda and the calendar instead of just disappearing, so you can see what you finished — including a distinct amber accent for tasks completed after their scheduled time.",
+      'Completed blocks can no longer be accidentally dragged or resized on the calendar.',
+    ],
+  },
+  {
     version: '1.33.8',
     date: '2026-07-31',
     title: 'Floating "Add task" button on desktop',
