@@ -24,6 +24,7 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
+import { clearAllPersisted } from '../utils/persistence';
 
 const AuthContext = createContext(null);
 
@@ -76,6 +77,12 @@ export function AuthProvider({ children }) {
   async function logout() {
     try {
       await firebaseSignOut(auth);
+      // Local state/localStorage are keyed globally, not per-account (see
+      // persistence.js) — wipe them so the next sign-in doesn't inherit this
+      // account's tasks. A reload is needed since SchedulerContext seeds its
+      // state from localStorage only on mount.
+      clearAllPersisted();
+      window.location.reload();
     } catch (err) {
       console.error('[AuthContext] Sign-out failed', err);
       setAuthError(err?.message || String(err));
