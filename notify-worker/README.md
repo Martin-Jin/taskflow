@@ -19,15 +19,24 @@ no Firebase billing plan requirement at all with this approach.
 
 Nothing here runs automatically until you set it up — follow the steps below.
 
+**Single-recipient limitation, by design:** without a verified custom domain,
+Resend's sandbox mode only allows sending from `onboarding@resend.dev` to the
+Resend account's own verified owner email — never an arbitrary address.
+Since TaskFlow is personal/single-user, `index.js` doesn't try to look up a
+per-user email at all; every notification, for any user, goes to one fixed
+address set via the `NOTIFICATION_RECIPIENT` secret below. If this app is
+ever used by more than one person, that requires verifying a domain at
+resend.com/domains and switching `SENDER` in `index.js` to an address on it —
+not needed for personal use.
+
 ## 1. Get a free Resend API key
 
 1. Sign up at [resend.com](https://resend.com) — the free tier (3,000
    emails/month, 100/day) is more than enough for a personal app.
 2. No domain setup needed. This script sends from Resend's shared
    `onboarding@resend.dev` address, which works with zero verification as
-   long as every email goes to the Resend account's own owner address —
-   exactly this script's use case (it only ever emails a TaskFlow user their
-   own Firebase Auth account email, never anyone else).
+   long as every email goes to the Resend account's own owner address (see
+   the single-recipient note above).
 3. From the Resend dashboard, go to **API Keys** and create one (the default
    "Sending access" key is fine). Copy it — it looks like `re_xxxxxxxx...`
    (that's a placeholder, not a real key).
@@ -47,14 +56,18 @@ SDK access to your Firebase project and bypasses ALL Firestore security
 rules. Never commit it to the repo, never paste it anywhere except GitHub's
 encrypted secret UI below, and don't share the file.
 
-## 3. Add both as GitHub encrypted secrets
+## 3. Add three GitHub encrypted secrets
 
 In this repo on GitHub: **Settings → Secrets and variables → Actions → New
-repository secret**. Add two:
+repository secret**. Add:
 
 - `FIREBASE_SERVICE_ACCOUNT_JSON` — paste the entire contents of the
   downloaded service-account JSON file as the value.
 - `RESEND_API_KEY` — paste the Resend API key from step 1.
+- `NOTIFICATION_RECIPIENT` — the email address every notification is sent
+  to. This must be the same address your Resend account is registered
+  under (its owner email) — see the single-recipient note above; sending to
+  any other address gets rejected by Resend's API.
 
 These are encrypted at rest by GitHub and only ever injected as environment
 variables into the workflow run — they're never printed to logs or exposed
@@ -64,7 +77,7 @@ to the repo's contents.
 
 `.github/workflows/notifications.yml` runs on a 5-minute cron
 (`schedule: */5 * * * *`), checking for due notifications and emailing via
-Resend. No further setup needed once the two secrets above exist.
+Resend. No further setup needed once the three secrets above exist.
 
 **To test a single run manually:** go to this repo's **Actions** tab →
 **Notifications** workflow → **Run workflow** button (this uses the

@@ -933,7 +933,9 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           is open, via your browser's notification popup (falling back to an in-app toast if that's not
           available/permitted). Email notifications require a one-time self-hosted setup of a GitHub
           Actions scheduled workflow (see notify-worker/README.md) — turning this on here does nothing
-          until that's set up.
+          until that's set up. That setup is single-recipient by design (no domain purchase needed):
+          every email goes to one fixed address configured in the workflow, not to this account's own
+          sign-in email.
         </p>
         <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input

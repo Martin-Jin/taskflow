@@ -18,7 +18,7 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Skill(claude-api)",
-      "Skill(claude-api:*)",
+      "Skill(claude-api:*)"
     ]
   }
 }

@@ -405,7 +405,7 @@ test.describe('Smart parse', () => {
       await page.waitForTimeout(300);
     }
     await closeAnyModal(page);
-    await page.waitForTimeout(200);
+    await expect(projectsDialog).toBeHidden();
 
     await openAddTask(page);
     const title = `Pack bags #${projectA}`;

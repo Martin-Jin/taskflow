@@ -186,7 +186,7 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
   about keeping *coverage* in sync with the app, independent of whether you
   actually run either suite for this change.
 - For UI or frontend changes, start the dev server and use the feature in a
-  browser before reporting the task as complete. Test the golden path and edge
+  browser before reporting the task as complete. Test the golden path and edge (only if is a large change)
   cases, and watch for regressions in other features.
 - **Do not reach for ad-hoc Playwright/browser automation on small or
   contained UI changes** (a modal, a button, a single component) — it's

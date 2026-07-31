@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.24',
+    date: '2026-08-01',
+    title: 'Fixed email notifications not actually sending',
+    changes: [
+      'Email notifications (Settings → Notifications) were silently failing to send, with no error anywhere — now fixed. Since this app has no verified email domain, notifications go to one fixed address you configure once (see notify-worker/README.md), not to your account\'s own sign-in email; the Settings help text now explains this.',
+    ],
+  },
+  {
     version: '1.33.23',
     date: '2026-08-01',
     title: 'Cleaner status pills in Settings',
