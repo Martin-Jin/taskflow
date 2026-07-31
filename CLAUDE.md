@@ -1,7 +1,18 @@
 # Taskflow — Working Agreement
 
-React + Vite + Firebase task manager. No test suite configured; `npm run build` is the
-main correctness check (catches type/import/build errors).
+React + Vite + Firebase task manager. `npm run build` is the per-change correctness
+check (catches type/import/build errors); a Vitest unit suite and a Playwright E2E
+suite exist too, but running them isn't required on every commit — see Testing.
+
+## Temporary model/effort cap (remove when user lifts it)
+
+**Until further notice: only Sonnet at medium effort, for the main session and
+every agent/subagent. Never use any agent or subagent above this (no high/xhigh/
+max effort, no Opus), for any task regardless of how hard it seems.** This
+overrides the per-tier guidance below — `hard-problem-solver` is temporarily
+capped at medium effort (its file has been annotated accordingly) instead of its
+normal high effort. Lower-cost tiers (e.g. `finder`'s Haiku/low) are unaffected,
+since they're below the cap, not above it.
 
 ## Model usage (token efficiency)
 
@@ -159,9 +170,11 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
 
 ## Testing
 
-- **Before every commit, run `npm run test:unit` and `npm run build`.** Both
-  must pass — treat this as the quick, mandatory pre-commit check (see the
-  Unit test suite section below for what it covers).
+- Treat `npm run build` as the minimum bar before calling a change done; run
+  it after non-trivial edits. Running the full test suites (`npm run
+  test:unit`, the Playwright suite) is **not** required for every commit —
+  that's a code review checklist step, not a per-change one (see Code review
+  checklist below).
 - **For every change, explicitly check both test suites for whether they need
   updating or a new test added** — not just whether the existing ones still
   pass. Playwright (`tests/e2e/full-suite/`) covers user-facing behavior;
@@ -169,18 +182,53 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
   parsing, merge/race-guard decisions, migrations — see below). A change can
   need one, the other, both, or neither; don't assume a non-UI change is
   exempt from Playwright, or that an internal logic change is exempt from
-  unit tests — check against each suite's own "keep in sync" rule.
+  unit tests — check against each suite's own "keep in sync" rule. This is
+  about keeping *coverage* in sync with the app, independent of whether you
+  actually run either suite for this change.
 - For UI or frontend changes, start the dev server and use the feature in a
   browser before reporting the task as complete. Test the golden path and edge
   cases, and watch for regressions in other features.
-- **Do not reach for Playwright/browser automation on small or contained UI
-  changes** (a modal, a button, a single component) — it's disproportionate
-  setup cost for the size of the change, and this repo's real auth flow
-  (Google sign-in via Firebase) isn't scriptable through it anyway. For these,
-  rely on `npm run build`, a careful read-through of the diff, and/or asking
-  the user to click through it themselves. Reserve Playwright for a genuinely
-  large change where browser automation is the only practical way to verify
-  it (e.g. a multi-step flow across several views).
+- **Do not reach for ad-hoc Playwright/browser automation on small or
+  contained UI changes** (a modal, a button, a single component) — it's
+  disproportionate setup cost for the size of the change. For these, rely on
+  `npm run build`, a careful read-through of the diff, and/or asking the user
+  to click through it themselves. Reserve one-off browser automation for a
+  genuinely large change where it's the only practical way to verify it (e.g.
+  a multi-step flow across several views).
+
+### Full E2E suite (`tests/e2e/full-suite/`)
+
+There IS a maintained, tracked Playwright suite — don't confuse it with
+`tests/e2e/manual/` (gitignored, throwaway exploratory scripts) or
+`tests/e2e/todoist-parity.spec.js` (a separate one-off parity check against
+Todoist's own web app). The full suite works headless with no real
+authentication needed: the app runs fully local against `localStorage` with
+seeded mock data (`src/services/mockData.js`) whenever no one is signed in —
+Firebase auth only gates optional cloud sync, never the UI itself.
+
+- Run it with `npm run test:e2e -- tests/e2e/full-suite` (or omit the path to
+  run everything under `tests/e2e/`). `playwright.config.js`'s `webServer`
+  block boots the dev server automatically and reuses one already running on
+  port 5183, so no manual setup is required.
+- Suite layout: `helpers.js` (shared `gotoApp`/`gotoTab`/`openAddTask`/
+  `trackConsoleErrors`/etc. — reuse these, don't re-duplicate boilerplate) plus
+  one spec file per feature domain (tasks/smart-parse, views, dashboard/stats,
+  settings/backups, search/shortcuts/undo, timer/AI-quick-add).
+- Coverage isn't limited to happy-path clicking: it also includes drag-and-drop
+  (Board column moves, section reassignment, calendar event rescheduling),
+  error paths (corrupt/invalid backup restore, circular-dependency prevention,
+  deleting the project currently selected as the active view filter),
+  multi-step undo/redo chains, and a mobile-viewport pass. When adding new
+  coverage, prefer extending one of these categories over only ever testing
+  the golden path.
+- **Keep it in sync with the app: whenever you add or materially change a
+  user-facing feature, add or update the corresponding test(s) in this suite
+  in the same change** — don't treat it as a one-time artifact. If a feature
+  doesn't fit an existing spec file's domain, add a new one alongside the
+  others rather than bloating an unrelated file.
+- It does not need to be run after every small change (see the "ad-hoc
+  Playwright" guidance above for those) — see the code review checklist for
+  when a full run is expected.
 
 ### Unit test suite (`tests/unit/`)
 
@@ -227,8 +275,27 @@ specifically so it could be unit tested.
   non-obvious (unique features, or the reason something was done a specific way).
 - No repeated code or worse-than-necessary implementations where a clearly
   cleaner approach exists in meaningfully fewer lines (skip if the win is minor).
+- Before adding new code, check whether an existing utility/component/hook
+  already does this and can be reused or extended instead of duplicated.
 - One-time/migration code has been removed once it's no longer needed.
+- No dead code left behind by the change itself — old components, props,
+  branches, or imports that this change made obsolete (not just migration
+  code) have been deleted, not left unreferenced.
 - Every feature's implementation is complete across integrations, syncing, and
-  any other consumer of what changed.
-- `npm run test:unit` passes, and it's been updated to cover whatever the
-  change added or altered in the areas listed under Unit test suite.
+  any other consumer of what changed (see "Before changing a component" under
+  Development practices).
+- UI changes are responsive and usable on mobile (see Development practices).
+- Any new persisted state has been added to `BACKUP_FIELDS` and
+  `restoreFromBackup`, or deliberately left out as device-local (see Backups).
+- `npm run build` passes, and `npm run test:unit` passes and has been updated
+  to cover whatever the change added or altered in the areas listed under
+  Unit test suite.
+- For a **big/cross-cutting change** (touches many files, a core data flow,
+  or several features at once): the full E2E suite (`tests/e2e/full-suite/`,
+  see Testing) has been run and passes, and it's been updated to cover
+  whatever the change added or altered. Not required for small/contained
+  changes — see Testing for that distinction.
+- No Firebase config/credentials or other secrets are committed in plaintext.
+- If the change is user-visible, `src/changelog.js` has a new entry and
+  `CURRENT_VERSION` is bumped, with `package.json`'s `version` kept in sync
+  (see Changelog).
