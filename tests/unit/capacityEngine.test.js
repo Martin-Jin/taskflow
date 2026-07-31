@@ -1,0 +1,140 @@
+import { describe, it, expect } from 'vitest';
+import { computeDayCapacity, computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
+
+const baseRules = {
+  workDayStart: '09:00',
+  workDayEnd: '17:00',
+  maxDailyDeepWorkHours: 8,
+  minGapBetweenBlocksMins: 0,
+};
+
+describe('computeDayCapacity', () => {
+  it('returns the full work window as free time when there is nothing busy', () => {
+    // 2026-07-01 is a Wednesday.
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events: [], blocks: [] });
+    expect(result.totalAvailableHours).toBe(8);
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('merges routines, events, and blocks into busy time correctly', () => {
+    const routines = [{ isActive: true, daysOfWeek: [3], startTime: '09:00', endTime: '10:00' }];
+    const events = [{ date: '2026-07-01', startTime: '11:00', endTime: '12:00' }];
+    const blocks = [{ date: '2026-07-01', startTime: '13:00', endTime: '14:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines, events, blocks });
+    expect(result.freeIntervals).toEqual([
+      { start: '10:00', end: '11:00' },
+      { start: '12:00', end: '13:00' },
+      { start: '14:00', end: '17:00' },
+    ]);
+    expect(result.totalAvailableHours).toBe(5);
+  });
+
+  it('excludes an inactive routine from busy time', () => {
+    const routines = [{ isActive: false, daysOfWeek: [3], startTime: '09:00', endTime: '10:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines, events: [], blocks: [] });
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+    expect(result.totalAvailableHours).toBe(8);
+  });
+
+  it('excludes a routine that does not run on this day of week', () => {
+    // 2026-07-01 is Wednesday (dow 3); routine only runs on Monday (dow 1).
+    const routines = [{ isActive: true, daysOfWeek: [1], startTime: '09:00', endTime: '10:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines, events: [], blocks: [] });
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('includes a routine that runs on this day of week', () => {
+    const routines = [{ isActive: true, daysOfWeek: [3], startTime: '09:00', endTime: '10:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines, events: [], blocks: [] });
+    expect(result.freeIntervals).toEqual([{ start: '10:00', end: '17:00' }]);
+  });
+
+  it('treats an isFreeTime event as available rather than busy', () => {
+    const events = [{ date: '2026-07-01', startTime: '11:00', endTime: '12:00', isFreeTime: true }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events, blocks: [] });
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('ignores events/blocks that fall on a different date', () => {
+    const events = [{ date: '2026-07-02', startTime: '11:00', endTime: '12:00' }];
+    const blocks = [{ date: '2026-07-02', startTime: '13:00', endTime: '14:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events, blocks });
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('never returns negative free capacity when busy time fully covers the work window', () => {
+    const blocks = [{ date: '2026-07-01', startTime: '08:00', endTime: '18:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events: [], blocks });
+    expect(result.totalAvailableHours).toBe(0);
+    expect(result.freeIntervals).toEqual([]);
+  });
+
+  it('clamps the work window start forward on the nowClamp date so past time is never scheduled', () => {
+    const result = computeDayCapacity('2026-07-01', {
+      rules: baseRules,
+      routines: [],
+      events: [],
+      blocks: [],
+      nowClamp: { date: '2026-07-01', minutes: 12 * 60 }, // noon
+    });
+    expect(result.freeIntervals).toEqual([{ start: '12:00', end: '17:00' }]);
+  });
+
+  it('does not apply nowClamp to a different date in the horizon', () => {
+    const result = computeDayCapacity('2026-07-02', {
+      rules: baseRules,
+      routines: [],
+      events: [],
+      blocks: [],
+      nowClamp: { date: '2026-07-01', minutes: 12 * 60 },
+    });
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('pads busy intervals with minGapBetweenBlocksMins on both sides', () => {
+    const rules = { ...baseRules, minGapBetweenBlocksMins: 15 };
+    const blocks = [{ date: '2026-07-01', startTime: '12:00', endTime: '13:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules, routines: [], events: [], blocks });
+    expect(result.freeIntervals).toEqual([
+      { start: '09:00', end: '11:45' },
+      { start: '13:15', end: '17:00' },
+    ]);
+  });
+
+  it('enforces the maxDailyDeepWorkHours cap on the actual free slots returned', () => {
+    const rules = { ...baseRules, maxDailyDeepWorkHours: 2 };
+    const result = computeDayCapacity('2026-07-01', { rules, routines: [], events: [], blocks: [] });
+    expect(result.totalAvailableHours).toBe(2);
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '11:00' }]);
+  });
+
+  it('never returns negative free capacity when nowClamp pushes the work start past the work end', () => {
+    const result = computeDayCapacity('2026-07-01', {
+      rules: baseRules,
+      routines: [],
+      events: [],
+      blocks: [],
+      nowClamp: { date: '2026-07-01', minutes: 20 * 60 }, // 8pm, after the 17:00 work-day end
+    });
+    expect(result.totalAvailableHours).toBe(0);
+    expect(result.freeIntervals).toEqual([]);
+  });
+});
+
+describe('computeHorizonCapacity', () => {
+  it('computes a DayCapacity for every day in the horizon', () => {
+    const map = computeHorizonCapacity('2026-07-01', 3, { rules: baseRules, routines: [], events: [], blocks: [] });
+    expect([...map.keys()]).toEqual(['2026-07-01', '2026-07-02', '2026-07-03']);
+    for (const cap of map.values()) {
+      expect(cap.totalAvailableHours).toBe(8);
+    }
+  });
+
+  it('applies per-day busy time independently across the horizon', () => {
+    const blocks = [{ date: '2026-07-02', startTime: '09:00', endTime: '17:00' }];
+    const map = computeHorizonCapacity('2026-07-01', 3, { rules: baseRules, routines: [], events: [], blocks });
+    expect(map.get('2026-07-01').totalAvailableHours).toBe(8);
+    expect(map.get('2026-07-02').totalAvailableHours).toBe(0);
+    expect(map.get('2026-07-03').totalAvailableHours).toBe(8);
+  });
+});

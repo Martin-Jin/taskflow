@@ -1,0 +1,116 @@
+import { describe, it, expect } from 'vitest';
+import { parseTaskText, findLinkPhrases } from '../../src/utils/smartParse';
+
+// parseTaskText's due-date detection (via findDuePhrase) has no injectable
+// reference date, so these tests deliberately stick to "tomorrow"/"today" —
+// phrases whose resolved value is always correct relative to whatever day
+// the suite actually runs on, so nothing here is flaky.
+
+describe('parseTaskText', () => {
+  it('detects a due date, project, label, and link all combined in one string', () => {
+    const projects = [{ id: 'p1', name: 'Work' }];
+    const { cleanedTitle, detected } = parseTaskText(
+      'Design homepage tomorrow #Work @urgent https://example.com',
+      { projects }
+    );
+
+    expect(detected.dueDate).toBeTruthy();
+    expect(detected.dueDate.matchedText).toBe('tomorrow');
+    expect(detected.link).toEqual({ url: 'https://example.com', matchedText: 'https://example.com', index: expect.any(Number) });
+    expect(detected.project.project).toEqual(projects[0]);
+    expect(detected.labels).toEqual([{ name: 'urgent', matchedText: '@urgent', index: expect.any(Number) }]);
+    expect(cleanedTitle).toBe('Design homepage');
+  });
+
+  it('resolves the longest matching project name first when one project name is a prefix of another', () => {
+    const projects = [
+      { id: 'p1', name: 'Work' },
+      { id: 'p2', name: 'Work Trip' },
+    ];
+    const { cleanedTitle, detected } = parseTaskText('Book flights #Work Trip', { projects });
+
+    expect(detected.project.project).toEqual(projects[1]);
+    expect(detected.project.fragment).toBe('Work Trip');
+    expect(cleanedTitle).toBe('Book flights');
+  });
+
+  it('detects both a due date and an independent fixed time in the same string', () => {
+    const { detected, cleanedTitle } = parseTaskText('Call client at 3pm tomorrow');
+
+    expect(detected.dueDate.matchedText).toBe('tomorrow');
+    expect(detected.fixedTime).toEqual({ time: '15:00', matchedText: 'at 3pm', index: expect.any(Number) });
+    expect(cleanedTitle).toBe('Call client');
+  });
+
+  it('detects priority shorthand alongside a due date without either interfering with the other', () => {
+    const { detected, cleanedTitle } = parseTaskText('Submit report tomorrow p2');
+
+    expect(detected.dueDate.matchedText).toBe('tomorrow');
+    expect(detected.priority).toEqual({ level: 'high', matchedText: 'p2', index: expect.any(Number) });
+    expect(cleanedTitle).toBe('Submit report');
+  });
+
+  it('leaves a trailing "#project"/"@label" mention alone for a dependency fragment bounded at "after"', () => {
+    const existingTasks = [{ id: 't1', title: 'Design review' }];
+    const { detected, cleanedTitle } = parseTaskText('Ship release after Design review #Writing', {
+      existingTasks,
+      projects: [{ id: 'p1', name: 'Writing' }],
+    });
+
+    expect(detected.dependency.task).toEqual(existingTasks[0]);
+    expect(detected.dependency.fragment).toBe('Design review');
+    expect(detected.project.project).toEqual({ id: 'p1', name: 'Writing' });
+    expect(cleanedTitle).toBe('Ship release');
+  });
+
+  it('returns plain text with no detections and an unmodified cleanedTitle when nothing matches', () => {
+    const result = parseTaskText('Buy groceries and cook dinner');
+    expect(result.detected).toEqual({});
+    expect(result.cleanedTitle).toBe('Buy groceries and cook dinner');
+  });
+
+  it('returns an empty result for blank/whitespace-only input', () => {
+    expect(parseTaskText('')).toEqual({ cleanedTitle: '', detected: {} });
+    expect(parseTaskText('   ')).toEqual({ cleanedTitle: '   ', detected: {} });
+  });
+
+  it('creates a label detection even when no existing label/task/project matches it', () => {
+    const result = parseTaskText('Water the plants @home');
+    expect(result.detected.labels).toEqual([{ name: 'home', matchedText: '@home', index: 17 }]);
+    expect(result.detected.project).toBeUndefined();
+    expect(result.cleanedTitle).toBe('Water the plants');
+  });
+
+  it('detects multiple labels in the same title', () => {
+    const result = parseTaskText('Plan trip @errand @urgent');
+    expect(result.detected.labels.map((l) => l.name)).toEqual(['errand', 'urgent']);
+    expect(result.cleanedTitle).toBe('Plan trip');
+  });
+
+  it('detects a bare "unattended" mention and an enforce-due-date phrase together', () => {
+    const result = parseTaskText('Backup script tomorrow unattended hard deadline');
+    expect(result.detected.unattended).toEqual({ matchedText: 'unattended', index: expect.any(Number) });
+    expect(result.detected.enforceDueDate).toEqual({ matchedText: 'hard deadline', index: expect.any(Number) });
+    expect(result.cleanedTitle).toBe('Backup script');
+  });
+});
+
+describe('findLinkPhrases', () => {
+  it('finds every URL-like phrase in a longer piece of text, preserving indexes', () => {
+    const text = 'See https://example.com/path and also www.foo.com/bar for details';
+    const matches = findLinkPhrases(text);
+
+    expect(matches).toHaveLength(2);
+    expect(matches[0]).toEqual({ url: 'https://example.com/path', matchedText: 'https://example.com/path', index: 4 });
+    expect(matches[1]).toEqual({ url: 'https://www.foo.com/bar', matchedText: 'www.foo.com/bar', index: 38 });
+  });
+
+  it('returns an empty array when no URL is present', () => {
+    expect(findLinkPhrases('just a plain task title')).toEqual([]);
+  });
+
+  it('returns an empty array for empty/blank input', () => {
+    expect(findLinkPhrases('')).toEqual([]);
+    expect(findLinkPhrases('   ')).toEqual([]);
+  });
+});

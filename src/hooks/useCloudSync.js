@@ -46,6 +46,124 @@ function pickValid(field, value, fallback) {
 }
 
 /**
+ * Hashes/serializes the syncable subset of state so callers can detect "is
+ * this remote update just an echo of what I just pushed" by string equality.
+ * Pure and stateless — hoisted out of the hook (it never closed over
+ * anything) so it can be exported and unit-tested directly.
+ */
+export function computeFingerprint(source) {
+  const relevant = {
+    tasks: source.tasks,
+    blocks: source.blocks,
+    sections: source.sections,
+    projects: source.projects,
+    labels: source.labels,
+    routines: source.routines,
+    rules: source.rules,
+    events: source.events,
+    soundEnabled: source.soundEnabled,
+    soundVolume: source.soundVolume,
+    animationsEnabled: source.animationsEnabled,
+    notificationSettings: source.notificationSettings,
+    notes: source.notes,
+    shortcutBindings: source.shortcutBindings,
+  };
+  return JSON.stringify(relevant);
+}
+
+/**
+ * The race guard shared by the live-listener and initial-pull effects: did a
+ * local commit land (currentActionId changed) after `baselineActionId` was
+ * captured at subscribe/pull-start? Both call sites compare the same shape
+ * (a baseline action-id snapshot vs. the latest action-id) even though they
+ * capture the baseline at different moments, so one pure comparison covers both.
+ */
+export function hasLocalEditRaced(baselineActionId, currentActionId) {
+  return baselineActionId !== currentActionId;
+}
+
+/**
+ * Computes the optimistic-stamp/rollback fingerprint values schedulePush
+ * needs, without performing the async Firestore write or mutating any ref.
+ * Returns { shouldPush: false } when the fingerprint hasn't changed since the
+ * last push (nothing to do). Otherwise returns the fingerprint to stamp
+ * before the write, and the previous fingerprint to roll back to if it fails.
+ */
+export function computePushStampPlan(currentState, lastPushedFingerprint) {
+  const fingerprint = computeFingerprint(currentState);
+  if (fingerprint === lastPushedFingerprint) {
+    return { shouldPush: false };
+  }
+  return { shouldPush: true, fingerprint, rollbackFingerprint: lastPushedFingerprint };
+}
+
+/**
+ * Pure merge-decision for applyRemoteData: given remote data, the current
+ * local state (used as per-field fallback via pickValid), and whether the
+ * race guard fired for tasks/blocks, returns a plan describing what to
+ * apply. A key is present in the returned plan only when that field should
+ * be set (mirrors the `'field' in remoteData` checks below) — the hook
+ * still performs the actual setState calls/side effects, this just computes
+ * what they should be.
+ *
+ * `skipTasksBlocks` (see the initial-pull/live-listener effects) means a
+ * genuinely newer local commit landed while remoteData was in flight —
+ * applying its tasks/blocks would silently discard that newer edit, so the
+ * plan omits `tasksBlocks` and reports `stampFingerprint: false` so the next
+ * schedulePush still sees a real change and pushes the newer local edit
+ * instead of assuming it's already synced. Every OTHER field still applies
+ * normally — they're plain setState with no undo-stack/history concept, so
+ * there's no equivalent "this local value is newer" signal to check them against.
+ */
+export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = false } = {}) {
+  const plan = {};
+
+  if (!skipTasksBlocks && ('tasks' in remoteData || 'blocks' in remoteData)) {
+    plan.tasksBlocks = {
+      tasks: pickValid('tasks', remoteData.tasks, localState.tasks),
+      blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
+    };
+  }
+  if ('sections' in remoteData) plan.sections = pickValid('sections', remoteData.sections, localState.sections);
+  if ('projects' in remoteData) plan.projects = pickValid('projects', remoteData.projects, localState.projects);
+  if ('labels' in remoteData) plan.labels = pickValid('labels', remoteData.labels, localState.labels);
+  if ('routines' in remoteData) plan.routines = pickValid('routines', remoteData.routines, localState.routines);
+  if ('rules' in remoteData) plan.rules = pickValid('rules', remoteData.rules, localState.rules);
+  if ('events' in remoteData) {
+    plan.events = dedupeEventsByOccurrence(pickValid('events', remoteData.events, localState.events));
+  }
+  if ('soundEnabled' in remoteData) plan.soundEnabled = pickValid('soundEnabled', remoteData.soundEnabled, localState.soundEnabled);
+  if ('soundVolume' in remoteData) plan.soundVolume = pickValid('soundVolume', remoteData.soundVolume, localState.soundVolume);
+  if ('animationsEnabled' in remoteData) {
+    plan.animationsEnabled = pickValid('animationsEnabled', remoteData.animationsEnabled, localState.animationsEnabled);
+  }
+  // This device's own browser timezone always wins over whatever timezone
+  // the remote doc carries (another device's, possibly stale).
+  if ('notificationSettings' in remoteData) {
+    const notificationSettings = pickValid('notificationSettings', remoteData.notificationSettings, localState.notificationSettings);
+    plan.notificationSettings = { ...notificationSettings, timezone: getBrowserTimeZone() };
+  }
+  if ('notes' in remoteData) {
+    plan.notes = pickValid('notes', remoteData.notes, localState.notes);
+  } else if ('pinnedLinks' in remoteData) {
+    // legacy remote doc, see notesModel.js migration note
+    const migrated = migrateLinksToNotes(remoteData.pinnedLinks);
+    if (migrated) plan.notes = migrated;
+  }
+  if ('shortcutBindings' in remoteData) {
+    plan.shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings);
+  }
+
+  // Only stamp "already synced" when tasks/blocks were actually applied
+  // as-is — when skipTasksBlocks is true, local tasks/blocks now differ from
+  // remoteData's (the newer local edit was kept), so stamping remoteData's
+  // fingerprint would claim a state we never actually applied.
+  plan.stampFingerprint = !skipTasksBlocks;
+
+  return plan;
+}
+
+/**
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/events/soundEnabled/soundVolume/
@@ -119,43 +237,24 @@ export function useCloudSync({
   const lastPushedFingerprintRef = useRef(null);
   const unsubscribeRef = useRef(null);
 
-  // ---- Compute a fingerprint of the current state to detect echo -----------
-  const computeFingerprint = useCallback((source) => {
-    const relevant = {
-      tasks: source.tasks,
-      blocks: source.blocks,
-      sections: source.sections,
-      projects: source.projects,
-      labels: source.labels,
-      routines: source.routines,
-      rules: source.rules,
-      events: source.events,
-      soundEnabled: source.soundEnabled,
-      soundVolume: source.soundVolume,
-      animationsEnabled: source.animationsEnabled,
-      notificationSettings: source.notificationSettings,
-      notes: source.notes,
-      shortcutBindings: source.shortcutBindings,
-    };
-    return JSON.stringify(relevant);
-  }, []);
-
   // ---- Debounced push to Firestore -----------------------------------------
+  // The fingerprint stamp/rollback decision itself lives in the pure,
+  // exported computePushStampPlan — this just performs the actual write and
+  // ref mutation around it.
   const schedulePush = useCallback(() => {
     if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
     pushTimerRef.current = setTimeout(async () => {
       if (!user) return;
       const currentState = stateRef.current;
-      const fingerprint = computeFingerprint(currentState);
-      if (fingerprint === lastPushedFingerprintRef.current) return; // no change
+      const plan = computePushStampPlan(currentState, lastPushedFingerprintRef.current);
+      if (!plan.shouldPush) return; // no change
       setIsPushingCloud(true);
-      const previousFingerprint = lastPushedFingerprintRef.current;
       try {
         // Stamp the ref before the write resolves, not after — otherwise a
         // local change made while this push is in flight can race the live
         // listener below, which would mistake the server echo for a genuine
         // remote change and stomp whatever just changed locally.
-        lastPushedFingerprintRef.current = fingerprint;
+        lastPushedFingerprintRef.current = plan.fingerprint;
         await pushUserData(user.uid, currentState);
       } catch (err) {
         console.warn('[useCloudSync] Push failed', err);
@@ -165,13 +264,13 @@ export function useCloudSync({
         // change" and this edit is silently dropped from Firestore forever.
         // Restoring the previous value means the very next state change
         // (including one identical to this failed push) will retry it.
-        lastPushedFingerprintRef.current = previousFingerprint;
+        lastPushedFingerprintRef.current = plan.rollbackFingerprint;
         setNotification({ type: 'error', message: 'Failed to sync to the cloud. Your changes are saved locally and will retry on your next edit.' });
       } finally {
         setIsPushingCloud(false);
       }
     }, PUSH_DEBOUNCE_MS);
-  }, [user, stateRef, computeFingerprint, setNotification]);
+  }, [user, stateRef, setNotification]);
 
   // ---- Apply remote data (from Firestore snapshot or an initial pull) ------
   // Mirrors applyBackupPayload below field-for-field, but routes tasks/blocks
@@ -188,60 +287,36 @@ export function useCloudSync({
   // plain setState with no undo-stack/history concept, so there's no
   // equivalent "this local value is newer" signal to check them against.
   const applyRemoteData = useCallback((remoteData, { skipTasksBlocks = false } = {}) => {
-    if (!skipTasksBlocks && ('tasks' in remoteData || 'blocks' in remoteData)) {
-      overwritePresent({
-        tasks: pickValid('tasks', remoteData.tasks, stateRef.current.tasks),
-        blocks: pickValid('blocks', remoteData.blocks, stateRef.current.blocks),
-      });
-    }
-    if ('sections' in remoteData) setSections(pickValid('sections', remoteData.sections, stateRef.current.sections));
-    if ('projects' in remoteData) setProjects(pickValid('projects', remoteData.projects, stateRef.current.projects));
-    if ('labels' in remoteData) setLabels(pickValid('labels', remoteData.labels, stateRef.current.labels));
-    if ('routines' in remoteData) setRoutines(pickValid('routines', remoteData.routines, stateRef.current.routines));
-    if ('rules' in remoteData) setRules(pickValid('rules', remoteData.rules, stateRef.current.rules));
-    if ('events' in remoteData) {
-      setEvents(dedupeEventsByOccurrence(pickValid('events', remoteData.events, stateRef.current.events)));
-    }
-    if ('soundEnabled' in remoteData) setSoundEnabled(pickValid('soundEnabled', remoteData.soundEnabled, stateRef.current.soundEnabled));
-    if ('soundVolume' in remoteData) setSoundVolume(pickValid('soundVolume', remoteData.soundVolume, stateRef.current.soundVolume));
-    if ('animationsEnabled' in remoteData) {
-      setAnimationsEnabled(pickValid('animationsEnabled', remoteData.animationsEnabled, stateRef.current.animationsEnabled));
-    }
-    // This device's own browser timezone always wins over whatever timezone
-    // the remote doc carries (another device's, possibly stale).
-    if ('notificationSettings' in remoteData) {
-      const notificationSettings = pickValid('notificationSettings', remoteData.notificationSettings, stateRef.current.notificationSettings);
-      setNotificationSettings({ ...notificationSettings, timezone: getBrowserTimeZone() });
-    }
-    if ('notes' in remoteData) setNotes(pickValid('notes', remoteData.notes, stateRef.current.notes));
-    else if ('pinnedLinks' in remoteData) {
-      // legacy remote doc, see notesModel.js migration note
-      const migrated = migrateLinksToNotes(remoteData.pinnedLinks);
-      if (migrated) setNotes(migrated);
-    }
-    if ('shortcutBindings' in remoteData) {
-      const shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, stateRef.current.shortcutBindings);
-      setShortcutBindings(shortcutBindings);
+    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipTasksBlocks });
+    if (plan.tasksBlocks) overwritePresent(plan.tasksBlocks);
+    if ('sections' in plan) setSections(plan.sections);
+    if ('projects' in plan) setProjects(plan.projects);
+    if ('labels' in plan) setLabels(plan.labels);
+    if ('routines' in plan) setRoutines(plan.routines);
+    if ('rules' in plan) setRules(plan.rules);
+    if ('events' in plan) setEvents(plan.events);
+    if ('soundEnabled' in plan) setSoundEnabled(plan.soundEnabled);
+    if ('soundVolume' in plan) setSoundVolume(plan.soundVolume);
+    if ('animationsEnabled' in plan) setAnimationsEnabled(plan.animationsEnabled);
+    if ('notificationSettings' in plan) setNotificationSettings(plan.notificationSettings);
+    if ('notes' in plan) setNotes(plan.notes);
+    if ('shortcutBindings' in plan) {
+      setShortcutBindings(plan.shortcutBindings);
       // Also write localStorage directly (not just React state) so the hot
       // keydown listener (see useKeyboardShortcuts.js) picks up an incoming
       // remote binding immediately, not just on this device's next local rebind.
-      savePersisted('shortcutBindings', shortcutBindings);
+      savePersisted('shortcutBindings', plan.shortcutBindings);
     }
     // Stamp what we just applied as "already synced" so the debounced push
     // effect doesn't immediately echo this same data straight back to
-    // Firestore — but only when tasks/blocks were actually applied as-is.
-    // When skipTasksBlocks is true, our local tasks/blocks now differ from
-    // remoteData's (we kept the newer local edit), so stamping remoteData's
-    // fingerprint would claim a state we never actually applied — leaving
-    // it unstamped means the next schedulePush correctly sees a real change
-    // and pushes the newer local edit up instead of assuming it's already synced.
-    if (!skipTasksBlocks) {
+    // Firestore — but only when tasks/blocks were actually applied as-is
+    // (see planRemoteDataMerge's stampFingerprint comment).
+    if (plan.stampFingerprint) {
       lastPushedFingerprintRef.current = computeFingerprint(remoteData);
     }
   }, [
     overwritePresent,
     stateRef,
-    computeFingerprint,
     setSections,
     setProjects,
     setLabels,
@@ -339,7 +414,7 @@ export function useCloudSync({
       if (fingerprint === remoteFingerprint) return; // echo of our own push
       const isFirstSnapshot = !receivedFirstSnapshot;
       receivedFirstSnapshot = true;
-      const localEditLandedFirst = isFirstSnapshot && currentActionIdRef.current !== actionIdAtSubscribe;
+      const localEditLandedFirst = isFirstSnapshot && hasLocalEditRaced(actionIdAtSubscribe, currentActionIdRef.current);
       applyRemoteData(remoteData, { skipTasksBlocks: localEditLandedFirst });
     });
     unsubscribeRef.current = unsubscribe;
@@ -366,7 +441,7 @@ export function useCloudSync({
       try {
         const remoteData = await pullUserData(user.uid);
         if (!cancelled && remoteData) {
-          const localEditLandedDuringPull = currentActionIdRef.current !== actionIdAtStart;
+          const localEditLandedDuringPull = hasLocalEditRaced(actionIdAtStart, currentActionIdRef.current);
           applyRemoteData(remoteData, { skipTasksBlocks: localEditLandedDuringPull });
         }
       } catch (err) {
