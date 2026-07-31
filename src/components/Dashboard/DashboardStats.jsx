@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, ExternalLink } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { toISODate, getWeekRange, formatTime12h as formatTime, formatDisplayDate, timeToMinutes } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
-import { getMissedTaskItems } from '../../utils/missedTasks';
+import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
 import { getOverdueTasks } from '../../utils/overdueTasks';
 import { ALL_TASKS_PROJECT_ID } from '../../utils/projectConstants';
 import StatListModal from './StatListModal';
@@ -73,7 +73,7 @@ function StatTile({ label, value, accent, onClick }) {
 
 export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
   const { tasks, blocks } = useScheduler();
-  const [openPopup, setOpenPopup] = useState(null); // null | 'missed' | 'overdue'
+  const [openPopup, setOpenPopup] = useState(null); // null | 'scheduledToday' | 'overdueMissed' | 'completedToday'
   const [editingTaskId, setEditingTaskId] = useState(null);
 
   function openTaskFromPopup(taskId) {
@@ -97,23 +97,33 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
       .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
     const seenTaskIds = new Set();
     const scheduledTodayItems = [];
+    const completedTodayItems = [];
     blocksToday.forEach((b) => {
       if (seenTaskIds.has(b.taskId)) return;
       const task = taskById.get(b.taskId);
       if (!task) return;
       seenTaskIds.add(b.taskId);
       scheduledTodayItems.push({ id: task.id, title: task.title, link: task.link || null, startTime: b.startTime });
+      if (isBlockTaskCompleted(b, task)) {
+        completedTodayItems.push({ id: task.id, title: task.title, link: task.link || null, startTime: b.startTime });
+      }
     });
 
-    const overdueItems = getOverdueTasks(tasks);
-    const missedItems = getMissedTaskItems(tasks, blocks);
+    // Merged into one "Overdue & missed" tile — both are "this task needs
+    // attention" signals, just for different reasons (deadline passed vs.
+    // today's scheduled slot for it passed), so users don't need to check
+    // two separate tiles/popups to see everything that needs attention.
+    const overdueAndMissedItems = [
+      ...getOverdueTasks(tasks).map((item) => ({ ...item, kind: 'overdue' })),
+      ...getMissedTaskItems(tasks, blocks).map((item) => ({ ...item, kind: 'missed' })),
+    ];
 
     const { weekStart, weekEnd } = getWeekRange(today);
     const hoursThisWeek = blocks
       .filter((b) => b.date >= weekStart && b.date <= weekEnd)
       .reduce((sum, b) => sum + b.durationHours, 0);
 
-    return { dueTodayCount, scheduledTodayItems, overdueItems, missedItems, hoursThisWeek };
+    return { dueTodayCount, scheduledTodayItems, completedTodayItems, overdueAndMissedItems, hoursThisWeek };
   }, [tasks, blocks]);
 
   return (
@@ -133,16 +143,16 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
         onClick={() => setOpenPopup('scheduledToday')}
       />
       <StatTile
-        label="Overdue"
-        value={stats.overdueItems.length}
-        accent={stats.overdueItems.length > 0 ? 'var(--color-danger)' : undefined}
-        onClick={() => setOpenPopup('overdue')}
+        label="Overdue & missed"
+        value={stats.overdueAndMissedItems.length}
+        accent={stats.overdueAndMissedItems.length > 0 ? 'var(--color-danger)' : undefined}
+        onClick={() => setOpenPopup('overdueMissed')}
       />
       <StatTile
-        label="Missed"
-        value={stats.missedItems.length}
-        accent={stats.missedItems.length > 0 ? 'var(--color-danger)' : undefined}
-        onClick={() => setOpenPopup('missed')}
+        label="Completed today"
+        value={stats.completedTodayItems.length}
+        accent={stats.completedTodayItems.length > 0 ? 'var(--color-success)' : undefined}
+        onClick={() => setOpenPopup('completedToday')}
       />
       <StatTile label="Scheduled this week" value={formatHours(stats.hoursThisWeek)} onClick={onOpenCalendar} />
 
@@ -165,39 +175,51 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
         />
       )}
 
-      {openPopup === 'missed' && (
+      {openPopup === 'overdueMissed' && (
         <StatListModal
-          title="Missed tasks"
-          items={stats.missedItems}
-          emptyMessage="Nothing missed — nice."
+          title="Overdue & missed"
+          items={stats.overdueAndMissedItems}
+          emptyMessage="Nothing overdue or missed — nice."
           onClose={() => setOpenPopup(null)}
-          renderItem={(item) => (
-            <StatListItem
-              key={item.id}
-              item={item}
-              taskId={item.taskId}
-              icon={AlertCircle}
-              timeLabel={formatTime(item.startTime)}
-              onOpen={openTaskFromPopup}
-            />
-          )}
+          renderItem={(item) =>
+            item.kind === 'overdue' ? (
+              <StatListItem
+                key={`overdue-${item.id}`}
+                item={item}
+                taskId={item.id}
+                icon={AlertTriangle}
+                timeLabel={formatDisplayDate(item.dueDate)}
+                timeClassName="overdue-list-date"
+                onOpen={openTaskFromPopup}
+              />
+            ) : (
+              <StatListItem
+                key={`missed-${item.taskId}`}
+                item={item}
+                taskId={item.taskId}
+                icon={AlertCircle}
+                timeLabel={formatTime(item.startTime)}
+                onOpen={openTaskFromPopup}
+              />
+            )
+          }
         />
       )}
 
-      {openPopup === 'overdue' && (
+      {openPopup === 'completedToday' && (
         <StatListModal
-          title="Overdue tasks"
-          items={stats.overdueItems}
-          emptyMessage="Nothing overdue — nice."
+          title="Completed today"
+          items={stats.completedTodayItems}
+          emptyMessage="Nothing completed yet today."
           onClose={() => setOpenPopup(null)}
           renderItem={(item) => (
             <StatListItem
               key={item.id}
               item={item}
               taskId={item.id}
-              icon={AlertTriangle}
-              timeLabel={formatDisplayDate(item.dueDate)}
-              timeClassName="overdue-list-date"
+              icon={CheckCircle2}
+              timeLabel={formatTime(item.startTime)}
+              itemClassName="completed-today-item"
               onOpen={openTaskFromPopup}
             />
           )}

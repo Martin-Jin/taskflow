@@ -14,6 +14,8 @@ import { AlertTriangle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { computeHorizonCapacity } from '../../algorithms/capacityEngine';
 import { addDays, dayOfWeek, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
+import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
+import { getOverdueTasks } from '../../utils/overdueTasks';
 import BarChart from './BarChart';
 import PieChart from './PieChart';
 
@@ -75,7 +77,28 @@ export default function StatsDashboard() {
       return effectiveDeadline < today && t.remainingHours > 0;
     });
 
-    return { totalHoursLeft, totalActualHours, scheduledToday, scheduledThisWeek, freeCapacityThisWeek, overdueRiskTasks };
+    // ---- Task-count stats (mirrors DashboardStats' own definitions, so the
+    // numbers agree wherever the same concept shows up) --------------------
+    const activeTaskCount = activeTasks.length;
+    const dueTodayCount = activeTasks.filter((t) => t.dueDate === today).length;
+    const overdueAndMissedCount = getOverdueTasks(tasks).length + getMissedTaskItems(tasks, blocks).length;
+    const taskById = new Map(tasks.map((t) => [t.id, t]));
+    const completedTodayCount = blocks.filter((b) => b.date === today && isBlockTaskCompleted(b, taskById.get(b.taskId))).length;
+    const totalCompletedCount = tasks.filter((t) => t.isCompleted || (t.isRecurring && t.completedDates?.length > 0)).length;
+
+    return {
+      totalHoursLeft,
+      totalActualHours,
+      scheduledToday,
+      scheduledThisWeek,
+      freeCapacityThisWeek,
+      overdueRiskTasks,
+      activeTaskCount,
+      dueTodayCount,
+      overdueAndMissedCount,
+      completedTodayCount,
+      totalCompletedCount,
+    };
   }, [tasks, blocks, routines, events, rules, today]);
 
   // ---- Hours planned per day (bar chart) -----------------------------------
@@ -112,6 +135,7 @@ export default function StatsDashboard() {
 
   return (
     <div>
+      <h3 className="stats-section-title" style={{ marginTop: 0 }}>Time &amp; hours</h3>
       <div className="stats-cards-row">
         <StatCard label="Total hours left" value={stats.totalHoursLeft.toFixed(1)} sublabel="across all active tasks" />
         <StatCard label="Scheduled today" value={stats.scheduledToday.toFixed(1) + 'h'} />
@@ -124,6 +148,23 @@ export default function StatsDashboard() {
         {stats.totalActualHours > 0 && (
           <StatCard label="Time logged" value={stats.totalActualHours.toFixed(1) + 'h'} sublabel="tracked via timer, on completed tasks" />
         )}
+      </div>
+
+      <h3 className="stats-section-title">Task counts</h3>
+      <div className="stats-cards-row">
+        <StatCard label="Active tasks" value={stats.activeTaskCount} />
+        <StatCard label="Due today" value={stats.dueTodayCount} />
+        <StatCard
+          label="Overdue & missed"
+          value={stats.overdueAndMissedCount}
+          accent={stats.overdueAndMissedCount > 0 ? 'var(--color-danger)' : undefined}
+        />
+        <StatCard
+          label="Completed today"
+          value={stats.completedTodayCount}
+          accent={stats.completedTodayCount > 0 ? 'var(--color-success)' : undefined}
+        />
+        <StatCard label="Total completed" value={stats.totalCompletedCount} sublabel="all-time" />
       </div>
 
       {stats.overdueRiskTasks.length > 0 && (

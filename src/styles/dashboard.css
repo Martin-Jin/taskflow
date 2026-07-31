@@ -967,6 +967,16 @@
   background: var(--color-bg-surface-hover);
 }
 
+/* Completed today rows: a positive "done" state, not a danger one — override
+   the danger-red icon color/hover tint .missed-tasks-item defaults to above. */
+.missed-tasks-item.completed-today-item .missed-tasks-icon {
+  color: var(--color-success);
+}
+
+.missed-tasks-item.completed-today-item.is-openable:hover {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-surface-hover));
+}
+
 .missed-tasks-icon {
   color: var(--color-danger);
   flex-shrink: 0;
