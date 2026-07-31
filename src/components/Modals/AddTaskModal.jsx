@@ -179,7 +179,14 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       },
       enforceDueDate: {
         isUntouched: () => !hasEditedEnforceDueDate,
-        apply: () => setEnforceDueDate(true),
+        apply: (match, detected) => {
+          setEnforceDueDate(true);
+          // Same reasoning as recurrence above — "enforce due date" is inert
+          // without a due date (see the `enforceDueDate: enforceDueDate &&
+          // !!dueDate` guard at save time below), so a bare "on the day"
+          // mention needs one too, or the flag would silently no-op on save.
+          if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
+        },
         revert: () => setEnforceDueDate(false),
       },
       dependency: {
