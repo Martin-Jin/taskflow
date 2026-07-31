@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.19',
+    date: '2026-07-31',
+    title: 'Fix "must be done on due date" tasks getting scheduled today',
+    changes: [
+      'Tasks with "Enforce due date" turned on were sometimes scheduled into today\'s plan even when today wasn\'t their due date — the "Plan my day" scheduler now correctly leaves them for their actual due date.',
+    ],
+  },
+  {
     version: '1.33.18',
     date: '2026-07-31',
     title: 'Completed tasks hidden from search by default',
