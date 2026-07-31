@@ -108,7 +108,7 @@ export default function EventDetailModal({ event, initial, onClose }) {
       <div
         className="modal modal-detail"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 420 }}
+        style={{ width: 560 }}
         ref={modalRef}
         role="dialog"
         aria-modal="true"

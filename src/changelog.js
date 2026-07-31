@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.16',
+    date: '2026-07-31',
+    title: 'Cleaner synced event descriptions, wider event modal, drag fix',
+    changes: [
+      'Descriptions synced from Google Calendar (which can contain HTML formatting from rich-text invites) are now converted to plain, readable text instead of showing raw HTML tags.',
+      'The calendar event editing modal is a bit wider on desktop.',
+      'Dragging a scheduled block on the calendar now keeps it centered under your cursor/finger, instead of snapping so the block\'s top edge lines up with the cursor.',
+    ],
+  },
+  {
     version: '1.33.15',
     date: '2026-07-31',
     title: 'Smart parse: exact time of day',

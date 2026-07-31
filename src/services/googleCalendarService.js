@@ -31,6 +31,19 @@ let accessToken = null;
 let gapiInited = false;
 let gisInited = false;
 
+// Google's `description` field is HTML when an event was composed with Google
+// Calendar's rich-text editor (e.g. via Gmail invites) — TaskFlow only has a
+// plain <textarea> for it, so render tags down to readable plain text rather
+// than showing raw markup. DOMParser is the simplest correct way to decode
+// HTML entities (e.g. `&amp;`) without a manual entity table.
+function htmlToPlainText(html) {
+  if (!html || !/[<&]/.test(html)) return html || '';
+  const withBreaks = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '\n');
+  const doc = new DOMParser().parseFromString(withBreaks, 'text/html');
+  const text = doc.body.textContent || '';
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // GIS's implicit-flow token client has no refresh token to persist — only a
 // short-lived (~1hr) access token that lives in this module's memory, which
 // is wiped on every page reload/reopen. Without caching it, EVERY app open
@@ -372,7 +385,7 @@ export async function fetchEvents(startIso, endIso) {
         calendarId: e.__calendarId,
         calendarName: e.__calendarName,
         source: 'google',
-        description: e.description || '',
+        description: htmlToPlainText(e.description),
         location: e.location || '',
         recurrenceRule,
         // Whether the user can push edits/deletes back to Google for this
