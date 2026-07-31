@@ -41,6 +41,7 @@ import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
+import { isBlockCompletedLate } from '../../utils/missedTasks';
 import HoverPreviewCard from './HoverPreviewCard';
 
 const GRID_START_MIN = 6 * 60; // 06:00
@@ -605,6 +606,12 @@ export default function WeekView({
       e.preventDefault();
       return;
     }
+    // A completed task's block is frozen in place as a historical record —
+    // dragging it to a new time wouldn't make sense once the work is done.
+    if (item.type === 'block' && taskById[item.data.taskId]?.isCompleted) {
+      e.preventDefault();
+      return;
+    }
     // Read-only events (calendars the user can't write to on Google) mustn't
     // be movable here either — dragging calls updateEvent below just like
     // the detail modal's Save does, which would attempt to push a change
@@ -802,6 +809,7 @@ export default function WeekView({
 
   function handleItemTouchStart(e, item) {
     if (item.type === 'block' && item.data.isLocked) return;
+    if (item.type === 'block' && taskById[item.data.taskId]?.isCompleted) return;
     if (item.type === 'event' && item.data.canEdit === false) return;
     // Stop this touch from bubbling up to CalendarPage's swipe-navigation
     // listener — without this, dragging an item sideways across columns
@@ -1095,12 +1103,13 @@ export default function WeekView({
                 // rather than left to clip into the block below.
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
+                const isAllCompleted = item.blocks.every((b) => taskById[b.taskId]?.isCompleted);
                 const openThisCluster = (rect) =>
                   setOpenCluster({ key: clusterKey, rect, items: item.blocks.map((b) => ({ type: 'block', data: b })) });
                 return (
                   <div
                     key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''}`}
+                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${isAllCompleted ? 'cal-cluster-completed' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
@@ -1140,11 +1149,15 @@ export default function WeekView({
                 const flatItems = item.items.flatMap((it) =>
                   it.kind === 'cluster' ? it.blocks.map((b) => ({ type: 'block', data: b })) : [{ type: it.type, data: it.data }]
                 );
+                // Events have no "completed" concept, so a chip containing any
+                // live event is never fully completed — only true when every
+                // underlying block is a completed-task block.
+                const isAllCompleted = flatItems.every((it) => it.type === 'block' && taskById[it.data.taskId]?.isCompleted);
                 const openThisOverlap = (rect) => setOpenCluster({ key: chipKey, rect, items: flatItems });
                 return (
                   <div
                     key={chipKey}
-                    className={`cal-block cal-overlap-chip ${isOpen ? 'is-open' : ''}`}
+                    className={`cal-block cal-overlap-chip ${isOpen ? 'is-open' : ''} ${isAllCompleted ? 'cal-cluster-completed' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
@@ -1236,18 +1249,20 @@ export default function WeekView({
               const parentTask = task.parentId ? taskById[task.parentId] : null;
               const showParentLine = !!parentTask && height >= TWO_LINE_MIN_HEIGHT;
               const showTimeLine = height >= (parentTask ? THREE_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT);
+              const isCompleted = !!task.isCompleted;
+              const isCompletedLate = isBlockCompletedLate(block, task);
               return (
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
+                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${isCompleted ? 'block-completed' : ''} ${isCompletedLate ? 'block-completed-late' : ''}`}
                   style={{
                     top,
                     height,
                     borderLeftColor: priorityColor(task.priority),
                     ...laneStyle,
                   }}
-                  draggable={!isMobile && !block.isLocked}
+                  draggable={!isMobile && !block.isLocked && !isCompleted}
                   onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
                   onDragEnd={isMobile ? undefined : endDrag}
                   onTouchStart={(e) => handleItemTouchStart(e, item)}
@@ -1307,7 +1322,7 @@ export default function WeekView({
                       {block.startTime}–{endTime}
                     </div>
                   )}
-                  {!block.isLocked && (
+                  {!block.isLocked && !isCompleted && (
                     <div
                       className="resize-handle"
                       onMouseDown={(e) => handleResizeStart(e, item)}
@@ -1345,7 +1360,7 @@ export default function WeekView({
                     <span className="cal-cluster-popover-time">
                       {it.data.startTime}–{it.data.endTime}
                     </span>
-                    <span className="cal-cluster-popover-title">{t.title}</span>
+                    <span className={`cal-cluster-popover-title ${t.isCompleted ? 'is-completed' : ''}`}>{t.title}</span>
                   </button>
                 );
               }
