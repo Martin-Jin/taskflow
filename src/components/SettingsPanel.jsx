@@ -9,7 +9,6 @@ import {
   Download,
   Upload,
   History,
-  Circle,
   Check,
   HelpCircle,
   AlertTriangle,
@@ -442,13 +441,13 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           </h4>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
             <span
-              className={`badge ${lastTodoistImport ? 'low' : 'medium'}`}
+              className="badge"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,
-                background: lastTodoistImport ? 'rgba(79, 191, 139, 0.15)' : undefined,
-                color: lastTodoistImport ? 'var(--color-success)' : undefined,
+                background: lastTodoistImport ? 'rgba(79, 191, 139, 0.15)' : 'var(--color-bg-surface-hover)',
+                color: lastTodoistImport ? 'var(--color-success)' : 'var(--color-text-secondary)',
               }}
             >
               {lastTodoistImport ? (
@@ -461,9 +460,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                   <KeyRound size={12} /> Connected — not yet imported
                 </>
               ) : (
-                <>
-                  <Circle size={12} /> Standalone mode (local sample tasks)
-                </>
+                <>Standalone mode (local sample tasks)</>
               )}
             </span>
           </div>
@@ -593,13 +590,13 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                 <span
-                  className={`badge ${anthropicKey ? 'low' : 'medium'}`}
+                  className="badge"
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 5,
-                    background: anthropicKey ? 'rgba(79, 191, 139, 0.15)' : undefined,
-                    color: anthropicKey ? 'var(--color-success)' : undefined,
+                    background: anthropicKey ? 'rgba(79, 191, 139, 0.15)' : 'var(--color-bg-surface-hover)',
+                    color: anthropicKey ? 'var(--color-success)' : 'var(--color-text-secondary)',
                   }}
                 >
                   {anthropicKey ? (
@@ -607,8 +604,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                       <KeyRound size={12} /> Claude (Anthropic) key connected
                     </>
                   ) : (
-                    <>
-                      <Circle size={12} /> Claude (Anthropic) key not set
+                    <>Claude (Anthropic) key not set
                     </>
                   )}
                 </span>
@@ -661,13 +657,13 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                 <span
-                  className={`badge ${geminiKey ? 'low' : 'medium'}`}
+                  className="badge"
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 5,
-                    background: geminiKey ? 'rgba(79, 191, 139, 0.15)' : undefined,
-                    color: geminiKey ? 'var(--color-success)' : undefined,
+                    background: geminiKey ? 'rgba(79, 191, 139, 0.15)' : 'var(--color-bg-surface-hover)',
+                    color: geminiKey ? 'var(--color-success)' : 'var(--color-text-secondary)',
                   }}
                 >
                   {geminiKey ? (
@@ -675,8 +671,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                       <KeyRound size={12} /> Gemini key connected
                     </>
                   ) : (
-                    <>
-                      <Circle size={12} /> Gemini key not set
+                    <>Gemini key not set
                     </>
                   )}
                 </span>
