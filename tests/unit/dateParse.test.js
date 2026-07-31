@@ -152,9 +152,13 @@ describe('findFixedTimePhrase', () => {
     expect(result).toEqual({ time: '15:00', matchedText: 'at 15:00', index: 12 });
   });
 
-  it('parses "at 9" with no am/pm suffix literally as 24-hour 09:00', () => {
-    const result = findFixedTimePhrase('meeting at 9');
-    expect(result).toEqual({ time: '09:00', matchedText: 'at 9', index: 8 });
+  it('returns null for a fully bare hour with no minutes and no am/pm, even with "at"', () => {
+    expect(findFixedTimePhrase('meeting at 9')).toBeNull();
+  });
+
+  it('parses "at 17:30" (24-hour, minutes present) as 17:30 with no am/pm required', () => {
+    const result = findFixedTimePhrase('meeting at 17:30');
+    expect(result).toEqual({ time: '17:30', matchedText: 'at 17:30', index: 8 });
   });
 
   it('parses "at 12am" as midnight (00:00)', () => {
@@ -176,16 +180,30 @@ describe('findFixedTimePhrase', () => {
     expect(findFixedTimePhrase('call at 13pm')).toBeNull();
   });
 
-  it('returns null for an hour out of 24-hour range with no am/pm ("at 24")', () => {
-    expect(findFixedTimePhrase('call at 24')).toBeNull();
+  it('returns null for an hour out of 24-hour range with no am/pm ("at 24:00")', () => {
+    expect(findFixedTimePhrase('call at 24:00')).toBeNull();
   });
 
   it('returns null for an invalid minute value ("at 3:75")', () => {
     expect(findFixedTimePhrase('call at 3:75')).toBeNull();
   });
 
-  it('returns null when there is no "at" trigger word', () => {
-    expect(findFixedTimePhrase('meeting 3pm')).toBeNull();
+  it('parses a standalone time with am/pm even without the "at" trigger word', () => {
+    const result = findFixedTimePhrase('meeting 3pm');
+    expect(result).toEqual({ time: '15:00', matchedText: '3pm', index: 8 });
+  });
+
+  it('parses a standalone time with minutes and am/pm ("9:10pm") without "at"', () => {
+    const result = findFixedTimePhrase('call dentist 9:10pm');
+    expect(result.time).toBe('21:10');
+  });
+
+  it('returns null for a standalone bare 24-hour time with no "at" and no am/pm ("17:30")', () => {
+    expect(findFixedTimePhrase('meeting 17:30')).toBeNull();
+  });
+
+  it('returns null for a standalone bare hour with no "at" and no am/pm ("9")', () => {
+    expect(findFixedTimePhrase('meeting 9')).toBeNull();
   });
 
   it('returns null for empty or non-string input', () => {

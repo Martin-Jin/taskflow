@@ -105,6 +105,16 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [enforceDueDate, setEnforceDueDate] = useState(false);
   const [hasEditedEnforceDueDate, setHasEditedEnforceDueDate] = useState(false);
   const [fixedTime, setFixedTime] = useState('');
+  // "Fixed time" has no value to speak of while the checkbox is checked but
+  // no time has been picked yet — fixedTimeEnabled tracks the checkbox
+  // itself (separate from the "HH:MM" value) so that state is distinguishable
+  // from "not fixed at all", and hasEditedFixedTime is a dedicated
+  // manual-edit flag (unlike the other fields above, `fixedTime` alone can't
+  // serve as its own "untouched" signal: a smart-parse-applied time is a
+  // non-empty value too, so re-detecting a *different* time phrase later in
+  // the same title would otherwise never be able to overwrite it).
+  const [fixedTimeEnabled, setFixedTimeEnabled] = useState(false);
+  const [hasEditedFixedTime, setHasEditedFixedTime] = useState(false);
   const [earliestDate, setEarliestDate] = useState('');
   const [labelIds, setLabelIds] = useState([]);
   const [error, setError] = useState('');
@@ -147,13 +157,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         revert: () => setDueDate(''),
       },
       fixedTime: {
-        // fixedTime has no dedicated manual-edit flag — the checkbox/time
-        // input in the "Fixed time" field are the only other producers, and
-        // both write straight into fixedTime itself, so "still blank" is
-        // already an accurate untouched check.
-        isUntouched: () => !fixedTime,
-        apply: (match) => setFixedTime(match.time),
-        revert: () => setFixedTime(''),
+        isUntouched: () => !hasEditedFixedTime,
+        apply: (match) => {
+          setFixedTime(match.time);
+          setFixedTimeEnabled(true);
+        },
+        revert: () => {
+          setFixedTime('');
+          setFixedTimeEnabled(false);
+        },
       },
       recurrence: {
         isUntouched: () => !hasEditedRecurrence,
@@ -252,6 +264,10 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       setError('A recurring task needs a starting due date.');
       return;
     }
+    if (fixedTimeEnabled && !fixedTime) {
+      setError('Pick a time, or turn off "Fixed time".');
+      return;
+    }
 
     const section = sections.find((s) => s.id === sectionId);
     const pendingLabelNames = (smartDetected.labels || []).map((m) => m.name);
@@ -275,7 +291,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       dependsOn,
       isPassive,
       enforceDueDate: enforceDueDate && !!dueDate,
-      fixedTime: fixedTime || null,
+      fixedTime: fixedTimeEnabled && fixedTime ? fixedTime : null,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
     });
@@ -526,12 +542,28 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
             <DetailField icon={Clock} label="Fixed time">
               <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={!!fixedTime} onChange={(e) => setFixedTime(e.target.checked ? '09:00' : '')} />
-                {fixedTime ? `At ${fixedTime}` : 'Not fixed'}
+                <input
+                  type="checkbox"
+                  checked={fixedTimeEnabled}
+                  onChange={(e) => {
+                    setHasEditedFixedTime(true);
+                    setFixedTimeEnabled(e.target.checked);
+                    if (!e.target.checked) setFixedTime('');
+                  }}
+                />
+                {fixedTimeEnabled ? (fixedTime ? `At ${fixedTime}` : 'Pick a time') : 'Not fixed'}
               </label>
-              {fixedTime && (
+              {fixedTimeEnabled && (
                 <>
-                  <input type="time" value={fixedTime} onChange={(e) => setFixedTime(e.target.value)} style={{ marginTop: 6 }} />
+                  <input
+                    type="time"
+                    value={fixedTime}
+                    onChange={(e) => {
+                      setHasEditedFixedTime(true);
+                      setFixedTime(e.target.value);
+                    }}
+                    style={{ marginTop: 6 }}
+                  />
                   <p className="form-hint">Scheduled blocks for this task will always start at this time.</p>
                 </>
               )}

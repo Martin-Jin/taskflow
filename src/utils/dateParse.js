@@ -333,29 +333,52 @@ export function findDuePhrase(text, referenceDate = new Date()) {
 }
 
 /**
- * Find an explicit clock-time mention ("at 12:30", "at 5pm", "at 9") for a
- * task's `fixedTime` field ("HH:MM" 24hr — see types/index.js's Task.fixedTime
- * and allocator.js's placeFixedTimeInDay). Requires the "at" trigger word so
- * this stays unambiguous and never collides with the duration ("3.5 hours"),
- * numeric-date ("24/03"), or priority ("p2") detectors elsewhere in the
- * title — none of those use "at". Independent of findDuePhrase's due-date
- * detection above: a title can carry a date, a time, both, or neither.
+ * Find an explicit clock-time mention for a task's `fixedTime` field ("HH:MM"
+ * 24hr — see types/index.js's Task.fixedTime and allocator.js's
+ * placeFixedTimeInDay). Two forms are recognized:
+ *  - "at ..." ("at 12:30", "at 5pm", "at 17:00") — the "at" trigger word
+ *    disambiguates a bare 24-hour hour/minute reading from the duration
+ *    ("3.5 hours"), numeric-date ("24/03"), or priority ("p2") detectors
+ *    elsewhere in the title, none of which use "at".
+ *  - standalone, no "at" ("5pm", "9:10pm") — only recognized when an am/pm
+ *    suffix is present, since without "at" to disambiguate, a bare number
+ *    would collide with those same detectors.
+ * Either way, a FULLY bare hour with no minutes and no am/pm ("at 9", "9")
+ * is never read as a time on its own — it's too ambiguous with an ordinary
+ * number in a title; "9am"/"9pm" (or minutes, "at 9:30") is how a user
+ * signals they mean a clock time.
  *
- * A bare hour/minute with no am/pm suffix is read literally as 24-hour time
- * ("at 9" -> "09:00", "at 17:30" -> "17:30") rather than guessed at — typing
- * "am"/"pm" is how a user asks for the 12-hour reading of an ambiguous hour.
+ * Independent of findDuePhrase's due-date detection above: a title can carry
+ * a date, a time, both, or neither.
  * @param {string} text
  * @returns {{time: string, matchedText: string, index: number}|null}
  */
 export function findFixedTimePhrase(text) {
   if (!text || typeof text !== 'string') return null;
-  const m = text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?\b/i);
-  if (!m) return null;
 
-  let hour = Number(m[1]);
-  const minute = m[2] ? Number(m[2]) : 0;
-  const meridiem = m[3] ? m[3].toLowerCase() : null;
+  const atRe = /\bat\s+(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?\b/gi;
+  let m;
+  while ((m = atRe.exec(text))) {
+    const time = parseClockMatch(m[1], m[2], m[3]);
+    if (time) return { time, matchedText: m[0], index: m.index };
+  }
+
+  const bareRe = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gi;
+  while ((m = bareRe.exec(text))) {
+    const time = parseClockMatch(m[1], m[2], m[3]);
+    if (time) return { time, matchedText: m[0], index: m.index };
+  }
+
+  return null;
+}
+
+/** Shared hour/minute/meridiem -> "HH:MM" validation for findFixedTimePhrase's two forms. */
+function parseClockMatch(hourStr, minuteStr, meridiemStr) {
+  let hour = Number(hourStr);
+  const minute = minuteStr ? Number(minuteStr) : 0;
+  const meridiem = meridiemStr ? meridiemStr.toLowerCase() : null;
   if (minute > 59) return null;
+  if (!minuteStr && !meridiem) return null; // bare hour alone is too ambiguous to read as a time
 
   if (meridiem) {
     if (hour < 1 || hour > 12) return null;
@@ -364,6 +387,5 @@ export function findFixedTimePhrase(text) {
     return null;
   }
 
-  const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  return { time, matchedText: m[0], index: m.index };
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }

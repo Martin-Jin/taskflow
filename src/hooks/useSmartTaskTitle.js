@@ -71,12 +71,21 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields 
       const field = fields[type];
       if (!field) return;
 
+      // Drop any dismissal for this type that doesn't match what's currently
+      // typed. A dismissed key must only keep suppressing the exact phrase it
+      // was dismissed for — otherwise, editing straight from one valid match
+      // to a *different* valid match of the same type (e.g. "at 9pm" -> "at
+      // 10pm") never passes through a "no match" state, so the old key would
+      // never get cleared, and coming back to the original phrase later would
+      // stay silently (and permanently) suppressed. This mirrors the `labels`
+      // cleanup below, which already compares against the full current match
+      // set rather than only clearing on a total absence of matches.
+      const key = match ? `${type}:${match.matchedText}` : null;
+      [...nextDismissed].forEach((k) => {
+        if (k.startsWith(`${type}:`) && k !== key) nextDismissed.delete(k);
+      });
+
       if (!match) {
-        // No detection of this type left in the text — clear any stale
-        // dismissal so the same trigger word re-arms if typed again later.
-        [...nextDismissed].forEach((key) => {
-          if (key.startsWith(`${type}:`)) nextDismissed.delete(key);
-        });
         // If a chip was showing (i.e. this field was auto-applied from a
         // previous detection), the phrase that drove it just got edited
         // away — revert the field now, otherwise it stays "touched" forever
@@ -87,7 +96,6 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields 
         return;
       }
 
-      const key = `${type}:${match.matchedText}`;
       if (field.isUntouched() && !nextDismissed.has(key)) {
         // Pass the full detection set so a field's apply() can see what else
         // was just detected in this same pass (e.g. recurrence checking

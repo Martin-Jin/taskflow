@@ -251,6 +251,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [earliestDate, setEarliestDate] = useState(task.earliestDate || '');
   const [enforceDueDate, setEnforceDueDate] = useState(!!task.enforceDueDate);
   const [fixedTime, setFixedTime] = useState(task.fixedTime || '');
+  // "Fixed time" has no value to speak of while the checkbox is checked but
+  // no time has been picked yet — fixedTimeEnabled tracks the checkbox
+  // itself (separate from the "HH:MM" value) so that state is distinguishable
+  // from "not fixed at all", and hasEditedFixedTime is a dedicated
+  // manual-edit flag: unlike every other sidebar field here (which compares
+  // its live value against the task's original to decide "untouched"),
+  // `fixedTime` alone can't use that comparison — a smart-parse-applied time
+  // is a non-empty/changed value too, so re-detecting a *different* time
+  // phrase later in the same title would otherwise never be able to
+  // overwrite it once the first detection had already applied.
+  const [fixedTimeEnabled, setFixedTimeEnabled] = useState(!!task.fixedTime);
+  const [hasEditedFixedTime, setHasEditedFixedTime] = useState(false);
   const [labelIds, setLabelIds] = useState(task.labelIds || []);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
@@ -401,6 +413,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
       fixedTime: task.fixedTime || '',
+      fixedTimeEnabled: !!task.fixedTime,
       labelIds: task.labelIds || [],
     };
   }
@@ -445,6 +458,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setEarliestDate(task.earliestDate || '');
     setEnforceDueDate(!!task.enforceDueDate);
     setFixedTime(task.fixedTime || '');
+    setFixedTimeEnabled(!!task.fixedTime);
+    setHasEditedFixedTime(false);
     setLabelIds(task.labelIds || []);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
@@ -466,6 +481,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
       fixedTime: task.fixedTime || '',
+      fixedTimeEnabled: !!task.fixedTime,
       labelIds: task.labelIds || [],
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -498,6 +514,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
       fixedTime: task.fixedTime || '',
+      fixedTimeEnabled: !!task.fixedTime,
     };
     const setters = {
       estimatedHours: setEstimatedHours,
@@ -512,6 +529,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       earliestDate: setEarliestDate,
       enforceDueDate: setEnforceDueDate,
       fixedTime: setFixedTime,
+      fixedTimeEnabled: setFixedTimeEnabled,
     };
     const localValues = {
       estimatedHours,
@@ -526,6 +544,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       earliestDate,
       enforceDueDate,
       fixedTime,
+      fixedTimeEnabled,
     };
     Object.keys(taskValues).forEach((key) => {
       if (String(localValues[key]) === String(snap[key]) && String(taskValues[key]) !== String(snap[key])) {
@@ -623,9 +642,15 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         revert: () => setDueDate(task.dueDate || ''),
       },
       fixedTime: {
-        isUntouched: () => fixedTime === (task.fixedTime || ''),
-        apply: (match) => setFixedTime(match.time),
-        revert: () => setFixedTime(task.fixedTime || ''),
+        isUntouched: () => !hasEditedFixedTime,
+        apply: (match) => {
+          setFixedTime(match.time);
+          setFixedTimeEnabled(true);
+        },
+        revert: () => {
+          setFixedTime(task.fixedTime || '');
+          setFixedTimeEnabled(!!task.fixedTime);
+        },
       },
       recurrence: {
         isUntouched: () => isRecurring === !!task.isRecurring,
@@ -767,11 +792,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     earliestDate !== initialSnapshotRef.current.earliestDate ||
     enforceDueDate !== initialSnapshotRef.current.enforceDueDate ||
     fixedTime !== initialSnapshotRef.current.fixedTime ||
+    fixedTimeEnabled !== initialSnapshotRef.current.fixedTimeEnabled ||
     dependsOn.length !== initialSnapshotRef.current.dependsOn.length ||
     dependsOn.some((id) => !initialSnapshotRef.current.dependsOn.includes(id)) ||
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
   const isDirty = mainDirty || sidebarDirty;
+  // Checking "Fixed time" with no time chosen yet is an incomplete edit —
+  // block it from silently autosaving (or from the explicit Save button)
+  // until a time is actually picked.
+  const fixedTimeError = fixedTimeEnabled && !fixedTime ? 'Pick a time, or turn off "Fixed time".' : '';
 
   function handleNotesChange(value) {
     setNotes(value);
@@ -909,7 +939,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       // A container is never scheduled directly, so a fixed time-of-day has
       // nothing to apply to — skip persisting it, same guard as
       // estimatedHours/remainingHours above.
-      fixedTime: isContainer ? null : fixedTime || null,
+      fixedTime: isContainer ? null : fixedTimeEnabled && fixedTime ? fixedTime : null,
       labelIds: finalLabelIds,
     });
 
@@ -938,11 +968,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       earliestDate: earliestDate || '',
       enforceDueDate: enforceDueDate && !!nextDueDate,
       fixedTime: fixedTime || '',
+      fixedTimeEnabled,
       labelIds: finalLabelIds,
     };
   }
 
   function handleSave() {
+    // "Fixed time" enabled with no time picked blocks the explicit Save too
+    // (mirrors AddTaskModal's handleSubmit) — the sidebar autosave effect
+    // below already blocks its own debounced commit the same way, but the
+    // Save/Cancel row is reachable whenever mainDirty is also true.
+    if (fixedTimeError) return;
     commitChanges();
     requestClose();
   }
@@ -950,15 +986,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // Sidebar fields auto-save (debounced) without needing the explicit
   // Save/Cancel row — that row is reserved for mainDirty (title/notes)
   // below. Skips entirely while mainDirty is also true, since in that case
-  // Save/Cancel is already visible and will commit both together.
+  // Save/Cancel is already visible and will commit both together. Also skips
+  // while fixedTimeError is set, so an enabled-but-empty "Fixed time" never
+  // silently autosaves.
   useEffect(() => {
-    if (mainDirty || !sidebarDirty) return undefined;
+    if (mainDirty || !sidebarDirty || fixedTimeError) return undefined;
     const handle = setTimeout(() => commitChanges(), 500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     mainDirty,
     sidebarDirty,
+    fixedTimeError,
     estimatedHours,
     priority,
     dueDate,
@@ -972,6 +1011,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     earliestDate,
     enforceDueDate,
     fixedTime,
+    fixedTimeEnabled,
     dependsOn,
     labelIds,
   ]);
@@ -997,6 +1037,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setEarliestDate(snap.earliestDate);
     setEnforceDueDate(snap.enforceDueDate);
     setFixedTime(snap.fixedTime);
+    setFixedTimeEnabled(snap.fixedTimeEnabled);
+    setHasEditedFixedTime(false);
     setLabelIds(snap.labelIds);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
@@ -1163,16 +1205,29 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           <label className="form-checkbox-row" style={{ cursor: isContainer ? 'not-allowed' : 'pointer' }}>
                             <input
                               type="checkbox"
-                              checked={!!fixedTime}
+                              checked={fixedTimeEnabled}
                               disabled={isContainer}
-                              onChange={(e) => setFixedTime(e.target.checked ? '09:00' : '')}
+                              onChange={(e) => {
+                                setHasEditedFixedTime(true);
+                                setFixedTimeEnabled(e.target.checked);
+                                if (!e.target.checked) setFixedTime('');
+                              }}
                             />
-                            {fixedTime ? `At ${fixedTime}` : 'Not fixed'}
+                            {fixedTimeEnabled ? (fixedTime ? `At ${fixedTime}` : 'Pick a time') : 'Not fixed'}
                           </label>
-                          {fixedTime && !isContainer && (
+                          {fixedTimeEnabled && !isContainer && (
                             <>
-                              <input type="time" value={fixedTime} onChange={(e) => setFixedTime(e.target.value)} style={{ marginTop: 6 }} />
+                              <input
+                                type="time"
+                                value={fixedTime}
+                                onChange={(e) => {
+                                  setHasEditedFixedTime(true);
+                                  setFixedTime(e.target.value);
+                                }}
+                                style={{ marginTop: 6 }}
+                              />
                               <p className="form-hint">Scheduled blocks for this task will always start at this time.</p>
+                              {fixedTimeError && <p className="form-error">{fixedTimeError}</p>}
                             </>
                           )}
                           {isContainer && (
@@ -1330,10 +1385,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
               {mainDirty && (
                 <div className="detail-save-row">
+                  {fixedTimeError && <p className="form-error">{fixedTimeError}</p>}
                   <button type="button" className="btn" onClick={handleCancel}>
                     Cancel
                   </button>
-                  <button type="button" className="btn btn-primary" onClick={handleSave}>
+                  <button type="button" className="btn btn-primary" onClick={handleSave} disabled={!!fixedTimeError}>
                     Save
                   </button>
                 </div>
