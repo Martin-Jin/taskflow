@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.23',
+    date: '2026-08-01',
+    title: 'Cleaner status pills in Settings',
+    changes: [
+      'The "not connected" status pills in Settings (Todoist standalone mode, Claude/Gemini key not set) no longer show a circle icon and now use the app\'s neutral theme color instead of blue.',
+    ],
+  },
+  {
     version: '1.33.22',
     date: '2026-08-01',
     title: 'Calendar event times, and an easier-to-see drag preview',
