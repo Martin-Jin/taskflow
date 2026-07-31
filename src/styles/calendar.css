@@ -1135,3 +1135,34 @@
     font-size: 17px;
   }
 }
+
+/* -------------------------------------------------------------------- */
+/* Mobile swipe-to-page carousel (CalendarPage) — see the swipe effect  */
+/* there for the drag/settle logic; this is just the 3-page strip.      */
+/* -------------------------------------------------------------------- */
+
+.calendar-swipe-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+}
+
+.calendar-swipe-track {
+  display: flex;
+  width: 300%;
+  flex: none;
+}
+
+/* Each page mirrors CalendarPage's old single-view wrapper (flex column,
+   min-height/min-width 0) so WeekView/MonthView's own `flex: 1` still fills
+   it exactly as when they sat directly in that wrapper. */
+.calendar-swipe-page {
+  flex: 0 0 33.3333%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}

@@ -3,7 +3,7 @@ import { ExternalLink, AlertCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime } from '../../utils/dateUtils';
-import { isBlockMissed, isBlockCompletedLate } from '../../utils/missedTasks';
+import { isBlockMissed, isBlockCompletedLate, isBlockTaskCompleted } from '../../utils/missedTasks';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 
@@ -33,7 +33,7 @@ export default function TodayAgenda() {
           link: task?.link || null,
           isMissed: isBlockMissed(b, task, today, nowMinutes),
           isDueToday: task?.dueDate === today,
-          isCompleted: !!task?.isCompleted,
+          isCompleted: isBlockTaskCompleted(b, task),
           isCompletedLate: isBlockCompletedLate(b, task),
         };
       });

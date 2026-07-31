@@ -17,6 +17,21 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.17',
+    date: '2026-07-31',
+    title: 'Undo event creation, fix recurring completions vanishing, dashboard/stats stat tiles',
+    changes: [
+      'Creating a calendar event now shows an "Undo" notification, matching editing and deleting events.',
+      "Completing a recurring task no longer immediately removes it from Today's agenda and the calendar — it now stays visible, crossed out, as a completed record before rolling over to its next occurrence.",
+      'Dashboard: "Overdue" and "Missed" are now one combined stat tile, and a new "Completed today" tile was added.',
+      'Stats page: added task-count tiles (active, due today, overdue & missed, completed today, total completed) and split the page into "Time & hours" and "Task counts" sections.',
+      'Mobile: the dashboard\'s search button moved from the top bar to a floating button in the bottom-right corner, matching the "Add task" button style.',
+      'Mobile: fixed a slight left/right spacing mismatch caused by the scrollbar reserving space on narrow screens — scrollbars no longer take up layout space on mobile.',
+      'Mobile calendar: swiping between days/weeks/months now follows your finger live and settles onto whichever page you dragged to, instead of jumping straight there once a swipe is detected.',
+      'The event description box starts about 50% taller before it scrolls.',
+    ],
+  },
+  {
     version: '1.33.16',
     date: '2026-07-31',
     title: 'Cleaner synced event descriptions, wider event modal, drag fix',

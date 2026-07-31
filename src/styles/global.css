@@ -464,6 +464,39 @@ select:focus-visible,
   .app-shell.is-mobile .topbar {
     padding: 0 var(--space-3);
   }
+
+  /* On mobile, a classic reserved-width scrollbar (still applied by desktop
+     Chromium/WebKit even at a narrow/touch-emulated viewport) eats into the
+     right edge's padding but not the left's, reading as lopsided side
+     spacing. Real touch devices already draw their own transient overlay
+     scrollbar outside this styling, so hiding ours here loses nothing and
+     fixes the asymmetry — applied to every scrollable element, not just
+     .main-content, since any scrollable list/modal on mobile has the same
+     problem. */
+  .app-shell.is-mobile * {
+    scrollbar-width: none;
+  }
+
+  .app-shell.is-mobile *::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Floating search button — Dashboard-only, mobile-only (see App.jsx).
+   Mirrors AddTaskFabGroup's .add-task-btn (tasklist.css) — same 56px size,
+   corner offsets and elevation, just left of that button's own reserved
+   right-edge column since Dashboard never renders that FAB alongside this. */
+.mobile-search-fab {
+  position: fixed;
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
+  z-index: 120;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  justify-content: center;
+  box-shadow: var(--shadow-elevated);
 }
 
 .topbar .brand {

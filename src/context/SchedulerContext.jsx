@@ -1030,6 +1030,7 @@ export function SchedulerProvider({ children }) {
               dueDate: nextDueDate,
               remainingHours: t.estimatedHours,
               isCompleted: false,
+              completedAt: nowIso,
               completedDates: keptDates,
               completionHistory: nextHistory,
               updatedAt: nowIso,
@@ -1040,14 +1041,19 @@ export function SchedulerProvider({ children }) {
           }
           return t;
         });
-        // Drop only *unlocked* blocks for the occurrence actually being
-        // closed out (date <= baseDate) — blocks for LATER dates belong to
-        // future occurrences already placed by the last rebalance (each
-        // occurrence gets its own block now, see rebalanceEngine's
-        // generateTaskOccurrences expansion) and must survive. Locked blocks
-        // are protected the same way a rebalance protects them, and blocks
-        // for other tasks are untouched.
-        const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date > baseDate);
+        // Drop only *unlocked* blocks for occurrences strictly BEFORE the one
+        // actually being closed out (date < baseDate) — those are stale/
+        // missed prior occurrences with nothing left to show. The occurrence
+        // just closed out (date === baseDate) keeps its block so today's
+        // agenda/calendar can keep showing it, crossed out, as a completed
+        // record (see isBlockTaskCompleted in missedTasks.js, which reads
+        // `completedDates` instead of `isCompleted` for this exact reason).
+        // Blocks for LATER dates belong to future occurrences already placed
+        // by the last rebalance (each occurrence gets its own block now, see
+        // rebalanceEngine's generateTaskOccurrences expansion) and must
+        // survive. Locked blocks are protected the same way a rebalance
+        // protects them, and blocks for other tasks are untouched.
+        const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date >= baseDate);
         commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
         return true;
       }
@@ -1493,6 +1499,28 @@ export function SchedulerProvider({ children }) {
           })
           .catch((err) => console.error('[SchedulerContext] Failed to push new event to Google Calendar', err));
       }
+
+      // ---- Undo toast -----------------------------------------------------
+      // Mirrors updateEvent/deleteEvent's own toast below — Undo removes the
+      // just-added row locally and, if it made it to Google in the meantime,
+      // deletes it there too (using the latest events, since the Google push
+      // above may still be in flight and hasn't patched a googleEventId in
+      // yet by the time Undo is clicked).
+      setActionToast({
+        id: `evt_add_${Date.now()}`,
+        label: 'Added event',
+        undo: () => {
+          setEvents((prev) => {
+            const current = prev.find((e) => e.id === newEvent.id);
+            if (googleConnected && current?.googleEventId) {
+              deleteCalendarEvent(current.googleEventId, current.calendarId).catch((err) =>
+                console.error('[SchedulerContext] Failed to delete undone event from Google Calendar', err)
+              );
+            }
+            return prev.filter((e) => e.id !== newEvent.id);
+          });
+        },
+      });
 
       return newEvent;
     },

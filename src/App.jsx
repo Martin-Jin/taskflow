@@ -289,12 +289,6 @@ function AppShell() {
             <span className="brand-name">TaskFlow</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {/* Mobile has no keyboard for Ctrl+K, so this is its only entry point
-                to the command palette — placed here since Dashboard is the
-                mobile home tab, reachable from anywhere via BottomTabBar. */}
-            <button className="btn btn-icon" onClick={() => setShowCommandPalette(true)} aria-label="Open command palette" title="Search / commands">
-              <Search size={18} />
-            </button>
             <AccountButton compact menuAlign="down" onOpenAccountSettings={() => setTab('settings')} />
           </div>
         </header>
@@ -323,6 +317,23 @@ function AppShell() {
           {tab === 'settings' && <SettingsPanel onOpenTour={openTour} settingsSectionRequest={settingsSectionRequest} />}
         </div>
       </main>
+
+      {isMobile && tab === 'dashboard' && (
+        // Mobile has no keyboard for Ctrl+K, so this is its only entry point
+        // to the command palette. Used to live as an icon button in the
+        // topbar; moved to a floating bottom-right button (mirroring
+        // AddTaskFabGroup's add-task FAB on Tasks/Board) so the topbar's
+        // right side is just the account button, and search stays reachable
+        // one-thumb from anywhere on the dashboard.
+        <button
+          className="btn btn-primary mobile-search-fab"
+          onClick={() => setShowCommandPalette(true)}
+          aria-label="Open command palette"
+          title="Search / commands"
+        >
+          <Search size={22} />
+        </button>
+      )}
 
       {isMobile && <BottomTabBar tabs={TABS} activeTab={tab} onSelectTab={setTab} />}
 

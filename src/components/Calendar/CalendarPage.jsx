@@ -30,10 +30,16 @@ function getWeekStart(iso) {
   return addDays(iso, -dow); // Sunday-start week
 }
 
-// Minimum horizontal drag distance (px) before a touch gesture counts as a
-// swipe rather than a tap/scroll — low enough to feel responsive, high
-// enough to not fire on incidental vertical-scroll touches.
-const SWIPE_THRESHOLD_PX = 50;
+// Fraction of the viewport's width a drag must cross before release commits
+// to the next/prev page instead of springing back to the current one —
+// mirrors Google Calendar's mobile swipe-to-page feel (a >30%-of-screen drag
+// "wins" the page, matching how far most carousel components in the wild
+// pick their commit threshold).
+const SWIPE_COMMIT_FRACTION = 0.3;
+// Below this many px of movement, a touch's direction (horizontal page-swipe
+// vs. vertical scroll) hasn't been determined yet — see the direction-lock
+// logic in the swipe effect below.
+const DIRECTION_LOCK_PX = 10;
 
 // Views mirror Google Calendar's own switcher: Day/3 Day/Week give the full
 // time-grid (WeekView, sized to 1, 3, or 7 columns), Month trades timeline
@@ -64,7 +70,20 @@ export default function CalendarPage() {
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
   const { blocks, events, tasks, runRebalance, runPlanToday, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
-  const touchStartX = useRef(null);
+  // ---- Mobile swipe-to-page carousel --------------------------------------
+  // A live-tracking 3-page carousel (prev/current/next, see the render below)
+  // instead of the old "detect a swipe past a threshold, then jump" — the
+  // track follows the finger 1:1 during the drag (imperative style writes in
+  // the native listener below, not React state, so it doesn't re-render on
+  // every touchmove) and on release either settles onto the adjacent page or
+  // springs back to center, matching Google Calendar's mobile paging feel.
+  const swipeViewportRef = useRef(null);
+  const swipeTrackRef = useRef(null);
+  const swipeGesture = useRef({ startX: 0, startY: 0, dragging: false, direction: null, lastDx: 0 });
+  // null while idle/dragging (no transition — the track just follows touch
+  // input directly); 'next'/'prev'/'cancel' during the post-release settle
+  // animation, so the CSS transition only applies for that brief animation.
+  const [swipeSettlePhase, setSwipeSettlePhase] = useState(null);
 
   // Close the date-picker/view-menu dropdowns on an outside click — each ref
   // wraps BOTH its trigger button and its dropdown panel, so clicks on the
@@ -172,30 +191,132 @@ export default function CalendarPage() {
     setView('day');
   }
 
-  function handleTouchStart(e) {
-    // A second finger joining mid-gesture means this is a pinch (zoom),
-    // not a swipe — WeekView's own touch listeners own that gesture, so
-    // bail out here and don't treat the eventual lift-off as a swipe.
-    if (e.touches.length !== 1) {
-      touchStartX.current = null;
-      return;
+  // Renders one page of the swipe carousel — `base` is a weekStart/day (for
+  // Day/3 Day/Week, passed straight to WeekView) or a monthStart (for
+  // Month). Shared by the prev/current/next panels below so all three stay
+  // in lockstep with whatever the current `view` mode is.
+  function renderCalendarPage(base) {
+    if (view === 'month') {
+      return (
+        <MonthView
+          monthStart={base}
+          onSelectBlock={(block) => setSelectedBlockId(block.id)}
+          onSelectEvent={(evt) => setSelectedEventId(evt.id)}
+          onSelectDay={jumpToDay}
+        />
+      );
     }
-    touchStartX.current = e.touches[0].clientX;
+    return (
+      <WeekView
+        weekStart={base}
+        dayCount={dayCount}
+        isMobile={isMobile}
+        pxPerMin={pxPerMin}
+        onZoomDelta={handleZoomDelta}
+        onSelectBlock={(block) => setSelectedBlockId(block.id)}
+        onSelectEvent={(evt) => setSelectedEventId(evt.id)}
+        onCreateEvent={(date, startTime, endTime) => setCreatingEvent({ date, startTime, endTime })}
+        onSelectDay={jumpToDay}
+      />
+    );
   }
 
-  function handleTouchEnd(e) {
-    if (touchStartX.current === null) return;
-    // Still-active touches after this one lifts means a pinch is (or was)
-    // in progress — same reasoning as handleTouchStart above.
-    if (e.touches.length > 0) {
-      touchStartX.current = null;
-      return;
+  const swipePrevBase = view === 'month' ? addMonths(monthStart, -1) : addDays(rangeStart, -step);
+  const swipeCenterBase = view === 'month' ? monthStart : rangeStart;
+  const swipeNextBase = view === 'month' ? addMonths(monthStart, 1) : addDays(rangeStart, step);
+
+  // Native (non-passive) listeners, same reasoning as WeekView's own touch
+  // handlers (see its wheel/touch effects) — React's synthetic onTouchMove is
+  // passive by default, so preventDefault() there is silently ignored and
+  // can't actually stop the vertical scroll/bounce a horizontal page-swipe
+  // needs to suppress.
+  useEffect(() => {
+    if (!isMobile) return undefined;
+    const viewport = swipeViewportRef.current;
+    const track = swipeTrackRef.current;
+    if (!viewport || !track) return undefined;
+
+    function setLiveOffset(px, animated) {
+      track.style.transition = animated ? 'transform 220ms ease' : 'none';
+      track.style.transform = `translateX(calc(-33.3333% + ${px}px))`;
     }
-    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
-    touchStartX.current = null;
-    if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX) return;
-    if (deltaX < 0) goNext();
-    else goPrev();
+
+    function onTouchStart(e) {
+      // A second finger joining means this is a pinch (zoom) — WeekView's
+      // own touch listeners own that gesture, so don't treat it as a swipe.
+      if (e.touches.length !== 1) return;
+      swipeGesture.current = { startX: e.touches[0].clientX, startY: e.touches[0].clientY, dragging: true, direction: null, lastDx: 0 };
+    }
+
+    function onTouchMove(e) {
+      const g = swipeGesture.current;
+      if (!g.dragging || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - g.startX;
+      const dy = e.touches[0].clientY - g.startY;
+      // Direction lock: the first ~10px of movement decide whether this
+      // gesture is a horizontal page-swipe or a vertical scroll — once
+      // decided it can't flip mid-gesture, matching how most swipeable
+      // carousels disambiguate from a scrollable list beneath them.
+      if (g.direction === null) {
+        if (Math.abs(dx) < DIRECTION_LOCK_PX && Math.abs(dy) < DIRECTION_LOCK_PX) return;
+        g.direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
+        if (g.direction === 'vertical') {
+          g.dragging = false; // let the native vertical scroll take over untouched
+          return;
+        }
+      }
+      if (g.direction !== 'horizontal') return;
+      if (e.cancelable) e.preventDefault();
+      g.lastDx = dx;
+      setLiveOffset(dx, false);
+    }
+
+    function onTouchEnd() {
+      const g = swipeGesture.current;
+      if (!g.dragging || g.direction !== 'horizontal') {
+        g.dragging = false;
+        return;
+      }
+      g.dragging = false;
+      const width = viewport.offsetWidth || 1;
+      const dx = g.lastDx;
+      if (Math.abs(dx) > width * SWIPE_COMMIT_FRACTION) {
+        setLiveOffset(dx < 0 ? -width : width, true);
+        setSwipeSettlePhase(dx < 0 ? 'next' : 'prev');
+      } else {
+        setLiveOffset(0, true);
+        setSwipeSettlePhase('cancel');
+      }
+    }
+
+    viewport.addEventListener('touchstart', onTouchStart, { passive: true });
+    viewport.addEventListener('touchmove', onTouchMove, { passive: false });
+    viewport.addEventListener('touchend', onTouchEnd);
+    viewport.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      viewport.removeEventListener('touchstart', onTouchStart);
+      viewport.removeEventListener('touchmove', onTouchMove);
+      viewport.removeEventListener('touchend', onTouchEnd);
+      viewport.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [isMobile]);
+
+  // Fires once the post-release settle transition finishes. For 'next'/'prev'
+  // this is where the date actually advances — until now the carousel was
+  // just showing the adjacent page's already-rendered content slid into
+  // view, nothing about `anchorDate` has changed yet. Resetting the track's
+  // transform back to its resting position happens in the same tick (with
+  // transitions off), so the freshly-centered page doesn't visibly animate
+  // in again on top of the swipe that just finished.
+  function handleSwipeTransitionEnd(e) {
+    if (e.target !== swipeTrackRef.current || swipeSettlePhase === null) return;
+    if (swipeSettlePhase === 'next') goNext();
+    else if (swipeSettlePhase === 'prev') goPrev();
+    setSwipeSettlePhase(null);
+    if (swipeTrackRef.current) {
+      swipeTrackRef.current.style.transition = 'none';
+      swipeTrackRef.current.style.transform = 'translateX(-33.3333%)';
+    }
   }
 
   const title =
@@ -210,8 +331,8 @@ export default function CalendarPage() {
       <div className="calendar-toolbar">
         <div className="calendar-toolbar-left">
           {/* Prev/Today/Next are desktop-only — mobile navigates by swiping
-              the grid itself (see handleTouchStart/End), so a duplicate tap
-              target for the same thing would be redundant there. */}
+              the grid itself (see the swipe-carousel effect above), so a
+              duplicate tap target for the same thing would be redundant there. */}
           {!isMobile && (
             <>
               <button className="btn btn-icon calendar-nav-prev" onClick={goPrev} aria-label="Previous">
@@ -321,30 +442,28 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div
-        style={{ flex: 1, minHeight: 0, display: 'flex' }}
-        onTouchStart={isMobile ? handleTouchStart : undefined}
-        onTouchEnd={isMobile ? handleTouchEnd : undefined}
-      >
-        {view === 'month' ? (
-          <MonthView
-            monthStart={monthStart}
-            onSelectBlock={(block) => setSelectedBlockId(block.id)}
-            onSelectEvent={(evt) => setSelectedEventId(evt.id)}
-            onSelectDay={jumpToDay}
-          />
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        {isMobile ? (
+          // Three pages (prev/current/next) sit side by side in a track 3x
+          // the viewport's width, permanently positioned to show the middle
+          // one (see the -33.3333% base offset) — the swipe effect above
+          // drags this track live, then either settles it onto the
+          // prev/next page or springs it back, at which point handleSwipe-
+          // TransitionEnd advances `anchorDate` and resets the track.
+          <div className="calendar-swipe-viewport" ref={swipeViewportRef}>
+            <div
+              className="calendar-swipe-track"
+              ref={swipeTrackRef}
+              style={{ transform: 'translateX(-33.3333%)' }}
+              onTransitionEnd={handleSwipeTransitionEnd}
+            >
+              <div className="calendar-swipe-page">{renderCalendarPage(swipePrevBase)}</div>
+              <div className="calendar-swipe-page">{renderCalendarPage(swipeCenterBase)}</div>
+              <div className="calendar-swipe-page">{renderCalendarPage(swipeNextBase)}</div>
+            </div>
+          </div>
         ) : (
-          <WeekView
-            weekStart={rangeStart}
-            dayCount={dayCount}
-            isMobile={isMobile}
-            pxPerMin={pxPerMin}
-            onZoomDelta={handleZoomDelta}
-            onSelectBlock={(block) => setSelectedBlockId(block.id)}
-            onSelectEvent={(evt) => setSelectedEventId(evt.id)}
-            onCreateEvent={(date, startTime, endTime) => setCreatingEvent({ date, startTime, endTime })}
-            onSelectDay={jumpToDay}
-          />
+          renderCalendarPage(view === 'month' ? monthStart : rangeStart)
         )}
       </div>
 

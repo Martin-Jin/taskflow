@@ -12,20 +12,36 @@
  */
 import { toISODate, timeToMinutes, fromISODate } from './dateUtils';
 
+/**
+ * Was `block`'s occurrence of `task` completed? A plain (non-recurring) task
+ * stays `isCompleted: true` once done, but a recurring task's `isCompleted`
+ * flips back to `false` the moment it's completed (advancing to its next
+ * occurrence — see SchedulerContext.completeTask) even though TODAY's block
+ * for the occurrence just closed out is deliberately kept around as a
+ * historical record. So for a recurring task, "was this specific block's
+ * occurrence completed" is answered by `completedDates` (which occurrence-
+ * dates have been closed out) instead of the task's current `isCompleted`.
+ */
+export function isBlockTaskCompleted(block, task) {
+  if (!task) return false;
+  if (task.isRecurring) return !!task.completedDates?.includes(block.date);
+  return !!task.isCompleted;
+}
+
 /** Is `block` (joined with its `task`) missed, given `today`/`nowMinutes`? */
 export function isBlockMissed(block, task, today, nowMinutes) {
-  if (!task || task.isCompleted) return false;
+  if (!task || isBlockTaskCompleted(block, task)) return false;
   if (block.date !== today) return false;
   return timeToMinutes(block.endTime) <= nowMinutes;
 }
 
 /**
- * Was `task` (already completed) marked done after `block`'s scheduled end
- * time had already elapsed? Used to give "completed late" a visually distinct
- * look from a plain on-time completion.
+ * Was `block`'s occurrence (already completed) marked done after its
+ * scheduled end time had already elapsed? Used to give "completed late" a
+ * visually distinct look from a plain on-time completion.
  */
 export function isBlockCompletedLate(block, task) {
-  if (!task?.isCompleted || !task.completedAt) return false;
+  if (!isBlockTaskCompleted(block, task) || !task.completedAt) return false;
   const blockEnd = fromISODate(block.date);
   const [h, m] = block.endTime.split(':').map(Number);
   blockEnd.setHours(h, m, 0, 0);
