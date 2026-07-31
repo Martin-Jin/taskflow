@@ -57,6 +57,7 @@ import { allocateTasks } from './allocator';
 import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { generateTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
+import { expandEventsForRange } from '../utils/recurrenceExpansion';
 
 /**
  * A recurring task is only eligible for the per-occurrence expansion below if
@@ -228,9 +229,16 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   const now = new Date();
   const nowClamp = !fromDate || fromDate === toISODate(now) ? { date: today, minutes: now.getHours() * 60 + now.getMinutes() } : null;
   const horizonDays = rules.horizonWeeks * 7;
+  // A recurring calendar event (e.g. a weekly class synced from Google
+  // Calendar) is stored as one master record describing only its first
+  // occurrence — capacityEngine's busy-interval check is a plain date match,
+  // so without expanding the rule here every occurrence after the first
+  // would look like open capacity and get scheduled straight over. See
+  // recurrenceExpansion.js's expandEventsForRange.
+  const expandedEvents = expandEventsForRange(events, today, addDays(today, horizonDays - 1));
   const capacityMap = computeHorizonCapacity(today, horizonDays, {
     routines,
-    events,
+    events: expandedEvents,
     blocks: lockedBlocks,
     rules,
     nowClamp,
@@ -381,9 +389,12 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   //    5pm doesn't open up capacity earlier in the day.
   const now = new Date();
   const nowClamp = !fromDate || fromDate === toISODate(now) ? { date: today, minutes: now.getHours() * 60 + now.getMinutes() } : null;
+  // See rebalance()'s equivalent comment: expand recurring events so an
+  // occurrence past the first still counts as busy time for today.
+  const expandedEvents = expandEventsForRange(events, today, today);
   const capacityMap = computeHorizonCapacity(today, 1, {
     routines,
-    events,
+    events: expandedEvents,
     blocks: todaysLocked,
     rules,
     nowClamp,

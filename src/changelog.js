@@ -17,6 +17,54 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.15',
+    date: '2026-07-31',
+    title: 'Smart parse: exact time of day',
+    changes: [
+      'Smart parse can now pick up an exact time of day (e.g. "at 5pm", "at 12:30", "at 9") typed into a task title and sets it as the task\'s fixed time — independent of any due date, and independent of the existing "on the day" option.',
+    ],
+  },
+  {
+    version: '1.33.14',
+    date: '2026-07-31',
+    title: 'Undo calendar event deletes',
+    changes: [
+      'Deleting a calendar event now shows an "Undo" toast for a few seconds, so an accidental delete (including on a recurring event\'s "this"/"following" scope) can be reversed instead of being permanent right away.',
+    ],
+  },
+  {
+    version: '1.33.13',
+    date: '2026-07-31',
+    title: 'Fix: scheduler ignoring repeating calendar events',
+    changes: [
+      "The scheduler was only treating a repeating synced calendar event (e.g. a weekly class) as busy time on its very first occurrence — every later occurrence looked like open time and could get a task block scheduled right on top of it. It now correctly blocks out every occurrence.",
+    ],
+  },
+  {
+    version: '1.33.12',
+    date: '2026-07-31',
+    title: 'Completed tasks no longer clutter search suggestions',
+    changes: [
+      'The search bar dropdown no longer suggests already-completed tasks — jumping to a finished task from search wasn\'t useful, so results now only show open tasks.',
+    ],
+  },
+  {
+    version: '1.33.11',
+    date: '2026-07-31',
+    title: 'Fix: scheduler scattering tiny leftover blocks',
+    changes: [
+      "The scheduler no longer splits a task's last few leftover minutes into their own separate tiny block (e.g. a stray 5-minute block next to the real one) when a day's free time didn't line up evenly with the task's length — that leftover now either merges into a real block or rolls over, instead of appearing as its own sliver.",
+    ],
+  },
+  {
+    version: '1.33.10',
+    date: '2026-07-31',
+    title: 'Fix: timer hidden on parent tasks',
+    changes: [
+      "The timer option no longer shows on a parent task that has sub-tasks, since sub-tasks should be completed first — timing the parent directly didn't make sense while it had children.",
+    ],
+  },
+  {
     version: '1.33.9',
     date: '2026-07-31',
     title: 'Completed tasks stay visible on the calendar',

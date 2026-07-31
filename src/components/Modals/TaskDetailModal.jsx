@@ -622,6 +622,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         apply: (match) => setDueDate(match.iso),
         revert: () => setDueDate(task.dueDate || ''),
       },
+      fixedTime: {
+        isUntouched: () => fixedTime === (task.fixedTime || ''),
+        apply: (match) => setFixedTime(match.time),
+        revert: () => setFixedTime(task.fixedTime || ''),
+      },
       recurrence: {
         isUntouched: () => isRecurring === !!task.isRecurring,
         apply: (match, detected) => {
@@ -1644,6 +1649,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 )}
               </DetailField>
 
+              {!isContainer && (
               <DetailField icon={Timer} label="Timer">
                 <TaskTimerControl
                   durationSeconds={getDefaultDurationSeconds({ ...task, estimatedHours })}
@@ -1670,6 +1676,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   onStop={() => stopTimer(task.id)}
                 />
               </DetailField>
+              )}
 
               <DetailField icon={Repeat} label="Repeat">
                 {isRecurring && recurrenceDays && recurrenceDays.length > 0 ? (

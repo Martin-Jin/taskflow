@@ -146,6 +146,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         apply: (match) => setDueDate(match.iso),
         revert: () => setDueDate(''),
       },
+      fixedTime: {
+        // fixedTime has no dedicated manual-edit flag — the checkbox/time
+        // input in the "Fixed time" field are the only other producers, and
+        // both write straight into fixedTime itself, so "still blank" is
+        // already an accurate untouched check.
+        isUntouched: () => !fixedTime,
+        apply: (match) => setFixedTime(match.time),
+        revert: () => setFixedTime(''),
+      },
       recurrence: {
         isUntouched: () => !hasEditedRecurrence,
         apply: (match, detected) => {
@@ -324,7 +333,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             textDecorationStyle: 'dotted',
           }}
         >
-          Smart parse: links, due dates, p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
+          Smart parse: links, due dates, "at 5pm", p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
         </button>
 
         <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />

@@ -85,9 +85,12 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
   // Default suggestion mode: plain text, not currently inside a "#"/"@"
   // token. Matches against the whole query (not just the active word) via
   // the same predicate the List/Board views use for in-place filtering.
+  // Completed tasks are excluded here — jumping to a finished task from
+  // search isn't a useful action, unlike the List/Board views where seeing
+  // a completed match in place is still informative.
   const matchingTasks =
     !activeWordIsProject && !activeWordIsTag && trimmedQuery.length > 0
-      ? tasks.filter((t) => taskMatchesQuery(t, trimmedQuery, labels)).slice(0, 5)
+      ? tasks.filter((t) => !t.isCompleted && taskMatchesQuery(t, trimmedQuery, labels)).slice(0, 5)
       : [];
   const showDropdown = isFocused && (matchingProjects.length > 0 || matchingLabels.length > 0 || matchingTasks.length > 0);
 
