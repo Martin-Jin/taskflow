@@ -159,8 +159,17 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
 
 ## Testing
 
-- There's no test suite — treat `npm run build` as the minimum bar before
-  calling a change done; run it after non-trivial edits.
+- **Before every commit, run `npm run test:unit` and `npm run build`.** Both
+  must pass — treat this as the quick, mandatory pre-commit check (see the
+  Unit test suite section below for what it covers).
+- **For every change, explicitly check both test suites for whether they need
+  updating or a new test added** — not just whether the existing ones still
+  pass. Playwright (`tests/e2e/full-suite/`) covers user-facing behavior;
+  the unit suite (`tests/unit/`) covers error-prone pure logic (date math,
+  parsing, merge/race-guard decisions, migrations — see below). A change can
+  need one, the other, both, or neither; don't assume a non-UI change is
+  exempt from Playwright, or that an internal logic change is exempt from
+  unit tests — check against each suite's own "keep in sync" rule.
 - For UI or frontend changes, start the dev server and use the feature in a
   browser before reporting the task as complete. Test the golden path and edge
   cases, and watch for regressions in other features.
@@ -172,6 +181,42 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
   the user to click through it themselves. Reserve Playwright for a genuinely
   large change where browser automation is the only practical way to verify
   it (e.g. a multi-step flow across several views).
+
+### Unit test suite (`tests/unit/`)
+
+A Vitest suite covers the app's error-prone pure logic — the kind of edge
+cases (date/timezone math, recurrence rollover, race-condition guards) that
+are easy to miss by reading a diff and impractical to exercise through the
+UI. Run it with `npm run test:unit` (wired via `vitest.config.js`, which only
+picks up `tests/unit/**/*.test.js`).
+
+Current coverage: recurrence & recurrence-expansion date math
+(`src/utils/recurrence.js`, `src/utils/recurrenceExpansion.js`), interval/
+capacity scheduling math (`src/utils/intervalUtils.js`,
+`src/algorithms/capacityEngine.js`), natural-language date/duration parsing
+(`src/utils/dateParse.js`, `src/utils/smartParse.js`,
+`src/utils/durationParser.js`, `src/utils/wordNumbers.js`), backup/restore
+field-parity and payload validation (`src/services/backupService.js`),
+dependency-cycle detection (`src/utils/dependencyUtils.js`), the one-shot
+`migrateBlockedTimeToEvents` migration, and the cloud-sync fingerprint/race-
+guard/merge-decision logic extracted from `src/hooks/useCloudSync.js`
+specifically so it could be unit tested.
+
+- **Keep it in sync with the app: whenever you add or materially change logic
+  in one of the areas above (or introduce a new piece of similarly tricky
+  pure logic — date math, parsing, merge/race-guard decisions, migrations),
+  add or update the corresponding test(s) in this suite in the same change**
+  — don't treat it as a one-time artifact, the same rule as the E2E suite
+  below. If new logic doesn't fit an existing test file's domain, add a new
+  file alongside the others rather than bloating an unrelated one.
+- If sync-critical logic (e.g. anything in `useCloudSync.js`) is hard to unit
+  test because it's a closure over hook-internal refs/state, prefer
+  extracting the pure decision as a standalone exported function (taking
+  plain arguments, no side effects) over leaving it untested — see how
+  `computeFingerprint` and the race-guard/merge-decision functions were
+  pulled out for precedent. Any such extraction must be a behavior-preserving
+  refactor only; verify old and new code make identical decisions for the
+  same inputs before trusting it.
 
 ## Code review checklist
 
@@ -185,3 +230,5 @@ never marked completed on finishing an occurrence (see `types/index.js`'s
 - One-time/migration code has been removed once it's no longer needed.
 - Every feature's implementation is complete across integrations, syncing, and
   any other consumer of what changed.
+- `npm run test:unit` passes, and it's been updated to cover whatever the
+  change added or altered in the areas listed under Unit test suite.
