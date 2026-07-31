@@ -1681,6 +1681,10 @@ export function SchedulerProvider({ children }) {
   const deleteEvent = useCallback(
     (eventId, scope = 'all') => {
       const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
+      // Captured before any mutation below, same technique updateEvent uses
+      // for its own Undo — restoring this verbatim always reverts local
+      // state regardless of which scope branch ran.
+      const prevEventsSnapshot = events;
 
       if (!isVirtual || scope === 'all') {
         const target = events.find((e) => e.id === eventId);
@@ -1689,6 +1693,28 @@ export function SchedulerProvider({ children }) {
           deleteCalendarEvent(target.googleEventId, target.calendarId).catch((err) =>
             console.error('[SchedulerContext] Failed to delete event from Google Calendar', err)
           );
+        }
+        if (target) {
+          setActionToast({
+            id: `evt_del_${Date.now()}`,
+            label: 'Deleted event',
+            undo: () => {
+              setEvents(prevEventsSnapshot);
+              // The Google copy was deleted above — recreate it (a fresh
+              // insert, not a revert-in-place) rather than trying to
+              // resurrect the same googleEventId.
+              if (googleConnected && target.googleEventId) {
+                pushEventToCalendar(target)
+                  .then((result) => {
+                    if (!result) return;
+                    setEvents((prev) =>
+                      prev.map((e) => (e.id === target.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+                    );
+                  })
+                  .catch((err) => console.error('[SchedulerContext] Failed to restore deleted event on Google Calendar on undo', err));
+              }
+            },
+          });
         }
         return;
       }
@@ -1712,6 +1738,20 @@ export function SchedulerProvider({ children }) {
             console.error('[SchedulerContext] Failed to delete single occurrence from Google Calendar', err)
           );
         }
+        setActionToast({
+          id: `evt_del_${Date.now()}`,
+          label: 'Deleted event',
+          undo: () => {
+            setEvents(prevEventsSnapshot);
+            if (googleConnected && master.googleEventId) {
+              const originalOverride = master.overrides?.[occurrenceDate];
+              const originalFields = { ...master, ...originalOverride, date: originalOverride?.date || occurrenceDate };
+              pushEventInstanceUpdate(master, occurrenceDate, originalFields).catch((err) =>
+                console.error('[SchedulerContext] Failed to restore single occurrence on Google Calendar on undo', err)
+              );
+            }
+          },
+        });
         return;
       }
 
@@ -1729,6 +1769,26 @@ export function SchedulerProvider({ children }) {
           })
           .catch((err) => console.error('[SchedulerContext] Failed to push truncated series to Google Calendar', err));
       }
+      setActionToast({
+        id: `evt_del_${Date.now()}`,
+        label: 'Deleted events',
+        undo: () => {
+          setEvents(prevEventsSnapshot);
+          // Push the pre-truncation master back so its full recurrence
+          // (including the occurrences we just truncated away) reappears
+          // on Google too.
+          if (googleConnected) {
+            pushEventToCalendar(master)
+              .then((result) => {
+                if (!result) return;
+                setEvents((prev) =>
+                  prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+                );
+              })
+              .catch((err) => console.error('[SchedulerContext] Failed to restore truncated series on Google Calendar on undo', err));
+          }
+        },
+      });
     },
     [events, googleConnected]
   );

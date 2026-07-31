@@ -36,7 +36,7 @@
  * ============================================================================
  */
 
-import { findDuePhrase } from './dateParse';
+import { findDuePhrase, findFixedTimePhrase } from './dateParse';
 import { findRecurrencePhrase, WEEKDAY_LABELS } from './recurrence';
 import { findDurationPhrase } from './durationParser';
 import { URL_PATTERN_SOURCE, needsScheme } from './linkify';
@@ -276,6 +276,7 @@ function findLabelPhrases(text) {
  *   detected: {
  *     link?: {url: string, matchedText: string},
  *     dueDate?: {iso: string, matchedText: string},
+ *     fixedTime?: {time: string, matchedText: string},
  *     recurrence?: {rule: {unit: string, count: number}, recurrenceString: string, matchedText: string},
  *     priority?: {level: string, matchedText: string},
  *     enforceDueDate?: {matchedText: string},
@@ -303,6 +304,14 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (dueMatch) {
     detected.dueDate = dueMatch;
     working = removeMatch(working, dueMatch.matchedText);
+  }
+
+  // Independent of the due-date match above — a title can carry a date, a
+  // time, both, or neither (see findFixedTimePhrase's doc comment).
+  const fixedTimeMatch = findFixedTimePhrase(working);
+  if (fixedTimeMatch) {
+    detected.fixedTime = fixedTimeMatch;
+    working = removeMatch(working, fixedTimeMatch.matchedText);
   }
 
   const recMatch = findRecurrencePhrase(working);

@@ -389,15 +389,19 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
  * array of {start,end}) in place and returns the number of hours actually
  * placed plus the concrete {start,end} minute ranges used.
  */
-function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours) {
+function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, floorHours = hours) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
   // A task's total remaining time can itself be smaller than its own
   // minChunkHours (e.g. a 5-minute task against the default 30-minute min
   // chunk) — the "no slivers" rule exists to stop a big task's leftover
   // fragments from getting scattered, not to make a task that's inherently
-  // shorter than the floor permanently unplaceable. Cap the floor at what
-  // we're actually trying to place for this call.
-  const effectiveMinChunk = Math.min(minChunkHours, hoursToPlace);
+  // shorter than the floor permanently unplaceable. Cap the floor at
+  // `floorHours` (the task's full remaining total, not whatever fragment
+  // this particular call/pass is placing) so a leftover sliver from an
+  // earlier pass — e.g. 5 minutes left over from a 1-hour task — still
+  // has to clear the real 30-minute floor instead of the floor shrinking
+  // down to match the sliver itself.
+  const effectiveMinChunk = Math.min(minChunkHours, floorHours);
   const placements = [];
 
   for (let i = 0; i < dayFreeIntervals.length && hoursToPlace >= effectiveMinChunk - EPSILON_HOURS; i++) {
@@ -443,9 +447,9 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours) 
  * No fallback to a different time is attempted; the whole point of
  * `fixedTime` is that the task is done at that time or not that day.
  */
-function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, fixedStartMins) {
+function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, fixedStartMins, floorHours = hours) {
   const hoursToPlace = Math.min(hours, maxChunkHours);
-  const effectiveMinChunk = Math.min(minChunkHours, hoursToPlace);
+  const effectiveMinChunk = Math.min(minChunkHours, floorHours);
 
   const idx = dayFreeIntervals.findIndex((iv) => iv.start <= fixedStartMins && iv.end > fixedStartMins);
   if (idx === -1) return { placedHours: 0, placements: [] };
@@ -483,9 +487,13 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
 function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '') {
   const minChunkHours = task.minChunkHours ?? 0.5;
   const maxChunkHours = task.maxChunkHours ?? 4;
+  // Floor the min-chunk check against the task's true total remaining hours,
+  // not `hours` (which may already be a shrunk-down leftover from an earlier
+  // pass) — see placeHoursInDay's floorHours comment.
+  const floorHours = task.remainingHours;
   const { placedHours, placements } = task.fixedTime
-    ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime))
-    : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours);
+    ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime), floorHours)
+    : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours, floorHours);
   for (const p of placements) {
     newBlocks.push({
       id: `blk_${task.id}_${date}_${p.start}${idSuffix}`,

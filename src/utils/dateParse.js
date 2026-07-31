@@ -331,3 +331,39 @@ export function findDuePhrase(text, referenceDate = new Date()) {
 
   return null;
 }
+
+/**
+ * Find an explicit clock-time mention ("at 12:30", "at 5pm", "at 9") for a
+ * task's `fixedTime` field ("HH:MM" 24hr — see types/index.js's Task.fixedTime
+ * and allocator.js's placeFixedTimeInDay). Requires the "at" trigger word so
+ * this stays unambiguous and never collides with the duration ("3.5 hours"),
+ * numeric-date ("24/03"), or priority ("p2") detectors elsewhere in the
+ * title — none of those use "at". Independent of findDuePhrase's due-date
+ * detection above: a title can carry a date, a time, both, or neither.
+ *
+ * A bare hour/minute with no am/pm suffix is read literally as 24-hour time
+ * ("at 9" -> "09:00", "at 17:30" -> "17:30") rather than guessed at — typing
+ * "am"/"pm" is how a user asks for the 12-hour reading of an ambiguous hour.
+ * @param {string} text
+ * @returns {{time: string, matchedText: string, index: number}|null}
+ */
+export function findFixedTimePhrase(text) {
+  if (!text || typeof text !== 'string') return null;
+  const m = text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?\b/i);
+  if (!m) return null;
+
+  let hour = Number(m[1]);
+  const minute = m[2] ? Number(m[2]) : 0;
+  const meridiem = m[3] ? m[3].toLowerCase() : null;
+  if (minute > 59) return null;
+
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    hour = meridiem === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+  } else if (hour > 23) {
+    return null;
+  }
+
+  const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  return { time, matchedText: m[0], index: m.index };
+}

@@ -39,7 +39,7 @@ import {
   Link as LinkIcon,
 } from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
-import { formatDisplayDate } from '../utils/dateUtils';
+import { formatDisplayDate, formatTime12h } from '../utils/dateUtils';
 import { linkLabel } from '../utils/linkify';
 import { PRIORITY_LABELS } from '../utils/priorityColor';
 import { formatHours } from '../utils/formatHours';
@@ -47,6 +47,7 @@ import { formatHours } from '../utils/formatHours';
 const SCALAR_FIELD_TYPES = [
   'link',
   'dueDate',
+  'fixedTime',
   'recurrence',
   'priority',
   'estimatedHours',
@@ -173,6 +174,7 @@ export function buildSmartChips(smartDetected) {
   return [
     smartDetected.link && { type: 'link', icon: LinkIcon, label: linkLabel(smartDetected.link.url) },
     smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
+    smartDetected.fixedTime && { type: 'fixedTime', icon: Clock, label: `At ${formatTime12h(smartDetected.fixedTime.time)}` },
     smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
     smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
     smartDetected.estimatedHours && {
