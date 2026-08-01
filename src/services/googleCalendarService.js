@@ -38,6 +38,7 @@
 import { getMockEvents } from './mockData';
 import { fromISODate, toISODate, timeToMinutes, addDays } from '../utils/dateUtils';
 import { loadPersisted, savePersisted, clearPersisted } from '../utils/persistence';
+import { loadScript } from '../utils/loadScript';
 import { auth } from '../firebase';
 
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
@@ -124,23 +125,6 @@ function throwAuthExpired() {
   const authErr = new Error('Google Calendar authorization expired — please reconnect.');
   authErr.isGoogleAuthError = true;
   throw authErr;
-}
-
-/**
- * Dynamically load the Google API + Identity Services scripts. Safe to call
- * multiple times — subsequent calls resolve immediately once loaded.
- */
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) return resolve();
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = true;
-    script.defer = true;
-    script.onload = resolve;
-    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
-    document.head.appendChild(script);
-  });
 }
 
 /**

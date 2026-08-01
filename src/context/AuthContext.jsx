@@ -7,31 +7,75 @@
  * cloud-sync effects in SchedulerContext/ThemeContext for the actual sync.
  * This context only owns "who is signed in", not the app data itself.
  *
- * SIGN-IN FLOW: popup only, deliberately — no signInWithRedirect fallback.
- * Redirect sends the user through Firebase's own intermediate OAuth handler
- * page (`<project>.firebaseapp.com/__/auth/handler`) and back, which depends
- * on a sessionStorage marker surviving that whole round-trip. That's broken
- * in more places than just iOS home-screen apps: e.g. Firefox for Android's
- * tab/storage handling can drop it too, in which case the user gets stranded
- * on Firebase's own error page ("missing initial state") *outside* our app —
- * a page we have no code running on and can't catch or redirect past. Popup
- * failures are surfaced as a clear in-app message instead, so the user never
- * leaves the app to a page we can't recover from.
+ * SIGN-IN FLOW: uses Google Identity Services' (GIS) OAuth token popup —
+ * the same mechanism googleCalendarService.js already uses for Calendar
+ * access (same VITE_GOOGLE_CLIENT_ID, no extra setup needed) — rather than
+ * Firebase's own signInWithPopup/signInWithRedirect. Both of Firebase's own
+ * methods route through its intermediate OAuth handler page
+ * (`<project>.firebaseapp.com/__/auth/handler`), which depends on a
+ * sessionStorage marker surviving the whole round-trip; on some mobile
+ * browsers (confirmed on Firefox for Android — window.open() there just
+ * navigates the current tab instead of opening a real popup, so
+ * signInWithPopup degrades to the same failure mode as signInWithRedirect)
+ * that marker gets lost, stranding the user on Firebase's own raw error page
+ * ("missing initial state") *outside* our app, which we have no code running
+ * on and can't recover from. GIS's popup is Google's own accounts.google.com
+ * page, with no Firebase-hosted intermediate step — it resolves with an
+ * access token, which is exchanged for a Firebase credential via
+ * signInWithCredential() instead.
  *
- * Popup itself doesn't work when TaskFlow is launched from an iOS/Android
- * home-screen icon (standalone display mode) either — window.open there
+ * GIS's popup also doesn't work when TaskFlow is launched from an iOS/
+ * Android home-screen icon (standalone display mode) — window.open there
  * typically just kicks the user out to the regular browser mid-flow. login()
  * detects standalone mode up front and skips straight to prompting the user
- * to continue in their regular browser instead of attempting popup there.
+ * to continue in their regular browser instead of attempting it there.
  * ============================================================================
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
-import { auth, googleProvider } from '../firebase';
+import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../firebase';
 import { clearAllPersisted } from '../utils/persistence';
+import { loadScript } from '../utils/loadScript';
 
 const AuthContext = createContext(null);
+
+// Just enough to identify the user — no Calendar/offline scopes needed here
+// (see googleCalendarService.js for that separate, heavier flow).
+const IDENTITY_SCOPES = 'openid email profile';
+
+let tokenClient = null;
+let gisInited = false;
+
+async function ensureGisClient() {
+  if (gisInited) return;
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  if (!clientId) throw new Error('Google sign-in requires VITE_GOOGLE_CLIENT_ID to be configured — see README.md.');
+
+  await loadScript('https://accounts.google.com/gsi/client');
+  tokenClient = window.google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: IDENTITY_SCOPES,
+    // Always show the account chooser rather than silently reusing whichever
+    // Google account last signed into any app on this device (matches the
+    // previous Firebase-popup flow's setCustomParameters({ prompt: ... })).
+    prompt: 'select_account',
+    callback: '', // set dynamically per-request in requestGoogleAccessToken()
+  });
+  gisInited = true;
+}
+
+/** Opens the GIS popup and resolves with a Google access token once the user approves. */
+function requestGoogleAccessToken() {
+  return new Promise((resolve, reject) => {
+    tokenClient.callback = (resp) => {
+      if (resp.error) return reject(Object.assign(new Error(resp.error_description || resp.error), { gisCode: resp.error }));
+      resolve(resp.access_token);
+    };
+    tokenClient.error_callback = (err) => reject(Object.assign(new Error(err?.message || 'Google sign-in failed'), { gisCode: err?.type }));
+    tokenClient.requestAccessToken();
+  });
+}
 
 export function isStandaloneDisplayMode() {
   if (typeof window === 'undefined') return false;
@@ -59,11 +103,14 @@ export function AuthProvider({ children }) {
       return;
     }
     try {
-      await signInWithPopup(auth, googleProvider);
+      await ensureGisClient();
+      const accessToken = await requestGoogleAccessToken();
+      const credential = GoogleAuthProvider.credential(null, accessToken);
+      await signInWithCredential(auth, credential);
     } catch (err) {
-      // "closed-by-user"/"cancelled" — the user changed their mind, not an error to surface.
-      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') return;
-      if (err?.code === 'auth/popup-blocked' || err?.code === 'auth/operation-not-supported-in-this-environment') {
+      // The user closed the pop-up or declined consent — not an error to surface.
+      if (err?.gisCode === 'popup_closed' || err?.gisCode === 'access_denied') return;
+      if (err?.gisCode === 'popup_failed_to_open') {
         setAuthError(
           "Google sign-in couldn't open a pop-up in this browser. Allow pop-ups for this site (check your address bar for a blocked pop-up icon) and try again, or use a different browser."
         );
