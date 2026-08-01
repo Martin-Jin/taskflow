@@ -1300,9 +1300,8 @@ input.search-bar-input {
   right: -20px;
   bottom: -10px;
   z-index: -1;
-  background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(3px);
   pointer-events: none;
 }
 
