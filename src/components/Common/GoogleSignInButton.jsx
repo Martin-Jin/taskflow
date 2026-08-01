@@ -8,11 +8,13 @@
  * our own button + a prompt to open TaskFlow in a regular browser in
  * standalone/home-screen mode, where nothing OAuth-related works in-place.
  *
- * The real GIS button is only mounted after the user clicks a plain button
- * of ours first, rather than always-on — Chrome shows its own floating
- * "Sign in as <name>" account-chooser bubble next to any rendered GIS
- * button as soon as it mounts if the browser has an active Google session,
- * which otherwise overlapped nearby sidebar UI on every load while signed out.
+ * Always rendered as GIS's compact icon-only button (never 'standard'/text),
+ * with our own "Sign in with Google" label drawn next to it in plain HTML —
+ * the standard text variant is what triggers Chrome's floating "Sign in as
+ * <name>" account-chooser bubble when a Google session cookie is present;
+ * the icon variant doesn't. That bubble is rendered by Google in a
+ * cross-origin iframe, so it can't be restyled (e.g. background) from our
+ * CSS — avoiding the trigger is the only lever we have.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -29,16 +31,15 @@ export default function GoogleSignInButton({ compact = false }) {
   const containerRef = useRef(null);
   const standalone = isRunningStandalone();
   const [showBrowserPrompt, setShowBrowserPrompt] = useState(false);
-  const [activated, setActivated] = useState(false);
 
   useEffect(() => {
-    if (standalone || !activated || !containerRef.current) return;
+    if (standalone || !containerRef.current) return;
     renderGoogleSignInButton(containerRef.current, handleGoogleCredential, {
-      type: compact ? 'icon' : 'standard',
+      type: 'icon',
       size: compact ? 'medium' : 'large',
     }).catch((err) => console.error('[GoogleSignInButton] Failed to render', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compact, standalone, activated]);
+  }, [compact, standalone]);
 
   if (standalone) {
     return (
@@ -59,19 +60,10 @@ export default function GoogleSignInButton({ compact = false }) {
     );
   }
 
-  if (!activated) {
-    return (
-      <button
-        className={`btn ${compact ? 'btn-icon' : ''}`}
-        style={compact ? undefined : { width: '100%', justifyContent: 'center' }}
-        onClick={() => setActivated(true)}
-        title="Sign in with Google to sync across devices"
-      >
-        <LogIn size={15} />
-        {!compact && 'Sign in with Google'}
-      </button>
-    );
-  }
-
-  return <div ref={containerRef} />;
+  return (
+    <div className={`google-signin-wrap ${compact ? 'compact' : ''}`}>
+      <div ref={containerRef} className="google-signin-container" />
+      {!compact && <span className="google-signin-label">Sign in with Google</span>}
+    </div>
+  );
 }
