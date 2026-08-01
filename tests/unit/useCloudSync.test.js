@@ -105,6 +105,7 @@ describe('isValidBackupPayload', () => {
     theme: 'dark',
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
+    events: [],
   };
 
   it('accepts a payload with every backup field present and correctly typed', () => {
@@ -165,7 +166,7 @@ describe('computeFingerprint', () => {
     shortcutBindings: {},
   };
 
-  it('ignores an events field entirely (Google Calendar is authoritative for events, not Firestore)', () => {
+  it('ignores an events field entirely (events are excluded from LIVE cross-device sync specifically — they ARE included in point-in-time backups, see backupService.test.js)', () => {
     const withEvents = { ...baseState, events: [{ id: 'e1' }] };
     expect(computeFingerprint(baseState)).toBe(computeFingerprint(withEvents));
   });
@@ -295,10 +296,14 @@ describe('planRemoteDataMerge', () => {
   });
 
   it('never applies events, even when remoteData carries a stray/legacy events field', () => {
-    // Google Calendar is the authoritative source for events now — Firestore
-    // sync/backups deliberately exclude it (see backupService.js's
-    // BACKUP_FIELDS doc comment), so a remote doc that still has one (e.g.
-    // from before this exclusion shipped) must never be applied.
+    // Google Calendar is the authoritative source for events day-to-day, and
+    // an automatic, continuously-reconciled live sync of them re-opens the
+    // exact "stale snapshot resurrects a deleted event" risk that got them
+    // excluded here (see backupService.js's BACKUP_FIELDS doc comment) — this
+    // exclusion is specific to the LIVE Firestore doc `planRemoteDataMerge`
+    // reconciles against, NOT to point-in-time backups, which DO include
+    // events now (a one-directional, user-initiated restore is a different
+    // risk profile — see backupService.test.js).
     const plan = planRemoteDataMerge(remoteData, localState, { skipTasksBlocks: false });
     expect('events' in plan).toBe(false);
   });

@@ -171,16 +171,30 @@ deliberately excluded from every backup payload — recurring tasks are never ma
 completed on finishing an occurrence (see `types/index.js`'s `Task.isRecurring`), so
 they're unaffected by this filter.
 
-**`events` (CalendarEvents) is deliberately excluded from `BACKUP_FIELDS`**, even
-though it's SchedulerContext state — Google Calendar is the authoritative store for
-it (see `useGoogleCalendarSync.js`), and round-tripping the same data through
-Firestore/backups too caused real bugs: a stale cross-device Firestore snapshot or an
-old backup restore could silently resurrect an event a user had already deleted
-(in TaskFlow or directly in Google Calendar), on top of whatever the Google Calendar
-sync's own merge policy (`eventSyncService.js`) was already doing. `events` is
-device-local now — seeded from `localStorage` on load, kept current purely by
-polling/pulling Google Calendar. Do not add it back to `BACKUP_FIELDS` without a
-strong reason and updating this note plus the README's own Backups section.
+**`events` (CalendarEvents) is a special case: it's in `BACKUP_FIELDS` (point-in-time
+backups DO capture it) but deliberately excluded from LIVE cross-device Firestore
+sync.** Google Calendar remains the authoritative store for events day-to-day (see
+`useGoogleCalendarSync.js`), and round-tripping the same data through a continuously-
+reconciled second store (the live Firestore doc `useCloudSync.js`'s
+`computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData` sync against) caused real
+bugs: a stale cross-device snapshot could silently resurrect an event a user had
+already deleted (in TaskFlow or directly in Google Calendar), on top of whatever the
+Google Calendar sync's own merge policy (`eventSyncService.js`) was already doing. A
+point-in-time backup doesn't have that failure mode — restoring one is an explicit,
+one-directional, user-initiated action (not an automatic background reconciliation),
+so it's safe to include `events` there as a safety net for "my local storage got
+wiped" / "I need to roll back to an old snapshot" scenarios. Concretely: `events`/
+`setEvents` are passed to `useCloudSync.js` as separate params (same pattern as
+`theme`/`setTheme`) so `buildBackupPayload`/`applyBackupPayload` (backup export/
+restore, in `backupService.js` and `useCloudSync.js` respectively) can read/write
+them, while the `state`/`stateRef` bundle that feeds `computeFingerprint`/
+`pushUserData`/`applyRemoteData` (the live-sync path) never includes them. An old
+backup taken before `events` joined `BACKUP_FIELDS` is still valid — a missing
+`events` key is treated as "leave it untouched," not rejected (see
+`isValidBackupPayload`'s doc comment in `backupService.js`). Do not add `events` to
+the live-sync path (`computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData`, or
+`SchedulerContext`'s `cloudSyncState`) without a strong reason and updating this note
+plus the README's own Backups section.
 
 ## Testing
 

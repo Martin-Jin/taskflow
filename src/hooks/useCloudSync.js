@@ -197,6 +197,12 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.
+ * @param {Array} deps.events - Current CalendarEvents. Like `theme`, kept
+ *   OUT of `state`/`stateRef` (so it never reaches the live-sync fingerprint
+ *   or Firestore push/pull) but passed separately purely so backup payloads
+ *   can capture it — see BACKUP_FIELDS' doc comment for why events are
+ *   backed-up but not live-synced.
+ * @param {Function} deps.setEvents - Applies a restored backup's events.
  * @returns {Object} Cloud sync state and callbacks
  */
 export function useCloudSync({
@@ -219,6 +225,8 @@ export function useCloudSync({
   setShortcutBindings,
   theme,
   setTheme,
+  events,
+  setEvents,
 }) {
   const { user } = useAuth();
   // Defaults to true (rather than requiring an opt-in toggle) so a signed-in
@@ -346,10 +354,10 @@ export function useCloudSync({
     if ('labels' in payload) setLabels(pickValid('labels', payload.labels, stateRef.current.labels));
     if ('routines' in payload) setRoutines(pickValid('routines', payload.routines, stateRef.current.routines));
     if ('rules' in payload) setRules(pickValid('rules', payload.rules, stateRef.current.rules));
-    // A backup file exported before events were excluded from BACKUP_FIELDS
-    // may still carry an `events` key — deliberately ignored here (not
-    // restored) rather than treated as legacy data to migrate, since
-    // restoring it is exactly the behavior this exclusion was meant to stop.
+    // Absent on a backup taken before `events` joined BACKUP_FIELDS — left
+    // untouched in that case, same as any other field missing from an
+    // older/partial payload (see isValidBackupPayload's doc comment).
+    if ('events' in payload) setEvents(pickValid('events', payload.events, events));
     if ('soundEnabled' in payload) setSoundEnabled(pickValid('soundEnabled', payload.soundEnabled, stateRef.current.soundEnabled));
     if ('soundVolume' in payload) setSoundVolume(pickValid('soundVolume', payload.soundVolume, stateRef.current.soundVolume));
     if ('animationsEnabled' in payload) {
@@ -387,6 +395,8 @@ export function useCloudSync({
     theme,
     setNotes,
     setShortcutBindings,
+    events,
+    setEvents,
   ]);
 
   // ---- Subscribe to Firestore on mount (when user is available) ------------
@@ -521,10 +531,10 @@ export function useCloudSync({
 
   // ---- Export local backup file --------------------------------------------
   const exportBackup = useCallback(() => {
-    const payload = buildBackupPayload({ ...stateRef.current, theme });
+    const payload = buildBackupPayload({ ...stateRef.current, theme, events });
     downloadBackupFile(payload);
     setNotification({ type: 'success', message: 'Backup exported.' });
-  }, [stateRef, theme, setNotification]);
+  }, [stateRef, theme, events, setNotification]);
 
   // ---- Import local backup file --------------------------------------------
   const importBackup = useCallback(async (file) => {
@@ -545,7 +555,7 @@ export function useCloudSync({
   const createCloudBackup = useCallback(async () => {
     if (!user) return;
     try {
-      const payload = buildBackupPayload({ ...stateRef.current, theme });
+      const payload = buildBackupPayload({ ...stateRef.current, theme, events });
       await createBackup(user.uid, payload);
       setNotification({ type: 'success', message: 'Cloud backup created.' });
       // Refresh the backup list
@@ -555,7 +565,7 @@ export function useCloudSync({
       console.error(err);
       setNotification({ type: 'error', message: 'Failed to create cloud backup.' });
     }
-  }, [user, stateRef, theme, setNotification]);
+  }, [user, stateRef, theme, events, setNotification]);
 
   const loadCloudBackups = useCallback(async () => {
     if (!user) return;

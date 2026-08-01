@@ -33,6 +33,7 @@ function makeSampleState() {
     theme: 'dark',
     notes: { folders: [], notes: [] },
     shortcutBindings: { addTask: 'n' },
+    events: [{ id: 'e1', title: 'Standup', date: '2026-07-31' }],
   };
 }
 
@@ -51,10 +52,24 @@ describe('BACKUP_FIELDS / buildBackupPayload integrity', () => {
     }
   });
 
-  it('excludes events even when the source state has one (Google Calendar is authoritative, not backups/Firestore)', () => {
-    const payload = buildBackupPayload({ ...makeSampleState(), events: [{ id: 'e1' }] });
-    expect(payload).not.toHaveProperty('events');
-    expect(BACKUP_FIELDS).not.toContain('events');
+  it('includes events in the built payload (point-in-time backups are a safety net; live cross-device sync still excludes them separately, see useCloudSync.test.js)', () => {
+    const state = makeSampleState();
+    const payload = buildBackupPayload(state);
+    expect(BACKUP_FIELDS).toContain('events');
+    expect(payload.events).toBe(state.events);
+  });
+
+  it('round-trips events through export + validate unchanged (backup/restore parity)', () => {
+    const state = makeSampleState();
+    const payload = buildBackupPayload(state);
+    expect(isValidBackupPayload(payload)).toBe(true);
+    expect(payload.events).toEqual(state.events);
+  });
+
+  it('accepts a legacy backup that predates events being added to BACKUP_FIELDS (missing `events` entirely)', () => {
+    const payload = buildBackupPayload(makeSampleState());
+    delete payload.events;
+    expect(isValidBackupPayload(payload)).toBe(true);
   });
 
   it('tags the payload with an exportedAt ISO timestamp', () => {

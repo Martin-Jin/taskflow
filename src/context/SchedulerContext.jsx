@@ -676,13 +676,13 @@ export function SchedulerProvider({ children }) {
   // ---- Cloud sync (Firestore) ------------------------------------------------
   // Pull/push/listener/fingerprint/backup/restore logic all lives in this
   // hook now — see its own doc comment (src/hooks/useCloudSync.js).
-  // `cloudSyncState`/`cloudStateRef` bundle every field this sync (and local/
-  // cloud backups) cover — everything BACKUP_FIELDS lists except `theme`,
-  // which the hook takes as a separate param (see its own JSDoc), since live
-  // sync deliberately leaves `theme` to ThemeContext's own independent sync.
-  // `events` is deliberately NOT included — see backupService.js's
-  // BACKUP_FIELDS doc comment for why CalendarEvents are device-local
-  // (Google Calendar-sourced) rather than round-tripped through Firestore.
+  // `cloudSyncState`/`cloudStateRef` bundle every field the LIVE sync (push/
+  // pull/listener/fingerprint) covers — everything BACKUP_FIELDS lists
+  // except `theme` and `events`, both passed to the hook as separate params
+  // instead (see its own JSDoc): `theme` because live sync leaves it to
+  // ThemeContext's own independent sync, and `events` because it's backed up
+  // (point-in-time) but deliberately never live cross-device synced — see
+  // backupService.js's BACKUP_FIELDS doc comment for why.
   const cloudSyncState = useMemo(
     () => ({
       tasks,
@@ -735,6 +735,8 @@ export function SchedulerProvider({ children }) {
     setShortcutBindings,
     theme,
     setTheme,
+    events,
+    setEvents,
   });
 
   /**

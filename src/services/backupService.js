@@ -11,22 +11,27 @@
  */
 
 /**
- * Exactly the fields the live cloud sync already pushes (see firestoreSync.js's
- * pushUserData) — a backup is the same shape, just point-in-time. Note:
- * `theme` is an exception — it's synced live by ThemeContext independently
- * (not pushed/pulled here, see SchedulerContext's cloud-sync comments), but
- * is still included here so point-in-time backups/restores capture it too.
+ * Almost exactly the fields the live cloud sync already pushes (see
+ * firestoreSync.js's pushUserData) — a backup is the same shape, just
+ * point-in-time. Note: `theme` is an exception — it's synced live by
+ * ThemeContext independently (not pushed/pulled here, see SchedulerContext's
+ * cloud-sync comments), but is still included here so point-in-time
+ * backups/restores capture it too.
  *
- * Deliberately EXCLUDES `events` (CalendarEvents — Google Calendar bookings,
- * plus any manual/blocked-time entries) even though it's a piece of
- * SchedulerContext state: Google Calendar is the authoritative store for
- * synced events (see useGoogleCalendarSync.js), and round-tripping the same
- * data through Firestore/backups too caused real bugs — a stale cross-device
- * Firestore snapshot or an old backup restore could reintroduce events a
- * user had already deleted (in TaskFlow or directly in Google Calendar),
- * independent of and on top of the Google Calendar sync's own merge policy.
- * `events` is intentionally device-local now: seeded from localStorage on
- * load and kept current purely by polling/pulling Google Calendar.
+ * `events` (CalendarEvents — Google Calendar bookings, plus any manual/
+ * blocked-time entries) is the other exception, in the opposite direction:
+ * it's included here (point-in-time backups DO capture it) but deliberately
+ * excluded from the LIVE cross-device Firestore sync (see useCloudSync.js's
+ * computeFingerprint/planRemoteDataMerge/applyRemoteData, none of which
+ * mention `events`). The risk that originally got `events` excluded from
+ * everything — a stale snapshot silently resurrecting an event the user had
+ * already deleted (in TaskFlow or directly in Google Calendar) — is a much
+ * bigger deal for live sync, which reconciles automatically and continuously
+ * in the background, than for a backup, which only ever gets written back by
+ * an explicit, one-directional, user-initiated "restore" action. Google
+ * Calendar remains the authoritative store for events day-to-day (see
+ * useGoogleCalendarSync.js); this is just a safety net for "I deleted my
+ * whole account's data" / "my local storage got wiped" scenarios.
  */
 export const BACKUP_FIELDS = [
   'tasks',
@@ -43,6 +48,7 @@ export const BACKUP_FIELDS = [
   'theme',
   'notes',
   'shortcutBindings',
+  'events',
 ];
 
 /**
@@ -71,6 +77,7 @@ export const FIELD_TYPES = {
   // { folders: [...], notes: [...] } — see notesModel.js's DEFAULT_NOTES.
   notes: 'object',
   shortcutBindings: 'object',
+  events: 'array',
 };
 
 /** Does `value` match the runtime shape FIELD_TYPES declares for `field`? */
@@ -117,11 +124,19 @@ export function buildBackupPayload(state) {
  * exist yet) are no longer expected to show up in "Restore from file"; see
  * notesModel.js's migrateLinksToNotes, which applyBackupPayload/
  * applyRemoteData call on such a payload.
+ *
+ * `events` is exempt from the "every field must be present" rule (not a
+ * migration, so no cleanup needed later): backups taken before `events`
+ * joined BACKUP_FIELDS simply won't have it, and that's a permanently valid
+ * shape, not a legacy format to eventually retire — applyBackupPayload
+ * treats an absent `events` as "leave whatever's there untouched" like any
+ * other missing-from-payload field.
  */
 export function isValidBackupPayload(payload) {
   if (!payload || typeof payload !== 'object') return false;
   return BACKUP_FIELDS.every((field) => {
     if (field in payload) return isValidFieldValue(field, payload[field]);
+    if (field === 'events') return true;
     // Legacy pre-Notes backup: accept a present-but-differently-shaped
     // `pinnedLinks` in place of `notes` (see the migration note above) — its
     // own shape is checked by migrateLinksToNotes at apply time, not here.

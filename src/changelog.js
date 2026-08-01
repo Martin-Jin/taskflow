@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.49',
+    date: '2026-08-01',
+    title: 'Calendar events are now included in backups',
+    changes: [
+      "Exporting a backup file, or creating a cloud backup snapshot, now includes your calendar events (Google Calendar bookings and blocked-time entries), so restoring an old backup brings your calendar back too. Live cross-device sync is unaffected — Google Calendar itself stays the sole source of truth there, only point-in-time backups now carry a copy as a safety net.",
+    ],
+  },
+  {
     version: '1.33.48',
     date: '2026-08-01',
     title: 'Google Calendar sync now includes a year of history, and disabled Repeat controls now say why',
