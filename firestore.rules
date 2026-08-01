@@ -8,5 +8,14 @@ service cloud.firestore {
     match /users/{userId}/backups/{backupId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+    // Google Calendar refresh tokens (see cloudflare-worker/src/
+    // googleCalendarAuthRoutes.js) are written/read ONLY by the Worker's
+    // service-account-authenticated Firestore REST calls, which are
+    // authorized by IAM, not by these rules. This match's real job is
+    // guaranteeing no client-side Firebase SDK call — not even the signed-in
+    // owner's own — can ever read or write this subcollection directly.
+    match /users/{userId}/googleCalendarAuth/{document=**} {
+      allow read, write: if false;
+    }
   }
 }

@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.29',
+    date: '2026-08-01',
+    title: 'Google Calendar now stays connected across page refreshes',
+    changes: [
+      "Google Calendar sync used to need a fresh login popup whenever its short-lived connection expired — most noticeably right after refreshing the page. It now stays connected in the background and silently renews itself, so reconnecting is only ever needed if you explicitly revoke access from your Google account.",
+    ],
+  },
+  {
     version: '1.33.28',
     date: '2026-08-01',
     title: 'Fixed deleted tasks leaving stale Google Calendar events behind',

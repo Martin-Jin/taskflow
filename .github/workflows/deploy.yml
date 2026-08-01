@@ -41,12 +41,17 @@ jobs:
       # costs the app owner anything. Lock the Worker's ALLOWED_ORIGIN down to
       # this Pages origin anyway (see cloudflare-worker/README.md) so other
       # sites can't use it as a free CORS relay.
+      # VITE_CALENDAR_AUTH_WORKER_URL points at the same Worker's Calendar
+      # OAuth routes (see cloudflare-worker/src/googleCalendarAuthRoutes.js) —
+      # also just a URL, the real secrets (GOOGLE_CLIENT_SECRET, the Firestore
+      # service account) live only as Worker secrets, never here.
       - name: Build
         env:
           GH_PAGES: true
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
           VITE_AI_QUICKADD_WORKER_URL: ${{ secrets.VITE_AI_QUICKADD_WORKER_URL }}
+          VITE_CALENDAR_AUTH_WORKER_URL: ${{ secrets.VITE_CALENDAR_AUTH_WORKER_URL }}
         run: npm run build
 
       - uses: actions/upload-pages-artifact@v5
