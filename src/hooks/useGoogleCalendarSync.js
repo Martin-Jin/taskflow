@@ -71,7 +71,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   // only re-runs on `googleConnected` changing — its `poll` closure captures
   // whatever `applyPulledEvents` existed at that render, so if that callback
   // closed over the boolean by value it would keep re-deciding "not done
-  // yet" on every 5-minute tick forever, re-running the wipe indefinitely
+  // yet" on every poll tick forever, re-running the wipe indefinitely
   // instead of exactly once. Reading a ref instead means every captured
   // closure still observes the flag flipping.
   const [googleEventsHardResetDone, setGoogleEventsHardResetDone] = usePersistedState('googleEventsHardResetDone', false);
@@ -199,24 +199,47 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     };
     pollGoogleEventsRef.current = poll;
 
-    const handle = setInterval(poll, 5 * 60 * 1000);
+    // 1 minute — down from an earlier 5 minutes, per explicit user request to
+    // close the gap toward "instant" sync without building real push-based
+    // sync (a webhook receiver Google notifies on change, which needs actual
+    // backend infrastructure — see this hook's own module doc). A 1-minute
+    // poll is a plain client-side interval change with no new moving parts,
+    // at the cost of more Google API calls (still well within personal-use
+    // quota) — see also the visibility/focus refresh below, which covers the
+    // common "switched away and came back" case faster than waiting for this
+    // interval to land.
+    const handle = setInterval(poll, 60 * 1000);
     return () => clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleConnected]);
 
-  // ---- Visibility-change refresh -------------------------------------------
+  // ---- Visibility/focus refresh ----------------------------------------------
+  // Pulls immediately when the user comes back to the app — covers both
+  // switching back to this browser tab (visibilitychange) and clicking back
+  // into this window when it was merely unfocused rather than hidden, e.g.
+  // two windows side by side (focus) — either alone can miss the other case.
   useEffect(() => {
     if (!googleConnected) return undefined;
 
-    const VISIBILITY_REFRESH_THROTTLE_MS = 60 * 1000;
+    // Short enough that "switch away for a few seconds, come back" still
+    // refreshes, but still guards against a refresh storm from rapid
+    // tab/window switching landing right on top of the periodic poll above.
+    const REFRESH_THROTTLE_MS = 20 * 1000;
+    const refreshIfDue = () => {
+      if (Date.now() - lastGooglePollAtRef.current < REFRESH_THROTTLE_MS) return;
+      pollGoogleEventsRef.current?.();
+    };
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
-      if (Date.now() - lastGooglePollAtRef.current < VISIBILITY_REFRESH_THROTTLE_MS) return;
-      pollGoogleEventsRef.current?.();
+      refreshIfDue();
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', refreshIfDue);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', refreshIfDue);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleConnected]);
 
