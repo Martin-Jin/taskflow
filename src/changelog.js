@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.46',
+    date: '2026-08-01',
+    title: 'Fixed an enforce-due-date task getting permanently stuck on a stale past time slot',
+    changes: [
+      "A task set to \"must be done on due date\" could get stuck showing a scheduled time in the past that Reschedule/Plan today could never move, even with its due date pushed into the future. The scheduler was treating any leftover block dated before today as untouchable, unworked-on hours already \"spent\" — which could zero out the task's remaining time and silently exclude it from being replanned. Stale, incomplete past blocks are now cleared and no longer counted as spent, so the task correctly reschedules onto its real due date; a genuinely completed task's past block is still preserved as before.",
+    ],
+  },
+  {
     version: '1.33.45',
     date: '2026-08-01',
     title: 'Fixed editing/deleting a single occurrence of a recurring event that had been split in Google Calendar itself',
