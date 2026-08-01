@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.57.0',
+    date: '2026-08-02',
+    title: 'Polished the floating/blurred header on the Tasks list and Settings search',
+    changes: [
+      'The Tasks list title now sits a bit closer to the top of the page, and there\'s more breathing room between it and the search bar below.',
+      'The blur behind the Tasks list header (and the Settings "jump to section" search) now washes over the whole top strip of the page as you scroll, instead of just a rounded box with an unblurred sliver peeking out above and to the sides of it.',
+    ],
+  },
+  {
     version: '1.56.0',
     date: '2026-08-02',
     title: 'The Tasks list header now floats and blurs as one piece while scrolling',
