@@ -256,10 +256,13 @@ worth knowing:
    your Google events populate the calendar grid, and creating, editing,
    moving, resizing, or deleting an event in TaskFlow now pushes that
    change to your primary Google Calendar too. Pulls happen on sign-in/
-   connect, on a background poll roughly every 5 minutes while connected,
-   and on manual **Sync now** — it isn't instant/live, so a change made
-   directly in Google Calendar can take a few minutes to show up here. If
-   the same event changed on both sides since the last sync, **Google
+   connect, on a background poll roughly every minute while connected, on
+   returning to the tab/window (if at least 20s have passed since the last
+   pull), and on manual **Sync now** — it isn't a true real-time push (that
+   would need a webhook server Google notifies on change, not just a
+   client-side poll), so a change made directly in Google Calendar can take
+   up to about a minute to show up here rather than being instant. If the
+   same event changed on both sides since the last sync, **Google
    Calendar's version always wins**.
 
 While the project is in Testing publishing status (the default), only
@@ -937,17 +940,20 @@ restrictions, if using Google Calendar sync from that hostname.
   sync](#account--cross-device-sync)) is live for tasks/blocks/boards/
   settings — a change on device A shows up on an already-open device B
   within moments via a background Firestore listener, no reload needed.
-  Google Calendar sync is the exception: it stays poll-based (see the next
-  bullet), so a change made directly in Google Calendar can still take a
-  few minutes to appear.
+  Calendar events are excluded from this sync entirely (Google Calendar is
+  their one source of truth — see Backups above) and Google Calendar sync
+  itself is the exception: it stays poll-based (see the next bullet), so a
+  change made directly in Google Calendar can still take up to about a
+  minute to appear.
 - Google Calendar sync is two-way but poll-based, not truly real-time —
-  pulls happen on sign-in/connect, a ~5-minute background poll while
-  connected, and manual **Sync now**, not via a live webhook (no backend
-  exists for that in this client-only SPA), so a change made directly in
-  Google Calendar can take a few minutes to appear in TaskFlow. On
-  conflict (the same event changed in both places since the last sync),
-  **Google Calendar's version always wins** — a local edit that hasn't
-  been pushed yet can be silently overwritten by the next pull.
+  pulls happen on sign-in/connect, a ~1-minute background poll while
+  connected, on returning to the tab/window, and manual **Sync now**, not
+  via a live webhook (no backend exists for that in this client-only SPA),
+  so a change made directly in Google Calendar can take up to about a
+  minute to appear in TaskFlow rather than being instant. On conflict (the
+  same event changed in both places since the last sync), **Google
+  Calendar's version always wins** — a local edit that hasn't been pushed
+  yet can be silently overwritten by the next pull.
 - All-day Google Calendar events are not imported or synced — only timed
   events are.
 - Todoist is a one-time import, not a sync — completing, editing, or

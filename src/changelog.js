@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.37',
+    date: '2026-08-01',
+    title: 'Faster Google Calendar sync (~1 minute instead of ~5)',
+    changes: [
+      'Google Calendar syncs about every minute now instead of every 5, and also pulls immediately when you switch back to the Taskflow tab/window. Still not instant push-based sync (that would need a backend webhook), but changes show up much sooner.',
+    ],
+  },
+  {
     version: '1.33.36',
     date: '2026-08-01',
     title: 'Fixed phantom recurring-event occurrences not on Google Calendar',
