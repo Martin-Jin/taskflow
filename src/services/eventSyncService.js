@@ -16,6 +16,15 @@
  * `googleUpdatedAt`/`localUpdatedAt` fields are still stamped/maintained
  * (for potential future use, e.g. avoiding redundant pushes) but never gate
  * this overwrite-on-pull behavior.
+ *
+ * RETENTION WINDOW: every fetch (see useGoogleCalendarSync's
+ * PAST_HORIZON_DAYS/EVENTS_HORIZON_DAYS) only ever covers a ROLLING window
+ * from some number of days in the past through some number of days in the
+ * future — this app is a forward-looking scheduler, not a full calendar
+ * archive/history. A non-recurring event that ages out of the past edge of
+ * that window is actively purged (see isTooOldToRetain), not just left
+ * alone — see the merge policy comment below for the distinction from an
+ * event that's merely out of scope for one particular pull.
  * ============================================================================
  */
 
@@ -35,6 +44,28 @@
 function isInScopeForPull(event, rangeStartIso, rangeEndIso) {
   if (event.recurrenceRule) return true;
   return event.date >= rangeStartIso && event.date <= rangeEndIso;
+}
+
+/**
+ * True if a local Google-sourced, non-recurring event has aged out of the
+ * retention window entirely (older than `rangeStartIso`, the trailing edge of
+ * every fetch — see useGoogleCalendarSync's PAST_HORIZON_DAYS) and should be
+ * actively purged rather than merely "left untouched because this pull says
+ * nothing about it" (see isInScopeForPull's own doc comment, which still
+ * governs the FUTURE side of the range: an event beyond the forward horizon
+ * is left alone since it'll simply roll into view later).
+ *
+ * Only ever applies to a plain (non-recurring) event — a recurring master's
+ * own stored `date` is just its DTSTART and can be arbitrarily old while the
+ * series is still very much active (e.g. a weekly meeting that started
+ * months ago); that case is already handled correctly by isInScopeForPull
+ * treating any recurring master as always in scope, so if Google stops
+ * returning it (its own occurrences have all aged out of the fetch window
+ * too) it's already dropped via the normal "in scope but missing from the
+ * pull" path below — no separate retention check needed for it.
+ */
+function isTooOldToRetain(event, rangeStartIso) {
+  return !event.recurrenceRule && event.date < rangeStartIso;
 }
 
 /**
@@ -120,7 +151,11 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
  *     is simply gone now), is treated as deleted on Google's side and
  *     dropped from the merged result.
  *   - A local Google-sourced event whose `date` falls OUTSIDE the queried
- *     range is left untouched (this pull says nothing about it either way).
+ *     range is left untouched (this pull says nothing about it either way) —
+ *     EXCEPT a non-recurring event older than `rangeStartIso` (the trailing
+ *     edge of the fetch window, i.e. it's aged out of the retention window
+ *     entirely), which is actively purged rather than left indefinitely —
+ *     see isTooOldToRetain.
  *   - Any pulled event with no matching local googleEventId is a brand-new
  *     Google event and is simply added — UNLESS that googleEventId is
  *     already claimed by an existing manual (source:'manual') event, i.e.
@@ -183,6 +218,11 @@ export function mergePulledGoogleEvents(
     if (e.source !== 'google') return true; // manual events are never touched by a Google pull
 
     if (pulledByGoogleEventId.has(e.googleEventId)) return false; // superseded below by the pulled version
+
+    // Aged out of the retention window entirely — purge it, don't just leave
+    // it untouched (see isTooOldToRetain's own doc comment for why this is
+    // NOT the same as the generic "out of scope, leave alone" case below).
+    if (isTooOldToRetain(e, rangeStartIso)) return false;
 
     // Not in the pulled set — either out of scope for this pull (leave
     // alone) or in scope and gone (Google-side delete, drop it).

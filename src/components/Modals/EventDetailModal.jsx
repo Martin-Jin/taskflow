@@ -76,7 +76,7 @@ function formatRepeatText(interval, freq, byDay) {
 }
 
 export default function EventDetailModal({ event, initial, onClose, onDeleted }) {
-  const { addManualEvent, updateEvent, deleteEvent, setEventIgnored } = useScheduler();
+  const { addManualEvent, updateEvent, deleteEvent, setEventIgnored, setNotification } = useScheduler();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -174,6 +174,16 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   function markRepeatEdited() {
     setHasEditedRepeat(true);
     setDetectedRecurrenceMatch(null);
+  }
+
+  // A disabled Repeat control (repeatControlsApply === false — see its own
+  // doc comment) looks visually identical to a live one except for the CSS
+  // disabled/greyed treatment, which is easy to miss at a glance — clicking
+  // it does nothing with no other feedback. Surfacing an explicit toast on
+  // click makes the "why won't this respond" moment self-explanatory instead
+  // of silently doing nothing.
+  function notifyRepeatLocked() {
+    setNotification({ type: 'info', message: 'Set "Apply to" above to "All events in the series" to edit the repeat pattern.' });
   }
 
   // Commits the free-text Repeat box (see the Repeat DetailField below) by
@@ -392,7 +402,13 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
           )}
           {repeatFieldVisible && (
             <DetailField icon={Repeat} label="Repeat">
-              <label className="form-checkbox-row" style={{ cursor: repeatControlsApply ? 'pointer' : 'default' }}>
+              <label
+                className="form-checkbox-row"
+                style={{ cursor: repeatControlsApply ? 'pointer' : 'not-allowed' }}
+                onClick={() => {
+                  if (!isReadOnly && !repeatControlsApply) notifyRepeatLocked();
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={repeats}
@@ -405,7 +421,14 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                 Repeats
               </label>
               {repeats && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6, position: 'relative' }}>
+                  {!isReadOnly && !repeatControlsApply && (
+                    <div
+                      onClick={notifyRepeatLocked}
+                      style={{ position: 'absolute', inset: 0, cursor: 'not-allowed', zIndex: 1 }}
+                      aria-hidden="true"
+                    />
+                  )}
                   <SmartRecurrenceInput
                     value={repeatText}
                     disabled={isReadOnly || !repeatControlsApply}

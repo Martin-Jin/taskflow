@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.48',
+    date: '2026-08-01',
+    title: 'Google Calendar sync now includes a year of history, and disabled Repeat controls now say why',
+    changes: [
+      "Google Calendar sync used to only ever look forward from today, so a change made to a past event on Google Calendar (creating or deleting one) never reached Taskflow no matter how long you waited. Sync now covers a full year back (in addition to the existing ~1 month ahead), and a non-recurring event that eventually ages past that year is automatically cleared out of Taskflow (it's untouched on Google Calendar itself — only the local copy is pruned).",
+      'Disabled Repeat controls in the event edit screen (shown when "Apply to" isn\'t set to "All events in the series") now show a small explanation when clicked instead of silently doing nothing, and look visibly greyed out.',
+    ],
+  },
+  {
     version: '1.33.47',
     date: '2026-08-01',
     title: 'Fixed misleading hint text for editing a recurring event\'s repeat pattern',
