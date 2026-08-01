@@ -28,6 +28,8 @@
  * ============================================================================
  */
 
+import { handleExchangeCode, handleRefreshToken } from './googleCalendarAuthRoutes.js';
+
 const MAX_TEXT_CHARS = 4000;
 const MAX_IMAGE_BASE64_CHARS = 5 * 1024 * 1024; // ~5MB of base64 text
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -519,6 +521,13 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed — POST only.' }, 405, headers);
+
+    // Google Calendar persistent-auth routes (see googleCalendarAuthRoutes.js)
+    // — dispatched by path ahead of the AI quick-add logic below, which has
+    // no path of its own and handles every other POST.
+    const { pathname } = new URL(request.url);
+    if (pathname === '/calendar/exchange-code') return handleExchangeCode(request, env, headers);
+    if (pathname === '/calendar/refresh-token') return handleRefreshToken(request, env, headers);
 
     let body;
     try {

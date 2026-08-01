@@ -3,13 +3,32 @@
  * GOOGLE CALENDAR SERVICE
  * ============================================================================
  * Wraps the Google Calendar API v3 using the Google Identity Services (GIS)
- * token client for OAuth2 (implicit flow, appropriate for a client-only SPA).
+ * *authorization-code* flow (`initCodeClient`, `access_type: 'offline'`)
+ * instead of the older implicit token flow — that used to mean Google only
+ * ever issued a short-lived (~1hr) access token with no refresh token, so
+ * once it expired the app depended on the browser still holding a live
+ * Google session to silently re-auth, and fell back to a visible login
+ * popup whenever that didn't hold (e.g. after a plain page refresh).
  *
- * SETUP (see README.md for full walkthrough):
+ * Now: the one-time consent grant exchanges its authorization `code` (via
+ * the companion Cloudflare Worker, see cloudflare-worker/src/
+ * googleCalendarAuthRoutes.js) for a genuine Google refresh token, which the
+ * Worker stores server-side in Firestore (never sent back to the client).
+ * Every subsequent "silent" token request instead asks the Worker to mint a
+ * fresh access token from that stored refresh token — no popup, no
+ * dependency on browser session state. A popup is only ever shown again for
+ * the original one-time consent, or after the user revokes access at
+ * myaccount.google.com (see `requestAccessToken` below).
+ *
+ * SETUP (see README.md and cloudflare-worker/README.md for full walkthroughs):
  *   1. Create a project in Google Cloud Console, enable the Calendar API.
  *   2. Create an OAuth 2.0 Client ID (type: Web application).
  *   3. Add your dev/prod origin to "Authorized JavaScript origins".
  *   4. Put the Client ID in `.env` as VITE_GOOGLE_CLIENT_ID.
+ *   5. Deploy/configure the calendar-auth routes on the Cloudflare Worker
+ *      (GOOGLE_CLIENT_SECRET + a Firestore-scoped service account — see
+ *      cloudflare-worker/README.md) and put its URL in `.env` as
+ *      VITE_CALENDAR_AUTH_WORKER_URL.
  *
  * Without a configured Client ID, all functions here transparently fall
  * back to mock data / no-ops so the rest of the app remains fully usable.
@@ -19,6 +38,7 @@
 import { getMockEvents } from './mockData';
 import { fromISODate, toISODate, timeToMinutes } from '../utils/dateUtils';
 import { loadPersisted, savePersisted, clearPersisted } from '../utils/persistence';
+import { auth } from '../firebase';
 
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 // calendar.events: read/write events on calendars the user can edit (needed for push).
@@ -26,7 +46,7 @@ const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/
 // lecture timetable) the user has, so we know which calendarIds to pull events from.
 const SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly';
 
-let tokenClient = null;
+let codeClient = null;
 let accessToken = null;
 let gapiInited = false;
 let gisInited = false;
@@ -44,17 +64,13 @@ function htmlToPlainText(html) {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-// GIS's implicit-flow token client has no refresh token to persist — only a
-// short-lived (~1hr) access token that lives in this module's memory, which
-// is wiped on every page reload/reopen. Without caching it, EVERY app open
-// re-runs the "silent" requestAccessToken(true) flow below, which — despite
-// `prompt: ''` asking Google to skip the consent screen — still has to pop
-// open a real (if brief) browser popup/tab to complete the OAuth round trip,
-// which reads to the user as "the Google sign-in popup opens every time I
-// open the app". Caching the still-valid token in localStorage lets repeat
-// opens within the same ~1hr window skip GIS entirely — no popup at all —
-// and only fall back to the silent GIS request once the cached token has
-// actually expired.
+// The access token this module holds is still short-lived (~1hr) and lives
+// only in memory, wiped on every page reload/reopen — but unlike the old
+// implicit flow, refreshing it no longer requires GIS or a popup at all: see
+// `refreshAccessTokenFromWorker` below, which mints a fresh one from the
+// refresh token the Worker stored server-side on first consent. Caching the
+// still-valid token in localStorage just avoids an unnecessary Worker round
+// trip on every repeat app open within the same ~1hr window.
 // Stored via the app's own persistence layer (utils/persistence.js) rather
 // than a hand-rolled localStorage key — this piggybacks on its existing
 // try/catch-wrapped read/write AND, importantly, means "Settings → Reset
@@ -151,52 +167,135 @@ export async function initGoogleCalendar(clientId, apiKey) {
   }
   gapiInited = true;
 
-  tokenClient = window.google.accounts.oauth2.initTokenClient({
+  // access_type: 'offline' + prompt: 'consent' are what make Google actually
+  // issue a refresh token on this grant (not just an access token) — without
+  // 'consent', Google can skip re-issuing one for a scope already approved
+  // in a previous grant. This only fires the popup for the one-time consent
+  // grant path (`requestAuthorizationCode` below) — never for the silent
+  // Worker-refresh path, which needs no popup at all.
+  codeClient = window.google.accounts.oauth2.initCodeClient({
     client_id: clientId,
     scope: SCOPES,
-    callback: '', // set dynamically per-request in requestAccessToken()
-    error_callback: (err) => tokenClient.callback?.({ error: err?.type || 'unknown_error', error_description: err?.message }),
+    ux_mode: 'popup',
+    access_type: 'offline',
+    prompt: 'consent',
+    callback: '', // set dynamically per-request in requestAuthorizationCode()
+    error_callback: (err) => codeClient.callback?.({ error: err?.type || 'unknown_error', error_description: err?.message }),
   });
   gisInited = true;
 
   return { enabled: true };
 }
 
+/** The current signed-in Taskflow user's Firebase ID token, required by every calendar-auth Worker route to identify whose Firestore doc to read/write. */
+async function getFirebaseIdToken() {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in to Taskflow — Google Calendar sync requires being signed in.');
+  return user.getIdToken();
+}
+
 /**
- * Trigger the OAuth flow and resolve once we have an access token.
- *
- * @param {boolean} silent - If true, ask Google Identity Services to reuse
- *   an existing grant without showing the consent popup (`prompt: ''`).
- *   Used on app load (and on manual refresh) to restore/renew a Google
- *   Calendar connection the user already approved in a previous session,
- *   so they don't have to click through the consent screen every time. If
- *   the user never consented, or has since revoked access, GIS will
- *   reject and the caller should fall back to treating the connection as
- *   inactive rather than forcing a popup.
- *
- * Before touching GIS at all, this checks localStorage for a still-valid
- * token cached from a previous call (this session's or an earlier one) and
- * resolves with that instead — see the caching block above for why this
- * matters (it's what stops the popup/tab flash from happening on every
- * single app open).
+ * One-time consent grant: opens the GIS popup and resolves with the
+ * one-time authorization `code` once the user approves. Never call this
+ * from a silent/background path — see `requestAccessToken` below.
  */
-export function requestAccessToken(silent = false) {
+function requestAuthorizationCode() {
+  return new Promise((resolve, reject) => {
+    if (!gisInited) return reject(new Error('Google Calendar client not initialized'));
+    codeClient.callback = (resp) => {
+      if (resp.error) return reject(new Error(resp.error_description || resp.error));
+      resolve(resp.code);
+    };
+    codeClient.requestCode();
+  });
+}
+
+/**
+ * Exchanges a one-time authorization `code` (from `requestAuthorizationCode`)
+ * at the Worker's `/calendar/exchange-code` route for an access token —
+ * the Worker redeems it with Google server-side and persists the resulting
+ * refresh token in Firestore, returning only the short-lived access token
+ * to the client.
+ */
+async function exchangeCodeForToken(code) {
+  const workerUrl = import.meta.env.VITE_CALENDAR_AUTH_WORKER_URL;
+  if (!workerUrl) throw new Error('Google Calendar auth worker not configured (VITE_CALENDAR_AUTH_WORKER_URL).');
+
+  const idToken = await getFirebaseIdToken();
+  const res = await fetch(`${workerUrl}/calendar/exchange-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, idToken }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Calendar auth worker code exchange failed (HTTP ${res.status}).`);
+
+  accessToken = body.access_token;
+  cacheAccessToken(accessToken, body.expires_in);
+  return accessToken;
+}
+
+/**
+ * The new no-popup "silent" path: asks the Worker's `/calendar/refresh-token`
+ * route to mint a fresh access token from the refresh token it stored on
+ * this user's first consent grant. Throws with `err.needsReconnect = true`
+ * if there's no stored refresh token yet (never connected) or Google
+ * reports it revoked — the only cases where a fresh one-time consent grant
+ * (a popup) is actually required.
+ */
+async function refreshAccessTokenFromWorker() {
+  const workerUrl = import.meta.env.VITE_CALENDAR_AUTH_WORKER_URL;
+  if (!workerUrl) throw new Error('Google Calendar auth worker not configured (VITE_CALENDAR_AUTH_WORKER_URL).');
+
+  const idToken = await getFirebaseIdToken();
+  const res = await fetch(`${workerUrl}/calendar/refresh-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(body.error === 'not_connected' ? 'Google Calendar not yet connected.' : body.error === 'revoked' ? 'Google Calendar access was revoked.' : body.error || `Calendar auth worker refresh failed (HTTP ${res.status}).`);
+    err.needsReconnect = res.status === 404 || res.status === 409;
+    throw err;
+  }
+
+  accessToken = body.access_token;
+  cacheAccessToken(accessToken, body.expires_in);
+  return accessToken;
+}
+
+/**
+ * Resolve to a usable access token, preferring — in order — a still-valid
+ * cached token, then the silent Worker-refresh path (no popup), and only
+ * falling back to a one-time consent grant (a real popup) when the Worker
+ * reports there's nothing to refresh (`needsReconnect`) AND this call is an
+ * explicit (non-silent) user action. A silent/background call (app load,
+ * periodic poll) that fails must propagate the error instead — the existing
+ * `googleNeedsReconnect` handling in useGoogleCalendarSync.js treats that as
+ * "show the reconnect banner", never as licence to pop a window.
+ *
+ * @param {boolean} silent - true for background/app-load calls that must
+ *   never show a popup; false only for an explicit user "Connect"/"Reconnect"
+ *   action, where falling back to the one-time consent grant is acceptable.
+ */
+export async function requestAccessToken(silent = false) {
   if (!accessToken) {
     const cached = readCachedAccessToken();
     if (cached) accessToken = cached;
   }
-  if (accessToken) return Promise.resolve(accessToken);
+  if (accessToken) return accessToken;
 
-  return new Promise((resolve, reject) => {
-    if (!gapiInited || !gisInited) return reject(new Error('Google Calendar client not initialized'));
-    tokenClient.callback = (resp) => {
-      if (resp.error) return reject(new Error(resp.error_description || resp.error));
-      accessToken = resp.access_token;
-      cacheAccessToken(accessToken, resp.expires_in);
-      resolve(accessToken);
-    };
-    tokenClient.requestAccessToken({ prompt: silent ? '' : 'consent' });
-  });
+  if (!gapiInited || !gisInited) throw new Error('Google Calendar client not initialized');
+
+  try {
+    return await refreshAccessTokenFromWorker();
+  } catch (err) {
+    if (silent || !err.needsReconnect) throw err;
+  }
+
+  const code = await requestAuthorizationCode();
+  return exchangeCodeForToken(code);
 }
 
 /**
