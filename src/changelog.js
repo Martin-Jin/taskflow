@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.52.0',
+    date: '2026-08-02',
+    title: "Fixed mobile sign-in prompt not showing when triggered from Settings",
+    changes: [
+      "The browser-sign-in prompt (shown when Google sign-in can't complete from an installed home-screen app) only rendered inside the account button — Settings has its own separate \"Sign in with Google\" button that silently did nothing on standalone/home-screen mode until switching to a tab that happened to pick up the pending state. The prompt now renders globally, so it shows immediately no matter where sign-in was triggered from.",
+    ],
+  },
+  {
     version: '1.51.0',
     date: '2026-08-02',
     title: 'Scheduling-conflict details, capped calendar history, and a clearer mobile sign-in prompt',
