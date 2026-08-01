@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.57',
+    date: '2026-08-02',
+    title: 'Clearer Google sign-in on installed home-screen apps',
+    changes: [
+      "Signing in from TaskFlow's installed home-screen icon on mobile could fail with a confusing browser error, since that context can't complete Google's sign-in redirect. Attempting to sign in there now shows a clear prompt to open TaskFlow in your regular browser instead, where sign-in works normally.",
+    ],
+  },
+  {
     version: '1.33.56',
     date: '2026-08-02',
     title: 'Scheduling conflicts grouped by day, and floating search bars stay legible',
