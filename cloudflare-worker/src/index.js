@@ -526,8 +526,19 @@ export default {
     // — dispatched by path ahead of the AI quick-add logic below, which has
     // no path of its own and handles every other POST.
     const { pathname } = new URL(request.url);
-    if (pathname === '/calendar/exchange-code') return handleExchangeCode(request, env, headers);
-    if (pathname === '/calendar/refresh-token') return handleRefreshToken(request, env, headers);
+    if (pathname === '/calendar/exchange-code' || pathname === '/calendar/refresh-token') {
+      try {
+        return await (pathname === '/calendar/exchange-code'
+          ? handleExchangeCode(request, env, headers)
+          : handleRefreshToken(request, env, headers));
+      } catch (err) {
+        // Without this, an uncaught error here returns a bare Cloudflare
+        // error page with no CORS headers — the browser reports that as an
+        // opaque "CORS request did not succeed" rather than the real cause.
+        console.error(`${pathname} threw`, err);
+        return jsonResponse({ error: `Internal error: ${err?.message || String(err)}` }, 500, headers);
+      }
+    }
 
     let body;
     try {

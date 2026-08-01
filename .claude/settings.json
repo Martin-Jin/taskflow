@@ -18,7 +18,8 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Skill(claude-api)",
-      "Skill(claude-api:*)"
+      "Skill(claude-api:*)",
+      "WebFetch(domain:developers.google.com)"
     ]
   }
 }

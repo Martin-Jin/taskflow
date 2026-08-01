@@ -157,6 +157,126 @@ via IAM, not these rules) — deploy it from the main repo root:
 firebase deploy --only firestore:rules
 ```
 
+### Troubleshooting: if Calendar connect/sign-in ever breaks again
+
+This flow touches an unusually large number of independently-configured
+pieces (OAuth client, consent screen, Firebase, Firestore rules, a service
+account, three separate "authorized domain" lists, and two separately-baked
+env-var sets for local vs. published builds). Getting it wrong the first
+time cost an entire debugging session — this section exists so the next
+time is faster. Check these roughly in order of how often each one was the
+actual cause:
+
+1. **Client-side and server-side must use the literal same OAuth Client ID.**
+   By far the most likely cause of `unauthorized_client` at the token-
+   exchange step. The client-side authorization request (`VITE_GOOGLE_CLIENT_ID`)
+   and the Worker's token exchange (`GOOGLE_CLIENT_ID` in `wrangler.toml`)
+   must be the exact same client — if the OAuth client ever gets deleted and
+   recreated, **every place that ID is configured needs updating together**:
+   - `.env` locally (`VITE_GOOGLE_CLIENT_ID`)
+   - the **GitHub Actions repo secret** `VITE_GOOGLE_CLIENT_ID` — easy to
+     forget, since it's invisible from the working tree and only affects the
+     *published* build, never local dev. Update it with
+     `echo "<new-id>" | gh secret set VITE_GOOGLE_CLIENT_ID`, then trigger a
+     rebuild (`gh workflow run deploy.yml`) — a stale secret here will pass
+     `npm run build` and look completely fine locally.
+   - `cloudflare-worker/wrangler.toml`'s `GOOGLE_CLIENT_ID`, then
+     `npx wrangler deploy`.
+   - To directly verify what's actually live on the published site (rather
+     than trusting that a secret got updated), fetch the deployed bundle and
+     grep it for `.apps.googleusercontent.com` — it'll show you the literal
+     client ID baked into what's actually being served.
+
+2. **`redirect_uri` for GIS's `initCodeClient` in `ux_mode: 'popup'` must be
+   the calling page's own origin** (e.g. `https://example.github.io`, no
+   path) — per
+   [Google's docs](https://developers.google.com/identity/oauth2/web/guides/use-code-model).
+   It is **not** `"postmessage"` (that's the older `gapi.auth2.grantOfflineAccess()`
+   convention) and not an empty string — both produce `unauthorized_client`.
+   `googleCalendarAuthRoutes.js` derives this from the request's `Origin`
+   header rather than hardcoding it, so it's automatically correct for both
+   `localhost` and the deployed origin. This origin must *also* be listed
+   under the OAuth client's **Authorized redirect URIs** (not just
+   Authorized JavaScript origins) for the exchange to succeed.
+
+3. **`gapi.client` needs the fetched access token explicitly.**
+   `gapi.client.calendar.*` calls read their auth from `gapi.client`'s own
+   internal state via `gapi.client.setToken(...)` — they do **not**
+   automatically know about a token this module fetched through the
+   Worker's refresh-token/exchange-code routes. `requestAccessToken()` in
+   `googleCalendarService.js` calls `setToken` on every path (cached, Worker-
+   refreshed, or freshly exchanged) specifically so this doesn't regress
+   again — if Calendar connects successfully but every subsequent event
+   fetch immediately throws "authorization expired", this wiring is the
+   first thing to check.
+
+4. **Three separate "authorized domain" lists exist and are easy to
+   conflate** — a change to one does not affect the others:
+   - The OAuth **client's** own Authorized JavaScript origins / Authorized
+     redirect URIs (Google Cloud Console → Credentials → your client).
+   - The **OAuth consent screen's** Authorized domains (Data Access/Audience
+     tabs) — requires **Google Search Console domain-ownership
+     verification** for any domain you don't already own outright (like a
+     `github.io` subdomain), *if* the consent screen is in **Production**
+     status. Switching the consent screen to **Testing** + adding your own
+     account as a **test user** sidesteps this entirely for a personal-scale
+     app, and also avoids Google's formal app-verification requirement for
+     sensitive scopes (Calendar's scopes are sensitive).
+   - **Firebase's own** Authorized domains list (Firebase Console →
+     Authentication → Settings) — separate from both of the above, defaults
+     to `localhost` + `*.firebaseapp.com`/`*.web.app` only; a custom domain
+     (like your GitHub Pages origin) needs adding here too, independently.
+
+5. **The Google Calendar API itself must be enabled** for the GCP project
+   (APIs & Services → Library → "Google Calendar API" → Enable) — separate
+   from every OAuth/consent-screen setting above. If it's ever disabled
+   (including by accident), the failure mode looks identical to an OAuth
+   config problem.
+
+6. **If the OAuth client is ever deleted and Firebase's Google sign-in
+   breaks too** (`auth/requests-from-referer-...-are-blocked` or "The
+   requested action is invalid" on the `<project>.firebaseapp.com/__/auth/handler`
+   page): Firebase's Google provider depends on its own auto-managed OAuth
+   client, which does not always get automatically recreated by toggling the
+   provider off/on in Firebase Console. If Google Cloud Console's Credentials
+   page shows no OAuth client after doing that, manually wire Firebase to an
+   OAuth client you do control (e.g. the Calendar one above) via
+   **Firebase Console → Authentication → Sign-in method → Google → Web SDK
+   configuration**, pasting in that client's ID and secret — and make sure
+   that client's Authorized redirect URIs includes
+   `https://<project>.firebaseapp.com/__/auth/handler`.
+
+7. **A GCP service account key downloaded while the console's project
+   selector was pointed at the wrong project still "works"** (Google will
+   happily mint it an access token — the key is real, just for the wrong
+   account/project) but then fails on the actual Firestore call with a
+   permissions or signature error. Before trusting a downloaded service-
+   account JSON, check its own `client_email`/`project_id` fields match what
+   you expect.
+
+8. **Never paste a client secret or service-account private key into an AI
+   chat, ticket, or log** — if one ever does leak this way, rotate it
+   immediately (Google Cloud Console lets you add a new client secret /
+   service-account key without downtime, then delete the old one). When
+   setting `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, always pipe it directly
+   from the downloaded JSON (see the `node -e ... | wrangler secret put ...`
+   command above) rather than copy-pasting through a clipboard/editor, which
+   silently mangles the PEM's newlines.
+
+9. **`wrangler secret put <NAME>`** — the argument is the secret's *name*;
+   it then prompts interactively for the *value*. Passing the value as the
+   argument instead creates a secret with that value as its name (visible via
+   `npx wrangler secret list`, which lists names only — it can't show you a
+   secret's current value, so when in doubt about whether a secret is
+   correct, just overwrite it rather than trying to inspect it).
+
+10. **Cloudflare Worker deploys/secrets are entirely independent of git.**
+    `wrangler deploy` and `wrangler secret put` push directly to Cloudflare
+    regardless of what's committed or pushed — uncommitted local changes are
+    still live once deployed, and a `git push` alone does *not* redeploy the
+    Worker (only the GitHub Pages *frontend* build is git-triggered, via
+    `.github/workflows/deploy.yml`).
+
 ## Notes on the abuse guard
 
 The AI quick-add routes hold no secrets, so there's nothing here for an
