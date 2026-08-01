@@ -124,6 +124,12 @@
   color: var(--color-text-primary);
 }
 
+/* Sticky on the row itself (not on .search-bar inside it) — its own box is
+   exactly one line tall, so a sticky child confined to it would have no
+   room to visually detach before the row's bottom edge (its sticky
+   containing block) scrolled past too. The row's real parent is the whole
+   scrollable task page, so stickying the row here is what gives it space to
+   float independently as the page scrolls underneath it. */
 .tasklist-toolbar {
   display: flex;
   justify-content: space-between;
@@ -131,6 +137,9 @@
   margin-bottom: 14px;
   gap: 12px;
   flex-wrap: wrap;
+  position: sticky;
+  top: 12px;
+  z-index: 120;
 }
 
 /* AI Quick Add + Add task (see AddTaskFabGroup) render as a floating FAB

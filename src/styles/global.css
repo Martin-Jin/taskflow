@@ -1235,10 +1235,16 @@ input.search-bar-input {
   height: 32px;
   padding: 0 30px 0 32px;
   background: var(--color-bg-surface-raised);
-  border: none;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   color: var(--color-text-primary);
   font-size: 13px;
+  /* All three SearchBar instances (Tasks list, Board, Settings) sit in a
+     sticky toolbar/row that floats over scrolled content — a permanent
+     raised look (border + shadow) is what keeps it reading as "floating
+     above" instead of blending into whatever scrolls underneath it, rather
+     than only looking different once actually stuck. */
+  box-shadow: var(--shadow-elevated);
 }
 
 .search-bar-clear {
@@ -1257,9 +1263,15 @@ input.search-bar-input {
 }
 
 /* Settings page's "jump to section" search — full width like the rest of
-   the settings column, instead of SearchBar's own 320px toolbar cap. */
+   the settings column, instead of SearchBar's own 320px toolbar cap. Unlike
+   .tasklist-toolbar (a wrapper row around .search-bar), this element IS the
+   .search-bar itself, so it can be the sticky element directly — its own
+   parent (the settings column) is tall enough to give it room to float. */
 .settings-search-bar {
   max-width: none;
+  position: sticky;
+  top: 12px;
+  z-index: 120;
 }
 
 .search-bar-dropdown {
