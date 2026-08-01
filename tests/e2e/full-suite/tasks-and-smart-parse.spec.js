@@ -151,6 +151,57 @@ test.describe('Sub-tasks', () => {
   });
 });
 
+test.describe('Reopening a completed task', () => {
+  test('editing the due date of a completed task reopens it', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    const title = `E2E Reopen On Reschedule ${RUN_ID}`;
+    await openAddTask(page);
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    // Complete it from the list.
+    await clearSearch(page);
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) }).click();
+    await page.waitForTimeout(300);
+    // Dropped out of the default (non-completed) search results.
+    await expect(page.locator('main').getByText(title, { exact: false })).toHaveCount(0);
+
+    // Completed tasks are hidden from search by default — reveal them via
+    // the "Show completed tasks" dropdown option, then open it.
+    const searchInput = page.getByPlaceholder(/search tasks/i);
+    await searchInput.fill(title);
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: 'Show completed tasks' }).click();
+    await page.waitForTimeout(200);
+    await page.getByRole('button', { name: title, exact: false }).first().click();
+    await page.waitForTimeout(300);
+
+    // Reschedule its due date to today — this should reopen the task, not
+    // leave it completed with a new deadline.
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    const today = new Date().toISOString().slice(0, 10);
+    await dueDateInput.fill(today);
+    await dueDateInput.blur();
+    await page.waitForTimeout(700);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // The task should be visible again in the default (non-completed) search
+    // results, with its "Mark complete" button restored (i.e. no longer
+    // isCompleted) — it shouldn't need "Show completed tasks" anymore.
+    await clearSearch(page);
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();
+
+    expectNoErrors(errors);
+  });
+});
+
 test.describe('Dependencies', () => {
   test('a task with an unmet dependency cannot be completed until its blocker is done', async ({ page }) => {
     const errors = trackConsoleErrors(page);

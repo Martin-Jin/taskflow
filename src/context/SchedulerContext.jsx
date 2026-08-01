@@ -902,7 +902,18 @@ export function SchedulerProvider({ children }) {
         (current) => ({
           tasks: current.tasks.map((t) => {
             if (t.id !== taskId) return t;
-            const merged = { ...t, ...sanitizeTaskUpdate(updates, t), updatedAt: new Date().toISOString() };
+            let merged = { ...t, ...sanitizeTaskUpdate(updates, t), updatedAt: new Date().toISOString() };
+            // Editing the due date of an already-completed task means the
+            // user is reopening/rescheduling it, not just relabeling a done
+            // task — otherwise it stays `isCompleted: true` forever (still
+            // showing in "Completed" tiles/lists) even though the user just
+            // moved it back onto the schedule. Only when the caller didn't
+            // already set `isCompleted` itself (completeTask/uncompleteTask
+            // don't go through updateTask, but keep this from double-acting
+            // if that ever changes) and the date is actually changing.
+            if (t.isCompleted && !('isCompleted' in updates) && 'dueDate' in updates && updates.dueDate !== t.dueDate) {
+              merged = { ...merged, isCompleted: false, completedAt: null };
+            }
             // recurrenceRule is a derived cache of recurrenceString (see
             // utils/recurrence.js) — recompute it whenever a caller touches
             // recurrenceString so the two can never drift apart.

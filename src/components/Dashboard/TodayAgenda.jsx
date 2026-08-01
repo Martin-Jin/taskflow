@@ -22,6 +22,14 @@ export default function TodayAgenda() {
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
     const blockItems = blocks
       .filter((b) => b.date === today)
+      .filter((b) => {
+        const task = taskById.get(b.taskId);
+        // An overdue task (due date already passed) isn't really "today's",
+        // even if a block for it landed on today's calendar — it's already
+        // covered by the "Overdue & missed" tile's own detail popup, whether
+        // or not this task has since been completed (see DashboardStats).
+        return !(task?.dueDate && task.dueDate < today);
+      })
       .map((b) => {
         const task = taskById.get(b.taskId);
         return {

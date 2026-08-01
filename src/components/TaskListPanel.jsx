@@ -123,6 +123,31 @@ export default function TaskListPanel({
       setShowAddModal(true);
     }
   }, [openAddTaskSignal]);
+  // Fades in the sticky header's blurred backdrop (see .taskpage-sticky-header)
+  // as the page scrolls, rather than snapping the blur on the instant it
+  // docks — measured against .main-content (the app's one real scroll
+  // container, see global.css) since that's what actually scrolls this
+  // page's content underneath it. Driven directly off scrollTop rather than
+  // the header's distance to its sticky `top` offset: that resting distance
+  // is only ~28px on desktop and effectively 0 on mobile (a narrower
+  // .main-content top padding there — see global.css's `.is-mobile
+  // .main-content`), so it doesn't leave enough room for a distance-based
+  // fade to start at 0 on every screen size the way a scrollTop-based one does.
+  const stickyHeaderRef = useRef(null);
+  const [headerBlurOpacity, setHeaderBlurOpacity] = useState(0);
+  useEffect(() => {
+    const node = stickyHeaderRef.current;
+    if (!node) return undefined;
+    const scrollContainer = node.closest('.main-content');
+    if (!scrollContainer) return undefined;
+    const fadeRange = 32; // px of scroll the fade plays out over
+    function handleScroll() {
+      setHeaderBlurOpacity(Math.min(1, Math.max(0, scrollContainer.scrollTop / fadeRange)));
+    }
+    handleScroll();
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+  }, [view]);
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filterByView, setFilterByView] = useState(DEFAULT_FILTER_BY_VIEW);
   const filter = filterByView[view]; // active | completed | all | noDueDate
@@ -328,74 +353,84 @@ export default function TaskListPanel({
 
   return (
     <div className="taskpage">
-      <div className="taskpage-header-row">
-        <div className="taskpage-project-header">
-          <SelectMenu
-            value={activeProjectId}
-            options={projectSelectOptions}
-            onChange={onChangeActiveProject}
-            ariaLabel="Switch project"
-            footerActions={footerActions}
-            marquee
-          />
-          {isRenamingProject ? (
-            <input
-              autoFocus
-              className="taskpage-project-title-input"
-              aria-label={`Rename project "${activeProject?.name || ''}"`}
-              value={projectNameDraft}
-              onChange={(e) => setProjectNameDraft(e.target.value)}
-              onBlur={commitRenameProject}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitRenameProject();
-                }
-                if (e.key === 'Escape') setIsRenamingProject(false);
-              }}
+      <div className="taskpage-sticky-header" ref={stickyHeaderRef} style={{ '--header-blur-opacity': headerBlurOpacity }}>
+        <div className="taskpage-sticky-header-backdrop" aria-hidden="true" />
+        <div className="taskpage-header-row">
+          <div className="taskpage-project-header">
+            <SelectMenu
+              value={activeProjectId}
+              options={projectSelectOptions}
+              onChange={onChangeActiveProject}
+              ariaLabel="Switch project"
+              footerActions={footerActions}
+              marquee
             />
-          ) : (
-            <h2
-              className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
-              title={activeProject ? 'Click to rename' : undefined}
-              role={activeProject ? 'button' : undefined}
-              tabIndex={activeProject ? 0 : undefined}
-              onClick={startRenameProject}
-              onKeyDown={(e) => {
-                if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
-                  e.preventDefault();
-                  startRenameProject();
-                }
-              }}
-            >
-              <MarqueeText text={activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL} />
-            </h2>
-          )}
+            {isRenamingProject ? (
+              <input
+                autoFocus
+                className="taskpage-project-title-input"
+                aria-label={`Rename project "${activeProject?.name || ''}"`}
+                value={projectNameDraft}
+                onChange={(e) => setProjectNameDraft(e.target.value)}
+                onBlur={commitRenameProject}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitRenameProject();
+                  }
+                  if (e.key === 'Escape') setIsRenamingProject(false);
+                }}
+              />
+            ) : (
+              <h2
+                className={`taskpage-project-title ${activeProject ? 'editable' : ''}`}
+                title={activeProject ? 'Click to rename' : undefined}
+                role={activeProject ? 'button' : undefined}
+                tabIndex={activeProject ? 0 : undefined}
+                onClick={startRenameProject}
+                onKeyDown={(e) => {
+                  if (activeProject && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    startRenameProject();
+                  }
+                }}
+              >
+                <MarqueeText text={activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL} />
+              </h2>
+            )}
+          </div>
+
+          <div className="taskpage-view-switch-row">
+            <ViewFilterMenu
+              view={view}
+              onChangeView={onChangeView}
+              viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID)}
+              filter={filter}
+              onChangeFilter={setFilter}
+              projectActions={isMobile ? projectActionsProps : undefined}
+            />
+            {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
+                doubles as this page's one-tap way to reach account/settings —
+                mirrors the old mobile topbar's AccountButton. */}
+            {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={onOpenSettings} />}
+            {!isMobile && activeProject && (
+              <ProjectActionsMenu
+                isPinned={!!activeProject.isPinned}
+                ariaLabel={`Actions for ${activeProject.name}`}
+                onRename={startRenameProject}
+                onTogglePin={() => togglePinProject(activeProject.id)}
+                onDelete={handleDeleteProject}
+              />
+            )}
+          </div>
         </div>
 
-        <div className="taskpage-view-switch-row">
-          <ViewFilterMenu
-            view={view}
-            onChangeView={onChangeView}
-            viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID)}
-            filter={filter}
-            onChangeFilter={setFilter}
-            projectActions={isMobile ? projectActionsProps : undefined}
-          />
-          {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
-              doubles as this page's one-tap way to reach account/settings —
-              mirrors the old mobile topbar's AccountButton. */}
-          {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={onOpenSettings} />}
-          {!isMobile && activeProject && (
-            <ProjectActionsMenu
-              isPinned={!!activeProject.isPinned}
-              ariaLabel={`Actions for ${activeProject.name}`}
-              onRename={startRenameProject}
-              onTogglePin={() => togglePinProject(activeProject.id)}
-              onDelete={handleDeleteProject}
-            />
-          )}
-        </div>
+        {view === 'list' && (
+          <div className="tasklist-toolbar">
+            <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
+            <AddTaskFabGroup onAddTask={() => setShowAddModal(true)} onAIQuickAdd={() => setShowAIQuickAdd(true)} />
+          </div>
+        )}
       </div>
 
       {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onResolveBoardProject} filter={filter} />}
@@ -403,11 +438,6 @@ export default function TaskListPanel({
 
       {view === 'list' && (
         <>
-          <div className="tasklist-toolbar">
-            <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
-            <AddTaskFabGroup onAddTask={() => setShowAddModal(true)} onAIQuickAdd={() => setShowAIQuickAdd(true)} />
-          </div>
-
           <div className="tasklist-rows">
             {visibleTasks.length === 0 && (
               <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
