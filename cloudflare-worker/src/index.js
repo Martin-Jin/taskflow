@@ -28,7 +28,13 @@
  * ============================================================================
  */
 
-import { handleExchangeCode, handleRefreshToken } from './googleCalendarAuthRoutes.js';
+import { handleExchangeCode, handleRefreshToken, handleDisconnect } from './googleCalendarAuthRoutes.js';
+
+const CALENDAR_ROUTES = {
+  '/calendar/exchange-code': handleExchangeCode,
+  '/calendar/refresh-token': handleRefreshToken,
+  '/calendar/disconnect': handleDisconnect,
+};
 
 const MAX_TEXT_CHARS = 4000;
 const MAX_IMAGE_BASE64_CHARS = 5 * 1024 * 1024; // ~5MB of base64 text
@@ -526,11 +532,10 @@ export default {
     // — dispatched by path ahead of the AI quick-add logic below, which has
     // no path of its own and handles every other POST.
     const { pathname } = new URL(request.url);
-    if (pathname === '/calendar/exchange-code' || pathname === '/calendar/refresh-token') {
+    const calendarHandler = CALENDAR_ROUTES[pathname];
+    if (calendarHandler) {
       try {
-        return await (pathname === '/calendar/exchange-code'
-          ? handleExchangeCode(request, env, headers)
-          : handleRefreshToken(request, env, headers));
+        return await calendarHandler(request, env, headers);
       } catch (err) {
         // Without this, an uncaught error here returns a bare Cloudflare
         // error page with no CORS headers — the browser reports that as an

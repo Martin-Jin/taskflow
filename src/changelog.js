@@ -17,6 +17,23 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.31',
+    date: '2026-08-01',
+    title: 'Added a Google Calendar Disconnect button',
+    changes: [
+      'Settings → Integrations now has a "Disconnect" button next to "Push" for Google Calendar, which properly revokes access at Google (not just locally) rather than needing to do that manually from your Google account settings.',
+      '"Push" now sits on its own row below the connection status/Pull buttons.',
+    ],
+  },
+  {
+    version: '1.33.30',
+    date: '2026-08-01',
+    title: 'Improved text contrast in light mode',
+    changes: [
+      'Several shades of gray, red, orange, blue and green text in light mode (secondary descriptions, priority badges, error/warning/success text, visited links) were too faint to read comfortably. They\'re now darker and meet accessibility contrast standards.',
+    ],
+  },
+  {
     version: '1.33.29',
     date: '2026-08-01',
     title: 'Google Calendar now stays connected across page refreshes',

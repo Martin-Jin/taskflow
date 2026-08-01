@@ -267,6 +267,28 @@ async function refreshAccessTokenFromWorker() {
 }
 
 /**
+ * User-initiated disconnect: tells the Worker to revoke the stored refresh
+ * token at Google and delete it from Firestore, then clears all local
+ * token state regardless of whether that network call succeeds — an
+ * unreachable Worker shouldn't leave the UI stuck showing "connected".
+ */
+export async function disconnectGoogleCalendar() {
+  const workerUrl = import.meta.env.VITE_CALENDAR_AUTH_WORKER_URL;
+  try {
+    if (workerUrl) {
+      const idToken = await getFirebaseIdToken();
+      await fetch(`${workerUrl}/calendar/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      });
+    }
+  } finally {
+    invalidateAccessToken();
+  }
+}
+
+/**
  * Resolve to a usable access token, preferring — in order — a still-valid
  * cached token, then the silent Worker-refresh path (no popup), and only
  * falling back to a one-time consent grant (a real popup) when the Worker

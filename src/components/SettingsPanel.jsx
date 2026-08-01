@@ -119,6 +119,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     googleNeedsReconnect,
     pushToGoogleCalendar,
     pullFromGoogleCalendar,
+    disconnectGoogleCalendar,
     isSyncing,
     isBackingUp,
     isPullingGoogleEvents,
@@ -406,12 +407,25 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               {isPullingGoogleEvents ? 'Pulling…' : 'Pull from Google Calendar'}
             </button>
           )}
-          {googleConnected && (
+        </div>
+        {googleConnected && (
+          <div className="google-calendar-actions" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
             <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
               {isSyncing ? 'Syncing…' : 'Push'}
             </button>
-          )}
-        </div>
+            <button
+              className="btn"
+              style={{ color: 'var(--color-danger)' }}
+              onClick={() => {
+                if (window.confirm('Disconnect Google Calendar? Synced events stay in TaskFlow, but reconnecting will need a fresh Google sign-in.')) {
+                  disconnectGoogleCalendar();
+                }
+              }}
+            >
+              Disconnect
+            </button>
+          </div>
+        )}
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>
           {googleNeedsReconnect
             ? "Google's sign-in expires periodically and can't always silently renew itself in the background — reconnecting takes one click and doesn't lose anything."

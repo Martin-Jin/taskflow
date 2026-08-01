@@ -2,9 +2,9 @@
  * ============================================================================
  * GOOGLE CALENDAR PERSISTENT-AUTH ROUTES
  * ============================================================================
- * Two routes that let src/services/googleCalendarService.js get a persistent
- * (refresh-token-backed) Google Calendar connection without ever holding the
- * OAuth client secret or a Google refresh token client-side:
+ * Three routes that let src/services/googleCalendarService.js get a
+ * persistent (refresh-token-backed) Google Calendar connection without ever
+ * holding the OAuth client secret or a Google refresh token client-side:
  *
  *   - POST /calendar/exchange-code — one-time: redeems the authorization
  *     `code` from GIS's initCodeClient popup for an access + refresh token,
@@ -12,8 +12,10 @@
  *     Firebase uid, and returns ONLY the access token to the client.
  *   - POST /calendar/refresh-token — the repeat "silent" path: looks up the
  *     stored refresh token and exchanges it for a fresh access token.
+ *   - POST /calendar/disconnect — user-initiated: revokes the stored
+ *     refresh token at Google and deletes it from Firestore.
  *
- * Both routes authenticate the caller via their Firebase ID token (see
+ * All three routes authenticate the caller via their Firebase ID token (see
  * googleAuth.js) rather than trusting a client-supplied uid, and both talk
  * to Firestore via firestoreClient.js's service-account REST helpers (IAM-
  * authorized, not governed by firestore.rules — see that file's rule
@@ -152,4 +154,36 @@ export async function handleRefreshToken(request, env, headers) {
 
   const tokenData = await tokenRes.json();
   return jsonResponse({ access_token: tokenData.access_token, expires_in: tokenData.expires_in }, 200, headers);
+}
+
+/**
+ * POST /calendar/disconnect — body: { idToken }
+ * A genuine user-initiated disconnect, not just clearing client-side state:
+ * revokes the stored refresh token at Google (so the grant also disappears
+ * from myaccount.google.com/permissions, not just from our own records) and
+ * deletes the stored Firestore doc either way. Always succeeds even if there
+ * was nothing stored (idempotent — matches deleteDoc's own no-op-on-404
+ * behavior) or if Google's revoke call fails (a token already-revoked one
+ * way is still successfully "disconnected" from the app's point of view).
+ */
+export async function handleDisconnect(request, env, headers) {
+  const body = await parseJsonBody(request);
+  if (!body) return jsonResponse({ error: 'Invalid JSON body.' }, 400, headers);
+
+  const { uid, response } = await requireUid(body.idToken, env, headers);
+  if (response) return response;
+
+  const stored = await getDoc(env, tokenDocPath(uid));
+  if (stored?.refreshToken) {
+    try {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(stored.refreshToken)}`, { method: 'POST' });
+    } catch (err) {
+      // Best-effort — Google being unreachable shouldn't block disconnecting
+      // locally; the stored doc is deleted below regardless.
+      console.error('Failed to revoke refresh token with Google', err);
+    }
+  }
+  await deleteDoc(env, tokenDocPath(uid));
+
+  return jsonResponse({ success: true }, 200, headers);
 }

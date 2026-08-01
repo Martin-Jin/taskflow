@@ -25,6 +25,7 @@ import {
   deleteCalendarEventInstance,
   initGoogleCalendar,
   requestAccessToken,
+  disconnectGoogleCalendar as disconnectGoogleCalendarService,
 } from '../services/googleCalendarService';
 import { mergePulledGoogleEvents, RECENTLY_DELETED_TTL_MS } from '../services/eventSyncService';
 
@@ -247,6 +248,22 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     }
   }, [blocks, tasks, commit, stateRef, setNotification]);
 
+  // ---- Disconnect Google Calendar (user-initiated) -------------------------
+  const disconnectGoogleCalendar = useCallback(async () => {
+    try {
+      await disconnectGoogleCalendarService();
+    } catch (err) {
+      console.error(err);
+      // Still treat the app as disconnected even if revoking server-side
+      // failed (e.g. Worker unreachable) — see disconnectGoogleCalendar's own
+      // finally-block for why the local token state is cleared regardless.
+    } finally {
+      setGoogleConnected(false);
+      setGoogleNeedsReconnect(false);
+      setNotification({ type: 'success', message: 'Disconnected Google Calendar.' });
+    }
+  }, [setGoogleConnected, setNotification]);
+
   return {
     googleConnected,
     setGoogleConnected,
@@ -255,6 +272,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
+    disconnectGoogleCalendar,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
   };
