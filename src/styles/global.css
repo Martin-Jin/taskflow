@@ -73,7 +73,9 @@
   --color-border-interactive: #8c8a80;
 
   --color-text-primary: #292824;
-  --color-text-secondary: #78766d;
+  /* ~5.3:1 on white/page bg — meets AA (4.5:1) for the small (11.5-12.5px)
+     body/description text this is used for throughout the app. */
+  --color-text-secondary: #6e6c62;
   /* ~2.4:1 on white — fails AA for body/UI text. Decorative/disabled use
      only (placeholder ghost text, disabled labels), never for anything
      conveying required information. */
@@ -98,14 +100,18 @@
   --color-accent-solid-text: #ffffff;
   --color-accent-soft: var(--color-accent-50);
 
-  --color-priority-urgent: #d64550;
-  --color-priority-high: #c97a2e;
-  --color-priority-medium: #2b8fa8;
-  --color-priority-low: #8a8578;
+  /* Darkened from an earlier lighter set (kept in dark-theme's own override
+     below) so each also clears 4.5:1 as text — these double as .badge text
+     color, not just dot/border fills, which need the same AA minimum as
+     any other small text. */
+  --color-priority-urgent: #c23c48;
+  --color-priority-high: #a35f1c;
+  --color-priority-medium: #226f84;
+  --color-priority-low: #736d60;
 
-  --color-success: #3e8f63;
-  --color-warning: #c97a2e;
-  --color-danger: #d64550;
+  --color-success: #2f7350;
+  --color-warning: #a35f1c;
+  --color-danger: #c23c48;
 
   /* Categorical chart series (StatsDashboard) — distinct hues for
      side-by-side comparison, not tied to priority/status meaning. */
@@ -265,7 +271,11 @@ a {
 }
 
 a:visited {
-  color: var(--color-accent-border);
+  /* NOT --color-accent-border here — that token is only 3:1-safe (border/
+     large-fill use), and read as ~2:1 against light-mode's near-white
+     backgrounds, nearly invisible. --color-accent-hover is the darker
+     accent stop and clears 4.5:1 for this small text. */
+  color: var(--color-accent-hover);
 }
 
 input[type='text'],
