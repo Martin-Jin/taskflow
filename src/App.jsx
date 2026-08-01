@@ -39,7 +39,6 @@ import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
 import TaskDetailModal from './components/Modals/TaskDetailModal';
 import SchedulingConflictsModal from './components/Modals/SchedulingConflictsModal';
-import BrowserSignInPromptModal from './components/Modals/BrowserSignInPromptModal';
 import CommandPalette from './components/CommandPalette';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
@@ -70,7 +69,7 @@ const TABS = [
 ];
 
 function AppShell() {
-  const { authError, clearAuthError, needsBrowserSignIn, dismissBrowserSignInPrompt } = useAuth();
+  const { authError, clearAuthError } = useAuth();
   const [tab, setTab] = useState('dashboard');
   // Device-local UI state (which project/view is selected) — not user data,
   // so deliberately left out of BACKUP_FIELDS.
@@ -418,7 +417,6 @@ function AppShell() {
         />
       )}
       <CompleteTaskConfirmModal />
-      {needsBrowserSignIn && <BrowserSignInPromptModal onClose={dismissBrowserSignInPrompt} />}
     </div>
   );
 }
