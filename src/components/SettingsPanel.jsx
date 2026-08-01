@@ -125,6 +125,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     isBackingUp,
     isPullingGoogleEvents,
     cloudBackups,
+    lastAutoBackupAt,
     todoistEnabled,
     setTodoistApiToken,
     importFromTodoist,
@@ -335,9 +336,12 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               </button>
             </div>
             <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 10, marginBottom: 0 }}>
-              Changes sync automatically in the background — usually within a few seconds — to every device signed
-              in with this account, no reload needed. "Sync now" is a manual fallback, and also refreshes Google
-              Calendar events, which don't push live.
+              Tasks, boards, and settings sync automatically in the background — usually within a few seconds — to
+              every device signed in with this account, no reload needed. Calendar events aren't part of that live
+              sync; your connected Google Calendar account is what carries those across devices, and events are only
+              otherwise captured in backups (see below) as a point-in-time safety net, not a way to deliver them to a
+              new device. "Sync now" is a manual fallback for the live sync, and also refreshes Google Calendar
+              events on demand.
             </p>
           </>
         ) : (
@@ -1148,8 +1152,10 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               Cloud backups
             </h4>
             <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 10 }}>
-              TaskFlow quietly takes a cloud backup roughly once a day while you're signed in, on top of whatever
-              you back up manually here.
+              TaskFlow automatically takes a cloud backup once a day while you're signed in, keeping the last 14 —
+              older automatic ones are pruned to make room. Anything you back up manually with "Back up now" is kept
+              forever and never pruned by this.
+              {lastAutoBackupAt && <> Last automatic backup: {new Date(lastAutoBackupAt).toLocaleString()}.</>}
             </p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <button

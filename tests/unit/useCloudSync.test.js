@@ -41,6 +41,7 @@ import {
   hasLocalEditRaced,
   planRemoteDataMerge,
   computePushStampPlan,
+  planAutoBackupPrune,
 } from '../../src/hooks/useCloudSync.js';
 
 describe('isValidFieldValue', () => {
@@ -329,6 +330,64 @@ describe('planRemoteDataMerge', () => {
     const plan = planRemoteDataMerge(legacyRemote, localState, { skipTasksBlocks: false });
     expect(plan.notes).toBeDefined();
     expect(plan.notes.notes.some((n) => n.body === 'https://example.com')).toBe(true);
+  });
+});
+
+describe('planAutoBackupPrune', () => {
+  // Firestore Timestamps expose `.toMillis()`; plain numbers (used here for
+  // brevity) are supported too — see the real function's `toMillis` helper.
+  function backup(id, { automatic = true, createdAt } = {}) {
+    return { id, automatic, createdAt };
+  }
+
+  it('keeps automatic backups within the retention count, deletes none', () => {
+    const backups = [
+      backup('a1', { createdAt: 5 }),
+      backup('a2', { createdAt: 4 }),
+      backup('a3', { createdAt: 3 }),
+    ];
+    expect(planAutoBackupPrune(backups, 14)).toEqual([]);
+  });
+
+  it('deletes only the automatic backups beyond the retention count, oldest first', () => {
+    const backups = [
+      backup('a1', { createdAt: 5 }),
+      backup('a2', { createdAt: 4 }),
+      backup('a3', { createdAt: 3 }),
+      backup('a4', { createdAt: 2 }),
+      backup('a5', { createdAt: 1 }),
+    ];
+    // Keep the 3 most recent (a1, a2, a3); prune the 2 oldest (a4, a5).
+    expect(planAutoBackupPrune(backups, 3)).toEqual(['a4', 'a5']);
+  });
+
+  it('never includes a manual backup as a deletion candidate, no matter how old or how many automatic backups exist', () => {
+    const backups = [
+      backup('manual-old', { automatic: false, createdAt: 0 }),
+      ...Array.from({ length: 20 }, (_, i) => backup(`auto-${i}`, { createdAt: 20 - i })),
+    ];
+    const toDelete = planAutoBackupPrune(backups, 14);
+    expect(toDelete).not.toContain('manual-old');
+    expect(toDelete).toHaveLength(6); // 20 automatic - 14 retained
+  });
+
+  it('handles a Firestore Timestamp-shaped createdAt (an object with toMillis())', () => {
+    const ts = (ms) => ({ toMillis: () => ms });
+    const backups = [
+      backup('a1', { createdAt: ts(3000) }),
+      backup('a2', { createdAt: ts(2000) }),
+      backup('a3', { createdAt: ts(1000) }),
+    ];
+    expect(planAutoBackupPrune(backups, 2)).toEqual(['a3']);
+  });
+
+  it('treats a missing/null createdAt as oldest (sorts last, pruned first when over the limit)', () => {
+    const backups = [
+      backup('a1', { createdAt: 100 }),
+      backup('a2', { createdAt: null }),
+      backup('a3', { createdAt: 50 }),
+    ];
+    expect(planAutoBackupPrune(backups, 2)).toEqual(['a2']);
   });
 });
 

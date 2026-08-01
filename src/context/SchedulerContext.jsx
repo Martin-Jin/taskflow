@@ -708,6 +708,7 @@ export function SchedulerProvider({ children }) {
 
   const {
     cloudBackups,
+    lastAutoBackupAt,
     pullFromCloud,
     exportBackup,
     importBackup,
@@ -2157,6 +2158,7 @@ export function SchedulerProvider({ children }) {
       isBackingUp,
       isPullingGoogleEvents,
       cloudBackups,
+      lastAutoBackupAt,
       googleConnected,
       googleNeedsReconnect,
       todoistEnabled,
@@ -2253,6 +2255,7 @@ export function SchedulerProvider({ children }) {
       isBackingUp,
       isPullingGoogleEvents,
       cloudBackups,
+      lastAutoBackupAt,
       googleConnected,
       googleNeedsReconnect,
       todoistEnabled,

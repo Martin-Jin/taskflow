@@ -48,7 +48,23 @@ export default function BackupsModal({ backups, isBusy, onRestore, onDelete, onC
                 className="settings-row"
                 style={{ borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap' }}
               >
-                <span style={{ flex: 1, fontSize: 13, minWidth: 160 }}>{formatWhen(backup)}</span>
+                <span style={{ flex: 1, fontSize: 13, minWidth: 160, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {formatWhen(backup)}
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.3,
+                      color: 'var(--color-text-secondary)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 4,
+                      padding: '1px 5px',
+                    }}
+                  >
+                    {backup.automatic ? 'Automatic' : 'Manual'}
+                  </span>
+                </span>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   <button
                     className="btn"

@@ -79,12 +79,23 @@ export function subscribeUserData(uid, onData, onError) {
   );
 }
 
-const MAX_LISTED_BACKUPS = 20;
+// Raised from 20 now that up to 14 automatic backups (see useCloudSync's
+// daily auto-backup/prune) can coexist with however many manual ones the
+// user has created — this needs enough headroom that manual backups don't
+// silently fall out of the "pick one to restore" list once 14+ automatic
+// ones exist alongside them.
+const MAX_LISTED_BACKUPS = 40;
 
-/** Creates a new immutable point-in-time backup doc. Returns the new doc's auto-generated id. */
-export async function createBackup(uid, data) {
+/**
+ * Creates a new immutable point-in-time backup doc. Returns the new doc's
+ * auto-generated id. `automatic` tags who created it (the daily auto-backup
+ * vs. Settings' "Back up now" button) so pruning can tell them apart —
+ * automatic backups are rotated on a retention count, manual ones never are.
+ */
+export async function createBackup(uid, data, { automatic = false } = {}) {
   const ref = await addDoc(collection(db, 'users', uid, 'backups'), {
     ...data,
+    automatic,
     createdAt: serverTimestamp(),
   });
   return ref.id;
@@ -92,16 +103,23 @@ export async function createBackup(uid, data) {
 
 /**
  * Lists up to MAX_LISTED_BACKUPS most recent backups, newest first, as
- * lightweight `{ id, createdAt, exportedAt }` metadata rather than the full
- * payload each doc carries — the client SDK still downloads the whole doc
- * per the query, but callers (the "pick one to restore" list) only ever
- * need these three fields, so we strip the rest here rather than holding
- * up to 20 full task/block/etc arrays in React state at once.
+ * lightweight `{ id, createdAt, exportedAt, automatic }` metadata rather than
+ * the full payload each doc carries — the client SDK still downloads the
+ * whole doc per the query, but callers (the "pick one to restore" list, and
+ * the auto-backup pruning logic) only ever need these fields, so we strip
+ * the rest here rather than holding many full task/block/etc arrays in React
+ * state at once. `automatic` defaults to false for backups created before
+ * that field existed.
  */
 export async function listBackups(uid) {
   const q = query(collection(db, 'users', uid, 'backups'), orderBy('createdAt', 'desc'), limit(MAX_LISTED_BACKUPS));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, createdAt: d.data().createdAt ?? null, exportedAt: d.data().exportedAt ?? null }));
+  return snap.docs.map((d) => ({
+    id: d.id,
+    createdAt: d.data().createdAt ?? null,
+    exportedAt: d.data().exportedAt ?? null,
+    automatic: d.data().automatic ?? false,
+  }));
 }
 
 /** Fetches one backup's full payload by id, or null if it's since been deleted. */

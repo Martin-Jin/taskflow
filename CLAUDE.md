@@ -196,6 +196,23 @@ the live-sync path (`computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData`
 `SchedulerContext`'s `cloudSyncState`) without a strong reason and updating this note
 plus the README's own Backups section.
 
+**Automatic daily cloud backups:** in addition to the manual "Back up now"
+button, `useCloudSync.js` (`runAutomaticBackupIfDue`) creates a Firestore
+backup automatically once per day while a user is signed in with cloud sync
+active — checked once on mount and hourly thereafter (`AUTO_BACKUP_CHECK_
+INTERVAL_MS`), gated by a persisted `lastAutoBackupAt` timestamp so a reload
+doesn't cause an extra one. Each backup doc is tagged `automatic: true`/
+`false` (`firestoreSync.createBackup`'s new option) so retention can tell
+them apart: after each automatic backup, `planAutoBackupPrune` (a pure,
+unit-tested function) decides which automatic backups beyond the 14 most
+recent (`AUTO_BACKUP_RETENTION_COUNT`) to delete. **Manual backups are never
+pruned by this — they're excluded from the candidate list entirely**, so a
+user's deliberate checkpoints survive regardless of age or how many
+automatic ones accumulate. This is separate from and doesn't affect the
+manual "Back up now" flow, which is unchanged. `MAX_LISTED_BACKUPS` in
+`firestoreSync.js` was raised (20 → 40) so the "view backups" list still
+shows manual backups once 14+ automatic ones exist alongside them.
+
 ## Testing
 
 - Treat `npm run build` as the minimum bar before calling a change done; run
