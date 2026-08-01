@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.51',
+    date: '2026-08-01',
+    title: 'Automatic daily cloud backups, and clearer sync explanations',
+    changes: [
+      'TaskFlow now automatically takes a cloud backup once a day while you\'re signed in, keeping the last 14 (older automatic ones are pruned to make room) — backups you create yourself with "Back up now" are kept forever and never affected by this.',
+      'Settings now explains the sync/backup picture more clearly: tasks, boards, and settings sync live across your devices in the background, calendar events sync only through your connected Google Calendar account (not the live sync), and backups are a separate point-in-time safety net for everything, including events.',
+    ],
+  },
+  {
     version: '1.33.50',
     date: '2026-08-01',
     title: 'Search bars now float as you scroll',

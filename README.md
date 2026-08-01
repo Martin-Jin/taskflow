@@ -126,14 +126,21 @@ restore one back in — both work whether or not you're signed in, since the
 file path never touches Firestore.
 
 If you're signed in, TaskFlow also keeps point-in-time snapshots in your
-account: a "Back up now" button for an on-demand snapshot, and a quiet
-automatic one roughly once a day while you're signed in. These live
-separately from the live sync doc described above (`users/{uid}`, which is
-just "current state" and gets overwritten on every change) in their own
+account: a "Back up now" button for an on-demand snapshot, and an automatic
+one taken once a day while you're signed in with cloud sync active. These
+live separately from the live sync doc described above (`users/{uid}`, which
+is just "current state" and gets overwritten on every change) in their own
 `users/{uid}/backups/{backupId}` subcollection, so they're a genuine
 rollback point even if a bad sync or an accidental bulk-delete already
 propagated to the live doc. **View backups** in Settings lists your recent
-snapshots (newest first) to restore or delete.
+snapshots (newest first, tagged "Automatic" or "Manual") to restore or delete.
+
+The automatic backups keep a rolling 2-week window: only the 14 most recent
+automatic snapshots are kept, and older ones are pruned right after each new
+one is created. Anything you create yourself via "Back up now" is tagged
+separately and is **never** pruned by this rotation, no matter how old it
+gets or how many automatic backups accumulate — you're the only one who
+deletes a manual backup.
 
 Restoring — from a file or from a cloud snapshot — replaces your current
 tasks, boards, and settings on this device, and asks for confirmation

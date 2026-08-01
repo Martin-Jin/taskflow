@@ -31,6 +31,43 @@ import { savePersisted } from '../utils/persistence.js';
 
 const PUSH_DEBOUNCE_MS = 1500;
 
+// ---- Automatic cloud backups ------------------------------------------------
+// Once per day while signed in with cloud sync active, a backup is taken
+// automatically (tagged `automatic: true`, see firestoreSync.createBackup) and
+// old automatic ones beyond AUTO_BACKUP_RETENTION_COUNT are pruned — manual
+// "Back up now" backups are never touched by this, regardless of age (see
+// planAutoBackupPrune below).
+const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const AUTO_BACKUP_RETENTION_COUNT = 14;
+// How often a long-lived open tab re-checks whether a day has elapsed since
+// the last automatic backup, without needing a reload — mirrors
+// useGoogleCalendarSync's periodic-poll pattern (a plain setInterval with an
+// in-flight guard ref), just on a much coarser cadence since this only needs
+// to catch a day boundary, not near-realtime freshness.
+const AUTO_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Pure retention decision for automatic cloud backups: given the full list of
+ * backups (as returned by firestoreSync.listBackups — `{ id, automatic,
+ * createdAt }`) and how many automatic ones to keep, returns the ids of
+ * automatic backups beyond that count (oldest-first among the excess),
+ * ready to delete. Manual backups (`automatic: false`) are never included in
+ * the input filtering here, so they're never candidates for deletion no
+ * matter how many exist or how old they are.
+ */
+export function planAutoBackupPrune(backups, retentionCount = AUTO_BACKUP_RETENTION_COUNT) {
+  const automaticBackups = backups.filter((b) => b.automatic);
+  const sorted = [...automaticBackups].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+  return sorted.slice(retentionCount).map((b) => b.id);
+}
+
+/** Firestore Timestamps expose `.toMillis()`; a plain number (e.g. in tests) is used as-is. Missing/unknown values sort last (treated as oldest). */
+function toMillis(createdAt) {
+  if (createdAt && typeof createdAt.toMillis === 'function') return createdAt.toMillis();
+  if (typeof createdAt === 'number') return createdAt;
+  return 0;
+}
+
 /**
  * `value` if it matches `field`'s expected shape (see backupService's
  * FIELD_TYPES), otherwise `fallback` (always the current in-app value for
@@ -238,10 +275,21 @@ export function useCloudSync({
   const [isPushingCloud, setIsPushingCloud] = useState(false);
   const [cloudBackups, setCloudBackups] = useState([]);
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  // When the last automatic backup ran (epoch ms), persisted so it survives a
+  // reload — see the automatic-backup effect below.
+  const [lastAutoBackupAt, setLastAutoBackupAt] = usePersistedState('lastAutoBackupAt', null);
 
   const pushTimerRef = useRef(null);
   const lastPushedFingerprintRef = useRef(null);
   const unsubscribeRef = useRef(null);
+  // Mirrors lastAutoBackupAt so the periodic check (a setInterval callback
+  // captured once per mount, see the automatic-backup effect) always reads
+  // the latest value instead of whatever was current when it was created —
+  // same reasoning as stateRef elsewhere in this file. Updated directly
+  // (not just via the setLastAutoBackupAt state setter) the moment a backup
+  // succeeds, so a same-session re-check can't race a stale render.
+  const lastAutoBackupAtRef = useRef(lastAutoBackupAt);
+  const autoBackupInFlightRef = useRef(false);
 
   // ---- Debounced push to Firestore -----------------------------------------
   // The fingerprint stamp/rollback decision itself lives in the pure,
@@ -567,6 +615,63 @@ export function useCloudSync({
     }
   }, [user, stateRef, theme, events, setNotification]);
 
+  // ---- Automatic daily cloud backup + retention -----------------------------
+  // Runs at most once per AUTO_BACKUP_INTERVAL_MS. Unlike createCloudBackup
+  // above (a user-initiated action they're actively waiting on, so it SHOULD
+  // surface errors), a failure here just warns to the console and moves on —
+  // it's a background action the user never explicitly triggered, so a
+  // disruptive error toast would be more annoying than useful. It doesn't
+  // return anything or throw for the same reason: nothing is waiting on it.
+  const runAutomaticBackupIfDue = useCallback(async () => {
+    if (!user || !cloudSynced) return;
+    if (autoBackupInFlightRef.current) return;
+    const now = Date.now();
+    if (lastAutoBackupAtRef.current && now - lastAutoBackupAtRef.current < AUTO_BACKUP_INTERVAL_MS) return;
+    autoBackupInFlightRef.current = true;
+    try {
+      const payload = buildBackupPayload({ ...stateRef.current, theme, events });
+      await createBackup(user.uid, payload, { automatic: true });
+      // Stamp the ref immediately (not just the state setter, which only
+      // takes effect on this hook's next render) so a same-session re-check
+      // — the periodic setInterval below, or a fast remount — can't mistake
+      // the backup that just succeeded for one still due.
+      lastAutoBackupAtRef.current = now;
+      setLastAutoBackupAt(now);
+
+      // Prune old automatic backups beyond the retention count. Manual
+      // backups are never candidates — see planAutoBackupPrune.
+      const backups = await listBackups(user.uid);
+      setCloudBackups(backups);
+      const idsToDelete = planAutoBackupPrune(backups, AUTO_BACKUP_RETENTION_COUNT);
+      if (idsToDelete.length > 0) {
+        await Promise.all(
+          idsToDelete.map((id) =>
+            deleteBackup(user.uid, id).catch((err) => {
+              console.warn('[useCloudSync] Failed to prune old automatic backup', id, err);
+            })
+          )
+        );
+        setCloudBackups((prev) => prev.filter((b) => !idsToDelete.includes(b.id)));
+      }
+    } catch (err) {
+      console.warn('[useCloudSync] Automatic backup failed', err);
+    } finally {
+      autoBackupInFlightRef.current = false;
+    }
+  }, [user, cloudSynced, stateRef, theme, events, setLastAutoBackupAt]);
+
+  // Checks once on mount (covers "app just opened, a day or more has passed")
+  // and hourly after that (covers a long-lived tab crossing the day boundary
+  // without a reload) — same setInterval + in-flight-guard shape as
+  // useGoogleCalendarSync's periodic poll.
+  useEffect(() => {
+    if (!user || !cloudSynced) return undefined;
+    runAutomaticBackupIfDue();
+    const handle = setInterval(runAutomaticBackupIfDue, AUTO_BACKUP_CHECK_INTERVAL_MS);
+    return () => clearInterval(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, cloudSynced]);
+
   const loadCloudBackups = useCallback(async () => {
     if (!user) return;
     setIsLoadingBackups(true);
@@ -614,6 +719,7 @@ export function useCloudSync({
     isPushingCloud,
     cloudBackups,
     isLoadingBackups,
+    lastAutoBackupAt,
     toggleCloudSync,
     pullFromCloud,
     pushToCloud,
