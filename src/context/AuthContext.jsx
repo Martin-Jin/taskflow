@@ -30,8 +30,8 @@
  * home-screen icon (standalone display mode) — that isolated context breaks
  * it the same way it breaks everything else OAuth-related. GoogleSignInButton
  * checks standalone mode (utils/installPrompt.js's isRunningStandalone) and
- * renders a plain button calling login() instead of Google's widget there,
- * prompting the user to continue in their regular browser.
+ * shows a prompt to continue in a regular browser instead of Google's widget
+ * there (see BrowserSignInPromptModal).
  * ============================================================================
  */
 
@@ -95,7 +95,6 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
-  const [needsBrowserSignIn, setNeedsBrowserSignIn] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -104,16 +103,6 @@ export function AuthProvider({ children }) {
     });
     return unsubscribe;
   }, []);
-
-  // Only used by the standalone-mode fallback button (a plain button we
-  // control, not Google's rendered widget — see needsBrowserSignIn/
-  // BrowserSignInPromptModal). The normal sign-in path never calls this;
-  // Google's own button (rendered via renderGoogleSignInButton) handles the
-  // click itself and reports straight to handleGoogleCredential below.
-  function login() {
-    setAuthError(null);
-    setNeedsBrowserSignIn(true);
-  }
 
   async function handleGoogleCredential(idToken) {
     setAuthError(null);
@@ -124,10 +113,6 @@ export function AuthProvider({ children }) {
       console.error('[AuthContext] Sign-in failed', err);
       setAuthError(err?.message || String(err));
     }
-  }
-
-  function dismissBrowserSignInPrompt() {
-    setNeedsBrowserSignIn(false);
   }
 
   function clearAuthError() {
@@ -155,10 +140,7 @@ export function AuthProvider({ children }) {
         user,
         authLoading,
         authError,
-        login,
         logout,
-        needsBrowserSignIn,
-        dismissBrowserSignInPrompt,
         clearAuthError,
         handleGoogleCredential,
       }}

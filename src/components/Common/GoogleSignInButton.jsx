@@ -5,22 +5,24 @@
  * AuthContext.jsx's renderGoogleSignInButton for why: it's the one sign-in
  * mechanism that doesn't rely on window.open() actually producing a real
  * popup, which several mobile browsers don't reliably do), falling back to
- * our own button + browser-redirect prompt in standalone/home-screen mode,
- * where nothing OAuth-related works in-place.
+ * our own button + a prompt to open TaskFlow in a regular browser in
+ * standalone/home-screen mode, where nothing OAuth-related works in-place.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LogIn } from 'lucide-react';
 import { useAuth, renderGoogleSignInButton } from '../../context/AuthContext';
 import { isRunningStandalone } from '../../utils/installPrompt';
+import BrowserSignInPromptModal from '../Modals/BrowserSignInPromptModal';
 
 /**
  * @param {{ compact?: boolean }} props
  */
 export default function GoogleSignInButton({ compact = false }) {
-  const { login, handleGoogleCredential } = useAuth();
+  const { handleGoogleCredential } = useAuth();
   const containerRef = useRef(null);
   const standalone = isRunningStandalone();
+  const [showBrowserPrompt, setShowBrowserPrompt] = useState(false);
 
   useEffect(() => {
     if (standalone || !containerRef.current) return;
@@ -33,15 +35,20 @@ export default function GoogleSignInButton({ compact = false }) {
 
   if (standalone) {
     return (
-      <button
-        className={`btn ${compact ? 'btn-icon' : ''}`}
-        style={compact ? undefined : { width: '100%', justifyContent: 'center' }}
-        onClick={login}
-        title="Sign in with Google to sync across devices"
-      >
-        <LogIn size={15} />
-        {!compact && 'Sign in with Google'}
-      </button>
+      <>
+        <button
+          className={`btn ${compact ? 'btn-icon' : ''}`}
+          style={compact ? undefined : { width: '100%', justifyContent: 'center' }}
+          onClick={() => setShowBrowserPrompt(true)}
+          title="Sign in with Google to sync across devices"
+        >
+          <LogIn size={15} />
+          {!compact && 'Sign in with Google'}
+        </button>
+        {showBrowserPrompt && (
+          <BrowserSignInPromptModal onClose={() => setShowBrowserPrompt(false)} />
+        )}
+      </>
     );
   }
 

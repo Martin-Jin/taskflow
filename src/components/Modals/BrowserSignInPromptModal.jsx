@@ -1,9 +1,9 @@
 /**
  * BrowserSignInPromptModal — shown instead of attempting Google sign-in when
  * TaskFlow is running in standalone display mode (launched from a home-screen
- * icon on iOS/Android). Both popup and redirect sign-in break there because
- * the standalone context's storage is isolated from the regular browser — see
- * AuthContext.jsx's login(). The "Open in browser" link uses target="_blank",
+ * icon on iOS/Android). Sign-in doesn't work there because the standalone
+ * context's storage is isolated from the regular browser — see
+ * GoogleSignInButton.jsx. The "Open in browser" link uses target="_blank",
  * which iOS routes to Safari instead of navigating in place, breaking the
  * user out of the isolated context to complete sign-in normally.
  */
