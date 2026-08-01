@@ -17,6 +17,25 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.39',
+    date: '2026-08-01',
+    title: 'Fixed one-off Google Calendar events not deleting cleanly, and deleting a whole recurring series',
+    changes: [
+      'Fixed a bug where a Google Calendar fetch could silently exclude events landing exactly on the last day of the sync window, which made a live event on that day look Google-side-deleted and get removed from Taskflow.',
+      'Fixed a leftover "cancelled" event record Google can return for a deleted single occurrence being mistaken for a still-live one-off event that then never really goes away.',
+      'Fixed "Delete" → "All events in the series" on a recurring Google Calendar event silently doing nothing (This event / This and following were unaffected).',
+    ],
+  },
+  {
+    version: '1.33.38',
+    date: '2026-08-01',
+    title: 'Fixed deletions in Google Calendar not removing the event from Taskflow; added a manual "Rebuild from Google Calendar" option',
+    changes: [
+      'Fixed a bug where deleting an event directly in Google Calendar (one that was originally created in Taskflow) never removed it from Taskflow — it kept showing up until deleted manually here too. Newly-created and newly-synced events now stay fully two-way in sync, including deletions made on either side.',
+      'Added "Rebuild from Google Calendar" in Settings → Calendar — a repeatable, on-demand full wipe-and-rebuild of your synced events from whatever Google currently has, for when stale/duplicate events won\'t clear with a normal Pull. (The earlier automatic one-time cleanup only ever ran once; this gives you a button instead.)',
+    ],
+  },
+  {
     version: '1.33.37',
     date: '2026-08-01',
     title: 'Faster Google Calendar sync (~1 minute instead of ~5)',

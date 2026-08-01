@@ -665,6 +665,7 @@ export function SchedulerProvider({ children }) {
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
+    rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
@@ -1598,12 +1599,20 @@ export function SchedulerProvider({ children }) {
       // functional setEvents form) so a later edit/delete on this same
       // event knows which Google event to update/delete, regardless of
       // whatever else has changed in `events` while this was in flight.
+      // Also flips `source` to 'google' — once this row has a real Google
+      // copy, Google Calendar is authoritative for it (see
+      // eventSyncService.mergePulledGoogleEvents's "Google always wins"
+      // policy): a row left at source:'manual' forever is PERMANENTLY
+      // exempt from pull-driven updates, including detecting that it was
+      // deleted directly in Google Calendar — a real event where events
+      // stopped in sync after their first successful push (and a manual/
+      // google distinction the UI no longer visually makes anyway).
       if (googleConnected) {
         pushEventToCalendar(newEvent)
           .then((result) => {
             if (!result) return;
             setEvents((prev) =>
-              prev.map((e) => (e.id === newEvent.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+              prev.map((e) => (e.id === newEvent.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
             );
           })
           .catch((err) => {
@@ -1791,8 +1800,12 @@ export function SchedulerProvider({ children }) {
         pushEventToCalendar(eventToPush)
           .then((result) => {
             if (!result) return;
+            // Flips source to 'google' too — see addManualEvent's own
+            // comment on its equivalent patch for why: a manual event can
+            // get its FIRST googleEventId here instead, if it was created
+            // while disconnected and only pushed later via an edit.
             setEvents((prev) =>
-              prev.map((e) => (e.id === pushId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+              prev.map((e) => (e.id === pushId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
             );
           })
           .catch((err) => console.error('[SchedulerContext] Failed to push updated event to Google Calendar', err));
@@ -1841,7 +1854,15 @@ export function SchedulerProvider({ children }) {
       const prevEventsSnapshot = events;
 
       if (!isVirtual || scope === 'all') {
-        const target = events.find((e) => e.id === eventId);
+        // For a virtual per-occurrence id (a true-RRULE series, scope 'all'
+        // only — see below), the real row to delete is the MASTER, not the
+        // virtual id itself: `events` never contains a row keyed by the
+        // `${masterId}::${date}` virtual id, so looking it up by the raw
+        // `eventId` here silently found nothing and made "Delete" on "All
+        // events in the series" a no-op for every true-RRULE series (the
+        // 'this'/'following' branches further below already resolved via
+        // `masterId` correctly — this branch was the one gap).
+        const target = events.find((e) => e.id === (isVirtual ? masterId : eventId));
         if (!target) return;
 
         // A "synthetic" series (see googleCalendarService's withSyntheticSeries)
@@ -1895,7 +1916,7 @@ export function SchedulerProvider({ children }) {
                   .then((result) => {
                     if (!result) return;
                     setEvents((prev) =>
-                      prev.map((e) => (e.id === t.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+                      prev.map((e) => (e.id === t.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
                     );
                   })
                   .catch((err) => console.error('[SchedulerContext] Failed to restore deleted event on Google Calendar on undo', err));
@@ -1951,7 +1972,7 @@ export function SchedulerProvider({ children }) {
           .then((result) => {
             if (!result) return;
             setEvents((prev) =>
-              prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+              prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
             );
           })
           .catch((err) => console.error('[SchedulerContext] Failed to push truncated series to Google Calendar', err));
@@ -1969,7 +1990,7 @@ export function SchedulerProvider({ children }) {
               .then((result) => {
                 if (!result) return;
                 setEvents((prev) =>
-                  prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+                  prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
                 );
               })
               .catch((err) => console.error('[SchedulerContext] Failed to restore truncated series on Google Calendar on undo', err));
@@ -2148,6 +2169,7 @@ export function SchedulerProvider({ children }) {
       connectGoogleCalendar,
       pullFromGoogleCalendar,
       pushToGoogleCalendar,
+      rebuildEventsFromGoogle,
       disconnectGoogleCalendar,
       syncNow,
       exportBackup,
@@ -2233,6 +2255,7 @@ export function SchedulerProvider({ children }) {
       connectGoogleCalendar,
       pullFromGoogleCalendar,
       pushToGoogleCalendar,
+      rebuildEventsFromGoogle,
       disconnectGoogleCalendar,
       syncNow,
       exportBackup,

@@ -119,6 +119,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     googleNeedsReconnect,
     pushToGoogleCalendar,
     pullFromGoogleCalendar,
+    rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
     isSyncing,
     isBackingUp,
@@ -417,6 +418,21 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               className="btn"
               style={{ color: 'var(--color-danger)' }}
               onClick={() => {
+                if (
+                  window.confirm(
+                    'Rebuild ALL calendar events from Google Calendar? This wipes every local event first — including any purely local "blocked time" that was never pushed to Google — then rebuilds entirely from what Google currently has. Use this if events keep reappearing or you still see events that no longer exist on Google after a normal Pull.'
+                  )
+                ) {
+                  rebuildEventsFromGoogle();
+                }
+              }}
+            >
+              Rebuild from Google Calendar
+            </button>
+            <button
+              className="btn"
+              style={{ color: 'var(--color-danger)' }}
+              onClick={() => {
                 if (window.confirm('Disconnect Google Calendar? Synced events stay in TaskFlow, but reconnecting will need a fresh Google sign-in.')) {
                   disconnectGoogleCalendar();
                 }
@@ -431,7 +447,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             ? "Google's sign-in expires periodically and can't always silently renew itself in the background — reconnecting takes one click and doesn't lose anything."
             : 'Connect Google Calendar to push scheduled blocks to it with one click — it asks Google directly for permission, TaskFlow never sees your Google password.'}
           {googleConnected &&
-            ' "Pull from Google Calendar" immediately re-fetches your Google events, overwriting any local changes to synced events with what Google currently has.'}
+            ' "Pull from Google Calendar" immediately re-fetches your Google events, overwriting any local changes to synced events with what Google currently has. "Rebuild from Google Calendar" goes further — a full wipe-and-rebuild for when stale/duplicate events won\'t go away with a normal Pull.'}
         </p>
 
         <div
