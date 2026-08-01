@@ -38,6 +38,7 @@ import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
 import TaskDetailModal from './components/Modals/TaskDetailModal';
+import SchedulingConflictsModal from './components/Modals/SchedulingConflictsModal';
 import CommandPalette from './components/CommandPalette';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
@@ -127,6 +128,9 @@ function AppShell() {
     touchProjectVisited,
     tasks,
     runRebalance,
+    schedulingConflicts,
+    schedulingConflictsModalOpen,
+    setSchedulingConflictsModalOpen,
   } = useScheduler();
 
   // Shared by the sidebar, List view, and Board view — selecting a project
@@ -381,6 +385,14 @@ function AppShell() {
         />
       )}
       {paletteTask && <TaskDetailModal task={paletteTask} onClose={() => setPaletteTaskId(null)} />}
+      {schedulingConflictsModalOpen && (
+        <SchedulingConflictsModal
+          conflicts={schedulingConflicts}
+          tasks={tasks}
+          onOpenTask={openTaskFromPalette}
+          onClose={() => setSchedulingConflictsModalOpen(false)}
+        />
+      )}
       <CompleteTaskConfirmModal />
     </div>
   );

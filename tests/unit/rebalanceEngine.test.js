@@ -103,6 +103,44 @@ describe('rebalance', () => {
     const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
     expect(result.blocks.some((b) => b.id === 'b6')).toBe(true);
   });
+
+  it('reports a fixed_time_conflict reason (with the conflicting event) when a fixedTime task collides with an event', () => {
+    const tasks = [
+      { id: 't7', title: 'Standup prep', isCompleted: false, estimatedHours: 1, dueDate: today, enforceDueDate: true, fixedTime: '09:00' },
+    ];
+    const events = [{ id: 'ev1', date: today, startTime: '09:00', endTime: '10:00', title: 'Team Standup' }];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events, rules: baseRules, fromDate: today });
+    expect(result.overflow).toHaveLength(1);
+    expect(result.overflow[0]).toMatchObject({
+      taskId: 't7',
+      reason: {
+        type: 'fixed_time_conflict',
+        conflictingItem: { id: 'ev1', type: 'event', label: 'Team Standup', start: '09:00', end: '10:00' },
+      },
+    });
+  });
+
+  it('reports a dependency_blocked reason (naming the blocking task) for a task whose dependency is incomplete', () => {
+    const tasks = [
+      { id: 't8', title: 'Blocker task', isCompleted: false, estimatedHours: 8, dueDate: today },
+      { id: 't9', title: 'Waiting task', isCompleted: false, estimatedHours: 1, dueDate: today, dependsOn: ['t8'] },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    const blocked = result.overflow.find((o) => o.taskId === 't9');
+    expect(blocked).toMatchObject({
+      reason: { type: 'dependency_blocked', blockingDependencies: [{ id: 't8', title: 'Blocker task' }] },
+    });
+    expect(result.stats.blockedByDependencies).toBe(1);
+  });
+
+  it('reports a no_capacity reason (not fixed_time_conflict) when a non-fixedTime task simply runs out of room', () => {
+    const tasks = [
+      { id: 't10', title: 'Too much work', isCompleted: false, estimatedHours: 100, dueDate: today, enforceDueDate: true },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    const overflowEntry = result.overflow.find((o) => o.taskId === 't10');
+    expect(overflowEntry.reason).toEqual({ type: 'no_capacity' });
+  });
 });
 
 describe('planToday', () => {

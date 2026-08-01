@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.55',
+    date: '2026-08-01',
+    title: "See exactly why a task couldn't be scheduled",
+    changes: [
+      "When Re-balance or Plan today can't fit every task, the notification now has a \"View details\" button showing exactly why each one didn't make it in — a specific conflicting calendar event/routine/task at its fixed time, an incomplete dependency it's still waiting on, or simply no free time left in its window.",
+    ],
+  },
+  {
     version: '1.33.54',
     date: '2026-08-01',
     title: 'Capped how far back on-demand calendar browsing keeps history',

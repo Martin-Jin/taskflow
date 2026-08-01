@@ -25,6 +25,16 @@ import { subtractIntervals, toTimeIntervals, totalMinutes, capTotalMinutes } fro
  * Events/routines flagged `isFreeTime` / inactive are excluded, honoring
  * the "Free Time / Ignore" override rule from the requirements (e.g. a
  * lecture the user wants to be schedulable-over).
+ *
+ * Each entry is tagged with `source`/`id`/`label` identifying what's
+ * occupying that time (a routine, calendar event, or another task's
+ * scheduled block) — purely additive metadata that `subtractIntervals`
+ * ignores (it only reads `start`/`end`), used only so a `fixedTime` task
+ * that fails to place can report exactly what it conflicted with (see
+ * allocator.js's `placeFixedTimeInDay`). A `block` entry's `label` is left
+ * null here since capacityEngine has no task lookup; the caller (usually
+ * rebalanceEngine, which has the full task list) fills in the owning
+ * task's title afterward.
  */
 function collectBusyIntervals(date, { routines, events, blocks }) {
   const dow = dayOfWeek(date);
@@ -33,18 +43,18 @@ function collectBusyIntervals(date, { routines, events, blocks }) {
   for (const r of routines) {
     if (!r.isActive) continue;
     if (!r.daysOfWeek.includes(dow)) continue;
-    busy.push({ start: timeToMinutes(r.startTime), end: timeToMinutes(r.endTime) });
+    busy.push({ start: timeToMinutes(r.startTime), end: timeToMinutes(r.endTime), source: 'routine', id: r.id, label: r.label });
   }
 
   for (const e of events) {
     if (e.date !== date) continue;
     if (e.isFreeTime) continue; // explicit override: treat as available, not busy
-    busy.push({ start: timeToMinutes(e.startTime), end: timeToMinutes(e.endTime) });
+    busy.push({ start: timeToMinutes(e.startTime), end: timeToMinutes(e.endTime), source: 'event', id: e.id, label: e.title });
   }
 
   for (const b of blocks) {
     if (b.date !== date) continue;
-    busy.push({ start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime) });
+    busy.push({ start: timeToMinutes(b.startTime), end: timeToMinutes(b.endTime), source: 'block', id: b.taskId, label: null });
   }
 
   return busy;
@@ -89,6 +99,11 @@ export function computeDayCapacity(date, ctx) {
     totalAvailableHours,
     allocatedHours: 0,
     freeIntervals: toTimeIntervals(trimmed),
+    // Raw (unpadded) tagged busy intervals, in minutes-since-midnight, kept
+    // separately from the freeIntervals math above purely so the allocator
+    // can identify what's occupying a `fixedTime` task's target slot when
+    // placement fails — see collectBusyIntervals' doc comment.
+    busyIntervals: busy,
   };
 }
 

@@ -119,6 +119,31 @@ describe('computeDayCapacity', () => {
     expect(result.totalAvailableHours).toBe(0);
     expect(result.freeIntervals).toEqual([]);
   });
+
+  it('tags busyIntervals with source/id/label for routines, events, and blocks', () => {
+    const routines = [{ id: 'r1', isActive: true, daysOfWeek: [3], startTime: '09:00', endTime: '10:00', label: 'Gym' }];
+    const events = [{ id: 'e1', date: '2026-07-01', startTime: '11:00', endTime: '12:00', title: 'Team Standup' }];
+    const blocks = [{ date: '2026-07-01', startTime: '13:00', endTime: '14:00', taskId: 'task-1' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines, events, blocks });
+    expect(result.busyIntervals).toEqual([
+      { start: 9 * 60, end: 10 * 60, source: 'routine', id: 'r1', label: 'Gym' },
+      { start: 11 * 60, end: 12 * 60, source: 'event', id: 'e1', label: 'Team Standup' },
+      { start: 13 * 60, end: 14 * 60, source: 'block', id: 'task-1', label: null },
+    ]);
+  });
+
+  it('excludes an isFreeTime event from busyIntervals just like from freeIntervals', () => {
+    const events = [{ id: 'e1', date: '2026-07-01', startTime: '11:00', endTime: '12:00', isFreeTime: true, title: 'Lecture' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events, blocks: [] });
+    expect(result.busyIntervals).toEqual([]);
+  });
+
+  it('reports busyIntervals unpadded even when minGapBetweenBlocksMins pads freeIntervals', () => {
+    const rules = { ...baseRules, minGapBetweenBlocksMins: 15 };
+    const blocks = [{ date: '2026-07-01', startTime: '12:00', endTime: '13:00', taskId: 'task-1' }];
+    const result = computeDayCapacity('2026-07-01', { rules, routines: [], events: [], blocks });
+    expect(result.busyIntervals).toEqual([{ start: 12 * 60, end: 13 * 60, source: 'block', id: 'task-1', label: null }]);
+  });
 });
 
 describe('computeHorizonCapacity', () => {

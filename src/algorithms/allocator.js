@@ -430,6 +430,29 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, 
 }
 
 /**
+ * When a `fixedTime` placement fails, find which busy interval (if any) is
+ * responsible so the caller can report a specific conflict instead of a bare
+ * "couldn't schedule". Checks for overlap against each busy interval PADDED
+ * by `gapMins` (mirroring capacityEngine's own padding, since a slot can fail
+ * to qualify purely due to the minimum-gap-between-blocks rule even when the
+ * fixed start time itself isn't literally inside the busy interval), over the
+ * minimum span the task would need to occupy starting at `fixedStartMins`.
+ * Returns null (falls through to a generic "no capacity" reason) if nothing
+ * tagged overlaps — e.g. the fixed time is simply outside the work day.
+ */
+function findFixedTimeConflict(fixedStartMins, neededMins, busyIntervals, gapMins) {
+  const windowEnd = fixedStartMins + neededMins;
+  for (const b of busyIntervals || []) {
+    const paddedStart = b.start - gapMins;
+    const paddedEnd = b.end + gapMins;
+    if (paddedEnd > fixedStartMins && paddedStart < windowEnd) {
+      return { source: b.source, id: b.id, label: b.label, start: b.start, end: b.end };
+    }
+  }
+  return null;
+}
+
+/**
  * Like placeHoursInDay, but for a task with `fixedTime` set: the placement
  * MUST start at `fixedStartMins` (the fixed time-of-day, in minutes) rather
  * than wherever first-fit would land. Finds the single free interval that
@@ -446,17 +469,27 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, 
  * hours that end up unplaceable across the whole window (see allocateTasks).
  * No fallback to a different time is attempted; the whole point of
  * `fixedTime` is that the task is done at that time or not that day.
+ *
+ * On failure, also attempts to identify WHAT occupies the slot (see
+ * findFixedTimeConflict) using `dayBusyIntervals`/`gapMins` — surfaced as
+ * `conflict` on the returned object (null if nothing tagged overlaps) so the
+ * caller can report a specific reason rather than a generic one.
  */
-function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, fixedStartMins, floorHours = hours) {
+function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, fixedStartMins, floorHours = hours, dayBusyIntervals, gapMins = 0) {
   const hoursToPlace = Math.min(hours, maxChunkHours);
   const effectiveMinChunk = Math.min(minChunkHours, floorHours);
+  const neededMins = Math.round(effectiveMinChunk * 60);
 
   const idx = dayFreeIntervals.findIndex((iv) => iv.start <= fixedStartMins && iv.end > fixedStartMins);
-  if (idx === -1) return { placedHours: 0, placements: [] };
+  if (idx === -1) {
+    return { placedHours: 0, placements: [], conflict: findFixedTimeConflict(fixedStartMins, neededMins, dayBusyIntervals, gapMins) };
+  }
 
   const interval = dayFreeIntervals[idx];
   const availableHours = (interval.end - fixedStartMins) / 60;
-  if (availableHours < effectiveMinChunk - EPSILON_HOURS) return { placedHours: 0, placements: [] };
+  if (availableHours < effectiveMinChunk - EPSILON_HOURS) {
+    return { placedHours: 0, placements: [], conflict: findFixedTimeConflict(fixedStartMins, neededMins, dayBusyIntervals, gapMins) };
+  }
 
   const takeHours = Math.min(hoursToPlace, availableHours);
   const takeMins = Math.round(takeHours * 60);
@@ -471,7 +504,7 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
   if (placementEnd < interval.end) remainder.push({ start: placementEnd, end: interval.end });
   dayFreeIntervals.splice(idx, 1, ...remainder);
 
-  return { placedHours: takeHours, placements: [{ start: placementStart, end: placementEnd }] };
+  return { placedHours: takeHours, placements: [{ start: placementStart, end: placementEnd }], conflict: null };
 }
 
 /**
@@ -482,18 +515,23 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
  *
  * `task.fixedTime` ("HH:MM") routes placement through placeFixedTimeInDay
  * instead of the normal first-fit placeHoursInDay — see that function and
- * the Task.fixedTime typedef for the override's semantics.
+ * the Task.fixedTime typedef for the override's semantics. `dayBusyIntervals`/
+ * `gapMins` are only consulted on that path, to identify a conflict on
+ * failure; when found (and this is the first day this task has failed on),
+ * it's recorded onto `conflictTracker` (Map<taskId, conflict>, mutated in
+ * place) for allocateTasks to attach to the task's eventual overflow entry.
  */
-function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '') {
+function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker) {
   const minChunkHours = task.minChunkHours ?? 0.5;
   const maxChunkHours = task.maxChunkHours ?? 4;
   // Floor the min-chunk check against the task's true total remaining hours,
   // not `hours` (which may already be a shrunk-down leftover from an earlier
   // pass) — see placeHoursInDay's floorHours comment.
   const floorHours = task.remainingHours;
-  const { placedHours, placements } = task.fixedTime
-    ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime), floorHours)
+  const { placedHours, placements, conflict } = task.fixedTime
+    ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime), floorHours, dayBusyIntervals, gapMins)
     : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours, floorHours);
+  if (conflict && conflictTracker && !conflictTracker.has(task.id)) conflictTracker.set(task.id, conflict);
   for (const p of placements) {
     newBlocks.push({
       id: `blk_${task.id}_${date}_${p.start}${idSuffix}`,
@@ -535,7 +573,13 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  *   `capacityMap`. Callers should pass a `capacityMap` covering only `today` in this mode, both so passes 2/3
  *   below can't spill into other days and so this stays simple (nothing here filters placements by date beyond
  *   what `capacityMap` already contains).
- * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number}> }}
+ * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}> }}
+ *   Each overflow entry's `reason` is one of:
+ *     - `{ type: 'fixed_time_conflict', conflictingItem: { id, type: 'routine'|'event'|'block', label, start, end } }`
+ *       — the task has `fixedTime` set and something identifiable occupies that slot ('block' entries have
+ *       `label: null`; the caller resolves it from the owning task, see rebalanceEngine.js).
+ *     - `{ type: 'no_capacity' }` — ran out of free time in the task's window; either it isn't `fixedTime`, or
+ *       nothing tagged could be identified as the specific blocker (e.g. the fixed time is outside working hours).
  */
 export function allocateTasks(tasks, capacityMap, rules, today, taskById, options = {}) {
   const { dayScoped = false } = options;
@@ -561,6 +605,12 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
   const blockerIds = computeBlockerIds(tasks, taskById);
   const newBlocks = [];
   const overflow = [];
+  // First conflict found (if any) for each fixedTime task that fails to
+  // place — see placeAndRecordBlocks/placeFixedTimeInDay/findFixedTimeConflict.
+  // Kept across all three placement passes below so the earliest, most
+  // relevant conflict wins rather than being overwritten by a later day.
+  const conflictTracker = new Map();
+  const gapMins = rules.minGapBetweenBlocksMins ?? 0;
 
   for (const task of prioritized) {
     const isBlocker = blockerIds.has(task.id);
@@ -592,7 +642,10 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       const targetHours = dayScoped || isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
       if (targetHours < (task.minChunkHours ?? 0.5) - EPSILON_HOURS) continue;
 
-      remaining -= placeAndRecordBlocks(task, date, targetHours, freeForTask.get(date), newBlocks);
+      remaining -= placeAndRecordBlocks(
+        task, date, targetHours, freeForTask.get(date), newBlocks, '',
+        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
+      );
     }
 
     // Second pass: if weighted shares left gaps (common when a day's free
@@ -605,7 +658,10 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
         if (remaining <= EPSILON_HOURS) break;
         const dayIntervals = freeForTask.get(date);
         if (!dayIntervals || dayIntervals.length === 0) continue;
-        remaining -= placeAndRecordBlocks(task, date, remaining, dayIntervals, newBlocks, '_sweep');
+        remaining -= placeAndRecordBlocks(
+          task, date, remaining, dayIntervals, newBlocks, '_sweep',
+          capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
+        );
       }
     }
 
@@ -629,14 +685,21 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
           for (const date of extraDays) {
             if (remaining <= EPSILON_HOURS) break;
             if (!freeForTask.has(date)) continue;
-            remaining -= placeAndRecordBlocks(task, date, remaining, freeForTask.get(date), newBlocks, '_overflow');
+            remaining -= placeAndRecordBlocks(
+              task, date, remaining, freeForTask.get(date), newBlocks, '_overflow',
+              capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
+            );
           }
         }
       }
     }
 
     if (remaining > EPSILON_HOURS) {
-      overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100 });
+      const conflict = task.fixedTime ? conflictTracker.get(task.id) : null;
+      const reason = conflict
+        ? { type: 'fixed_time_conflict', conflictingItem: { id: conflict.id, type: conflict.source, label: conflict.label, start: minutesToTime(conflict.start), end: minutesToTime(conflict.end) } }
+        : { type: 'no_capacity' };
+      overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100, reason });
     }
   }
 
