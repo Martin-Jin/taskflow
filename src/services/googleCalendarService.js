@@ -491,14 +491,37 @@ export async function fetchEvents(startIso, endIso) {
         // out for display only). Google's API only allows `orderBy:
         // 'startTime'` when singleEvents is true (it throws otherwise), so
         // ordering is done client-side after flattening/deduping below.
-        const resp = await window.gapi.client.calendar.events.list({
-          calendarId: cal.id,
-          timeMin,
-          timeMax,
-          timeZone: localTimeZone,
-          singleEvents: false,
-        });
-        return (resp.result.items || []).map((e) => ({ ...e, __calendarId: cal.id, __calendarName: cal.summary, __accessRole: cal.accessRole }));
+        //
+        // PAGINATION: events.list caps each response at a default 250 items
+        // (Google's own `maxResults` default) and signals more are available
+        // via `nextPageToken`. This was never followed here — harmless while
+        // the fetch window was ~1 month forward-only (well under 250 items
+        // for a typical personal calendar), but became a real, silent bug
+        // once the window grew to a full year back: a calendar with more
+        // than 250 distinct events/masters across that year (easily a busy
+        // primary calendar, vs. a lighter subscribed timetable) got silently
+        // truncated to whatever Google's unspecified item ordering (there's
+        // no `orderBy` available for singleEvents:false) happened to put on
+        // the first page — NOT necessarily the most recent/soonest items, so
+        // this could drop even the CURRENT week entirely for that calendar
+        // while other, smaller calendars kept working fine. Loop until
+        // `nextPageToken` is absent so every item in range is actually
+        // returned, however many pages that takes.
+        const items = [];
+        let pageToken;
+        do {
+          const resp = await window.gapi.client.calendar.events.list({
+            calendarId: cal.id,
+            timeMin,
+            timeMax,
+            timeZone: localTimeZone,
+            singleEvents: false,
+            ...(pageToken ? { pageToken } : {}),
+          });
+          items.push(...(resp.result.items || []));
+          pageToken = resp.result.nextPageToken;
+        } while (pageToken);
+        return items.map((e) => ({ ...e, __calendarId: cal.id, __calendarName: cal.summary, __accessRole: cal.accessRole }));
       } catch (err) {
         // An expired/revoked token fails identically on every calendar in
         // this Promise.all — reporting each one as a separate "failed

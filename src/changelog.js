@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.52',
+    date: '2026-08-01',
+    title: "Fixed a calendar that could go completely missing from sync once a year of history was included",
+    changes: [
+      "After extending Google Calendar sync to cover a year of history, a calendar with a lot of events (e.g. your own primary calendar, as opposed to a lighter subscribed one) could silently disappear from Taskflow entirely — including the current week — because Google only returns up to 250 events per request and Taskflow wasn't asking for the rest. Taskflow now fetches every page of results, so a busy calendar's events (past, present, and future) show up completely again.",
+    ],
+  },
+  {
     version: '1.33.51',
     date: '2026-08-01',
     title: 'Automatic daily cloud backups, and clearer sync explanations',
