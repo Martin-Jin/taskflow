@@ -17,8 +17,13 @@ async function submitAddTask(page) {
   await page.waitForTimeout(400);
 }
 
+// Local date, not toISOString()'s UTC — matches the app's own toISODate
+// (dateUtils.js) convention. UTC would be off by a day in any timezone ahead
+// of UTC (e.g. NZT), silently dating these tasks "yesterday" from the app's
+// perspective.
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 test.describe('Scheduling conflict details', () => {
@@ -87,7 +92,14 @@ test.describe('Scheduling conflict details', () => {
     // explanation, not just any mention of the blocker's title.
     await expect(modal.getByText(new RegExp(`Waiting on.*${blockerTitle}`))).toBeVisible();
 
-    await page.keyboard.press('Escape');
+    // Both tasks are due today, so they should be grouped under one "Today"
+    // section header rather than opening a task edit modal when clicked.
+    await expect(modal.getByText('Today', { exact: true })).toBeVisible();
+    await modal.getByText(waiterTitle).click();
+    await expect(modal).not.toBeVisible();
+    await expect(page.getByRole('dialog', { name: /^E2E Conflict/ })).toHaveCount(0);
+    await expect(page.locator('.calendar-container')).toBeVisible();
+
     expectNoErrors(errors);
   });
 });

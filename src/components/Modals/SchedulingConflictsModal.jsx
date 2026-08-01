@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { AlertTriangle, Ban, Clock3 } from 'lucide-react';
-import { formatTime12h } from '../../utils/dateUtils';
+import { addDays, formatDisplayDate, formatTime12h, toISODate } from '../../utils/dateUtils';
 import StatListModal from '../Dashboard/StatListModal';
 
 const REASON_ICON = { fixed_time_conflict: Clock3, dependency_blocked: Ban, no_capacity: AlertTriangle };
@@ -37,9 +37,37 @@ function describeReason(reason, task) {
   }
 }
 
-export default function SchedulingConflictsModal({ conflicts, tasks, onOpenTask, onClose }) {
+/** "Today" / "Tomorrow" / a full display date for a conflict's grouping day. */
+function describeDay(dateIso) {
+  if (!dateIso) return 'No due date';
+  const today = toISODate(new Date());
+  if (dateIso === today) return 'Today';
+  if (dateIso === addDays(today, 1)) return 'Tomorrow';
+  return formatDisplayDate(dateIso);
+}
+
+export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, onClose }) {
   const taskById = new Map(tasks.map((t) => [t.id, t]));
-  const items = conflicts.map((c) => ({ ...c, task: taskById.get(c.taskId) })).filter((c) => c.task);
+  const items = conflicts
+    .map((c) => ({ ...c, task: taskById.get(c.taskId) }))
+    .filter((c) => c.task)
+    // The day a conflict "occurred" on is the task's own due date (the day
+    // the allocator was trying to place it into) — group and sort by that so
+    // same-day conflicts read as one section, undated tasks trailing last.
+    .sort((a, b) => {
+      const da = a.task.dueDate || '9999-99-99';
+      const db = b.task.dueDate || '9999-99-99';
+      return da < db ? -1 : da > db ? 1 : 0;
+    });
+
+  // Jumping to a day switches tabs away from wherever this modal is open, so
+  // (unlike the old "open the task's edit modal on top" behavior) it also
+  // closes this modal — otherwise it'd be left floating over the Calendar
+  // tab it just navigated to.
+  function openDayAndClose(dateIso) {
+    onOpenDay(dateIso);
+    onClose();
+  }
 
   return (
     <StatListModal
@@ -47,30 +75,35 @@ export default function SchedulingConflictsModal({ conflicts, tasks, onOpenTask,
       items={items}
       emptyMessage="No scheduling conflicts."
       onClose={onClose}
-      renderItem={(item) => {
+      renderItem={(item, index) => {
         const Icon = REASON_ICON[item.reason?.type] || AlertTriangle;
+        const dayKey = item.task.dueDate || null;
+        const isNewDay = index === 0 || dayKey !== (items[index - 1].task.dueDate || null);
+        const dayLabel = describeDay(dayKey);
         return (
-          <li
-            key={item.taskId}
-            className="missed-tasks-item is-openable"
-            role="button"
-            tabIndex={0}
-            onClick={() => onOpenTask(item.taskId)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onOpenTask(item.taskId);
-              }
-            }}
-          >
-            <Icon size={13} className="missed-tasks-icon" aria-hidden="true" />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-              <span className="missed-tasks-title">{item.task.title}</span>
-              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
-                {describeReason(item.reason, item.task)}
-              </span>
-            </div>
-          </li>
+          <React.Fragment key={item.taskId}>
+            {isNewDay && <li className="stat-list-section-header">{dayLabel}</li>}
+            <li
+              className="missed-tasks-item is-openable"
+              role="button"
+              tabIndex={0}
+              onClick={() => openDayAndClose(dayKey || toISODate(new Date()))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  openDayAndClose(dayKey || toISODate(new Date()));
+                }
+              }}
+            >
+              <Icon size={13} className="missed-tasks-icon" aria-hidden="true" />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <span className="missed-tasks-title">{item.task.title}</span>
+                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
+                  {describeReason(item.reason, item.task)}
+                </span>
+              </div>
+            </li>
+          </React.Fragment>
         );
       }}
     />

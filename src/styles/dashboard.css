@@ -1017,6 +1017,23 @@
   margin-bottom: var(--space-3);
 }
 
+/* Day-grouping heading between SchedulingConflictsModal sections — plain list
+   items (see StatListModal's `items.map(renderItem)`) rather than a real
+   <ul>/<li> nesting change, so it's just styled to read as a label, not a
+   clickable row like its siblings. */
+.stat-list-section-header {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+  padding: 6px 10px 2px;
+}
+
+.stat-list-section-header:first-child {
+  padding-top: 0;
+}
+
 .stat-list-modal-header h3 {
   font-family: var(--font-display);
   font-size: var(--text-md);

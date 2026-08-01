@@ -1272,6 +1272,14 @@ input.search-bar-input {
   position: sticky;
   top: 12px;
   z-index: 120;
+  /* Same floating-block blur as .tasklist-toolbar (tasklist.css) — only
+     .search-bar-input paints an opaque background, so without this the gap
+     around it let scrolled content show straight through once it went
+     sticky. */
+  background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--radius-md);
 }
 
 .search-bar-dropdown {
