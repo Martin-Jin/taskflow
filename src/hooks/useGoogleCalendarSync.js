@@ -48,7 +48,24 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
   const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);
 
-  const googlePollInFlightRef = useRef(false);
+  // Shared by EVERY fetch-and-apply path below — the periodic poll, the
+  // visibility/focus refresh (which just calls the poll), the manual "Pull"
+  // button, "Rebuild from Google Calendar", the initial silent re-auth on
+  // mount, and connectGoogleCalendar's own first fetch. Originally only the
+  // periodic poll guarded itself against re-entrancy; the other paths each
+  // did their own independent fetchGoogleEvents() + applyPulledEvents() with
+  // no coordination, so two of them could run concurrently (e.g. clicking
+  // "Pull" while a poll tick was already in flight) and whichever HTTP
+  // round-trip happened to RESOLVE last would win and overwrite state —
+  // regardless of which one actually reflected fresher server data. A
+  // slower, earlier-started fetch resolving after a faster, later-started
+  // one could silently clobber a just-applied Google-side delete with stale
+  // data, making a deleted event appear to "come back" a few minutes later.
+  // Serializing every fetch-and-apply cycle behind this one flag closes that
+  // race outright (out-of-order application can't happen if only one fetch
+  // is ever in flight at a time) — simpler than a request-generation counter
+  // while a single flag is enough to fully prevent overlap.
+  const googleFetchInFlightRef = useRef(false);
   const lastGooglePollAtRef = useRef(0);
   const pollGoogleEventsRef = useRef(null);
 
@@ -58,6 +75,17 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   // propagated can't resurrect an event we just deleted (see
   // eventSyncService.mergePulledGoogleEvents and SchedulerContext.deleteEvent).
   const recentlyDeletedGoogleEventIdsRef = useRef(new Map());
+
+  // `${masterGoogleEventId}::${occurrenceDateIso}` -> timestamp this app
+  // instance issued a deleteCalendarEventInstance call for that single
+  // occurrence (SchedulerContext.deleteEvent's scope 'this'). Parallel to
+  // recentlyDeletedGoogleEventIdsRef above but per-occurrence rather than
+  // per-event: deleting one occurrence never changes the master's own
+  // googleEventId, so the whole-event suppression above doesn't cover it —
+  // without this, a poll landing before Google's EXDATE update propagates
+  // would silently overwrite the master's local `overrides` and resurrect
+  // the just-deleted occurrence (see eventSyncService.mergePulledGoogleEvents).
+  const recentlyDeletedGoogleEventInstancesRef = useRef(new Map());
 
   // Guards the one-time hardResetEventsFromGoogle cleanup below so it only
   // ever runs once per device — see hardResetEventsFromGoogle's own doc
@@ -91,8 +119,15 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       const didHardReset = !googleEventsHardResetDoneRef.current;
       setEvents((prev) =>
         didHardReset
-          ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current)
-          : mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current)
+          ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
+          : mergePulledGoogleEvents(
+              prev,
+              fetchedEvents,
+              rangeStartIso,
+              rangeEndIso,
+              recentlyDeletedGoogleEventIdsRef.current,
+              recentlyDeletedGoogleEventInstancesRef.current
+            )
       );
       if (didHardReset) {
         googleEventsHardResetDoneRef.current = true; // synchronous — covers any other already-in-flight closure too
@@ -122,6 +157,27 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     recentlyDeletedGoogleEventIdsRef.current.delete(googleEventId);
   }, []);
 
+  // Per-occurrence equivalents of the pair above — see
+  // recentlyDeletedGoogleEventInstancesRef's own doc comment.
+  const markGoogleEventInstanceDeleted = useCallback((masterGoogleEventId, occurrenceDateIso) => {
+    if (!masterGoogleEventId || !occurrenceDateIso) return;
+    const map = recentlyDeletedGoogleEventInstancesRef.current;
+    const cutoff = Date.now() - RECENTLY_DELETED_TTL_MS;
+    for (const [key, ts] of map) {
+      if (ts < cutoff) map.delete(key);
+    }
+    map.set(`${masterGoogleEventId}::${occurrenceDateIso}`, Date.now());
+  }, []);
+
+  // Called if the Google-side delete-instance call itself fails — see
+  // unmarkGoogleEventDeleted's own comment for why this matters (an
+  // undetected failure would otherwise hide the still-live occurrence from
+  // the user for up to RECENTLY_DELETED_TTL_MS).
+  const unmarkGoogleEventInstanceDeleted = useCallback((masterGoogleEventId, occurrenceDateIso) => {
+    if (!masterGoogleEventId || !occurrenceDateIso) return;
+    recentlyDeletedGoogleEventInstancesRef.current.delete(`${masterGoogleEventId}::${occurrenceDateIso}`);
+  }, []);
+
   // ---- Initial silent re-auth on mount ------------------------------------
   useEffect(() => {
     let cancelled = false;
@@ -133,20 +189,29 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
         const { enabled } = await initGoogleCalendar(clientId, apiKey);
         if (enabled) {
           await requestAccessToken(true); // silent — no consent popup
-          const rangeStartIso = toISODate(new Date());
-          const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-          const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-          if (!cancelled) {
-            const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-            if (didHardReset) {
-              setNotification({
-                type: 'info',
-                message: 'Rebuilt your synced events from Google Calendar to clean up a past sync issue.',
-              });
+          // Guard this fetch too — see googleFetchInFlightRef's own doc
+          // comment. Unlikely to overlap anything this early, but a manual
+          // "Pull" click landing during this initial load is possible.
+          if (googleFetchInFlightRef.current) return;
+          googleFetchInFlightRef.current = true;
+          try {
+            const rangeStartIso = toISODate(new Date());
+            const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+            if (!cancelled) {
+              const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+              if (didHardReset) {
+                setNotification({
+                  type: 'info',
+                  message: 'Rebuilt your synced events from Google Calendar to clean up a past sync issue.',
+                });
+              }
+              if (failedCalendars.length > 0) {
+                console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
+              }
             }
-            if (failedCalendars.length > 0) {
-              console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
-            }
+          } finally {
+            googleFetchInFlightRef.current = false;
           }
         } else if (!cancelled) {
           setGoogleConnected(false);
@@ -170,8 +235,8 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     if (!googleConnected) return undefined;
 
     const poll = async () => {
-      if (googlePollInFlightRef.current) return;
-      googlePollInFlightRef.current = true;
+      if (googleFetchInFlightRef.current) return;
+      googleFetchInFlightRef.current = true;
       lastGooglePollAtRef.current = Date.now();
       try {
         const rangeStartIso = toISODate(new Date());
@@ -194,7 +259,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
         }
         console.warn('[useGoogleCalendarSync] Periodic poll failed', err);
       } finally {
-        googlePollInFlightRef.current = false;
+        googleFetchInFlightRef.current = false;
       }
     };
     pollGoogleEventsRef.current = poll;
@@ -256,18 +321,30 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       await requestAccessToken(false);
       setGoogleConnected(true);
       setGoogleNeedsReconnect(false);
-      const rangeStartIso = toISODate(new Date());
-      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
-      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-      const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
-      if (failedCalendars.length > 0) {
-        setNotification({
-          type: 'warning',
-          message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.${resetSuffix}`,
-        });
-      } else {
-        setNotification({ type: 'success', message: `Connected to Google Calendar.${resetSuffix}` });
+      // See googleFetchInFlightRef's doc comment — guard this fetch too so it
+      // can't overlap a poll/pull/rebuild that happens to land at the same
+      // moment (unlikely right after connecting, but not impossible).
+      if (googleFetchInFlightRef.current) {
+        setNotification({ type: 'info', message: 'Connected. Already syncing with Google Calendar — events will appear shortly.' });
+        return;
+      }
+      googleFetchInFlightRef.current = true;
+      try {
+        const rangeStartIso = toISODate(new Date());
+        const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+        const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+        const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+        const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
+        if (failedCalendars.length > 0) {
+          setNotification({
+            type: 'warning',
+            message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.${resetSuffix}`,
+          });
+        } else {
+          setNotification({ type: 'success', message: `Connected to Google Calendar.${resetSuffix}` });
+        }
+      } finally {
+        googleFetchInFlightRef.current = false;
       }
     } catch (err) {
       console.error(err);
@@ -279,6 +356,15 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   // ---- Pull from Google Calendar (manual) ----------------------------------
   const pullFromGoogleCalendar = useCallback(async () => {
     if (!googleConnected) return;
+    // A user-clicked action shouldn't silently no-op if it happens to
+    // overlap a background poll — surface why nothing happened instead of
+    // leaving the button looking like it did nothing (see
+    // googleFetchInFlightRef's doc comment for the race this prevents).
+    if (googleFetchInFlightRef.current) {
+      setNotification({ type: 'info', message: 'Already syncing with Google Calendar — try again in a moment.' });
+      return;
+    }
+    googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
     try {
       const rangeStartIso = toISODate(new Date());
@@ -300,6 +386,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       setNotification({ type: 'error', message: `Pull from Google Calendar failed: ${reason}` });
     } finally {
       setIsPullingGoogleEvents(false);
+      googleFetchInFlightRef.current = false;
     }
   }, [googleConnected, setNotification, applyPulledEvents]);
 
@@ -314,12 +401,21 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   // automatic way to clear them again.
   const rebuildEventsFromGoogle = useCallback(async () => {
     if (!googleConnected) return;
+    // See googleFetchInFlightRef's doc comment / pullFromGoogleCalendar's
+    // identical guard above.
+    if (googleFetchInFlightRef.current) {
+      setNotification({ type: 'info', message: 'Already syncing with Google Calendar — try again in a moment.' });
+      return;
+    }
+    googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
     try {
       const rangeStartIso = toISODate(new Date());
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      setEvents((prev) => hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current));
+      setEvents((prev) =>
+        hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
+      );
       googleEventsHardResetDoneRef.current = true;
       setGoogleEventsHardResetDone(true);
       if (failedCalendars.length > 0) {
@@ -336,6 +432,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       setNotification({ type: 'error', message: `Rebuild from Google Calendar failed: ${reason}` });
     } finally {
       setIsPullingGoogleEvents(false);
+      googleFetchInFlightRef.current = false;
     }
   }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone]);
 
@@ -393,5 +490,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     disconnectGoogleCalendar,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
+    markGoogleEventInstanceDeleted,
+    unmarkGoogleEventInstanceDeleted,
   };
 }

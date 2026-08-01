@@ -66,6 +66,45 @@ function isRecentlyDeletedLocally(googleEventId, recentlyDeletedGoogleEventIds, 
 }
 
 /**
+ * Key format for `recentlyDeletedGoogleEventInstances` below — one entry per
+ * (recurring master, single occurrence) pair this app instance issued a
+ * `deleteCalendarEventInstance` call for (SchedulerContext.deleteEvent's
+ * scope 'this'). Kept as a single string key (rather than a nested Map) to
+ * match the plain `Map<string, number>` shape `recentlyDeletedGoogleEventIds`
+ * already uses, so both can be pruned/read the same way.
+ */
+function instanceDeleteKey(masterGoogleEventId, occurrenceDateIso) {
+  return `${masterGoogleEventId}::${occurrenceDateIso}`;
+}
+
+/**
+ * Fold "recently instance-deleted" suppression into one pulled master
+ * event's `overrides`. Unlike the whole-event suppression above (which drops
+ * a pulled event entirely), a single-occurrence delete must still let the
+ * rest of the pulled master through — only the specific deleted date's
+ * override is forced to `{ deleted: true }`, overriding whatever the fresh
+ * pull's own EXDATE-derived overrides say (or don't yet say) for that date.
+ * Every other override entry is left exactly as the pull computed it —
+ * Google is still authoritative for everything outside the suppression
+ * window, exactly mirroring how whole-event suppression expires.
+ */
+function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInstances, nowMs) {
+  if (!pulledEvent.googleEventId || recentlyDeletedGoogleEventInstances.size === 0) return pulledEvent;
+
+  let mergedOverrides = null;
+  for (const [key, deletedAt] of recentlyDeletedGoogleEventInstances) {
+    if (nowMs - deletedAt >= RECENTLY_DELETED_TTL_MS) continue;
+    const sep = key.lastIndexOf('::');
+    const masterId = key.slice(0, sep);
+    const occurrenceDate = key.slice(sep + 2);
+    if (masterId !== pulledEvent.googleEventId) continue;
+    mergedOverrides = mergedOverrides || { ...(pulledEvent.overrides || {}) };
+    mergedOverrides[occurrenceDate] = { ...mergedOverrides[occurrenceDate], deleted: true };
+  }
+  return mergedOverrides ? { ...pulledEvent, overrides: mergedOverrides } : pulledEvent;
+}
+
+/**
  * Merge freshly-pulled Google events into the existing local `events` array.
  * Policy: Google always wins for anything it returns. Concretely:
  *   - Every non-Google (source:'manual') local event is kept untouched —
@@ -100,11 +139,20 @@ function isRecentlyDeletedLocally(googleEventId, recentlyDeletedGoogleEventIds, 
  *     immediately, but a poll/pull landing before Google's own delete has
  *     propagated still reports the event as live, which would otherwise
  *     silently re-add ("resurrect") the just-deleted event.
+ *   - A second, narrower version of that same race: deleting a SINGLE
+ *     occurrence of a recurring master (scope 'this') doesn't remove the
+ *     master's googleEventId at all, so the whole-event suppression above
+ *     doesn't apply — instead, any occurrence date recently deleted this way
+ *     (per `recentlyDeletedGoogleEventInstances`) has `overrides[date].deleted`
+ *     forced to `true` on the pulled master, even if that pull's own
+ *     EXDATE-derived overrides don't (yet) reflect Google's side having
+ *     processed the delete — see applyRecentInstanceDeletes.
  * @param {import('../types').CalendarEvent[]} existingEvents
  * @param {import('../types').CalendarEvent[]} pulledGoogleEvents
  * @param {string} rangeStartIso
  * @param {string} rangeEndIso
  * @param {Map<string, number>} [recentlyDeletedGoogleEventIds] - googleEventId -> delete-issued timestamp (ms); defaults to empty (no suppression)
+ * @param {Map<string, number>} [recentlyDeletedGoogleEventInstances] - `${masterGoogleEventId}::${occurrenceDateIso}` -> delete-issued timestamp (ms); defaults to empty (no suppression)
  * @param {number} [nowMs] - defaults to Date.now(); overridable for testing
  * @returns {import('../types').CalendarEvent[]}
  */
@@ -114,17 +162,20 @@ export function mergePulledGoogleEvents(
   rangeStartIso,
   rangeEndIso,
   recentlyDeletedGoogleEventIds = new Map(),
+  recentlyDeletedGoogleEventInstances = new Map(),
   nowMs = Date.now()
 ) {
   const manualOwnedGoogleEventIds = new Set(
     existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
   );
 
-  const freshPulled = pulledGoogleEvents.filter(
-    (e) =>
-      !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs) &&
-      !manualOwnedGoogleEventIds.has(e.googleEventId)
-  );
+  const freshPulled = pulledGoogleEvents
+    .filter(
+      (e) =>
+        !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs) &&
+        !manualOwnedGoogleEventIds.has(e.googleEventId)
+    )
+    .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs));
 
   const pulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
 
@@ -161,6 +212,13 @@ export function mergePulledGoogleEvents(
  * a future migration — mergePulledGoogleEvents above is the correct
  * steady-state policy.
  */
-export function hardResetEventsFromGoogle(pulledGoogleEvents, recentlyDeletedGoogleEventIds = new Map(), nowMs = Date.now()) {
-  return pulledGoogleEvents.filter((e) => !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs));
+export function hardResetEventsFromGoogle(
+  pulledGoogleEvents,
+  recentlyDeletedGoogleEventIds = new Map(),
+  recentlyDeletedGoogleEventInstances = new Map(),
+  nowMs = Date.now()
+) {
+  return pulledGoogleEvents
+    .filter((e) => !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs))
+    .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs));
 }

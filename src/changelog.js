@@ -17,6 +17,48 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.45',
+    date: '2026-08-01',
+    title: 'Fixed editing/deleting a single occurrence of a recurring event that had been split in Google Calendar itself',
+    changes: [
+      "Taskflow used to guess the Google Calendar id of a single occurrence it was about to edit or delete, built from the recurring event's own id. That guess broke for a recurring event that had previously been split (\"this and following\") directly in Google Calendar's own interface, causing a real, confirmed failed delete against Google. Taskflow now looks up the occurrence's real id from Google first, so this works correctly even for a previously-split series.",
+    ],
+  },
+  {
+    version: '1.33.44',
+    date: '2026-08-01',
+    title: 'Fixed deleted/moved recurring-event occurrences reappearing every sync, including after a Rebuild',
+    changes: [
+      "Found the actual root cause of occurrences reappearing: Google reports a cancelled or moved single occurrence of a recurring event as its own separate item, not reliably as a change to the recurring event's own text — Taskflow was only ever reading the text form, so the exclusion was silently lost on every sync (even a full \"Rebuild from Google Calendar\"), and the occurrence kept coming back. Taskflow now reads Google's actual per-occurrence signal directly, so a deleted or moved occurrence stays gone.",
+    ],
+  },
+  {
+    version: '1.33.43',
+    date: '2026-08-01',
+    title: 'Fixed a single-occurrence Google Calendar delete that could silently never actually happen, plus a Repeat-editor field-order fix',
+    changes: [
+      "Deleting one occurrence of a recurring Google Calendar event (\"Apply to: This event\") could look successful with no error, but never actually remove it on Google's side — it would then reappear once Taskflow trusted Google's copy again. A failed delete now correctly surfaces as a real error instead of being silently treated as \"already gone\".",
+      'In the event edit screen, the "Apply to" scope picker (needed to enable editing an existing recurring event\'s Repeat pattern) was rendered below the Repeat field instead of above it, making it easy to miss why Repeat looked uneditable. Moved it above Repeat.',
+    ],
+  },
+  {
+    version: '1.33.42',
+    date: '2026-08-01',
+    title: 'Failed calendar deletes now tell you instead of silently coming back later; sync fetches no longer overlap',
+    changes: [
+      "If deleting an event (or an occurrence) from Google Calendar fails for a real reason — not because it was already gone — Taskflow now puts it back and shows an error explaining why, instead of quietly looking deleted and then reappearing on the next sync with no explanation.",
+      'Fixed a rare race where two Google Calendar syncs running at the same time (e.g. clicking "Pull" right as a background sync was already running) could let an older, slower fetch overwrite a newer one — now only one sync runs at a time, and starting another while one is in progress just lets you know it\'s already syncing.',
+    ],
+  },
+  {
+    version: '1.33.41',
+    date: '2026-08-01',
+    title: 'Fixed a deleted recurring-event occurrence sometimes reappearing after about a minute',
+    changes: [
+      'Deleting a single occurrence of a recurring Google Calendar event (e.g. skipping one week of a weekly event) could silently reappear roughly a minute later if Taskflow\'s background sync checked Google before the deletion had fully gone through there — it now waits out that short window before trusting Google\'s copy again, so the deleted occurrence stays gone.',
+    ],
+  },
+  {
     version: '1.33.40',
     date: '2026-08-01',
     title: 'Event repeat can now be edited (not just set at creation), with a smarter free-text box',
