@@ -669,6 +669,8 @@ export function SchedulerProvider({ children }) {
     disconnectGoogleCalendar,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
+    markGoogleEventInstanceDeleted,
+    unmarkGoogleEventInstanceDeleted,
   } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast });
 
   // ---- Cloud sync (Firestore) ------------------------------------------------
@@ -1668,9 +1670,9 @@ export function SchedulerProvider({ children }) {
    *
    * If connected, fire-and-forget pushes the edit to Google. A 'this'-scope
    * edit on a single occurrence of a true-RRULE series pushes via Google's
-   * deterministic single-instance id (`{recurringEventId}_{originalStartTimeUTC}`
-   * — see googleCalendarService.buildInstanceEventId/pushEventInstanceUpdate)
-   * rather than through `applyEventScopeUpdate`'s `pushTargets` (which stays
+   * real per-occurrence instance id, resolved through `events.instances()`
+   * (see googleCalendarService.pushEventInstanceUpdate) rather than through
+   * `applyEventScopeUpdate`'s `pushTargets` (which stays
    * empty for that case, since there's no top-level master-row change to
    * push — the edit only ever touches the master's `overrides` map). There's
    * no per-occurrence row to stamp a fresh googleEventId onto afterwards
@@ -1833,8 +1835,8 @@ export function SchedulerProvider({ children }) {
    *   - 'this' (true-RRULE occurrence only): keeps the master row; marks
    *     just this date's override `deleted`, so expandRecurringEvent stops
    *     generating it — and, if connected, also deletes that single instance
-   *     on Google via the same deterministic instance-id mechanism
-   *     `updateEvent` uses for 'this'-scope edits (see
+   *     on Google via the same real-instance-id resolution `updateEvent` uses
+   *     for 'this'-scope edits (see
    *     googleCalendarService.deleteCalendarEventInstance).
    *   - 'following' (true-RRULE occurrence only): truncates the master's
    *     recurrenceRule to end the day before this occurrence — no
@@ -1893,6 +1895,15 @@ export function SchedulerProvider({ children }) {
               // in its (still-live) real state rather than continuing to hide
               // it locally for the rest of the suppression window.
               unmarkGoogleEventDeleted(t.googleEventId);
+              // Also put THIS specific target back locally now, rather than
+              // leaving it removed until the next poll silently resurrects it
+              // with no explanation — only this target reverts, so siblings
+              // in a multi-event fan-out that deleted successfully stay gone.
+              setEvents((prev) => (prev.some((e) => e.id === t.id) ? prev : [...prev, t]));
+              setNotification({
+                type: 'error',
+                message: `Couldn't delete "${t.title}" from Google Calendar: ${err?.message || err}`,
+              });
             });
           }
         });
@@ -1942,9 +1953,37 @@ export function SchedulerProvider({ children }) {
           )
         );
         if (googleConnected && master.googleEventId) {
-          deleteCalendarEventInstance(master, occurrenceDate).catch((err) =>
-            console.error('[SchedulerContext] Failed to delete single occurrence from Google Calendar', err)
-          );
+          // Suppress this occurrence from being merged back in by a poll/pull
+          // that lands before Google's own EXDATE update has propagated (see
+          // eventSyncService.mergePulledGoogleEvents) — mirrors the whole-event
+          // suppression above, just keyed per-occurrence since the master's own
+          // googleEventId never changes for a single-occurrence delete.
+          markGoogleEventInstanceDeleted(master.googleEventId, occurrenceDate);
+          deleteCalendarEventInstance(master, occurrenceDate).catch((err) => {
+            console.error('[SchedulerContext] Failed to delete single occurrence from Google Calendar', err);
+            // The delete never actually happened on Google's side — stop
+            // suppressing pulls for this occurrence so the next poll/pull can
+            // merge in its (still-live) real state.
+            unmarkGoogleEventInstanceDeleted(master.googleEventId, occurrenceDate);
+            // Also undo the optimistic local 'deleted' override for just this
+            // occurrence, restoring whatever override it had before (e.g. a
+            // moved time) instead of leaving it hidden until the next poll
+            // silently brings it back with no explanation.
+            setEvents((prev) =>
+              prev.map((e) => {
+                if (e.id !== masterId) return e;
+                const overrides = { ...(e.overrides || {}) };
+                const priorOverride = master.overrides?.[occurrenceDate];
+                if (priorOverride) overrides[occurrenceDate] = priorOverride;
+                else delete overrides[occurrenceDate];
+                return { ...e, overrides };
+              })
+            );
+            setNotification({
+              type: 'error',
+              message: `Couldn't delete "${master.title}" from Google Calendar: ${err?.message || err}`,
+            });
+          });
         }
         pushActionToast({
           id: `evt_del_${Date.now()}`,
@@ -1952,6 +1991,11 @@ export function SchedulerProvider({ children }) {
           undo: () => {
             setEvents(prevEventsSnapshot);
             if (googleConnected && master.googleEventId) {
+              // The user undid the delete — this occurrence shouldn't be
+              // suppressed from merges anymore, otherwise a pull landing
+              // before the restore push below finishes could drop it right
+              // back out as an out-of-band Google-side delete.
+              unmarkGoogleEventInstanceDeleted(master.googleEventId, occurrenceDate);
               const originalOverride = master.overrides?.[occurrenceDate];
               const originalFields = { ...master, ...originalOverride, date: originalOverride?.date || occurrenceDate };
               pushEventInstanceUpdate(master, occurrenceDate, originalFields).catch((err) =>
@@ -1975,7 +2019,18 @@ export function SchedulerProvider({ children }) {
               prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
             );
           })
-          .catch((err) => console.error('[SchedulerContext] Failed to push truncated series to Google Calendar', err));
+          .catch((err) => {
+            console.error('[SchedulerContext] Failed to push truncated series to Google Calendar', err);
+            // The truncated series never actually made it to Google — put the
+            // master's original (pre-truncation) recurrenceRule back locally
+            // rather than leaving it truncated until the next poll silently
+            // restores the "deleted" occurrences with no explanation.
+            setEvents((prev) => prev.map((e) => (e.id === masterId ? master : e)));
+            setNotification({
+              type: 'error',
+              message: `Couldn't delete "${master.title}" from Google Calendar: ${err?.message || err}`,
+            });
+          });
       }
       pushActionToast({
         id: `evt_del_${Date.now()}`,
@@ -1998,7 +2053,7 @@ export function SchedulerProvider({ children }) {
         },
       });
     },
-    [events, googleConnected]
+    [events, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted, markGoogleEventInstanceDeleted, unmarkGoogleEventInstanceDeleted]
   );
 
   /**

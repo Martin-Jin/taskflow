@@ -7,8 +7,9 @@
  * editable here, mirroring real Google Calendar's own edit popup — editing
  * title/description/location/time pushes back to the calendar via
  * SchedulerContext.updateEvent, including a 'this'-scope edit on a single
- * occurrence of a recurring series (pushed via Google's deterministic
- * per-instance id — see googleCalendarService.pushEventInstanceUpdate).
+ * occurrence of a recurring series (pushed via Google's real per-occurrence
+ * instance id, resolved through `events.instances()` — see
+ * googleCalendarService.pushEventInstanceUpdate).
  *
  * A Google-sourced event from a calendar the user only has read access to
  * (e.g. a subscribed lecture timetable shared as viewer-only) is rendered
@@ -377,6 +378,18 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
           <DetailField icon={Clock} label="End time">
             <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
           </DetailField>
+          {!isCreate && event.seriesId && (
+            <DetailField icon={ListTree} label="Apply to">
+              <select value={scope} onChange={(e) => setScope(e.target.value)}>
+                {SCOPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <p className="form-hint">This is a recurring event — choose how far Save and Ignore should apply.</p>
+            </DetailField>
+          )}
           {repeatFieldVisible && (
             <DetailField icon={Repeat} label="Repeat">
               <label className="form-checkbox-row" style={{ cursor: repeatControlsApply ? 'pointer' : 'default' }}>
@@ -469,18 +482,6 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                 Equivalent to this time not being blocked out at all — TaskFlow will schedule tasks right over it.
                 This doesn't change anything in Google Calendar itself.
               </p>
-            </DetailField>
-          )}
-          {!isCreate && event.seriesId && (
-            <DetailField icon={ListTree} label="Apply to">
-              <select value={scope} onChange={(e) => setScope(e.target.value)}>
-                {SCOPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <p className="form-hint">This is a recurring event — choose how far Save and Ignore should apply.</p>
             </DetailField>
           )}
         </div>

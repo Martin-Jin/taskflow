@@ -532,15 +532,47 @@ export async function fetchEvents(startIso, endIso) {
   // `id`, which Google mints separately per calendar.
   const seenEventKeys = new Set();
 
-  const events = perCalendarResults
-    .flat()
+  const flatItems = perCalendarResults.flat();
+
+  // A cancelled or individually-modified instance of a recurring event comes
+  // back from events.list (with singleEvents:false) as its OWN separate item
+  // carrying `recurringEventId` (the master's real id) + `originalStartTime`
+  // (the occurrence's ORIGINAL, pre-cancellation/pre-move date) — this is
+  // Google's actual signal for "this occurrence is excluded from the
+  // master's plain RRULE expansion", DISTINCT from (and, in practice, not
+  // reliably accompanied by) a textual EXDATE line in the master's own
+  // `recurrence` array. The EXDATE-line parsing below this point only
+  // catches exclusions Google happens to also mirror into that text — for a
+  // single-occurrence delete/move issued via THIS APP'S OWN instance-id API
+  // calls (deleteCalendarEventInstance/pushEventInstanceUpdate), Google
+  // reliably returns the cancelled/modified instance item but does NOT
+  // reliably add a matching EXDATE line to the master's `recurrence` text —
+  // so relying on EXDATE text alone left the master's own virtual expansion
+  // with no record the occurrence was ever excluded: the "deleted" occurrence
+  // would keep reappearing on every fetch (survives even a full
+  // hardResetEventsFromGoogle rebuild, since that rebuilds purely from what
+  // this function returns). Building `overrides` from these items directly —
+  // for BOTH a cancelled instance (deleted) and a live modified instance
+  // (moved elsewhere, so its original slot must still be excluded from the
+  // master or it would double-render) — closes that gap regardless of
+  // whether Google also happens to emit EXDATE text for a given case.
+  const excludedOriginalDatesByMaster = new Map(); // `${calendarId}::${recurringEventId}` -> Set<"YYYY-MM-DD">
+  for (const e of flatItems) {
+    if (!e.recurringEventId) continue;
+    const originalStart = e.originalStartTime?.dateTime;
+    if (!originalStart) continue; // all-day instance exception — out of scope, this app is timed-events-only (see the filter below)
+    const key = `${e.__calendarId}::${e.recurringEventId}`;
+    if (!excludedOriginalDatesByMaster.has(key)) excludedOriginalDatesByMaster.set(key, new Set());
+    excludedOriginalDatesByMaster.get(key).add(toISODate(new Date(originalStart)));
+  }
+
+  const events = flatItems
     // Google's events.list defaults to `showDeleted: false`, which normally
     // means a deleted event is simply absent from the response — that's what
     // mergePulledGoogleEvents' deletion-detection relies on. But per Google's
     // own API docs, a CANCELLED INSTANCE of a recurring event (e.g. the
-    // Google-minted `{recurringEventId}_{originalStartTimeUTC}` resource left
-    // behind after a single-occurrence delete or edit — see
-    // buildInstanceEventId above) can still come back even with showDeleted
+    // resource left behind after a single-occurrence delete or edit,
+    // resolved via `resolveInstanceId` below) can still come back even with showDeleted
     // false, carrying `status: 'cancelled'` but a start/end time inherited
     // from before cancellation. Without this filter, that tombstone slips
     // through as if it were a live, ordinary one-off event (recurrence is
@@ -548,7 +580,9 @@ export async function fetchEvents(startIso, endIso) {
     // plain singular event) — a deleted event that never actually disappears
     // no matter how many times it's re-deleted (its own real API delete
     // already returned 404/410 the first time, which deleteCalendarEvent
-    // correctly treats as already-gone and stops retrying).
+    // correctly treats as already-gone and stops retrying). Its exclusion
+    // date was already captured into excludedOriginalDatesByMaster above,
+    // before this filter drops the tombstone itself.
     .filter((e) => e.status !== 'cancelled')
     .filter((e) => e.start?.dateTime) // skip all-day events for time-blocking purposes
     .filter((e) => {
@@ -602,6 +636,23 @@ export async function fetchEvents(startIso, endIso) {
               overrides = overrides || {};
               overrides[excludedIso] = { deleted: true };
             }
+          }
+        }
+      }
+
+      // Also fold in exclusions derived from actual cancelled/modified
+      // instance items (see excludedOriginalDatesByMaster above) — the more
+      // reliable signal, since Google doesn't consistently mirror these into
+      // this master's own EXDATE text. Only applies to true-RRULE masters
+      // (seriesId === id here); harmless no-op otherwise since a plain
+      // one-off event's own real id won't coincidentally match some other
+      // event's recurringEventId.
+      if (seriesId) {
+        const excludedDates = excludedOriginalDatesByMaster.get(`${e.__calendarId}::${e.id}`);
+        if (excludedDates) {
+          overrides = overrides || {};
+          for (const isoDate of excludedDates) {
+            overrides[isoDate] = { ...overrides[isoDate], deleted: true };
           }
         }
       }
@@ -745,14 +796,36 @@ export async function pushEventToCalendar(event) {
  * True if a failed `events.delete` call means the event is already gone on
  * Google's side (410 "Resource has been deleted", or 404 "Not Found" for a
  * delete issued after Google's own 410 window has passed) — i.e. exactly
- * the state a delete is trying to reach anyway. Both callers below treat
- * this as success rather than a real failure; without this, a delete
+ * the state a delete is trying to reach anyway. `deleteCalendarEvent` below
+ * treats this as success rather than a real failure; without this, a delete
  * retried after it already succeeded (e.g. a duplicate click, or a stale
  * local row left over from an old sync bug whose Google copy is long gone)
  * surfaces as a scary console error for something that isn't actually wrong.
+ *
+ * `deleteCalendarEventInstance` deliberately does NOT use this — see its own
+ * doc comment for why a 404 there needs to surface as a real failure instead.
  */
 function isAlreadyGoneError(err) {
   return err?.status === 404 || err?.status === 410;
+}
+
+/**
+ * True if a failed `events.delete` call against a CLIENT-CONSTRUCTED instance
+ * id (see `buildInstanceEventId`) means the occurrence is genuinely already
+ * gone. Only a 410 ("Gone") counts — that's Google confirming a real resource
+ * it once had is now gone. A 404 ("Not Found") is deliberately NOT treated as
+ * success here, unlike `isAlreadyGoneError` above: since `instanceId` is
+ * computed client-side rather than a real id Google handed us, a 404 is
+ * ambiguous between "already deleted" and "this constructed id never matched
+ * anything on Google's side" (e.g. built from a stale/incorrect
+ * `googleEventId`/`startTime`) — silently swallowing that second case as
+ * success previously masked a real failure: the local optimistic delete
+ * would stick, but nothing was actually removed on Google's side, so the
+ * occurrence would reappear once the local suppression window elapsed with
+ * no error ever shown.
+ */
+export function isInstanceAlreadyGoneError(err) {
+  return err?.status === 410;
 }
 
 /**
@@ -772,51 +845,75 @@ export async function deleteCalendarEvent(googleEventId, calendarId = 'primary')
 }
 
 /**
- * Build the deterministic Google Calendar id for a SINGLE modified instance
- * of a recurring event: `{recurringEventId}_{originalStartTimeUTC}`, where
- * `originalStartTimeUTC` is that occurrence's ORIGINAL (pre-override)
- * scheduled start time in combined UTC basic format — "YYYYMMDDTHHMMSSZ", no
- * dashes/colons. Google mints this id once, from the instance's *original*
- * time, and it never changes even after the instance is later moved/edited —
- * so it can be constructed client-side without first listing instances via
- * `singleEvents: true`.
+ * True if a recurring event's `events.instances()` result item IS the
+ * occurrence originally scheduled for `occurrenceDateIso`/`masterStartTime`.
+ * Google's `events.instances` returns each instance's *original* scheduled
+ * start under `originalStartTime` whenever it's been individually moved/
+ * edited (absent for an untouched instance, whose `start` still equals its
+ * original slot) — checking `originalStartTime` first, falling back to
+ * `start`, is what lets this match an occurrence by its ORIGINAL slot
+ * regardless of whether that occurrence has since been moved elsewhere.
  *
- * `occurrenceDateIso` + `masterStartTime` MUST be the occurrence's ORIGINAL
- * date/time (the RRULE-generated date, and the MASTER row's own DTSTART
- * time-of-day) — never a moved/overridden date or time — or the constructed
- * id won't match the instance Google actually has on file.
- *
- * Assumes a timed (non-all-day) occurrence: `fetchEvents` above filters out
- * all-day events entirely (`.filter((e) => e.start?.dateTime)`), so every
- * CalendarEvent in this app always has a startTime and this app never needs
- * the date-only ("YYYYMMDD", no time/Z suffix) id variant Google uses for
- * all-day recurring instances.
- *
- * @param {string} masterGoogleEventId - the recurring series' own (real) Google event id
+ * Extracted as its own pure function (no `window.gapi` dependency) purely so
+ * this comparison can be unit tested — see this file's own doc comment on why
+ * the rest of the `events.instances` flow can't be.
+ * @param {object} instance - one item from `events.instances()`'s `result.items`
  * @param {string} occurrenceDateIso - "YYYY-MM-DD", the occurrence's ORIGINAL date
  * @param {string} masterStartTime - "HH:MM", the MASTER's own (pre-override) start time
- * @returns {string}
+ * @returns {boolean}
  */
-export function buildInstanceEventId(masterGoogleEventId, occurrenceDateIso, masterStartTime) {
-  // No trailing 'Z'/offset -> parsed as LOCAL wall-clock time (matches how
-  // every other dateTime string in this file is built, e.g. pushEventToCalendar
-  // below), then read back off the Date object in UTC for the id — Google
-  // always encodes the instance id's time component in UTC regardless of the
-  // event's own timezone.
-  const localDate = new Date(`${occurrenceDateIso}T${masterStartTime}:00`);
+export function instanceMatchesOccurrence(instance, occurrenceDateIso, masterStartTime) {
+  const dt = instance?.originalStartTime?.dateTime || instance?.start?.dateTime;
+  if (!dt) return false;
+  const date = new Date(dt);
+  if (Number.isNaN(date.getTime())) return false;
   const pad2 = (n) => String(n).padStart(2, '0');
-  const utcStamp =
-    `${localDate.getUTCFullYear()}${pad2(localDate.getUTCMonth() + 1)}${pad2(localDate.getUTCDate())}` +
-    `T${pad2(localDate.getUTCHours())}${pad2(localDate.getUTCMinutes())}${pad2(localDate.getUTCSeconds())}Z`;
-  return `${masterGoogleEventId}_${utcStamp}`;
+  const hhmm = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  return toISODate(date) === occurrenceDateIso && hhmm === masterStartTime;
+}
+
+/**
+ * Resolve the REAL Google Calendar id of a single occurrence of a recurring
+ * event, via `events.instances()` — the documented, authoritative way to look
+ * up an occurrence's actual id, rather than guessing it client-side (see this
+ * function's own history: a prior client-side construction,
+ * `{recurringEventId}_{originalStartTimeUTC}`, broke for a master that had
+ * itself been split via "this and following" in Google's own UI, since a
+ * split-off master's OWN id already carries a `_R{timestamp}` suffix and
+ * appending a second suffix on top never matches anything Google has).
+ *
+ * Costs one extra read round-trip per single-occurrence delete/edit — an
+ * acceptable, deliberate tradeoff for correctness over the old zero-round-trip
+ * guess.
+ *
+ * @param {import('../types').CalendarEvent} master - the series' master row
+ * @param {string} occurrenceDateIso - "YYYY-MM-DD", the occurrence's ORIGINAL date
+ * @returns {Promise<string|null>} the real instance id, or null if no
+ *   instance matching this date was found (e.g. already deleted on Google's side)
+ */
+async function resolveInstanceId(master, occurrenceDateIso) {
+  const calendarId = master.calendarId || 'primary';
+  const { timeMin, timeMax } = computeFetchTimeRange(occurrenceDateIso, occurrenceDateIso);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const resp = await window.gapi.client.calendar.events.instances({
+    calendarId,
+    eventId: master.googleEventId,
+    timeMin,
+    timeMax,
+    timeZone,
+  });
+  const instances = resp.result.items || [];
+  const match = instances.find((inst) => instanceMatchesOccurrence(inst, occurrenceDateIso, master.startTime));
+  return match ? match.id : null;
 }
 
 /**
  * Push an edit to a SINGLE occurrence of a recurring Google event (scope
- * 'this' in SchedulerContext.updateEvent) via the deterministic instance-id
- * mechanism above, instead of the local-only fallback this used to require.
- * Uses `events.patch` (partial update) rather than `.update` (full replace)
- * so the instance's implicit link back to the series is left untouched.
+ * 'this' in SchedulerContext.updateEvent), resolving the occurrence's real id
+ * via `resolveInstanceId` first. Uses `events.patch` (partial update) rather
+ * than `.update` (full replace) so the instance's implicit link back to the
+ * series is left untouched.
  *
  * `master` is the series' master row (carries `googleEventId`/`calendarId`);
  * `occurrenceDateIso` is the occurrence's ORIGINAL date (the overrides map
@@ -827,7 +924,10 @@ export function buildInstanceEventId(masterGoogleEventId, occurrenceDateIso, mas
  *
  * Returns `{ id, updated }` like `pushEventToCalendar`, or null if not
  * connected or the master has no `googleEventId` yet (never pushed to
- * Google, so there's no series/instance to patch).
+ * Google, so there's no series/instance to patch). Throws if no instance
+ * matching `occurrenceDateIso` could be found — editing an occurrence that
+ * doesn't exist (anymore) on Google's side is a real problem the caller
+ * should surface, not silently swallow.
  * @param {import('../types').CalendarEvent} master
  * @param {string} occurrenceDateIso
  * @param {Partial<import('../types').CalendarEvent>} fields
@@ -836,7 +936,11 @@ export function buildInstanceEventId(masterGoogleEventId, occurrenceDateIso, mas
 export async function pushEventInstanceUpdate(master, occurrenceDateIso, fields) {
   if (!gapiInited || !accessToken || !master?.googleEventId) return null;
 
-  const instanceId = buildInstanceEventId(master.googleEventId, occurrenceDateIso, master.startTime);
+  const instanceId = await resolveInstanceId(master, occurrenceDateIso);
+  if (!instanceId) {
+    throw new Error(`Couldn't find this occurrence (${occurrenceDateIso}) on Google Calendar to update — it may have already been deleted or moved there.`);
+  }
+
   const calendarId = master.calendarId || 'primary';
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -854,20 +958,34 @@ export async function pushEventInstanceUpdate(master, occurrenceDateIso, fields)
 
 /**
  * Delete a SINGLE occurrence of a recurring Google event (scope 'this' in
- * SchedulerContext.deleteEvent) via the same deterministic instance-id
- * mechanism as `pushEventInstanceUpdate` above. No-ops if not connected or
- * the master has no `googleEventId` yet, mirroring `deleteCalendarEvent`.
+ * SchedulerContext.deleteEvent), resolving the occurrence's real id via
+ * `resolveInstanceId` first. No-ops if not connected, the master has no
+ * `googleEventId` yet, or no matching instance was found for this date (that
+ * last case means there's nothing left to delete — treated the same as
+ * already-deleted, mirroring `deleteCalendarEvent`'s 404/410 handling). If a
+ * matching instance WAS found but the delete call itself still 410s (a race
+ * between the lookup and the delete), that's also treated as success — see
+ * `isInstanceAlreadyGoneError` above.
  * @param {import('../types').CalendarEvent} master
  * @param {string} occurrenceDateIso
  */
 export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
   if (!gapiInited || !accessToken || !master?.googleEventId) return;
-  const instanceId = buildInstanceEventId(master.googleEventId, occurrenceDateIso, master.startTime);
+
+  let instanceId;
+  try {
+    instanceId = await resolveInstanceId(master, occurrenceDateIso);
+  } catch (err) {
+    if (isAlreadyGoneError(err)) return; // the whole series is already gone on Google's side
+    throw err;
+  }
+  if (!instanceId) return; // no matching occurrence found — already gone, nothing to delete
+
   const calendarId = master.calendarId || 'primary';
   try {
     await window.gapi.client.calendar.events.delete({ calendarId, eventId: instanceId });
   } catch (err) {
-    if (isAlreadyGoneError(err)) return;
+    if (isInstanceAlreadyGoneError(err)) return;
     throw err;
   }
 }

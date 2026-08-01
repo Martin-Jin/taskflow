@@ -116,7 +116,15 @@ describe('hardResetEventsFromGoogle — one-time full wipe-and-rebuild', () => {
     const now = 1_000_000;
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1' });
     const recentlyDeleted = new Map([['g1', now - 1000]]);
-    expect(hardResetEventsFromGoogle([pulled], recentlyDeleted, now)).toEqual([]);
+    expect(hardResetEventsFromGoogle([pulled], recentlyDeleted, new Map(), now)).toEqual([]);
+  });
+
+  it('also applies recently instance-deleted suppression, forcing overrides.deleted=true for that occurrence', () => {
+    const now = 1_000_000;
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', recurrenceRule: 'FREQ=WEEKLY' });
+    const recentlyDeletedInstances = new Map([[`g1::2026-08-10`, now - 5000]]);
+    const result = hardResetEventsFromGoogle([pulled], new Map(), recentlyDeletedInstances, now);
+    expect(result).toEqual([{ ...pulled, overrides: { '2026-08-10': { deleted: true } } }]);
   });
 });
 
@@ -128,7 +136,7 @@ describe('mergePulledGoogleEvents — recently-deleted suppression', () => {
     const now = 1_000_000;
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-08-10' });
     const recentlyDeleted = new Map([['g1', now - 5000]]); // deleted 5s ago
-    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, recentlyDeleted, now);
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, recentlyDeleted, new Map(), now);
     expect(result).toEqual([]);
   });
 
@@ -136,7 +144,7 @@ describe('mergePulledGoogleEvents — recently-deleted suppression', () => {
     const now = 1_000_000;
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-08-10' });
     const recentlyDeleted = new Map([['g1', now - RECENTLY_DELETED_TTL_MS - 1]]); // just past TTL
-    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, recentlyDeleted, now);
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, recentlyDeleted, new Map(), now);
     expect(result).toEqual([pulled]);
   });
 
@@ -145,13 +153,60 @@ describe('mergePulledGoogleEvents — recently-deleted suppression', () => {
     const deletedEvent = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-08-10' });
     const otherEvent = googleEvent({ id: 'g2', googleEventId: 'g2', date: '2026-08-11', title: 'Unrelated' });
     const recentlyDeleted = new Map([['g1', now - 1000]]);
-    const result = mergePulledGoogleEvents([], [deletedEvent, otherEvent], rangeStart, rangeEnd, recentlyDeleted, now);
+    const result = mergePulledGoogleEvents([], [deletedEvent, otherEvent], rangeStart, rangeEnd, recentlyDeleted, new Map(), now);
     expect(result).toEqual([otherEvent]);
   });
 
   it('does not suppress anything when no recently-deleted map is passed (default behavior unchanged)', () => {
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-08-10' });
     const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
+  });
+});
+
+describe('mergePulledGoogleEvents — recently instance-deleted suppression (single occurrence of a series)', () => {
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('forces a recently-deleted occurrence to overrides.deleted=true even if the pull\'s own EXDATE has not caught up yet', () => {
+    const now = 1_000_000;
+    // Pulled master has no override for this date yet — Google hasn't
+    // propagated the EXDATE for the deleteCalendarEventInstance call.
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', recurrenceRule: 'FREQ=WEEKLY' });
+    const recentlyDeletedInstances = new Map([[`g1::2026-08-10`, now - 5000]]);
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, new Map(), recentlyDeletedInstances, now);
+    expect(result).toEqual([{ ...pulled, overrides: { '2026-08-10': { deleted: true } } }]);
+  });
+
+  it('preserves the pull\'s other override entries while forcing the suppressed date', () => {
+    const now = 1_000_000;
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-03': { deleted: true } },
+    });
+    const recentlyDeletedInstances = new Map([[`g1::2026-08-10`, now - 5000]]);
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, new Map(), recentlyDeletedInstances, now);
+    expect(result[0].overrides).toEqual({
+      '2026-08-03': { deleted: true },
+      '2026-08-10': { deleted: true },
+    });
+  });
+
+  it('stops forcing an occurrence once the TTL has elapsed (Google\'s own EXDATE state wins outright)', () => {
+    const now = 1_000_000;
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', recurrenceRule: 'FREQ=WEEKLY' });
+    const recentlyDeletedInstances = new Map([[`g1::2026-08-10`, now - RECENTLY_DELETED_TTL_MS - 1]]);
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, new Map(), recentlyDeletedInstances, now);
+    expect(result).toEqual([pulled]);
+  });
+
+  it('only forces the specific master+date pair, leaving an unrelated master/date untouched', () => {
+    const now = 1_000_000;
+    const pulled = googleEvent({ id: 'g2', googleEventId: 'g2', recurrenceRule: 'FREQ=WEEKLY' });
+    const recentlyDeletedInstances = new Map([[`g1::2026-08-10`, now - 5000]]);
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, new Map(), recentlyDeletedInstances, now);
     expect(result).toEqual([pulled]);
   });
 });

@@ -16,11 +16,24 @@
  *     rest of the sync pipeline works in into the `timeMin`/`timeMax`
  *     instants Google's `events.list` expects — see its own doc comment for
  *     a real off-by-one bug this used to have at the inclusive end boundary.
+ *   - `instanceMatchesOccurrence` is the pure comparison `resolveInstanceId`
+ *     uses to pick the right item out of an `events.instances()` response —
+ *     the real, authoritative replacement for a previous client-side-
+ *     constructed instance id (`{recurringEventId}_{originalStartTimeUTC}`)
+ *     that broke for a master which had itself been split via "this and
+ *     following" directly in Google's own UI (a split-off master's own id
+ *     already carries a `_R{timestamp}` suffix, so appending a second
+ *     constructed suffix on top never matched anything real).
  * ============================================================================
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseExdateToLocalIsoDate, computeFetchTimeRange } from '../../src/services/googleCalendarService.js';
+import {
+  parseExdateToLocalIsoDate,
+  computeFetchTimeRange,
+  isInstanceAlreadyGoneError,
+  instanceMatchesOccurrence,
+} from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
   it('parses a UTC ("Z"-suffixed) EXDATE value into its local calendar date', () => {
@@ -70,5 +83,60 @@ describe('computeFetchTimeRange', () => {
   it('keeps timeMin/timeMax a single day apart for a one-day range', () => {
     const { timeMin, timeMax } = computeFetchTimeRange('2026-08-01', '2026-08-01');
     expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBe(24 * 60 * 60 * 1000);
+  });
+});
+
+describe('isInstanceAlreadyGoneError', () => {
+  // Regression test: an instance delete used to be able to hit a 404 for
+  // reasons unrelated to "already deleted" (see instanceMatchesOccurrence's
+  // own history below) — a real 410 ("Gone") is the only case that
+  // unambiguously confirms a resource existed and was removed.
+  it('treats 410 (Gone) as already deleted', () => {
+    expect(isInstanceAlreadyGoneError({ status: 410 })).toBe(true);
+  });
+
+  it('does NOT treat 404 (Not Found) as already deleted', () => {
+    expect(isInstanceAlreadyGoneError({ status: 404 })).toBe(false);
+  });
+
+  it('does not treat other errors as already deleted', () => {
+    expect(isInstanceAlreadyGoneError({ status: 403 })).toBe(false);
+    expect(isInstanceAlreadyGoneError(new Error('network error'))).toBe(false);
+  });
+});
+
+describe('instanceMatchesOccurrence', () => {
+  it('matches an unmodified instance by its plain `start` time', () => {
+    const instance = { start: { dateTime: '2026-08-01T20:00:00Z' } };
+    // Compare against what that UTC instant actually resolves to locally,
+    // rather than hardcoding a single timezone's expected wall-clock time.
+    const local = new Date('2026-08-01T20:00:00Z');
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const localIso = `${local.getFullYear()}-${pad2(local.getMonth() + 1)}-${pad2(local.getDate())}`;
+    const localHHMM = `${pad2(local.getHours())}:${pad2(local.getMinutes())}`;
+    expect(instanceMatchesOccurrence(instance, localIso, localHHMM)).toBe(true);
+  });
+
+  it('matches a moved instance by its ORIGINAL start time, not its new one', () => {
+    const instance = {
+      originalStartTime: { dateTime: '2026-08-01T20:00:00Z' },
+      start: { dateTime: '2026-08-02T09:00:00Z' }, // moved elsewhere
+    };
+    const local = new Date('2026-08-01T20:00:00Z');
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const localIso = `${local.getFullYear()}-${pad2(local.getMonth() + 1)}-${pad2(local.getDate())}`;
+    const localHHMM = `${pad2(local.getHours())}:${pad2(local.getMinutes())}`;
+    expect(instanceMatchesOccurrence(instance, localIso, localHHMM)).toBe(true);
+    // And does NOT match the moved-to slot, since that's not this occurrence's original date/time.
+    expect(instanceMatchesOccurrence(instance, '2026-08-02', '09:00')).toBe(false);
+  });
+
+  it('returns false for a non-matching date/time', () => {
+    const instance = { start: { dateTime: '2026-08-01T20:00:00Z' } };
+    expect(instanceMatchesOccurrence(instance, '2026-08-03', '08:00')).toBe(false);
+  });
+
+  it('returns false when the instance has neither originalStartTime nor start', () => {
+    expect(instanceMatchesOccurrence({}, '2026-08-01', '08:00')).toBe(false);
   });
 });
