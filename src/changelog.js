@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.54',
+    date: '2026-08-01',
+    title: 'Capped how far back on-demand calendar browsing keeps history',
+    changes: [
+      "Scrolling far enough back in the calendar view could keep that history synced indefinitely, regardless of age. Retention is now capped at a rolling 1 year — once-viewed events older than a year are cleared out again on the next sync, same as anything never explicitly viewed.",
+    ],
+  },
+  {
     version: '1.33.53',
     date: '2026-08-01',
     title: 'Google Calendar sync now stays lightweight, and widens itself as you browse',

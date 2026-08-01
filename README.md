@@ -974,12 +974,13 @@ restrictions, if using Google Calendar sync from that hostname.
   never even look at. Scrolling the calendar view (Week/Month/etc.) to a date
   outside that window fetches the additional range on demand instead, and
   once fetched it stays synced for the rest of the session — navigating back
-  to "today" afterward doesn't drop it again. A non-recurring event that's
-  never been synced (neither by the routine window nor an on-demand fetch
-  this session) is actively removed from TaskFlow's local mirror once it ages
-  past the oldest edge ever synced (it stays on Google Calendar itself, only
-  the local mirror is pruned); a recurring event's own occurrences roll in
-  and out of view as the window advances day by day.
+  to "today" afterward doesn't drop it again. Retention is capped at a
+  rolling 1 year regardless: a non-recurring event older than that (whether
+  never synced at all, or on-demand fetched from further back than a year)
+  is actively removed from TaskFlow's local mirror on the next sync (it
+  stays on Google Calendar itself, only the local mirror is pruned); a
+  recurring event's own occurrences roll in and out of view as the window
+  advances day by day.
 - Todoist is a one-time import, not a sync — completing, editing, or
   deleting a Todoist-imported task in TaskFlow never writes back to
   Todoist. Re-importing later pulls in anything new/changed on Todoist's

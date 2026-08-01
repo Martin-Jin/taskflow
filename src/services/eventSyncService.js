@@ -39,6 +39,8 @@
  * ============================================================================
  */
 
+import { toISODate } from '../utils/dateUtils';
+
 /**
  * True if a local Google-sourced event should be looked up against this
  * pull's results at all (as opposed to being left untouched because this
@@ -325,4 +327,34 @@ export function computeOnDemandFetchRange(bounds, viewStartIso, viewEndIso) {
     startIso: needsBack ? viewStartIso : bounds.startIso,
     endIso: needsForward ? viewEndIso : bounds.endIso,
   };
+}
+
+/**
+ * The effective purge boundary passed to mergePulledGoogleEvents: the LATER
+ * (more restrictive, closer to today) of (a) the synced-bounds union's own
+ * outer edge and (b) a flat retention ceiling `maxRetentionDays` back from
+ * `nowMs`. Once-viewed history (on-demand fetched, see
+ * computeOnDemandFetchRange) is meant to stick around for the rest of the
+ * session rather than being purged the moment a narrower routine poll comes
+ * back around — that's what the synced-bounds union alone would give you.
+ * But that union only ever grows outward and never rolls forward with real
+ * time, so on its own it would let retention drift past `maxRetentionDays`
+ * (e.g. a single on-demand view from 500 days back would keep that stale
+ * boundary — and everything back to it — retained forever). Combining it
+ * with a retention ceiling that IS recomputed fresh from `nowMs` on every
+ * call keeps retention capped at "up to `maxRetentionDays`", not unbounded.
+ * ISO date strings compare correctly with plain `<`/`>` (YYYY-MM-DD).
+ * @param {string|null} syncedBoundsStartIso - `expandSyncedBounds(...).startIso`, or null if nothing's synced yet
+ * @param {number} maxRetentionDays
+ * @param {number} [nowMs] - defaults to Date.now(); overridable for testing
+ * @returns {string}
+ */
+export function computeEffectivePurgeBoundary(syncedBoundsStartIso, maxRetentionDays, nowMs = Date.now()) {
+  // toISODate (not toISOString) — this app's date-only strings are always
+  // LOCAL calendar dates (see dateUtils.js), and toISOString's UTC
+  // conversion would be off by a day for anyone west/east of UTC at the
+  // wrong moment.
+  const retentionFloorIso = toISODate(new Date(nowMs - maxRetentionDays * 86400000));
+  if (!syncedBoundsStartIso) return retentionFloorIso;
+  return syncedBoundsStartIso > retentionFloorIso ? syncedBoundsStartIso : retentionFloorIso;
 }
