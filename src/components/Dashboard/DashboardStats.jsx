@@ -102,6 +102,13 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
       if (seenTaskIds.has(b.taskId)) return;
       const task = taskById.get(b.taskId);
       if (!task) return;
+      // A task whose due date has already passed is overdue, not "today's" —
+      // it's already surfaced by the "Overdue & missed" tile below (with its
+      // own click-through detail popup), so counting it here too would show
+      // it in two places and, once it's completed, would misleadingly count
+      // as "completed today" even though its due date never actually moved
+      // to today. Applies whether the task ends up completed or not.
+      if (task.dueDate && task.dueDate < today) return;
       seenTaskIds.add(b.taskId);
       scheduledTodayItems.push({ id: task.id, title: task.title, link: task.link || null, startTime: b.startTime });
       if (isBlockTaskCompleted(b, task)) {

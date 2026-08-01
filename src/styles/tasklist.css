@@ -20,6 +20,37 @@
   min-width: 0;
 }
 
+/* Wraps the page title row and (List view only) the search toolbar into one
+   sticky block, so the whole top part of the page — not just the search bar
+   — floats and blurs together as the page scrolls underneath it. Sticky on
+   the wrapper itself (not its children) for the same reason .tasklist-toolbar
+   used to need it: it needs a tall-enough parent (the page's own scroll
+   container, .main-content) to detach into before locking at `top`.
+   The blurred backdrop lives in a separate absolutely-positioned child (see
+   .taskpage-sticky-header-backdrop) rather than directly on this element, so
+   its opacity can fade in via `--header-blur-opacity` (set from JS in
+   TaskListPanel, based on how far .main-content has scrolled) without also
+   fading the title/search text sitting above it. */
+.taskpage-sticky-header {
+  position: sticky;
+  top: 12px;
+  z-index: 120;
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+}
+
+.taskpage-sticky-header-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--color-bg-page) 94%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  opacity: var(--header-blur-opacity, 0);
+  pointer-events: none;
+}
+
 /* The Tasks page's header: project switcher + title on the left,
    view/filter + "⋯" project actions on the right, all one line (no wrap —
    see .taskpage-project-header's max-width truncation below for how a long
@@ -30,7 +61,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 14px;
 }
 
 /* The combined view/filter dropdown (ViewFilterMenu — List/Board/Gantt plus
@@ -124,32 +154,19 @@
   color: var(--color-text-primary);
 }
 
-/* Sticky on the row itself (not on .search-bar inside it) — its own box is
-   exactly one line tall, so a sticky child confined to it would have no
-   room to visually detach before the row's bottom edge (its sticky
-   containing block) scrolled past too. The row's real parent is the whole
-   scrollable task page, so stickying the row here is what gives it space to
-   float independently as the page scrolls underneath it. */
+/* Now just a plain flex row — the sticky/blur treatment lives one level up
+   on .taskpage-sticky-header (the shared wrapper around this and
+   .taskpage-header-row), so the title row and search bar float and blur as
+   one block instead of only this row detaching on its own. Top margin is
+   deliberately tighter than the old standalone toolbar's 14px now that it
+   sits directly under the title row inside the same floating block. */
 .tasklist-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 14px;
+  margin-top: 10px;
   gap: 12px;
   flex-wrap: wrap;
-  position: sticky;
-  top: 12px;
-  z-index: 120;
-  /* Only .search-bar-input paints its own opaque background — the row
-     around it (and the gap to its siblings) was fully transparent, so
-     content scrolling underneath showed straight through once the row
-     detached into its floating/sticky state. A blurred, translucent page-
-     color backdrop across the whole row reads as one floating block instead
-     of blending into whatever scrolls beneath it. */
-  background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-radius: var(--radius-md);
 }
 
 /* AI Quick Add + Add task (see AddTaskFabGroup) render as a floating FAB

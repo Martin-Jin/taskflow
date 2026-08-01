@@ -17,6 +17,23 @@
 
 export const CHANGELOG = [
   {
+    version: '1.56.0',
+    date: '2026-08-02',
+    title: 'The Tasks list header now floats and blurs as one piece while scrolling',
+    changes: [
+      'The project title/view-switcher row and the search bar used to blur separately (only the search bar\'s own row floated) as you scrolled the Tasks list — they now float and blur together as a single header, with the blur fading in as you start scrolling instead of snapping on abruptly.',
+    ],
+  },
+  {
+    version: '1.55.0',
+    date: '2026-08-02',
+    title: 'Rescheduling a completed task reopens it, and overdue tasks stay out of "today" tiles',
+    changes: [
+      "Completing an overdue task and then changing its due date used to leave it stuck showing as completed on the Dashboard forever — editing the due date of a completed task now reopens it, since rescheduling means it isn't actually done.",
+      "An overdue task's leftover calendar block could show up in \"Scheduled today\"/\"Completed today\" and Today's agenda alongside the \"Overdue & missed\" tile, effectively listing the same overdue task twice. Overdue tasks (due date already past) are now left out of those \"today\" views entirely — that info lives in \"Overdue & missed\" instead — whether or not the task has since been completed.",
+    ],
+  },
+  {
     version: '1.54.0',
     date: '2026-08-02',
     title: "Fixed Google sign-in on browsers where Firebase's own popup silently broke",
