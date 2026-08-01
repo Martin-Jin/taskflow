@@ -1557,7 +1557,7 @@ export function SchedulerProvider({ children }) {
   // doesn't distinguish by `source`), and re-running Re-balance schedule
   // will move any unlocked task work out from under it.
   const addManualEvent = useCallback(
-    ({ title, date, startTime, endTime, description = '', location = '' }) => {
+    ({ title, date, startTime, endTime, description = '', location = '', recurrenceRule = null }) => {
       // Belt-and-suspenders: EventDetailModal already validates this before
       // calling in, but a reversed/zero-length interval here would silently
       // fail to block any time (subtractIntervals doesn't special-case
@@ -1567,8 +1567,9 @@ export function SchedulerProvider({ children }) {
         setNotification({ type: 'error', message: 'Invalid event time range.' });
         return;
       }
+      const id = generateLocalId('evt_manual');
       const newEvent = {
-        id: generateLocalId('evt_manual'),
+        id,
         title: title?.trim() || 'Untitled event',
         date,
         startTime,
@@ -1576,10 +1577,16 @@ export function SchedulerProvider({ children }) {
         description: description?.trim() || '',
         location: location?.trim() || '',
         isFreeTime: false,
-        isRecurring: false,
-        recurrenceRule: null,
+        isRecurring: !!recurrenceRule,
+        recurrenceRule: recurrenceRule || null,
         googleEventId: null,
-        seriesId: null,
+        // Own id doubles as seriesId when recurring — same convention
+        // googleCalendarService uses for a true-RRULE master (see its own
+        // "master's own id doubles as its seriesId" comment) — so
+        // EventDetailModal's "Apply to" scope picker (gated on
+        // `event.seriesId`) shows up for this event's own edits/deletes the
+        // same way it already does for a Google-sourced recurring master.
+        seriesId: recurrenceRule ? id : null,
         source: 'manual',
       };
       setEvents((prev) => [...prev, newEvent]);
@@ -1598,7 +1605,17 @@ export function SchedulerProvider({ children }) {
               prev.map((e) => (e.id === newEvent.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
             );
           })
-          .catch((err) => console.error('[SchedulerContext] Failed to push new event to Google Calendar', err));
+          .catch((err) => {
+            console.error('[SchedulerContext] Failed to push new event to Google Calendar', err);
+            // Unlike every other push/pull path in this file, this failure was
+            // previously swallowed to the console only — the event would just
+            // silently never show up on Google with no indication why. Saved
+            // locally either way, so this is a heads-up, not a rollback.
+            setNotification({
+              type: 'error',
+              message: `Saved "${newEvent.title}" locally, but couldn't push it to Google Calendar: ${err?.message || err}`,
+            });
+          });
       }
 
       // ---- Undo toast -----------------------------------------------------
@@ -1788,10 +1805,17 @@ export function SchedulerProvider({ children }) {
    * true-RRULE Google series (one master row per series — see
    * recurrenceExpansion.js's doc comment). `eventId` may be a virtual
    * per-occurrence id (see resolveEventId).
-   *   - 'all' (default — also the only meaningful scope for a real id, i.e.
-   *     a manual event or a non-recurring/synthetic-series event): deletes
-   *     the whole row, same as before this fix — and its Google copy, if
-   *     one was ever pushed.
+   *   - 'all' (default): for a manual/non-recurring event, deletes the whole
+   *     row and its Google copy, if one was ever pushed. For a "synthetic"
+   *     series (see googleCalendarService's withSyntheticSeries — each
+   *     occurrence is its own real row sharing `seriesId`, no master row),
+   *     fans out across every row sharing `seriesId`, deleting each on
+   *     Google too — otherwise untouched siblings would just get re-imported
+   *     on the next poll.
+   *   - 'following' on a synthetic series: same fan-out, restricted to rows
+   *     with `date >= this occurrence's date`.
+   *   - 'this' on a synthetic series (or any real id with no series):
+   *     deletes only the clicked row.
    *   - 'this' (true-RRULE occurrence only): keeps the master row; marks
    *     just this date's override `deleted`, so expandRecurringEvent stops
    *     generating it — and, if connected, also deletes that single instance
@@ -1817,51 +1841,67 @@ export function SchedulerProvider({ children }) {
 
       if (!isVirtual || scope === 'all') {
         const target = events.find((e) => e.id === eventId);
-        setEvents((prev) => prev.filter((e) => e.id !== eventId));
-        if (googleConnected && target?.googleEventId) {
-          // Suppress this id from being merged back in by a poll/pull that
-          // lands before Google's own delete has propagated (see
-          // eventSyncService.mergePulledGoogleEvents) — the fire-and-forget
-          // delete call below isn't awaited, so without this a pull racing
-          // ahead of it would see the event as still live and resurrect it.
-          markGoogleEventDeleted(target.googleEventId);
-          deleteCalendarEvent(target.googleEventId, target.calendarId).catch((err) => {
-            console.error('[SchedulerContext] Failed to delete event from Google Calendar', err);
-            // The delete never actually happened on Google's side — stop
-            // suppressing pulls for this id so the next poll/pull can merge
-            // in its (still-live) real state rather than continuing to hide
-            // it locally for the rest of the suppression window.
-            unmarkGoogleEventDeleted(target.googleEventId);
-          });
-        }
-        if (target) {
-          pushActionToast({
-            id: `evt_del_${Date.now()}`,
-            label: 'Deleted event',
-            undo: () => {
-              setEvents(prevEventsSnapshot);
+        if (!target) return;
+
+        // A "synthetic" series (see googleCalendarService's withSyntheticSeries)
+        // has no single master row — every occurrence is its own real row,
+        // grouped only by sharing `seriesId` — so 'following'/'all' scope has
+        // to fan out across those sibling rows the same way applyEventScopeUpdate
+        // does for edits. 'this' scope (or no series at all) only ever touches
+        // the one clicked row.
+        const deleteTargets =
+          target.seriesId && scope !== 'this'
+            ? events.filter((e) => e.seriesId === target.seriesId && (scope === 'all' || e.date >= target.date))
+            : [target];
+        const deleteIds = new Set(deleteTargets.map((e) => e.id));
+
+        setEvents((prev) => prev.filter((e) => !deleteIds.has(e.id)));
+        deleteTargets.forEach((t) => {
+          if (googleConnected && t.googleEventId) {
+            // Suppress this id from being merged back in by a poll/pull that
+            // lands before Google's own delete has propagated (see
+            // eventSyncService.mergePulledGoogleEvents) — the fire-and-forget
+            // delete call below isn't awaited, so without this a pull racing
+            // ahead of it would see the event as still live and resurrect it.
+            markGoogleEventDeleted(t.googleEventId);
+            deleteCalendarEvent(t.googleEventId, t.calendarId).catch((err) => {
+              console.error('[SchedulerContext] Failed to delete event from Google Calendar', err);
+              // The delete never actually happened on Google's side — stop
+              // suppressing pulls for this id so the next poll/pull can merge
+              // in its (still-live) real state rather than continuing to hide
+              // it locally for the rest of the suppression window.
+              unmarkGoogleEventDeleted(t.googleEventId);
+            });
+          }
+        });
+        pushActionToast({
+          id: `evt_del_${Date.now()}`,
+          label: deleteTargets.length > 1 ? `Deleted ${deleteTargets.length} events` : 'Deleted event',
+          undo: () => {
+            setEvents(prevEventsSnapshot);
+            deleteTargets.forEach((t) => {
               // The user undid the delete — this id shouldn't be suppressed
               // from merges anymore (it's no longer "recently deleted" from
               // the user's point of view), otherwise a pull landing before
               // the recreate below finishes could drop the restored event
               // right back out as an out-of-band Google-side delete.
-              if (target.googleEventId) unmarkGoogleEventDeleted(target.googleEventId);
+              if (t.googleEventId) unmarkGoogleEventDeleted(t.googleEventId);
               // The Google copy was deleted above — recreate it (a fresh
               // insert, not a revert-in-place) rather than trying to
               // resurrect the same googleEventId.
-              if (googleConnected && target.googleEventId) {
-                pushEventToCalendar(target)
+              if (googleConnected && t.googleEventId) {
+                pushEventToCalendar(t)
                   .then((result) => {
                     if (!result) return;
                     setEvents((prev) =>
-                      prev.map((e) => (e.id === target.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
+                      prev.map((e) => (e.id === t.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated } : e))
                     );
                   })
                   .catch((err) => console.error('[SchedulerContext] Failed to restore deleted event on Google Calendar on undo', err));
               }
-            },
-          });
-        }
+            });
+          },
+        });
         return;
       }
 

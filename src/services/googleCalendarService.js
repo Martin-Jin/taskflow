@@ -638,6 +638,20 @@ export async function pushEventToCalendar(event) {
 }
 
 /**
+ * True if a failed `events.delete` call means the event is already gone on
+ * Google's side (410 "Resource has been deleted", or 404 "Not Found" for a
+ * delete issued after Google's own 410 window has passed) — i.e. exactly
+ * the state a delete is trying to reach anyway. Both callers below treat
+ * this as success rather than a real failure; without this, a delete
+ * retried after it already succeeded (e.g. a duplicate click, or a stale
+ * local row left over from an old sync bug whose Google copy is long gone)
+ * surfaces as a scary console error for something that isn't actually wrong.
+ */
+function isAlreadyGoneError(err) {
+  return err?.status === 404 || err?.status === 410;
+}
+
+/**
  * Delete a pushed event (e.g. when a block is rescheduled/removed, or a
  * CalendarEvent is deleted locally). `calendarId` defaults to 'primary' but
  * must be passed explicitly for anything sourced from a non-primary (e.g.
@@ -645,7 +659,12 @@ export async function pushEventToCalendar(event) {
  */
 export async function deleteCalendarEvent(googleEventId, calendarId = 'primary') {
   if (!gapiInited || !accessToken || !googleEventId) return;
-  await window.gapi.client.calendar.events.delete({ calendarId, eventId: googleEventId });
+  try {
+    await window.gapi.client.calendar.events.delete({ calendarId, eventId: googleEventId });
+  } catch (err) {
+    if (isAlreadyGoneError(err)) return;
+    throw err;
+  }
 }
 
 /**
@@ -741,7 +760,12 @@ export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
   if (!gapiInited || !accessToken || !master?.googleEventId) return;
   const instanceId = buildInstanceEventId(master.googleEventId, occurrenceDateIso, master.startTime);
   const calendarId = master.calendarId || 'primary';
-  await window.gapi.client.calendar.events.delete({ calendarId, eventId: instanceId });
+  try {
+    await window.gapi.client.calendar.events.delete({ calendarId, eventId: instanceId });
+  } catch (err) {
+    if (isAlreadyGoneError(err)) return;
+    throw err;
+  }
 }
 
 function priorityToColorId(priority) {

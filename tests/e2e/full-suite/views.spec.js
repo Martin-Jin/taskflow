@@ -318,6 +318,68 @@ test.describe('Calendar', () => {
     expectNoErrors(errors);
   });
 
+  test('create a recurring event and confirm it exposes the series scope picker', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Calendar');
+
+    await page.getByRole('button', { name: /change view/i }).click();
+    await page.waitForTimeout(150);
+    await page.getByRole('button', { name: 'Day', exact: true }).click();
+    await page.waitForTimeout(400);
+
+    const dayColumn = page.locator('.day-column').first();
+    await expect(dayColumn).toBeVisible();
+    const box = await dayColumn.boundingBox();
+
+    const dialog = page.getByRole('dialog').filter({ hasText: 'New event' });
+    let created = false;
+    for (const frac of [0.02, 0.1, 0.2, 0.4, 0.6, 0.8]) {
+      const x = box.x + box.width / 2;
+      const yStart = box.y + box.height * frac;
+      await page.mouse.move(x, yStart);
+      await page.mouse.down();
+      await page.mouse.move(x, yStart + 40, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      if (await dialog.isVisible({ timeout: 500 }).catch(() => false)) {
+        created = true;
+        break;
+      }
+    }
+
+    if (!created) {
+      console.log('Could not find an empty slot to drag on (day fully booked) — skipping recurring-event assertion.');
+      expectNoErrors(errors);
+      return;
+    }
+
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder('e.g. Team standup').fill('E2E recurring event');
+    await dialog.getByRole('checkbox', { name: /repeats/i }).check();
+    await expect(dialog.getByText('Every')).toBeVisible();
+    await dialog.getByRole('button', { name: /^add event$/i }).click();
+    await page.waitForTimeout(400);
+
+    const newEvent = page.locator('.cal-event', { hasText: 'E2E recurring event' }).first();
+    await expect(newEvent).toBeVisible({ timeout: 3000 });
+    await newEvent.click();
+    await page.waitForTimeout(300);
+
+    // A recurring master gets its own id as `seriesId` (see
+    // SchedulerContext.addManualEvent), which is what gates EventDetailModal's
+    // "Apply to" scope picker — its presence here confirms the created event
+    // is genuinely wired up as a recurring series, not just a plain one-off.
+    const editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByText(/apply to/i)).toBeVisible();
+    await expect(editDialog.getByRole('combobox').filter({ hasText: /this event/i })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+
+    expectNoErrors(errors);
+  });
+
   test('drag an existing event to reschedule it to a different time', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);

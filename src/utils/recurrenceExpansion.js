@@ -87,6 +87,31 @@ export function parseRRule(ruleStr) {
   return { freq, interval, byDay: byDay && byDay.length ? byDay : null, count, until };
 }
 
+const INDEX_TO_DAY_CODE = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+/**
+ * Inverse of parseRRule — builds a bare RRULE parameter string (no leading
+ * "RRULE:", matching the format `CalendarEvent.recurrenceRule` is stored
+ * in) from simple structured inputs, for a "Repeat" creation UI
+ * (EventDetailModal). Only accepts the same subset parseRRule understands
+ * (see this module's own header comment) — anything else would just be
+ * silently dropped the next time the result is parsed anyway.
+ * @param {{freq: 'DAILY'|'WEEKLY'|'MONTHLY', interval?: number, byDay?: number[]|null, count?: number|null, until?: string|null}} input
+ *   `byDay` is 0(Sun)-6(Sat) day indices, WEEKLY only. `until` is "YYYY-MM-DD".
+ *   `count`/`until` are mutually exclusive — `count` wins if both are given.
+ * @returns {string}
+ */
+export function buildRRuleString({ freq, interval = 1, byDay = null, count = null, until = null }) {
+  const parts = [`FREQ=${freq}`];
+  if (interval > 1) parts.push(`INTERVAL=${interval}`);
+  if (freq === 'WEEKLY' && byDay && byDay.length) {
+    parts.push(`BYDAY=${byDay.map((d) => INDEX_TO_DAY_CODE[d]).join(',')}`);
+  }
+  if (count) parts.push(`COUNT=${count}`);
+  else if (until) parts.push(`UNTIL=${until.replace(/-/g, '')}`);
+  return parts.join(';');
+}
+
 /** Whole-month difference between two ISO dates (b's month - a's month, ignoring day-of-month). */
 function monthsBetween(isoA, isoB) {
   const [ya, ma] = isoA.split('-').map(Number);
