@@ -111,6 +111,11 @@ there):
 5. Project settings (gear icon) → scroll to "Your apps" → add a Web app →
    copy the `firebaseConfig` object it gives you into `src/firebase.js`,
    replacing the values already there.
+6. Sign-in itself uses Google Identity Services (GIS) rather than Firebase's
+   own popup/redirect (see `AuthContext.jsx` for why), so it needs the same
+   `VITE_GOOGLE_CLIENT_ID` OAuth Client ID used for [Google
+   Calendar](#google-calendar) below — set that up too (steps 1-5 there),
+   even if you don't care about Calendar sync itself.
 
 The `firebaseConfig` values (API key, project id, etc.) are not secrets —
 they identify the project, they don't authorize access to it — so it's

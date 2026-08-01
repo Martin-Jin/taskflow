@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.54.0',
+    date: '2026-08-02',
+    title: "Fixed Google sign-in on browsers where Firebase's own popup silently broke",
+    changes: [
+      "Google sign-in still failed on some mobile browsers (confirmed on Firefox for Android) after the last fix, because Firebase's popup sign-in internally routes through the same fragile intermediate page a full-page redirect does — on browsers where a \"popup\" is really just a same-tab navigation, that's identical to the broken redirect flow. Sign-in now uses Google's own sign-in library directly instead of Firebase's built-in popup/redirect, avoiding that page entirely.",
+    ],
+  },
+  {
     version: '1.53.0',
     date: '2026-08-02',
     title: 'Google sign-in no longer strands you on a broken Firebase page',
