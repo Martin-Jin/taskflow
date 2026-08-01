@@ -148,6 +148,44 @@ function stripOccurrenceSuffix(id) {
 }
 
 /**
+ * Build one overflow-shaped entry per task excluded from allocation because
+ * an incomplete dependency is blocking it (see `schedulable`/`eligibleTasks`
+ * in rebalance()/planToday() above) — these tasks never reach allocateTasks
+ * at all, so they'd otherwise vanish from the "couldn't schedule" reporting
+ * entirely instead of surfacing WHY. Appended into the same overflow/
+ * unfitToday array the allocator itself populates, so the UI has one list to
+ * read regardless of which stage excluded the task.
+ */
+function buildDependencyBlockedEntries(blockedTasks, taskById) {
+  return blockedTasks.map((t) => ({
+    taskId: t.id,
+    unplacedHours: Math.round(t.remainingHours * 100) / 100,
+    reason: {
+      type: 'dependency_blocked',
+      blockingDependencies: (t.dependsOn || [])
+        .filter((depId) => !taskById.get(depId)?.isCompleted)
+        .map((depId) => ({ id: depId, title: taskById.get(depId)?.title || 'a task' })),
+    },
+  }));
+}
+
+/**
+ * Resolve a `fixed_time_conflict` overflow entry's `conflictingItem.label`
+ * when it's `null` — only ever true for a `block` source (see
+ * capacityEngine.js's collectBusyIntervals, which has no task lookup of its
+ * own), where `conflictingItem.id` is the OWNING TASK's id. Every other
+ * source (`event`/`routine`) already carries its real label from
+ * capacityEngine and is left untouched.
+ */
+function resolveConflictLabels(overflow, taskById) {
+  return overflow.map((entry) => {
+    const item = entry.reason?.conflictingItem;
+    if (!item || item.label !== null) return entry;
+    return { ...entry, reason: { ...entry.reason, conflictingItem: { ...item, label: taskById.get(item.id)?.title || 'another task' } } };
+  });
+}
+
+/**
  * Strip the `::occurrenceDate` virtual-id suffix off every returned block's
  * (and overflow entry's) `taskId` — this must never leak into persisted
  * state. The block's own `date` field (already set to the occurrence date by
@@ -168,7 +206,9 @@ function stripVirtualIds(newBlocks, overflow) {
  * @param {import('../types').CalendarEvent[]} params.events
  * @param {import('../types').SchedulingRules} params.rules
  * @param {string} [params.fromDate] - Defaults to today; days before this are never touched.
- * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number}>, stats: Object }}
+ * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}>, stats: Object }}
+ *   `overflow` includes both allocator-reported entries (see allocator.js's allocateTasks) and dependency-blocked
+ *   tasks that never reached the allocator (`reason.type === 'dependency_blocked'`) — see buildDependencyBlockedEntries.
  */
 export function rebalance({ tasks, existingBlocks, routines, events, rules, fromDate }) {
   const today = fromDate || toISODate(new Date());
@@ -311,7 +351,8 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       (!!t.dueDate || !!t.parentId)
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
-  const blockedByDependencies = schedulable.length - eligibleTasks.length;
+  const dependencyBlockedTasks = schedulable.filter((t) => !areDependenciesMet(t, taskById));
+  const blockedByDependencies = dependencyBlockedTasks.length;
 
   // A recurring task (isRecurring && dueDate, already guaranteed once it's
   // schedulable) is expanded into one virtual pseudo-task per occurrence date
@@ -327,7 +368,14 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     today,
     withVirtualEntries(taskById, virtualOccurrences)
   );
-  const { blocks: newBlocks, overflow } = stripVirtualIds(rawBlocks, rawOverflow);
+  const { blocks: newBlocks, overflow: allocatorOverflow } = stripVirtualIds(rawBlocks, rawOverflow);
+  // Dependency-blocked tasks never reach allocateTasks, so they're appended
+  // here rather than coming back through stripVirtualIds — see
+  // buildDependencyBlockedEntries.
+  const overflow = resolveConflictLabels(
+    [...allocatorOverflow, ...buildDependencyBlockedEntries(dependencyBlockedTasks, taskById)],
+    taskById
+  );
 
   // 5. Merge: historical locked/completed (untouched) + locked (untouched) +
   //    completed (untouched) + freshly allocated. A stale, never-completed
@@ -381,7 +429,8 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
  * @param {import('../types').CalendarEvent[]} params.events
  * @param {import('../types').SchedulingRules} params.rules
  * @param {string} [params.fromDate] - Defaults to today; the one day this touches.
- * @returns {{ blocks: import('../types').ScheduledBlock[], unfitToday: Array<{taskId:string,unplacedHours:number}>, stats: Object }}
+ * @returns {{ blocks: import('../types').ScheduledBlock[], unfitToday: Array<{taskId:string,unplacedHours:number,reason:Object}>, stats: Object }}
+ *   See rebalance()'s equivalent note: `unfitToday` includes dependency-blocked tasks too.
  */
 export function planToday({ tasks, existingBlocks, routines, events, rules, fromDate }) {
   const today = fromDate || toISODate(new Date());
@@ -483,7 +532,8 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
       (!t.enforceDueDate || t.dueDate === today)
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
-  const blockedByDependencies = schedulable.length - eligibleTasks.length;
+  const dependencyBlockedTasks = schedulable.filter((t) => !areDependenciesMet(t, taskById));
+  const blockedByDependencies = dependencyBlockedTasks.length;
 
   // Same recurring-task expansion as rebalance() (see expandRecurringTasks
   // above), just scoped to a single-day [today, today] range — a recurring
@@ -498,7 +548,13 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
     withVirtualEntries(taskById, virtualOccurrences),
     { dayScoped: true }
   );
-  const { blocks: newBlocks, overflow: unfitToday } = stripVirtualIds(rawBlocks, rawUnfitToday);
+  const { blocks: newBlocks, overflow: allocatorUnfitToday } = stripVirtualIds(rawBlocks, rawUnfitToday);
+  // See rebalance()'s identical comment: dependency-blocked tasks never
+  // reach allocateTasks, so they're appended here.
+  const unfitToday = resolveConflictLabels(
+    [...allocatorUnfitToday, ...buildDependencyBlockedEntries(dependencyBlockedTasks, taskById)],
+    taskById
+  );
 
   // 5. Merge: future (untouched) + past locked/completed (untouched) +
   //    today's locked (untouched) + today's completed (untouched) + freshly

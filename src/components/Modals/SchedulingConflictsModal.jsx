@@ -1,0 +1,78 @@
+/**
+ * SchedulingConflictsModal — "View details" destination for the rebalance/
+ * planToday toast (see SchedulerContext's runRebalance/runPlanToday), listing
+ * every task that couldn't be scheduled along with WHY: a fixed-time clash
+ * with a specific event/routine/other task's block, an incomplete dependency
+ * still blocking it, or simply no free capacity left in its window. Reuses
+ * StatListModal (the same scrollable list-modal shell as the Dashboard's
+ * "Missed"/"Overdue" tiles) rather than a bespoke layout.
+ */
+
+import React from 'react';
+import { AlertTriangle, Ban, Clock3 } from 'lucide-react';
+import { formatTime12h } from '../../utils/dateUtils';
+import StatListModal from '../Dashboard/StatListModal';
+
+const REASON_ICON = { fixed_time_conflict: Clock3, dependency_blocked: Ban, no_capacity: AlertTriangle };
+
+/** Plain-English explanation for one overflow/unfitToday entry's `reason`. */
+function describeReason(reason, task) {
+  if (!reason) return "Couldn't fit in the available capacity.";
+  switch (reason.type) {
+    case 'fixed_time_conflict': {
+      const item = reason.conflictingItem;
+      const timeLabel = task?.fixedTime ? ` at ${formatTime12h(task.fixedTime)}` : '';
+      if (!item) return `Couldn't schedule${timeLabel} — that time isn't available.`;
+      return `Couldn't schedule${timeLabel} — conflicts with "${item.label}" (${formatTime12h(item.start)}–${formatTime12h(item.end)}).`;
+    }
+    case 'dependency_blocked': {
+      const deps = reason.blockingDependencies || [];
+      if (deps.length === 0) return 'Waiting on another task to be completed first.';
+      const names = deps.map((d) => `"${d.title}"`).join(', ');
+      return deps.length === 1 ? `Waiting on ${names} to be completed first.` : `Waiting on ${deps.length} tasks to be completed first: ${names}.`;
+    }
+    case 'no_capacity':
+    default:
+      return "No free time left in this task's window — consider extending its due date or freeing up capacity.";
+  }
+}
+
+export default function SchedulingConflictsModal({ conflicts, tasks, onOpenTask, onClose }) {
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const items = conflicts.map((c) => ({ ...c, task: taskById.get(c.taskId) })).filter((c) => c.task);
+
+  return (
+    <StatListModal
+      title="Scheduling conflicts"
+      items={items}
+      emptyMessage="No scheduling conflicts."
+      onClose={onClose}
+      renderItem={(item) => {
+        const Icon = REASON_ICON[item.reason?.type] || AlertTriangle;
+        return (
+          <li
+            key={item.taskId}
+            className="missed-tasks-item is-openable"
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpenTask(item.taskId)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpenTask(item.taskId);
+              }
+            }}
+          >
+            <Icon size={13} className="missed-tasks-icon" aria-hidden="true" />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+              <span className="missed-tasks-title">{item.task.title}</span>
+              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
+                {describeReason(item.reason, item.task)}
+              </span>
+            </div>
+          </li>
+        );
+      }}
+    />
+  );
+}
