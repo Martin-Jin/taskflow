@@ -22,6 +22,7 @@ import {
   hardResetEventsFromGoogle,
   expandSyncedBounds,
   computeOnDemandFetchRange,
+  computeEffectivePurgeBoundary,
   RECENTLY_DELETED_TTL_MS,
 } from '../../src/services/eventSyncService.js';
 
@@ -313,5 +314,28 @@ describe('computeOnDemandFetchRange — deciding what (if anything) a calendar-v
   it('extends both edges at once when the view is wider on both sides than synced bounds', () => {
     const bounds = { startIso: '2026-08-01', endIso: '2026-08-31' };
     expect(computeOnDemandFetchRange(bounds, '2026-01-01', '2026-12-31')).toEqual({ startIso: '2026-01-01', endIso: '2026-12-31' });
+  });
+});
+
+describe('computeEffectivePurgeBoundary — capping retention at a rolling maxRetentionDays regardless of synced bounds', () => {
+  const nowMs = new Date(2026, 7, 1).getTime(); // 2026-08-01 local
+
+  it('falls back to the retention floor when nothing has been synced yet', () => {
+    expect(computeEffectivePurgeBoundary(null, 365, nowMs)).toBe('2025-08-01');
+  });
+
+  it('uses the synced-bounds edge when it is within the retention ceiling (e.g. the routine 30-day window)', () => {
+    expect(computeEffectivePurgeBoundary('2026-07-02', 365, nowMs)).toBe('2026-07-02');
+  });
+
+  it('caps retention at the ceiling even when an on-demand fetch reached further back than a year', () => {
+    // Regression case: a single on-demand view from 500 days back must not
+    // pin retention there forever — the ceiling still wins.
+    expect(computeEffectivePurgeBoundary('2025-03-19', 365, nowMs)).toBe('2025-08-01');
+  });
+
+  it('rolls forward with real time — the same synced bound eventually falls outside a LATER retention ceiling', () => {
+    const oneYearLaterMs = new Date(2027, 7, 1).getTime(); // 2027-08-01
+    expect(computeEffectivePurgeBoundary('2026-07-02', 365, oneYearLaterMs)).toBe('2026-08-01');
   });
 });

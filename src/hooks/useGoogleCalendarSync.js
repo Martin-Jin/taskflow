@@ -32,6 +32,7 @@ import {
   hardResetEventsFromGoogle,
   expandSyncedBounds,
   computeOnDemandFetchRange,
+  computeEffectivePurgeBoundary,
   RECENTLY_DELETED_TTL_MS,
 } from '../services/eventSyncService';
 
@@ -56,6 +57,19 @@ function getRoutineSyncRange() {
     rangeEndIso: toISODate(new Date(Date.now() + ROUTINE_SYNC_WINDOW_DAYS * 86400000)),
   };
 }
+
+// The RETENTION ceiling — separate from ROUTINE_SYNC_WINDOW_DAYS above. An
+// on-demand fetch (see ensureGoogleRangeSynced) can widen what's synced far
+// beyond the routine 30-day window and that widened range is deliberately
+// never purged just for falling outside the routine window (see
+// eventSyncService's module doc) — but retention still isn't meant to be
+// UNBOUNDED. A non-recurring event older than a year is purged regardless of
+// whether it was once on-demand-fetched, same as this app already treats a
+// year as the outer edge of "recent history" elsewhere (backups, etc.).
+// Rolls forward with real time (recomputed fresh on every call, not pinned
+// to whenever a far-back fetch happened to occur) — see how it's combined
+// with the synced-bounds union in applyPulledEvents below.
+const MAX_RETENTION_DAYS = 365;
 
 /**
  * @param {Object} deps
@@ -163,6 +177,10 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       // rather than just this call's own (possibly narrower) rangeStartIso
       // — see eventSyncService's module doc for the bug this avoids.
       const expandedBounds = expandSyncedBounds(googleSyncedRangeBoundsRef.current, rangeStartIso, rangeEndIso);
+      // Cap retention at MAX_RETENTION_DAYS regardless of how far back the
+      // synced-bounds union reaches — see MAX_RETENTION_DAYS' and
+      // computeEffectivePurgeBoundary's own doc comments.
+      const purgeBoundaryIso = computeEffectivePurgeBoundary(expandedBounds.startIso, MAX_RETENTION_DAYS);
       setEvents((prev) =>
         didHardReset
           ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
@@ -174,7 +192,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
               recentlyDeletedGoogleEventIdsRef.current,
               recentlyDeletedGoogleEventInstancesRef.current,
               Date.now(),
-              expandedBounds.startIso
+              purgeBoundaryIso
             )
       );
       // A hard reset wipes and replaces `events` wholesale — anything
@@ -510,7 +528,16 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     async (viewStartIso, viewEndIso) => {
       if (!googleConnected) return;
       if (googleFetchInFlightRef.current) return;
-      const needed = computeOnDemandFetchRange(googleSyncedRangeBoundsRef.current, viewStartIso, viewEndIso);
+      // Never bother on-demand-fetching further back than the retention
+      // ceiling (MAX_RETENTION_DAYS) — anything from further back than that
+      // would just get purged again on the very next routine poll anyway
+      // (see the purgeBoundaryIso clamp in applyPulledEvents), so fetching it
+      // at all would be pure wasted API calls/bandwidth for data that can't
+      // stick around regardless. Reuses computeEffectivePurgeBoundary for the
+      // same "later of the two" comparison, just with `viewStartIso` in place
+      // of a synced-bounds union.
+      const clampedViewStartIso = computeEffectivePurgeBoundary(viewStartIso, MAX_RETENTION_DAYS);
+      const needed = computeOnDemandFetchRange(googleSyncedRangeBoundsRef.current, clampedViewStartIso, viewEndIso);
       if (!needed) return; // already fully covered by what's synced so far
       googleFetchInFlightRef.current = true;
       try {
