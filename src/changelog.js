@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.50',
+    date: '2026-08-01',
+    title: 'Search bars now float as you scroll',
+    changes: [
+      'The search bar on the Tasks list, Board, and Settings pages now stays within reach as you scroll down — it floats near the top of the page with a small gap instead of scrolling out of view, on both mobile and desktop.',
+    ],
+  },
+  {
     version: '1.33.49',
     date: '2026-08-01',
     title: 'Calendar events are now included in backups',
