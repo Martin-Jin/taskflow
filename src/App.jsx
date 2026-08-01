@@ -107,6 +107,10 @@ function AppShell() {
   const [addTaskSignal, setAddTaskSignal] = useState(0);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [paletteTaskId, setPaletteTaskId] = useState(null);
+  // Bumped by SchedulingConflictsModal's "jump to day" click — mirrors
+  // addTaskSignal/settingsSectionRequest's requestId pattern so CalendarPage
+  // can react even when the request repeats the same date.
+  const [calendarDayRequest, setCalendarDayRequest] = useState(null);
   const isMobile = useIsMobile();
   const { toggleTheme } = useTheme();
   const {
@@ -245,6 +249,14 @@ function AppShell() {
     setPaletteTaskId(taskId);
   }
 
+  // Scheduling conflicts are grouped/explained per-day (see
+  // SchedulingConflictsModal) — clicking one should land on that day in the
+  // Calendar tab rather than opening the task's edit modal.
+  function goToCalendarDay(dateIso) {
+    setTab('calendar');
+    setCalendarDayRequest((prev) => ({ date: dateIso, requestId: prev ? prev.requestId + 1 : 1 }));
+  }
+
   const paletteTask = paletteTaskId ? tasks.find((t) => t.id === paletteTaskId) : null;
 
   const paletteActions = [
@@ -304,7 +316,7 @@ function AppShell() {
           className={`tab-panel ${tab === 'calendar' || (tab === 'tasks' && taskView === 'board') ? 'tab-panel-fill' : ''}`}
         >
           {tab === 'dashboard' && <DashboardPage onSelectProject={selectProject} onOpenCalendar={() => setTab('calendar')} />}
-          {tab === 'calendar' && <CalendarPage />}
+          {tab === 'calendar' && <CalendarPage dayJumpRequest={calendarDayRequest} />}
           {tab === 'tasks' && (
             <TaskListPanel
               view={taskView}
@@ -389,7 +401,7 @@ function AppShell() {
         <SchedulingConflictsModal
           conflicts={schedulingConflicts}
           tasks={tasks}
-          onOpenTask={openTaskFromPalette}
+          onOpenDay={goToCalendarDay}
           onClose={() => setSchedulingConflictsModalOpen(false)}
         />
       )}

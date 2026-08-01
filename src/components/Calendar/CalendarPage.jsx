@@ -51,7 +51,7 @@ const VIEWS = [
   { key: 'month', label: 'Month' },
 ];
 
-export default function CalendarPage() {
+export default function CalendarPage({ dayJumpRequest } = {}) {
   const [anchorDate, setAnchorDate] = useState(toISODate(new Date()));
   const isMobile = useIsMobile();
   const [view, setView] = useState(() => (isMobile ? 'day' : 'week'));
@@ -219,6 +219,15 @@ export default function CalendarPage() {
     setAnchorDate(date);
     setView('day');
   }
+
+  // Lets a component outside the Calendar tab (e.g. SchedulingConflictsModal)
+  // jump straight to a specific day — mirrors App's requestSettingsSection
+  // pattern: a bumped requestId (not just the date) so re-requesting the same
+  // date still re-triggers the effect below.
+  useEffect(() => {
+    if (dayJumpRequest?.requestId) jumpToDay(dayJumpRequest.date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayJumpRequest?.requestId]);
 
   // Renders one page of the swipe carousel — `base` is a weekStart/day (for
   // Day/3 Day/Week, passed straight to WeekView) or a monthStart (for

@@ -140,6 +140,16 @@
   position: sticky;
   top: 12px;
   z-index: 120;
+  /* Only .search-bar-input paints its own opaque background — the row
+     around it (and the gap to its siblings) was fully transparent, so
+     content scrolling underneath showed straight through once the row
+     detached into its floating/sticky state. A blurred, translucent page-
+     color backdrop across the whole row reads as one floating block instead
+     of blending into whatever scrolls beneath it. */
+  background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--radius-md);
 }
 
 /* AI Quick Add + Add task (see AddTaskFabGroup) render as a floating FAB

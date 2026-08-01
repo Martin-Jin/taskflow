@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.56',
+    date: '2026-08-02',
+    title: 'Scheduling conflicts grouped by day, and floating search bars stay legible',
+    changes: [
+      "The scheduling conflicts details view now groups tasks into sections by the day they couldn't be scheduled for (Today, Tomorrow, or the date), and clicking a task jumps straight to that day on the Calendar instead of opening its edit view.",
+      'Search bars that float over the page as you scroll (Tasks and Settings) now blur the content behind them instead of blending into it.',
+    ],
+  },
+  {
     version: '1.33.55',
     date: '2026-08-01',
     title: "See exactly why a task couldn't be scheduled",
