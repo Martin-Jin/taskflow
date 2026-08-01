@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.40',
+    date: '2026-08-01',
+    title: 'Event repeat can now be edited (not just set at creation), with a smarter free-text box',
+    changes: [
+      'You can now add, edit, or remove a repeat pattern on an event you\'ve already created — previously "Repeat" only existed while creating a brand-new event.',
+      'Replaced the "Every [number] [Day/Week/Month]" number + dropdown with a single free-text box (e.g. type "every 2 weeks"), matching the same smart autocomplete highlighting used elsewhere in Taskflow.',
+      'Editing the repeat pattern on an event that\'s already part of a series only applies with "Apply to" set to "All events in the series", since a single occurrence or a "following" split doesn\'t have its own separate cadence.',
+    ],
+  },
+  {
     version: '1.33.39',
     date: '2026-08-01',
     title: 'Fixed one-off Google Calendar events not deleting cleanly, and deleting a whole recurring series',

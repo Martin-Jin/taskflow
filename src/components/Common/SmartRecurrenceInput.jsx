@@ -15,7 +15,7 @@
 import React, { useRef, useState } from 'react';
 import { findRecurrencePhrase } from '../../utils/recurrence';
 
-export default function SmartRecurrenceInput({ value, onChange, onBlur, onKeyDown, autoFocus }) {
+export default function SmartRecurrenceInput({ value, onChange, onBlur, onKeyDown, autoFocus, disabled }) {
   const inputRef = useRef(null);
   const [scrollLeft, setScrollLeft] = useState(0);
 
@@ -53,6 +53,7 @@ export default function SmartRecurrenceInput({ value, onChange, onBlur, onKeyDow
         onScroll={syncScroll}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
+        disabled={disabled}
       />
     </div>
   );

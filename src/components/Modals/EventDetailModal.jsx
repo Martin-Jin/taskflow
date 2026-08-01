@@ -36,10 +36,11 @@ import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { timeToMinutes } from '../../utils/dateUtils';
-import { buildRRuleString } from '../../utils/recurrenceExpansion';
+import { buildRRuleString, parseRRule } from '../../utils/recurrenceExpansion';
 import { findRecurrencePhrase, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { stripMatchedText } from '../../utils/smartParse';
 import DetailField from '../Common/DetailField';
+import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 
 const SCOPE_OPTIONS = [
   { value: 'this', label: 'This event' },
@@ -47,15 +48,31 @@ const SCOPE_OPTIONS = [
   { value: 'all', label: 'All events in the series' },
 ];
 
-// Deliberately excludes YEARLY — recurrenceExpansion.parseRRule (the module
-// that actually walks these occurrences for display) only understands
-// DAILY/WEEKLY/MONTHLY, so offering YEARLY here would create an event that
-// silently renders as a single non-repeating occurrence.
-const REPEAT_FREQ_OPTIONS = [
-  { value: 'DAILY', label: 'Day(s)' },
-  { value: 'WEEKLY', label: 'Week(s)' },
-  { value: 'MONTHLY', label: 'Month(s)' },
-];
+// A detected "every year" phrase (from either the Title field or the Repeat
+// box itself) is deliberately never applied — recurrenceExpansion.parseRRule
+// (the module that actually walks occurrences for display) only understands
+// DAILY/WEEKLY/MONTHLY, so silently mapping YEARLY to one of those would
+// create an event that repeats on the wrong cadence. See handleTitleChange
+// and commitRepeatText below, which both guard on `match.rule.unit !== 'year'`.
+
+/**
+ * Canonical human phrase for a given interval/freq/byDay, used to (re)seed
+ * SmartRecurrenceInput's text box — both as its initial value (create mode
+ * default, or parsed off an existing event's recurrenceRule in edit mode)
+ * and to "clean up" the box after a successful parse (e.g. "Every  2  weeks"
+ * typed in becomes "every 2 weeks"). Mirrors the phrasing
+ * TaskDetailModal.commitRepeatEditText's toggle button already uses for its
+ * day-specific case.
+ */
+function formatRepeatText(interval, freq, byDay) {
+  if (freq === 'WEEKLY' && byDay && byDay.length) {
+    return `every ${interval === 1 ? '' : `${interval} `}week${interval === 1 ? '' : 's'} on ${byDay
+      .map((d) => WEEKDAY_LABELS[d])
+      .join(', ')}`;
+  }
+  const unit = freq === 'DAILY' ? 'day' : freq === 'MONTHLY' ? 'month' : 'week';
+  return `every ${interval === 1 ? '' : `${interval} `}${unit}${interval === 1 ? '' : 's'}`;
+}
 
 export default function EventDetailModal({ event, initial, onClose, onDeleted }) {
   const { addManualEvent, updateEvent, deleteEvent, setEventIgnored } = useScheduler();
@@ -78,17 +95,47 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   const [scope, setScope] = useState('this');
   const [error, setError] = useState('');
 
-  // "Repeat" — create mode only (see EventDetailModal's own header comment):
-  // turning an already-created event into a recurring one, or vice versa,
-  // isn't supported here, same as the rest of this modal only ever moving a
-  // single occurrence's date rather than re-anchoring a whole series.
-  const [repeats, setRepeats] = useState(false);
-  const [repeatInterval, setRepeatInterval] = useState(1);
-  const [repeatFreq, setRepeatFreq] = useState('WEEKLY');
-  const [repeatByDay, setRepeatByDay] = useState(null); // set only via smart-parse (e.g. "every mon, wed") — no manual picker for it
-  const [repeatEndType, setRepeatEndType] = useState('never'); // 'never' | 'count' | 'until'
-  const [repeatCount, setRepeatCount] = useState(10);
-  const [repeatUntil, setRepeatUntil] = useState('');
+  // A "true-RRULE" series (one master row carrying `recurrenceRule`, whose
+  // occurrences are only ever virtual — see recurrenceExpansion.js) is the
+  // only series shape this modal's Repeat editor can meaningfully touch. A
+  // "synthetic" series (seriesId set, but no recurrenceRule — Google returned
+  // one real row per occurrence instead of a single RRULE) has no single
+  // cadence to edit: applyEventScopeUpdate's 'all' scope for that shape fans
+  // a field update across EVERY row in the series rather than one master, so
+  // stamping a `recurrenceRule` there would give every one of those rows its
+  // own (wrong) recurring series on next expand. Repeat editing is hidden
+  // entirely for that shape rather than risking that.
+  const isSeriesEvent = !isCreate && !!event.seriesId;
+  const isTrueRruleSeries = isSeriesEvent && !!event.recurrenceRule;
+  // Whether the Repeat DetailField renders at all.
+  const repeatFieldVisible = isCreate || !isSeriesEvent || isTrueRruleSeries;
+  // Whether its controls are interactive and will actually be saved —
+  // changing a whole series' cadence only makes sense at 'all' scope (a
+  // 'this'/'following' edit only ever touches one occurrence's overrides or
+  // a date-based split, neither of which has a natural cadence to change).
+  const repeatControlsApply = isCreate || !isSeriesEvent || (isTrueRruleSeries && scope === 'all');
+
+  // "Repeat" — for a plain event this turns it into a recurring one for the
+  // first time (see handleSave); for an existing true-RRULE series (at 'all'
+  // scope only — see repeatControlsApply above) it edits the master's own
+  // cadence. Seeded from the event's existing recurrenceRule when there is
+  // one, so opening an already-recurring event shows its real pattern.
+  const initialRule = isTrueRruleSeries ? parseRRule(event.recurrenceRule) : null;
+  const [repeats, setRepeats] = useState(!!initialRule);
+  const [repeatInterval, setRepeatInterval] = useState(initialRule?.interval || 1);
+  const [repeatFreq, setRepeatFreq] = useState(initialRule?.freq || 'WEEKLY');
+  const [repeatByDay, setRepeatByDay] = useState(initialRule?.byDay || null); // set only via smart-parse (e.g. "every mon, wed") — no manual picker for it
+  const [repeatEndType, setRepeatEndType] = useState(initialRule?.count ? 'count' : initialRule?.until ? 'until' : 'never'); // 'never' | 'count' | 'until'
+  const [repeatCount, setRepeatCount] = useState(initialRule?.count || 10);
+  const [repeatUntil, setRepeatUntil] = useState(initialRule?.until || '');
+  // The SmartRecurrenceInput's live text (e.g. "every 2 weeks") — kept in
+  // sync with repeatInterval/repeatFreq/repeatByDay via formatRepeatText
+  // whenever those change from a source OTHER than this box itself (title
+  // smart-parse, initial load); the box's own edits go the other way,
+  // parsing text back into those fields on blur/Enter (see commitRepeatText).
+  const [repeatText, setRepeatText] = useState(
+    formatRepeatText(initialRule?.interval || 1, initialRule?.freq || 'WEEKLY', initialRule?.byDay || null)
+  );
 
   // Smart-parse detection state — mirrors AddTaskModal/TaskDetailModal's own
   // "typed 'every 2 weeks' inline in the title" behavior (see
@@ -108,10 +155,12 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
     // comment) — a detected "every year" phrase is left in the title
     // untouched rather than silently applied as some other cadence.
     if (match && match.rule.unit !== 'year') {
+      const freq = match.rule.unit === 'day' ? 'DAILY' : match.rule.unit === 'week' ? 'WEEKLY' : 'MONTHLY';
       setRepeats(true);
-      setRepeatFreq(match.rule.unit === 'day' ? 'DAILY' : match.rule.unit === 'week' ? 'WEEKLY' : 'MONTHLY');
+      setRepeatFreq(freq);
       setRepeatInterval(match.rule.count);
       setRepeatByDay(match.rule.days || null);
+      setRepeatText(formatRepeatText(match.rule.count, freq, match.rule.days || null));
       setDetectedRecurrenceMatch(match);
     } else if (detectedRecurrenceMatch) {
       // The phrase that drove the last auto-detection got edited away.
@@ -124,6 +173,26 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   function markRepeatEdited() {
     setHasEditedRepeat(true);
     setDetectedRecurrenceMatch(null);
+  }
+
+  // Commits the free-text Repeat box (see the Repeat DetailField below) by
+  // running it through the same phrase parser the Title field's smart-parse
+  // uses — same defensive behavior as TaskDetailModal.commitRepeatEditText:
+  // an unparseable (or unsupported "every year") phrase leaves the
+  // last-known-good interval/freq/byDay untouched, and the box is reformatted
+  // back to match rather than left showing raw text that no longer reflects
+  // state.
+  function commitRepeatText() {
+    const match = findRecurrencePhrase(repeatText || '');
+    if (match && match.rule.unit !== 'year') {
+      const freq = match.rule.unit === 'day' ? 'DAILY' : match.rule.unit === 'week' ? 'WEEKLY' : 'MONTHLY';
+      setRepeatFreq(freq);
+      setRepeatInterval(match.rule.count);
+      setRepeatByDay(match.rule.days || null);
+      setRepeatText(formatRepeatText(match.rule.count, freq, match.rule.days || null));
+    } else {
+      setRepeatText(formatRepeatText(repeatInterval, repeatFreq, repeatByDay));
+    }
   }
 
   const descriptionRef = useRef(null);
@@ -139,7 +208,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
         setError('End time must be after start time.');
         return;
       }
-      if (isCreate && repeats && repeatEndType === 'until' && !repeatUntil) {
+      if (repeatControlsApply && repeats && repeatEndType === 'until' && !repeatUntil) {
         setError('Pick an end date, or change "Ends" to "Never" or "After".');
         return;
       }
@@ -174,6 +243,33 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
         // happened to be open (the input is disabled for that scope below,
         // for the same reason).
         if (!event.seriesId || scope === 'this') fieldUpdates.date = date;
+        // Repeat: only touched when the editor was actually interactive for
+        // this event/scope (see repeatControlsApply) — a 'this'/'following'
+        // edit on an existing series never carries a cadence change.
+        if (repeatControlsApply) {
+          if (repeats) {
+            fieldUpdates.recurrenceRule = buildRRuleString({
+              freq: repeatFreq,
+              interval: repeatInterval,
+              byDay: repeatByDay,
+              count: repeatEndType === 'count' ? repeatCount : null,
+              until: repeatEndType === 'until' ? repeatUntil : null,
+            });
+            fieldUpdates.isRecurring = true;
+            // A plain event has no seriesId yet — giving it its own id as
+            // seriesId is the same "own id doubles as seriesId when
+            // recurring" convention addManualEvent uses, so the "Apply to"
+            // scope picker and future edits treat it as a real series.
+            if (!isSeriesEvent) fieldUpdates.seriesId = event.id;
+          } else if (isTrueRruleSeries) {
+            // Repeats was unchecked on an existing series — stop recurring
+            // entirely rather than leaving a stale recurrenceRule/seriesId
+            // behind (both were only ever meaningful together here).
+            fieldUpdates.recurrenceRule = null;
+            fieldUpdates.isRecurring = false;
+            fieldUpdates.seriesId = null;
+          }
+        }
         updateEvent(event.id, fieldUpdates, scope);
       }
       if (ignored !== !!event.isFreeTime) {
@@ -281,12 +377,13 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
           <DetailField icon={Clock} label="End time">
             <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
           </DetailField>
-          {isCreate && (
+          {repeatFieldVisible && (
             <DetailField icon={Repeat} label="Repeat">
-              <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+              <label className="form-checkbox-row" style={{ cursor: repeatControlsApply ? 'pointer' : 'default' }}>
                 <input
                   type="checkbox"
                   checked={repeats}
+                  disabled={isReadOnly || !repeatControlsApply}
                   onChange={(e) => {
                     markRepeatEdited();
                     setRepeats(e.target.checked);
@@ -296,47 +393,24 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
               </label>
               {repeats && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-                  <div className="detail-field-inline">
-                    Every
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      step="1"
-                      value={repeatInterval}
-                      onChange={(e) => {
-                        markRepeatEdited();
-                        setRepeatInterval(Math.max(1, Number(e.target.value) || 1));
-                        setRepeatByDay(null);
-                      }}
-                      style={{ width: 56 }}
-                    />
-                    <select
-                      value={repeatFreq}
-                      onChange={(e) => {
-                        markRepeatEdited();
-                        setRepeatFreq(e.target.value);
-                        setRepeatByDay(null);
-                      }}
-                      style={{ flex: 1 }}
-                    >
-                      {REPEAT_FREQ_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {repeatByDay && repeatByDay.length > 0 && (
-                    <p className="form-hint">
-                      Detected from the title: on {repeatByDay.map((d) => WEEKDAY_LABELS[d]).join(', ')}. Changing frequency/interval
-                      above clears this.
-                    </p>
-                  )}
+                  <SmartRecurrenceInput
+                    value={repeatText}
+                    disabled={isReadOnly || !repeatControlsApply}
+                    onChange={(e) => {
+                      markRepeatEdited();
+                      setRepeatText(e.target.value);
+                    }}
+                    onBlur={commitRepeatText}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      if (e.key === 'Escape') setRepeatText(formatRepeatText(repeatInterval, repeatFreq, repeatByDay));
+                    }}
+                  />
                   <div className="detail-field-inline">
                     Ends
                     <select
                       value={repeatEndType}
+                      disabled={isReadOnly || !repeatControlsApply}
                       onChange={(e) => {
                         markRepeatEdited();
                         setRepeatEndType(e.target.value);
@@ -354,6 +428,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                         max="730"
                         step="1"
                         value={repeatCount}
+                        disabled={isReadOnly || !repeatControlsApply}
                         onChange={(e) => {
                           markRepeatEdited();
                           setRepeatCount(Math.max(1, Number(e.target.value) || 1));
@@ -366,6 +441,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                         type="date"
                         value={repeatUntil}
                         min={date}
+                        disabled={isReadOnly || !repeatControlsApply}
                         onChange={(e) => {
                           markRepeatEdited();
                           setRepeatUntil(e.target.value);
@@ -375,6 +451,11 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                     {repeatEndType === 'count' && 'occurrences'}
                   </div>
                 </div>
+              )}
+              {!repeatControlsApply && (
+                <p className="form-hint">
+                  Editing the repeat pattern only applies when the scope below is set to "All events in the series".
+                </p>
               )}
             </DetailField>
           )}
