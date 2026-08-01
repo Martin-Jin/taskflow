@@ -303,6 +303,42 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     }
   }, [googleConnected, setNotification, applyPulledEvents]);
 
+  // ---- Force a full rebuild from Google Calendar (manual, repeatable) ------
+  // Unlike the one-time hardResetEventsFromGoogle pass above (which only
+  // ever fires once automatically, guarded by googleEventsHardResetDone),
+  // this is an explicit user action from Settings ("Rebuild from Google
+  // Calendar") that ALWAYS does the full wipe-and-rebuild, no matter how
+  // many times it's been run before — for exactly the case where the
+  // one-time pass already consumed itself (possibly before some other sync
+  // fix shipped) and stale/orphaned local events are stuck with no
+  // automatic way to clear them again.
+  const rebuildEventsFromGoogle = useCallback(async () => {
+    if (!googleConnected) return;
+    setIsPullingGoogleEvents(true);
+    try {
+      const rangeStartIso = toISODate(new Date());
+      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+      setEvents((prev) => hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current));
+      googleEventsHardResetDoneRef.current = true;
+      setGoogleEventsHardResetDone(true);
+      if (failedCalendars.length > 0) {
+        setNotification({
+          type: 'warning',
+          message: `Rebuilt, but couldn't load events from: ${failedCalendars.join(', ')}.`,
+        });
+      } else {
+        setNotification({ type: 'success', message: 'Rebuilt your calendar events from Google Calendar.' });
+      }
+    } catch (err) {
+      console.error(err);
+      const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
+      setNotification({ type: 'error', message: `Rebuild from Google Calendar failed: ${reason}` });
+    } finally {
+      setIsPullingGoogleEvents(false);
+    }
+  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone]);
+
   // ---- Push blocks to Google Calendar --------------------------------------
   const pushToGoogleCalendar = useCallback(async () => {
     setIsPullingGoogleEvents(true);
@@ -353,6 +389,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
+    rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,

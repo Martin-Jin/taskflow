@@ -36,7 +36,7 @@
  */
 
 import { getMockEvents } from './mockData';
-import { fromISODate, toISODate, timeToMinutes } from '../utils/dateUtils';
+import { fromISODate, toISODate, timeToMinutes, addDays } from '../utils/dateUtils';
 import { loadPersisted, savePersisted, clearPersisted } from '../utils/persistence';
 import { auth } from '../firebase';
 
@@ -388,6 +388,33 @@ export function parseExdateToLocalIsoDate(dtRaw) {
 }
 
 /**
+ * Convert an inclusive `[startIso, endIso]` "YYYY-MM-DD" range into the
+ * `timeMin`/`timeMax` instants Google's `events.list` expects. `timeMin` is
+ * local midnight AT THE START of `startIso` (Google's lower bound is
+ * inclusive, so this is correct as-is). `timeMax` is Google's EXCLUSIVE upper
+ * bound, so it must be local midnight at the START of the day AFTER `endIso`
+ * — not `endIso` itself — or every event actually occurring ON `endIso`
+ * (anything after local midnight that day) is silently excluded from the
+ * fetch. That mismatch used to cause a real bug: mergePulledGoogleEvents'
+ * `isInScopeForPull` treats `event.date <= rangeEndIso` as in scope (see its
+ * own doc comment) — an inclusive contract — so a still-live event dated
+ * exactly on the horizon's last day would come back missing from a fetch
+ * that (wrongly) excluded it, and get misread as a Google-side deletion.
+ * Extracted as its own pure function purely so this date arithmetic can be
+ * unit tested without mocking `window.gapi` (see fetchEvents' own doc
+ * comment on why the rest of this module mostly can't be).
+ * @param {string} startIso - "YYYY-MM-DD", inclusive
+ * @param {string} endIso - "YYYY-MM-DD", inclusive
+ * @returns {{timeMin: string, timeMax: string}}
+ */
+export function computeFetchTimeRange(startIso, endIso) {
+  return {
+    timeMin: fromISODate(startIso).toISOString(),
+    timeMax: fromISODate(addDays(endIso, 1)).toISOString(),
+  };
+}
+
+/**
  * Fetch events in a date range, across the user's PRIMARY calendar and
  * every other calendar they subscribe to (e.g. a lecture timetable shared
  * with them). Falls back to mock events if Calendar API isn't
@@ -447,8 +474,7 @@ export async function fetchEvents(startIso, endIso) {
   // 'primary' alias, duplicating every one of its events on the agenda.
   if (!calendars.some((c) => c.id === 'primary' || c.primary)) calendars.unshift({ id: 'primary', summary: 'primary', accessRole: 'owner' });
 
-  const timeMin = fromISODate(startIso).toISOString();
-  const timeMax = fromISODate(endIso).toISOString();
+  const { timeMin, timeMax } = computeFetchTimeRange(startIso, endIso);
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const failedCalendars = [];
@@ -508,6 +534,22 @@ export async function fetchEvents(startIso, endIso) {
 
   const events = perCalendarResults
     .flat()
+    // Google's events.list defaults to `showDeleted: false`, which normally
+    // means a deleted event is simply absent from the response — that's what
+    // mergePulledGoogleEvents' deletion-detection relies on. But per Google's
+    // own API docs, a CANCELLED INSTANCE of a recurring event (e.g. the
+    // Google-minted `{recurringEventId}_{originalStartTimeUTC}` resource left
+    // behind after a single-occurrence delete or edit — see
+    // buildInstanceEventId above) can still come back even with showDeleted
+    // false, carrying `status: 'cancelled'` but a start/end time inherited
+    // from before cancellation. Without this filter, that tombstone slips
+    // through as if it were a live, ordinary one-off event (recurrence is
+    // absent on the instance resource itself, so it looks exactly like a
+    // plain singular event) — a deleted event that never actually disappears
+    // no matter how many times it's re-deleted (its own real API delete
+    // already returned 404/410 the first time, which deleteCalendarEvent
+    // correctly treats as already-gone and stops retrying).
+    .filter((e) => e.status !== 'cancelled')
     .filter((e) => e.start?.dateTime) // skip all-day events for time-blocking purposes
     .filter((e) => {
       const key = `${e.iCalUID || e.id}::${e.start.dateTime}`;

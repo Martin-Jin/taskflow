@@ -1,22 +1,26 @@
 /**
  * ============================================================================
- * parseExdateToLocalIsoDate — coverage notes
+ * googleCalendarService.js — coverage notes
  * ============================================================================
- * The only piece of googleCalendarService.js pure enough to unit test
- * without mocking `window.gapi` — everything else in that file is a thin
- * wrapper around the live Google Calendar API. This function converts one
- * EXDATE value (from a recurring master event's `recurrence` array) into
- * the local-calendar-date ISO string `fetchEvents` uses to build that
- * master's `overrides` map, marking a specific occurrence excluded so
- * expandRecurringEvent doesn't regenerate a "phantom" occurrence for a date
- * Google has already cancelled/individually modified. Getting this date
- * math wrong silently reintroduces exactly that bug, so it's covered here
- * per this repo's own convention for date/timezone-sensitive logic.
+ * Most of this file is a thin wrapper around the live Google Calendar API
+ * (`window.gapi`), which isn't practical to unit test without heavy mocking.
+ * Two pieces of pure date math were extracted specifically so they could be
+ * covered here instead of only by reasoning about a diff:
+ *   - `parseExdateToLocalIsoDate` converts one EXDATE value (from a recurring
+ *     master event's `recurrence` array) into the local-calendar-date ISO
+ *     string `fetchEvents` uses to build that master's `overrides` map,
+ *     marking a specific occurrence excluded so expandRecurringEvent doesn't
+ *     regenerate a "phantom" occurrence for a date Google has already
+ *     cancelled/individually modified.
+ *   - `computeFetchTimeRange` converts the inclusive "YYYY-MM-DD" range the
+ *     rest of the sync pipeline works in into the `timeMin`/`timeMax`
+ *     instants Google's `events.list` expects — see its own doc comment for
+ *     a real off-by-one bug this used to have at the inclusive end boundary.
  * ============================================================================
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseExdateToLocalIsoDate } from '../../src/services/googleCalendarService.js';
+import { parseExdateToLocalIsoDate, computeFetchTimeRange } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
   it('parses a UTC ("Z"-suffixed) EXDATE value into its local calendar date', () => {
@@ -43,5 +47,28 @@ describe('parseExdateToLocalIsoDate', () => {
 
   it('returns null for garbage input', () => {
     expect(parseExdateToLocalIsoDate('not-a-date')).toBeNull();
+  });
+});
+
+describe('computeFetchTimeRange', () => {
+  it('makes timeMax cover all of the inclusive end date, not just its local midnight instant', () => {
+    // Regression test: timeMax used to be `fromISODate(endIso).toISOString()`
+    // — local midnight at the START of endIso — which is Google's EXCLUSIVE
+    // upper bound, so it silently excluded every event actually occurring ON
+    // endIso (the horizon's last day). mergePulledGoogleEvents' own
+    // `isInScopeForPull` treats that same date as in scope (inclusive), so
+    // the mismatch made a still-live event dated exactly on the last day of
+    // the sync horizon look Google-side-deleted on every pull.
+    const { timeMin, timeMax } = computeFetchTimeRange('2026-08-01', '2026-08-29');
+    const localMidnightOfEndIso = new Date(2026, 7, 29, 0, 0, 0).toISOString();
+    const localMidnightOfDayAfter = new Date(2026, 7, 30, 0, 0, 0).toISOString();
+    expect(timeMax).not.toBe(localMidnightOfEndIso);
+    expect(timeMax).toBe(localMidnightOfDayAfter);
+    expect(timeMin).toBe(new Date(2026, 7, 1, 0, 0, 0).toISOString());
+  });
+
+  it('keeps timeMin/timeMax a single day apart for a one-day range', () => {
+    const { timeMin, timeMax } = computeFetchTimeRange('2026-08-01', '2026-08-01');
+    expect(new Date(timeMax).getTime() - new Date(timeMin).getTime()).toBe(24 * 60 * 60 * 1000);
   });
 });

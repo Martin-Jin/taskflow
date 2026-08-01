@@ -380,6 +380,71 @@ test.describe('Calendar', () => {
     expectNoErrors(errors);
   });
 
+  test('deleting a recurring event with "All events in the series" removes it entirely', async ({ page }) => {
+    // Regression test for a bug where SchedulerContext.deleteEvent looked up
+    // the row to delete by the clicked occurrence's VIRTUAL id
+    // (`${masterId}::${date}`) instead of resolving it back to the real
+    // master row first — `events` never contains a row keyed by that virtual
+    // id, so the lookup silently found nothing and "Delete" + "All events in
+    // the series" was a no-op. 'This event'/'This and following' already
+    // resolved correctly; this scope was the one gap.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Calendar');
+
+    await page.getByRole('button', { name: /change view/i }).click();
+    await page.waitForTimeout(150);
+    await page.getByRole('button', { name: 'Day', exact: true }).click();
+    await page.waitForTimeout(400);
+
+    const dayColumn = page.locator('.day-column').first();
+    await expect(dayColumn).toBeVisible();
+    const box = await dayColumn.boundingBox();
+
+    const dialog = page.getByRole('dialog').filter({ hasText: 'New event' });
+    let created = false;
+    for (const frac of [0.02, 0.1, 0.2, 0.4, 0.6, 0.8]) {
+      const x = box.x + box.width / 2;
+      const yStart = box.y + box.height * frac;
+      await page.mouse.move(x, yStart);
+      await page.mouse.down();
+      await page.mouse.move(x, yStart + 40, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      if (await dialog.isVisible({ timeout: 500 }).catch(() => false)) {
+        created = true;
+        break;
+      }
+    }
+
+    if (!created) {
+      console.log('Could not find an empty slot to drag on (day fully booked) — skipping series-delete assertion.');
+      expectNoErrors(errors);
+      return;
+    }
+
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder('e.g. Team standup').fill('E2E series delete');
+    await dialog.getByRole('checkbox', { name: /repeats/i }).check();
+    await dialog.getByRole('button', { name: /^add event$/i }).click();
+    await page.waitForTimeout(400);
+
+    const newEvent = page.locator('.cal-event', { hasText: 'E2E series delete' }).first();
+    await expect(newEvent).toBeVisible({ timeout: 3000 });
+    await newEvent.click();
+    await page.waitForTimeout(300);
+
+    const editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await editDialog.getByRole('combobox').selectOption('all');
+    await editDialog.getByRole('button', { name: /^delete$/i }).click();
+    await page.waitForTimeout(400);
+
+    await expect(page.locator('.cal-event', { hasText: 'E2E series delete' })).toHaveCount(0);
+
+    expectNoErrors(errors);
+  });
+
   test('drag an existing event to reschedule it to a different time', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
