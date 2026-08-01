@@ -225,14 +225,22 @@ worth knowing:
 2. **APIs & Services → Library** → enable the Google Calendar API.
 3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
    (type: Web application). Add `http://localhost:5173` as an authorized
-   JavaScript origin, plus your production domain when you deploy.
+   JavaScript origin, plus your production domain when you deploy — and add
+   that same origin (bare, no path) under **Authorized redirect URIs** too
+   (see the persistent-auth note below for why both lists matter).
 4. **APIs & Services → Credentials → Create Credentials → API key**.
 5. Add both to `.env`:
    ```
    VITE_GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
    VITE_GOOGLE_API_KEY=xxxxxxxx
    ```
-6. Restart the dev server, then **Settings → Connect Google Calendar** and
+6. Deploy the Cloudflare Worker's Calendar auth routes and add
+   `VITE_CALENDAR_AUTH_WORKER_URL` to `.env` too — see
+   [`cloudflare-worker/README.md`](cloudflare-worker/README.md#google-calendar-persistent-auth)
+   for the full setup (a client secret and a Firestore-scoped service
+   account, both server-side only). This is what makes the connection
+   persist across refreshes instead of needing periodic re-login.
+7. Restart the dev server, then **Settings → Connect Google Calendar** and
    approve the OAuth prompt. This enables two-way sync of calendar events:
    your Google events populate the calendar grid, and creating, editing,
    moving, resizing, or deleting an event in TaskFlow now pushes that
@@ -246,32 +254,29 @@ worth knowing:
 While the project is in Testing publishing status (the default), only
 accounts you've explicitly added as test users can complete the OAuth flow:
 Cloud Console → **APIs & Services → OAuth consent screen → Audience/Test
-users → Add users**.
+users → Add users**. Testing status also sidesteps Google's formal
+app-verification requirement for Calendar's scopes (which are "sensitive"),
+so it's the right choice for personal/small-scale use — only move to
+Production if you actually need the app open to arbitrary Google accounts.
 
-You only need to click "Connect" once per browser profile. The access token
-Google issues is cached locally and reused for its full ~1 hour lifetime, so
-reopening or refreshing the app repeatedly doesn't re-trigger Google's
-sign-in flow each time. Once that cached token expires, TaskFlow falls back
-to silently refreshing it (no popup) as long as the underlying Google grant
-is still valid. Google's implicit-token flow has no refresh token, though,
-so this silent refresh is expected to fail periodically for reasons outside
-the app's control (token expiry while the tab was closed, third-party-cookie/
-FedCM restrictions, a revoked grant) — when it does, Settings flags it
-distinctly as "Google Calendar disconnected — reconnect" (rather than looking
-identical to never having connected) and a toast fires the moment it
-happens; reconnecting is one click and doesn't lose anything.
+You only need to click "Connect" once, ever (not once per browser profile) —
+the one-time consent grant gets exchanged server-side for a Google refresh
+token (stored in Firestore, never sent back to the client — see
+[`cloudflare-worker/README.md`](cloudflare-worker/README.md#google-calendar-persistent-auth)),
+so every subsequent access token is minted silently on demand, with no
+dependency on a cached token's ~1 hour lifetime or the browser holding onto
+any Google session state. Reconnecting is only ever needed if you actually
+revoke TaskFlow's access at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions)
+— Settings flags that case distinctly as "Google Calendar disconnected —
+reconnect" (rather than looking identical to never having connected) and a
+toast fires the moment it's detected.
 
 Settings → Integrations also has a **Pull from Google Calendar** button
 (shown once connected), for forcing an on-demand resync instead of waiting
 for the next automatic poll or accepting local drift — it re-fetches your
 Google events and overwrites any local changes to synced events with
 whatever Google currently has, same as any other pull.
-
-> The app uses Google Identity Services' token client (implicit OAuth2
-> flow), which is appropriate for a client-only SPA. For a multi-tenant
-> production deployment behind a backend, swap this for a server-side
-> OAuth2 flow with refresh tokens — `src/services/googleCalendarService.js`
-> is the one file that would need to change.
 
 **Subscribed calendars not showing up?** Check that you reconnected *after*
 subscribing (TaskFlow lists your subscribed calendars at connect-time),
@@ -705,8 +710,10 @@ renders as a clickable link automatically — see `src/utils/linkify.js`.
 Everything persists to `localStorage` (see `src/utils/persistence.js`):
 tasks, scheduled blocks, sections, projects, calendar events, scheduling
 rules, fixed routines, when the last Todoist import ran, and a "connected
-to Google Calendar" flag (the OAuth token itself is not persisted — a
-silent, popup-free refresh runs on load instead). A recurring calendar
+to Google Calendar" flag plus a short-lived cached access token (the Google
+refresh token itself is never persisted client-side at all — it lives only
+in Firestore, written by the Cloudflare Worker; see
+[Google Calendar](#google-calendar) above). A recurring calendar
 event is stored once with its RRULE recurrence rule, not as one record
 per occurrence — occurrences are expanded for display only.
 
@@ -838,13 +845,21 @@ every push to `main`.
 1. **Repo settings → Pages → Build and deployment → Source: "GitHub
    Actions"** (not "Deploy from a branch"). This lets the included workflow
    publish directly, without needing a separate `gh-pages` branch.
-2. If you want Google Calendar sync to work for visitors, add two **Repo
+2. If you want Google Calendar sync to work for visitors, add three **Repo
    settings → Secrets and variables → Actions → Repository secrets**:
-   `VITE_GOOGLE_CLIENT_ID` and `VITE_GOOGLE_API_KEY` (same values as your
-   local `.env` — see [Google Calendar](#google-calendar) above). Then, in
-   Google Cloud Console, add `https://<your-username>.github.io` to that
-   OAuth client's **Authorized JavaScript origins** so the deployed site is
-   allowed to use it.
+   `VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY`, and
+   `VITE_CALENDAR_AUTH_WORKER_URL` (same values as your local `.env` — see
+   [Google Calendar](#google-calendar) above; the last one requires
+   deploying the Cloudflare Worker's Calendar routes, see
+   [`cloudflare-worker/README.md`](cloudflare-worker/README.md#google-calendar-persistent-auth)).
+   Then, in Google Cloud Console, add `https://<your-username>.github.io`
+   to that OAuth client's **Authorized JavaScript origins AND Authorized
+   redirect URIs** (both lists — the persistent-auth token exchange
+   validates against the redirect URIs list specifically) so the deployed
+   site is allowed to use it. If this OAuth client is ever deleted and
+   recreated, every one of these three places needs updating together —
+   see the troubleshooting section in `cloudflare-worker/README.md` for the
+   full list of what breaks if you miss one.
    - **Do not** add a `VITE_TODOIST_API_TOKEN` secret here. That would bake
      *your* personal Todoist token into a build every visitor downloads —
      see the [Todoist](#todoist) section above for why each visitor instead
@@ -928,15 +943,12 @@ restrictions, if using Google Calendar sync from that hostname.
   deleting a Todoist-imported task in TaskFlow never writes back to
   Todoist. Re-importing later pulls in anything new/changed on Todoist's
   side, but won't reflect changes made here.
-- Silent Google token refresh depends on the underlying OAuth grant still
-  being valid; Google may occasionally require interactive re-consent
-  (e.g. after long inactivity or a security-related grant reset) that a
-  backend-less SPA can't fully suppress — when it happens, Settings surfaces
-  a distinct "reconnect" prompt (see [Google
-  Calendar](#google-calendar) above) rather than failing silently. A
-  server-side OAuth flow with refresh tokens (see the Google Calendar setup
-  note above) removes this edge case entirely if it becomes a problem in
-  practice.
+- Reconnecting Google Calendar is only ever needed if you actually revoke
+  TaskFlow's access at Google's end (myaccount.google.com/permissions) —
+  the server-side refresh-token flow (see [Google
+  Calendar](#google-calendar) above) means an ordinary page refresh or
+  closed tab never triggers it. When a revoke does happen, Settings
+  surfaces a distinct "reconnect" prompt rather than failing silently.
 - Undo/Redo (`useHistoryState`) only covers `tasks` and `blocks`. Calendar
   events get the same Undo-toast affordance through a parallel mechanism
   (editing, dragging, or resizing one — including reverting the matching

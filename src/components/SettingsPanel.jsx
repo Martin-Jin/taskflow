@@ -396,11 +396,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             )}
           </button>
           {googleConnected && (
-            <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
-              {isSyncing ? 'Syncing…' : 'Push'}
-            </button>
-          )}
-          {googleConnected && (
             <button
               className="btn"
               onClick={pullFromGoogleCalendar}
@@ -409,6 +404,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             >
               <RefreshCw size={13} />
               {isPullingGoogleEvents ? 'Pulling…' : 'Pull from Google Calendar'}
+            </button>
+          )}
+          {googleConnected && (
+            <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
+              {isSyncing ? 'Syncing…' : 'Push'}
             </button>
           )}
         </div>

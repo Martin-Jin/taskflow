@@ -25,13 +25,10 @@ import { verifyFirebaseIdToken, AuthError } from './googleAuth.js';
 import { getDoc, setDoc, deleteDoc } from './firestoreClient.js';
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-// GIS's initCodeClient in `ux_mode: 'popup'` never actually redirects
-// anywhere (the code comes back via an in-page callback, not a browser
-// navigation) — per Google's OAuth 2.0 code-model docs, the token exchange
-// for this popup flow must still supply a `redirect_uri`, and the documented
-// value for this exact JS-popup case is the literal string "postmessage"
-// (the same convention the older gapi.auth2 `grantOfflineAccess()` used).
-const POPUP_CODE_REDIRECT_URI = 'postmessage';
+// Fallback only — see the Origin-header-based redirectUri computed in
+// handleExchangeCode below, which is what actually gets used per Google's
+// documented popup-mode convention (the calling page's own origin).
+const POPUP_CODE_REDIRECT_URI = '';
 
 function tokenDocPath(uid) {
   return `users/${uid}/googleCalendarAuth/token`;
@@ -73,6 +70,13 @@ export async function handleExchangeCode(request, env, headers) {
   const { uid, response } = await requireUid(body.idToken, env, headers);
   if (response) return response;
 
+  // Per Google's own docs (developers.google.com/identity/oauth2/web/guides/
+  // use-code-model), initCodeClient's popup mode uses the calling page's own
+  // *origin* as redirect_uri — not "postmessage" (that's the older gapi.auth2
+  // convention) and not an empty string. The Origin header is exactly that,
+  // and is already what CORS validates against for this same request.
+  const redirectUri = request.headers.get('Origin') || POPUP_CODE_REDIRECT_URI;
+
   const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -81,7 +85,7 @@ export async function handleExchangeCode(request, env, headers) {
       client_id: env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
       grant_type: 'authorization_code',
-      redirect_uri: POPUP_CODE_REDIRECT_URI,
+      redirect_uri: redirectUri,
     }),
   });
 

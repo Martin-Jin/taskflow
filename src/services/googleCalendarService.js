@@ -115,6 +115,7 @@ function isAuthError(err) {
 function invalidateAccessToken() {
   accessToken = null;
   clearCachedAccessToken();
+  window.gapi.client.setToken(null);
 }
 
 /** Invalidate the token and throw a marked error callers can recognize (see `err.isGoogleAuthError`) and react to by disconnecting, instead of retrying with the same now-cleared token. */
@@ -284,18 +285,29 @@ export async function requestAccessToken(silent = false) {
     const cached = readCachedAccessToken();
     if (cached) accessToken = cached;
   }
-  if (accessToken) return accessToken;
+  if (accessToken) {
+    window.gapi.client.setToken({ access_token: accessToken });
+    return accessToken;
+  }
 
   if (!gapiInited || !gisInited) throw new Error('Google Calendar client not initialized');
 
+  let token;
   try {
-    return await refreshAccessTokenFromWorker();
+    token = await refreshAccessTokenFromWorker();
   } catch (err) {
     if (silent || !err.needsReconnect) throw err;
+    const code = await requestAuthorizationCode();
+    token = await exchangeCodeForToken(code);
   }
 
-  const code = await requestAuthorizationCode();
-  return exchangeCodeForToken(code);
+  // gapi.client.calendar.* calls (listSubscribedCalendars, fetchGoogleEvents,
+  // push/delete, etc.) read their auth token from gapi.client's own internal
+  // state, not from this module's `accessToken` variable — without this,
+  // every one of those calls gets no token at all and fails with 401,
+  // immediately surfacing as "authorization expired" right after connecting.
+  window.gapi.client.setToken({ access_token: token });
+  return token;
 }
 
 /**
