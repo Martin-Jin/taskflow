@@ -53,10 +53,23 @@ describe('mergePulledGoogleEvents — base merge policy (no suppression)', () =>
     expect(result).toEqual([]);
   });
 
-  it('leaves a local google event outside the pull range untouched even if absent from the pull', () => {
+  it('leaves a local google event PAST the pull range untouched even if absent from the pull (future out-of-scope)', () => {
     const local = googleEvent({ id: 'local1', googleEventId: 'faraway', date: '2026-09-15' });
     const result = mergePulledGoogleEvents([local], [], rangeStart, rangeEnd);
     expect(result).toEqual([local]);
+  });
+
+  it('purges a local non-recurring google event OLDER than the retention window (rangeStart), unlike the future out-of-scope case above', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'ancient', date: '2026-07-20' });
+    const result = mergePulledGoogleEvents([local], [], rangeStart, rangeEnd);
+    expect(result).toEqual([]);
+  });
+
+  it('does NOT purge a recurring master whose DTSTART predates the retention window — it stays in scope as long as Google keeps returning it', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', date: '2026-01-01', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO' });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-01-01', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', title: 'Updated' });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
   });
 
   it('adds a brand-new pulled event with no local match', () => {

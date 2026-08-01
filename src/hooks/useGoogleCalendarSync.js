@@ -30,6 +30,16 @@ import {
 import { mergePulledGoogleEvents, hardResetEventsFromGoogle, RECENTLY_DELETED_TTL_MS } from '../services/eventSyncService';
 
 const EVENTS_HORIZON_DAYS = 28;
+// How far back every fetch reaches — a rolling trailing window, not
+// unbounded history. mergePulledGoogleEvents actively purges any local
+// Google-sourced non-recurring event older than this on every sync (see its
+// own doc comment) — the retention window is enforced going forward as today
+// advances, not just a one-time cutoff. A year is well within what a single
+// browser's localStorage quota can hold for one personal calendar's worth of
+// events (Google Calendar itself has no retention limit — this constant only
+// governs how much of that history Taskflow keeps a local, forward-syncing
+// mirror of).
+const PAST_HORIZON_DAYS = 365;
 
 /**
  * @param {Object} deps
@@ -195,7 +205,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
           if (googleFetchInFlightRef.current) return;
           googleFetchInFlightRef.current = true;
           try {
-            const rangeStartIso = toISODate(new Date());
+            const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
             const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
             const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
             if (!cancelled) {
@@ -239,7 +249,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       googleFetchInFlightRef.current = true;
       lastGooglePollAtRef.current = Date.now();
       try {
-        const rangeStartIso = toISODate(new Date());
+        const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
         const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
         const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
         const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
@@ -330,7 +340,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       }
       googleFetchInFlightRef.current = true;
       try {
-        const rangeStartIso = toISODate(new Date());
+        const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
         const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
         const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
         const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
@@ -367,7 +377,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
     try {
-      const rangeStartIso = toISODate(new Date());
+      const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
       const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
@@ -410,7 +420,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
     try {
-      const rangeStartIso = toISODate(new Date());
+      const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
       setEvents((prev) =>

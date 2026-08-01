@@ -1662,6 +1662,15 @@ input[type='checkbox']:hover {
   border-color: var(--color-accent-border);
 }
 
+input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+input[type='checkbox']:disabled:hover {
+  border-color: var(--color-border-interactive);
+}
+
 input[type='checkbox']:checked {
   background: var(--color-accent-solid-bg);
   border-color: var(--color-accent-solid-bg);
