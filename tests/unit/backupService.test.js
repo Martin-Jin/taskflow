@@ -26,7 +26,6 @@ function makeSampleState() {
     labels: [{ id: 'l1', name: 'urgent' }],
     routines: [{ id: 'r1', name: 'Morning routine' }],
     rules: { bufferDays: 1, workDayStart: '07:00', workDayEnd: '23:00' },
-    events: [{ id: 'e1', source: 'manual', title: 'Meeting' }],
     soundEnabled: true,
     soundVolume: 0.5,
     animationsEnabled: false,
@@ -50,6 +49,12 @@ describe('BACKUP_FIELDS / buildBackupPayload integrity', () => {
     for (const field of BACKUP_FIELDS) {
       expect(FIELD_TYPES).toHaveProperty(field);
     }
+  });
+
+  it('excludes events even when the source state has one (Google Calendar is authoritative, not backups/Firestore)', () => {
+    const payload = buildBackupPayload({ ...makeSampleState(), events: [{ id: 'e1' }] });
+    expect(payload).not.toHaveProperty('events');
+    expect(BACKUP_FIELDS).not.toContain('events');
   });
 
   it('tags the payload with an exportedAt ISO timestamp', () => {

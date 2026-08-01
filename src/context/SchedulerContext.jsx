@@ -677,6 +677,9 @@ export function SchedulerProvider({ children }) {
   // cloud backups) cover — everything BACKUP_FIELDS lists except `theme`,
   // which the hook takes as a separate param (see its own JSDoc), since live
   // sync deliberately leaves `theme` to ThemeContext's own independent sync.
+  // `events` is deliberately NOT included — see backupService.js's
+  // BACKUP_FIELDS doc comment for why CalendarEvents are device-local
+  // (Google Calendar-sourced) rather than round-tripped through Firestore.
   const cloudSyncState = useMemo(
     () => ({
       tasks,
@@ -686,7 +689,6 @@ export function SchedulerProvider({ children }) {
       labels,
       routines,
       rules,
-      events,
       soundEnabled,
       soundVolume,
       animationsEnabled,
@@ -694,7 +696,7 @@ export function SchedulerProvider({ children }) {
       notes,
       shortcutBindings,
     }),
-    [tasks, blocks, sections, projects, labels, routines, rules, events, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]
+    [tasks, blocks, sections, projects, labels, routines, rules, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]
   );
   const cloudStateRef = useRef(cloudSyncState);
   useEffect(() => {
@@ -722,7 +724,6 @@ export function SchedulerProvider({ children }) {
     setLabels,
     setRoutines,
     setRules,
-    setEvents,
     setSoundEnabled,
     setSoundVolume,
     setAnimationsEnabled,

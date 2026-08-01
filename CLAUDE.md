@@ -153,20 +153,34 @@ do this before considering the change done, not as an afterthought.**
 Backups (local file export/import, and cloud snapshots in Firestore at
 `users/{uid}/backups/{backupId}`) cover a fixed set of state fields, listed in
 `src/services/backupService.js`'s `BACKUP_FIELDS` — treat that array as the source
-of truth rather than duplicating its contents here, since it drifts. When adding a
-new piece of persisted state to `SchedulerContext` (a new field on Task/
-ScheduledBlock, a whole new top-level collection, or a setting a user would be sad
-to lose on a device switch), add it to `BACKUP_FIELDS` and to `restoreFromBackup` in
-`SchedulerContext.jsx` too — otherwise it silently won't survive a restore, and the
-existing "restore all your data" button quietly stops being true. Not every piece of
-persisted state belongs here, though — some are genuinely device-local preferences
-(theme's live sync is the one exception living outside SchedulerContext, in
-ThemeContext; dashboard widget visibility and view/filter selections are deliberately
-local-only, per their own doc comments) — check whether a new field is "data the user
-would want to keep" before reflexively adding it. Completed one-off tasks (and their
-blocks) are deliberately excluded from every backup payload — recurring tasks are
-never marked completed on finishing an occurrence (see `types/index.js`'s
-`Task.isRecurring`), so they're unaffected by this filter.
+of truth rather than duplicating its contents here, since it drifts. `BACKUP_FIELDS`
+is also what the live cross-device Firestore sync pushes/pulls (see
+`useCloudSync.js`'s `computeFingerprint`/`planRemoteDataMerge`), not just point-in-time
+backups — the two share one field list. When adding a new piece of persisted state to
+`SchedulerContext` (a new field on Task/ScheduledBlock, a whole new top-level
+collection, or a setting a user would be sad to lose on a device switch), add it to
+`BACKUP_FIELDS` and to `applyBackupPayload`/`applyRemoteData`/`computeFingerprint` in
+`useCloudSync.js` too — otherwise it silently won't survive a restore or cross-device
+sync, and the existing "restore all your data" button quietly stops being true. Not
+every piece of persisted state belongs here, though — some are genuinely device-local
+(theme's live sync is one exception living outside SchedulerContext, in ThemeContext;
+dashboard widget visibility and view/filter selections are deliberately local-only,
+per their own doc comments) — check whether a new field is "data the user would want
+to keep" before reflexively adding it. Completed one-off tasks (and their blocks) are
+deliberately excluded from every backup payload — recurring tasks are never marked
+completed on finishing an occurrence (see `types/index.js`'s `Task.isRecurring`), so
+they're unaffected by this filter.
+
+**`events` (CalendarEvents) is deliberately excluded from `BACKUP_FIELDS`**, even
+though it's SchedulerContext state — Google Calendar is the authoritative store for
+it (see `useGoogleCalendarSync.js`), and round-tripping the same data through
+Firestore/backups too caused real bugs: a stale cross-device Firestore snapshot or an
+old backup restore could silently resurrect an event a user had already deleted
+(in TaskFlow or directly in Google Calendar), on top of whatever the Google Calendar
+sync's own merge policy (`eventSyncService.js`) was already doing. `events` is
+device-local now — seeded from `localStorage` on load, kept current purely by
+polling/pulling Google Calendar. Do not add it back to `BACKUP_FIELDS` without a
+strong reason and updating this note plus the README's own Backups section.
 
 ## Testing
 

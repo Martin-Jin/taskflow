@@ -98,7 +98,6 @@ describe('isValidBackupPayload', () => {
     labels: [],
     routines: [],
     rules: {},
-    events: [],
     soundEnabled: true,
     soundVolume: 0.5,
     animationsEnabled: true,
@@ -158,7 +157,6 @@ describe('computeFingerprint', () => {
     labels: [],
     routines: [],
     rules: {},
-    events: [],
     soundEnabled: true,
     soundVolume: 0.5,
     animationsEnabled: true,
@@ -166,6 +164,11 @@ describe('computeFingerprint', () => {
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
   };
+
+  it('ignores an events field entirely (Google Calendar is authoritative for events, not Firestore)', () => {
+    const withEvents = { ...baseState, events: [{ id: 'e1' }] };
+    expect(computeFingerprint(baseState)).toBe(computeFingerprint(withEvents));
+  });
 
   it('produces the same fingerprint for the same data (so a pushed echo is recognized)', () => {
     const copy = JSON.parse(JSON.stringify(baseState));
@@ -217,7 +220,6 @@ describe('planRemoteDataMerge', () => {
     labels: ['local-label'],
     routines: ['local-routine'],
     rules: { id: 'local-rule' },
-    events: [{ id: 'e1', occurrenceId: 'e1-occ' }],
     soundEnabled: false,
     soundVolume: 0.2,
     animationsEnabled: false,
@@ -234,6 +236,10 @@ describe('planRemoteDataMerge', () => {
     labels: ['remote-label'],
     routines: ['remote-routine'],
     rules: { id: 'remote-rule' },
+    // Deliberately included in remoteData/localState fixtures (as a stray
+    // extra field, same as an old Firestore doc from before events were
+    // excluded from sync would still carry) to prove planRemoteDataMerge
+    // ignores it — see the dedicated test below.
     events: [{ id: 'e2', occurrenceId: 'e2-occ' }],
     soundEnabled: true,
     soundVolume: 0.9,
@@ -251,7 +257,6 @@ describe('planRemoteDataMerge', () => {
     expect(plan.labels).toBe(remoteData.labels);
     expect(plan.routines).toBe(remoteData.routines);
     expect(plan.rules).toBe(remoteData.rules);
-    expect(plan.events).toEqual(remoteData.events);
     expect(plan.soundEnabled).toBe(true);
     expect(plan.soundVolume).toBe(0.9);
     expect(plan.animationsEnabled).toBe(true);
@@ -281,13 +286,21 @@ describe('planRemoteDataMerge', () => {
     expect(plan.labels).toBe(remoteData.labels);
     expect(plan.routines).toBe(remoteData.routines);
     expect(plan.rules).toBe(remoteData.rules);
-    expect(plan.events).toEqual(remoteData.events);
     expect(plan.soundEnabled).toBe(true);
     expect(plan.notes).toBe(remoteData.notes);
     expect(plan.shortcutBindings).toBe(remoteData.shortcutBindings);
     // Deliberately left unstamped so the next schedulePush still pushes the
     // newer local edit instead of assuming this state is already synced.
     expect(plan.stampFingerprint).toBe(false);
+  });
+
+  it('never applies events, even when remoteData carries a stray/legacy events field', () => {
+    // Google Calendar is the authoritative source for events now — Firestore
+    // sync/backups deliberately exclude it (see backupService.js's
+    // BACKUP_FIELDS doc comment), so a remote doc that still has one (e.g.
+    // from before this exclusion shipped) must never be applied.
+    const plan = planRemoteDataMerge(remoteData, localState, { skipTasksBlocks: false });
+    expect('events' in plan).toBe(false);
   });
 
   it('a malformed remote field falls back to the local value instead of being applied as-is', () => {
@@ -323,7 +336,6 @@ describe('computePushStampPlan', () => {
     labels: [],
     routines: [],
     rules: {},
-    events: [],
     soundEnabled: true,
     soundVolume: 0.5,
     animationsEnabled: true,
