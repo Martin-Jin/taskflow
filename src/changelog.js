@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.36',
+    date: '2026-08-01',
+    title: 'Fixed phantom recurring-event occurrences not on Google Calendar',
+    changes: [
+      'Fixed the real underlying cause of some Google Calendar recurring events showing occurrences in Taskflow that don\'t actually exist on Google — a cancelled or individually-moved occurrence of a recurring series (its "EXDATE") was being ignored, so Taskflow kept regenerating that date from the plain repeat rule as if nothing had changed.',
+    ],
+  },
+  {
     version: '1.33.35',
     date: '2026-08-01',
     title: 'Calendar events no longer round-trip through backups/cloud sync',

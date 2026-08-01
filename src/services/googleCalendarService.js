@@ -354,6 +354,40 @@ async function listSubscribedCalendars() {
 }
 
 /**
+ * Parse one EXDATE value (a single comma-separated entry from an `EXDATE`
+ * line in `event.recurrence`) into the LOCAL calendar-date ISO string
+ * ("YYYY-MM-DD") that `expandRecurringEvent` keys its `overrides` map by —
+ * i.e. the same convention `fetchEvents` below uses for every other date it
+ * computes (`toISODate` off a real Date object, never string-slicing).
+ *
+ * Accepts both forms Google emits: `YYYYMMDDTHHMMSSZ` (absolute UTC instant)
+ * and `YYYYMMDDTHHMMSS` (floating/local time, paired with a `TZID=` param on
+ * the line — not read here since resolving an arbitrary IANA zone name
+ * client-side isn't worth it for a value that already reflects wall-clock
+ * time almost identically to `buildInstanceEventId`'s own "no trailing
+ * Z/offset -> local wall-clock" convention elsewhere in this file).
+ * Returns null for anything that doesn't parse (e.g. an all-day `YYYYMMDD`
+ * value — never expected here since this app only ever handles timed
+ * events, see buildInstanceEventId's own doc comment, but a defensive null
+ * is safer than silently excluding the wrong date).
+ * @param {string} dtRaw
+ * @returns {string|null}
+ */
+export function parseExdateToLocalIsoDate(dtRaw) {
+  const isUtc = dtRaw.endsWith('Z');
+  const digits = dtRaw.replace(/[^0-9]/g, '');
+  if (digits.length < 8) return null;
+  const y = digits.slice(0, 4);
+  const mo = digits.slice(4, 6);
+  const d = digits.slice(6, 8);
+  const h = digits.slice(8, 10) || '00';
+  const mi = digits.slice(10, 12) || '00';
+  const s = digits.slice(12, 14) || '00';
+  const date = isUtc ? new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +s)) : new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`);
+  return Number.isNaN(date.getTime()) ? null : toISODate(date);
+}
+
+/**
  * Fetch events in a date range, across the user's PRIMARY calendar and
  * every other calendar they subscribe to (e.g. a lecture timetable shared
  * with them). Falls back to mock events if Calendar API isn't
@@ -497,13 +531,37 @@ export async function fetchEvents(startIso, endIso) {
       // recurring events (see recurrenceExpansion.js / SchedulerContext).
       const seriesId = e.recurrence ? id : null;
 
-      // e.recurrence is an array of RRULE/EXDATE/RDATE/EXRULE lines. Only
-      // the RRULE line is used — EXDATE/RDATE/EXRULE are an out-of-scope
-      // subset, same limitation documented in recurrenceExpansion.js.
+      // e.recurrence is an array of RRULE/EXDATE/RDATE/EXRULE lines. RDATE/
+      // EXRULE are an out-of-scope subset, same limitation documented in
+      // recurrenceExpansion.js — but EXDATE (marking a specific occurrence
+      // as cancelled/individually modified, e.g. after a drag-to-reschedule
+      // or a single-occurrence delete, done either in TaskFlow or directly
+      // in Google Calendar) IS translated into this master's own
+      // `overrides` map below, the same shape a local 'this'-scope delete
+      // already produces (see SchedulerContext.deleteEvent). Without this,
+      // expandRecurringEvent has no way to know that date is excluded and
+      // regenerates it from the RRULE alone — a "phantom" occurrence that
+      // looks live in TaskFlow but doesn't actually exist on Google's
+      // calendar (its real replacement, if the occurrence was moved rather
+      // than deleted, shows up separately as its own one-off event with a
+      // Google-minted `{seriesId}_{originalStartTimeUTC}`-shaped id).
       let recurrenceRule = null;
+      let overrides = null;
       if (e.recurrence) {
         const rruleLine = e.recurrence.find((line) => line.startsWith('RRULE:'));
         if (rruleLine) recurrenceRule = rruleLine.slice('RRULE:'.length);
+
+        const exdateLines = e.recurrence.filter((line) => line.startsWith('EXDATE'));
+        for (const line of exdateLines) {
+          const valuePart = line.slice(line.indexOf(':') + 1);
+          for (const dtRaw of valuePart.split(',')) {
+            const excludedIso = parseExdateToLocalIsoDate(dtRaw.trim());
+            if (excludedIso) {
+              overrides = overrides || {};
+              overrides[excludedIso] = { deleted: true };
+            }
+          }
+        }
       }
 
       return {
@@ -534,6 +592,10 @@ export async function fetchEvents(startIso, endIso) {
         // instance, this-and-following, or the whole series. See
         // SchedulerContext.setEventIgnored.
         seriesId,
+        // EXDATE-derived exclusions (see above) — omitted entirely rather
+        // than `{}` when there are none, matching expandRecurringEvent's own
+        // `masterEvent.overrides || {}` fallback.
+        ...(overrides ? { overrides } : {}),
       };
     })
     // Google only allows orderBy:'startTime' when singleEvents:true (see
