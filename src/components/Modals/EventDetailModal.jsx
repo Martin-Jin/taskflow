@@ -467,7 +467,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
               )}
               {!repeatControlsApply && (
                 <p className="form-hint">
-                  Editing the repeat pattern only applies when the scope below is set to "All events in the series".
+                  Set "Apply to" above to "All events in the series" to edit the repeat pattern.
                 </p>
               )}
             </DetailField>

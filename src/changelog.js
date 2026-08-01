@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.47',
+    date: '2026-08-01',
+    title: 'Fixed misleading hint text for editing a recurring event\'s repeat pattern',
+    changes: [
+      'The event edit screen\'s Repeat field pointed to "the scope below" for enabling repeat-pattern edits on an existing series, but "Apply to" had already been moved above it in the previous update — the hint now correctly says "above".',
+    ],
+  },
+  {
     version: '1.33.46',
     date: '2026-08-01',
     title: 'Fixed an enforce-due-date task getting permanently stuck on a stale past time slot',
