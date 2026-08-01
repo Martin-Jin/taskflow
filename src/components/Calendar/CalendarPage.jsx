@@ -69,7 +69,18 @@ export default function CalendarPage() {
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
-  const { blocks, events, tasks, runRebalance, runPlanToday, isLoading, googleConnected, syncNow, isSyncing } = useScheduler();
+  const {
+    blocks,
+    events,
+    tasks,
+    runRebalance,
+    runPlanToday,
+    isLoading,
+    googleConnected,
+    syncNow,
+    isSyncing,
+    ensureGoogleRangeSynced,
+  } = useScheduler();
   // ---- Mobile swipe-to-page carousel --------------------------------------
   // A live-tracking 3-page carousel (prev/current/next, see the render below)
   // instead of the old "detect a swipe past a threshold, then jump" — the
@@ -170,6 +181,24 @@ export default function CalendarPage() {
   // current day/week/month.
   const isViewingToday =
     view === 'month' ? monthStart.slice(0, 7) === todayISO.slice(0, 7) : rangeStart <= todayISO && todayISO <= rangeEnd;
+
+  // ---- On-demand Google Calendar sync for the visible range -----------------
+  // The background sync (useGoogleCalendarSync) only routinely keeps a small
+  // rolling window around today fresh — scrolling the calendar to a date
+  // outside that window needs its own fetch. Debounced so rapid prev/next
+  // clicks or a fast swipe through several pages settle on one fetch for
+  // wherever navigation actually stops, rather than firing one per page;
+  // ensureGoogleRangeSynced itself also no-ops instantly if the range is
+  // already covered, so this is cheap even for in-window navigation.
+  const viewedRangeEnd = view === 'month' ? addDays(addMonths(monthStart, 1), -1) : rangeEnd;
+  const viewedRangeStart = view === 'month' ? monthStart : rangeStart;
+  useEffect(() => {
+    if (!googleConnected) return undefined;
+    const handle = setTimeout(() => {
+      ensureGoogleRangeSynced(viewedRangeStart, viewedRangeEnd);
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [googleConnected, viewedRangeStart, viewedRangeEnd, ensureGoogleRangeSynced]);
 
   function goPrev() {
     setAnchorDate(view === 'month' ? addMonths(anchorDate, -1) : addDays(anchorDate, -step));

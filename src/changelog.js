@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.53',
+    date: '2026-08-01',
+    title: 'Google Calendar sync now stays lightweight, and widens itself as you browse',
+    changes: [
+      'Background Google Calendar sync now keeps a modest rolling window (30 days back, 30 days forward) fresh automatically, instead of pulling a full year of history on every ~1-minute refresh — a big improvement in how much needs fetching for a range most sessions never even look at.',
+      "Scrolling the calendar view to a date outside that window now fetches the events for that range on demand — no need to disconnect/reconnect or wait for a routine sync. Once fetched, it stays synced for the rest of the session, including if you navigate back to today afterward.",
+    ],
+  },
+  {
     version: '1.33.52',
     date: '2026-08-01',
     title: "Fixed a calendar that could go completely missing from sync once a year of history was included",

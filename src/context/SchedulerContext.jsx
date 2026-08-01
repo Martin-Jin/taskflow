@@ -517,6 +517,14 @@ export function SchedulerProvider({ children }) {
   // with rebalance's "at risk of missing its deadline" overflow.
   const [lastUnfitToday, setLastUnfitToday] = useState([]);
   const [notification, setNotification] = useState(null);
+  // Ephemeral, transient UI state for the "View details" flow off a
+  // rebalance/planToday toast (see runRebalance/runPlanToday below) — not
+  // persisted/backed up, just the enriched overflow/unfitToday list (each
+  // entry's `reason` describes WHY that task couldn't be scheduled) for
+  // SchedulingConflictsModal to render. Reused by both actions since only
+  // one can be relevant to look at at a time.
+  const [schedulingConflicts, setSchedulingConflicts] = useState([]);
+  const [schedulingConflictsModalOpen, setSchedulingConflictsModalOpen] = useState(false);
   // Ephemeral cross-component "jump to a Settings section" signal — not
   // persisted/synced/backed-up, just a bumped-counter request (mirrors the
   // addTaskSignal pattern in App.jsx) so components outside SettingsPanel can
@@ -667,6 +675,7 @@ export function SchedulerProvider({ children }) {
     pushToGoogleCalendar,
     rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
+    ensureGoogleRangeSynced,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
     markGoogleEventInstanceDeleted,
@@ -806,6 +815,11 @@ export function SchedulerProvider({ children }) {
       setNotification({
         type: 'warning',
         message: `${result.overflow.length} task(s) couldn't be fully scheduled within their deadline window — consider extending due dates or freeing up capacity.${blockedNote}`,
+        actionLabel: 'View details',
+        onAction: () => {
+          setSchedulingConflicts(result.overflow);
+          setSchedulingConflictsModalOpen(true);
+        },
       });
     } else {
       setNotification({ type: 'success', message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
@@ -832,6 +846,11 @@ export function SchedulerProvider({ children }) {
       setNotification({
         type: 'warning',
         message: `${result.unfitToday.length} task(s) didn't fully fit in today's remaining capacity — they'll get picked up on a later plan/re-balance.${blockedNote}`,
+        actionLabel: 'View details',
+        onAction: () => {
+          setSchedulingConflicts(result.unfitToday);
+          setSchedulingConflictsModalOpen(true);
+        },
       });
     } else {
       setNotification({ type: 'success', message: `Today planned: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
@@ -2168,6 +2187,9 @@ export function SchedulerProvider({ children }) {
       lastTodoistImport,
       lastOverflow,
       lastUnfitToday,
+      schedulingConflicts,
+      schedulingConflictsModalOpen,
+      setSchedulingConflictsModalOpen,
       notification,
       setNotification,
       settingsSectionRequest,
@@ -2230,6 +2252,7 @@ export function SchedulerProvider({ children }) {
       pushToGoogleCalendar,
       rebuildEventsFromGoogle,
       disconnectGoogleCalendar,
+      ensureGoogleRangeSynced,
       syncNow,
       exportBackup,
       importBackupFromFile,
@@ -2265,6 +2288,8 @@ export function SchedulerProvider({ children }) {
       lastTodoistImport,
       lastOverflow,
       lastUnfitToday,
+      schedulingConflicts,
+      schedulingConflictsModalOpen,
       notification,
       setNotification,
       settingsSectionRequest,
@@ -2317,6 +2342,7 @@ export function SchedulerProvider({ children }) {
       pushToGoogleCalendar,
       rebuildEventsFromGoogle,
       disconnectGoogleCalendar,
+      ensureGoogleRangeSynced,
       syncNow,
       exportBackup,
       importBackupFromFile,
