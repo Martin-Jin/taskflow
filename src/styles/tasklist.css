@@ -59,10 +59,7 @@
   right: -20px;
   bottom: -10px;
   z-index: -1;
-  background: color-mix(in srgb, var(--color-bg-page) 94%, transparent);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  opacity: var(--header-blur-opacity, 0);
+  backdrop-filter: blur(1px);
   pointer-events: none;
 }
 
@@ -256,6 +253,7 @@
 }
 
 .tasklist-section {
+  padding-top: 50px;
   display: flex;
   flex-direction: column;
   gap: 8px;
