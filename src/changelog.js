@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.58.0',
+    date: '2026-08-02',
+    title: 'Google sign-in fixed for real this time, using Google\'s own button',
+    changes: [
+      "Google sign-in still failed on some mobile browsers (blank accounts.google.com page, no error) even after switching to Google's own sign-in library, because that fix still relied on a browser popup window — and on browsers where a \"popup\" is really just the current tab navigating away, there's no window left to report a result back to. Sign-in now uses Google's own rendered \"Sign in with Google\" button, which resolves in place instead of needing a popup window at all.",
+    ],
+  },
+  {
     version: '1.57.0',
     date: '2026-08-02',
     title: 'Polished the floating/blurred header on the Tasks list and Settings search',

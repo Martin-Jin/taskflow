@@ -11,14 +11,15 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { LogIn, LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import GoogleSignInButton from '../Common/GoogleSignInButton';
 
 /**
  * @param {{ compact?: boolean, menuAlign?: 'up'|'down', onOpenAccountSettings?: () => void }} props
  */
 export default function AccountButton({ compact = false, menuAlign = 'down', onOpenAccountSettings }) {
-  const { user, authLoading, login, logout } = useAuth();
+  const { user, authLoading, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapperRef = useRef(null);
 
@@ -34,17 +35,7 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
   if (authLoading) return null;
 
   if (!user) {
-    return (
-      <button
-        className={`btn ${compact ? 'btn-icon' : ''}`}
-        style={compact ? undefined : { width: '100%', justifyContent: 'center' }}
-        onClick={login}
-        title="Sign in with Google to sync across devices"
-      >
-        <LogIn size={15} />
-        {!compact && 'Sign in with Google'}
-      </button>
-    );
+    return <GoogleSignInButton compact={compact} />;
   }
 
   const label = user.displayName || user.email || 'Account';
