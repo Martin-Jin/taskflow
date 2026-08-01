@@ -17,7 +17,6 @@ import {
   Trash2,
   Sun,
   Moon,
-  LogIn,
   LogOut,
   CloudCog,
   Tag,
@@ -42,6 +41,7 @@ import {
   IS_IOS,
   isRunningStandalone,
 } from '../utils/installPrompt';
+import GoogleSignInButton from './Common/GoogleSignInButton';
 import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
 import LabelsModal from './Modals/LabelsModal';
@@ -105,7 +105,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   }
   const { theme, setTheme } = useTheme();
   const { soundEnabled, setSoundEnabled, soundVolume, setSoundVolume, playComplete } = useSound();
-  const { user, authLoading, login, logout } = useAuth();
+  const { user, authLoading, logout } = useAuth();
   const {
     routines,
     setRoutines,
@@ -345,15 +345,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             </p>
           </>
         ) : (
-          <button
-            className="btn btn-primary"
-            onClick={login}
-            disabled={authLoading}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <LogIn size={14} />
-            Sign in with Google
-          </button>
+          !authLoading && <GoogleSignInButton />
         )}
       </div>
 

@@ -7,28 +7,31 @@
  * cloud-sync effects in SchedulerContext/ThemeContext for the actual sync.
  * This context only owns "who is signed in", not the app data itself.
  *
- * SIGN-IN FLOW: uses Google Identity Services' (GIS) OAuth token popup —
- * the same mechanism googleCalendarService.js already uses for Calendar
- * access (same VITE_GOOGLE_CLIENT_ID, no extra setup needed) — rather than
- * Firebase's own signInWithPopup/signInWithRedirect. Both of Firebase's own
- * methods route through its intermediate OAuth handler page
- * (`<project>.firebaseapp.com/__/auth/handler`), which depends on a
- * sessionStorage marker surviving the whole round-trip; on some mobile
- * browsers (confirmed on Firefox for Android — window.open() there just
- * navigates the current tab instead of opening a real popup, so
- * signInWithPopup degrades to the same failure mode as signInWithRedirect)
- * that marker gets lost, stranding the user on Firebase's own raw error page
- * ("missing initial state") *outside* our app, which we have no code running
- * on and can't recover from. GIS's popup is Google's own accounts.google.com
- * page, with no Firebase-hosted intermediate step — it resolves with an
- * access token, which is exchanged for a Firebase credential via
- * signInWithCredential() instead.
+ * SIGN-IN FLOW: renders Google's own "Sign in with Google" button via
+ * Identity Services' (GIS) *identity* API (`google.accounts.id`), not its
+ * OAuth *authorization* API (`google.accounts.oauth2`, still used as-is by
+ * googleCalendarService.js for actual Calendar API access — different
+ * problem, different tool). That distinction matters here: both Firebase's
+ * signInWithPopup/signInWithRedirect AND google.accounts.oauth2's token popup
+ * rely on window.open() producing a genuine second browsing context. On some
+ * mobile browsers (confirmed on Firefox for Android) window.open() instead
+ * just navigates the *current* tab to the target URL — so every popup-based
+ * attempt degraded into the same failure: the user's only tab gets yanked to
+ * an external page with no way back, whether that page was Firebase's own
+ * intermediate OAuth handler (missing-initial-state error) or Google's own
+ * accounts.google.com (blank page, no popup to report a result back to).
  *
- * GIS's popup also doesn't work when TaskFlow is launched from an iOS/
- * Android home-screen icon (standalone display mode) — window.open there
- * typically just kicks the user out to the regular browser mid-flow. login()
- * detects standalone mode up front and skips straight to prompting the user
- * to continue in their regular browser instead of attempting it there.
+ * google.accounts.id sidesteps window.open() entirely for the base case —
+ * it resolves via an iframe/overlay in the same page, delivering a Google ID
+ * token to a JS callback, which is exchanged for a Firebase credential via
+ * signInWithCredential(). Same VITE_GOOGLE_CLIENT_ID, no extra setup.
+ *
+ * This still doesn't work when TaskFlow is launched from an iOS/Android
+ * home-screen icon (standalone display mode) — that isolated context breaks
+ * it the same way it breaks everything else OAuth-related. GoogleSignInButton
+ * checks standalone mode (utils/installPrompt.js's isRunningStandalone) and
+ * renders a plain button calling login() instead of Google's widget there,
+ * prompting the user to continue in their regular browser.
  * ============================================================================
  */
 
@@ -37,49 +40,55 @@ import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut, o
 import { auth } from '../firebase';
 import { clearAllPersisted } from '../utils/persistence';
 import { loadScript } from '../utils/loadScript';
+import { isRunningStandalone } from '../utils/installPrompt';
 
 const AuthContext = createContext(null);
 
-// Just enough to identify the user — no Calendar/offline scopes needed here
-// (see googleCalendarService.js for that separate, heavier flow).
-const IDENTITY_SCOPES = 'openid email profile';
+let identityInited = false;
+let identityInitPromise = null;
 
-let tokenClient = null;
-let gisInited = false;
-
-async function ensureGisClient() {
-  if (gisInited) return;
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-  if (!clientId) throw new Error('Google sign-in requires VITE_GOOGLE_CLIENT_ID to be configured — see README.md.');
-
-  await loadScript('https://accounts.google.com/gsi/client');
-  tokenClient = window.google.accounts.oauth2.initTokenClient({
-    client_id: clientId,
-    scope: IDENTITY_SCOPES,
-    // Always show the account chooser rather than silently reusing whichever
-    // Google account last signed into any app on this device (matches the
-    // previous Firebase-popup flow's setCustomParameters({ prompt: ... })).
-    prompt: 'select_account',
-    callback: '', // set dynamically per-request in requestGoogleAccessToken()
-  });
-  gisInited = true;
+/**
+ * Loads GIS and calls google.accounts.id.initialize() exactly once — safe to
+ * call from multiple mounted buttons (AccountButton + SettingsPanel both
+ * render one). `onCredential` is re-pointed to the latest caller on every
+ * call so whichever AuthProvider instance is current handles the result
+ * (there's only ever one in practice, but this avoids a stale-closure trap).
+ */
+let latestOnCredential = null;
+async function ensureGisIdentity(onCredential) {
+  latestOnCredential = onCredential;
+  if (identityInited) return;
+  if (!identityInitPromise) {
+    identityInitPromise = (async () => {
+      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+      if (!clientId) throw new Error('Google sign-in requires VITE_GOOGLE_CLIENT_ID to be configured — see README.md.');
+      await loadScript('https://accounts.google.com/gsi/client');
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (resp) => latestOnCredential?.(resp),
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      });
+      identityInited = true;
+    })();
+  }
+  await identityInitPromise;
 }
 
-/** Opens the GIS popup and resolves with a Google access token once the user approves. */
-function requestGoogleAccessToken() {
-  return new Promise((resolve, reject) => {
-    tokenClient.callback = (resp) => {
-      if (resp.error) return reject(Object.assign(new Error(resp.error_description || resp.error), { gisCode: resp.error }));
-      resolve(resp.access_token);
-    };
-    tokenClient.error_callback = (err) => reject(Object.assign(new Error(err?.message || 'Google sign-in failed'), { gisCode: err?.type }));
-    tokenClient.requestAccessToken();
+/**
+ * Mounts Google's own rendered "Sign in with Google" button into `container`
+ * — the actual click target; our own UI just provides the container div and
+ * an `onCredential(idToken)` callback for when the user completes sign-in.
+ */
+export async function renderGoogleSignInButton(container, onCredential, options = {}) {
+  await ensureGisIdentity((resp) => onCredential(resp.credential));
+  window.google.accounts.id.renderButton(container, {
+    theme: 'filled_black',
+    size: 'large',
+    shape: 'pill',
+    text: 'signin_with',
+    ...options,
   });
-}
-
-export function isStandaloneDisplayMode() {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true;
 }
 
 export function AuthProvider({ children }) {
@@ -96,26 +105,22 @@ export function AuthProvider({ children }) {
     return unsubscribe;
   }, []);
 
-  async function login() {
+  // Only used by the standalone-mode fallback button (a plain button we
+  // control, not Google's rendered widget — see needsBrowserSignIn/
+  // BrowserSignInPromptModal). The normal sign-in path never calls this;
+  // Google's own button (rendered via renderGoogleSignInButton) handles the
+  // click itself and reports straight to handleGoogleCredential below.
+  function login() {
     setAuthError(null);
-    if (isStandaloneDisplayMode()) {
-      setNeedsBrowserSignIn(true);
-      return;
-    }
+    setNeedsBrowserSignIn(true);
+  }
+
+  async function handleGoogleCredential(idToken) {
+    setAuthError(null);
     try {
-      await ensureGisClient();
-      const accessToken = await requestGoogleAccessToken();
-      const credential = GoogleAuthProvider.credential(null, accessToken);
+      const credential = GoogleAuthProvider.credential(idToken);
       await signInWithCredential(auth, credential);
     } catch (err) {
-      // The user closed the pop-up or declined consent — not an error to surface.
-      if (err?.gisCode === 'popup_closed' || err?.gisCode === 'access_denied') return;
-      if (err?.gisCode === 'popup_failed_to_open') {
-        setAuthError(
-          "Google sign-in couldn't open a pop-up in this browser. Allow pop-ups for this site (check your address bar for a blocked pop-up icon) and try again, or use a different browser."
-        );
-        return;
-      }
       console.error('[AuthContext] Sign-in failed', err);
       setAuthError(err?.message || String(err));
     }
@@ -155,6 +160,7 @@ export function AuthProvider({ children }) {
         needsBrowserSignIn,
         dismissBrowserSignInPrompt,
         clearAuthError,
+        handleGoogleCredential,
       }}
     >
       {children}
