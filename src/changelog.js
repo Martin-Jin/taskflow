@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.35',
+    date: '2026-08-01',
+    title: 'Calendar events no longer round-trip through backups/cloud sync',
+    changes: [
+      "Calendar events (Google-synced and local blocked-time alike) are no longer included in backup files, cloud backups, or cross-device sync — Google Calendar is now the only source of truth for them. This closes a real bug: a stale backup restore or cross-device sync could silently bring back an event you'd already deleted.",
+      'Existing backup files with events in them still restore fine — the events field in them is now just ignored.',
+    ],
+  },
+  {
     version: '1.33.34',
     date: '2026-08-01',
     title: 'More Google Calendar sync cleanup; smart "every ..." detection for new events',

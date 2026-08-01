@@ -142,6 +142,17 @@ aren't included in any backup (there's nothing to restore them to);
 recurring tasks always are, since completing one occurrence doesn't mark
 the task itself as done.
 
+**Calendar events are not included in backups or cross-device cloud sync.**
+Google Calendar is the single source of truth for synced events — TaskFlow
+only ever mirrors whatever Google currently has via polling/pulling (see
+[Google Calendar](#google-calendar) below), and any purely local
+"blocked time" entry (never pushed to Google) is device-local by design.
+Backing these up too would let a stale snapshot silently resurrect an event
+you'd already deleted (in TaskFlow or directly in Google Calendar) on
+restore, or on this device receiving a cross-device sync from another —
+exactly the kind of duplicate/reappearing-event bug this exclusion exists
+to prevent.
+
 ## Connecting real data
 
 TaskFlow is fully usable without either of these — everything below is an

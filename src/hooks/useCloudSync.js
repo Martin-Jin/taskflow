@@ -26,7 +26,6 @@ import {
   deleteBackup,
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
-import { dedupeEventsByOccurrence } from '../utils/eventUtils';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { savePersisted } from '../utils/persistence.js';
 
@@ -50,6 +49,10 @@ function pickValid(field, value, fallback) {
  * this remote update just an echo of what I just pushed" by string equality.
  * Pure and stateless — hoisted out of the hook (it never closed over
  * anything) so it can be exported and unit-tested directly.
+ *
+ * Deliberately excludes `events` — see backupService.js's BACKUP_FIELDS doc
+ * comment for why CalendarEvents are device-local (Google Calendar-sourced)
+ * now rather than round-tripped through Firestore.
  */
 export function computeFingerprint(source) {
   const relevant = {
@@ -60,7 +63,6 @@ export function computeFingerprint(source) {
     labels: source.labels,
     routines: source.routines,
     rules: source.rules,
-    events: source.events,
     soundEnabled: source.soundEnabled,
     soundVolume: source.soundVolume,
     animationsEnabled: source.animationsEnabled,
@@ -129,9 +131,6 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
   if ('labels' in remoteData) plan.labels = pickValid('labels', remoteData.labels, localState.labels);
   if ('routines' in remoteData) plan.routines = pickValid('routines', remoteData.routines, localState.routines);
   if ('rules' in remoteData) plan.rules = pickValid('rules', remoteData.rules, localState.rules);
-  if ('events' in remoteData) {
-    plan.events = dedupeEventsByOccurrence(pickValid('events', remoteData.events, localState.events));
-  }
   if ('soundEnabled' in remoteData) plan.soundEnabled = pickValid('soundEnabled', remoteData.soundEnabled, localState.soundEnabled);
   if ('soundVolume' in remoteData) plan.soundVolume = pickValid('soundVolume', remoteData.soundVolume, localState.soundVolume);
   if ('animationsEnabled' in remoteData) {
@@ -166,10 +165,11 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
 /**
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
- *   sections/projects/labels/routines/rules/events/soundEnabled/soundVolume/
+ *   sections/projects/labels/routines/rules/soundEnabled/soundVolume/
  *   animationsEnabled/notificationSettings/notes/shortcutBindings) — a plain
  *   object recomputed whenever any of those fields changes, purely so the
- *   push-scheduling effect below has something to depend on.
+ *   push-scheduling effect below has something to depend on. Deliberately
+ *   excludes `events` — see backupService.js's BACKUP_FIELDS doc comment.
  * @param {React.MutableRefObject} deps.stateRef - Ref mirroring `state`, read
  *   from async callbacks (the debounced push, backup builders) that need the
  *   LATEST snapshot rather than whatever was closed over when they were created.
@@ -188,7 +188,6 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Function} deps.setLabels - Setter for labels
  * @param {Function} deps.setRoutines - Setter for routines
  * @param {Function} deps.setRules - Setter for rules
- * @param {Function} deps.setEvents - Setter for events
  * @param {Function} deps.setSoundEnabled - Setter for soundEnabled
  * @param {Function} deps.setSoundVolume - Setter for soundVolume
  * @param {Function} deps.setAnimationsEnabled - Setter for animationsEnabled
@@ -212,7 +211,6 @@ export function useCloudSync({
   setLabels,
   setRoutines,
   setRules,
-  setEvents,
   setSoundEnabled,
   setSoundVolume,
   setAnimationsEnabled,
@@ -294,7 +292,6 @@ export function useCloudSync({
     if ('labels' in plan) setLabels(plan.labels);
     if ('routines' in plan) setRoutines(plan.routines);
     if ('rules' in plan) setRules(plan.rules);
-    if ('events' in plan) setEvents(plan.events);
     if ('soundEnabled' in plan) setSoundEnabled(plan.soundEnabled);
     if ('soundVolume' in plan) setSoundVolume(plan.soundVolume);
     if ('animationsEnabled' in plan) setAnimationsEnabled(plan.animationsEnabled);
@@ -322,7 +319,6 @@ export function useCloudSync({
     setLabels,
     setRoutines,
     setRules,
-    setEvents,
     setSoundEnabled,
     setSoundVolume,
     setAnimationsEnabled,
@@ -350,9 +346,10 @@ export function useCloudSync({
     if ('labels' in payload) setLabels(pickValid('labels', payload.labels, stateRef.current.labels));
     if ('routines' in payload) setRoutines(pickValid('routines', payload.routines, stateRef.current.routines));
     if ('rules' in payload) setRules(pickValid('rules', payload.rules, stateRef.current.rules));
-    if ('events' in payload) {
-      setEvents(dedupeEventsByOccurrence(pickValid('events', payload.events, stateRef.current.events)));
-    }
+    // A backup file exported before events were excluded from BACKUP_FIELDS
+    // may still carry an `events` key — deliberately ignored here (not
+    // restored) rather than treated as legacy data to migrate, since
+    // restoring it is exactly the behavior this exclusion was meant to stop.
     if ('soundEnabled' in payload) setSoundEnabled(pickValid('soundEnabled', payload.soundEnabled, stateRef.current.soundEnabled));
     if ('soundVolume' in payload) setSoundVolume(pickValid('soundVolume', payload.soundVolume, stateRef.current.soundVolume));
     if ('animationsEnabled' in payload) {
@@ -382,7 +379,6 @@ export function useCloudSync({
     setLabels,
     setRoutines,
     setRules,
-    setEvents,
     setSoundEnabled,
     setSoundVolume,
     setAnimationsEnabled,

@@ -16,6 +16,17 @@
  * `theme` is an exception — it's synced live by ThemeContext independently
  * (not pushed/pulled here, see SchedulerContext's cloud-sync comments), but
  * is still included here so point-in-time backups/restores capture it too.
+ *
+ * Deliberately EXCLUDES `events` (CalendarEvents — Google Calendar bookings,
+ * plus any manual/blocked-time entries) even though it's a piece of
+ * SchedulerContext state: Google Calendar is the authoritative store for
+ * synced events (see useGoogleCalendarSync.js), and round-tripping the same
+ * data through Firestore/backups too caused real bugs — a stale cross-device
+ * Firestore snapshot or an old backup restore could reintroduce events a
+ * user had already deleted (in TaskFlow or directly in Google Calendar),
+ * independent of and on top of the Google Calendar sync's own merge policy.
+ * `events` is intentionally device-local now: seeded from localStorage on
+ * load and kept current purely by polling/pulling Google Calendar.
  */
 export const BACKUP_FIELDS = [
   'tasks',
@@ -25,7 +36,6 @@ export const BACKUP_FIELDS = [
   'labels',
   'routines',
   'rules',
-  'events',
   'soundEnabled',
   'soundVolume',
   'animationsEnabled',
@@ -53,7 +63,6 @@ export const FIELD_TYPES = {
   labels: 'array',
   routines: 'array',
   rules: 'object',
-  events: 'array',
   soundEnabled: 'boolean',
   soundVolume: 'number',
   animationsEnabled: 'boolean',
