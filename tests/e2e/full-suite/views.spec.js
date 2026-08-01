@@ -357,7 +357,10 @@ test.describe('Calendar', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByPlaceholder('e.g. Team standup').fill('E2E recurring event');
     await dialog.getByRole('checkbox', { name: /repeats/i }).check();
-    await expect(dialog.getByText('Every')).toBeVisible();
+    // The Repeat interval/frequency is a free-text smart-parse box (see
+    // SmartRecurrenceInput), not a number+dropdown pair — defaults to "every
+    // week" until the user types something else.
+    await expect(dialog.locator('input[type="text"]')).toHaveValue('every week');
     await dialog.getByRole('button', { name: /^add event$/i }).click();
     await page.waitForTimeout(400);
 
@@ -374,6 +377,113 @@ test.describe('Calendar', () => {
     await expect(editDialog).toBeVisible();
     await expect(editDialog.getByText(/apply to/i)).toBeVisible();
     await expect(editDialog.getByRole('combobox').filter({ hasText: /this event/i })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+
+    expectNoErrors(errors);
+  });
+
+  test('editing an existing event can turn it into a recurring series, and later edit its cadence', async ({ page }) => {
+    // Regression coverage for EventDetailModal's Repeat field, which used to
+    // be gated entirely behind "isCreate" — editing an already-saved event
+    // had no way to add/change a repeat pattern at all.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Calendar');
+
+    await page.getByRole('button', { name: /change view/i }).click();
+    await page.waitForTimeout(150);
+    await page.getByRole('button', { name: 'Day', exact: true }).click();
+    await page.waitForTimeout(400);
+
+    const dayColumn = page.locator('.day-column').first();
+    await expect(dayColumn).toBeVisible();
+    const box = await dayColumn.boundingBox();
+
+    const dialog = page.getByRole('dialog').filter({ hasText: 'New event' });
+    let created = false;
+    for (const frac of [0.02, 0.1, 0.2, 0.4, 0.6, 0.8]) {
+      const x = box.x + box.width / 2;
+      const yStart = box.y + box.height * frac;
+      await page.mouse.move(x, yStart);
+      await page.mouse.down();
+      await page.mouse.move(x, yStart + 40, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      if (await dialog.isVisible({ timeout: 500 }).catch(() => false)) {
+        created = true;
+        break;
+      }
+    }
+
+    if (!created) {
+      console.log('Could not find an empty slot to drag on (day fully booked) — skipping edit-mode repeat assertion.');
+      expectNoErrors(errors);
+      return;
+    }
+
+    // Create a plain, non-recurring event first.
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder('e.g. Team standup').fill('E2E edit-mode repeat');
+    await expect(dialog.getByRole('checkbox', { name: /repeats/i })).not.toBeChecked();
+    await dialog.getByRole('button', { name: /^add event$/i }).click();
+    await page.waitForTimeout(400);
+
+    const newEvent = page.locator('.cal-event', { hasText: 'E2E edit-mode repeat' }).first();
+    await expect(newEvent).toBeVisible({ timeout: 3000 });
+    await newEvent.click();
+    await page.waitForTimeout(300);
+
+    // Reopened in edit mode: no "Apply to" scope picker yet (not a series),
+    // but the Repeat checkbox is available and unchecked.
+    let editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByText(/apply to/i)).toHaveCount(0);
+    const repeatCheckbox = editDialog.getByRole('checkbox', { name: /repeats/i });
+    await expect(repeatCheckbox).not.toBeChecked();
+
+    // Turn it into a recurring series with a typed smart-parse phrase.
+    await repeatCheckbox.check();
+    const repeatInput = editDialog.locator('input[type="text"]');
+    await expect(repeatInput).toHaveValue('every week');
+    await repeatInput.fill('every 2 weeks');
+    await repeatInput.blur();
+    await expect(repeatInput).toHaveValue('every 2 weeks');
+    await editDialog.getByRole('button', { name: /^save$/i }).click();
+    await page.waitForTimeout(400);
+
+    // Reopening now shows the series scope picker (seriesId was assigned)
+    // and the Repeat box reflects the saved cadence, parsed back off the
+    // stored recurrenceRule.
+    await page.locator('.cal-event', { hasText: 'E2E edit-mode repeat' }).first().click();
+    await page.waitForTimeout(300);
+    editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByText(/apply to/i)).toBeVisible();
+    await expect(editDialog.getByRole('checkbox', { name: /repeats/i })).toBeChecked();
+    await expect(editDialog.locator('input[type="text"]')).toHaveValue('every 2 weeks');
+
+    // At the default 'this event' scope, the cadence controls are disabled —
+    // changing a whole series' repeat pattern only makes sense at 'all' scope.
+    await expect(editDialog.locator('input[type="text"]')).toBeDisabled();
+    await expect(editDialog.getByText(/only applies when the scope/i)).toBeVisible();
+
+    // Switch to 'all' scope and edit the cadence again. The Repeat field's
+    // own "Ends" select is also a combobox here, so target the "Apply to"
+    // one specifically by an option only it has (mirrors the earlier
+    // create-mode recurring test's own disambiguation).
+    await editDialog.getByRole('combobox').filter({ hasText: /this event/i }).selectOption('all');
+    const seriesRepeatInput = editDialog.locator('input[type="text"]');
+    await expect(seriesRepeatInput).toBeEnabled();
+    await seriesRepeatInput.fill('every 3 weeks');
+    await seriesRepeatInput.blur();
+    await editDialog.getByRole('button', { name: /^save$/i }).click();
+    await page.waitForTimeout(400);
+
+    await page.locator('.cal-event', { hasText: 'E2E edit-mode repeat' }).first().click();
+    await page.waitForTimeout(300);
+    editDialog = page.getByRole('dialog');
+    await expect(editDialog.locator('input[type="text"]')).toHaveValue('every 3 weeks');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
 
@@ -436,7 +546,10 @@ test.describe('Calendar', () => {
 
     const editDialog = page.getByRole('dialog');
     await expect(editDialog).toBeVisible();
-    await editDialog.getByRole('combobox').selectOption('all');
+    // The Repeat field's own "Ends" select is also a combobox now that
+    // edit-mode exposes Repeat too — disambiguate by an option only the
+    // "Apply to" scope select has.
+    await editDialog.getByRole('combobox').filter({ hasText: /this event/i }).selectOption('all');
     await editDialog.getByRole('button', { name: /^delete$/i }).click();
     await page.waitForTimeout(400);
 
