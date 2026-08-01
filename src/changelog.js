@@ -17,354 +17,107 @@
 
 export const CHANGELOG = [
   {
-    version: '1.33.57',
+    version: '1.51.0',
     date: '2026-08-02',
-    title: 'Clearer Google sign-in on installed home-screen apps',
+    title: 'Scheduling-conflict details, capped calendar history, and a clearer mobile sign-in prompt',
     changes: [
+      "Capped how far back on-demand calendar browsing keeps history: scrolling far enough back in the calendar view could keep that history synced indefinitely — retention is now capped at a rolling 1 year, same as anything never explicitly viewed.",
+      "When Re-balance or Plan today can't fit every task, the notification now has a \"View details\" button showing exactly why each one didn't make it in — a specific conflicting calendar event/routine/task at its fixed time, an incomplete dependency it's still waiting on, or simply no free time left in its window.",
+      "The scheduling conflicts details view now groups tasks into sections by the day they couldn't be scheduled for (Today, Tomorrow, or the date), and clicking a task jumps straight to that day on the Calendar instead of opening its edit view.",
+      'Search bars that float over the page as you scroll (Tasks and Settings) now blur the content behind them instead of blending into it.',
       "Signing in from TaskFlow's installed home-screen icon on mobile could fail with a confusing browser error, since that context can't complete Google's sign-in redirect. Attempting to sign in there now shows a clear prompt to open TaskFlow in your regular browser instead, where sign-in works normally.",
     ],
   },
   {
-    version: '1.33.56',
-    date: '2026-08-02',
-    title: 'Scheduling conflicts grouped by day, and floating search bars stay legible',
-    changes: [
-      "The scheduling conflicts details view now groups tasks into sections by the day they couldn't be scheduled for (Today, Tomorrow, or the date), and clicking a task jumps straight to that day on the Calendar instead of opening its edit view.",
-      'Search bars that float over the page as you scroll (Tasks and Settings) now blur the content behind them instead of blending into it.',
-    ],
-  },
-  {
-    version: '1.33.55',
+    version: '1.50.0',
     date: '2026-08-01',
-    title: "See exactly why a task couldn't be scheduled",
+    title: 'A year of Google Calendar history, automatic backups, and a lighter sync window',
     changes: [
-      "When Re-balance or Plan today can't fit every task, the notification now has a \"View details\" button showing exactly why each one didn't make it in — a specific conflicting calendar event/routine/task at its fixed time, an incomplete dependency it's still waiting on, or simply no free time left in its window.",
-    ],
-  },
-  {
-    version: '1.33.54',
-    date: '2026-08-01',
-    title: 'Capped how far back on-demand calendar browsing keeps history',
-    changes: [
-      "Scrolling far enough back in the calendar view could keep that history synced indefinitely, regardless of age. Retention is now capped at a rolling 1 year — once-viewed events older than a year are cleared out again on the next sync, same as anything never explicitly viewed.",
-    ],
-  },
-  {
-    version: '1.33.53',
-    date: '2026-08-01',
-    title: 'Google Calendar sync now stays lightweight, and widens itself as you browse',
-    changes: [
-      'Background Google Calendar sync now keeps a modest rolling window (30 days back, 30 days forward) fresh automatically, instead of pulling a full year of history on every ~1-minute refresh — a big improvement in how much needs fetching for a range most sessions never even look at.',
-      "Scrolling the calendar view to a date outside that window now fetches the events for that range on demand — no need to disconnect/reconnect or wait for a routine sync. Once fetched, it stays synced for the rest of the session, including if you navigate back to today afterward.",
-    ],
-  },
-  {
-    version: '1.33.52',
-    date: '2026-08-01',
-    title: "Fixed a calendar that could go completely missing from sync once a year of history was included",
-    changes: [
-      "After extending Google Calendar sync to cover a year of history, a calendar with a lot of events (e.g. your own primary calendar, as opposed to a lighter subscribed one) could silently disappear from Taskflow entirely — including the current week — because Google only returns up to 250 events per request and Taskflow wasn't asking for the rest. Taskflow now fetches every page of results, so a busy calendar's events (past, present, and future) show up completely again.",
-    ],
-  },
-  {
-    version: '1.33.51',
-    date: '2026-08-01',
-    title: 'Automatic daily cloud backups, and clearer sync explanations',
-    changes: [
-      'TaskFlow now automatically takes a cloud backup once a day while you\'re signed in, keeping the last 14 (older automatic ones are pruned to make room) — backups you create yourself with "Back up now" are kept forever and never affected by this.',
-      'Settings now explains the sync/backup picture more clearly: tasks, boards, and settings sync live across your devices in the background, calendar events sync only through your connected Google Calendar account (not the live sync), and backups are a separate point-in-time safety net for everything, including events.',
-    ],
-  },
-  {
-    version: '1.33.50',
-    date: '2026-08-01',
-    title: 'Search bars now float as you scroll',
-    changes: [
+      'The event edit screen\'s Repeat field pointed to "the scope below" for enabling repeat-pattern edits on an existing series, but "Apply to" had already been moved above it — the hint now correctly says "above". Disabled Repeat controls now show a small explanation when clicked instead of silently doing nothing, and look visibly greyed out.',
+      "Google Calendar sync used to only ever look forward from today, so a change made to a past event on Google Calendar never reached Taskflow no matter how long you waited. Sync now covers a full year back (in addition to the existing ~1 month ahead), and a non-recurring event that eventually ages past that year is automatically cleared out of Taskflow.",
+      "Exporting a backup file, or creating a cloud backup snapshot, now includes your calendar events (Google Calendar bookings and blocked-time entries), so restoring an old backup brings your calendar back too. Live cross-device sync is unaffected — Google Calendar itself stays the sole source of truth there.",
       'The search bar on the Tasks list, Board, and Settings pages now stays within reach as you scroll down — it floats near the top of the page with a small gap instead of scrolling out of view, on both mobile and desktop.',
+      'TaskFlow now automatically takes a cloud backup once a day while you\'re signed in, keeping the last 14 (older automatic ones are pruned to make room) — backups you create yourself with "Back up now" are kept forever and never affected by this.',
+      'Settings now explains the sync/backup picture more clearly: tasks, boards, and settings sync live across your devices in the background, calendar events sync only through your connected Google Calendar account, and backups are a separate point-in-time safety net for everything, including events.',
+      "After extending Google Calendar sync to cover a year of history, a calendar with a lot of events could silently disappear from Taskflow entirely — including the current week — because Google only returns up to 250 events per request and Taskflow wasn't asking for the rest. Taskflow now fetches every page of results.",
+      'Background Google Calendar sync now keeps a modest rolling window (30 days back, 30 days forward) fresh automatically, instead of pulling a full year of history on every ~1-minute refresh. Scrolling the calendar view to a date outside that window now fetches the events for that range on demand.',
     ],
   },
   {
-    version: '1.33.49',
+    version: '1.49.0',
     date: '2026-08-01',
-    title: 'Calendar events are now included in backups',
+    title: 'Editable event repeat patterns, and a string of recurring-event sync fixes',
     changes: [
-      "Exporting a backup file, or creating a cloud backup snapshot, now includes your calendar events (Google Calendar bookings and blocked-time entries), so restoring an old backup brings your calendar back too. Live cross-device sync is unaffected — Google Calendar itself stays the sole source of truth there, only point-in-time backups now carry a copy as a safety net.",
+      'You can now add, edit, or remove a repeat pattern on an event you\'ve already created. Replaced the "Every [number] [Day/Week/Month]" number + dropdown with a single free-text box (e.g. "every 2 weeks"), matching the smart autocomplete used elsewhere. Editing the repeat pattern on an event already part of a series only applies with "Apply to" set to "All events in the series".',
+      'Deleting a single occurrence of a recurring Google Calendar event could silently reappear roughly a minute later if Taskflow\'s background sync checked Google before the deletion had fully gone through there — it now waits out that short window before trusting Google\'s copy again.',
+      "If deleting an event fails for a real reason — not because it was already gone — Taskflow now puts it back and shows an error explaining why, instead of quietly looking deleted and then reappearing later. Fixed a rare race where two Google Calendar syncs running at the same time could let an older, slower fetch overwrite a newer one.",
+      'Deleting one occurrence of a recurring event ("Apply to: This event") could look successful with no error, but never actually remove it on Google\'s side. A failed delete now correctly surfaces as a real error. Also moved the "Apply to" scope picker above the Repeat field in the event edit screen, since it was easy to miss why Repeat looked uneditable.',
+      "Found the actual root cause of deleted/moved recurring-event occurrences reappearing every sync (even after a full Rebuild): Google reports a cancelled or moved single occurrence as its own separate item, not reliably as a change to the recurring event's own text. Taskflow now reads Google's actual per-occurrence signal directly.",
+      "Taskflow used to guess the Google Calendar id of a single occurrence it was about to edit or delete. That guess broke for a recurring event that had previously been split (\"this and following\") directly in Google Calendar's own interface. Taskflow now looks up the occurrence's real id from Google first.",
+      "A task set to \"must be done on due date\" could get stuck showing a scheduled time in the past that Reschedule/Plan today could never move. Stale, incomplete past blocks are now cleared and no longer counted as spent, so the task correctly reschedules onto its real due date.",
     ],
   },
   {
-    version: '1.33.48',
+    version: '1.48.0',
     date: '2026-08-01',
-    title: 'Google Calendar sync now includes a year of history, and disabled Repeat controls now say why',
+    title: 'More Google Calendar sync fixes: phantom occurrences, faster polling, manual rebuild',
     changes: [
-      "Google Calendar sync used to only ever look forward from today, so a change made to a past event on Google Calendar (creating or deleting one) never reached Taskflow no matter how long you waited. Sync now covers a full year back (in addition to the existing ~1 month ahead), and a non-recurring event that eventually ages past that year is automatically cleared out of Taskflow (it's untouched on Google Calendar itself — only the local copy is pruned).",
-      'Disabled Repeat controls in the event edit screen (shown when "Apply to" isn\'t set to "All events in the series") now show a small explanation when clicked instead of silently doing nothing, and look visibly greyed out.',
+      'Fixed the real underlying cause of some Google Calendar recurring events showing occurrences in Taskflow that don\'t actually exist on Google — a cancelled or individually-moved occurrence\'s "EXDATE" was being ignored, so Taskflow kept regenerating that date from the plain repeat rule.',
+      'Google Calendar syncs about every minute now instead of every 5, and also pulls immediately when you switch back to the Taskflow tab/window.',
+      'Fixed a bug where deleting an event directly in Google Calendar (one that was originally created in Taskflow) never removed it from Taskflow. Added "Rebuild from Google Calendar" in Settings → Calendar — a repeatable, on-demand full wipe-and-rebuild of your synced events from whatever Google currently has.',
+      'Fixed a bug where a Google Calendar fetch could silently exclude events landing exactly on the last day of the sync window. Fixed a leftover "cancelled" event record Google can return for a deleted single occurrence being mistaken for a still-live one-off event. Fixed "Delete" → "All events in the series" on a recurring event silently doing nothing.',
     ],
   },
   {
-    version: '1.33.47',
+    version: '1.47.0',
     date: '2026-08-01',
-    title: 'Fixed misleading hint text for editing a recurring event\'s repeat pattern',
+    title: 'Fixed recurring/duplicate Google Calendar events; events now excluded from cross-device sync',
     changes: [
-      'The event edit screen\'s Repeat field pointed to "the scope below" for enabling repeat-pattern edits on an existing series, but "Apply to" had already been moved above it in the previous update — the hint now correctly says "above".',
+      'Deleting a recurring Google Calendar booking that repeats without a true recurrence rule now removes the whole series — or just the occurrences from that date on, per the scope you pick — instead of only the one clicked occurrence, which used to come back on the next sync.',
+      'Fixed a bug where adding an event synced it to Google Calendar but then created a second duplicate copy in Taskflow on the next sync (with a one-time cleanup of any leftovers). If pushing a newly-added event to Google Calendar fails, you\'ll now see an error instead of it silently never showing up there. Events you create in Taskflow now render with the same styling as synced calendar events. You can now create a recurring event directly in Taskflow, syncing to Google Calendar as a real repeating event.',
+      "Replaced the previous partial duplicate-event cleanup with a full one-time rebuild from Google Calendar on your next sync. Deleting an event that turns out to already be gone on Google's side no longer shows a \"failed to delete\" error. Typing \"every 2 weeks\", \"every Mon and Wed\", etc. into a new event's title now auto-fills the Repeat field, the same as it already works for tasks.",
+      "Calendar events (Google-synced and local blocked-time alike) are no longer included in backup files, cloud backups, or cross-device sync — Google Calendar is now the only source of truth for them. This closes a real bug: a stale backup restore or cross-device sync could silently bring back an event you'd already deleted. Existing backup files with events in them still restore fine — the events field is now just ignored.",
     ],
   },
   {
-    version: '1.33.46',
+    version: '1.46.0',
     date: '2026-08-01',
-    title: 'Fixed an enforce-due-date task getting permanently stuck on a stale past time slot',
+    title: 'Completed-task and Google Calendar sync fixes, plus a contrast pass',
     changes: [
-      "A task set to \"must be done on due date\" could get stuck showing a scheduled time in the past that Reschedule/Plan today could never move, even with its due date pushed into the future. The scheduler was treating any leftover block dated before today as untouchable, unworked-on hours already \"spent\" — which could zero out the task's remaining time and silently exclude it from being replanned. Stale, incomplete past blocks are now cleared and no longer counted as spent, so the task correctly reschedules onto its real due date; a genuinely completed task's past block is still preserved as before.",
-    ],
-  },
-  {
-    version: '1.33.45',
-    date: '2026-08-01',
-    title: 'Fixed editing/deleting a single occurrence of a recurring event that had been split in Google Calendar itself',
-    changes: [
-      "Taskflow used to guess the Google Calendar id of a single occurrence it was about to edit or delete, built from the recurring event's own id. That guess broke for a recurring event that had previously been split (\"this and following\") directly in Google Calendar's own interface, causing a real, confirmed failed delete against Google. Taskflow now looks up the occurrence's real id from Google first, so this works correctly even for a previously-split series.",
-    ],
-  },
-  {
-    version: '1.33.44',
-    date: '2026-08-01',
-    title: 'Fixed deleted/moved recurring-event occurrences reappearing every sync, including after a Rebuild',
-    changes: [
-      "Found the actual root cause of occurrences reappearing: Google reports a cancelled or moved single occurrence of a recurring event as its own separate item, not reliably as a change to the recurring event's own text — Taskflow was only ever reading the text form, so the exclusion was silently lost on every sync (even a full \"Rebuild from Google Calendar\"), and the occurrence kept coming back. Taskflow now reads Google's actual per-occurrence signal directly, so a deleted or moved occurrence stays gone.",
-    ],
-  },
-  {
-    version: '1.33.43',
-    date: '2026-08-01',
-    title: 'Fixed a single-occurrence Google Calendar delete that could silently never actually happen, plus a Repeat-editor field-order fix',
-    changes: [
-      "Deleting one occurrence of a recurring Google Calendar event (\"Apply to: This event\") could look successful with no error, but never actually remove it on Google's side — it would then reappear once Taskflow trusted Google's copy again. A failed delete now correctly surfaces as a real error instead of being silently treated as \"already gone\".",
-      'In the event edit screen, the "Apply to" scope picker (needed to enable editing an existing recurring event\'s Repeat pattern) was rendered below the Repeat field instead of above it, making it easy to miss why Repeat looked uneditable. Moved it above Repeat.',
-    ],
-  },
-  {
-    version: '1.33.42',
-    date: '2026-08-01',
-    title: 'Failed calendar deletes now tell you instead of silently coming back later; sync fetches no longer overlap',
-    changes: [
-      "If deleting an event (or an occurrence) from Google Calendar fails for a real reason — not because it was already gone — Taskflow now puts it back and shows an error explaining why, instead of quietly looking deleted and then reappearing on the next sync with no explanation.",
-      'Fixed a rare race where two Google Calendar syncs running at the same time (e.g. clicking "Pull" right as a background sync was already running) could let an older, slower fetch overwrite a newer one — now only one sync runs at a time, and starting another while one is in progress just lets you know it\'s already syncing.',
-    ],
-  },
-  {
-    version: '1.33.41',
-    date: '2026-08-01',
-    title: 'Fixed a deleted recurring-event occurrence sometimes reappearing after about a minute',
-    changes: [
-      'Deleting a single occurrence of a recurring Google Calendar event (e.g. skipping one week of a weekly event) could silently reappear roughly a minute later if Taskflow\'s background sync checked Google before the deletion had fully gone through there — it now waits out that short window before trusting Google\'s copy again, so the deleted occurrence stays gone.',
-    ],
-  },
-  {
-    version: '1.33.40',
-    date: '2026-08-01',
-    title: 'Event repeat can now be edited (not just set at creation), with a smarter free-text box',
-    changes: [
-      'You can now add, edit, or remove a repeat pattern on an event you\'ve already created — previously "Repeat" only existed while creating a brand-new event.',
-      'Replaced the "Every [number] [Day/Week/Month]" number + dropdown with a single free-text box (e.g. type "every 2 weeks"), matching the same smart autocomplete highlighting used elsewhere in Taskflow.',
-      'Editing the repeat pattern on an event that\'s already part of a series only applies with "Apply to" set to "All events in the series", since a single occurrence or a "following" split doesn\'t have its own separate cadence.',
-    ],
-  },
-  {
-    version: '1.33.39',
-    date: '2026-08-01',
-    title: 'Fixed one-off Google Calendar events not deleting cleanly, and deleting a whole recurring series',
-    changes: [
-      'Fixed a bug where a Google Calendar fetch could silently exclude events landing exactly on the last day of the sync window, which made a live event on that day look Google-side-deleted and get removed from Taskflow.',
-      'Fixed a leftover "cancelled" event record Google can return for a deleted single occurrence being mistaken for a still-live one-off event that then never really goes away.',
-      'Fixed "Delete" → "All events in the series" on a recurring Google Calendar event silently doing nothing (This event / This and following were unaffected).',
-    ],
-  },
-  {
-    version: '1.33.38',
-    date: '2026-08-01',
-    title: 'Fixed deletions in Google Calendar not removing the event from Taskflow; added a manual "Rebuild from Google Calendar" option',
-    changes: [
-      'Fixed a bug where deleting an event directly in Google Calendar (one that was originally created in Taskflow) never removed it from Taskflow — it kept showing up until deleted manually here too. Newly-created and newly-synced events now stay fully two-way in sync, including deletions made on either side.',
-      'Added "Rebuild from Google Calendar" in Settings → Calendar — a repeatable, on-demand full wipe-and-rebuild of your synced events from whatever Google currently has, for when stale/duplicate events won\'t clear with a normal Pull. (The earlier automatic one-time cleanup only ever ran once; this gives you a button instead.)',
-    ],
-  },
-  {
-    version: '1.33.37',
-    date: '2026-08-01',
-    title: 'Faster Google Calendar sync (~1 minute instead of ~5)',
-    changes: [
-      'Google Calendar syncs about every minute now instead of every 5, and also pulls immediately when you switch back to the Taskflow tab/window. Still not instant push-based sync (that would need a backend webhook), but changes show up much sooner.',
-    ],
-  },
-  {
-    version: '1.33.36',
-    date: '2026-08-01',
-    title: 'Fixed phantom recurring-event occurrences not on Google Calendar',
-    changes: [
-      'Fixed the real underlying cause of some Google Calendar recurring events showing occurrences in Taskflow that don\'t actually exist on Google — a cancelled or individually-moved occurrence of a recurring series (its "EXDATE") was being ignored, so Taskflow kept regenerating that date from the plain repeat rule as if nothing had changed.',
-    ],
-  },
-  {
-    version: '1.33.35',
-    date: '2026-08-01',
-    title: 'Calendar events no longer round-trip through backups/cloud sync',
-    changes: [
-      "Calendar events (Google-synced and local blocked-time alike) are no longer included in backup files, cloud backups, or cross-device sync — Google Calendar is now the only source of truth for them. This closes a real bug: a stale backup restore or cross-device sync could silently bring back an event you'd already deleted.",
-      'Existing backup files with events in them still restore fine — the events field in them is now just ignored.',
-    ],
-  },
-  {
-    version: '1.33.34',
-    date: '2026-08-01',
-    title: 'More Google Calendar sync cleanup; smart "every ..." detection for new events',
-    changes: [
-      "Replaced the previous partial duplicate-event cleanup with a full one-time rebuild from Google Calendar on your next sync — this fixes leftover duplicate/orphaned events the partial version could still miss, at the cost of also clearing out any purely local blocked-time events that were never pushed to Google. You'll see a notice when it runs.",
-      'Deleting an event (or a single occurrence of one) that turns out to already be gone on Google\'s side no longer shows a "failed to delete" error — that\'s the outcome a delete is going for anyway.',
-      'Typing "every 2 weeks", "every Mon and Wed", etc. into a new event\'s title now auto-fills the Repeat field and strips the phrase from the title, the same as it already works for tasks.',
-    ],
-  },
-  {
-    version: '1.33.33',
-    date: '2026-08-01',
-    title: 'Fixed duplicate/reappearing Google Calendar events; added recurring events in Taskflow',
-    changes: [
-      'Fixed a bug where adding an event synced it to Google Calendar but then created a second duplicate copy in Taskflow on the next sync.',
-      "The next sync after this update will do a one-time cleanup of any duplicate/stale events left over from that bug — you'll see a notice when it happens.",
-      "If pushing a newly-added event to Google Calendar fails, you'll now see an error instead of it silently never showing up there.",
-      'Events you create in Taskflow now render with the same styling as synced calendar events, instead of a red striped "blocked time" look.',
-      'You can now create a recurring event directly in Taskflow (daily/weekly/monthly, with an optional end) — it syncs to Google Calendar as a real repeating event.',
-    ],
-  },
-  {
-    version: '1.33.32',
-    date: '2026-08-01',
-    title: 'Fixed recurring Google Calendar events reappearing after delete',
-    changes: [
-      'Deleting a recurring Google Calendar booking that repeats without a true recurrence rule (e.g. a weekly appointment synced as separate events) now removes the whole series — or just the occurrences from that date on, per the scope you pick — instead of only the one clicked occurrence, which used to come back on the next sync.',
-    ],
-  },
-  {
-    version: '1.33.31',
-    date: '2026-08-01',
-    title: 'Added a Google Calendar Disconnect button',
-    changes: [
-      'Settings → Integrations now has a "Disconnect" button next to "Push" for Google Calendar, which properly revokes access at Google (not just locally) rather than needing to do that manually from your Google account settings.',
-      '"Push" now sits on its own row below the connection status/Pull buttons.',
-    ],
-  },
-  {
-    version: '1.33.30',
-    date: '2026-08-01',
-    title: 'Improved text contrast in light mode',
-    changes: [
+      'Completing a task today, then hitting "Reschedule" or "Plan today", used to wipe that task\'s block for today entirely. Rescheduling now leaves a completed task\'s block for today untouched.',
+      'Deleting a task whose scheduled block had synced to Google Calendar removed it from Taskflow but left the event on Google Calendar, which could then reappear locally. Deleting a task now also removes its Google Calendar event.',
+      "Google Calendar sync used to need a fresh login popup whenever its short-lived connection expired, most noticeably right after refreshing the page. It now stays connected in the background and silently renews itself. Reordered the Google Calendar buttons so \"Push\" comes after \"Pull from Google Calendar\".",
       'Several shades of gray, red, orange, blue and green text in light mode (secondary descriptions, priority badges, error/warning/success text, visited links) were too faint to read comfortably. They\'re now darker and meet accessibility contrast standards.',
+      'Settings → Integrations now has a "Disconnect" button next to "Push" for Google Calendar, which properly revokes access at Google (not just locally). "Push" now sits on its own row below the connection status/Pull buttons.',
     ],
   },
   {
-    version: '1.33.29',
+    version: '1.45.0',
     date: '2026-08-01',
-    title: 'Google Calendar now stays connected across page refreshes',
+    title: 'Calendar event fixes, cleaner Settings, and account/backup bug fixes',
     changes: [
-      "Google Calendar sync used to need a fresh login popup whenever its short-lived connection expired — most noticeably right after refreshing the page. It now stays connected in the background and silently renews itself, so reconnecting is only ever needed if you explicitly revoke access from your Google account.",
-      'Settings → Integrations: reordered the Google Calendar buttons so "Push" comes after "Pull from Google Calendar" instead of before it.',
-    ],
-  },
-  {
-    version: '1.33.28',
-    date: '2026-08-01',
-    title: 'Fixed deleted tasks leaving stale Google Calendar events behind',
-    changes: [
-      'Deleting a task whose scheduled block had synced to Google Calendar removed it from Taskflow but left the event on Google Calendar, which could then reappear locally and need deleting a second time. Deleting a task now also removes its Google Calendar event.',
-    ],
-  },
-  {
-    version: '1.33.27',
-    date: '2026-08-01',
-    title: 'Fixed completed tasks disappearing from Today\'s Agenda after rescheduling',
-    changes: [
-      'Completing a task today, then hitting "Reschedule" or "Plan today", used to wipe that task\'s block for today entirely — it vanished from Today\'s Agenda and its calendar event instead of staying visible as completed. Rescheduling now leaves a completed task\'s block for today untouched.',
-    ],
-  },
-  {
-    version: '1.33.26',
-    date: '2026-08-01',
-    title: 'Fixed "Invalid backup file" on every backup restore',
-    changes: [
+      'Deleting a Google Calendar-synced event could occasionally reappear a few seconds later and pop its edit window back open, if a calendar refresh landed before Google had finished processing the delete — deleting one now sticks the first time.',
+      'Events on the calendar now show their time range under the title, matching how scheduled task blocks already look. Dragging an event or task block to reschedule it now makes the item you\'re dragging more transparent and highlights the drop-target preview more clearly.',
+      'The "not connected" status pills in Settings (Todoist standalone mode, Claude/Gemini key not set) no longer show a circle icon and now use the app\'s neutral theme color instead of blue.',
+      'Email notifications (Settings → Notifications) were silently failing to send, with no error anywhere — now fixed. Since this app has no verified email domain, notifications go to one fixed address you configure once, not to your account\'s own sign-in email.',
+      'Signing out and signing into a different account no longer leaves the previous account\'s tasks/settings behind — signing out now clears local data so the next sign-in starts clean.',
       'Restoring a downloaded backup always failed with "Invalid backup file", even right after exporting it — scheduling rules were checked against the wrong internal shape. Backup export/import now works again.',
     ],
   },
   {
-    version: '1.33.25',
-    date: '2026-08-01',
-    title: 'Fixed old account data carrying over after switching accounts',
-    changes: [
-      'Signing out and signing into a different account no longer leaves the previous account\'s tasks/settings behind — signing out now clears local data so the next sign-in starts clean.',
-    ],
-  },
-  {
-    version: '1.33.24',
-    date: '2026-08-01',
-    title: 'Fixed email notifications not actually sending',
-    changes: [
-      'Email notifications (Settings → Notifications) were silently failing to send, with no error anywhere — now fixed. Since this app has no verified email domain, notifications go to one fixed address you configure once (see notify-worker/README.md), not to your account\'s own sign-in email; the Settings help text now explains this.',
-    ],
-  },
-  {
-    version: '1.33.23',
-    date: '2026-08-01',
-    title: 'Cleaner status pills in Settings',
-    changes: [
-      'The "not connected" status pills in Settings (Todoist standalone mode, Claude/Gemini key not set) no longer show a circle icon and now use the app\'s neutral theme color instead of blue.',
-    ],
-  },
-  {
-    version: '1.33.22',
-    date: '2026-08-01',
-    title: 'Calendar event times, and an easier-to-see drag preview',
-    changes: [
-      'Events on the calendar now show their time range under the title, matching how scheduled task blocks already look.',
-      'Dragging an event or task block to reschedule it now makes the item you\'re dragging more transparent and highlights the drop-target preview more clearly, so it\'s easier to see where it will land.',
-    ],
-  },
-  {
-    version: '1.33.21',
-    date: '2026-08-01',
-    title: 'Fix a deleted Google Calendar event reappearing and reopening',
-    changes: [
-      'Deleting a Google Calendar-synced event could occasionally reappear a few seconds later and pop its edit window back open, if a calendar refresh landed before Google had finished processing the delete — deleting one now sticks the first time.',
-    ],
-  },
-  {
-    version: '1.33.20',
+    version: '1.44.0',
     date: '2026-07-31',
-    title: 'Smart-parsed fixed times, and a proper "Fixed time" checkbox',
+    title: 'Completed-task visibility in search, due-date scheduling fix, and smarter fixed-time parsing',
     changes: [
-      'A bare number in a task title (e.g. "at 9") is no longer misread as a fixed time — a time now needs an am/pm (e.g. "9pm") or minutes to be detected.',
-      'A standalone time with am/pm now works without the word "at" too — e.g. typing "5pm" or "9:10pm" anywhere in the title sets the task\'s fixed time.',
-      'Fixed a bug where dismissing a smart-parsed suggestion, then editing to a different value of the same kind, could leave the original suggestion permanently stuck and unable to re-trigger.',
-      'Checking the "Fixed time" box no longer silently defaults to 9:00am — it starts blank, and Add/Save now blocks with a message until you actually pick a time.',
-    ],
-  },
-  {
-    version: '1.33.19',
-    date: '2026-07-31',
-    title: 'Fix "must be done on due date" tasks getting scheduled today',
-    changes: [
+      'Searching from the List view or the Ctrl+K command palette no longer surfaces completed tasks unless you\'re already viewing the "Completed" tab in List view. The search bar\'s suggestion dropdown now shows a "Show completed tasks" option when a search has completed matches.',
       'Tasks with "Enforce due date" turned on were sometimes scheduled into today\'s plan even when today wasn\'t their due date — the "Plan my day" scheduler now correctly leaves them for their actual due date.',
+      'A bare number in a task title (e.g. "at 9") is no longer misread as a fixed time — it now needs an am/pm or minutes to be detected, and a standalone time with am/pm now works without the word "at" too. Fixed a bug where dismissing a smart-parsed suggestion, then editing to a different value of the same kind, could leave the original suggestion permanently stuck. Checking the "Fixed time" box no longer silently defaults to 9:00am — it starts blank, and Add/Save now blocks with a message until you actually pick a time.',
     ],
   },
   {
-    version: '1.33.18',
+    version: '1.43.0',
     date: '2026-07-31',
-    title: 'Completed tasks hidden from search by default',
-    changes: [
-      'Searching from the List view or the Ctrl+K command palette no longer surfaces completed tasks unless you\'re already viewing the "Completed" tab in List view.',
-      'The search bar\'s suggestion dropdown now shows a "Show completed tasks" option when a search has completed matches, so you can still find one if you need to.',
-    ],
-  },
-  {
-    version: '1.33.17',
-    date: '2026-07-31',
-    title: 'Undo event creation, fix recurring completions vanishing, dashboard/stats stat tiles',
+    title: 'Undo for event creation, keep completed recurring tasks visible, dashboard/stats reorg, mobile calendar swipe carousel',
     changes: [
       'Creating a calendar event now shows an "Undo" notification, matching editing and deleting events.',
       "Completing a recurring task no longer immediately removes it from Today's agenda and the calendar — it now stays visible, crossed out, as a completed record before rolling over to its next occurrence.",
@@ -377,157 +130,53 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.33.16',
+    version: '1.42.0',
     date: '2026-07-31',
-    title: 'Cleaner synced event descriptions, wider event modal, drag fix',
+    title: 'Scheduler, search, and calendar-event polish',
     changes: [
-      'Descriptions synced from Google Calendar (which can contain HTML formatting from rich-text invites) are now converted to plain, readable text instead of showing raw HTML tags.',
-      'The calendar event editing modal is a bit wider on desktop.',
-      'Dragging a scheduled block on the calendar now keeps it centered under your cursor/finger, instead of snapping so the block\'s top edge lines up with the cursor.',
-    ],
-  },
-  {
-    version: '1.33.15',
-    date: '2026-07-31',
-    title: 'Smart parse: exact time of day',
-    changes: [
-      'Smart parse can now pick up an exact time of day (e.g. "at 5pm", "at 12:30", "at 9") typed into a task title and sets it as the task\'s fixed time — independent of any due date, and independent of the existing "on the day" option.',
-    ],
-  },
-  {
-    version: '1.33.14',
-    date: '2026-07-31',
-    title: 'Undo calendar event deletes',
-    changes: [
-      'Deleting a calendar event now shows an "Undo" toast for a few seconds, so an accidental delete (including on a recurring event\'s "this"/"following" scope) can be reversed instead of being permanent right away.',
-    ],
-  },
-  {
-    version: '1.33.13',
-    date: '2026-07-31',
-    title: 'Fix: scheduler ignoring repeating calendar events',
-    changes: [
-      "The scheduler was only treating a repeating synced calendar event (e.g. a weekly class) as busy time on its very first occurrence — every later occurrence looked like open time and could get a task block scheduled right on top of it. It now correctly blocks out every occurrence.",
-    ],
-  },
-  {
-    version: '1.33.12',
-    date: '2026-07-31',
-    title: 'Completed tasks no longer clutter search suggestions',
-    changes: [
+      "The timer option no longer shows on a parent task that has sub-tasks, since sub-tasks should be completed first.",
+      "The scheduler no longer splits a task's last few leftover minutes into their own separate tiny block when a day's free time didn't line up evenly with the task's length.",
       'The search bar dropdown no longer suggests already-completed tasks — jumping to a finished task from search wasn\'t useful, so results now only show open tasks.',
+      "The scheduler was only treating a repeating synced calendar event (e.g. a weekly class) as busy time on its very first occurrence — every later occurrence looked like open time and could get a task block scheduled right on top of it. It now correctly blocks out every occurrence.",
+      'Deleting a calendar event now shows an "Undo" toast for a few seconds, so an accidental delete (including on a recurring event\'s "this"/"following" scope) can be reversed instead of being permanent right away.',
+      'Smart parse can now pick up an exact time of day (e.g. "at 5pm", "at 12:30", "at 9") typed into a task title and sets it as the task\'s fixed time — independent of any due date, and independent of the existing "on the day" option.',
+      'Descriptions synced from Google Calendar (which can contain HTML formatting from rich-text invites) are now converted to plain, readable text instead of showing raw HTML tags. The calendar event editing modal is a bit wider on desktop. Dragging a scheduled block on the calendar now keeps it centered under your cursor/finger, instead of snapping so the block\'s top edge lines up with the cursor.',
     ],
   },
   {
-    version: '1.33.11',
+    version: '1.41.0',
     date: '2026-07-31',
-    title: 'Fix: scheduler scattering tiny leftover blocks',
-    changes: [
-      "The scheduler no longer splits a task's last few leftover minutes into their own separate tiny block (e.g. a stray 5-minute block next to the real one) when a day's free time didn't line up evenly with the task's length — that leftover now either merges into a real block or rolls over, instead of appearing as its own sliver.",
-    ],
-  },
-  {
-    version: '1.33.10',
-    date: '2026-07-31',
-    title: 'Fix: timer hidden on parent tasks',
-    changes: [
-      "The timer option no longer shows on a parent task that has sub-tasks, since sub-tasks should be completed first — timing the parent directly didn't make sense while it had children.",
-    ],
-  },
-  {
-    version: '1.33.9',
-    date: '2026-07-31',
-    title: 'Completed tasks stay visible on the calendar',
-    changes: [
-      "Completed tasks now stay visible (with a crossed-out, faded style) on Today's Agenda and the calendar instead of just disappearing, so you can see what you finished — including a distinct amber accent for tasks completed after their scheduled time.",
-      'Completed blocks can no longer be accidentally dragged or resized on the calendar.',
-    ],
-  },
-  {
-    version: '1.33.8',
-    date: '2026-07-31',
-    title: 'Floating "Add task" button on desktop',
-    changes: [
-      'The "Add task" and "AI Quick Add" buttons in the Tasks list and Board views now float in the bottom-right corner on desktop too, matching the mobile layout, instead of sitting inline in the toolbar.',
-    ],
-  },
-  {
-    version: '1.33.7',
-    date: '2026-07-31',
-    title: 'Fix: notification timing for users outside UTC',
-    changes: [
-      "Email and in-app notifications (overdue, due today, starting soon) now use your device's own timezone instead of always assuming UTC, so they no longer fire on the wrong day or at the wrong time if you're not in UTC.",
-    ],
-  },
-  {
-    version: '1.33.6',
-    date: '2026-07-31',
-    title: 'Fixed broken drag on mobile calendar',
+    title: 'Fixed mobile drag crash, notification timing, and floating Add-task button',
     changes: [
       'Fixed a bug where long-pressing a calendar block, event, or unscheduled task on a phone or tablet to drag it could fail silently instead of starting the drag.',
+      "Email and in-app notifications (overdue, due today, starting soon) now use your device's own timezone instead of always assuming UTC, so they no longer fire on the wrong day or at the wrong time if you're not in UTC.",
+      'The "Add task" and "AI Quick Add" buttons in the Tasks list and Board views now float in the bottom-right corner on desktop too, matching the mobile layout.',
+      "Completed tasks now stay visible (with a crossed-out, faded style) on Today's Agenda and the calendar instead of just disappearing, including a distinct amber accent for tasks completed after their scheduled time. Completed blocks can no longer be accidentally dragged or resized on the calendar.",
     ],
   },
   {
-    version: '1.33.5',
+    version: '1.40.0',
     date: '2026-07-31',
-    title: 'Smoother scrolling on mobile',
+    title: 'Recurring-task scheduling, and several small mobile/logic fixes',
     changes: [
-      'Reduced background blur behind modals on smaller screens, which was making scrolling inside them (e.g. the task detail view) feel slightly laggy.',
-      'General performance tuning for the task detail modal and task list so editing a task no longer causes the whole list underneath it to redo unnecessary work.',
-    ],
-  },
-  {
-    version: '1.33.4',
-    date: '2026-07-31',
-    title: 'Fix: stale Gantt bars showing at "today"',
-    changes: [
-      'A task with only overdue/stale scheduled blocks no longer shows a misleading 1-day bar sitting at today on the Gantt chart — it\'s now omitted instead.',
-    ],
-  },
-  {
-    version: '1.33.3',
-    date: '2026-07-31',
-    title: 'Fix: decimal durations misread as dates',
-    changes: [
-      'Titles like "Read chapter 4 for 3.5 hours" no longer have the "3.5" mistaken for a date (e.g. 3rd of May) and silently stripped out as a due date instead of being read as a duration.',
-    ],
-  },
-  {
-    version: '1.33.2',
-    date: '2026-07-31',
-    title: 'Fix: Board view not showing on mobile',
-    changes: [
+      'A recurring task (e.g. "every Mon/Wed/Fri" or "every day") now actually gets scheduled on each of those days, instead of only showing up once per cycle. The task detail view now shows a small "completed X of the last 7 days" readout for recurring tasks.',
       'Board view (Tasks → Board) now displays correctly on phone-width screens — a CSS quirk was collapsing it into a near-invisible scroll box instead of showing the stacked columns on the page.',
+      'Titles like "Read chapter 4 for 3.5 hours" no longer have the "3.5" mistaken for a date and silently stripped out as a due date instead of being read as a duration.',
+      'A task with only overdue/stale scheduled blocks no longer shows a misleading 1-day bar sitting at today on the Gantt chart — it\'s now omitted instead.',
+      'Reduced background blur behind modals on smaller screens, which was making scrolling inside them feel slightly laggy. General performance tuning for the task detail modal and task list so editing a task no longer causes the whole list underneath it to redo unnecessary work.',
     ],
   },
   {
-    version: '1.33.1',
+    version: '1.39.0',
     date: '2026-07-31',
-    title: 'Recurring tasks now schedule every day they repeat',
-    changes: [
-      'A recurring task (e.g. "every Mon/Wed/Fri" or "every day") now actually gets scheduled on each of those days, instead of only showing up once per cycle.',
-      'The task detail view now shows a small "completed X of the last 7 days" readout for recurring tasks, so you can see recent completion activity at a glance.',
-    ],
-  },
-  {
-    version: '1.32.2',
-    date: '2026-07-31',
-    title: 'Cleaner Google Calendar settings row',
-    changes: [
-      'The "Push scheduled blocks to Google Calendar" button is now just labeled "Push", and only shows up once you\'ve actually connected Google Calendar.',
-      'Fixed the Connect/Push buttons looking inconsistent — they now sit left-aligned together instead of Push stretching across the full row.',
-    ],
-  },
-  {
-    version: '1.32.1',
-    date: '2026-07-31',
-    title: 'Interface animations now override reduced-motion at the OS level',
+    title: 'Reduced-motion override, and a cleaner Google Calendar settings row',
     changes: [
       'Turning on Settings → Interface animations now shows motion even if your device has a system-wide "reduce motion" preference on — previously the OS setting silently won and animations stayed off no matter what.',
+      'The "Push scheduled blocks to Google Calendar" button is now just labeled "Push", and only shows up once you\'ve actually connected Google Calendar. Fixed the Connect/Push buttons looking inconsistent — they now sit left-aligned together instead of Push stretching across the full row.',
     ],
   },
   {
-    version: '1.32.0',
+    version: '1.38.0',
     date: '2026-07-31',
     title: 'A more polished feel: motion, hover previews, and a bit of depth',
     changes: [
@@ -539,7 +188,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.31.0',
+    version: '1.37.0',
     date: '2026-07-30',
     title: '"Plan today" — a lighter re-balance for just today, plus drag-to-schedule',
     changes: [
@@ -548,7 +197,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.30.0',
+    version: '1.36.0',
     date: '2026-07-30',
     title: 'Email notifications (self-hosted) and notification polish',
     changes: [
@@ -557,7 +206,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.29.0',
+    version: '1.35.0',
     date: '2026-07-30',
     title: 'In-app notifications',
     changes: [
@@ -567,7 +216,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.28.0',
+    version: '1.34.0',
     date: '2026-07-30',
     title: 'Command palette: jump to anything with Ctrl+K',
     changes: [
@@ -577,7 +226,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.27.0',
+    version: '1.33.0',
     date: '2026-07-30',
     title: 'Click a note to read the whole thing',
     changes: [
@@ -585,7 +234,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.26.0',
+    version: '1.32.0',
     date: '2026-07-30',
     title: 'Dead-end fixes: AI Quick Add and Gantt now point you to the fix',
     changes: [
@@ -594,7 +243,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.25.0',
+    version: '1.31.0',
     date: '2026-07-30',
     title: 'Scheduler clears blocking tasks faster',
     changes: [
@@ -602,7 +251,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.24.0',
+    version: '1.30.0',
     date: '2026-07-30',
     title: 'Pinned links are now Notes',
     changes: [
@@ -612,7 +261,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.23.0',
+    version: '1.29.0',
     date: '2026-07-30',
     title: 'Smarter scheduling around task dependencies, tidier mobile calendar toolbar',
     changes: [
@@ -621,7 +270,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.22.0',
+    version: '1.28.0',
     date: '2026-07-30',
     title: 'Sub-tasks now show up on the Gantt chart',
     changes: [
@@ -629,26 +278,18 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.21.0',
+    version: '1.27.0',
     date: '2026-07-30',
-    title: 'Push-to-Google-Calendar button no longer stretches unnecessarily on mobile',
-    changes: [
-      'Fixed the "Push scheduled blocks to Google Calendar" button stretching full-width (with a large empty gap after the label) on most mobile screen sizes — it now only goes full-width on the narrow range of screens where its label actually wraps to two lines.',
-    ],
-  },
-  {
-    version: '1.20.0',
-    date: '2026-07-30',
-    title: 'A more satisfying delete sound, a few new animations, and a couple of fixes',
+    title: 'A more satisfying delete sound, a few new animations, and mobile button fixes',
     changes: [
       'Replaced the delete sound effect with a crisper, more satisfying click.',
       'Added small polish animations: AI Quick Add\'s mobile mini-buttons now pop in instead of appearing instantly, and tapping AI Quick Add without an API key saved gives a quick "shake" alongside the reminder toast.',
       'AI Quick Add is no longer allowed to open without an API key saved (on mobile it previously could) — the button stays visible either way, but now shows a reminder toast instead of opening a modal that would just fail later.',
-      'Fixed the "Push scheduled blocks to Google Calendar" button wrapping into a centered, jagged two-line label on mobile — it now stacks full-width and left-aligns.',
+      'Fixed the "Push scheduled blocks to Google Calendar" button wrapping into a centered, jagged two-line label on mobile — it now stacks full-width and left-aligns, and no longer stretches full-width unnecessarily on the wider range of mobile screens where its label fits on one line.',
     ],
   },
   {
-    version: '1.19.0',
+    version: '1.26.0',
     date: '2026-07-30',
     title: 'Sub-tasks can now be scheduled onto your calendar on their own',
     changes: [
@@ -659,44 +300,29 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.18.3',
+    version: '1.25.0',
     date: '2026-07-30',
-    title: 'Balanced sound effect volumes',
+    title: 'Home-screen icons and balanced sound volumes',
     changes: [
+      'Added proper 192x192 and 512x512 app icons to the install manifest, so Android/Chrome "Add to Home Screen" installs get a real icon instead of falling back to a generic one.',
       'Normalized the loudness of the add/complete/delete sound effects so none plays noticeably louder or quieter than the others at the same volume setting.',
     ],
   },
   {
-    version: '1.18.2',
-    date: '2026-07-30',
-    title: 'Home-screen icon fixes for Android/Chrome installs',
-    changes: [
-      'Added proper 192x192 and 512x512 app icons to the install manifest, so Android/Chrome "Add to Home Screen" installs get a real icon instead of falling back to a generic one.',
-    ],
-  },
-  {
-    version: '1.18.1',
-    date: '2026-07-30',
-    title: 'AI Quick Add: fixed a plan-review crash and a wrong error message',
-    changes: [
-      'Fixed a bug where a proposed plan containing a dependency cycle (e.g. two tasks each depending on the other) could crash the review screen entirely instead of just flagging the cyclic tasks as invalid.',
-      'A rejected Gemini API key now shows the same "check it in Settings" message as other providers, instead of a generic upstream-error message.',
-    ],
-  },
-  {
-    version: '1.18.0',
+    version: '1.24.0',
     date: '2026-07-30',
     title: 'AI Quick Add can now plan and organize your whole workspace',
     changes: [
       'AI Quick Add went from creating one task or event at a time to proposing a full set of changes in one request: creating tasks and events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving tasks between projects/sections, and creating/renaming/deleting projects, sections, and labels.',
       'Nothing is applied automatically — every request opens a new review screen listing each proposed change individually with a checkbox, so you can uncheck anything you don\'t want before applying.',
-      'The AI now defaults to creating tasks (even ones with a deadline) rather than calendar events — events are reserved for things that must happen at a fixed real-world time regardless of workload (an appointment, meeting, flight), since this app\'s own scheduler already decides when task work actually gets done.',
+      'The AI now defaults to creating tasks (even ones with a deadline) rather than calendar events — events are reserved for things that must happen at a fixed real-world time regardless of workload, since this app\'s own scheduler already decides when task work actually gets done.',
       'Added a model picker next to the provider choice, defaulting to the fastest/cheapest model with reasoning enabled for each provider (Claude Haiku 4.5 / Gemini 3.5 Flash-Lite) — pick a stronger model from the same dropdown for harder requests. A provider you haven\'t added an API key for yet is disabled instead of erroring after the fact.',
       'Shows an approximate token count before you submit, and gives a specific message (with a "switch provider" shortcut where it helps) when a request hits a rate limit, quota, or context-size limit, instead of one generic failure.',
+      'Fixed a bug where a proposed plan containing a dependency cycle (e.g. two tasks each depending on the other) could crash the review screen entirely instead of just flagging the cyclic tasks as invalid. A rejected Gemini API key now shows the same "check it in Settings" message as other providers, instead of a generic upstream-error message.',
     ],
   },
   {
-    version: '1.17.6',
+    version: '1.23.0',
     date: '2026-07-30',
     title: 'Task dependencies are now actually enforced',
     changes: [
@@ -708,7 +334,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.17.5',
+    version: '1.22.0',
     date: '2026-07-30',
     title: 'AI Quick Add button regrouped, mobile speed-dial',
     changes: [
@@ -717,23 +343,16 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.17.4',
+    version: '1.21.0',
     date: '2026-07-30',
-    title: 'Fixed remaining toolbar height mismatch',
+    title: 'Shorter "What\'s New" panel, and a toolbar height fix',
     changes: [
+      'Settings → Versions now only shows the 2 newest versions by default, with a "See more versions" button to load the full history instead of always scrolling through everything at once.',
       'The search bar next to the AI Quick Add and Add task buttons was still a couple pixels shorter than both, despite an earlier alignment fix — now matches their height exactly.',
     ],
   },
   {
-    version: '1.17.3',
-    date: '2026-07-30',
-    title: 'Shorter "What\'s New" panel by default',
-    changes: [
-      'Settings → Versions now only shows the 2 newest versions by default, with a "See more versions" button to load the full history instead of always scrolling through everything at once.',
-    ],
-  },
-  {
-    version: '1.17.2',
+    version: '1.20.0',
     date: '2026-07-30',
     title: 'Google Calendar reconnect prompt, sync/backup fixes, and small polish',
     changes: [
@@ -747,7 +366,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.17.1',
+    version: '1.19.0',
     date: '2026-07-30',
     title: 'Home-screen install support',
     changes: [
@@ -757,7 +376,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.17.0',
+    version: '1.18.0',
     date: '2026-07-30',
     title: 'AI Quick Add',
     changes: [
@@ -768,7 +387,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.16.0',
+    version: '1.17.0',
     date: '2026-07-30',
     title: 'Calendar redesigned to feel like Google Calendar mobile',
     changes: [
@@ -781,7 +400,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: '1.15.1',
+    version: '1.16.0',
     date: '2026-07-29',
     title: 'Search, calendar, and sync polish',
     changes: [
@@ -849,8 +468,7 @@ export const CHANGELOG = [
       'Added a search bar at the top of Settings to jump straight to a section instead of scrolling.',
       'Keyboard shortcuts (undo, redo, new task) now show a brief confirmation toast when pressed, so you always get feedback even if nothing visibly changes.',
       'The "What\'s New" list in Settings → Versions now groups patch-level bugfix updates under the feature release they belong to, instead of listing every point release separately.',
-      'Fixed the New task shortcut sometimes reopening "Add task" by itself when switching back to the Tasks tab.',
-      'Changed the New task shortcut\'s default from Ctrl+N to Alt+N — Ctrl+N is reserved by the browser (it opened a new browser window alongside the dialog). Rebind it from Settings → Keyboard shortcuts if you\'d like something else.',
+      'Fixed the New task shortcut sometimes reopening "Add task" by itself when switching back to the Tasks tab, and changed its default from Ctrl+N to Alt+N — Ctrl+N is reserved by the browser. Rebind it from Settings → Keyboard shortcuts if you\'d like something else.',
     ],
   },
   {
@@ -868,7 +486,7 @@ export const CHANGELOG = [
       'Fixed "All Tasks" sometimes instantly redirecting to a different project if Board view had ever gotten stuck as its remembered view — the Board option is now hidden while All Tasks is active, since Board needs a single project to show.',
       'Fixed a day-specific repeat (e.g. "every week on Sun, Sat") not being recognized when typed or edited directly — it now highlights and saves correctly instead of silently losing the selected days.',
       'The Estimated time field now shows the plain-English duration ("20 minutes") in place, instead of a duplicate line underneath, and swaps to the short editable form when you click in. Clearing the field now actually sets the estimate to 0 instead of snapping back to the old value.',
-      'Undoing a change (via the bottom-corner Undo notification) now updates an already-open task edit screen immediately, instead of requiring you to close and reopen it to see the reverted value.',
+      'Undoing a change (via the bottom-corner Undo notification) now updates an already-open task edit screen immediately, instead of requiring you to close and reopen it to see the reverted value. Also fixed a bug where the docs describing the top-bar/keyboard-shortcuts rework had gone stale.',
     ],
   },
   {
