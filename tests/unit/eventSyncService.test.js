@@ -17,7 +17,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mergePulledGoogleEvents, hardResetEventsFromGoogle, RECENTLY_DELETED_TTL_MS } from '../../src/services/eventSyncService.js';
+import {
+  mergePulledGoogleEvents,
+  hardResetEventsFromGoogle,
+  expandSyncedBounds,
+  computeOnDemandFetchRange,
+  RECENTLY_DELETED_TTL_MS,
+} from '../../src/services/eventSyncService.js';
 
 function googleEvent(overrides = {}) {
   return {
@@ -221,5 +227,91 @@ describe('mergePulledGoogleEvents — recently instance-deleted suppression (sin
     const recentlyDeletedInstances = new Map([[`g1::2026-08-10`, now - 5000]]);
     const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd, new Map(), recentlyDeletedInstances, now);
     expect(result).toEqual([pulled]);
+  });
+});
+
+describe('mergePulledGoogleEvents — purgeBoundaryIso (on-demand-fetched-old-event retention fix)', () => {
+  // Reproduces the bug the "routine 30/30 window + on-demand widening" model
+  // introduced: an on-demand fetch pulls in an event far older than the
+  // routine window, then the VERY NEXT routine poll runs with its own
+  // narrower rangeStartIso. Without a separate purgeBoundaryIso tracking the
+  // union of every range ever synced, that poll would see the on-demand
+  // event as "older than THIS pull's rangeStartIso" and purge it right back
+  // out — silently undoing the on-demand fetch.
+  const routineRangeStart = '2026-08-01'; // this narrow routine poll's own range
+  const routineRangeEnd = '2026-08-31';
+
+  it('does NOT purge an old non-recurring event when purgeBoundaryIso (the wider synced union) still covers it', () => {
+    const oldEvent = googleEvent({ id: 'local1', googleEventId: 'ancient', date: '2026-02-01' }); // 6 months before routineRangeStart
+    const purgeBoundaryIso = '2026-01-01'; // union includes an on-demand fetch that reached back this far
+    const result = mergePulledGoogleEvents([oldEvent], [], routineRangeStart, routineRangeEnd, new Map(), new Map(), Date.now(), purgeBoundaryIso);
+    expect(result).toEqual([oldEvent]);
+  });
+
+  it('still purges an event older than purgeBoundaryIso itself, even though it is within this pull\'s own out-of-scope future side', () => {
+    const oldEvent = googleEvent({ id: 'local1', googleEventId: 'ancient', date: '2025-12-01' }); // before purgeBoundaryIso
+    const purgeBoundaryIso = '2026-01-01';
+    const result = mergePulledGoogleEvents([oldEvent], [], routineRangeStart, routineRangeEnd, new Map(), new Map(), Date.now(), purgeBoundaryIso);
+    expect(result).toEqual([]);
+  });
+
+  it('defaults purgeBoundaryIso to rangeStartIso when omitted, preserving the original (pre-on-demand-sync) purge behavior', () => {
+    const oldEvent = googleEvent({ id: 'local1', googleEventId: 'ancient', date: '2026-07-20' }); // before routineRangeStart, no purgeBoundaryIso passed
+    const result = mergePulledGoogleEvents([oldEvent], [], routineRangeStart, routineRangeEnd);
+    expect(result).toEqual([]);
+  });
+
+  it('never purges a recurring master regardless of purgeBoundaryIso — recurring masters are always in scope', () => {
+    const oldMaster = googleEvent({ id: 'local1', googleEventId: 'g1', date: '2020-01-01', recurrenceRule: 'FREQ=WEEKLY' });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2020-01-01', recurrenceRule: 'FREQ=WEEKLY', title: 'Updated' });
+    const result = mergePulledGoogleEvents([oldMaster], [pulled], routineRangeStart, routineRangeEnd, new Map(), new Map(), Date.now(), '2026-08-01');
+    expect(result).toEqual([pulled]);
+  });
+});
+
+describe('expandSyncedBounds — union of every range ever synced', () => {
+  it('starts from null bounds by adopting the first fetched range as-is', () => {
+    expect(expandSyncedBounds(null, '2026-08-01', '2026-08-31')).toEqual({ startIso: '2026-08-01', endIso: '2026-08-31' });
+  });
+
+  it('grows the start edge backward when a new fetch reaches further into the past', () => {
+    const bounds = { startIso: '2026-08-01', endIso: '2026-08-31' };
+    expect(expandSyncedBounds(bounds, '2026-01-01', '2026-08-31')).toEqual({ startIso: '2026-01-01', endIso: '2026-08-31' });
+  });
+
+  it('grows the end edge forward when a new fetch reaches further into the future', () => {
+    const bounds = { startIso: '2026-08-01', endIso: '2026-08-31' };
+    expect(expandSyncedBounds(bounds, '2026-08-01', '2026-12-31')).toEqual({ startIso: '2026-08-01', endIso: '2026-12-31' });
+  });
+
+  it('never shrinks — a narrower routine-poll range leaves existing wider bounds untouched', () => {
+    const bounds = { startIso: '2026-01-01', endIso: '2026-12-31' };
+    expect(expandSyncedBounds(bounds, '2026-08-01', '2026-08-31')).toEqual(bounds);
+  });
+});
+
+describe('computeOnDemandFetchRange — deciding what (if anything) a calendar-view navigation needs to fetch', () => {
+  it('fetches the full view range when nothing has been synced yet', () => {
+    expect(computeOnDemandFetchRange(null, '2026-08-01', '2026-08-31')).toEqual({ startIso: '2026-08-01', endIso: '2026-08-31' });
+  });
+
+  it('returns null when the viewed range is already fully covered by synced bounds', () => {
+    const bounds = { startIso: '2026-01-01', endIso: '2026-12-31' };
+    expect(computeOnDemandFetchRange(bounds, '2026-08-01', '2026-08-31')).toBeNull();
+  });
+
+  it('extends only the back edge when the view scrolls before the synced start, leaving the front edge alone', () => {
+    const bounds = { startIso: '2026-08-01', endIso: '2026-08-31' };
+    expect(computeOnDemandFetchRange(bounds, '2026-06-01', '2026-08-15')).toEqual({ startIso: '2026-06-01', endIso: '2026-08-31' });
+  });
+
+  it('extends only the forward edge when the view scrolls past the synced end, leaving the back edge alone', () => {
+    const bounds = { startIso: '2026-08-01', endIso: '2026-08-31' };
+    expect(computeOnDemandFetchRange(bounds, '2026-08-15', '2026-10-01')).toEqual({ startIso: '2026-08-01', endIso: '2026-10-01' });
+  });
+
+  it('extends both edges at once when the view is wider on both sides than synced bounds', () => {
+    const bounds = { startIso: '2026-08-01', endIso: '2026-08-31' };
+    expect(computeOnDemandFetchRange(bounds, '2026-01-01', '2026-12-31')).toEqual({ startIso: '2026-01-01', endIso: '2026-12-31' });
   });
 });

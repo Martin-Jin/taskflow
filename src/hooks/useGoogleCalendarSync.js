@@ -27,19 +27,35 @@ import {
   requestAccessToken,
   disconnectGoogleCalendar as disconnectGoogleCalendarService,
 } from '../services/googleCalendarService';
-import { mergePulledGoogleEvents, hardResetEventsFromGoogle, RECENTLY_DELETED_TTL_MS } from '../services/eventSyncService';
+import {
+  mergePulledGoogleEvents,
+  hardResetEventsFromGoogle,
+  expandSyncedBounds,
+  computeOnDemandFetchRange,
+  RECENTLY_DELETED_TTL_MS,
+} from '../services/eventSyncService';
 
-const EVENTS_HORIZON_DAYS = 28;
-// How far back every fetch reaches — a rolling trailing window, not
-// unbounded history. mergePulledGoogleEvents actively purges any local
-// Google-sourced non-recurring event older than this on every sync (see its
-// own doc comment) — the retention window is enforced going forward as today
-// advances, not just a one-time cutoff. A year is well within what a single
-// browser's localStorage quota can hold for one personal calendar's worth of
-// events (Google Calendar itself has no retention limit — this constant only
-// governs how much of that history Taskflow keeps a local, forward-syncing
-// mirror of).
-const PAST_HORIZON_DAYS = 365;
+// The ROUTINE background sync window (silent re-auth on mount, the periodic
+// poll, connect, and manual pull/rebuild) — a small window centered on
+// TODAY, not on whatever the user happens to be viewing. Kept modest on
+// purpose: every poll tick (every 60s, see below) re-fetches this whole
+// range, and a full year each time (an earlier version of this constant)
+// meant a much larger/paginated fetch on every single tick for a window the
+// user usually isn't even looking at. Widening beyond this now happens
+// on-demand instead — see ensureGoogleRangeSynced below, which fetches
+// additional range only when the calendar VIEW actually scrolls outside
+// what's already synced, and folds it into `googleSyncedRangeBounds` so it
+// stays synced for the rest of the session rather than being re-fetched (or
+// wrongly purged, see eventSyncService's module doc) every time the routine
+// window's own narrower range comes back around.
+const ROUTINE_SYNC_WINDOW_DAYS = 30;
+
+function getRoutineSyncRange() {
+  return {
+    rangeStartIso: toISODate(new Date(Date.now() - ROUTINE_SYNC_WINDOW_DAYS * 86400000)),
+    rangeEndIso: toISODate(new Date(Date.now() + ROUTINE_SYNC_WINDOW_DAYS * 86400000)),
+  };
+}
 
 /**
  * @param {Object} deps
@@ -118,6 +134,21 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     googleEventsHardResetDoneRef.current = googleEventsHardResetDone;
   }, [googleEventsHardResetDone]);
 
+  // Outer bounds (`{ startIso, endIso }`) of the UNION of every range ever
+  // fetched — starts at whatever the routine window covered, then grows
+  // whenever ensureGoogleRangeSynced below fetches further out because the
+  // calendar view scrolled past it. Persisted (not just session-local) so a
+  // reload doesn't forget an on-demand-widened range and let the very next
+  // routine poll purge what it fetched — see eventSyncService's module doc
+  // for that bug. Mirrored into a ref for the same reason
+  // googleEventsHardResetDoneRef is: closures captured by the polling
+  // effect's interval need to see updates without that effect re-running.
+  const [googleSyncedRangeBounds, setGoogleSyncedRangeBounds] = usePersistedState('googleSyncedRangeBounds', null);
+  const googleSyncedRangeBoundsRef = useRef(googleSyncedRangeBounds);
+  useEffect(() => {
+    googleSyncedRangeBoundsRef.current = googleSyncedRangeBounds;
+  }, [googleSyncedRangeBounds]);
+
   // Shared by every fetch call site below (initial silent re-auth, periodic
   // poll, connect, manual pull) — applies the one-time hard reset instead of
   // the normal incremental merge for exactly the first pull after this fix
@@ -127,6 +158,11 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   const applyPulledEvents = useCallback(
     (fetchedEvents, rangeStartIso, rangeEndIso) => {
       const didHardReset = !googleEventsHardResetDoneRef.current;
+      // Union this fetch's own range into everything synced so far BEFORE
+      // merging, so the purge check below uses the union's outer edge
+      // rather than just this call's own (possibly narrower) rangeStartIso
+      // — see eventSyncService's module doc for the bug this avoids.
+      const expandedBounds = expandSyncedBounds(googleSyncedRangeBoundsRef.current, rangeStartIso, rangeEndIso);
       setEvents((prev) =>
         didHardReset
           ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
@@ -136,16 +172,25 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
               rangeStartIso,
               rangeEndIso,
               recentlyDeletedGoogleEventIdsRef.current,
-              recentlyDeletedGoogleEventInstancesRef.current
+              recentlyDeletedGoogleEventInstancesRef.current,
+              Date.now(),
+              expandedBounds.startIso
             )
       );
+      // A hard reset wipes and replaces `events` wholesale — anything
+      // outside THIS fetch's own range is gone regardless of what was synced
+      // before, so the bounds reset to exactly this fetch's range rather than
+      // unioning with (now-stale) prior bounds.
+      const nextBounds = didHardReset ? { startIso: rangeStartIso, endIso: rangeEndIso } : expandedBounds;
+      googleSyncedRangeBoundsRef.current = nextBounds;
+      setGoogleSyncedRangeBounds(nextBounds);
       if (didHardReset) {
         googleEventsHardResetDoneRef.current = true; // synchronous — covers any other already-in-flight closure too
         setGoogleEventsHardResetDone(true);
       }
       return didHardReset;
     },
-    [setEvents, setGoogleEventsHardResetDone]
+    [setEvents, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds]
   );
 
   const markGoogleEventDeleted = useCallback((googleEventId) => {
@@ -205,8 +250,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
           if (googleFetchInFlightRef.current) return;
           googleFetchInFlightRef.current = true;
           try {
-            const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
-            const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+            const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
             const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
             if (!cancelled) {
               const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
@@ -249,8 +293,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       googleFetchInFlightRef.current = true;
       lastGooglePollAtRef.current = Date.now();
       try {
-        const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
-        const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+        const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
         const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
         const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
         if (didHardReset) {
@@ -340,8 +383,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       }
       googleFetchInFlightRef.current = true;
       try {
-        const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
-        const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+        const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
         const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
         const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
         const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
@@ -377,8 +419,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
     try {
-      const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
-      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+      const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
       const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
       const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
@@ -409,6 +450,16 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   // one-time pass already consumed itself (possibly before some other sync
   // fix shipped) and stale/orphaned local events are stuck with no
   // automatic way to clear them again.
+  //
+  // Deliberately rebuilds only the ROUTINE 30/30 window, not the full union
+  // of every range ever on-demand-fetched this session — this button is
+  // meant to be a quick full-refresh/cleanup, not a mechanism for re-walking
+  // every date range the user has ever scrolled the calendar to. Any
+  // on-demand-fetched older/further-out events are wiped along with
+  // everything else (same tradeoff this already made for purely-local manual
+  // events — see this function's own doc comment above) and the synced
+  // bounds reset to exactly the routine window; a subsequent calendar-view
+  // scroll outside it will simply re-fetch on demand again.
   const rebuildEventsFromGoogle = useCallback(async () => {
     if (!googleConnected) return;
     // See googleFetchInFlightRef's doc comment / pullFromGoogleCalendar's
@@ -420,14 +471,16 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
     try {
-      const rangeStartIso = toISODate(new Date(Date.now() - PAST_HORIZON_DAYS * 86400000));
-      const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
+      const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
       setEvents((prev) =>
         hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
       );
       googleEventsHardResetDoneRef.current = true;
       setGoogleEventsHardResetDone(true);
+      const rebuiltBounds = { startIso: rangeStartIso, endIso: rangeEndIso };
+      googleSyncedRangeBoundsRef.current = rebuiltBounds;
+      setGoogleSyncedRangeBounds(rebuiltBounds);
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
@@ -444,7 +497,40 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       setIsPullingGoogleEvents(false);
       googleFetchInFlightRef.current = false;
     }
-  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone]);
+  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds]);
+
+  // ---- On-demand fetch for calendar-view navigation -------------------------
+  // Called by CalendarPage (debounced) whenever the viewed date range
+  // scrolls outside what's currently synced. Reuses googleFetchInFlightRef
+  // rather than a second guard, so an on-demand fetch can't race a routine
+  // poll/pull/connect — if one's already in flight this just no-ops; the
+  // debounce upstream means rapid navigation clicks don't pile up calls
+  // anyway, and the next settled navigation will trigger its own check.
+  const ensureGoogleRangeSynced = useCallback(
+    async (viewStartIso, viewEndIso) => {
+      if (!googleConnected) return;
+      if (googleFetchInFlightRef.current) return;
+      const needed = computeOnDemandFetchRange(googleSyncedRangeBoundsRef.current, viewStartIso, viewEndIso);
+      if (!needed) return; // already fully covered by what's synced so far
+      googleFetchInFlightRef.current = true;
+      try {
+        const { events: fetchedEvents } = await fetchGoogleEvents(needed.startIso, needed.endIso);
+        applyPulledEvents(fetchedEvents, needed.startIso, needed.endIso);
+      } catch (err) {
+        if (err?.isGoogleAuthError) {
+          console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
+          setGoogleConnected(false);
+          setGoogleNeedsReconnect(true);
+          setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+          return;
+        }
+        console.warn('[useGoogleCalendarSync] On-demand range fetch failed', err);
+      } finally {
+        googleFetchInFlightRef.current = false;
+      }
+    },
+    [googleConnected, applyPulledEvents, setGoogleConnected, setNotification]
+  );
 
   // ---- Push blocks to Google Calendar --------------------------------------
   const pushToGoogleCalendar = useCallback(async () => {
@@ -498,6 +584,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     pushToGoogleCalendar,
     rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
+    ensureGoogleRangeSynced,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
     markGoogleEventInstanceDeleted,

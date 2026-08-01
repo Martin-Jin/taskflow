@@ -17,14 +17,25 @@
  * (for potential future use, e.g. avoiding redundant pushes) but never gate
  * this overwrite-on-pull behavior.
  *
- * RETENTION WINDOW: every fetch (see useGoogleCalendarSync's
- * PAST_HORIZON_DAYS/EVENTS_HORIZON_DAYS) only ever covers a ROLLING window
- * from some number of days in the past through some number of days in the
- * future — this app is a forward-looking scheduler, not a full calendar
+ * RETENTION WINDOW: the routine background sync (see useGoogleCalendarSync's
+ * ROUTINE_SYNC_WINDOW_DAYS) only ever covers a small ROLLING window centered
+ * on today — this app is a forward-looking scheduler, not a full calendar
  * archive/history. A non-recurring event that ages out of the past edge of
  * that window is actively purged (see isTooOldToRetain), not just left
  * alone — see the merge policy comment below for the distinction from an
  * event that's merely out of scope for one particular pull.
+ *
+ * That said, the PURGE boundary is deliberately NOT the same thing as any
+ * single pull's own rangeStartIso. useGoogleCalendarSync also fetches
+ * on-demand whenever the calendar view is scrolled outside the routine
+ * window (see its ensureGoogleRangeSynced/computeOnDemandFetchRange), and
+ * once fetched that way, an old event is meant to stay put for the rest of
+ * the session rather than getting purged again the moment the NEXT routine
+ * poll runs its own narrower range. So the purge check takes an explicit
+ * `purgeBoundaryIso` — the outer edge of the UNION of every range ever
+ * synced (see expandSyncedBounds), not just the current call's own
+ * rangeStartIso — falling back to rangeStartIso when the caller has no wider
+ * union to offer (e.g. in tests that only care about the base policy).
  * ============================================================================
  */
 
@@ -48,12 +59,13 @@ function isInScopeForPull(event, rangeStartIso, rangeEndIso) {
 
 /**
  * True if a local Google-sourced, non-recurring event has aged out of the
- * retention window entirely (older than `rangeStartIso`, the trailing edge of
- * every fetch — see useGoogleCalendarSync's PAST_HORIZON_DAYS) and should be
- * actively purged rather than merely "left untouched because this pull says
- * nothing about it" (see isInScopeForPull's own doc comment, which still
- * governs the FUTURE side of the range: an event beyond the forward horizon
- * is left alone since it'll simply roll into view later).
+ * retention window entirely (older than `purgeBoundaryIso` — the trailing
+ * edge of the UNION of every range ever synced, not just this call's own
+ * rangeStartIso, see this file's module doc) and should be actively purged
+ * rather than merely "left untouched because this pull says nothing about
+ * it" (see isInScopeForPull's own doc comment, which still governs the
+ * FUTURE side of the range: an event beyond the forward horizon is left
+ * alone since it'll simply roll into view later).
  *
  * Only ever applies to a plain (non-recurring) event — a recurring master's
  * own stored `date` is just its DTSTART and can be arbitrarily old while the
@@ -64,8 +76,8 @@ function isInScopeForPull(event, rangeStartIso, rangeEndIso) {
  * too) it's already dropped via the normal "in scope but missing from the
  * pull" path below — no separate retention check needed for it.
  */
-function isTooOldToRetain(event, rangeStartIso) {
-  return !event.recurrenceRule && event.date < rangeStartIso;
+function isTooOldToRetain(event, purgeBoundaryIso) {
+  return !event.recurrenceRule && event.date < purgeBoundaryIso;
 }
 
 /**
@@ -189,6 +201,7 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
  * @param {Map<string, number>} [recentlyDeletedGoogleEventIds] - googleEventId -> delete-issued timestamp (ms); defaults to empty (no suppression)
  * @param {Map<string, number>} [recentlyDeletedGoogleEventInstances] - `${masterGoogleEventId}::${occurrenceDateIso}` -> delete-issued timestamp (ms); defaults to empty (no suppression)
  * @param {number} [nowMs] - defaults to Date.now(); overridable for testing
+ * @param {string} [purgeBoundaryIso] - trailing edge of the UNION of every range ever synced (see expandSyncedBounds); defaults to rangeStartIso when the caller has no wider union to offer
  * @returns {import('../types').CalendarEvent[]}
  */
 export function mergePulledGoogleEvents(
@@ -198,7 +211,8 @@ export function mergePulledGoogleEvents(
   rangeEndIso,
   recentlyDeletedGoogleEventIds = new Map(),
   recentlyDeletedGoogleEventInstances = new Map(),
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  purgeBoundaryIso = rangeStartIso
 ) {
   const manualOwnedGoogleEventIds = new Set(
     existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
@@ -222,7 +236,7 @@ export function mergePulledGoogleEvents(
     // Aged out of the retention window entirely — purge it, don't just leave
     // it untouched (see isTooOldToRetain's own doc comment for why this is
     // NOT the same as the generic "out of scope, leave alone" case below).
-    if (isTooOldToRetain(e, rangeStartIso)) return false;
+    if (isTooOldToRetain(e, purgeBoundaryIso)) return false;
 
     // Not in the pulled set — either out of scope for this pull (leave
     // alone) or in scope and gone (Google-side delete, drop it).
@@ -261,4 +275,54 @@ export function hardResetEventsFromGoogle(
   return pulledGoogleEvents
     .filter((e) => !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs))
     .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs));
+}
+
+/**
+ * ============================================================================
+ * Synced-range bounds — pure helpers backing useGoogleCalendarSync's
+ * "routine 30/30 window, widened on demand by calendar navigation" policy.
+ * ============================================================================
+ * `bounds` is `{ startIso, endIso }` (or `null` before anything's ever been
+ * synced) — the outer edges of the UNION of every range fetched so far, not
+ * just the most recent one. Extracted as plain functions (no hook/ref
+ * access) so the on-demand-fetch decision and the purge-boundary fix can be
+ * unit tested directly, per this repo's convention for cloud-sync's own
+ * fingerprint/merge-decision logic (see useCloudSync.js).
+ */
+
+/**
+ * Folds a freshly-fetched [rangeStartIso, rangeEndIso] into the running
+ * union of everything ever synced. The union only ever GROWS — an on-demand
+ * fetch that reached further back/forward than the routine window stays
+ * "in" for the rest of the session even once a later, narrower routine poll
+ * runs (see eventSyncService's module doc for the purge bug this prevents).
+ */
+export function expandSyncedBounds(bounds, rangeStartIso, rangeEndIso) {
+  if (!bounds) return { startIso: rangeStartIso, endIso: rangeEndIso };
+  return {
+    startIso: rangeStartIso < bounds.startIso ? rangeStartIso : bounds.startIso,
+    endIso: rangeEndIso > bounds.endIso ? rangeEndIso : bounds.endIso,
+  };
+}
+
+/**
+ * Given the currently synced union and the date range the calendar view is
+ * now showing, returns the additional range that needs fetching to fully
+ * cover the view, or `null` if the view already falls entirely within what's
+ * synced. Returns the smallest single range covering whatever's missing on
+ * either edge (not just the missing sliver) so one fetch call is enough even
+ * if the view needs widening on both sides at once — mergePulledGoogleEvents
+ * is idempotent for anything it re-fetches, so re-covering already-synced
+ * ground alongside the genuinely new part costs nothing but one extra
+ * (still single) API round trip.
+ */
+export function computeOnDemandFetchRange(bounds, viewStartIso, viewEndIso) {
+  if (!bounds) return { startIso: viewStartIso, endIso: viewEndIso };
+  const needsBack = viewStartIso < bounds.startIso;
+  const needsForward = viewEndIso > bounds.endIso;
+  if (!needsBack && !needsForward) return null;
+  return {
+    startIso: needsBack ? viewStartIso : bounds.startIso,
+    endIso: needsForward ? viewEndIso : bounds.endIso,
+  };
 }
