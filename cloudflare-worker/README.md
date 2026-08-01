@@ -77,13 +77,16 @@ model ids get retired over time.
 
 ## Google Calendar persistent auth
 
-The `/calendar/exchange-code` and `/calendar/refresh-token` routes (see
-`src/googleCalendarAuthRoutes.js`) let the app get a Google Calendar
-connection that survives page refreshes without repeated login popups: the
-one-time consent grant's authorization code is redeemed here for a Google
-**refresh token**, stored in Firestore, and used to mint fresh access tokens
-on demand — the client never holds the refresh token or the OAuth client
-secret.
+The `/calendar/exchange-code`, `/calendar/refresh-token`, and
+`/calendar/disconnect` routes (see `src/googleCalendarAuthRoutes.js`) let the
+app get a Google Calendar connection that survives page refreshes without
+repeated login popups: the one-time consent grant's authorization code is
+redeemed here for a Google **refresh token**, stored in Firestore, and used
+to mint fresh access tokens on demand — the client never holds the refresh
+token or the OAuth client secret. `/calendar/disconnect` is the reverse: a
+user-initiated disconnect revokes that stored refresh token at Google (so the
+grant also disappears from myaccount.google.com/permissions) and deletes it
+from Firestore.
 
 Unlike AI Quick Add, this needs the following configured **once**, by you
 (the deployer), not per-visitor:

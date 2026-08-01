@@ -665,6 +665,7 @@ export function SchedulerProvider({ children }) {
     connectGoogleCalendar,
     pullFromGoogleCalendar,
     pushToGoogleCalendar,
+    disconnectGoogleCalendar,
     markGoogleEventDeleted,
     unmarkGoogleEventDeleted,
   } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast });
@@ -2106,6 +2107,7 @@ export function SchedulerProvider({ children }) {
       connectGoogleCalendar,
       pullFromGoogleCalendar,
       pushToGoogleCalendar,
+      disconnectGoogleCalendar,
       syncNow,
       exportBackup,
       importBackupFromFile,
@@ -2190,6 +2192,7 @@ export function SchedulerProvider({ children }) {
       connectGoogleCalendar,
       pullFromGoogleCalendar,
       pushToGoogleCalendar,
+      disconnectGoogleCalendar,
       syncNow,
       exportBackup,
       importBackupFromFile,
