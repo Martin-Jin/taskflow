@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.53.0',
+    date: '2026-08-02',
+    title: 'Google sign-in no longer strands you on a broken Firebase page',
+    changes: [
+      "Google sign-in's full-page redirect fallback could leave you stranded on Firebase's own OAuth handler page showing a raw \"missing initial state\" error (seen on Firefox for Android, among other browsers) — a page outside the app that couldn't be recovered from. Sign-in now uses a pop-up only; if the browser blocks it, you get a clear in-app message telling you to allow pop-ups and try again, instead of ever leaving the app.",
+    ],
+  },
+  {
     version: '1.52.0',
     date: '2026-08-02',
     title: "Fixed mobile sign-in prompt not showing when triggered from Settings",

@@ -70,7 +70,7 @@ const TABS = [
 ];
 
 function AppShell() {
-  const { needsBrowserSignIn, dismissBrowserSignInPrompt } = useAuth();
+  const { authError, clearAuthError, needsBrowserSignIn, dismissBrowserSignInPrompt } = useAuth();
   const [tab, setTab] = useState('dashboard');
   // Device-local UI state (which project/view is selected) — not user data,
   // so deliberately left out of BACKUP_FIELDS.
@@ -173,6 +173,16 @@ function AppShell() {
     if (!hasSeenTutorial) setShowTour(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // AuthContext has no UI of its own to surface sign-in failures (e.g. a
+  // pop-up blocked by the browser) — bridge it into the app's existing
+  // notification toast instead of leaving it as silent, unreachable state.
+  useEffect(() => {
+    if (!authError) return;
+    setNotification({ type: 'error', message: authError });
+    clearAuthError();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authError]);
 
   // Auto-pop the "What's new" changelog once per version bump, for
   // returning visitors only — a brand-new visitor already gets the guided

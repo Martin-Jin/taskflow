@@ -7,43 +7,31 @@
  * cloud-sync effects in SchedulerContext/ThemeContext for the actual sync.
  * This context only owns "who is signed in", not the app data itself.
  *
- * SIGN-IN FLOW: tries a popup first (no full-page navigation, feels
- * instant on desktop). Popups are blocked or unreliable in some mobile
- * browser contexts, so on popup-specific failures we transparently fall
- * back to a full-page redirect instead — completed via getRedirectResult()
- * in the effect below when the user lands back on the app.
+ * SIGN-IN FLOW: popup only, deliberately — no signInWithRedirect fallback.
+ * Redirect sends the user through Firebase's own intermediate OAuth handler
+ * page (`<project>.firebaseapp.com/__/auth/handler`) and back, which depends
+ * on a sessionStorage marker surviving that whole round-trip. That's broken
+ * in more places than just iOS home-screen apps: e.g. Firefox for Android's
+ * tab/storage handling can drop it too, in which case the user gets stranded
+ * on Firebase's own error page ("missing initial state") *outside* our app —
+ * a page we have no code running on and can't catch or redirect past. Popup
+ * failures are surfaced as a clear in-app message instead, so the user never
+ * leaves the app to a page we can't recover from.
  *
- * Neither popup nor redirect works when TaskFlow is launched from an iOS/
- * Android home-screen icon (standalone display mode): that context's storage
- * is isolated from the regular browser, so the sessionStorage marker Firebase
- * writes before redirecting is gone by the time the user lands back (surfaces
- * as `auth/missing-initial-state`). login() detects standalone mode up front
- * and skips straight to prompting the user to continue in their browser,
- * rather than attempting a flow that's known to fail there.
+ * Popup itself doesn't work when TaskFlow is launched from an iOS/Android
+ * home-screen icon (standalone display mode) either — window.open there
+ * typically just kicks the user out to the regular browser mid-flow. login()
+ * detects standalone mode up front and skips straight to prompting the user
+ * to continue in their regular browser instead of attempting popup there.
  * ============================================================================
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-  signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-} from 'firebase/auth';
+import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
 import { clearAllPersisted } from '../utils/persistence';
 
 const AuthContext = createContext(null);
-
-// Popup failures worth silently retrying as a redirect instead of surfacing
-// as an error — anything else (e.g. the user just closing the popup) should
-// stay a no-op rather than bouncing them through a full navigation too.
-const POPUP_FALLBACK_CODES = new Set([
-  'auth/popup-blocked',
-  'auth/operation-not-supported-in-this-environment',
-  'auth/cancelled-popup-request',
-]);
 
 export function isStandaloneDisplayMode() {
   if (typeof window === 'undefined') return false;
@@ -57,20 +45,6 @@ export function AuthProvider({ children }) {
   const [needsBrowserSignIn, setNeedsBrowserSignIn] = useState(false);
 
   useEffect(() => {
-    // Completes a sign-in that fell back to signInWithRedirect() below, once
-    // Firebase redirects the user back to the app. A no-op if this load
-    // wasn't the result of a redirect.
-    getRedirectResult(auth).catch((err) => {
-      if (err?.code === 'auth/missing-initial-state') {
-        setAuthError(
-          "Sign-in didn't complete because the browser lost track of the sign-in session — this happens when opening TaskFlow from a home-screen icon. Open TaskFlow in your browser (not the installed icon) to sign in."
-        );
-        return;
-      }
-      console.error('[AuthContext] Redirect sign-in failed', err);
-      setAuthError(err?.message || String(err));
-    });
-
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
@@ -87,12 +61,14 @@ export function AuthProvider({ children }) {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      if (POPUP_FALLBACK_CODES.has(err?.code)) {
-        await signInWithRedirect(auth, googleProvider);
+      // "closed-by-user"/"cancelled" — the user changed their mind, not an error to surface.
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') return;
+      if (err?.code === 'auth/popup-blocked' || err?.code === 'auth/operation-not-supported-in-this-environment') {
+        setAuthError(
+          "Google sign-in couldn't open a pop-up in this browser. Allow pop-ups for this site (check your address bar for a blocked pop-up icon) and try again, or use a different browser."
+        );
         return;
       }
-      // "closed-by-user"/"cancelled" — the user changed their mind, not an error to surface.
-      if (err?.code === 'auth/popup-closed-by-user') return;
       console.error('[AuthContext] Sign-in failed', err);
       setAuthError(err?.message || String(err));
     }
@@ -100,6 +76,10 @@ export function AuthProvider({ children }) {
 
   function dismissBrowserSignInPrompt() {
     setNeedsBrowserSignIn(false);
+  }
+
+  function clearAuthError() {
+    setAuthError(null);
   }
 
   async function logout() {
@@ -119,7 +99,16 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, authLoading, authError, login, logout, needsBrowserSignIn, dismissBrowserSignInPrompt }}
+      value={{
+        user,
+        authLoading,
+        authError,
+        login,
+        logout,
+        needsBrowserSignIn,
+        dismissBrowserSignInPrompt,
+        clearAuthError,
+      }}
     >
       {children}
     </AuthContext.Provider>
