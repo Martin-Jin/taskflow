@@ -12,6 +12,14 @@
  * browser contexts, so on popup-specific failures we transparently fall
  * back to a full-page redirect instead — completed via getRedirectResult()
  * in the effect below when the user lands back on the app.
+ *
+ * Neither popup nor redirect works when TaskFlow is launched from an iOS/
+ * Android home-screen icon (standalone display mode): that context's storage
+ * is isolated from the regular browser, so the sessionStorage marker Firebase
+ * writes before redirecting is gone by the time the user lands back (surfaces
+ * as `auth/missing-initial-state`). login() detects standalone mode up front
+ * and skips straight to prompting the user to continue in their browser,
+ * rather than attempting a flow that's known to fail there.
  * ============================================================================
  */
 
@@ -37,16 +45,28 @@ const POPUP_FALLBACK_CODES = new Set([
   'auth/cancelled-popup-request',
 ]);
 
+export function isStandaloneDisplayMode() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
+  const [needsBrowserSignIn, setNeedsBrowserSignIn] = useState(false);
 
   useEffect(() => {
     // Completes a sign-in that fell back to signInWithRedirect() below, once
     // Firebase redirects the user back to the app. A no-op if this load
     // wasn't the result of a redirect.
     getRedirectResult(auth).catch((err) => {
+      if (err?.code === 'auth/missing-initial-state') {
+        setAuthError(
+          "Sign-in didn't complete because the browser lost track of the sign-in session — this happens when opening TaskFlow from a home-screen icon. Open TaskFlow in your browser (not the installed icon) to sign in."
+        );
+        return;
+      }
       console.error('[AuthContext] Redirect sign-in failed', err);
       setAuthError(err?.message || String(err));
     });
@@ -60,6 +80,10 @@ export function AuthProvider({ children }) {
 
   async function login() {
     setAuthError(null);
+    if (isStandaloneDisplayMode()) {
+      setNeedsBrowserSignIn(true);
+      return;
+    }
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
@@ -72,6 +96,10 @@ export function AuthProvider({ children }) {
       console.error('[AuthContext] Sign-in failed', err);
       setAuthError(err?.message || String(err));
     }
+  }
+
+  function dismissBrowserSignInPrompt() {
+    setNeedsBrowserSignIn(false);
   }
 
   async function logout() {
@@ -90,7 +118,11 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, authLoading, authError, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{ user, authLoading, authError, login, logout, needsBrowserSignIn, dismissBrowserSignInPrompt }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
 }
 
