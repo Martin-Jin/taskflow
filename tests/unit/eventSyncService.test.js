@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mergePulledGoogleEvents, RECENTLY_DELETED_TTL_MS } from '../../src/services/eventSyncService.js';
+import { mergePulledGoogleEvents, hardResetEventsFromGoogle, RECENTLY_DELETED_TTL_MS } from '../../src/services/eventSyncService.js';
 
 function googleEvent(overrides = {}) {
   return {
@@ -63,6 +63,60 @@ describe('mergePulledGoogleEvents — base merge policy (no suppression)', () =>
     const pulled = googleEvent({ id: 'g2', googleEventId: 'g2' });
     const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd);
     expect(result).toEqual([pulled]);
+  });
+});
+
+describe('mergePulledGoogleEvents — manual-event echo suppression', () => {
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('does not duplicate a manual event when the pull echoes back the copy it was pushed as', () => {
+    // Reproduces the "add an event, refresh, get two" bug: addManualEvent
+    // fire-and-forget pushes to Google then patches googleEventId onto the
+    // still-source:'manual' row, so the very next pull sees that same event
+    // come back from Google with no local GOOGLE-sourced row claiming its id.
+    const manual = { id: 'm1', source: 'manual', googleEventId: 'g1', date: '2026-08-05', title: 'Dentist' };
+    const echoed = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-08-05', title: 'Dentist' });
+    const result = mergePulledGoogleEvents([manual], [echoed], rangeStart, rangeEnd);
+    expect(result).toEqual([manual]);
+  });
+
+  it('still adds an unrelated brand-new pulled event alongside an untouched manual event', () => {
+    const manual = { id: 'm1', source: 'manual', googleEventId: 'g1', date: '2026-08-05', title: 'Dentist' };
+    const other = googleEvent({ id: 'g2', googleEventId: 'g2', date: '2026-08-06', title: 'Meeting' });
+    const result = mergePulledGoogleEvents([manual], [other], rangeStart, rangeEnd);
+    expect(result).toEqual([manual, other]);
+  });
+
+  it('does not suppress a pulled event merely because a DIFFERENT manual event exists', () => {
+    const manual = { id: 'm1', source: 'manual', googleEventId: null, date: '2026-08-05', title: 'Blocked time' };
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-08-06' });
+    const result = mergePulledGoogleEvents([manual], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([manual, pulled]);
+  });
+});
+
+describe('hardResetEventsFromGoogle — one-time full wipe-and-rebuild', () => {
+  it('returns exactly the pulled batch, discarding anything existing was never even passed', () => {
+    // Unlike mergePulledGoogleEvents, this takes NO existingEvents argument
+    // at all — it is an unconditional wipe, explicitly authorized as a
+    // one-time recovery for accumulated duplicate/orphaned local state that
+    // a partial reconcile couldn't reliably chase down (see the file's own
+    // doc comment). Any local-only manual event with no Google counterpart
+    // is gone after this runs; that's the deliberate, disclosed tradeoff.
+    const pulled = [googleEvent({ id: 'g1', googleEventId: 'g1' }), googleEvent({ id: 'g2', googleEventId: 'g2' })];
+    expect(hardResetEventsFromGoogle(pulled)).toEqual(pulled);
+  });
+
+  it('returns an empty array for an empty pull', () => {
+    expect(hardResetEventsFromGoogle([])).toEqual([]);
+  });
+
+  it('still applies recently-deleted suppression to the pulled batch', () => {
+    const now = 1_000_000;
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1' });
+    const recentlyDeleted = new Map([['g1', now - 1000]]);
+    expect(hardResetEventsFromGoogle([pulled], recentlyDeleted, now)).toEqual([]);
   });
 });
 

@@ -27,7 +27,7 @@ import {
   requestAccessToken,
   disconnectGoogleCalendar as disconnectGoogleCalendarService,
 } from '../services/googleCalendarService';
-import { mergePulledGoogleEvents, RECENTLY_DELETED_TTL_MS } from '../services/eventSyncService';
+import { mergePulledGoogleEvents, hardResetEventsFromGoogle, RECENTLY_DELETED_TTL_MS } from '../services/eventSyncService';
 
 const EVENTS_HORIZON_DAYS = 28;
 
@@ -58,6 +58,50 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
   // propagated can't resurrect an event we just deleted (see
   // eventSyncService.mergePulledGoogleEvents and SchedulerContext.deleteEvent).
   const recentlyDeletedGoogleEventIdsRef = useRef(new Map());
+
+  // Guards the one-time hardResetEventsFromGoogle cleanup below so it only
+  // ever runs once per device — see hardResetEventsFromGoogle's own doc
+  // comment for what it's cleaning up and why it's a deliberate one-time
+  // full wipe (explicitly authorized by the user) rather than a general
+  // merge policy. Named distinctly (and stored under a fresh persisted key)
+  // from an earlier, narrower "reconcile" pass this replaces, so it still
+  // fires even for a device where that earlier pass already ran. Mirrored
+  // into a ref (kept in sync below) rather than read directly from state
+  // inside applyPulledEvents, because the periodic-poll effect further down
+  // only re-runs on `googleConnected` changing — its `poll` closure captures
+  // whatever `applyPulledEvents` existed at that render, so if that callback
+  // closed over the boolean by value it would keep re-deciding "not done
+  // yet" on every 5-minute tick forever, re-running the wipe indefinitely
+  // instead of exactly once. Reading a ref instead means every captured
+  // closure still observes the flag flipping.
+  const [googleEventsHardResetDone, setGoogleEventsHardResetDone] = usePersistedState('googleEventsHardResetDone', false);
+  const googleEventsHardResetDoneRef = useRef(googleEventsHardResetDone);
+  useEffect(() => {
+    googleEventsHardResetDoneRef.current = googleEventsHardResetDone;
+  }, [googleEventsHardResetDone]);
+
+  // Shared by every fetch call site below (initial silent re-auth, periodic
+  // poll, connect, manual pull) — applies the one-time hard reset instead of
+  // the normal incremental merge for exactly the first pull after this fix
+  // ships, then flips the flag so every subsequent call uses the normal
+  // merge. Returns whether this call was the reset pass, so callers can let
+  // the user know their calendar was just wiped and rebuilt.
+  const applyPulledEvents = useCallback(
+    (fetchedEvents, rangeStartIso, rangeEndIso) => {
+      const didHardReset = !googleEventsHardResetDoneRef.current;
+      setEvents((prev) =>
+        didHardReset
+          ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current)
+          : mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current)
+      );
+      if (didHardReset) {
+        googleEventsHardResetDoneRef.current = true; // synchronous — covers any other already-in-flight closure too
+        setGoogleEventsHardResetDone(true);
+      }
+      return didHardReset;
+    },
+    [setEvents, setGoogleEventsHardResetDone]
+  );
 
   const markGoogleEventDeleted = useCallback((googleEventId) => {
     if (!googleEventId) return;
@@ -93,7 +137,13 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
           const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
           const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
           if (!cancelled) {
-            setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
+            const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+            if (didHardReset) {
+              setNotification({
+                type: 'info',
+                message: 'Rebuilt your synced events from Google Calendar to clean up a past sync issue.',
+              });
+            }
             if (failedCalendars.length > 0) {
               console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
             }
@@ -127,7 +177,13 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
         const rangeStartIso = toISODate(new Date());
         const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
         const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
+        const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+        if (didHardReset) {
+          setNotification({
+            type: 'info',
+            message: 'Rebuilt your synced events from Google Calendar to clean up a past sync issue.',
+          });
+        }
       } catch (err) {
         if (err?.isGoogleAuthError) {
           console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
@@ -180,21 +236,22 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       const rangeStartIso = toISODate(new Date());
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
+      const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+      const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
-          message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.`,
+          message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.${resetSuffix}`,
         });
       } else {
-        setNotification({ type: 'success', message: 'Connected to Google Calendar.' });
+        setNotification({ type: 'success', message: `Connected to Google Calendar.${resetSuffix}` });
       }
     } catch (err) {
       console.error(err);
       const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
       setNotification({ type: 'error', message: `Google Calendar connection failed: ${reason}` });
     }
-  }, [setGoogleConnected, setNotification, setEvents]);
+  }, [setGoogleConnected, setNotification, applyPulledEvents]);
 
   // ---- Pull from Google Calendar (manual) ----------------------------------
   const pullFromGoogleCalendar = useCallback(async () => {
@@ -204,14 +261,15 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
       const rangeStartIso = toISODate(new Date());
       const rangeEndIso = toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000));
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      setEvents((prev) => mergePulledGoogleEvents(prev, fetchedEvents, rangeStartIso, rangeEndIso, recentlyDeletedGoogleEventIdsRef.current));
+      const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+      const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
-          message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.`,
+          message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.${resetSuffix}`,
         });
       } else {
-        setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
+        setNotification({ type: 'success', message: `Pulled latest events from Google Calendar.${resetSuffix}` });
       }
     } catch (err) {
       console.error(err);
@@ -220,7 +278,7 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
     } finally {
       setIsPullingGoogleEvents(false);
     }
-  }, [googleConnected, setEvents, setNotification]);
+  }, [googleConnected, setNotification, applyPulledEvents]);
 
   // ---- Push blocks to Google Calendar --------------------------------------
   const pushToGoogleCalendar = useCallback(async () => {

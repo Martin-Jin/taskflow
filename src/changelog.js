@@ -17,6 +17,36 @@
 
 export const CHANGELOG = [
   {
+    version: '1.33.34',
+    date: '2026-08-01',
+    title: 'More Google Calendar sync cleanup; smart "every ..." detection for new events',
+    changes: [
+      "Replaced the previous partial duplicate-event cleanup with a full one-time rebuild from Google Calendar on your next sync — this fixes leftover duplicate/orphaned events the partial version could still miss, at the cost of also clearing out any purely local blocked-time events that were never pushed to Google. You'll see a notice when it runs.",
+      'Deleting an event (or a single occurrence of one) that turns out to already be gone on Google\'s side no longer shows a "failed to delete" error — that\'s the outcome a delete is going for anyway.',
+      'Typing "every 2 weeks", "every Mon and Wed", etc. into a new event\'s title now auto-fills the Repeat field and strips the phrase from the title, the same as it already works for tasks.',
+    ],
+  },
+  {
+    version: '1.33.33',
+    date: '2026-08-01',
+    title: 'Fixed duplicate/reappearing Google Calendar events; added recurring events in Taskflow',
+    changes: [
+      'Fixed a bug where adding an event synced it to Google Calendar but then created a second duplicate copy in Taskflow on the next sync.',
+      "The next sync after this update will do a one-time cleanup of any duplicate/stale events left over from that bug — you'll see a notice when it happens.",
+      "If pushing a newly-added event to Google Calendar fails, you'll now see an error instead of it silently never showing up there.",
+      'Events you create in Taskflow now render with the same styling as synced calendar events, instead of a red striped "blocked time" look.',
+      'You can now create a recurring event directly in Taskflow (daily/weekly/monthly, with an optional end) — it syncs to Google Calendar as a real repeating event.',
+    ],
+  },
+  {
+    version: '1.33.32',
+    date: '2026-08-01',
+    title: 'Fixed recurring Google Calendar events reappearing after delete',
+    changes: [
+      'Deleting a recurring Google Calendar booking that repeats without a true recurrence rule (e.g. a weekly appointment synced as separate events) now removes the whole series — or just the occurrences from that date on, per the scope you pick — instead of only the one clicked occurrence, which used to come back on the next sync.',
+    ],
+  },
+  {
     version: '1.33.31',
     date: '2026-08-01',
     title: 'Added a Google Calendar Disconnect button',

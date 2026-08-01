@@ -1192,7 +1192,7 @@ export default function WeekView({
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
+                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     // Desktop gets the richer HoverPreviewCard instead (see
                     // below) — mobile has no hover, so it keeps the native

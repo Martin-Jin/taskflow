@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseRRule,
+  buildRRuleString,
   generateRuleOccurrences,
   truncateRuleUntil,
   ruleEndDate,
@@ -44,6 +45,35 @@ describe('parseRRule', () => {
 
   it('drops unrecognized BYDAY codes but keeps the valid ones', () => {
     expect(parseRRule('FREQ=WEEKLY;BYDAY=MO,XX,FR').byDay).toEqual([1, 5]);
+  });
+});
+
+describe('buildRRuleString — inverse of parseRRule, for the event-creation UI', () => {
+  it('builds a bare daily rule with no extras', () => {
+    expect(buildRRuleString({ freq: 'DAILY' })).toBe('FREQ=DAILY');
+  });
+
+  it('omits INTERVAL when it is 1 (the default), includes it otherwise', () => {
+    expect(buildRRuleString({ freq: 'WEEKLY', interval: 1 })).toBe('FREQ=WEEKLY');
+    expect(buildRRuleString({ freq: 'WEEKLY', interval: 3 })).toBe('FREQ=WEEKLY;INTERVAL=3');
+  });
+
+  it('includes BYDAY only for WEEKLY, ignoring it for DAILY/MONTHLY', () => {
+    expect(buildRRuleString({ freq: 'WEEKLY', byDay: [1, 3] })).toBe('FREQ=WEEKLY;BYDAY=MO,WE');
+    expect(buildRRuleString({ freq: 'MONTHLY', byDay: [1, 3] })).toBe('FREQ=MONTHLY');
+  });
+
+  it('prefers COUNT over UNTIL when both are given', () => {
+    expect(buildRRuleString({ freq: 'DAILY', count: 5, until: '2026-12-31' })).toBe('FREQ=DAILY;COUNT=5');
+  });
+
+  it('builds UNTIL with dashes stripped, matching parseRRule\'s expected format', () => {
+    expect(buildRRuleString({ freq: 'DAILY', until: '2026-12-31' })).toBe('FREQ=DAILY;UNTIL=20261231');
+  });
+
+  it('round-trips through parseRRule for a full rule', () => {
+    const rule = { freq: 'WEEKLY', interval: 2, byDay: [1, 3], count: 10, until: null };
+    expect(parseRRule(buildRRuleString(rule))).toEqual(rule);
   });
 });
 

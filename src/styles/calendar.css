@@ -803,19 +803,6 @@
   border-left-style: dotted;
 }
 
-.cal-event.manual {
-  cursor: pointer;
-  background: repeating-linear-gradient(
-    45deg,
-    color-mix(in srgb, var(--color-danger) 12%, transparent),
-    color-mix(in srgb, var(--color-danger) 12%, transparent) 4px,
-    var(--color-bg-surface) 4px,
-    var(--color-bg-surface) 8px
-  );
-  border-left-color: var(--color-danger);
-  color: var(--color-text-primary);
-}
-
 /* CalendarEvents get full drag/resize parity with ScheduledBlocks (see
    WeekView) — this class layers the grab cursor + lane-positioning support
    on top of .cal-event's existing dashed/striped look without touching its

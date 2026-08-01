@@ -83,7 +83,14 @@ function isRecentlyDeletedLocally(googleEventId, recentlyDeletedGoogleEventIds, 
  *   - A local Google-sourced event whose `date` falls OUTSIDE the queried
  *     range is left untouched (this pull says nothing about it either way).
  *   - Any pulled event with no matching local googleEventId is a brand-new
- *     Google event and is simply added.
+ *     Google event and is simply added — UNLESS that googleEventId is
+ *     already claimed by an existing manual (source:'manual') event, i.e.
+ *     one this app instance itself created and fire-and-forget pushed to
+ *     Google (see SchedulerContext.addManualEvent). Without this, the very
+ *     next pull after that push resolves would see "no local GOOGLE-sourced
+ *     row owns this id yet" and add Google's own copy of the event as a
+ *     second, duplicate row — the manual row is always the canonical one for
+ *     an id it already owns, so the echoed pulled copy is dropped instead.
  *   - EXCEPTION to all of the above: any pulled event whose googleEventId
  *     this app instance itself deleted within the last RECENTLY_DELETED_TTL_MS
  *     is dropped from the pulled batch entirely before any of the above
@@ -109,8 +116,14 @@ export function mergePulledGoogleEvents(
   recentlyDeletedGoogleEventIds = new Map(),
   nowMs = Date.now()
 ) {
+  const manualOwnedGoogleEventIds = new Set(
+    existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
+  );
+
   const freshPulled = pulledGoogleEvents.filter(
-    (e) => !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs)
+    (e) =>
+      !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs) &&
+      !manualOwnedGoogleEventIds.has(e.googleEventId)
   );
 
   const pulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
@@ -126,4 +139,28 @@ export function mergePulledGoogleEvents(
   });
 
   return [...survivingLocal, ...freshPulled];
+}
+
+/**
+ * One-time hard reset, run for the first sync after the manual-echo-
+ * duplicate fix shipped (see useGoogleCalendarSync's `googleEventsHardReset
+ * Done` flag) — an EXPLICIT user-requested tidy-up of accumulated bad local
+ * event state (duplicate pairs, orphaned rows, and separately, malformed
+ * Google-side instance ids from unrelated recurring-event edge cases) that
+ * built up faster than a partial reconcile could reliably chase down.
+ *
+ * Unlike every other function in this file, this DISCARDS the entire local
+ * `events` array — including `source:'manual'` events that were never even
+ * pushed to Google — and replaces it wholesale with exactly what this pull
+ * returns. This is a deliberate, one-time, user-authorized data loss
+ * tradeoff, not a general-purpose merge policy: any purely-local blocked
+ * time with no Google counterpart is gone after this runs, and any
+ * already-past Google event outside `fetchEvents`' rolling horizon won't
+ * come back either (future events roll back into view as the horizon
+ * advances day by day; past ones don't). Do not reuse this as a template for
+ * a future migration — mergePulledGoogleEvents above is the correct
+ * steady-state policy.
+ */
+export function hardResetEventsFromGoogle(pulledGoogleEvents, recentlyDeletedGoogleEventIds = new Map(), nowMs = Date.now()) {
+  return pulledGoogleEvents.filter((e) => !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs));
 }
