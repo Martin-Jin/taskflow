@@ -30,20 +30,35 @@
    .taskpage-sticky-header-backdrop) rather than directly on this element, so
    its opacity can fade in via `--header-blur-opacity` (set from JS in
    TaskListPanel, based on how far .main-content has scrolled) without also
-   fading the title/search text sitting above it. */
+   fading the title/search text sitting above it. The negative margin-top
+   pulls it up out of .main-content's 40px padding-top so there's less dead
+   space above the title (matches .settings-search-bar's same pull, in
+   global.css, for a consistent gap across both pages) — undone on mobile
+   below, where that padding is already tight. */
 .taskpage-sticky-header {
   position: sticky;
-  top: 12px;
+  top: 8px;
   z-index: 120;
   border-radius: var(--radius-md);
   margin-bottom: 14px;
+  margin-top: -16px;
 }
 
+/* Bleeds past this element's own box on every side rather than a plain
+   inset: 0, so the blur reads as one continuous wash over the whole top of
+   the page instead of a rounded card floating over a visibly-unblurred
+   strip: up by `top`'s sticky offset (so it reaches the true top of
+   .main-content's scrollport with no gap), sideways by .main-content's own
+   20px padding (so it spans edge to edge, clipped there rather than
+   bleeding into the sidebar since that's a separate grid area), and down by
+   an extra 10px past the search bar. */
 .taskpage-sticky-header-backdrop {
   position: absolute;
-  inset: 0;
+  top: -8px;
+  left: -20px;
+  right: -20px;
+  bottom: -10px;
   z-index: -1;
-  border-radius: inherit;
   background: color-mix(in srgb, var(--color-bg-page) 94%, transparent);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
@@ -159,12 +174,14 @@
    .taskpage-header-row), so the title row and search bar float and blur as
    one block instead of only this row detaching on its own. Top margin is
    deliberately tighter than the old standalone toolbar's 14px now that it
-   sits directly under the title row inside the same floating block. */
+   sits directly under the title row inside the same floating block —
+   though still enough to read as its own row rather than crowding the
+   title above it. */
 .tasklist-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 10px;
+  margin-top: 16px;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -391,6 +408,14 @@
 .task-row-badges .badge {
   padding: 1px 7px;
   font-weight: 500;
+}
+
+/* Mobile's .main-content padding-top is already tight (see the
+   .app-shell.is-mobile rules in global.css) — pulling the header up further
+   on top of that would crowd it into the topbar instead of just closing a
+   gap. */
+.app-shell.is-mobile .taskpage-sticky-header {
+  margin-top: 0;
 }
 
 @media (max-width: 639px) {

@@ -1266,20 +1266,44 @@ input.search-bar-input {
    the settings column, instead of SearchBar's own 320px toolbar cap. Unlike
    .tasklist-toolbar (a wrapper row around .search-bar), this element IS the
    .search-bar itself, so it can be the sticky element directly — its own
-   parent (the settings column) is tall enough to give it room to float. */
+   parent (the settings column) is tall enough to give it room to float.
+   Same `top` offset and the same negative margin-top pull as
+   .taskpage-sticky-header (tasklist.css) — undone on mobile below, for the
+   same reason — so both pages' floating search bars sit a consistent
+   distance from the top of the page. */
 .settings-search-bar {
   max-width: none;
   position: sticky;
-  top: 12px;
+  top: 8px;
   z-index: 120;
-  /* Same floating-block blur as .tasklist-toolbar (tasklist.css) — only
-     .search-bar-input paints an opaque background, so without this the gap
-     around it let scrolled content show straight through once it went
-     sticky. */
+  border-radius: var(--radius-md);
+  margin-top: -16px;
+}
+
+.app-shell.is-mobile .settings-search-bar {
+  margin-top: 0;
+}
+
+/* The actual blur/background, on a ::before rather than directly on this
+   element — same bleed trick as .taskpage-sticky-header-backdrop
+   (tasklist.css): up by `top`'s sticky offset, sideways by .main-content's
+   own 20px padding, and 10px past this element's own bottom edge — so the
+   blur reads as one continuous wash over the whole top of the page instead
+   of a card floating over a visibly-unblurred strip. Only .search-bar-input
+   paints its own opaque background, so without this the gap around it let
+   scrolled content show straight through once it went sticky. */
+.settings-search-bar::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: -20px;
+  right: -20px;
+  bottom: -10px;
+  z-index: -1;
   background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border-radius: var(--radius-md);
+  pointer-events: none;
 }
 
 .search-bar-dropdown {
