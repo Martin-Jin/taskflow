@@ -848,14 +848,14 @@ select:focus-visible,
    with the app's other anchored popups.
    ---------------------------------------------------------------------- */
 .help-tooltip-trigger {
-  border-color: transparent;
+  border: none;
   background: transparent;
   color: var(--color-text-secondary);
 }
 
 .help-tooltip-trigger:hover {
   background: var(--color-bg-surface-hover);
-  border-color: transparent;
+  border: none;
 }
 
 .help-tooltip-popover {

@@ -56,7 +56,7 @@ import {
   Search,
   Sparkles,
 } from 'lucide-react';
-import { isAIQuickAddConfigured } from './services/aiQuickAddService';
+import { isAIQuickAddConfigured, getStoredApiKey } from './services/aiQuickAddService';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch), so
@@ -128,6 +128,7 @@ function AppShell() {
     notification,
     setNotification,
     clearNotification,
+    requestSettingsSection,
     settingsSectionRequest,
     actionToasts,
     dismissActionToast,
@@ -288,7 +289,22 @@ function AppShell() {
             id: 'aiQuickAdd',
             label: 'Quick Add with AI',
             icon: Sparkles,
-            run: () => { setTab('tasks'); setAiQuickAddSignal((n) => n + 1); },
+            run: () => {
+              // Mirrors AddTaskFabGroup's handleAIQuickAdd key check — the palette
+              // entry point must not open the modal when no provider key is saved.
+              const hasKey = !!getStoredApiKey('anthropic') || !!getStoredApiKey('gemini');
+              if (!hasKey) {
+                setNotification({
+                  type: 'error',
+                  message: 'Add an Anthropic or Gemini API key in Settings → Integrations first.',
+                  actionLabel: 'Open Settings',
+                  onAction: () => requestSettingsSection('integrations'),
+                });
+                return;
+              }
+              setTab('tasks');
+              setAiQuickAddSignal((n) => n + 1);
+            },
           },
         ]
       : []),
