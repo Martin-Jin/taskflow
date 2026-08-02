@@ -12,7 +12,6 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X, CalendarClock } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
@@ -25,7 +24,6 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
-import { useMenuPosition } from '../../hooks/useMenuPosition';
 
 function getWeekStart(iso) {
   const dow = dayOfWeek(iso);
@@ -63,32 +61,15 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
   const [creatingEvent, setCreatingEvent] = useState(null); // { date, startTime, endTime } while the "block time" modal is open
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showViewMenu, setShowViewMenu] = useState(false);
-  // Mobile-only speed-dial state for the bottom-right FAB (see .calendar-fab
-  // below) — expands into "Re-balance schedule" + "New event" mini-FABs
-  // instead of the desktop FAB's single always-visible action. Desktop opens
-  // a small anchored popover menu instead (same shell as TaskDetailModal's
-  // "..." menu — see .detail-menu-dropdown/.detail-menu-item in forms.css)
-  // so it can expose the "Schedule manually for today" option like mobile does.
+  // Speed-dial state for the bottom-right FAB (see .calendar-fab below) —
+  // expands into mini-FABs instead of the FAB's single always-visible
+  // action: mobile gets Re-balance schedule + Plan today + New event,
+  // desktop gets Schedule manually for today + New event.
   const [fabExpanded, setFabExpanded] = useState(false);
-  const [fabMenuOpen, setFabMenuOpen] = useState(false); // desktop popover
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
   const fabTriggerRef = useRef(null);
-  const {
-    menuRef: fabMenuRef,
-    mode: fabMenuMode,
-    style: fabMenuStyle,
-  } = useMenuPosition({
-    isOpen: fabMenuOpen,
-    anchorRef: fabTriggerRef,
-    onClose: () => setFabMenuOpen(false),
-    computeAnchored: (anchorRect, menuRect) => ({
-      left: anchorRect.right - menuRect.width,
-      top: undefined,
-      bottom: window.innerHeight - anchorRect.top + 8,
-    }),
-  });
   const {
     blocks,
     events,
@@ -544,40 +525,60 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
       {/* Floating action button — replaces the old inline "New event"
           toolbar button, matching TaskListPanel's "Add task" FAB style
           (see .calendar-fab in calendar.css, mirroring .add-task-btn). On
-          desktop it still opens "New event" directly with a single click. On
           mobile it expands into a three-item speed-dial (Re-balance schedule +
-          Plan today + New event) instead, since those toolbar buttons were
-          removed from the mobile toolbar above to save vertical space —
-          mirrors AddTaskFabGroup's mobile expand/collapse pattern. */}
+          Plan today + New event), since those toolbar buttons were removed
+          from the mobile toolbar above to save vertical space. On desktop it
+          expands into a two-item speed-dial (Schedule manually for today +
+          New event) as a pair of mini-FABs — same .fab-mini shell/animation
+          as mobile's, not a dropdown list — mirrors AddTaskFabGroup's
+          expand/collapse pattern throughout. */}
       <div className="calendar-fab-group" ref={fabGroupRef}>
-        {isMobile && fabExpanded && (
+        {fabExpanded && (
           <>
-            <button
-              className="btn btn-primary fab-mini"
-              data-tour="rebalance"
-              onClick={() => {
-                setFabExpanded(false);
-                runRebalance();
-              }}
-              disabled={isLoading}
-              aria-label="Re-balance schedule"
-              title="Re-balance schedule"
-            >
-              <Zap size={16} />
-            </button>
-            <button
-              className="btn btn-primary fab-mini"
-              data-tour="plan-today"
-              onClick={() => {
-                setFabExpanded(false);
-                runPlanToday();
-              }}
-              disabled={isLoading}
-              aria-label="Plan today"
-              title="Plan today"
-            >
-              <Sunrise size={16} />
-            </button>
+            {isMobile && (
+              <>
+                <button
+                  className="btn btn-primary fab-mini"
+                  data-tour="rebalance"
+                  onClick={() => {
+                    setFabExpanded(false);
+                    runRebalance();
+                  }}
+                  disabled={isLoading}
+                  aria-label="Re-balance schedule"
+                  title="Re-balance schedule"
+                >
+                  <Zap size={16} />
+                </button>
+                <button
+                  className="btn btn-primary fab-mini"
+                  data-tour="plan-today"
+                  onClick={() => {
+                    setFabExpanded(false);
+                    runPlanToday();
+                  }}
+                  disabled={isLoading}
+                  aria-label="Plan today"
+                  title="Plan today"
+                >
+                  <Sunrise size={16} />
+                </button>
+              </>
+            )}
+            {!isMobile && (
+              <button
+                className="btn btn-primary fab-mini"
+                data-tour="manual-plan-today"
+                onClick={() => {
+                  setFabExpanded(false);
+                  toggleManualPlanToday(!manualPlanTodayMode);
+                }}
+                aria-label={manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
+                title={manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
+              >
+                <CalendarClock size={16} />
+              </button>
+            )}
             <button
               className="btn btn-primary fab-mini"
               data-tour="new-event"
@@ -600,64 +601,12 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
           ref={fabTriggerRef}
           className="btn btn-primary calendar-fab"
           data-tour={isMobile ? undefined : 'new-event'}
-          onClick={() => {
-            if (isMobile) {
-              setFabExpanded((v) => !v);
-            } else {
-              // Desktop: open a small anchored popover menu exposing the
-              // "Schedule manually for today" action (mirrors mobile speed-dial).
-              setFabMenuOpen((v) => !v);
-            }
-          }}
-          aria-haspopup={isMobile ? undefined : 'menu'}
-          aria-label={isMobile && fabExpanded ? 'Close' : 'Actions'}
-          aria-expanded={isMobile ? fabExpanded : fabMenuOpen}
+          onClick={() => setFabExpanded((v) => !v)}
+          aria-label={fabExpanded ? 'Close' : 'Actions'}
+          aria-expanded={fabExpanded}
         >
-          {isMobile ? (fabExpanded ? <X size={22} /> : <PenSquare size={22} />) : <PenSquare size={22} />}
+          {fabExpanded ? <X size={22} /> : <PenSquare size={22} />}
         </button>
-        {/* Desktop popover menu for the FAB — same anchored-dropdown shell as
-            TaskDetailModal's "..." menu (useMenuPosition + .detail-menu-dropdown/
-            .detail-menu-item in forms.css) instead of one-off popover CSS. */}
-        {!isMobile &&
-          fabMenuOpen &&
-          createPortal(
-            <ul
-              ref={fabMenuRef}
-              className={`detail-menu-dropdown ${fabMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
-              role="menu"
-              style={fabMenuMode === 'anchored' ? fabMenuStyle : undefined}
-            >
-              <li role="none">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="detail-menu-item"
-                  onClick={() => {
-                    setFabMenuOpen(false);
-                    toggleManualPlanToday(!manualPlanTodayMode);
-                  }}
-                >
-                  <CalendarClock size={14} aria-hidden="true" />
-                  {manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
-                </button>
-              </li>
-              <li role="none">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="detail-menu-item"
-                  onClick={() => {
-                    setFabMenuOpen(false);
-                    setCreatingEvent({ date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()), startTime: '', endTime: '' });
-                  }}
-                >
-                  <Plus size={14} aria-hidden="true" />
-                  New event
-                </button>
-              </li>
-            </ul>,
-            document.body
-          )}
       </div>
 
       {selectedBlock && (
