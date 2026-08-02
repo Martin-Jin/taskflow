@@ -24,6 +24,7 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import HelpTooltip from '../Common/HelpTooltip';
 
 function getWeekStart(iso) {
   const dow = dayOfWeek(iso);
@@ -463,18 +464,31 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               below (see .calendar-fab) instead of wrapping onto its own row. */}
           {!isMobile && (
             <>
-              <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
-                <Zap size={14} />
-                Re-balance schedule
-              </button>
+              <div className="calendar-toolbar-action-group">
+                <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
+                  <Zap size={14} />
+                  Re-balance schedule
+                </button>
+                <HelpTooltip label="How does Re-balance schedule work?">
+                  Re-plans every unlocked block across your work hours and buffer days — weighting urgency by due
+                  date, priority, and whatever depends on it, splitting work across free gaps, and falling back to a
+                  task's fixed time if it has one.
+                </HelpTooltip>
+              </div>
               {/* Lighter sibling of Re-balance: only touches today's unlocked
                   blocks instead of the whole visible horizon — see
                   algorithms/rebalanceEngine.planToday for why this can't just
                   reuse the full rebalance and discard the rest. */}
-              <button className="btn" data-tour="plan-today" onClick={runPlanToday} disabled={isLoading}>
-                <Sunrise size={14} />
-                Plan today
-              </button>
+              <div className="calendar-toolbar-action-group">
+                <button className="btn" data-tour="plan-today" onClick={runPlanToday} disabled={isLoading}>
+                  <Sunrise size={14} />
+                  Plan today
+                </button>
+                <HelpTooltip label="How does Plan today work?">
+                  Same dependency-aware, urgency-weighted, gap-splitting logic as Re-balance schedule, but only
+                  touches today's unlocked blocks — every other day is left exactly as it was.
+                </HelpTooltip>
+              </div>
             </>
           )}
           {/* Only useful once Google Calendar is actually connected — hidden

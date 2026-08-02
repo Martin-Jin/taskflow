@@ -114,6 +114,7 @@ import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitl
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import DependencyPicker from '../Common/DependencyPicker';
+import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
 import SmartChips from '../Common/SmartChips';
@@ -1151,7 +1152,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
                       {dependencyOptions.length > 0 && (
                         <li role="none">
-                          <DetailField icon={Link2} label="Depends on">
+                          <DetailField
+                            icon={Link2}
+                            label="Depends on"
+                            labelExtra={
+                              <HelpTooltip label="What does this do?">
+                                A blocked task can't be marked complete or auto-scheduled until every task it depends on is
+                                done first.
+                              </HelpTooltip>
+                            }
+                          >
                             <DependencyPicker options={dependencyOptions} selectedIds={dependsOn} onChange={setDependsOn} />
                           </DetailField>
                         </li>
@@ -1735,7 +1745,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               </DetailField>
               )}
 
-              <DetailField icon={Repeat} label="Repeat">
+              <DetailField
+                icon={Repeat}
+                label="Repeat"
+                labelExtra={
+                  <HelpTooltip label="Recurrence syntax help">
+                    The text field accepts free-text recurrence phrases like "every 2 weeks", "every mon and wed", or
+                    "every other friday".
+                  </HelpTooltip>
+                }
+              >
                 {isRecurring && recurrenceDays && recurrenceDays.length > 0 ? (
                   repeatEditText !== null ? (
                     <SmartRecurrenceInput

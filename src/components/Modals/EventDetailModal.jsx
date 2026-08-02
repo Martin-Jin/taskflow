@@ -41,6 +41,7 @@ import { buildRRuleString, parseRRule } from '../../utils/recurrenceExpansion';
 import { findRecurrencePhrase, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { stripMatchedText } from '../../utils/smartParse';
 import DetailField from '../Common/DetailField';
+import HelpTooltip from '../Common/HelpTooltip';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 
 const SCOPE_OPTIONS = [
@@ -401,7 +402,16 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
             </DetailField>
           )}
           {repeatFieldVisible && (
-            <DetailField icon={Repeat} label="Repeat">
+            <DetailField
+              icon={Repeat}
+              label="Repeat"
+              labelExtra={
+                <HelpTooltip label="Recurrence syntax help">
+                  The text field accepts free-text recurrence phrases like "every 2 weeks", "every mon and wed", or
+                  "every other friday".
+                </HelpTooltip>
+              }
+            >
               <label
                 className="form-checkbox-row"
                 style={{ cursor: repeatControlsApply ? 'pointer' : 'not-allowed' }}

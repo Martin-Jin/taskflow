@@ -98,6 +98,7 @@ export default function TaskListPanel({
   onResolveBoardProject,
   onOpenManageProjects,
   openAddTaskSignal,
+  openAIQuickAddSignal,
   onOpenSettings,
   onOpenSearch,
 }) {
@@ -112,43 +113,79 @@ export default function TaskListPanel({
   // from anywhere in the app to open "Add task" here, since this modal's open
   // state is local to the Tasks tab rather than lifted — App.jsx switches to
   // this tab and increments the signal, this just reacts to the change.
-  // lastHandledSignalRef starts at the *current* signal value (not 0) so that
-  // remounting this component (e.g. switching away from and back to the Tasks
-  // tab) doesn't immediately reopen the modal just because the signal was
-  // already bumped earlier in the session — only a genuine new increment
-  // after this mount should open it.
+  //
+  // A signal-bumping caller always does `setTab('tasks')` + the increment in
+  // the same event handler (same React batch), so on the *first* trigger of
+  // a session this component can mount for the first time already carrying
+  // the bumped value — plain `useRef(openAddTaskSignal)` would then capture
+  // that already-bumped value as its own "last handled" baseline and the
+  // effect below would see no change, silently no-opping the very trigger
+  // that mounted it. useState's lazy initializer runs before the ref would,
+  // but the actual fix is tracking "has this component observed the signal
+  // at least once" (hasHandledRef) independently of the value comparison —
+  // the first render always opens the modal if openAddTaskSignal is already
+  // truthy (non-zero) at mount, and every render after that only reopens it
+  // on a genuine new increment, so a later remount (e.g. switching away from
+  // and back to the Tasks tab) doesn't spuriously reopen it just because the
+  // signal was already bumped earlier in the session.
   const lastHandledSignalRef = useRef(openAddTaskSignal);
+  const hasHandledSignalRef = useRef(false);
   useEffect(() => {
-    if (openAddTaskSignal !== lastHandledSignalRef.current) {
-      lastHandledSignalRef.current = openAddTaskSignal;
-      setShowAddModal(true);
-    }
+    const isFirstObservation = !hasHandledSignalRef.current;
+    hasHandledSignalRef.current = true;
+    const changed = openAddTaskSignal !== lastHandledSignalRef.current;
+    lastHandledSignalRef.current = openAddTaskSignal;
+    if (changed || (isFirstObservation && openAddTaskSignal)) setShowAddModal(true);
   }, [openAddTaskSignal]);
+  // Same signal pattern, for the command palette's "Quick Add with AI" action
+  // (see App.jsx's aiQuickAddSignal) — opens the List view's own AI Quick Add
+  // modal directly; Board view gets the equivalent effect on the same prop,
+  // forwarded down below, since it owns its own copy of this modal's state.
+  const lastHandledAISignalRef = useRef(openAIQuickAddSignal);
+  const hasHandledAISignalRef = useRef(false);
+  useEffect(() => {
+    const isFirstObservation = !hasHandledAISignalRef.current;
+    hasHandledAISignalRef.current = true;
+    const changed = openAIQuickAddSignal !== lastHandledAISignalRef.current;
+    lastHandledAISignalRef.current = openAIQuickAddSignal;
+    if (changed || (isFirstObservation && openAIQuickAddSignal)) setShowAIQuickAdd(true);
+  }, [openAIQuickAddSignal]);
   // Fades in the sticky header's blurred backdrop (see .taskpage-sticky-header)
-  // as the page scrolls, rather than snapping the blur on the instant it
-  // docks — measured against .main-content (the app's one real scroll
-  // container, see global.css) since that's what actually scrolls this
-  // page's content underneath it. Driven directly off scrollTop rather than
-  // the header's distance to its sticky `top` offset: that resting distance
-  // is only ~28px on desktop and effectively 0 on mobile (a narrower
-  // .main-content top padding there — see global.css's `.is-mobile
-  // .main-content`), so it doesn't leave enough room for a distance-based
-  // fade to start at 0 on every screen size the way a scrollTop-based one does.
+  // and pulls it a little closer to the top of the screen, as the page
+  // scrolls, rather than snapping both the instant it docks — measured
+  // against .main-content (the app's one real scroll container, see
+  // global.css) since that's what actually scrolls this page's content
+  // underneath it. Driven directly off scrollTop rather than the header's
+  // distance to its sticky `top` offset: that resting distance is only
+  // ~28px on desktop and effectively 0 on mobile (a narrower .main-content
+  // top padding there — see global.css's `.is-mobile .main-content`), so it
+  // doesn't leave enough room for a distance-based fade to start at 0 on
+  // every screen size the way a scrollTop-based one does. The same fraction
+  // drives both effects so they land together instead of at two different
+  // scroll speeds. The docking distance itself is done here (a JS-driven
+  // translateY), not via `position: sticky`'s own `top` offset, since a
+  // negative `top` only changes *when* the element locks, not how far above
+  // its resting position it ends up once locked — there's no sticky-only
+  // way to make "docked" measurably closer to the top than "resting".
   const stickyHeaderRef = useRef(null);
-  const [headerBlurOpacity, setHeaderBlurOpacity] = useState(0);
+  const [headerScrollFraction, setHeaderScrollFraction] = useState(0);
   useEffect(() => {
     const node = stickyHeaderRef.current;
     if (!node) return undefined;
     const scrollContainer = node.closest('.main-content');
     if (!scrollContainer) return undefined;
-    const fadeRange = 32; // px of scroll the fade plays out over
+    const fadeRange = 32; // px of scroll the fade/dock-in plays out over
     function handleScroll() {
-      setHeaderBlurOpacity(Math.min(1, Math.max(0, scrollContainer.scrollTop / fadeRange)));
+      setHeaderScrollFraction(Math.min(1, Math.max(0, scrollContainer.scrollTop / fadeRange)));
     }
     handleScroll();
     scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
     return () => scrollContainer.removeEventListener('scroll', handleScroll);
   }, [view]);
+  // How much closer to the top the header sits once fully docked, on top of
+  // its resting distance (pulled up via `margin-top` in tasklist.css).
+  const HEADER_DOCK_PULL_PX = 16;
+  const headerDockOffsetPx = headerScrollFraction * HEADER_DOCK_PULL_PX;
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [filterByView, setFilterByView] = useState(DEFAULT_FILTER_BY_VIEW);
   const filter = filterByView[view]; // active | completed | all | noDueDate
@@ -354,7 +391,11 @@ export default function TaskListPanel({
 
   return (
     <div className="taskpage">
-      <div className="taskpage-sticky-header" ref={stickyHeaderRef} style={{ '--header-blur-opacity': headerBlurOpacity }}>
+      <div
+        className="taskpage-sticky-header"
+        ref={stickyHeaderRef}
+        style={{ '--header-blur-opacity': headerScrollFraction, transform: `translateY(-${headerDockOffsetPx}px)` }}
+      >
         <div className="taskpage-sticky-header-backdrop" aria-hidden="true" />
         <div className="taskpage-header-row">
           <div className="taskpage-project-header">
@@ -444,6 +485,7 @@ export default function TaskListPanel({
           onProjectChange={onResolveBoardProject}
           filter={filter}
           onOpenSearch={isMobile ? onOpenSearch : undefined}
+          openAIQuickAddSignal={openAIQuickAddSignal}
         />
       )}
       {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}

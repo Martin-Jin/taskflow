@@ -247,40 +247,42 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   }, [settingsSectionRequest?.requestId]);
 
   return (
-    <div className="settings-search-bar-wrap">
-      <div className="settings-search-bar-backdrop" aria-hidden="true" />
-      <div className="search-bar settings-search-bar" ref={sectionSearchRef}>
-        <div className="search-bar-field">
-          <span className="search-bar-icon">
-            <Search size={14} />
-          </span>
-          <input
-            type="text"
-            className="search-bar-input"
-            value={sectionQuery}
-            onChange={(e) => setSectionQuery(e.target.value)}
-            onFocus={() => setIsSectionSearchFocused(true)}
-            placeholder="Search settings…"
-            aria-label="Search settings"
-          />
-        </div>
-        {showSectionDropdown && (
-          <div className="search-bar-dropdown">
-            <div className="search-bar-dropdown-group">
-              {matchingSections.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className="search-bar-dropdown-item"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => goToSection(s.id)}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+    <>
+      <div className="settings-search-bar-wrap">
+        <div className="settings-search-bar-backdrop" aria-hidden="true" />
+        <div className="search-bar settings-search-bar" ref={sectionSearchRef}>
+          <div className="search-bar-field">
+            <span className="search-bar-icon">
+              <Search size={14} />
+            </span>
+            <input
+              type="text"
+              className="search-bar-input"
+              value={sectionQuery}
+              onChange={(e) => setSectionQuery(e.target.value)}
+              onFocus={() => setIsSectionSearchFocused(true)}
+              placeholder="Search settings…"
+              aria-label="Search settings"
+            />
           </div>
-        )}
+          {showSectionDropdown && (
+            <div className="search-bar-dropdown">
+              <div className="search-bar-dropdown-group">
+                {matchingSections.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="search-bar-dropdown-item"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => goToSection(s.id)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
@@ -1222,6 +1224,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
       {showChangelogModal && <ChangelogModal onClose={() => setShowChangelogModal(false)} />}
       {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
       </div>
-    </div>
+    </>
   );
 }

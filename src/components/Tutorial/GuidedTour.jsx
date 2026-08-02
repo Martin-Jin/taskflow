@@ -11,7 +11,7 @@
  * `hasSeenTutorial` flag) and replayable anytime from Settings.
  */
 
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -106,6 +106,23 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
   // starts as a guess so the very first position computation has something
   // to work with before that measurement effect has run.
   const [tooltipHeight, setTooltipHeight] = useState(TOOLTIP_HEIGHT_ESTIMATE);
+  // Which way the last goNext/goBack moved — read by the desktopOnly skip
+  // effect below so skipping continues in the same direction the visitor
+  // was already navigating, instead of always skipping forward.
+  const skipDirection = useRef('next');
+
+  // Steps flagged `desktopOnly` (e.g. Manual Plan Today, whose toggle has no
+  // mobile equivalent at all) skip past themselves as soon as they'd become
+  // current on a mobile viewport — otherwise the locate effect below would
+  // just time out and fall back to a spotlight-less tooltip describing a
+  // control the visitor can't reach.
+  useEffect(() => {
+    if (!isMobile) return;
+    const step = GUIDED_TOUR_STEPS[stepIndex];
+    if (!step.desktopOnly) return;
+    setStepIndex((i) => clamp(i + (skipDirection.current === 'back' ? -1 : 1), 0, GUIDED_TOUR_STEPS.length - 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIndex, isMobile]);
 
   const step = GUIDED_TOUR_STEPS[stepIndex];
   const isFirst = stepIndex === 0;
@@ -204,10 +221,12 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       requestClose();
       return;
     }
+    skipDirection.current = 'next';
     setStepIndex((i) => i + 1);
   }
 
   function goBack() {
+    skipDirection.current = 'back';
     setStepIndex((i) => Math.max(0, i - 1));
   }
 

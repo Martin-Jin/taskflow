@@ -838,6 +838,42 @@ select:focus-visible,
 }
 
 /* ----------------------------------------------------------------------
+   HelpTooltip (src/components/Common/HelpTooltip.jsx) — small "?" icon
+   button + popover reused wherever a control needs a sentence or two of
+   inline explanation (DependencyPicker, SmartRecurrenceInput, the
+   Re-balance/Plan-today calendar buttons). Trigger reuses .btn/.btn-icon's
+   ghost look (same idea as .ai-quickadd-help-btn) so it doesn't compete
+   visually with real action buttons; the popover itself borrows
+   .select-menu-dropdown's surface/border/shadow language for consistency
+   with the app's other anchored popups.
+   ---------------------------------------------------------------------- */
+.help-tooltip-trigger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.help-tooltip-trigger:hover {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
+.help-tooltip-popover {
+  width: max-content;
+  max-width: 260px;
+  z-index: 200;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  animation: dropdown-in var(--duration-fast) var(--ease-standard);
+}
+
+/* ----------------------------------------------------------------------
    ProjectActionsMenu (src/components/Common/ProjectActionsMenu.jsx) —
    shared "⋯" popover for Rename/Pin/Delete, used by both the sidebar rows
    and the List/Board project header.
@@ -1296,13 +1332,14 @@ input.search-bar-input {
   position: sticky;
   top: 0;
   z-index: 120;
-  margin-top: -16px;
-  /* The column's own `gap: 20` (SettingsPanel.jsx) reads as barely-there
-     once this bar is floating/blurred right above the first card — its own
-     bottom blur bleed (18px, see .settings-search-bar-backdrop below) eats
-     into that gap visually. A dedicated margin-bottom restores real
-     breathing room between the floating bar and "Account & sync". */
-  margin-bottom: 12px;
+  /* Unlike .taskpage-sticky-header, this bar doesn't need a different
+     resting vs. docked distance — it's pulled up by the same fixed amount
+     either way, just further than before to sit a bit higher on the page. */
+  margin-top: -24px;
+  /* Breathing room between the floating bar and "Account & sync" below it
+     (a sibling element now, not a nested column with its own leading gap —
+     see SettingsPanel.jsx). */
+  margin-bottom: 50px;
 }
 
 .app-shell.is-mobile .settings-search-bar-wrap {

@@ -54,6 +54,20 @@ export const GUIDED_TOUR_STEPS = [
     body: "A lighter version of Re-balance that only fills today's remaining free time, leaving every other day exactly as it was. You can also drag a task straight out of the Unscheduled list above the calendar onto any day to place it yourself.",
   },
   {
+    // Desktop-only feature — the toggle only renders in the desktop FAB
+    // speed-dial (see CalendarPage.jsx's `!isMobile` branch around
+    // data-tour="manual-plan-today"), with no mobile equivalent at all, so
+    // this step is skipped entirely on mobile (see GuidedTour's
+    // `desktopOnly` handling) rather than falling back to a spotlight-less
+    // tooltip describing a control the visitor can't actually reach.
+    desktopOnly: true,
+    tab: 'calendar',
+    selector: '[data-tour="manual-plan-today"]',
+    placement: 'bottom',
+    title: 'Schedule manually for today',
+    body: "Toggle this on to take over today's plan yourself: today's auto-scheduled blocks move into an Unscheduled Today tray above the calendar so nothing is lost, and you drag each one onto the time you want. Toggle off to hand today back to auto-scheduling.",
+  },
+  {
     tab: 'tasks',
     view: 'list',
     selector: '[data-tour="nav-tasks"]',
