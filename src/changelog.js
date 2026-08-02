@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.65.0',
+    date: '2026-08-02',
+    title: 'Fixed a third false "no free time" conflict for fixed-time recurring tasks',
+    changes: [
+      'Fixed a bug where a recurring task with a fixed practice/routine time (e.g. Piano, or a daily task like Practice questions) could report "no free time left" for a specific day even though the calendar clearly showed open time later that day — this happened when that day\'s fixed time slot had already passed (or was otherwise unavailable) and the occurrence had no other day to fall back to. It now uses any other free time that same day instead of giving up. A real scheduling collision (something else genuinely booked into that exact time) still reports a specific conflict as before.',
+    ],
+  },
+  {
     version: '1.64.0',
     date: '2026-08-02',
     title: 'Fixed a second false "no free time" scheduling conflict',
