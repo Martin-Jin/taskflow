@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.63.0',
+    date: '2026-08-02',
+    title: "Manual 'Plan Today' follow-ups: unscheduled tray, cross-device sync",
+    changes: [
+      "The Unscheduled tray (for dragging unplaced tasks onto a day) is shown again whenever there's unplaced work, regardless of whether Manual Plan Today mode is on — it had been unintentionally hidden outside that mode.",
+      "Manual Plan Today's on/off state, and any auto-scheduled blocks set aside while it's on, now travel with backups and cross-device cloud sync instead of staying stuck on one device.",
+    ],
+  },
+  {
     version: '1.62.0',
     date: '2026-08-02',
     title: 'Fixed false "no free time" scheduling conflicts',

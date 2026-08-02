@@ -46,19 +46,42 @@ function describeDay(dateIso) {
   return formatDisplayDate(dateIso);
 }
 
-export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, onClose }) {
+/**
+ * The day a conflict entry "occurred" on: the conflict's own `dueDate` (set
+ * by allocator.js's overflow-push — see its own comment) if present,
+ * otherwise falling back to the task's `dueDate` for older overflow entries
+ * that predate that field. Exported so its grouping/sort behavior — in
+ * particular, that entries sharing a task but carrying DIFFERENT `dueDate`s
+ * (e.g. a recurring task with multiple missed occurrences) key and sort by
+ * their own conflict date, not the task's, which is what previously caused
+ * same-day conflicts across different tasks/occurrences to collapse into
+ * one incorrectly-grouped "day" — is covered by a standalone unit test
+ * rather than only by rendering this modal.
+ */
+export function conflictDayKey(conflictItem) {
+  return conflictItem.dueDate || conflictItem.task?.dueDate || null;
+}
+
+/**
+ * Attaches each conflict's resolved task and sorts by conflictDayKey, undated
+ * entries trailing last — the shape StatListModal's `items` prop expects.
+ * Pure and exported so the grouping/sort behavior is unit-testable without
+ * rendering the modal.
+ */
+export function buildConflictItems(conflicts, tasks) {
   const taskById = new Map(tasks.map((t) => [t.id, t]));
-  const items = conflicts
+  return conflicts
     .map((c) => ({ ...c, task: taskById.get(c.taskId) }))
     .filter((c) => c.task)
-    // The day a conflict "occurred" on is the task's own due date (the day
-    // the allocator was trying to place it into) — group and sort by that so
-    // same-day conflicts read as one section, undated tasks trailing last.
     .sort((a, b) => {
-      const da = a.dueDate || a.task.dueDate || '9999-99-99';
-      const db = b.dueDate || b.task.dueDate || '9999-99-99';
+      const da = conflictDayKey(a) || '9999-99-99';
+      const db = conflictDayKey(b) || '9999-99-99';
       return da < db ? -1 : da > db ? 1 : 0;
     });
+}
+
+export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, onClose }) {
+  const items = buildConflictItems(conflicts, tasks);
 
   // Jumping to a day switches tabs away from wherever this modal is open, so
   // (unlike the old "open the task's edit modal on top" behavior) it also
@@ -77,8 +100,8 @@ export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, 
       onClose={onClose}
       renderItem={(item, index) => {
         const Icon = REASON_ICON[item.reason?.type] || AlertTriangle;
-        const dayKey = item.dueDate || item.task.dueDate || null;
-        const isNewDay = index === 0 || dayKey !== (items[index - 1].dueDate || items[index - 1].task.dueDate || null);
+        const dayKey = conflictDayKey(item);
+        const isNewDay = index === 0 || dayKey !== conflictDayKey(items[index - 1]);
         const dayLabel = describeDay(dayKey);
         return (
           <React.Fragment key={item.taskId}>

@@ -327,6 +327,33 @@ function getDescendantIds(taskId, tasks) {
   return descendants;
 }
 
+/**
+ * Pure decision for enabling Manual Plan Today mode: which of today's blocks
+ * get pulled out to make room for a manual schedule, and which are left
+ * alone. Only auto-scheduled blocks dated `todayIso` are removed — locked/
+ * manual blocks and every other day are untouched. Exported (alongside
+ * planDisableManualPlanToday below) so this decision is unit-testable
+ * without rendering SchedulerContext — same "extract the pure decision"
+ * pattern as useCloudSync.js's computeFingerprint/planRemoteDataMerge.
+ */
+export function planEnableManualPlanToday(blocks, todayIso) {
+  const removed = blocks.filter((b) => b.isAutoScheduled && b.date === todayIso);
+  const remaining = blocks.filter((b) => !(b.isAutoScheduled && b.date === todayIso));
+  return { removed, remaining };
+}
+
+/**
+ * Pure decision for disabling Manual Plan Today mode: merges back the blocks
+ * planEnableManualPlanToday previously set aside, skipping any that already
+ * match an existing block id (avoids duplicating a block something else —
+ * e.g. a rebalance run while the mode was on — already recreated).
+ */
+export function planDisableManualPlanToday(blocks, savedAutoScheduledBlocksForToday) {
+  const existingIds = new Set(blocks.map((b) => b.id));
+  const toRestore = savedAutoScheduledBlocksForToday.filter((b) => !existingIds.has(b.id));
+  return [...blocks, ...toRestore];
+}
+
 export function SchedulerProvider({ children }) {
   const { user } = useAuth();
   // Owned live by ThemeContext (which wraps this provider — see App.jsx) —
@@ -536,12 +563,11 @@ export function SchedulerProvider({ children }) {
         // Remove any auto-scheduled blocks that landed on today so the
         // user can build a manual day without engine-placed blocks colliding.
         commit((current) => {
-          const removed = current.blocks.filter((b) => b.isAutoScheduled && b.date === todayIso);
-          const remaining = current.blocks.filter((b) => !(b.isAutoScheduled && b.date === todayIso));
+          const plan = planEnableManualPlanToday(current.blocks, todayIso);
           // Persist the removed blocks so we can restore them when the mode
           // is turned off again.
-          setSavedAutoScheduledBlocksForToday(removed);
-          return { tasks: current.tasks, blocks: remaining };
+          setSavedAutoScheduledBlocksForToday(plan.removed);
+          return { tasks: current.tasks, blocks: plan.remaining };
         }, 'Enabled manual plan for today');
         setManualPlanTodayMode(true);
       } else {
@@ -549,9 +575,7 @@ export function SchedulerProvider({ children }) {
         // duplicates in case something else already created similar blocks.
         if (savedAutoScheduledBlocksForToday && savedAutoScheduledBlocksForToday.length > 0) {
           commit((current) => {
-            const existingIds = new Set(current.blocks.map((b) => b.id));
-            const toRestore = savedAutoScheduledBlocksForToday.filter((b) => !existingIds.has(b.id));
-            const merged = [...current.blocks, ...toRestore];
+            const merged = planDisableManualPlanToday(current.blocks, savedAutoScheduledBlocksForToday);
             return { tasks: current.tasks, blocks: merged };
           }, 'Restored auto-scheduled blocks for today');
           setSavedAutoScheduledBlocksForToday([]);
@@ -751,8 +775,26 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
+      manualPlanTodayMode,
+      savedAutoScheduledBlocksForToday,
     }),
-    [tasks, blocks, sections, projects, labels, routines, rules, soundEnabled, soundVolume, animationsEnabled, notificationSettings, notes, shortcutBindings]
+    [
+      tasks,
+      blocks,
+      sections,
+      projects,
+      labels,
+      routines,
+      rules,
+      soundEnabled,
+      soundVolume,
+      animationsEnabled,
+      notificationSettings,
+      notes,
+      shortcutBindings,
+      manualPlanTodayMode,
+      savedAutoScheduledBlocksForToday,
+    ]
   );
   const cloudStateRef = useRef(cloudSyncState);
   useEffect(() => {
@@ -787,6 +829,8 @@ export function SchedulerProvider({ children }) {
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
+    setManualPlanTodayMode,
+    setSavedAutoScheduledBlocksForToday,
     theme,
     setTheme,
     events,

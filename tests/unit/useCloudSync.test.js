@@ -107,6 +107,8 @@ describe('isValidBackupPayload', () => {
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
     events: [],
+    manualPlanTodayMode: false,
+    savedAutoScheduledBlocksForToday: [],
   };
 
   it('accepts a payload with every backup field present and correctly typed', () => {

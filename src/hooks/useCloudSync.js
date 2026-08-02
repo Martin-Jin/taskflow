@@ -106,6 +106,8 @@ export function computeFingerprint(source) {
     notificationSettings: source.notificationSettings,
     notes: source.notes,
     shortcutBindings: source.shortcutBindings,
+    manualPlanTodayMode: source.manualPlanTodayMode,
+    savedAutoScheduledBlocksForToday: source.savedAutoScheduledBlocksForToday,
   };
   return JSON.stringify(relevant);
 }
@@ -189,6 +191,16 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
   if ('shortcutBindings' in remoteData) {
     plan.shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings);
   }
+  if ('manualPlanTodayMode' in remoteData) {
+    plan.manualPlanTodayMode = pickValid('manualPlanTodayMode', remoteData.manualPlanTodayMode, localState.manualPlanTodayMode);
+  }
+  if ('savedAutoScheduledBlocksForToday' in remoteData) {
+    plan.savedAutoScheduledBlocksForToday = pickValid(
+      'savedAutoScheduledBlocksForToday',
+      remoteData.savedAutoScheduledBlocksForToday,
+      localState.savedAutoScheduledBlocksForToday
+    );
+  }
 
   // Only stamp "already synced" when tasks/blocks were actually applied
   // as-is — when skipTasksBlocks is true, local tasks/blocks now differ from
@@ -203,8 +215,9 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/soundEnabled/soundVolume/
- *   animationsEnabled/notificationSettings/notes/shortcutBindings) — a plain
- *   object recomputed whenever any of those fields changes, purely so the
+ *   animationsEnabled/notificationSettings/notes/shortcutBindings/
+ *   manualPlanTodayMode/savedAutoScheduledBlocksForToday) — a plain object
+ *   recomputed whenever any of those fields changes, purely so the
  *   push-scheduling effect below has something to depend on. Deliberately
  *   excludes `events` — see backupService.js's BACKUP_FIELDS doc comment.
  * @param {React.MutableRefObject} deps.stateRef - Ref mirroring `state`, read
@@ -231,6 +244,8 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Function} deps.setNotificationSettings - Setter for notificationSettings
  * @param {Function} deps.setNotes - Setter for notes
  * @param {Function} deps.setShortcutBindings - Setter for shortcutBindings
+ * @param {Function} deps.setManualPlanTodayMode - Setter for manualPlanTodayMode
+ * @param {Function} deps.setSavedAutoScheduledBlocksForToday - Setter for savedAutoScheduledBlocksForToday
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.
@@ -260,6 +275,8 @@ export function useCloudSync({
   setNotificationSettings,
   setNotes,
   setShortcutBindings,
+  setManualPlanTodayMode,
+  setSavedAutoScheduledBlocksForToday,
   theme,
   setTheme,
   events,
@@ -360,6 +377,8 @@ export function useCloudSync({
       // remote binding immediately, not just on this device's next local rebind.
       savePersisted('shortcutBindings', plan.shortcutBindings);
     }
+    if ('manualPlanTodayMode' in plan) setManualPlanTodayMode(plan.manualPlanTodayMode);
+    if ('savedAutoScheduledBlocksForToday' in plan) setSavedAutoScheduledBlocksForToday(plan.savedAutoScheduledBlocksForToday);
     // Stamp what we just applied as "already synced" so the debounced push
     // effect doesn't immediately echo this same data straight back to
     // Firestore — but only when tasks/blocks were actually applied as-is
@@ -381,6 +400,8 @@ export function useCloudSync({
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
+    setManualPlanTodayMode,
+    setSavedAutoScheduledBlocksForToday,
   ]);
 
   // ---- Applies a full backup payload (local file or cloud backup) ----------
@@ -427,6 +448,14 @@ export function useCloudSync({
       setShortcutBindings(shortcutBindings);
       savePersisted('shortcutBindings', shortcutBindings);
     }
+    if ('manualPlanTodayMode' in payload) {
+      setManualPlanTodayMode(pickValid('manualPlanTodayMode', payload.manualPlanTodayMode, stateRef.current.manualPlanTodayMode));
+    }
+    if ('savedAutoScheduledBlocksForToday' in payload) {
+      setSavedAutoScheduledBlocksForToday(
+        pickValid('savedAutoScheduledBlocksForToday', payload.savedAutoScheduledBlocksForToday, stateRef.current.savedAutoScheduledBlocksForToday)
+      );
+    }
   }, [
     commit,
     stateRef,
@@ -443,6 +472,8 @@ export function useCloudSync({
     theme,
     setNotes,
     setShortcutBindings,
+    setManualPlanTodayMode,
+    setSavedAutoScheduledBlocksForToday,
     events,
     setEvents,
   ]);
