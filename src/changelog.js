@@ -17,6 +17,19 @@
 
 export const CHANGELOG = [
   {
+    version: '1.75.0',
+    date: '2026-08-02',
+    title: 'Guided tour covers Manual Plan Today; new help tooltips; AI Quick Add in the command palette',
+    changes: [
+      'The guided tour now covers "Schedule manually for today" — the calendar\'s opt-in mode that stashes today\'s auto-scheduled blocks into an Unscheduled Today tray so you can place them yourself.',
+      'Added small "?" help tooltips explaining task dependencies, the free-text recurrence syntax ("every 2 weeks", "every mon and wed", ...), and what Re-balance schedule / Plan today actually do under the hood.',
+      'The command palette (Ctrl/Cmd+K) can now launch "Quick Add with AI" directly, when it\'s configured.',
+      'Fixed the Settings search bar disappearing entirely once you scrolled past it, and tightened/repositioned it for a bit more breathing room above "Account & sync".',
+      'The Tasks page\'s floating header now actually docks closer to the top of the screen while scrolled (the previous two attempts at this didn\'t visibly take effect).',
+      'The "Sign in with Google" button in Settings is no longer stretched to the full width of the page — it now sizes to its content and left-aligns like other buttons.',
+    ],
+  },
+  {
     version: '1.74.1',
     date: '2026-08-02',
     title: 'Fix Settings search bar alignment and Tasks docking distance',

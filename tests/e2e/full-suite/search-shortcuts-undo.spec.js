@@ -65,6 +65,11 @@ test('completed tasks are hidden from search except on the Completed filter', as
 
   // Switch to the "Completed" filter (Tasks page's view/filter dropdown) —
   // the task should reappear even with the same search query still active.
+  // The fixed-position Add Task FAB (bottom-right, see .add-task-fab-group)
+  // now sits over this trigger at rest per the intentional toolbar/header
+  // spacing changes, so scroll it into view above the FAB's screen position
+  // before clicking, same as a real user would.
+  await page.getByRole('button', { name: /change view or filter/i }).scrollIntoViewIfNeeded();
   await page.getByRole('button', { name: /change view or filter/i }).click();
   await page.waitForTimeout(200);
   await page.getByRole('menuitemradio', { name: 'Completed' }).click();
@@ -111,6 +116,34 @@ test('command palette can jump straight to a matching task', async ({ page }) =>
 
   // Opening a task from the palette shows its detail modal.
   await expect(page.locator('.modal-detail')).toBeVisible();
+  await closeAnyModal(page);
+
+  expectNoErrors(errors);
+});
+
+test('command palette can launch "Quick Add with AI" when configured', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Dashboard');
+
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await expect(palette).toBeVisible();
+
+  await page.getByLabel('Command palette search').fill('Quick Add with AI');
+  await page.waitForTimeout(300);
+  const action = palette.getByRole('button', { name: 'Quick Add with AI' });
+  // Same entry-point gating as the mini-FAB (isAIQuickAddConfigured — see
+  // AddTaskFabGroup.jsx/App.jsx's paletteActions): the action is only listed
+  // at all when VITE_AI_QUICKADD_WORKER_URL is configured, so skip gracefully
+  // like the dedicated AI Quick Add spec does when it isn't.
+  const configured = await action.isVisible({ timeout: 1000 }).catch(() => false);
+  test.skip(!configured, 'AI Quick Add is not configured locally (VITE_AI_QUICKADD_WORKER_URL unset) — action is intentionally hidden.');
+
+  await action.click();
+  await page.waitForTimeout(300);
+
+  await expect(palette).not.toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'AI Quick Add', exact: true })).toBeVisible();
   await closeAnyModal(page);
 
   expectNoErrors(errors);

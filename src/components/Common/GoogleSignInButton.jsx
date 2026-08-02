@@ -37,7 +37,6 @@ export default function GoogleSignInButton({ compact = false }) {
     <>
       <button
         className={`btn ${compact ? 'btn-icon' : ''}`}
-        style={compact ? undefined : { width: '100%', justifyContent: 'center' }}
         onClick={handleClick}
         title="Sign in with Google to sync across devices"
       >

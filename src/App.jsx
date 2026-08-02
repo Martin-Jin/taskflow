@@ -54,7 +54,9 @@ import {
   TrendingUp,
   Settings,
   Search,
+  Sparkles,
 } from 'lucide-react';
+import { isAIQuickAddConfigured } from './services/aiQuickAddService';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch), so
@@ -106,6 +108,10 @@ function AppShell() {
   // is pressed from a different tab — see the effect on this prop in
   // TaskListPanel.
   const [addTaskSignal, setAddTaskSignal] = useState(0);
+  // Same signal pattern as addTaskSignal, for the command palette's "Quick
+  // Add with AI" action — TaskListPanel forwards it to whichever sub-view
+  // (List or Board) owns the AI Quick Add modal's open state locally.
+  const [aiQuickAddSignal, setAiQuickAddSignal] = useState(0);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [paletteTaskId, setPaletteTaskId] = useState(null);
   // Bumped by SchedulingConflictsModal's "jump to day" click — mirrors
@@ -272,6 +278,20 @@ function AppShell() {
 
   const paletteActions = [
     { id: 'addTask', label: 'Add task', run: () => { setTab('tasks'); setAddTaskSignal((n) => n + 1); } },
+    // Gated the same way AddTaskFabGroup's own mini-FAB is (isAIQuickAddConfigured
+    // — no worker URL set = feature hidden entirely), rather than always listing it
+    // and letting the modal itself reject; both TaskListPanel's List and Board
+    // sub-views react to this signal, so it works from either one.
+    ...(isAIQuickAddConfigured()
+      ? [
+          {
+            id: 'aiQuickAdd',
+            label: 'Quick Add with AI',
+            icon: Sparkles,
+            run: () => { setTab('tasks'); setAiQuickAddSignal((n) => n + 1); },
+          },
+        ]
+      : []),
     { id: 'rebalance', label: 'Re-balance schedule', run: runRebalance },
     { id: 'toggleTheme', label: 'Toggle light/dark theme', run: toggleTheme },
     { id: 'manageProjects', label: 'Manage projects', run: () => openManageProjects() },
@@ -342,6 +362,7 @@ function AppShell() {
               onResolveBoardProject={resolveBoardProject}
               onOpenManageProjects={openManageProjects}
               openAddTaskSignal={addTaskSignal}
+              openAIQuickAddSignal={aiQuickAddSignal}
               onOpenSettings={() => setTab('settings')}
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
             />

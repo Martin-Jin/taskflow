@@ -60,6 +60,7 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import DependencyPicker from '../Common/DependencyPicker';
+import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
 import SelectMenu from '../Common/SelectMenu';
@@ -570,7 +571,16 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             </DetailField>
 
             {dependencyOptions.length > 0 && (
-              <DetailField icon={Link2} label="Depends on">
+              <DetailField
+                icon={Link2}
+                label="Depends on"
+                labelExtra={
+                  <HelpTooltip label="What does this do?">
+                    A blocked task can't be marked complete or auto-scheduled until every task it depends on is done
+                    first.
+                  </HelpTooltip>
+                }
+              >
                 <DependencyPicker
                   options={dependencyOptions}
                   selectedIds={dependsOn}
