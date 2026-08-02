@@ -111,11 +111,12 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
   // was already navigating, instead of always skipping forward.
   const skipDirection = useRef('next');
 
-  // Steps flagged `desktopOnly` (e.g. Manual Plan Today, whose toggle has no
-  // mobile equivalent at all) skip past themselves as soon as they'd become
-  // current on a mobile viewport — otherwise the locate effect below would
-  // just time out and fall back to a spotlight-less tooltip describing a
-  // control the visitor can't reach.
+  // Steps flagged `desktopOnly` (for a control with no mobile equivalent at
+  // all) skip past themselves as soon as they'd become current on a mobile
+  // viewport — otherwise the locate effect below would just time out and
+  // fall back to a spotlight-less tooltip describing a control the visitor
+  // can't reach. No current step uses this flag, but the mechanism stays in
+  // place for a future desktop-only feature.
   useEffect(() => {
     if (!isMobile) return;
     const step = GUIDED_TOUR_STEPS[stepIndex];

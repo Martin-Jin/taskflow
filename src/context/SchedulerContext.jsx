@@ -48,7 +48,7 @@ import { useTheme } from './ThemeContext';
 import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { playAddSound, playDeleteSound } from '../services/soundService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
-import { rebalance, planToday } from '../algorithms/rebalanceEngine';
+import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { computeNextDueDate, deriveRecurrenceRule } from '../utils/recurrence';
 import {
@@ -327,35 +327,8 @@ function getDescendantIds(taskId, tasks) {
   return descendants;
 }
 
-/**
- * Pure decision for enabling Manual Plan Today mode: which of today's blocks
- * get pulled out to make room for a manual schedule, and which are left
- * alone. Only auto-scheduled blocks dated `todayIso` are removed — locked/
- * manual blocks and every other day are untouched. Exported (alongside
- * planDisableManualPlanToday below) so this decision is unit-testable
- * without rendering SchedulerContext — same "extract the pure decision"
- * pattern as useCloudSync.js's computeFingerprint/planRemoteDataMerge.
- */
-export function planEnableManualPlanToday(blocks, todayIso) {
-  const removed = blocks.filter((b) => b.isAutoScheduled && b.date === todayIso);
-  const remaining = blocks.filter((b) => !(b.isAutoScheduled && b.date === todayIso));
-  return { removed, remaining };
-}
-
-/**
- * Pure decision for disabling Manual Plan Today mode: merges back the blocks
- * planEnableManualPlanToday previously set aside, skipping any that already
- * match an existing block id (avoids duplicating a block something else —
- * e.g. a rebalance run while the mode was on — already recreated).
- */
-export function planDisableManualPlanToday(blocks, savedAutoScheduledBlocksForToday) {
-  const existingIds = new Set(blocks.map((b) => b.id));
-  const toRestore = savedAutoScheduledBlocksForToday.filter((b) => !existingIds.has(b.id));
-  return [...blocks, ...toRestore];
-}
-
 export function SchedulerProvider({ children }) {
-  const { user } = useAuth();
+  const { user, authLoading } = useAuth();
 
   // Ref-based indirection so useGoogleCalendarSync (constructed below, before
   // queueDueDateRebalance exists later in this component) can still trigger
@@ -547,58 +520,11 @@ export function SchedulerProvider({ children }) {
   // right around the two call sites that wrap them.
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [lastOverflow, setLastOverflow] = useState([]);
-  // Separate from lastOverflow: planToday's "didn't fit today" list carries a
-  // different meaning (see runPlanToday below) and must never be conflated
-  // with rebalance's "at risk of missing its deadline" overflow.
-  const [lastUnfitToday, setLastUnfitToday] = useState([]);
   const [notification, setNotification] = useState(null);
-  // Manual "Plan Today" mode: when enabled the UI shows manual placement
-  // blocks for TODAY only, and auto-scheduled blocks for today are removed.
-  // Persisted so the user's choice survives a reload; toggle via
-  // toggleManualPlanToday().
-  const [manualPlanTodayMode, setManualPlanTodayMode] = usePersistedState('manualPlanTodayMode', false);
-  // Holds any auto-scheduled blocks removed when manual-plan-day is enabled,
-  // so they can be restored if the user later turns the mode off.
-  const [savedAutoScheduledBlocksForToday, setSavedAutoScheduledBlocksForToday] = usePersistedState(
-    'savedAutoScheduledBlocksForToday',
-    []
-  );
-
-  const toggleManualPlanToday = useCallback(
-    (enabled) => {
-      const todayIso = toISODate(new Date());
-      if (enabled) {
-        // Remove any auto-scheduled blocks that landed on today so the
-        // user can build a manual day without engine-placed blocks colliding.
-        commit((current) => {
-          const plan = planEnableManualPlanToday(current.blocks, todayIso);
-          // Persist the removed blocks so we can restore them when the mode
-          // is turned off again.
-          setSavedAutoScheduledBlocksForToday(plan.removed);
-          return { tasks: current.tasks, blocks: plan.remaining };
-        }, 'Enabled manual plan for today');
-        setManualPlanTodayMode(true);
-      } else {
-        // Restore previously-removed auto-scheduled blocks (if any), avoiding
-        // duplicates in case something else already created similar blocks.
-        if (savedAutoScheduledBlocksForToday && savedAutoScheduledBlocksForToday.length > 0) {
-          commit((current) => {
-            const merged = planDisableManualPlanToday(current.blocks, savedAutoScheduledBlocksForToday);
-            return { tasks: current.tasks, blocks: merged };
-          }, 'Restored auto-scheduled blocks for today');
-          setSavedAutoScheduledBlocksForToday([]);
-        }
-        setManualPlanTodayMode(false);
-      }
-    },
-    [commit, savedAutoScheduledBlocksForToday, setSavedAutoScheduledBlocksForToday]
-  );
   // Ephemeral, transient UI state for the "View details" flow off a
-  // rebalance/planToday toast (see runRebalance/runPlanToday below) — not
-  // persisted/backed up, just the enriched overflow/unfitToday list (each
-  // entry's `reason` describes WHY that task couldn't be scheduled) for
-  // SchedulingConflictsModal to render. Reused by both actions since only
-  // one can be relevant to look at at a time.
+  // rebalance toast (see runRebalance below) — not persisted/backed up, just
+  // the enriched overflow list (each entry's `reason` describes WHY that
+  // task couldn't be scheduled) for SchedulingConflictsModal to render.
   const [schedulingConflicts, setSchedulingConflicts] = useState([]);
   const [schedulingConflictsModalOpen, setSchedulingConflictsModalOpen] = useState(false);
   // Ephemeral cross-component "jump to a Settings section" signal — not
@@ -765,6 +691,7 @@ export function SchedulerProvider({ children }) {
     commit,
     stateRef,
     pushActionToast,
+    authLoading,
     onEventsChanged: triggerDueDateRebalance,
   });
 
@@ -793,8 +720,6 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
-      manualPlanTodayMode,
-      savedAutoScheduledBlocksForToday,
     }),
     [
       tasks,
@@ -810,8 +735,6 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
-      manualPlanTodayMode,
-      savedAutoScheduledBlocksForToday,
     ]
   );
   const cloudStateRef = useRef(cloudSyncState);
@@ -847,12 +770,11 @@ export function SchedulerProvider({ children }) {
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
-    setManualPlanTodayMode,
-    setSavedAutoScheduledBlocksForToday,
     theme,
     setTheme,
     events,
     setEvents,
+    googleConnected,
   });
 
   /**
@@ -962,37 +884,6 @@ export function SchedulerProvider({ children }) {
       if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
     };
   }, []);
-
-  /**
-   * Lighter, day-scoped sibling of runRebalance: only clears and replans
-   * TODAY's unlocked blocks (see algorithms/rebalanceEngine.planToday for
-   * why this can't just be "run the normal rebalance and keep today's
-   * slice" — the pacing math needs a dedicated greedy mode). Every other
-   * day, past or future, is left exactly as it was.
-   */
-  const runPlanToday = useCallback(() => {
-    const result = planToday({ tasks, existingBlocks: blocks, routines, events, rules });
-    commit({ tasks, blocks: result.blocks }, `Planned today (${result.stats.blocksCreated} blocks placed)`);
-    setLastUnfitToday(result.unfitToday);
-    const blockedNote =
-      result.stats.blockedByDependencies > 0
-        ? ` ${result.stats.blockedByDependencies} task(s) held back pending dependencies.`
-        : '';
-    if (result.unfitToday.length > 0) {
-      setNotification({
-        type: 'warning',
-        message: `${result.unfitToday.length} task(s) didn't fully fit in today's remaining capacity — they'll get picked up on a later plan/re-balance.${blockedNote}`,
-        actionLabel: 'View details',
-        onAction: () => {
-          setSchedulingConflicts(result.unfitToday);
-          setSchedulingConflictsModalOpen(true);
-        },
-      });
-    } else {
-      setNotification({ type: 'success', message: `Today planned: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
-    }
-    return result;
-  }, [tasks, blocks, routines, events, rules, commit]);
 
   // ---- Task CRUD -----------------------------------------------------------
 
@@ -1722,40 +1613,6 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
-  /**
-   * Manually place a task directly onto the calendar (drag from the task
-   * list onto a day column — see WeekView's task-drop handling). Like any
-   * other manual placement (dragging/resizing an existing block — see
-   * WeekView/BlockDetailModal), this is `isAutoScheduled: false` so a later
-   * rebalance/plan-today run leaves it exactly where the user put it unless
-   * they explicitly lock it; `isLocked` stays at its default `false`,
-   * matching every other freshly-created block/event in this file (locking
-   * is always a separate, explicit user action via toggleBlockLock).
-   */
-  const scheduleTaskManually = useCallback(
-    (taskId, date, startTime, durationHours) => {
-      const task = tasks.find((t) => t.id === taskId);
-      if (!task) return;
-      const startMin = timeToMinutes(startTime);
-      const endMin = startMin + Math.round(durationHours * 60);
-      const newBlock = {
-        id: generateLocalId('blk_manual'),
-        taskId,
-        date,
-        startTime,
-        endTime: minutesToTime(endMin),
-        durationHours,
-        isLocked: false,
-        isAutoScheduled: false,
-        status: 'scheduled',
-        googleEventId: null,
-        isPassive: !!task.isPassive,
-      };
-      commit({ tasks, blocks: [...blocks, newBlock] }, `Scheduled "${task.title}"`);
-    },
-    [tasks, blocks, commit]
-  );
-
   // ---- Manual blocked-time CRUD --------------------------------------------
   // A "manual" CalendarEvent has no Google counterpart — it's the user
   // saying "block this time out" directly (e.g. plans changed, doing
@@ -2367,7 +2224,6 @@ export function SchedulerProvider({ children }) {
       importFromTodoist,
       lastTodoistImport,
       lastOverflow,
-      lastUnfitToday,
       schedulingConflicts,
       schedulingConflictsModalOpen,
       setSchedulingConflictsModalOpen,
@@ -2399,7 +2255,6 @@ export function SchedulerProvider({ children }) {
       undo,
       redo,
       runRebalance,
-      runPlanToday,
       addTask,
       updateTask,
       deleteTask,
@@ -2422,7 +2277,6 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
-      scheduleTaskManually,
       addManualEvent,
       updateEvent,
       deleteEvent,
@@ -2443,9 +2297,6 @@ export function SchedulerProvider({ children }) {
       deleteCloudBackup,
       clearNotification,
       clearAllData,
-      // Manual plan today mode & toggle
-      manualPlanTodayMode,
-      toggleManualPlanToday,
     }),
     [
       tasks,
@@ -2471,7 +2322,6 @@ export function SchedulerProvider({ children }) {
       importFromTodoist,
       lastTodoistImport,
       lastOverflow,
-      lastUnfitToday,
       schedulingConflicts,
       schedulingConflictsModalOpen,
       notification,
@@ -2492,7 +2342,6 @@ export function SchedulerProvider({ children }) {
       undo,
       redo,
       runRebalance,
-      runPlanToday,
       addTask,
       updateTask,
       deleteTask,
@@ -2515,7 +2364,6 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
-      scheduleTaskManually,
       addManualEvent,
       updateEvent,
       deleteEvent,

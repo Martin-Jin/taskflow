@@ -411,11 +411,7 @@ cached copy.
   drag-edge-to-resize, on desktop with the mouse and on mobile via
   long-press-then-drag/resize by touch — any event you create counts as
   busy time the scheduler avoids, there's no separate "blocked time" concept
-  anymore. Any task with unplaced hours shows up as a draggable chip in the
-  "Unscheduled" tray above the grid — drag (or long-press-drag on touch) one
-  straight onto a day to place a block manually, sized to the task's own
-  chunk-size rules, without waiting for Re-balance/Plan today. Overlapping
-  events/blocks render side-by-side in columns on
+  anymore. Overlapping events/blocks render side-by-side in columns on
   desktop; on mobile, where there's no room for columns, they collapse into
   a single tappable "N events" chip instead. Week/3 Day/Day view clusters
   runs of short back-to-back tasks into a single "N short tasks" chip (click
@@ -427,10 +423,7 @@ cached copy.
   days) and clicking a day drills into Day view for the full time grid,
   matching how most calendar apps handle month → day navigation. Tap the
   lock icon on a block to protect it from future rebalances. **Re-balance
-  schedule** re-runs the engine while preserving locked blocks. **Plan
-  today**, next to it, only clears and re-plans today's unlocked blocks,
-  leaving every other day exactly as it was — useful when you just want to
-  fill in today's gaps without disturbing the rest of the week.
+  schedule** re-runs the engine while preserving locked blocks.
 - **Tasks** — one page, three views via its own List/Board/Gantt switch, all
   scoped to one project at a time (or "All Tasks"). Switch projects from the
   sidebar, the project picker shown above List/Board, or the search bar;

@@ -1,7 +1,7 @@
 /**
- * SchedulingConflictsModal — "View details" destination for the rebalance/
- * planToday toast (see SchedulerContext's runRebalance/runPlanToday), listing
- * every task that couldn't be scheduled along with WHY: a fixed-time clash
+ * SchedulingConflictsModal — "View details" destination for the rebalance
+ * toast (see SchedulerContext's runRebalance), listing every task that
+ * couldn't be scheduled along with WHY: a fixed-time clash
  * with a specific event/routine/other task's block, an incomplete dependency
  * still blocking it, or simply no free capacity left in its window. Reuses
  * StatListModal (the same scrollable list-modal shell as the Dashboard's
@@ -15,7 +15,7 @@ import StatListModal from '../Dashboard/StatListModal';
 
 const REASON_ICON = { fixed_time_conflict: Clock3, dependency_blocked: Ban, no_capacity: AlertTriangle };
 
-/** Plain-English explanation for one overflow/unfitToday entry's `reason`. */
+/** Plain-English explanation for one overflow entry's `reason`. */
 function describeReason(reason, task) {
   if (!reason) return "Couldn't fit in the available capacity.";
   switch (reason.type) {

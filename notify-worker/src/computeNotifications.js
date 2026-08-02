@@ -150,10 +150,17 @@ function computeCandidates({ tasks, blocks, settings, rules, now }) {
   // is just as much "missed" as one whose overall due date has elapsed — see
   // the 'overdue' block below for the separate dueDate<today trigger.
   if (settings.taskOverdue) {
+    // Bounded to the last 24h: without this, a block that was scheduled long
+    // ago, never marked 'done', and never previously reported (e.g. the
+    // worker was only just turned on, or the block was untouched for weeks)
+    // would count as "missed" forever and fire the instant its dedupe state
+    // doesn't exist yet — flooding a first run (or any run after a gap) with
+    // a backlog of stale, no-longer-relevant blocks instead of just today's.
+    const MISSED_LOOKBACK_MS = 24 * 60 * 60 * 1000;
     for (const block of blocks) {
       if (block.status === 'done') continue;
       const endMs = zonedWallTimeToEpochMs(block.date, block.endTime, timeZone);
-      if (endMs > now) continue;
+      if (endMs > now || endMs < now - MISSED_LOOKBACK_MS) continue;
       const task = tasksById.get(block.taskId);
       if (!task || task.isCompleted) continue;
       toNotify.push({

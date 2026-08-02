@@ -26,9 +26,9 @@
  *   7. task.fixedTime ("HH:MM"), when set, pins every block placed for that
  *      task to start at that exact time of day instead of wherever first-fit
  *      would land — see placeFixedTimeInDay below. Exception: when the task's
- *      whole window is a single day (enforceDueDate, or dayScoped "Plan
- *      today") and the pinned slot isn't available that day, there's no OTHER
- *      day left to retry on — see placeAndRecordBlocks' allowSameDayFallback,
+ *      whole window is a single day (enforceDueDate) and the pinned slot
+ *      isn't available that day, there's no OTHER day left to retry on — see
+ *      placeAndRecordBlocks' allowSameDayFallback,
  *      which lets the leftover hours fall back to ordinary first-fit
  *      placement elsewhere that same day rather than reporting a visibly free
  *      day as out of capacity.
@@ -571,7 +571,7 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
  * fully place at its pinned time-of-day fall back to ordinary first-fit
  * placement for whatever hours are left over, on this SAME day's remaining
  * free intervals — see allocateTasks' `singleDayWindow` for when/why this is
- * enabled (a single-day window, from enforceDueDate or dayScoped, has no
+ * enabled (a single-day window, from enforceDueDate, has no
  * other day for the task to retry on, unlike fixedTime's normal multi-day
  * "try again tomorrow" behavior). This fallback runs whether or not something
  * identifiable conflicted with the pinned slot itself — a real event sitting
@@ -647,18 +647,6 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  * @param {Map<string, import('../types').Task>} [taskById] - FULL task-id lookup (not just `tasks` above), used to
  *   resolve a due-date-less sub-task's nearest ancestor deadline (see resolveDueDate). Omit only if the caller
  *   knows none of `tasks` are ever due-date-less sub-tasks.
- * @param {Object} [options]
- * @param {boolean} [options.dayScoped] - "Plan today" mode (see rebalanceEngine's planToday). When true, EVERY
- *   task's window collapses to just `today` (skipping the normal due-date-driven getTaskWindow resolution) and
- *   every task targets its FULL remaining hours on that single day instead of an ideal per-day share — i.e. the
- *   existing "blocker" greedy-fill behavior (see module doc comment, point 8) is extended to apply to all tasks,
- *   not just blockers. This deliberately bypasses even-pacing/front-loading rather than trying to approximate it
- *   over a truncated horizon: computing an "ideal share" against a task's real multi-day due-date window while
- *   only exposing one day of capacity would dilute today's placement based on runway the caller isn't offering
- *   anyway, and would report false overflow for tasks that have plenty of time on days simply not in this
- *   `capacityMap`. Callers should pass a `capacityMap` covering only `today` in this mode, both so passes 2/3
- *   below can't spill into other days and so this stays simple (nothing here filters placements by date beyond
- *   what `capacityMap` already contains).
  * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}> }}
  *   Each overflow entry's `reason` is one of:
  *     - `{ type: 'fixed_time_conflict', conflictingItem: { id, type: 'routine'|'event'|'block', label, start, end } }`
@@ -672,8 +660,7 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  *       (it's a real conflict on a specific day, not a horizon artifact), and a task with no resolvable due date
  *       at all keeps reporting as before, since there's nothing to compare against the horizon.
  */
-export function allocateTasks(tasks, capacityMap, rules, today, taskById, options = {}) {
-  const { dayScoped = false } = options;
+export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   const dates = [...capacityMap.keys()].sort();
   const horizonEnd = dates[dates.length - 1];
 
@@ -715,15 +702,13 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
 
   for (const task of prioritized) {
     const isBlocker = blockerIds.has(task.id);
-    const { windowStart, windowEnd } = dayScoped
-      ? { windowStart: today, windowEnd: today }
-      : getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
-    const frontLoad = !dayScoped && !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
+    const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
+    const frontLoad = !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
     const dayWeights = buildDayWeights(windowStart, windowEnd, frontLoad);
     // A single-day window (enforceDueDate collapsing a recurring occurrence
-    // onto its one due date, or dayScoped's "Plan today") gives a fixedTime
-    // task no OTHER day to retry on if its pinned time-of-day slot is
-    // unavailable (already passed today per nowClamp, or occupied) — unlike
+    // onto its one due date) gives a fixedTime task no OTHER day to retry on
+    // if its pinned time-of-day slot is unavailable (already passed today
+    // per nowClamp, or occupied) — unlike
     // the normal multi-day case, where "just try again tomorrow" is the
     // correct fixedTime behavior (see placeFixedTimeInDay's doc comment).
     // Passed to placeAndRecordBlocks below so it can fall back to ordinary
@@ -764,7 +749,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       if (!freeForTask.has(date)) continue; // outside computed horizon
 
       const idealShare = task.remainingHours * (weight / totalWeight);
-      const targetHours = dayScoped || isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
+      const targetHours = isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
       if (targetHours < Math.max(task.minChunkHours ?? MIN_SPLIT_CHUNK_HOURS, MIN_SPLIT_CHUNK_HOURS) - EPSILON_HOURS) continue;
 
       remaining -= placeWithinDailyBudget(date, targetHours, freeForTask.get(date), '');

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rebalance, planToday } from '../../src/algorithms/rebalanceEngine';
+import { rebalance } from '../../src/algorithms/rebalanceEngine';
 import { allocateTasks } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
 
@@ -192,56 +192,6 @@ describe('rebalance', () => {
   });
 });
 
-describe('planToday', () => {
-  it('preserves a completed task\'s unlocked block for today instead of clearing it', () => {
-    const tasks = [
-      { id: 't1', title: 'Done today', isCompleted: true, estimatedHours: 1, dueDate: today },
-    ];
-    const existingBlocks = [
-      { id: 'b1', taskId: 't1', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
-    ];
-    const result = planToday({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
-    expect(result.blocks.some((b) => b.id === 'b1')).toBe(true);
-    expect(result.stats.blocksCleared).toBe(0);
-  });
-
-  it('still clears an unlocked, unfinished task\'s block for today', () => {
-    const tasks = [
-      { id: 't3', title: 'Not done', isCompleted: false, estimatedHours: 1, dueDate: today },
-    ];
-    const existingBlocks = [
-      { id: 'b3', taskId: 't3', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
-    ];
-    const result = planToday({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
-    expect(result.stats.blocksCleared).toBe(1);
-  });
-
-  it("clears an incomplete task's stale PAST block too (not just today's), freeing its hours for today's replan", () => {
-    const yesterday = '2026-06-30';
-    const tasks = [
-      { id: 't4', title: 'Stale past, moved to today', isCompleted: false, estimatedHours: 1, dueDate: today },
-    ];
-    const existingBlocks = [
-      { id: 'b4', taskId: 't4', date: yesterday, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
-    ];
-    const result = planToday({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
-    expect(result.blocks.some((b) => b.id === 'b4')).toBe(false);
-    expect(result.blocks.some((b) => b.taskId === 't4' && b.date === today)).toBe(true);
-  });
-
-  it('leaves a FUTURE-dated block completely untouched regardless of completion state', () => {
-    const tomorrow = '2026-07-02';
-    const tasks = [
-      { id: 't5', title: 'Future, not done', isCompleted: false, estimatedHours: 1, dueDate: tomorrow },
-    ];
-    const existingBlocks = [
-      { id: 'b5', taskId: 't5', date: tomorrow, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
-    ];
-    const result = planToday({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
-    expect(result.blocks.some((b) => b.id === 'b5')).toBe(true);
-  });
-});
-
 // Regression coverage for a false "no free time left" report on a recurring,
 // fixedTime task (e.g. "Piano" at a fixed practice time, or "Practice
 // questions" today) whose per-occurrence virtual task collapses its window to
@@ -254,7 +204,7 @@ describe('planToday', () => {
 // so before this fix the task's whole remaining duration was reported as
 // no_capacity even on a day with hours of otherwise-visible free time. These
 // tests exercise allocateTasks directly (rather than nowClamp's real
-// wall-clock gating in rebalance()/planToday(), which would make a test
+// wall-clock gating in rebalance(), which would make a test
 // depend on what time it's actually run) by building a capacity map whose
 // free interval simply starts after the fixed time, exactly like nowClamp
 // would produce.
