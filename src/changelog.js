@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.75.2',
+    date: '2026-08-02',
+    title: 'Fix AI Quick Add opening without an API key via the command palette; tidy help buttons',
+    changes: [
+      'The command palette\'s "Quick Add with AI" action now checks for a saved Anthropic/Gemini API key before opening the modal, matching the existing check on the Tasks page\'s AI Quick Add button — previously it opened regardless and let the request fail later.',
+      'Removed the faint border around the small "?" help buttons.',
+      'The Calendar page\'s two separate help buttons (next to Re-balance schedule and Plan today) are now a single combined help button at the right-most end of the toolbar.',
+    ],
+  },
+  {
     version: '1.75.1',
     date: '2026-08-02',
     title: 'Fix Add task / AI Quick Add buttons overlapping the Tasks view menu',

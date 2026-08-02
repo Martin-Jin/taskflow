@@ -28,15 +28,6 @@
   align-items: center;
 }
 
-/* Pairs a toolbar button with its adjacent HelpTooltip "?" at a tighter gap
-   than .calendar-toolbar-actions' own 8px between unrelated buttons, so the
-   two visually read as one unit rather than three same-weight siblings. */
-.calendar-toolbar-action-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
 .calendar-toolbar-title {
   font-family: var(--font-display);
   font-size: 18px;
