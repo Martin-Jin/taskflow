@@ -108,6 +108,21 @@ describe('computeNextDueDate', () => {
   it('falls back to +1 day when the recurrence string is missing', () => {
     expect(computeNextDueDate('2026-07-31', null)).toBe('2026-08-01');
   });
+
+  it('advances a Mon/Wed weekday rule from Monday to the same week\'s Wednesday', () => {
+    // 2026-08-03 is a Monday.
+    expect(computeNextDueDate('2026-08-03', 'every week on Mon, Wed')).toBe('2026-08-05');
+  });
+
+  it('advances a Mon/Wed weekday rule from Wednesday to the following week\'s Monday', () => {
+    // 2026-08-05 is a Wednesday; next matching day wraps to the following Monday.
+    expect(computeNextDueDate('2026-08-05', 'every week on Mon, Wed')).toBe('2026-08-10');
+  });
+
+  it('advances an every-2-weeks-on-Monday rule by a full 2-week cycle after wrapping', () => {
+    // 2026-08-03 is a Monday; only day in the list, so wrap uses the 2-week interval.
+    expect(computeNextDueDate('2026-08-03', 'every 2 weeks on Mon')).toBe('2026-08-17');
+  });
 });
 
 describe('generateTaskOccurrences', () => {

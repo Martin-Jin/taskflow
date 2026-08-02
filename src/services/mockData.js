@@ -501,5 +501,6 @@ export function getDefaultRules() {
     horizonWeeks: 4,
     frontLoadUrgent: true,
     minGapBetweenBlocksMins: 10,
+    autoRescheduleEnabled: true,
   };
 }

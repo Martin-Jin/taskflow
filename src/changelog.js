@@ -17,6 +17,18 @@
 
 export const CHANGELOG = [
   {
+    version: '1.77.0',
+    date: '2026-08-03',
+    title: 'Fix multi-weekday recurrence and email notification timing; add auto-reschedule toggle; move mobile calendar refresh button',
+    changes: [
+      'Fixed a recurring task set to repeat on specific weekdays (e.g. "every Mon, Wed") jumping a full week ahead when completed, instead of advancing to the next of its listed days — completing a Monday occurrence now correctly moves it to that same week\'s Wednesday.',
+      'Adding a new task with a due date, and Google Calendar events changing (via sync or import), now automatically queue a schedule rebalance instead of requiring a manual "Re-balance schedule" click — this can be turned off in Settings → Scheduling rules if you\'d rather always rebalance manually.',
+      'On the mobile Calendar page, the Google Calendar refresh button moved up next to the date title and view menu (right-aligned) instead of sitting alone on its own row underneath.',
+      'Fixed "due today" emails arriving at whatever random early-morning moment the notification check happened to run (e.g. 4am) — they\'re now sent once daily, right after your configured work-day start time, as a single consolidated "Good morning" email listing every task due that day instead of one email per task.',
+      'Added a new "missed" email for a scheduled task whose time slot passed while still incomplete — separate from "overdue" (past due date). The email tells you whether it was also due that day or just missed its time slot, always including the due date, and re-sends if you reschedule it and miss it again.',
+    ],
+  },
+  {
     version: '1.75.2',
     date: '2026-08-02',
     title: 'Fix AI Quick Add opening without an API key via the command palette; tidy help buttons',

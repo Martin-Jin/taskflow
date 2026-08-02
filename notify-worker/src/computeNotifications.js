@@ -96,14 +96,22 @@ function zonedWallTimeToEpochMs(dateStr, timeStr, timeZone) {
 }
 
 /**
- * @param {{tasks: object[], blocks: object[], settings: object, now: number}} args
+ * @param {{tasks: object[], blocks: object[], settings: object, rules: object, now: number}} args
  * @returns {{toNotify: object[], toClear: {stateId: string}[]}}
- *   toNotify entries: { type: 'startingSoon'|'overdue'|'dueToday', task, block?, stateId, isUrgentish?,
- *     todayISO?, dueDate?, scheduledAt? } — dueDate/scheduledAt let notificationState.js detect a
- *     rescheduled task/block and re-arm even if it already notified once for the old date.
- *   toClear entries: stale dedupe-state docs to delete (task no longer overdue), independent of whether anything fires this run.
+ *   toNotify entries:
+ *     - { type: 'startingSoon', task, block, stateId, scheduledAt }
+ *     - { type: 'dueTodayDigest', tasks: object[], stateId, todayISO } — ONE entry per user carrying
+ *       every due-today task, not one per task (see index.js/emailTemplate.js for the digest send).
+ *     - { type: 'missed', task, block, stateId, scheduledAt, isDueToday, dueDate } — a scheduled block
+ *       whose end time passed with the task still incomplete. `isDueToday`/`dueDate` distinguish "due
+ *       today AND missed" from "missed but not due today/overdue" for the email copy.
+ *     - { type: 'overdue', task, stateId, isUrgentish, todayISO, dueDate } — task's own dueDate is in
+ *       the past (independent of any scheduled block).
+ *   dueDate/scheduledAt let notificationState.js detect a rescheduled task/block and re-arm even if it
+ *   already notified once for the old date. toClear entries: stale dedupe-state docs to delete (task no
+ *   longer overdue), independent of whether anything fires this run.
  */
-function computeCandidates({ tasks, blocks, settings, now }) {
+function computeCandidates({ tasks, blocks, settings, rules, now }) {
   const toNotify = [];
   const toClear = [];
   const timeZone = resolveTimeZone(settings.timezone);
@@ -136,7 +144,32 @@ function computeCandidates({ tasks, blocks, settings, now }) {
     }
   }
 
+  // "Missed" — a scheduled block whose end time has already passed, with the
+  // task still incomplete. Independent of the task's own dueDate: a task due
+  // NEXT WEEK but time-blocked for a slot earlier today that passed unstarted
+  // is just as much "missed" as one whose overall due date has elapsed — see
+  // the 'overdue' block below for the separate dueDate<today trigger.
+  if (settings.taskOverdue) {
+    for (const block of blocks) {
+      if (block.status === 'done') continue;
+      const endMs = zonedWallTimeToEpochMs(block.date, block.endTime, timeZone);
+      if (endMs > now) continue;
+      const task = tasksById.get(block.taskId);
+      if (!task || task.isCompleted) continue;
+      toNotify.push({
+        type: 'missed',
+        task,
+        block,
+        stateId: `missed_${block.id}`,
+        scheduledAt: `${block.date}T${block.endTime}`,
+        isDueToday: task.dueDate === todayISO,
+        dueDate: task.dueDate || null,
+      });
+    }
+  }
+
   if (settings.taskOverdue || settings.taskDueToday) {
+    const dueTodayTasks = [];
     for (const task of tasks) {
       if (task.isCompleted || !task.dueDate) continue;
       const isOverdue = task.dueDate < todayISO;
@@ -151,7 +184,7 @@ function computeCandidates({ tasks, blocks, settings, now }) {
           dueDate: task.dueDate,
         });
       } else if (settings.taskDueToday && task.dueDate === todayISO) {
-        toNotify.push({ type: 'dueToday', task, stateId: `dueToday_${task.id}`, todayISO, dueDate: task.dueDate });
+        dueTodayTasks.push(task);
       }
 
       // Once a task is no longer overdue (completed, rescheduled forward, or
@@ -161,6 +194,20 @@ function computeCandidates({ tasks, blocks, settings, now }) {
       // client's identical reset-on-resolve behavior.
       if (!isOverdue) {
         toClear.push({ stateId: `overdue_${task.id}` });
+      }
+    }
+
+    // Due-today tasks are consolidated into ONE digest candidate (not one
+    // per task) sent once daily at the user's own workDayStart, rather than
+    // firing the instant the worker's first post-midnight tick happens to
+    // land (which could be minutes after midnight, or hours later depending
+    // on the 5-minute cron's timing) — see notificationState.js's dueToday
+    // eligibility for the "not before workDayStart" gate this relies on.
+    if (settings.taskDueToday && dueTodayTasks.length > 0) {
+      const workDayStart = rules?.workDayStart || '00:00';
+      const workDayStartMs = zonedWallTimeToEpochMs(todayISO, workDayStart, timeZone);
+      if (now >= workDayStartMs) {
+        toNotify.push({ type: 'dueTodayDigest', tasks: dueTodayTasks, stateId: 'dueTodayDigest', todayISO });
       }
     }
   }
