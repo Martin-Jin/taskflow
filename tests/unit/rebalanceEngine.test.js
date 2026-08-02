@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rebalance, planToday } from '../../src/algorithms/rebalanceEngine';
+import { allocateTasks } from '../../src/algorithms/allocator';
+import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
 
 const baseRules = {
   workDayStart: '09:00',
@@ -237,5 +239,93 @@ describe('planToday', () => {
     ];
     const result = planToday({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
     expect(result.blocks.some((b) => b.id === 'b5')).toBe(true);
+  });
+});
+
+// Regression coverage for a false "no free time left" report on a recurring,
+// fixedTime task (e.g. "Piano" at a fixed practice time, or "Practice
+// questions" today) whose per-occurrence virtual task collapses its window to
+// a single day (rebalanceEngine's expandRecurringTasks sets enforceDueDate)
+// AND whose fixed time-of-day slot isn't available that day — either because
+// nowClamp has pushed the work day's start past it (the slot already "came
+// and went" earlier today) or because it simply falls outside the work day.
+// A single-day window means fixedTime's normal "just try again tomorrow"
+// fallback (see placeFixedTimeInDay's doc comment) has no other day to use,
+// so before this fix the task's whole remaining duration was reported as
+// no_capacity even on a day with hours of otherwise-visible free time. These
+// tests exercise allocateTasks directly (rather than nowClamp's real
+// wall-clock gating in rebalance()/planToday(), which would make a test
+// depend on what time it's actually run) by building a capacity map whose
+// free interval simply starts after the fixed time, exactly like nowClamp
+// would produce.
+describe('allocateTasks: fixedTime + single-day window fallback', () => {
+  const rules = { workDayStart: '09:00', workDayEnd: '22:00', maxDailyDeepWorkHours: 8, minGapBetweenBlocksMins: 0, horizonWeeks: 1, bufferDays: 0 };
+
+  it('falls back to placing a fixedTime task later the same day when its pinned slot has already passed (nowClamp-style)', () => {
+    // Simulates "now" being 16:30 on a recurring task ("Practice questions")
+    // whose fixed practice time was 09:00 — long gone — but the rest of the
+    // day (16:30-22:00) is completely free.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], events: [], blocks: [], rules,
+      nowClamp: { date: '2026-07-01', minutes: 16 * 60 + 30 },
+    });
+    const task = {
+      id: 'occ1', title: 'Practice questions', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '09:00', isRecurring: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(0);
+    expect(blocks).toHaveLength(1);
+    // Placed somewhere in the still-open remainder of the day, not at the
+    // (now unavailable) 09:00 fixed time.
+    expect(blocks[0].startTime >= '16:30').toBe(true);
+    expect(blocks[0].durationHours).toBe(1);
+  });
+
+  it('still reports fixed_time_conflict (no same-day relocation) when a real event occupies the fixed slot, even in a single-day window', () => {
+    // A genuine collision (something identifiable sitting on the fixed time)
+    // must still be surfaced as a specific conflict rather than silently
+    // relocated — only an UNIDENTIFIABLE failure (nowClamp/outside-work-day)
+    // should fall back to same-day placement. See placeAndRecordBlocks.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules,
+      events: [{ id: 'ev1', date: '2026-07-01', startTime: '09:00', endTime: '10:00', title: 'Piano lesson' }],
+    });
+    const task = {
+      id: 'occ2', title: 'Piano', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '09:00', isRecurring: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(blocks).toHaveLength(0);
+    expect(overflow).toEqual([{
+      taskId: 'occ2',
+      unplacedHours: 1,
+      reason: {
+        type: 'fixed_time_conflict',
+        conflictingItem: { id: 'ev1', type: 'event', label: 'Piano lesson', start: '09:00', end: '10:00' },
+      },
+      dueDate: '2026-07-01',
+    }]);
+  });
+
+  it('does NOT apply the same-day fallback to a normal multi-day fixedTime task (it still just tries again on a later day)', () => {
+    // Sanity check that the fallback is scoped to single-day windows only —
+    // a normal fixedTime task with several days of runway should behave
+    // exactly as before: skip a day whose fixed slot is blocked and place on
+    // a later day instead, never relocating within the blocked day itself.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 3, {
+      routines: [], blocks: [], rules,
+      events: [{ id: 'ev1', date: '2026-07-01', startTime: '09:00', endTime: '10:00', title: 'Meeting' }],
+    });
+    const task = {
+      id: 't13', title: 'Multi-day fixedTime', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-03', fixedTime: '09:00',
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(0);
+    expect(blocks).toHaveLength(1);
+    // Placed on 07-02 (or 07-03) at the fixed time, NOT relocated to later on 07-01.
+    expect(blocks[0].date).not.toBe('2026-07-01');
+    expect(blocks[0].startTime).toBe('09:00');
   });
 });

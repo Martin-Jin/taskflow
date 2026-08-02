@@ -25,7 +25,13 @@
  *      attention. See "PASSIVE TASK PLACEMENT" below.
  *   7. task.fixedTime ("HH:MM"), when set, pins every block placed for that
  *      task to start at that exact time of day instead of wherever first-fit
- *      would land — see placeFixedTimeInDay below.
+ *      would land — see placeFixedTimeInDay below. Exception: when the task's
+ *      whole window is a single day (enforceDueDate, or dayScoped "Plan
+ *      today") and the pinned slot isn't available that day, there's no OTHER
+ *      day left to retry on — see placeAndRecordBlocks' allowSameDayFallback,
+ *      which lets the leftover hours fall back to ordinary first-fit
+ *      placement elsewhere that same day rather than reporting a visibly free
+ *      day as out of capacity.
  *   8. A "blocker" task (one with at least one other incomplete task
  *      depending on it — see computeBlockerIds) skips even-pacing/front-load
  *      entirely and greedily claims as much of each day's capacity as it can,
@@ -467,8 +473,11 @@ function findFixedTimeConflict(fixedStartMins, neededMins, busyIntervals, gapMin
  * treats a day that can't fit a task's requirements: the hours simply aren't
  * placed there, and the caller's normal overflow reporting picks up any
  * hours that end up unplaceable across the whole window (see allocateTasks).
- * No fallback to a different time is attempted; the whole point of
- * `fixedTime` is that the task is done at that time or not that day.
+ * No fallback to a different time is attempted HERE; the whole point of
+ * `fixedTime` is that the task is done at that time or not that day — a
+ * multi-day window simply retries the same fixed time on the next day. The
+ * one exception (a single-day window with nowhere else to retry) is handled
+ * one level up, by placeAndRecordBlocks' allowSameDayFallback.
  *
  * On failure, also attempts to identify WHAT occupies the slot (see
  * findFixedTimeConflict) using `dayBusyIntervals`/`gapMins` — surfaced as
@@ -520,17 +529,51 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
  * failure; when found (and this is the first day this task has failed on),
  * it's recorded onto `conflictTracker` (Map<taskId, conflict>, mutated in
  * place) for allocateTasks to attach to the task's eventual overflow entry.
+ *
+ * `allowSameDayFallback`, when true, lets a `fixedTime` task that couldn't
+ * fully place at its pinned time-of-day fall back to ordinary first-fit
+ * placement for whatever hours are left over, on this SAME day's remaining
+ * free intervals — see allocateTasks' `singleDayWindow` for when/why this is
+ * enabled (a single-day window, from enforceDueDate or dayScoped, has no
+ * other day for the task to retry on, unlike fixedTime's normal multi-day
+ * "try again tomorrow" behavior).
  */
-function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker) {
+function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, allowSameDayFallback = false) {
   const minChunkHours = task.minChunkHours ?? 0.5;
   const maxChunkHours = task.maxChunkHours ?? 4;
   // Floor the min-chunk check against the task's true total remaining hours,
   // not `hours` (which may already be a shrunk-down leftover from an earlier
   // pass) — see placeHoursInDay's floorHours comment.
   const floorHours = task.remainingHours;
-  const { placedHours, placements, conflict } = task.fixedTime
+  const result = task.fixedTime
     ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime), floorHours, dayBusyIntervals, gapMins)
     : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours, floorHours);
+  let { placedHours, placements } = result;
+  const { conflict } = result;
+  // Same-day fallback: the fixed slot couldn't take everything (or anything)
+  // this task needed today, there's no other day in its window to retry on,
+  // AND nothing IDENTIFIABLE is occupying the slot (conflict === null — see
+  // findFixedTimeConflict). That last condition matters: if a real event/
+  // routine/block is sitting on the fixed time, that's a genuine, worth-
+  // knowing-about conflict (e.g. "Standup prep" colliding with an actual
+  // Standup) and should still be reported as fixed_time_conflict rather than
+  // silently relocated — a fixedTime task exists specifically to happen at
+  // that time, not "sometime that day". But when nothing tagged conflicts
+  // (the far more common case: the fixed time has simply already passed
+  // today per nowClamp, or falls outside the work day), there's nothing
+  // meaningful to report a conflict WITH, and reporting a bare "no_capacity"
+  // on a visibly free day is actively misleading — so fall back to ordinary
+  // first-fit placement for the leftover hours instead.
+  if (task.fixedTime && allowSameDayFallback && !conflict) {
+    const leftoverHours = hours - placedHours;
+    if (leftoverHours > EPSILON_HOURS) {
+      const fallback = placeHoursInDay(leftoverHours, dayIntervals, minChunkHours, maxChunkHours, floorHours - placedHours);
+      if (fallback.placedHours > EPSILON_HOURS) {
+        placedHours += fallback.placedHours;
+        placements = [...placements, ...fallback.placements];
+      }
+    }
+  }
   if (conflict && conflictTracker && !conflictTracker.has(task.id)) conflictTracker.set(task.id, conflict);
   for (const p of placements) {
     newBlocks.push({
@@ -629,6 +672,16 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       : getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
     const frontLoad = !dayScoped && !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
     const dayWeights = buildDayWeights(windowStart, windowEnd, frontLoad);
+    // A single-day window (enforceDueDate collapsing a recurring occurrence
+    // onto its one due date, or dayScoped's "Plan today") gives a fixedTime
+    // task no OTHER day to retry on if its pinned time-of-day slot is
+    // unavailable (already passed today per nowClamp, or occupied) — unlike
+    // the normal multi-day case, where "just try again tomorrow" is the
+    // correct fixedTime behavior (see placeFixedTimeInDay's doc comment).
+    // Passed to placeAndRecordBlocks below so it can fall back to ordinary
+    // first-fit placement for this day's leftover hours instead of reporting
+    // a visibly-free day as `no_capacity`.
+    const singleDayWindow = windowStart === windowEnd;
 
     // Order of attack: front-loaded tasks try deadline-adjacent days FIRST
     // (reverse chronological), even-paced tasks try chronological order.
@@ -652,7 +705,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       const cappedHours = task.isPassive || budget == null ? hours : Math.min(hours, Math.max(0, budget / 60));
       const placedHours = placeAndRecordBlocks(
         task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
-        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
+        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, singleDayWindow
       );
       if (!task.isPassive && budget != null) dailyBudgetMins.set(date, budget - Math.round(placedHours * 60));
       return placedHours;
