@@ -66,6 +66,18 @@ import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, fi
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
+// Baselines for the openAddTaskSignal/openAIQuickAddSignal props below — kept
+// at module scope (not component-instance refs) because this component
+// unmounts/remounts every time the user leaves and returns to the Tasks tab,
+// and a per-instance "last handled" ref would forget it already handled the
+// current signal value, reopening the modal on every return visit. Seeded to
+// 0 (matching both signals' initial useState(0) in App.jsx), not left
+// `undefined` — otherwise `0 !== undefined` on this component's very first
+// mount of the session, which used to auto-open both modals the first time
+// anyone ever visited the Tasks tab.
+let lastHandledAddTaskSignal = 0;
+let lastHandledAIQuickAddSignal = 0;
+
 // Row reorder/removal motion (see the ROW MOTION note above). `layout:
 // 'position'` animates a row's position only, never its size — a row whose
 // text reflows would otherwise visibly squash/stretch mid-animation. Timing
@@ -117,38 +129,32 @@ export default function TaskListPanel({
   // A signal-bumping caller always does `setTab('tasks')` + the increment in
   // the same event handler (same React batch), so on the *first* trigger of
   // a session this component can mount for the first time already carrying
-  // the bumped value — plain `useRef(openAddTaskSignal)` would then capture
-  // that already-bumped value as its own "last handled" baseline and the
-  // effect below would see no change, silently no-opping the very trigger
-  // that mounted it. useState's lazy initializer runs before the ref would,
-  // but the actual fix is tracking "has this component observed the signal
-  // at least once" (hasHandledRef) independently of the value comparison —
-  // the first render always opens the modal if openAddTaskSignal is already
-  // truthy (non-zero) at mount, and every render after that only reopens it
-  // on a genuine new increment, so a later remount (e.g. switching away from
-  // and back to the Tasks tab) doesn't spuriously reopen it just because the
-  // signal was already bumped earlier in the session.
-  const lastHandledSignalRef = useRef(openAddTaskSignal);
-  const hasHandledSignalRef = useRef(false);
+  // the bumped value. The "last handled" baseline therefore can't live in a
+  // ref local to this component instance: this component unmounts every time
+  // the user leaves the Tasks tab (App.jsx only renders it while `tab ===
+  // 'tasks'`), so a per-instance "have I observed a signal yet" flag resets
+  // on every remount and would spuriously reopen the modal just because the
+  // signal was already bumped earlier in the session, the first time the
+  // user navigates back to Tasks. Module-scope variables survive remounts
+  // (this page is effectively a singleton), so the baseline lives there
+  // instead — updated as soon as it's read, before the modal opens, so a
+  // re-render triggered by opening the modal can't re-read the same "changed"
+  // signal as new again.
   useEffect(() => {
-    const isFirstObservation = !hasHandledSignalRef.current;
-    hasHandledSignalRef.current = true;
-    const changed = openAddTaskSignal !== lastHandledSignalRef.current;
-    lastHandledSignalRef.current = openAddTaskSignal;
-    if (changed || (isFirstObservation && openAddTaskSignal)) setShowAddModal(true);
+    if (openAddTaskSignal !== lastHandledAddTaskSignal) {
+      lastHandledAddTaskSignal = openAddTaskSignal;
+      setShowAddModal(true);
+    }
   }, [openAddTaskSignal]);
   // Same signal pattern, for the command palette's "Quick Add with AI" action
   // (see App.jsx's aiQuickAddSignal) — opens the List view's own AI Quick Add
   // modal directly; Board view gets the equivalent effect on the same prop,
   // forwarded down below, since it owns its own copy of this modal's state.
-  const lastHandledAISignalRef = useRef(openAIQuickAddSignal);
-  const hasHandledAISignalRef = useRef(false);
   useEffect(() => {
-    const isFirstObservation = !hasHandledAISignalRef.current;
-    hasHandledAISignalRef.current = true;
-    const changed = openAIQuickAddSignal !== lastHandledAISignalRef.current;
-    lastHandledAISignalRef.current = openAIQuickAddSignal;
-    if (changed || (isFirstObservation && openAIQuickAddSignal)) setShowAIQuickAdd(true);
+    if (openAIQuickAddSignal !== lastHandledAIQuickAddSignal) {
+      lastHandledAIQuickAddSignal = openAIQuickAddSignal;
+      setShowAIQuickAdd(true);
+    }
   }, [openAIQuickAddSignal]);
   // Fades in the sticky header's blurred backdrop (see .taskpage-sticky-header)
   // and pulls it a little closer to the top of the screen, as the page
@@ -470,14 +476,24 @@ export default function TaskListPanel({
         {view === 'list' && (
           <div className="tasklist-toolbar">
             <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
-            <AddTaskFabGroup
-              onAddTask={() => setShowAddModal(true)}
-              onAIQuickAdd={() => setShowAIQuickAdd(true)}
-              onOpenSearch={isMobile ? onOpenSearch : undefined}
-            />
           </div>
         )}
       </div>
+
+      {/* Rendered as a sibling of .taskpage-sticky-header, not inside it —
+          that element carries an inline `transform` (the scroll-driven dock
+          offset above), and any transform — even translateY(0) at rest —
+          makes its subtree a containing block for position:fixed
+          descendants, which broke this FAB's "fixed to viewport" corner
+          positioning (it would render pinned near the header instead of the
+          bottom-right corner, overlapping the view/filter menu). */}
+      {view === 'list' && (
+        <AddTaskFabGroup
+          onAddTask={() => setShowAddModal(true)}
+          onAIQuickAdd={() => setShowAIQuickAdd(true)}
+          onOpenSearch={isMobile ? onOpenSearch : undefined}
+        />
+      )}
 
       {view === 'board' && (
         <BoardView

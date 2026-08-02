@@ -149,6 +149,39 @@ test('command palette can launch "Quick Add with AI" when configured', async ({ 
   expectNoErrors(errors);
 });
 
+test('command palette "Add task" does not reopen when revisiting the Tasks tab', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  // Regression test: TaskListPanel/BoardView unmount whenever the user
+  // leaves the Tasks tab, so the openAddTaskSignal/openAIQuickAddSignal
+  // props they watch must not spuriously reopen the modal on remount just
+  // because the signal was already bumped earlier in the session.
+  await gotoTab(page, 'Dashboard');
+
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await expect(palette).toBeVisible();
+  await page.getByLabel('Command palette search').fill('Add task');
+  await page.waitForTimeout(300);
+  await palette.getByRole('button', { name: 'Add task', exact: true }).click();
+  await page.waitForTimeout(300);
+
+  await expect(page.getByPlaceholder('Task name')).toBeVisible();
+  // Close via the modal's own close button rather than Escape — more
+  // deterministic here since this modal was opened through the command
+  // palette's own closing modal, which briefly shares the keyboard-handler
+  // stack (see useModalA11y) as it animates out.
+  await page.getByLabel('Close').first().click();
+  await page.waitForTimeout(300);
+  await expect(page.getByPlaceholder('Task name')).not.toBeVisible();
+
+  await gotoTab(page, 'Dashboard');
+  await gotoTab(page, 'Tasks');
+  await page.waitForTimeout(300);
+  await expect(page.getByPlaceholder('Task name')).not.toBeVisible();
+
+  expectNoErrors(errors);
+});
+
 test('keyboard shortcut: Alt+N opens the "Add task" dialog', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   // TaskListPanel only wires up the newTask signal once it's mounted (see

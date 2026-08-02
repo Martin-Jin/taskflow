@@ -75,7 +75,10 @@ test.describe('Scheduling conflict details', () => {
 
     // Trigger a rebalance from the Calendar tab and open the conflict details.
     await gotoTab(page, 'Calendar');
-    await page.getByRole('button', { name: 'Re-balance schedule' }).click();
+    // exact: true — a help-tooltip trigger next to the real button shares
+    // "Re-balance schedule" as a substring of its own aria-label ("How does
+    // Re-balance schedule work?").
+    await page.getByRole('button', { name: 'Re-balance schedule', exact: true }).click();
     await page.waitForTimeout(500);
 
     const toast = page.locator('.toast');
@@ -123,7 +126,8 @@ test.describe('Scheduling conflict details', () => {
     // Manually rebalance once so the task gets an actual scheduled block —
     // otherwise there'd be nothing stale for the due-date edit to invalidate.
     await gotoTab(page, 'Calendar');
-    await page.getByRole('button', { name: 'Re-balance schedule' }).click();
+    // exact: true — see the note on the other "Re-balance schedule" click above.
+    await page.getByRole('button', { name: 'Re-balance schedule', exact: true }).click();
     await page.waitForTimeout(500);
     await expect(page.locator('.toast')).toBeVisible();
     // Dismiss the toast so the next one (from the auto-rebalance) is unambiguous.
