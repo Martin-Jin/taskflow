@@ -17,6 +17,18 @@
 
 export const CHANGELOG = [
   {
+    version: '1.60.0',
+    date: '2026-08-02',
+    title: "Manual 'Plan Today' — schedule tasks manually for today only",
+    changes: [
+      "Added an opt-in Manual 'Plan Today' mode that appears in the calendar's bottom-right FAB popover. When enabled, an Unscheduled tray appears so tasks can be dragged onto TODAY only.",
+      "While the mode is enabled, any auto-scheduled blocks that were placed for TODAY are removed and persisted so the user can build a manual plan for the day; these removed auto-scheduled blocks are restored if the user disables the mode.",
+      "Desktop FAB now shows an Edit icon and opens a small popover (matching mobile's speed-dial style) containing the 'Schedule manually for today' toggle and New event action. Mobile FAB keeps its existing behaviour.",
+      "Dragging an unscheduled task while Manual 'Plan Today' is active forces placement to TODAY and creates manual (non-auto-scheduled) blocks only for that day.",
+      "This is an opt-in, local-only mode that only affects today and is persisted across reloads; it does not change the automatic scheduler's behaviour for other days.",
+    ],
+  },
+  {
     version: '1.59.0',
     date: '2026-08-02',
     title: 'Removed the floating Google account popup on the sign-in button',
@@ -24,6 +36,7 @@ export const CHANGELOG = [
       "Signed-out users could see a floating \"Sign in as ...\" Google account bubble pop up over the sidebar, overlapping other buttons. That bubble is Chrome's own account suggestion, and it turned out to be tied to the text-style \"Sign in with Google\" button specifically. The sign-in button is now Google's compact icon-only button (with our own \"Sign in with Google\" text drawn next to it) instead, which doesn't trigger the popup.",
     ],
   },
+
   {
     version: '1.58.0',
     date: '2026-08-02',
