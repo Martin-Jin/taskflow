@@ -458,6 +458,27 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               </div>
             )}
           </div>
+          {/* Mobile only — on desktop this stays in .calendar-toolbar-actions
+              alongside Re-balance/Plan today. On mobile it's placed here,
+              in-line with the date title and hamburger menu, pushed to the
+              right via margin-left: auto (see calendar.css). Only useful once
+              Google Calendar is actually connected — hidden rather than
+              shown-but-disabled, matching how Settings' own Google controls
+              are gated on googleConnected. Shares isSyncing with Settings'
+              "Sync now"/"Push to Google Calendar" so this button, that
+              button, and any other sync action all show a consistent busy
+              state if one is already running. */}
+          {isMobile && googleConnected && (
+            <button
+              className="btn btn-icon calendar-refresh-btn-mobile"
+              onClick={syncNow}
+              disabled={isSyncing}
+              aria-label="Refresh Google Calendar events"
+              title="Refresh Google Calendar events"
+            >
+              <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
+            </button>
+          )}
         </div>
         <div className="calendar-toolbar-actions">
           {/* Desktop only — on mobile this moves into the FAB speed-dial
@@ -488,24 +509,24 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                 <strong>Plan today</strong> uses the same logic but only touches today's unlocked blocks — every
                 other day is left exactly as it was.
               </HelpTooltip>
+              {/* Only useful once Google Calendar is actually connected — hidden
+                  rather than shown-but-disabled, matching how Settings' own
+                  Google controls are gated on googleConnected. Shares isSyncing
+                  with Settings' "Sync now"/"Push to Google Calendar" so this
+                  button, that button, and any other sync action all show a
+                  consistent busy state if one is already running. */}
+              {googleConnected && (
+                <button
+                  className="btn btn-icon"
+                  onClick={syncNow}
+                  disabled={isSyncing}
+                  aria-label="Refresh Google Calendar events"
+                  title="Refresh Google Calendar events"
+                >
+                  <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
+                </button>
+              )}
             </>
-          )}
-          {/* Only useful once Google Calendar is actually connected — hidden
-              rather than shown-but-disabled, matching how Settings' own
-              Google controls are gated on googleConnected. Shares isSyncing
-              with Settings' "Sync now"/"Push to Google Calendar" so this
-              button, that button, and any other sync action all show a
-              consistent busy state if one is already running. */}
-          {googleConnected && (
-            <button
-              className="btn btn-icon"
-              onClick={syncNow}
-              disabled={isSyncing}
-              aria-label="Refresh Google Calendar events"
-              title="Refresh Google Calendar events"
-            >
-              <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
-            </button>
           )}
         </div>
       </div>

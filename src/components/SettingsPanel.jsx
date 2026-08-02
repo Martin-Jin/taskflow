@@ -806,6 +806,17 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             Front-load urgent/high-priority tasks near their deadline
           </label>
         </div>
+        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            id="autoRescheduleEnabled"
+            checked={rules.autoRescheduleEnabled !== false}
+            onChange={(e) => setRules({ ...rules, autoRescheduleEnabled: e.target.checked })}
+          />
+          <label htmlFor="autoRescheduleEnabled" style={{ margin: 0 }}>
+            Automatically reschedule when adding a task with a due date, or when Google Calendar events change
+          </label>
+        </div>
       </div>
 
       <div className="card" ref={(el) => (sectionRefs.current.routines = el)}>

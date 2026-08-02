@@ -2,12 +2,26 @@
 
 Backend half of the notification system (TODO.md #10, Phase 3). A plain Node
 script (`index.js`) checks every user who has email notifications enabled for
-tasks/blocks that are starting soon, overdue, or due today, and emails them
-via [Resend](https://resend.com). It's invoked on a schedule by a GitHub
+tasks/blocks that are starting soon, missed, overdue, or due today, and emails
+them via [Resend](https://resend.com). It's invoked on a schedule by a GitHub
 Actions workflow (`.github/workflows/notifications.yml`), not by Firebase —
 see the comments in `index.js`, `src/computeNotifications.js`, and
 `src/notificationState.js` for the trigger rules and duplicate-send-safety
-design (all unchanged from the original design).
+design.
+
+- **Due today** is sent as ONE consolidated digest email per user
+  ("Good morning! Here are the tasks due today: ...") rather than one email
+  per task, and only fires once the user's own `rules.workDayStart` (Settings
+  → Scheduling rules) has passed for that day in their timezone — not on
+  whatever post-midnight cron tick happens to run first.
+- **Missed** is a new trigger distinct from overdue: it fires when a
+  scheduled block's end time passes with the task still incomplete,
+  regardless of the task's own due date — the email distinguishes "due today
+  and missed" from "missed but not due today/overdue" and always includes
+  the due date. Re-arms if the task is rescheduled and misses again.
+- **Overdue** (task's own `dueDate` is in the past) is unchanged.
+- **Starting soon** is unchanged: fires once a scheduled block's start time
+  is within the user's configured threshold, re-arming on reschedule.
 
 This deliberately does NOT use Firebase Cloud Functions. Cloud Functions v2
 and Secret Manager (which the original design used for the Resend key) both

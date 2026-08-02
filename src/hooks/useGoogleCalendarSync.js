@@ -83,7 +83,17 @@ const MAX_RETENTION_DAYS = 365;
  * @param {Function} deps.pushActionToast - Queues a toast with undo support
  * @returns {Object} Google Calendar state and callbacks
  */
-export function useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast }) {
+export function useGoogleCalendarSync({
+  events,
+  setEvents,
+  setNotification,
+  blocks,
+  tasks,
+  commit,
+  stateRef,
+  pushActionToast,
+  onEventsChanged,
+}) {
   const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
   const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
   const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);
@@ -206,9 +216,14 @@ export function useGoogleCalendarSync({ events, setEvents, setNotification, bloc
         googleEventsHardResetDoneRef.current = true; // synchronous — covers any other already-in-flight closure too
         setGoogleEventsHardResetDone(true);
       }
+      // Events just changed (poll/pull/import/rebuild) — any task blocks
+      // scheduled around the old event set may now overlap or leave newly
+      // freed capacity unused, so queue the same auto-rebalance a due-date
+      // change triggers.
+      onEventsChanged?.();
       return didHardReset;
     },
-    [setEvents, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds]
+    [setEvents, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, onEventsChanged]
   );
 
   const markGoogleEventDeleted = useCallback((googleEventId) => {

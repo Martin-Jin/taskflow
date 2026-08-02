@@ -27,7 +27,7 @@
  * ============================================================================
  */
 
-import { addDays, addMonthsClamped } from './dateUtils';
+import { addDays, addMonthsClamped, fromISODate } from './dateUtils';
 import { generateRuleOccurrences } from './recurrenceExpansion';
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -410,6 +410,11 @@ export function computeNextDueDate(currentDueDate, recurrenceString) {
     case 'day':
       return addDays(currentDueDate, rule.count);
     case 'week':
+      // A weekday-specific rule ("every Mon, Wed") must advance to the next
+      // matching weekday, not blindly jump count*7 days — otherwise "every
+      // Mon, Wed" completed on a Monday jumps straight to next Monday
+      // instead of the same week's Wednesday.
+      if (rule.days && rule.days.length) return nextWeekdayOccurrence(currentDueDate, rule.days, rule.count);
       return addDays(currentDueDate, rule.count * 7);
     case 'month':
       return addMonthsClamped(currentDueDate, rule.count);
@@ -418,6 +423,24 @@ export function computeNextDueDate(currentDueDate, recurrenceString) {
     default:
       return addDays(currentDueDate, 1);
   }
+}
+
+/**
+ * Next date after `currentDueDate` whose weekday is in `days` (0=Sun..6=Sat).
+ * If the next matching weekday falls within the same week (i.e. before
+ * wrapping back around to a day <= today's weekday), it's used directly
+ * regardless of `weekInterval` — an every-N-weeks-on-certain-days rule still
+ * cycles through all its listed days every single week, `weekInterval` only
+ * stretches the gap between one full week-cycle and the next. So the interval
+ * only applies once we wrap past the end of the current week.
+ */
+function nextWeekdayOccurrence(currentDueDate, days, weekInterval) {
+  const sorted = [...days].sort((a, b) => a - b);
+  const currentWeekday = fromISODate(currentDueDate).getDay();
+  const nextInWeek = sorted.find((d) => d > currentWeekday);
+  if (nextInWeek !== undefined) return addDays(currentDueDate, nextInWeek - currentWeekday);
+  const daysUntilWrap = 7 - currentWeekday + sorted[0] + 7 * (Math.max(1, weekInterval) - 1);
+  return addDays(currentDueDate, daysUntilWrap);
 }
 
 /**

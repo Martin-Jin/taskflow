@@ -16,25 +16,16 @@
 const COPY = {
   startingSoon: { subjectPrefix: 'Starting soon', heading: 'A task is starting soon' },
   overdue: { subjectPrefix: 'Overdue', heading: 'A task is overdue' },
-  dueToday: { subjectPrefix: 'Due today', heading: 'A task is due today' },
+  missed: { subjectPrefix: 'Missed', heading: 'A scheduled task was missed' },
 };
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-/**
- * @param {'startingSoon'|'overdue'|'dueToday'} type
- * @param {{title: string}} task
- * @param {string} detailLine - plain-English specifics, e.g. "Starts at 14:00" / "Was due 2026-07-29" / "Due date is today"
- * @returns {{subject: string, html: string}}
- */
-function buildNotificationEmail(type, task, detailLine) {
-  const copy = COPY[type];
-  const title = escapeHtml(task.title);
-  const subject = `${copy.subjectPrefix}: ${title}`;
-
-  const html = `<!doctype html>
+/** Shared card chrome every email variant below renders into — heading + arbitrary inner HTML body. */
+function renderCard(heading, bodyHtml, previewText) {
+  return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -53,7 +44,7 @@ function buildNotificationEmail(type, task, detailLine) {
     </style>
   </head>
   <body class="tf-bg" style="margin:0;padding:0;background:#f4f4f5;">
-    <span style="display:none;max-height:0;overflow:hidden;">${escapeHtml(detailLine)}</span>
+    <span style="display:none;max-height:0;overflow:hidden;">${escapeHtml(previewText)}</span>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="tf-bg" style="background:#f4f4f5;padding:24px 0;">
       <tr>
         <td align="center">
@@ -61,13 +52,12 @@ function buildNotificationEmail(type, task, detailLine) {
             <tr>
               <td style="padding:24px 24px 8px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
                 <p style="margin:0 0 4px;font-size:13px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#6366f1;">TaskFlow</p>
-                <h1 class="tf-heading" style="margin:0 0 12px;font-size:20px;line-height:1.3;color:#18181b;">${copy.heading}</h1>
+                <h1 class="tf-heading" style="margin:0 0 12px;font-size:20px;line-height:1.3;color:#18181b;">${heading}</h1>
               </td>
             </tr>
             <tr>
               <td style="padding:0 24px 24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
-                <p class="tf-title" style="margin:0 0 8px;font-size:16px;color:#18181b;font-weight:600;">${title}</p>
-                <p class="tf-detail" style="margin:0;font-size:14px;color:#52525b;">${escapeHtml(detailLine)}</p>
+                ${bodyHtml}
               </td>
             </tr>
             <tr>
@@ -83,8 +73,37 @@ function buildNotificationEmail(type, task, detailLine) {
     </table>
   </body>
 </html>`;
-
-  return { subject, html };
 }
 
-module.exports = { buildNotificationEmail };
+/**
+ * @param {'startingSoon'|'overdue'|'missed'} type
+ * @param {{title: string}} task
+ * @param {string} detailLine - plain-English specifics, e.g. "Starts at 14:00" / "Was due 2026-07-29"
+ * @returns {{subject: string, html: string}}
+ */
+function buildNotificationEmail(type, task, detailLine) {
+  const copy = COPY[type];
+  const title = escapeHtml(task.title);
+  const subject = `${copy.subjectPrefix}: ${title}`;
+  const bodyHtml = `<p class="tf-title" style="margin:0 0 8px;font-size:16px;color:#18181b;font-weight:600;">${title}</p>
+                <p class="tf-detail" style="margin:0;font-size:14px;color:#52525b;">${escapeHtml(detailLine)}</p>`;
+  return { subject, html: renderCard(copy.heading, bodyHtml, detailLine) };
+}
+
+/**
+ * Consolidated "due today" digest — one email listing every task due today,
+ * instead of one email per task. Sent once daily at the user's own
+ * workDayStart (see computeNotifications.js), with a morning-greeting intro
+ * line ahead of the task list.
+ * @param {{title: string}[]} tasks - every task due today, at least one.
+ * @returns {{subject: string, html: string}}
+ */
+function buildDueTodayDigestEmail(tasks) {
+  const subject = tasks.length === 1 ? `Due today: ${escapeHtml(tasks[0].title)}` : `Due today: ${tasks.length} tasks`;
+  const items = tasks.map((t) => `<li style="margin:0 0 6px;">${escapeHtml(t.title)}</li>`).join('');
+  const bodyHtml = `<p class="tf-detail" style="margin:0 0 12px;font-size:14px;color:#52525b;">Good morning! Here are the tasks due today:</p>
+                <ul class="tf-detail" style="margin:0;padding-left:20px;font-size:14px;color:#52525b;">${items}</ul>`;
+  return { subject, html: renderCard('Tasks due today', bodyHtml, `${tasks.length} task(s) due today`) };
+}
+
+module.exports = { buildNotificationEmail, buildDueTodayDigestEmail };

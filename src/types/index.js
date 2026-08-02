@@ -273,6 +273,7 @@
  * @property {number} horizonWeeks             - How many weeks ahead the scheduler plans across.
  * @property {boolean} frontLoadUrgent         - If true, urgent/high priority tasks are packed near their due dates first.
  * @property {number} minGapBetweenBlocksMins  - Minimum break minutes required between two scheduled blocks.
+ * @property {boolean} [autoRescheduleEnabled] - When true (default), adding a task with a due date or Google Calendar events changing (sync/import) automatically queues a schedule rebalance. When false, the user must trigger Re-balance/Plan today manually.
  */
 
 /**

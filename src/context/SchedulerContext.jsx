@@ -356,6 +356,14 @@ export function planDisableManualPlanToday(blocks, savedAutoScheduledBlocksForTo
 
 export function SchedulerProvider({ children }) {
   const { user } = useAuth();
+
+  // Ref-based indirection so useGoogleCalendarSync (constructed below, before
+  // queueDueDateRebalance exists later in this component) can still trigger
+  // an auto-rebalance when Google Calendar events change/import — populated
+  // once queueDueDateRebalance itself is defined, called via a stable wrapper
+  // so the hook's own dependency array never needs to change.
+  const queueDueDateRebalanceRef = useRef(() => {});
+  const triggerDueDateRebalance = useCallback(() => queueDueDateRebalanceRef.current(), []);
   // Owned live by ThemeContext (which wraps this provider — see App.jsx) —
   // only read/written here so the backup payload (exportBackup/
   // createCloudBackup, both in useCloudSync) can capture it and a restore
@@ -748,7 +756,17 @@ export function SchedulerProvider({ children }) {
     unmarkGoogleEventDeleted,
     markGoogleEventInstanceDeleted,
     unmarkGoogleEventInstanceDeleted,
-  } = useGoogleCalendarSync({ events, setEvents, setNotification, blocks, tasks, commit, stateRef, pushActionToast });
+  } = useGoogleCalendarSync({
+    events,
+    setEvents,
+    setNotification,
+    blocks,
+    tasks,
+    commit,
+    stateRef,
+    pushActionToast,
+    onEventsChanged: triggerDueDateRebalance,
+  });
 
   // ---- Cloud sync (Firestore) ------------------------------------------------
   // Pull/push/listener/fingerprint/backup/restore logic all lives in this
@@ -934,6 +952,12 @@ export function SchedulerProvider({ children }) {
     }, 300);
   }, []);
   useEffect(() => {
+    // Gated on the user's auto-reschedule toggle (Settings → Scheduling
+    // rules) — undefined (persisted before this setting existed) defaults to
+    // on, same as addTask/updateTask's checks above.
+    queueDueDateRebalanceRef.current = rules.autoRescheduleEnabled !== false ? queueDueDateRebalance : () => {};
+  }, [queueDueDateRebalance, rules.autoRescheduleEnabled]);
+  useEffect(() => {
     return () => {
       if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
     };
@@ -991,9 +1015,15 @@ export function SchedulerProvider({ children }) {
       // and silently clobbering all but the last one.
       commit((current) => ({ tasks: [...current.tasks, newTask], blocks: current.blocks }), `Added task "${newTask.title}"`);
       if (soundEnabled) playAddSound(soundVolume);
+      // A new task with a due date needs a planning slot — queue the same
+      // debounced rebalance updateTask uses for a due-date change, so it
+      // gets picked up without requiring a manual Re-balance click. Gated on
+      // the user's auto-reschedule toggle (Settings → Scheduling rules) —
+      // undefined (persisted before this setting existed) defaults to on.
+      if (newTask.dueDate && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
       return newTask;
     },
-    [commit, soundEnabled, soundVolume]
+    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled]
   );
 
   /**
@@ -1053,9 +1083,12 @@ export function SchedulerProvider({ children }) {
       // would run the engine redundantly against still-stale snapshots.
       // Debouncing collapses a burst into exactly one rebalance, run after
       // the batch's commits have all landed.
-      if (hasScheduledBlock) queueDueDateRebalance();
+      // Gated on the user's auto-reschedule toggle (Settings → Scheduling
+      // rules) — undefined (persisted before this setting existed) defaults
+      // to on, same as addTask's check above.
+      if (hasScheduledBlock && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
     },
-    [commit, tasks, blocks, queueDueDateRebalance]
+    [commit, tasks, blocks, queueDueDateRebalance, rules.autoRescheduleEnabled]
   );
 
   /**

@@ -5,7 +5,7 @@ const { Resend } = require('resend');
 
 const { computeCandidates } = require('./src/computeNotifications');
 const { claimNotification, clearNotificationState } = require('./src/notificationState');
-const { buildNotificationEmail } = require('./src/emailTemplate');
+const { buildNotificationEmail, buildDueTodayDigestEmail } = require('./src/emailTemplate');
 
 // Resend's no-setup shared sender. Without a verified custom domain, Resend's
 // sandbox mode restricts this address to sending ONLY to the Resend
@@ -85,7 +85,8 @@ async function main() {
 
     const tasks = data.tasks || [];
     const blocks = data.blocks || [];
-    const { toNotify, toClear } = computeCandidates({ tasks, blocks, settings, now });
+    const rules = data.rules || {};
+    const { toNotify, toClear } = computeCandidates({ tasks, blocks, settings, rules, now });
 
     // Clearing stale overdue dedupe-state is independent of whether
     // anything fires this run, so it always runs regardless.
@@ -104,7 +105,10 @@ async function main() {
       }
       if (!claimed) continue; // already sent this one, or its throttle says not yet
 
-      const { subject, html } = buildNotificationEmail(candidate.type, candidate.task, buildDetailLine(candidate));
+      const { subject, html } =
+        candidate.type === 'dueTodayDigest'
+          ? buildDueTodayDigestEmail(candidate.tasks)
+          : buildNotificationEmail(candidate.type, candidate.task, buildDetailLine(candidate));
 
       try {
         // The Resend SDK resolves (never throws) on API-level rejections —
@@ -131,9 +135,13 @@ function buildDetailLine(candidate) {
     case 'startingSoon':
       return `Starts at ${candidate.block.startTime}`;
     case 'overdue':
-      return `Was due ${candidate.task.dueDate}`;
-    case 'dueToday':
-      return 'Due date is today';
+      return `Overdue — was due ${candidate.task.dueDate}`;
+    case 'missed':
+      // Distinguish "due today AND missed" from "missed but not due
+      // today/overdue" per the user's ask — both cases always include the
+      // due date so the email is unambiguous either way.
+      if (candidate.isDueToday) return `Due today and missed — scheduled slot ended at ${candidate.block.endTime}, due ${candidate.dueDate}`;
+      return `Missed scheduled slot (ended ${candidate.block.endTime})${candidate.dueDate ? `, due ${candidate.dueDate}` : ' — no due date set'}`;
     default:
       return '';
   }

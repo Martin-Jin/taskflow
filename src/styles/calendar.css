@@ -236,6 +236,14 @@
     justify-content: center;
   }
 
+  /* Pushes the refresh button to the right edge of the same row as the date
+     title and hamburger menu, rather than centered/wrapped onto its own row
+     below (see CalendarPage.jsx for why it moved into .calendar-toolbar-left
+     on mobile). */
+  .calendar-refresh-btn-mobile {
+    margin-left: auto;
+  }
+
   /* The prev/next arrows are desktop-only (see CalendarPage.jsx) — Today
      stands in for them on mobile, sitting directly left of the date
      dropdown in the same row, and only shows once the user has actually

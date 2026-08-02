@@ -83,17 +83,30 @@ async function claimNotification(db, uid, candidate, now) {
         break;
       }
 
-      case 'dueToday': {
-        // Once per calendar date; a new day's "due today" fires again. Also
-        // re-arms if dueDate changed (moved off today and back onto today
-        // within the same calendar day would otherwise stay silently
-        // suppressed by the date-only check below).
-        const dueDateChanged = prev !== null && prev.dueDate !== candidate.dueDate;
-        eligible = prev === null || dueDateChanged || prev.lastNotifiedDate !== candidate.todayISO;
-        nextState = { type: 'dueToday', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO, dueDate: candidate.dueDate };
+      case 'missed': {
+        // Fires once per block id, same "unless rescheduled" rule as
+        // startingSoon — a block whose time already passed once and got
+        // reported is only worth a fresh email if the user then moved it to
+        // a new date/time and STILL missed that one too.
+        const rescheduled = prev !== null && prev.scheduledAt !== candidate.scheduledAt;
+        eligible = prev === null || rescheduled;
+        nextState = { type: 'missed', lastNotifiedAt: now, scheduledAt: candidate.scheduledAt };
         break;
       }
 
+      case 'dueTodayDigest': {
+        // Once per calendar date — the digest itself is already gated to not
+        // fire before the user's workDayStart (see computeNotifications.js),
+        // so this just prevents repeat sends on later ticks the same day.
+        eligible = prev === null || prev.lastNotifiedDate !== candidate.todayISO;
+        nextState = { type: 'dueTodayDigest', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO };
+        break;
+      }
+
+      // NOTE: 'dueToday' (the old one-email-per-task variant) is gone —
+      // replaced entirely by 'dueTodayDigest' above. No migration needed:
+      // any stale users/{uid}/notificationState/dueToday_{taskId} docs from
+      // before this change are simply never read again and can be ignored.
       default:
         return false;
     }
