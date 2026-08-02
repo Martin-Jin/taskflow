@@ -699,7 +699,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       const reason = conflict
         ? { type: 'fixed_time_conflict', conflictingItem: { id: conflict.id, type: conflict.source, label: conflict.label, start: minutesToTime(conflict.start), end: minutesToTime(conflict.end) } }
         : { type: 'no_capacity' };
-      overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100, reason });
+      overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100, reason, dueDate: task.dueDate ?? null });
     }
   }
 

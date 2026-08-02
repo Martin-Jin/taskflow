@@ -55,8 +55,8 @@ export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, 
     // the allocator was trying to place it into) — group and sort by that so
     // same-day conflicts read as one section, undated tasks trailing last.
     .sort((a, b) => {
-      const da = a.task.dueDate || '9999-99-99';
-      const db = b.task.dueDate || '9999-99-99';
+      const da = a.dueDate || a.task.dueDate || '9999-99-99';
+      const db = b.dueDate || b.task.dueDate || '9999-99-99';
       return da < db ? -1 : da > db ? 1 : 0;
     });
 
@@ -77,8 +77,8 @@ export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, 
       onClose={onClose}
       renderItem={(item, index) => {
         const Icon = REASON_ICON[item.reason?.type] || AlertTriangle;
-        const dayKey = item.task.dueDate || null;
-        const isNewDay = index === 0 || dayKey !== (items[index - 1].task.dueDate || null);
+        const dayKey = item.dueDate || item.task.dueDate || null;
+        const isNewDay = index === 0 || dayKey !== (items[index - 1].dueDate || items[index - 1].task.dueDate || null);
         const dayLabel = describeDay(dayKey);
         return (
           <React.Fragment key={item.taskId}>

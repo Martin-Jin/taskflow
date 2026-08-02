@@ -517,6 +517,50 @@ export function SchedulerProvider({ children }) {
   // with rebalance's "at risk of missing its deadline" overflow.
   const [lastUnfitToday, setLastUnfitToday] = useState([]);
   const [notification, setNotification] = useState(null);
+  // Manual "Plan Today" mode: when enabled the UI shows manual placement
+  // blocks for TODAY only, and auto-scheduled blocks for today are removed.
+  // Persisted so the user's choice survives a reload; toggle via
+  // toggleManualPlanToday().
+  const [manualPlanTodayMode, setManualPlanTodayMode] = usePersistedState('manualPlanTodayMode', false);
+  // Holds any auto-scheduled blocks removed when manual-plan-day is enabled,
+  // so they can be restored if the user later turns the mode off.
+  const [savedAutoScheduledBlocksForToday, setSavedAutoScheduledBlocksForToday] = usePersistedState(
+    'savedAutoScheduledBlocksForToday',
+    []
+  );
+
+  const toggleManualPlanToday = useCallback(
+    (enabled) => {
+      const todayIso = toISODate(new Date());
+      if (enabled) {
+        // Remove any auto-scheduled blocks that landed on today so the
+        // user can build a manual day without engine-placed blocks colliding.
+        commit((current) => {
+          const removed = current.blocks.filter((b) => b.isAutoScheduled && b.date === todayIso);
+          const remaining = current.blocks.filter((b) => !(b.isAutoScheduled && b.date === todayIso));
+          // Persist the removed blocks so we can restore them when the mode
+          // is turned off again.
+          setSavedAutoScheduledBlocksForToday(removed);
+          return { tasks: current.tasks, blocks: remaining };
+        }, 'Enabled manual plan for today');
+        setManualPlanTodayMode(true);
+      } else {
+        // Restore previously-removed auto-scheduled blocks (if any), avoiding
+        // duplicates in case something else already created similar blocks.
+        if (savedAutoScheduledBlocksForToday && savedAutoScheduledBlocksForToday.length > 0) {
+          commit((current) => {
+            const existingIds = new Set(current.blocks.map((b) => b.id));
+            const toRestore = savedAutoScheduledBlocksForToday.filter((b) => !existingIds.has(b.id));
+            const merged = [...current.blocks, ...toRestore];
+            return { tasks: current.tasks, blocks: merged };
+          }, 'Restored auto-scheduled blocks for today');
+          setSavedAutoScheduledBlocksForToday([]);
+        }
+        setManualPlanTodayMode(false);
+      }
+    },
+    [commit, savedAutoScheduledBlocksForToday, setSavedAutoScheduledBlocksForToday]
+  );
   // Ephemeral, transient UI state for the "View details" flow off a
   // rebalance/planToday toast (see runRebalance/runPlanToday below) — not
   // persisted/backed up, just the enriched overflow/unfitToday list (each
@@ -2279,6 +2323,9 @@ export function SchedulerProvider({ children }) {
       deleteCloudBackup,
       clearNotification,
       clearAllData,
+      // Manual plan today mode & toggle
+      manualPlanTodayMode,
+      toggleManualPlanToday,
     }),
     [
       tasks,
