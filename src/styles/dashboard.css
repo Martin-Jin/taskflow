@@ -83,12 +83,6 @@
   color: var(--color-text-primary);
 }
 
-@media (max-width: 640px) {
-  .dashboard-stat-tile {
-    text-align: center;
-  }
-}
-
 /* -------------------------------------------------------------------- */
 /* Grid layout                                                           */
 /* -------------------------------------------------------------------- */
@@ -946,6 +940,10 @@
   min-width: 0;
 }
 
+.progress-ring-card .dashboard-card-header {
+  text-align: center;
+}
+
 @media (max-width: 639px) {
   .progress-ring-row {
     flex-direction: column;
@@ -963,6 +961,7 @@
 .progress-ring-body {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-4);
 }
 
