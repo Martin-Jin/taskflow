@@ -495,8 +495,11 @@ select:focus-visible,
 /* Circular FAB shape shared by the mobile search/command-palette button —
    distinct from the square-ish --radius-lg used by .add-task-btn/.calendar-fab
    so it reads as a different (secondary) action from the page's main FAB. */
+/* !important needed since this loads before .btn in the cascade, which also
+   sets border-radius at equal specificity and would otherwise win by source
+   order. */
 .fab-round {
-  border-radius: 50%;
+  border-radius: 50% !important;
 }
 
 /* Mobile search/command-palette button (see App.jsx) — same 56px size and
