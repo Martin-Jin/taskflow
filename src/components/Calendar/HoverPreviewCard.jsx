@@ -38,7 +38,7 @@ function computeStyle(rect) {
   return { left, top, width: WIDTH };
 }
 
-export default function HoverPreviewCard({ rect, title, timeText, priority, projectName, parentTitle, isPassive }) {
+export default function HoverPreviewCard({ rect, title, timeText, priority, projectName, parentTitle, isPassive, completedAt }) {
   if (!rect) return null;
   return createPortal(
     <div className="cal-hover-preview" style={{ position: 'fixed', ...computeStyle(rect) }}>
