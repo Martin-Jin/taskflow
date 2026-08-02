@@ -247,7 +247,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   }, [settingsSectionRequest?.requestId]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
+    <div className="settings-search-bar-wrap">
+      <div className="settings-search-bar-backdrop" aria-hidden="true" />
       <div className="search-bar settings-search-bar" ref={sectionSearchRef}>
         <div className="search-bar-field">
           <span className="search-bar-icon">
@@ -282,6 +283,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
         )}
       </div>
 
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
       <div className="card" data-tour="account-card" ref={(el) => (sectionRefs.current.account = el)}>
         <h3 style={{ marginTop: 0 }}>Account &amp; sync</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
@@ -1219,6 +1221,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
       {showLabelsModal && <LabelsModal onClose={() => setShowLabelsModal(false)} />}
       {showChangelogModal && <ChangelogModal onClose={() => setShowChangelogModal(false)} />}
       {showShortcutsModal && <ShortcutsModal onClose={() => setShowShortcutsModal(false)} />}
+      </div>
     </div>
   );
 }

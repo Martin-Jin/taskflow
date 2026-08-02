@@ -114,10 +114,10 @@ export default function CommandPalette({
     }));
 
     return [
+      { label: 'Actions', items: actionItems },
       { label: 'Views', items: viewItems },
       { label: 'Projects', items: projectItems },
       { label: 'Tasks', items: taskItems },
-      { label: 'Actions', items: actionItems },
     ].filter((g) => g.items.length > 0);
   }, [query, tabs, activeTab, projects, tasks, actions, onSelectTab, onSelectProject, onOpenTask]);
 
@@ -178,7 +178,11 @@ export default function CommandPalette({
             placeholder="Jump to a view, project, task, or action…"
             aria-label="Command palette search"
           />
-          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+          {/* Not a tab stop: Escape already closes the palette (see
+              useModalA11y above), so leaving this in the Tab sequence would
+              put it between the search input and the first result — this
+              way Tab from the input lands straight on the first result. */}
+          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close" tabIndex={-1}>
             <X size={16} />
           </button>
         </div>
