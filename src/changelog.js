@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.61.0',
+    date: '2026-08-02',
+    title: "Fixed the calendar FAB's popover styling",
+    changes: [
+      "The desktop calendar FAB's popover menu (Schedule manually for today / New event) now uses the same anchored popover styling as the task detail view's \"...\" menu, instead of rendering unstyled.",
+    ],
+  },
+  {
     version: '1.60.0',
     date: '2026-08-02',
     title: "Manual 'Plan Today' — schedule tasks manually for today only",
@@ -26,6 +34,7 @@ export const CHANGELOG = [
       "Desktop FAB now shows an Edit icon and opens a small popover (matching mobile's speed-dial style) containing the 'Schedule manually for today' toggle and New event action. Mobile FAB keeps its existing behaviour.",
       "Dragging an unscheduled task while Manual 'Plan Today' is active forces placement to TODAY and creates manual (non-auto-scheduled) blocks only for that day.",
       "This is an opt-in, local-only mode that only affects today and is persisted across reloads; it does not change the automatic scheduler's behaviour for other days.",
+      "Fixed the scheduling-conflicts modal showing duplicate/incorrectly-grouped entries when multiple conflicts fell on the same day.",
     ],
   },
   {
