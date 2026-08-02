@@ -59,7 +59,7 @@
  * ============================================================================
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -85,6 +85,15 @@ import { getEffectiveRemainingHours } from '../../utils/taskHierarchy';
 const CARD_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
 const CARD_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
 
+// Baseline for the openAIQuickAddSignal prop below — kept at module scope
+// (not a component-instance ref) because BoardView unmounts/remounts on
+// every List/Board switch, see the effect below for the full rationale.
+// Seeded to 0 (matching aiQuickAddSignal's initial useState(0) in App.jsx),
+// not left `undefined` — otherwise `0 !== undefined` on BoardView's very
+// first mount of the session, which used to auto-open AI Quick Add the
+// first time anyone ever switched to the Board view.
+let lastHandledBoardAIQuickAddSignal = 0;
+
 export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal }) {
   const {
     tasks,
@@ -107,20 +116,18 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   // Command palette's "Quick Add with AI" action (see App.jsx's
   // aiQuickAddSignal, forwarded via TaskListPanel) — same signal-counter
   // pattern as TaskListPanel's own openAddTaskSignal, since this modal's open
-  // state is local to Board rather than lifted. hasHandledAISignalRef exists
-  // so a first-ever mount that's already carrying a bumped signal (the
-  // caller does setTab('tasks') + the increment in the same batch, so Board
-  // can mount fresh already "caught up") still opens the modal instead of
-  // silently no-opping — see TaskListPanel's matching effect for the full
-  // rationale.
-  const lastHandledAISignalRef = useRef(openAIQuickAddSignal);
-  const hasHandledAISignalRef = useRef(false);
+  // state is local to Board rather than lifted. The "last handled" baseline
+  // lives at module scope, not in a component-instance ref: Board remounts
+  // every time the user switches away from and back to the Board view (or
+  // leaves and returns to the Tasks tab), and a per-instance ref would forget
+  // it already handled the current signal value, reopening the modal on
+  // every return visit — see TaskListPanel's matching effect for the same
+  // fix and full rationale.
   useEffect(() => {
-    const isFirstObservation = !hasHandledAISignalRef.current;
-    hasHandledAISignalRef.current = true;
-    const changed = openAIQuickAddSignal !== lastHandledAISignalRef.current;
-    lastHandledAISignalRef.current = openAIQuickAddSignal;
-    if (changed || (isFirstObservation && openAIQuickAddSignal)) setShowAIQuickAdd(true);
+    if (openAIQuickAddSignal !== lastHandledBoardAIQuickAddSignal) {
+      lastHandledBoardAIQuickAddSignal = openAIQuickAddSignal;
+      setShowAIQuickAdd(true);
+    }
   }, [openAIQuickAddSignal]);
   const [editingColumnId, setEditingColumnId] = useState(null); // null | sectionId
   const [editingColumnTitle, setEditingColumnTitle] = useState('');

@@ -375,7 +375,9 @@ test.describe('Calendar', () => {
     // is genuinely wired up as a recurring series, not just a plain one-off.
     const editDialog = page.getByRole('dialog');
     await expect(editDialog).toBeVisible();
-    await expect(editDialog.getByText(/apply to/i)).toBeVisible();
+    // exact: true — DetailField's label span ("Apply to") vs. the
+    // form-hint paragraph that also mentions '"Apply to"' when quoting it.
+    await expect(editDialog.getByText('Apply to', { exact: true })).toBeVisible();
     await expect(editDialog.getByRole('combobox').filter({ hasText: /this event/i })).toBeVisible();
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
@@ -438,7 +440,7 @@ test.describe('Calendar', () => {
     // but the Repeat checkbox is available and unchecked.
     let editDialog = page.getByRole('dialog');
     await expect(editDialog).toBeVisible();
-    await expect(editDialog.getByText(/apply to/i)).toHaveCount(0);
+    await expect(editDialog.getByText('Apply to', { exact: true })).toHaveCount(0);
     const repeatCheckbox = editDialog.getByRole('checkbox', { name: /repeats/i });
     await expect(repeatCheckbox).not.toBeChecked();
 
@@ -459,14 +461,14 @@ test.describe('Calendar', () => {
     await page.waitForTimeout(300);
     editDialog = page.getByRole('dialog');
     await expect(editDialog).toBeVisible();
-    await expect(editDialog.getByText(/apply to/i)).toBeVisible();
+    await expect(editDialog.getByText('Apply to', { exact: true })).toBeVisible();
     await expect(editDialog.getByRole('checkbox', { name: /repeats/i })).toBeChecked();
     await expect(editDialog.locator('input[type="text"]')).toHaveValue('every 2 weeks');
 
     // At the default 'this event' scope, the cadence controls are disabled —
     // changing a whole series' repeat pattern only makes sense at 'all' scope.
     await expect(editDialog.locator('input[type="text"]')).toBeDisabled();
-    await expect(editDialog.getByText(/only applies when the scope/i)).toBeVisible();
+    await expect(editDialog.getByText(/to edit the repeat pattern/i)).toBeVisible();
 
     // Switch to 'all' scope and edit the cadence again. The Repeat field's
     // own "Ends" select is also a combobox here, so target the "Apply to"

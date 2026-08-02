@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.75.1',
+    date: '2026-08-02',
+    title: 'Fix Add task / AI Quick Add buttons overlapping the Tasks view menu',
+    changes: [
+      'Fixed the floating "Add task" / AI Quick Add buttons on the Tasks page rendering near the top-right corner instead of the bottom-right, overlapping (and blocking clicks on) the view/filter menu — a side effect of the previous release\'s header-docking fix.',
+    ],
+  },
+  {
     version: '1.75.0',
     date: '2026-08-02',
     title: 'Guided tour covers Manual Plan Today; new help tooltips; AI Quick Add in the command palette',
