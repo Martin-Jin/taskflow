@@ -169,6 +169,15 @@
   position: relative;
 }
 
+.calendar-view-menu-trigger {
+  background: transparent;
+  border-color: transparent;
+}
+
+.calendar-view-menu-trigger:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+}
+
 .calendar-view-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -415,23 +424,25 @@
   transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
 }
 
-/* Routine (Fixed-availability) background: purely informational — sits
-   behind blocks/events, never intercepts clicks/drags, so the "create
-   event" drag-to-block-out gesture on the column still works right through
-   it. Deliberately much quieter than .cal-block/.cal-event (no border,
-   shadow, or saturated fill) so it reads as "unavailable" without
-   competing with real scheduled items for attention. */
+/* Routine (Fixed-availability) background: purely informational — the
+   label/time only reveal on hover (see .cal-routine-block-label/-time
+   below), and mousedown is forwarded to the underlying day-column's own
+   drag-to-block-out gesture (see WeekView's handleColumnMouseDown call
+   here) rather than truly ignoring clicks, so hover still works.
+   Deliberately much quieter than .cal-block/.cal-event (no border, shadow,
+   or saturated fill) so it reads as "unavailable" without competing with
+   real scheduled items for attention. */
 .cal-routine-block {
   position: absolute;
   left: 0;
   right: 0;
   background: color-mix(in srgb, var(--color-border) 55%, transparent);
-  pointer-events: none;
   overflow: hidden;
   padding: 3px 7px;
   font-size: 10.5px;
   color: var(--color-text-secondary);
   z-index: 0;
+  cursor: grab;
 }
 
 .cal-routine-block-label {
@@ -440,10 +451,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.cal-routine-block:hover .cal-routine-block-label {
+  opacity: 1;
 }
 
 .cal-routine-block-time {
-  opacity: 0.8;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.cal-routine-block:hover .cal-routine-block-time {
+  opacity: 1;
 }
 
 .cal-block:hover {

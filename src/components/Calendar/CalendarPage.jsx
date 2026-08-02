@@ -429,7 +429,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
           </div>
           <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
             <button
-              className="btn btn-icon"
+              className="btn btn-icon calendar-view-menu-trigger"
               onClick={() => setShowViewMenu((v) => !v)}
               aria-label="Change view"
               aria-haspopup="true"
