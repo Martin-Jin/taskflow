@@ -83,6 +83,12 @@
  *                                              SchedulerContext.completeTask), cleared back to null on restore
  *                                              (uncompleteTask). Drives the 30-day auto-delete sweep on load.
  * @property {number} minChunkHours          - Smallest allowed contiguous block (default 0.5h) - prevents over-fragmentation.
+ *                                              A larger-than-0.5h value here is honored, but the allocator (see
+ *                                              MIN_SPLIT_CHUNK_HOURS in allocator.js) enforces a hard 30-minute
+ *                                              floor for any SPLIT chunk regardless of a smaller value set here -
+ *                                              a task can't ask to be fragmented into pieces under 30 minutes, and
+ *                                              a task whose entire remaining time is <=30 minutes is never split
+ *                                              at all (it places as one block or not this run).
  * @property {number} maxChunkHours          - Largest allowed contiguous block per day (default 4h) - encourages context-switching breaks.
  * @property {string} createdAt              - ISO datetime.
  * @property {string} updatedAt              - ISO datetime.

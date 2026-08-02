@@ -354,10 +354,13 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
 
   it('splits a task across several small non-contiguous gaps when no single gap can hold the full remaining duration', () => {
     // Three 1-hour meetings carve the day into four 45-min-or-shorter gaps —
-    // none individually big enough for a continuous 2-hour block, but they
-    // sum to well over 2 hours. The task's default minChunkHours (0.5h) is
+    // none individually big enough for a continuous 1.75-hour block, but they
+    // sum to well over that. The task's default minChunkHours (0.5h) is
     // bigger than some of these gaps, so a continuous placement is genuinely
-    // impossible; the task should still fully place by splitting.
+    // impossible; the task should still fully place by splitting, as long as
+    // it divides evenly into pieces that each clear the 30-minute split floor
+    // (MIN_SPLIT_CHUNK_HOURS in allocator.js) — see the "does not shrink a
+    // split chunk below 30 minutes" test below for the case where it doesn't.
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
       routines: [], blocks: [], rules,
       events: [
@@ -367,14 +370,45 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
       ],
     });
     // Free gaps: 09:00-09:45 (45m), 10:45-11:15 (30m), 12:15-12:45 (30m), 13:45-18:00 (4h15m).
+    // 1.75h is fully absorbed by the first three gaps (0.75+0.5+0.5), so this
+    // never even needs to reach into the wide-open fourth gap.
     const task = {
-      id: 'tsplit', title: 'Deep work', estimatedHours: 2, remainingHours: 2,
+      id: 'tsplit', title: 'Deep work', estimatedHours: 1.75, remainingHours: 1.75,
       dueDate: '2026-07-01', enforceDueDate: true,
     };
     const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
     expect(overflow).toHaveLength(0);
     const totalHours = blocks.reduce((sum, b) => sum + b.durationHours, 0);
-    expect(totalHours).toBeCloseTo(2, 5);
+    expect(totalHours).toBeCloseTo(1.75, 5);
+    for (const block of blocks) {
+      expect(block.durationHours).toBeGreaterThanOrEqual(0.5 - 1e-9);
+    }
+  });
+
+  it('does not shrink a split chunk below 30 minutes, even if that leaves a small remainder unplaced', () => {
+    // Same fragmented day as above, but the task's total (2h) doesn't divide
+    // evenly into pieces that each clear the 30-minute floor once the first
+    // three gaps (0.75+0.5+0.5=1.75h) are consumed — the leftover 0.25h must
+    // overflow rather than being carved out of the wide-open fourth gap as a
+    // sub-30-minute sliver.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules,
+      events: [
+        { id: 'ev1', date: '2026-07-01', startTime: '09:45', endTime: '10:45', title: 'Meeting A' },
+        { id: 'ev2', date: '2026-07-01', startTime: '11:15', endTime: '12:15', title: 'Meeting B' },
+        { id: 'ev3', date: '2026-07-01', startTime: '12:45', endTime: '13:45', title: 'Meeting C' },
+      ],
+    });
+    const task = {
+      id: 'tsplit2', title: 'Deep work', estimatedHours: 2, remainingHours: 2,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    for (const block of blocks) {
+      expect(block.durationHours).toBeGreaterThanOrEqual(0.5 - 1e-9);
+    }
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].unplacedHours).toBeCloseTo(0.25, 5);
   });
 
   it('still prefers a single continuous block when one is available, and does not fragment unnecessarily', () => {

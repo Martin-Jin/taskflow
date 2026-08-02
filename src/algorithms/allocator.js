@@ -138,6 +138,15 @@ const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
 // a threshold tighter than that spuriously carries a fully-schedulable task
 // through the sweep/spill passes and into the overflow report.
 const EPSILON_HOURS = 1 / 120;
+// Hard floor for any chunk produced by SPLITTING a task across multiple
+// blocks — 30 minutes. Unlike the old per-task `minChunkHours` (which a task
+// could set smaller), this floor is never overridden: a task whose total
+// remaining time is at or under this floor is never split at all (it must
+// land as one single block, even if that means waiting for a later day with
+// a big-enough opening — see the `remainingHours <= MIN_SPLIT_CHUNK_HOURS`
+// checks below), and a task larger than this floor may still be split, but
+// never into a piece smaller than it.
+const MIN_SPLIT_CHUNK_HOURS = 0.5;
 
 /**
  * Walk up `task.parentId` (arbitrarily deep — nesting is capped at 2 levels
@@ -395,21 +404,24 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
  * array of {start,end}) in place and returns the number of hours actually
  * placed plus the concrete {start,end} minute ranges used.
  *
- * `allowUndersizedChunks` is a last-resort override of the min-chunk floor,
- * used only by allocateTasks' final "split what's left" pass after every
- * normal pass (weighted share, sweep, buffer overflow) has already tried and
- * failed to fit the task's remaining hours into a single chunk per interval
- * that clears `minChunkHours`. Normally a free interval smaller than the
- * floor is skipped entirely — that's the deliberate "no slivers" behavior
- * that keeps a big task's leftover fragments from getting scattered across
- * tiny gaps. But when that's the ONLY reason a task with real remaining
- * hours would end up reported as unschedulable, on a day that visibly still
- * has free time (just spread across intervals individually below the
- * floor), splitting into those smaller pieces is strictly better than
+ * `allowUndersizedChunks` is a last-resort relaxation of the min-chunk floor
+ * down to MIN_SPLIT_CHUNK_HOURS (30 min), used only by allocateTasks' final
+ * "split what's left" pass after every normal pass (weighted share, sweep,
+ * buffer overflow) has already tried and failed to fit the task's remaining
+ * hours into a single chunk per interval that clears the task's own (or
+ * `floorHours`-capped) `minChunkHours`. Normally a free interval smaller than
+ * that floor is skipped entirely — the deliberate "no slivers" behavior that
+ * keeps a big task's leftover fragments from getting scattered across tiny
+ * gaps. But when that's the ONLY reason a task with real remaining hours
+ * would end up reported as unschedulable, on a day that visibly still has
+ * free time (just spread across several DIFFERENT intervals, each still
+ * >= MIN_SPLIT_CHUNK_HOURS but individually below the task's own larger
+ * floor), splitting across those intervals is strictly better than
  * reporting a false conflict — the user explicitly wants a continuous block
  * preferred, but a split allowed when a continuous one is genuinely
- * impossible. With this flag, any interval too small for `effectiveMinChunk`
- * is still used for whatever it can hold instead of being skipped.
+ * impossible. This flag never relaxes the floor below MIN_SPLIT_CHUNK_HOURS
+ * itself, though — a single placed piece is never allowed to be shorter than
+ * that, no matter how this pass is invoked (see MIN_SPLIT_CHUNK_HOURS above).
  */
 function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, floorHours = hours, allowUndersizedChunks = false) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
@@ -423,7 +435,12 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, 
   // earlier pass — e.g. 5 minutes left over from a 1-hour task — still
   // has to clear the real 30-minute floor instead of the floor shrinking
   // down to match the sliver itself.
-  const effectiveMinChunk = allowUndersizedChunks ? EPSILON_HOURS : Math.min(minChunkHours, floorHours);
+  // Even the last-resort `allowUndersizedChunks` pass never drops below
+  // MIN_SPLIT_CHUNK_HOURS (30 min) per placed piece — that pass exists to
+  // stitch together several DIFFERENT intervals each still >= the floor when
+  // no single one held the task's continuous total, not to shave a piece
+  // under 30 min out of a too-small interval (see MIN_SPLIT_CHUNK_HOURS above).
+  const effectiveMinChunk = allowUndersizedChunks ? MIN_SPLIT_CHUNK_HOURS : Math.min(minChunkHours, floorHours);
   const placements = [];
 
   for (let i = 0; i < dayFreeIntervals.length && hoursToPlace >= effectiveMinChunk - EPSILON_HOURS; i++) {
@@ -434,6 +451,10 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, 
 
     const takeHours = Math.min(hoursToPlace, availableHours);
     const takeMins = Math.round(takeHours * 60);
+    // A sub-minute-rounding sliver (e.g. leftover floating-point residue from
+    // earlier passes) can round down to 0 minutes here. Skip it rather than
+    // pushing a zero-duration block — there's nothing meaningful to place.
+    if (takeMins <= 0) continue;
     const placementStart = interval.start;
     const placementEnd = interval.start + takeMins;
 
@@ -562,7 +583,10 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
  * whole task as unschedulable while the calendar visibly shows free time.
  */
 function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, allowSameDayFallback = false, allowUndersizedChunks = false) {
-  const minChunkHours = task.minChunkHours ?? 0.5;
+  // 30 minutes is a hard floor for any SPLIT chunk — never shrunk by a
+  // smaller task.minChunkHours (see MIN_SPLIT_CHUNK_HOURS above). A task can
+  // still ask for a larger minimum chunk than this via task.minChunkHours.
+  const minChunkHours = Math.max(task.minChunkHours ?? MIN_SPLIT_CHUNK_HOURS, MIN_SPLIT_CHUNK_HOURS);
   const maxChunkHours = task.maxChunkHours ?? 4;
   // Floor the min-chunk check against the task's true total remaining hours,
   // not `hours` (which may already be a shrunk-down leftover from an earlier
@@ -741,7 +765,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
 
       const idealShare = task.remainingHours * (weight / totalWeight);
       const targetHours = dayScoped || isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
-      if (targetHours < (task.minChunkHours ?? 0.5) - EPSILON_HOURS) continue;
+      if (targetHours < Math.max(task.minChunkHours ?? MIN_SPLIT_CHUNK_HOURS, MIN_SPLIT_CHUNK_HOURS) - EPSILON_HOURS) continue;
 
       remaining -= placeWithinDailyBudget(date, targetHours, freeForTask.get(date), '');
     }
@@ -798,7 +822,13 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
     // continuous block truly isn't possible; every earlier pass had first
     // claim on any interval long enough to avoid fragmenting this task at
     // all.
-    if (remaining > EPSILON_HOURS) {
+    //
+    // A task whose ENTIRE remaining time is at or under MIN_SPLIT_CHUNK_HOURS
+    // (30 min) is never allowed to fragment at all, even as a last resort —
+    // it must land as one single block or not be placed this run (falling
+    // through to overflow below). Splitting a task that's already ≤30 min
+    // into still-smaller pieces defeats the point of a minimum chunk size.
+    if (remaining > EPSILON_HOURS && task.remainingHours > MIN_SPLIT_CHUNK_HOURS + EPSILON_HOURS) {
       for (const { date } of dayWeights) {
         if (remaining <= EPSILON_HOURS) break;
         const dayIntervals = freeForTask.get(date);
