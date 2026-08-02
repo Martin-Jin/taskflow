@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.86.0',
+    date: '2026-08-03',
+    title: 'Fix "missed task" emails for already-completed tasks',
+    changes: [
+      'Fixed the email notification worker sending "task missed" (and overdue/starting-soon) emails for tasks or scheduled blocks that had already been completed or marked done in the few minutes before the email actually went out.',
+    ],
+  },
+  {
     version: '1.85.0',
     date: '2026-08-03',
     title: 'Fix remaining dashboard overflow on mobile',
