@@ -101,11 +101,21 @@ describe('computeDayCapacity', () => {
     ]);
   });
 
-  it('enforces the maxDailyDeepWorkHours cap on the actual free slots returned', () => {
+  // Regression coverage: maxDailyDeepWorkHours caps the summary
+  // totalAvailableHours stat (used e.g. by StatsDashboard's "free time this
+  // week" figure), but must NOT truncate freeIntervals itself — doing so
+  // used to delete every slot after the cap from the allocator's own view
+  // (e.g. an 09:00-17:00 day with a 2-hour cap collapsed to "09:00-11:00
+  // only"), so a task needing a LATER slot that day (a fixedTime task, or a
+  // lower-priority task whose earlier hours were already claimed by
+  // something else) spuriously saw no capacity even on a mostly-empty day.
+  // The cap is enforced instead as a running per-day budget while the
+  // allocator actually places blocks (see allocator.js's allocateTasks).
+  it('caps totalAvailableHours to maxDailyDeepWorkHours but leaves freeIntervals uncapped', () => {
     const rules = { ...baseRules, maxDailyDeepWorkHours: 2 };
     const result = computeDayCapacity('2026-07-01', { rules, routines: [], events: [], blocks: [] });
     expect(result.totalAvailableHours).toBe(2);
-    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '11:00' }]);
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
   });
 
   it('never returns negative free capacity when nowClamp pushes the work start past the work end', () => {

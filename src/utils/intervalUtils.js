@@ -65,30 +65,6 @@ export function totalMinutes(intervals) {
   return intervals.reduce((sum, i) => sum + (i.end - i.start), 0);
 }
 
-/**
- * Trim a sorted list of intervals so their combined duration never exceeds
- * `capMinutes`, dropping/truncating from the end. Used to enforce a daily
- * deep-work cap on the actual free slots handed to the allocator, not just
- * on the summary hour count.
- */
-export function capTotalMinutes(intervals, capMinutes) {
-  const capped = [];
-  let used = 0;
-  for (const iv of intervals) {
-    if (used >= capMinutes) break;
-    const remaining = capMinutes - used;
-    const duration = iv.end - iv.start;
-    if (duration <= remaining) {
-      capped.push(iv);
-      used += duration;
-    } else {
-      capped.push({ start: iv.start, end: iv.start + remaining });
-      used = capMinutes;
-    }
-  }
-  return capped;
-}
-
 /** Convert "HH:MM" interval pairs to minute-based intervals. */
 export function toMinuteIntervals(pairs) {
   return pairs.map((p) => ({ start: timeToMinutes(p.start ?? p.startTime), end: timeToMinutes(p.end ?? p.endTime) }));

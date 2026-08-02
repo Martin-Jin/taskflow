@@ -16,7 +16,7 @@
  */
 
 import { dayOfWeek, timeToMinutes, dateRange } from '../utils/dateUtils';
-import { subtractIntervals, toTimeIntervals, totalMinutes, capTotalMinutes } from '../utils/intervalUtils';
+import { subtractIntervals, toTimeIntervals, totalMinutes } from '../utils/intervalUtils';
 
 /**
  * Build the list of busy minute-intervals for a single day from fixed
@@ -87,18 +87,30 @@ export function computeDayCapacity(date, ctx) {
   const paddedBusy = gap > 0 ? busy.map((iv) => ({ start: iv.start - gap, end: iv.end + gap })) : busy;
   const freeMinuteIntervals = subtractIntervals(workWindow, paddedBusy);
   const positive = freeMinuteIntervals.filter((iv) => iv.end - iv.start > 0);
-  // Enforce the deep-work-hours-per-day cap on the actual slots the
-  // allocator will place work into, not just on the summary stat below —
-  // otherwise the rule is only ever reported, never scheduled against.
-  const trimmed = capTotalMinutes(positive, rules.maxDailyDeepWorkHours * 60);
-
-  const totalAvailableHours = Math.max(0, totalMinutes(trimmed) / 60);
+  // totalAvailableHours (the summary stat consumed e.g. by StatsDashboard's
+  // "free time this week" figure) is capped to the deep-work-hours-per-day
+  // rule, but freeIntervals themselves are deliberately left UNCAPPED here.
+  // Capping the intervals directly (as this used to do, via capTotalMinutes)
+  // truncated the day's free time from the FRONT of the list — e.g. an
+  // 06:00-23:59 open day with an 8-hour cap became "06:00-14:00 only",
+  // silently deleting every slot after 2pm from the allocator's view. That
+  // broke any task that specifically needed a later slot that day — a
+  // fixedTime task like a bedtime routine at 22:00, or a lower-priority task
+  // whose earlier-day share was already claimed by something else — even
+  // though the real calendar still had plenty of open time later on, and
+  // even though nothing had actually been scheduled into most of the
+  // "capped away" hours yet. The deep-work ceiling is enforced instead as a
+  // running per-day budget while the allocator actually places blocks (see
+  // allocateTasks' dailyBudgetMins) — that only holds back a day once ITS
+  // hours are actually spent, rather than pre-deleting time-of-day slots
+  // nothing has claimed yet.
+  const totalAvailableHours = Math.max(0, Math.min(totalMinutes(positive), rules.maxDailyDeepWorkHours * 60) / 60);
 
   return {
     date,
     totalAvailableHours,
     allocatedHours: 0,
-    freeIntervals: toTimeIntervals(trimmed),
+    freeIntervals: toTimeIntervals(positive),
     // Raw (unpadded) tagged busy intervals, in minutes-since-midnight, kept
     // separately from the freeIntervals math above purely so the allocator
     // can identify what's occupying a `fixedTime` task's target slot when

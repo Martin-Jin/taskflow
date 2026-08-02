@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.64.0',
+    date: '2026-08-02',
+    title: 'Fixed a second false "no free time" scheduling conflict',
+    changes: [
+      'Fixed a bug where the daily work-hours limit was cutting off the LATER part of an open day from the scheduler entirely (e.g. an evening bedtime routine, or any task needing a later time slot), even when almost none of that day\'s hours were actually in use yet — the limit is now enforced as a running budget as work gets placed, instead of pre-deleting later time slots from view.',
+    ],
+  },
+  {
     version: '1.63.0',
     date: '2026-08-02',
     title: "Manual 'Plan Today' follow-ups: unscheduled tray, cross-device sync",
