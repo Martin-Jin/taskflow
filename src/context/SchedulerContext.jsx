@@ -1136,14 +1136,20 @@ export function SchedulerProvider({ children }) {
         const nextDueDate = computeNextDueDate(baseDate, existing.recurrenceString);
         const nowIso = new Date().toISOString();
 
-        // Record this occurrence's completion, then trim anything older than
-        // 7 days out of the raw `completedDates` list into the monthly
-        // `completionHistory` aggregate instead of dropping it outright — see
-        // types/index.js's Task typedef.
+        // Record this occurrence's completion against the actual occurrence
+        // date (the original dueDate). When a task is completed late we still
+        // advance its next due date from today, but recording the closed
+        // occurrence under the original due date prevents it from appearing
+        // as "completed today" on the dashboard.
+        const occurrenceDate = existing.dueDate;
+
+        // Then trim anything older than 7 days out of the raw `completedDates`
+        // list into the monthly `completionHistory` aggregate instead of
+        // dropping it outright — see types/index.js's Task typedef.
         const sevenDaysAgoIso = addDays(todayIso, -7);
         const keptDates = [];
         const nextHistory = { ...(existing.completionHistory || {}) };
-        for (const d of [baseDate, ...(existing.completedDates || [])]) {
+        for (const d of [occurrenceDate, ...(existing.completedDates || [])]) {
           if (d >= sevenDaysAgoIso) {
             keptDates.push(d);
           } else {
