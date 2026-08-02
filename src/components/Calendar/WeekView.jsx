@@ -373,6 +373,7 @@ export default function WeekView({
         (t) =>
           !t.isLocked &&
           !t.isCompleted &&
+          !(t.isRecurring && t.completedDates?.includes(todayIso)) &&
           !parentIds.has(t.id) &&
           (!!t.dueDate || !!t.parentId) &&
           areDependenciesMet(t, taskByIdMap)
