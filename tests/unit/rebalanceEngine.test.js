@@ -165,6 +165,29 @@ describe('rebalance', () => {
     const newBlock = result.blocks.find((b) => b.taskId === 't11' && b.id !== 'b11');
     expect(newBlock?.durationHours).toBe(1);
   });
+
+  // Regression test: maxDailyDeepWorkHours used to be enforced by physically
+  // truncating computeDayCapacity's freeIntervals from the FRONT of the day
+  // (e.g. a 06:00-23:59 open day with an 8-hour cap became "06:00-14:00
+  // only"), deleting every later time-of-day slot from the allocator's view
+  // regardless of whether anything had actually been scheduled into it yet.
+  // That broke a fixedTime task (e.g. a bedtime "Sleep routine") needing a
+  // slot LATER in the day than the cap's cutoff, even on a day with nothing
+  // else scheduled — it spuriously reported `no_capacity` even though the
+  // real calendar had that time completely free. The cap is now enforced as
+  // a running per-day budget as blocks are actually placed (allocator.js's
+  // dailyBudgetMins), so it only holds a day back once ITS hours are truly
+  // spent, never by pre-deleting unclaimed time-of-day slots.
+  it("places a fixedTime task's block late in the day even when maxDailyDeepWorkHours would have truncated that slot under the old front-trimming behavior", () => {
+    const tasks = [
+      { id: 't12', title: 'Sleep routine', isCompleted: false, estimatedHours: 1, dueDate: today, enforceDueDate: true, fixedTime: '22:00', minChunkHours: 1, maxChunkHours: 1 },
+    ];
+    const rules = { ...baseRules, workDayStart: '06:00', workDayEnd: '23:59', maxDailyDeepWorkHours: 2 };
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules, fromDate: today });
+    expect(result.overflow.find((o) => o.taskId === 't12')).toBeUndefined();
+    const block = result.blocks.find((b) => b.taskId === 't12');
+    expect(block).toMatchObject({ startTime: '22:00', endTime: '23:00' });
+  });
 });
 
 describe('planToday', () => {

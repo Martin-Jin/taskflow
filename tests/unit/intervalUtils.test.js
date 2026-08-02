@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { subtractIntervals, toTimeIntervals, totalMinutes, capTotalMinutes } from '../../src/utils/intervalUtils';
+import { subtractIntervals, toTimeIntervals, totalMinutes } from '../../src/utils/intervalUtils';
 
 describe('subtractIntervals', () => {
   it('returns the full container when there is no busy time', () => {
@@ -91,53 +91,6 @@ describe('totalMinutes', () => {
 
   it('returns 0 for a single zero-length interval', () => {
     expect(totalMinutes([{ start: 10, end: 10 }])).toBe(0);
-  });
-});
-
-describe('capTotalMinutes', () => {
-  it('returns all intervals unchanged when under the cap', () => {
-    const intervals = [
-      { start: 0, end: 30 },
-      { start: 60, end: 90 },
-    ];
-    expect(capTotalMinutes(intervals, 120)).toEqual(intervals);
-  });
-
-  it('truncates an interval that straddles the cap boundary exactly', () => {
-    const intervals = [
-      { start: 0, end: 30 },
-      { start: 60, end: 100 },
-    ];
-    // Cap = 50: first interval uses 30, second interval gets truncated to 20 more.
-    expect(capTotalMinutes(intervals, 50)).toEqual([
-      { start: 0, end: 30 },
-      { start: 60, end: 80 },
-    ]);
-  });
-
-  it('drops intervals entirely once the cap has already been reached', () => {
-    const intervals = [
-      { start: 0, end: 30 },
-      { start: 60, end: 90 },
-      { start: 100, end: 130 },
-    ];
-    expect(capTotalMinutes(intervals, 30)).toEqual([{ start: 0, end: 30 }]);
-  });
-
-  it('handles a cap that lands exactly on an interval boundary (no truncation needed)', () => {
-    const intervals = [
-      { start: 0, end: 30 },
-      { start: 60, end: 90 },
-    ];
-    expect(capTotalMinutes(intervals, 60)).toEqual(intervals);
-  });
-
-  it('returns [] when the cap is 0', () => {
-    expect(capTotalMinutes([{ start: 0, end: 30 }], 0)).toEqual([]);
-  });
-
-  it('returns [] for an empty interval list', () => {
-    expect(capTotalMinutes([], 60)).toEqual([]);
   });
 });
 

@@ -611,6 +611,16 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
   // relevant conflict wins rather than being overwritten by a later day.
   const conflictTracker = new Map();
   const gapMins = rules.minGapBetweenBlocksMins ?? 0;
+  // Running per-day deep-work budget (minutes remaining), shared across
+  // non-passive tasks only — mirrors workingFree's passive/non-passive split,
+  // since a passive task (laundry, something baking) doesn't consume
+  // attention and was never meant to be capped by this rule. This is where
+  // rules.maxDailyDeepWorkHours is actually enforced: capacityEngine
+  // deliberately leaves freeIntervals uncapped now (see its own comment) so
+  // every time-of-day slot stays visible to whichever task actually needs
+  // it (e.g. a fixedTime bedtime routine late in the day); this budget only
+  // holds a day back once ITS hours are genuinely spent by real placements.
+  const dailyBudgetMins = new Map([...capacityMap.keys()].map((date) => [date, Math.round(rules.maxDailyDeepWorkHours * 60)]));
 
   for (const task of prioritized) {
     const isBlocker = blockerIds.has(task.id);
@@ -634,6 +644,20 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
     let remaining = task.remainingHours;
     const totalWeight = dayWeights.reduce((s, d) => s + d.weight, 0) || 1;
 
+    // Clamps `hours` to the day's remaining deep-work budget (passive tasks
+    // are exempt — see dailyBudgetMins' own comment), places into `dayIntervals`,
+    // then deducts whatever was actually placed back out of that budget.
+    const placeWithinDailyBudget = (date, hours, dayIntervals, idSuffix) => {
+      const budget = dailyBudgetMins.get(date);
+      const cappedHours = task.isPassive || budget == null ? hours : Math.min(hours, Math.max(0, budget / 60));
+      const placedHours = placeAndRecordBlocks(
+        task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
+        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
+      );
+      if (!task.isPassive && budget != null) dailyBudgetMins.set(date, budget - Math.round(placedHours * 60));
+      return placedHours;
+    };
+
     for (const { date, weight } of attackOrder) {
       if (remaining <= EPSILON_HOURS) break;
       if (!freeForTask.has(date)) continue; // outside computed horizon
@@ -642,10 +666,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       const targetHours = dayScoped || isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
       if (targetHours < (task.minChunkHours ?? 0.5) - EPSILON_HOURS) continue;
 
-      remaining -= placeAndRecordBlocks(
-        task, date, targetHours, freeForTask.get(date), newBlocks, '',
-        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
-      );
+      remaining -= placeWithinDailyBudget(date, targetHours, freeForTask.get(date), '');
     }
 
     // Second pass: if weighted shares left gaps (common when a day's free
@@ -658,10 +679,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
         if (remaining <= EPSILON_HOURS) break;
         const dayIntervals = freeForTask.get(date);
         if (!dayIntervals || dayIntervals.length === 0) continue;
-        remaining -= placeAndRecordBlocks(
-          task, date, remaining, dayIntervals, newBlocks, '_sweep',
-          capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
-        );
+        remaining -= placeWithinDailyBudget(date, remaining, dayIntervals, '_sweep');
       }
     }
 
@@ -685,10 +703,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
           for (const date of extraDays) {
             if (remaining <= EPSILON_HOURS) break;
             if (!freeForTask.has(date)) continue;
-            remaining -= placeAndRecordBlocks(
-              task, date, remaining, freeForTask.get(date), newBlocks, '_overflow',
-              capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker
-            );
+            remaining -= placeWithinDailyBudget(date, remaining, freeForTask.get(date), '_overflow');
           }
         }
       }
