@@ -85,7 +85,7 @@ import { getEffectiveRemainingHours } from '../../utils/taskHierarchy';
 const CARD_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
 const CARD_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
 
-export default function BoardView({ projectId, onProjectChange, filter = 'all' }) {
+export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch }) {
   const {
     tasks,
     sections,
@@ -339,7 +339,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all' }
     <div className="board-page">
       <div className="board-toolbar tasklist-toolbar">
         <SearchBar placeholder="Search board…" onSelectTask={setEditingTaskId} />
-        <AddTaskFabGroup onAddTask={() => setAddingToSectionId('')} onAIQuickAdd={() => setShowAIQuickAdd(true)} />
+        <AddTaskFabGroup
+          onAddTask={() => setAddingToSectionId('')}
+          onAIQuickAdd={() => setShowAIQuickAdd(true)}
+          onOpenSearch={onOpenSearch}
+        />
       </div>
 
       {!selectedProject ? (

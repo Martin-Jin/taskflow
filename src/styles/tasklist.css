@@ -37,7 +37,7 @@
    below, where that padding is already tight. */
 .taskpage-sticky-header {
   position: sticky;
-  top: 8px;
+  top: 0;
   z-index: 120;
   border-radius: var(--radius-md);
   margin-bottom: 14px;
@@ -47,17 +47,19 @@
 /* Bleeds past this element's own box on every side rather than a plain
    inset: 0, so the blur reads as one continuous wash over the whole top of
    the page instead of a rounded card floating over a visibly-unblurred
-   strip: up by `top`'s sticky offset (so it reaches the true top of
-   .main-content's scrollport with no gap), sideways by .main-content's own
-   20px padding (so it spans edge to edge, clipped there rather than
-   bleeding into the sidebar since that's a separate grid area), and down by
-   an extra 10px past the search bar. */
+   strip: up by a fixed 200px (comfortably past .main-content's own
+   padding-top on every breakpoint, whatever `top`'s sticky offset is, so
+   there's never a gap of unblurred content peeking above the header —
+   .main-content's own overflow:auto clips the excess), sideways by
+   .main-content's own 20px padding (so it spans edge to edge, clipped there
+   rather than bleeding into the sidebar since that's a separate grid area),
+   and down by an extra 18px past the search bar. */
 .taskpage-sticky-header-backdrop {
   position: absolute;
-  top: -8px;
+  top: -200px;
   left: -20px;
   right: -20px;
-  bottom: -10px;
+  bottom: -18px;
   z-index: -1;
   backdrop-filter: blur(1px);
   pointer-events: none;

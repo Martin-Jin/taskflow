@@ -12,7 +12,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X, CalendarClock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X, CalendarClock, Search } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -51,7 +51,7 @@ const VIEWS = [
   { key: 'month', label: 'Month' },
 ];
 
-export default function CalendarPage({ dayJumpRequest } = {}) {
+export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   const [anchorDate, setAnchorDate] = useState(toISODate(new Date()));
   const isMobile = useIsMobile();
   const [view, setView] = useState(() => (isMobile ? 'day' : 'week'));
@@ -533,6 +533,16 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
           as mobile's, not a dropdown list — mirrors AddTaskFabGroup's
           expand/collapse pattern throughout. */}
       <div className="calendar-fab-group" ref={fabGroupRef}>
+        {onOpenSearch && (
+          <button
+            className="btn btn-primary fab-round mobile-search-fab"
+            onClick={onOpenSearch}
+            aria-label="Open command palette"
+            title="Search / commands"
+          >
+            <Search size={22} />
+          </button>
+        )}
         {fabExpanded && (
           <>
             {isMobile && (

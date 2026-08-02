@@ -14,14 +14,21 @@
  * (`isAIQuickAddConfigured`), regardless of whether the user has actually
  * saved a provider API key yet. If no key is saved, tapping it shows a toast
  * pointing at Settings instead of opening the modal (see handleAIQuickAdd).
+ *
+ * On mobile, an optional `onOpenSearch` renders the global search/command-
+ * palette button (see App.jsx's mobile-search-fab) as the top-most member of
+ * this same flex column instead of App.jsx placing a second, separately
+ * fixed-position button in the same corner — that way it naturally stacks
+ * above (and shifts with) the AI Quick Add / Add task mini-FABs whenever
+ * this group expands or collapses, with no manual offset math needed.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Sparkles, X } from 'lucide-react';
+import { Plus, Search, Sparkles, X } from 'lucide-react';
 import { isAIQuickAddConfigured, getStoredApiKey } from '../../services/aiQuickAddService';
 import { useScheduler } from '../../context/SchedulerContext';
 
-export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
+export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch }) {
   const { setNotification, requestSettingsSection } = useScheduler();
   const aiConfigured = isAIQuickAddConfigured();
   const speedDial = aiConfigured;
@@ -74,6 +81,16 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd }) {
 
   return (
     <div className="add-task-fab-group" ref={rootRef}>
+      {onOpenSearch && (
+        <button
+          className="btn btn-primary fab-round mobile-search-fab"
+          onClick={onOpenSearch}
+          aria-label="Open command palette"
+          title="Search / commands"
+        >
+          <Search size={22} />
+        </button>
+      )}
       {speedDial && expanded && (
         <>
           <button
