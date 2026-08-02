@@ -12,7 +12,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X, CalendarClock } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -24,6 +25,7 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { useMenuPosition } from '../../hooks/useMenuPosition';
 
 function getWeekStart(iso) {
   const dow = dayOfWeek(iso);
@@ -63,14 +65,30 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
   const [showViewMenu, setShowViewMenu] = useState(false);
   // Mobile-only speed-dial state for the bottom-right FAB (see .calendar-fab
   // below) — expands into "Re-balance schedule" + "New event" mini-FABs
-  // instead of the desktop FAB's single always-visible action. Desktop uses
-  // a small popover menu instead of a single-action button so it can expose
-  // the "Schedule manually for today" option like mobile does.
+  // instead of the desktop FAB's single always-visible action. Desktop opens
+  // a small anchored popover menu instead (same shell as TaskDetailModal's
+  // "..." menu — see .detail-menu-dropdown/.detail-menu-item in forms.css)
+  // so it can expose the "Schedule manually for today" option like mobile does.
   const [fabExpanded, setFabExpanded] = useState(false);
   const [fabMenuOpen, setFabMenuOpen] = useState(false); // desktop popover
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
+  const fabTriggerRef = useRef(null);
+  const {
+    menuRef: fabMenuRef,
+    mode: fabMenuMode,
+    style: fabMenuStyle,
+  } = useMenuPosition({
+    isOpen: fabMenuOpen,
+    anchorRef: fabTriggerRef,
+    onClose: () => setFabMenuOpen(false),
+    computeAnchored: (anchorRect, menuRect) => ({
+      left: anchorRect.right - menuRect.width,
+      top: undefined,
+      bottom: window.innerHeight - anchorRect.top + 8,
+    }),
+  });
   const {
     blocks,
     events,
@@ -123,16 +141,13 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
   }, [showViewMenu]);
 
   useEffect(() => {
-    if (!fabExpanded && !fabMenuOpen) return undefined;
+    if (!fabExpanded) return undefined;
     function onDocMouseDown(e) {
-      if (fabGroupRef.current && !fabGroupRef.current.contains(e.target)) {
-        setFabExpanded(false);
-        setFabMenuOpen(false);
-      }
+      if (fabGroupRef.current && !fabGroupRef.current.contains(e.target)) setFabExpanded(false);
     }
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [fabExpanded, fabMenuOpen]);
+  }, [fabExpanded]);
   // _v2: the zoom level table gained more zoom-in steps above the original
   // max, so a v1 key persisted from before that change would pin returning
   // users to what is now a mid-range level instead of the new top/default.
@@ -582,45 +597,68 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
           </>
         )}
         <button
+          ref={fabTriggerRef}
           className="btn btn-primary calendar-fab"
           data-tour={isMobile ? undefined : 'new-event'}
           onClick={() => {
             if (isMobile) {
               setFabExpanded((v) => !v);
             } else {
-              // Desktop: open a small popover menu exposing the "Schedule
-              // manually for today" action (mirrors mobile speed-dial).
+              // Desktop: open a small anchored popover menu exposing the
+              // "Schedule manually for today" action (mirrors mobile speed-dial).
               setFabMenuOpen((v) => !v);
             }
           }}
+          aria-haspopup={isMobile ? undefined : 'menu'}
           aria-label={isMobile && fabExpanded ? 'Close' : 'Actions'}
           aria-expanded={isMobile ? fabExpanded : fabMenuOpen}
         >
           {isMobile ? (fabExpanded ? <X size={22} /> : <PenSquare size={22} />) : <PenSquare size={22} />}
         </button>
-        {/* Desktop popover menu for the FAB */}
-        {!isMobile && fabMenuOpen && (
-          <div className="calendar-fab-popover" role="menu">
-            <button
-              className="btn"
-              onClick={() => {
-                setFabMenuOpen(false);
-                toggleManualPlanToday(!manualPlanTodayMode);
-              }}
+        {/* Desktop popover menu for the FAB — same anchored-dropdown shell as
+            TaskDetailModal's "..." menu (useMenuPosition + .detail-menu-dropdown/
+            .detail-menu-item in forms.css) instead of one-off popover CSS. */}
+        {!isMobile &&
+          fabMenuOpen &&
+          createPortal(
+            <ul
+              ref={fabMenuRef}
+              className={`detail-menu-dropdown ${fabMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
+              role="menu"
+              style={fabMenuMode === 'anchored' ? fabMenuStyle : undefined}
             >
-              {manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                setFabMenuOpen(false);
-                setCreatingEvent({ date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()), startTime: '', endTime: '' });
-              }}
-            >
-              New event
-            </button>
-          </div>
-        )}      </div>
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="detail-menu-item"
+                  onClick={() => {
+                    setFabMenuOpen(false);
+                    toggleManualPlanToday(!manualPlanTodayMode);
+                  }}
+                >
+                  <CalendarClock size={14} aria-hidden="true" />
+                  {manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
+                </button>
+              </li>
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="detail-menu-item"
+                  onClick={() => {
+                    setFabMenuOpen(false);
+                    setCreatingEvent({ date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()), startTime: '', endTime: '' });
+                  }}
+                >
+                  <Plus size={14} aria-hidden="true" />
+                  New event
+                </button>
+              </li>
+            </ul>,
+            document.body
+          )}
+      </div>
 
       {selectedBlock && (
         <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} onOpenTask={handleOpenTask} />
