@@ -36,6 +36,22 @@ import {
   RECENTLY_DELETED_TTL_MS,
 } from '../services/eventSyncService';
 
+/**
+ * Cheap signature of the subset of an event's fields that could actually
+ * affect scheduling (id, start/end time, recurrence) — used by
+ * applyPulledEvents below to decide whether a pull actually changed anything
+ * worth auto-rebalancing over. Deliberately excludes fields like title/
+ * description/color that a Google-side edit could change without affecting
+ * any task's scheduled block. Order-independent (sorted by id) since a
+ * differently-ordered but otherwise-identical array isn't a real change.
+ */
+function eventsSignature(events) {
+  return events
+    .map((e) => `${e.id}|${e.date || ''}|${e.startTime || ''}|${e.endTime || ''}|${e.recurrenceRule ? JSON.stringify(e.recurrenceRule) : ''}`)
+    .sort()
+    .join('\n');
+}
+
 // The ROUTINE background sync window (silent re-auth on mount, the periodic
 // poll, connect, and manual pull/rebuild) — a small window centered on
 // TODAY, not on whatever the user happens to be viewing. Kept modest on
@@ -116,6 +132,13 @@ export function useGoogleCalendarSync({
   // is ever in flight at a time) — simpler than a request-generation counter
   // while a single flag is enough to fully prevent overlap.
   const googleFetchInFlightRef = useRef(false);
+
+  // Set synchronously inside applyPulledEvents' setEvents updater when a
+  // pull actually changed something schedule-relevant (see eventsSignature),
+  // then read+cleared right after — a plain local variable wouldn't survive
+  // across the async setEvents update boundary reliably. Only in this
+  // narrow signal state; not a general "did anything change" API.
+  const eventsChangedRef = useRef(false);
   const lastGooglePollAtRef = useRef(0);
   const pollGoogleEventsRef = useRef(null);
 
@@ -191,8 +214,9 @@ export function useGoogleCalendarSync({
       // synced-bounds union reaches — see MAX_RETENTION_DAYS' and
       // computeEffectivePurgeBoundary's own doc comments.
       const purgeBoundaryIso = computeEffectivePurgeBoundary(expandedBounds.startIso, MAX_RETENTION_DAYS);
-      setEvents((prev) =>
-        didHardReset
+      eventsChangedRef.current = false;
+      setEvents((prev) => {
+        const next = didHardReset
           ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
           : mergePulledGoogleEvents(
               prev,
@@ -203,8 +227,16 @@ export function useGoogleCalendarSync({
               recentlyDeletedGoogleEventInstancesRef.current,
               Date.now(),
               purgeBoundaryIso
-            )
-      );
+            );
+        // Most poll ticks pull back the exact same events unchanged — only
+        // worth queuing an auto-rebalance when the merge actually altered
+        // something a task's scheduled block could conflict with (an event
+        // added/removed/moved in time), not on every 60s poll or tab-focus
+        // refresh regardless of whether anything changed. See
+        // eventsSignature's own doc comment for what counts as "changed".
+        if (eventsSignature(prev) !== eventsSignature(next)) eventsChangedRef.current = true;
+        return next;
+      });
       // A hard reset wipes and replaces `events` wholesale — anything
       // outside THIS fetch's own range is gone regardless of what was synced
       // before, so the bounds reset to exactly this fetch's range rather than
@@ -216,11 +248,14 @@ export function useGoogleCalendarSync({
         googleEventsHardResetDoneRef.current = true; // synchronous — covers any other already-in-flight closure too
         setGoogleEventsHardResetDone(true);
       }
-      // Events just changed (poll/pull/import/rebuild) — any task blocks
-      // scheduled around the old event set may now overlap or leave newly
-      // freed capacity unused, so queue the same auto-rebalance a due-date
-      // change triggers.
-      onEventsChanged?.();
+      // Only queue an auto-rebalance if this pull actually changed something
+      // schedule-relevant (see eventsSignature) — most poll ticks/tab-focus
+      // refreshes pull back an identical event set, and rebalancing on every
+      // one of those would silently re-trigger without the user doing
+      // anything. A hard reset always counts as changed (nothing to diff
+      // against meaningfully — see hardResetEventsFromGoogle's own doc for
+      // why that's a one-time full replace).
+      if (didHardReset || eventsChangedRef.current) onEventsChanged?.();
       return didHardReset;
     },
     [setEvents, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, onEventsChanged]
