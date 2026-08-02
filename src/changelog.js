@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.73.0',
+    date: '2026-08-02',
+    title: 'Mobile search button now available on every tab',
+    changes: [
+      'The floating search/command-palette button (previously only on the Dashboard) now appears on every tab on mobile. It\'s also switched to a circular shape, and on tabs with their own floating "+" button (Tasks, Board, Calendar) it now stacks above it, shifting up automatically when that button\'s menu is expanded.',
+      'Fixed a small gap of unblurred content that could peek out above the floating search bar on the Tasks and Settings pages while scrolled. The floating header also now docks sooner (sits closer to the top of the page) and blurs a little further past the search bar.',
+      'Added back some breathing room between the Settings search bar and the first section below it ("Account & sync"), which had become too tight.',
+    ],
+  },
+  {
     version: '1.72.0',
     date: '2026-08-02',
     title: 'Fixed email/in-app notifications spamming and firing for completed tasks',

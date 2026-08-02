@@ -492,21 +492,35 @@ select:focus-visible,
   }
 }
 
-/* Floating search button — Dashboard-only, mobile-only (see App.jsx).
-   Mirrors AddTaskFabGroup's .add-task-btn (tasklist.css) — same 56px size,
-   corner offsets and elevation, just left of that button's own reserved
-   right-edge column since Dashboard never renders that FAB alongside this. */
+/* Circular FAB shape shared by the mobile search/command-palette button —
+   distinct from the square-ish --radius-lg used by .add-task-btn/.calendar-fab
+   so it reads as a different (secondary) action from the page's main FAB. */
+.fab-round {
+  border-radius: 50%;
+}
+
+/* Mobile search/command-palette button (see App.jsx) — same 56px size and
+   elevation as AddTaskFabGroup's .add-task-btn/.calendar-fab. On tabs that
+   already render one of those FAB groups (Tasks list/Board, Calendar), this
+   renders *inside* that group as its top-most flex child instead (see
+   AddTaskFabGroup/CalendarPage's onOpenSearch prop) so it stacks above, and
+   shifts with, that group's own mini-FABs on expand/collapse — no manual
+   offset math needed since flexbox handles it. Only the standalone variant
+   below (tabs with no FAB group: Dashboard/Stats/Settings/Gantt) needs its
+   own fixed positioning. */
 .mobile-search-fab {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  justify-content: center;
+  box-shadow: var(--shadow-elevated);
+}
+
+.mobile-search-fab-standalone {
   position: fixed;
   right: calc(var(--space-4) + env(safe-area-inset-right, 0));
   bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
   z-index: 120;
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  border-radius: var(--radius-lg);
-  justify-content: center;
-  box-shadow: var(--shadow-elevated);
 }
 
 .topbar .brand {
@@ -1274,10 +1288,16 @@ input.search-bar-input {
 .settings-search-bar {
   max-width: none;
   position: sticky;
-  top: 8px;
+  top: 0;
   z-index: 120;
   border-radius: var(--radius-md);
   margin-top: -16px;
+  /* The column's own `gap: 20` (SettingsPanel.jsx) reads as barely-there
+     once this bar is floating/blurred right above the first card — its own
+     bottom blur bleed (18px, see ::before below) eats into that gap
+     visually. A dedicated margin-bottom, on top of the column gap, restores
+     real breathing room between the floating bar and "Account & sync". */
+  margin-bottom: 12px;
 }
 
 .app-shell.is-mobile .settings-search-bar {
@@ -1286,19 +1306,22 @@ input.search-bar-input {
 
 /* The actual blur/background, on a ::before rather than directly on this
    element — same bleed trick as .taskpage-sticky-header-backdrop
-   (tasklist.css): up by `top`'s sticky offset, sideways by .main-content's
-   own 20px padding, and 10px past this element's own bottom edge — so the
-   blur reads as one continuous wash over the whole top of the page instead
-   of a card floating over a visibly-unblurred strip. Only .search-bar-input
-   paints its own opaque background, so without this the gap around it let
-   scrolled content show straight through once it went sticky. */
+   (tasklist.css): up by a fixed 200px (comfortably past .main-content's own
+   padding-top on every breakpoint, so there's never a gap of unblurred
+   content peeking above the header — .main-content's own overflow:auto
+   clips the excess), sideways by .main-content's own 20px padding, and 18px
+   past this element's own bottom edge — so the blur reads as one continuous
+   wash over the whole top of the page instead of a card floating over a
+   visibly-unblurred strip. Only .search-bar-input paints its own opaque
+   background, so without this the gap around it let scrolled content show
+   straight through once it went sticky. */
 .settings-search-bar::before {
   content: '';
   position: absolute;
-  top: -8px;
+  top: -200px;
   left: -20px;
   right: -20px;
-  bottom: -10px;
+  bottom: -18px;
   z-index: -1;
   backdrop-filter: blur(1px);
   -webkit-backdrop-filter: blur(3px);

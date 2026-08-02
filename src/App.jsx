@@ -327,7 +327,12 @@ function AppShell() {
           className={`tab-panel ${tab === 'calendar' || (tab === 'tasks' && taskView === 'board') ? 'tab-panel-fill' : ''}`}
         >
           {tab === 'dashboard' && <DashboardPage onSelectProject={selectProject} onOpenCalendar={() => setTab('calendar')} />}
-          {tab === 'calendar' && <CalendarPage dayJumpRequest={calendarDayRequest} />}
+          {tab === 'calendar' && (
+            <CalendarPage
+              dayJumpRequest={calendarDayRequest}
+              onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
+            />
+          )}
           {tab === 'tasks' && (
             <TaskListPanel
               view={taskView}
@@ -338,6 +343,7 @@ function AppShell() {
               onOpenManageProjects={openManageProjects}
               openAddTaskSignal={addTaskSignal}
               onOpenSettings={() => setTab('settings')}
+              onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
@@ -345,15 +351,17 @@ function AppShell() {
         </div>
       </main>
 
-      {isMobile && tab === 'dashboard' && (
+      {isMobile && (tab === 'dashboard' || tab === 'stats' || tab === 'settings' || (tab === 'tasks' && taskView === 'gantt')) && (
         // Mobile has no keyboard for Ctrl+K, so this is its only entry point
-        // to the command palette. Used to live as an icon button in the
-        // topbar; moved to a floating bottom-right button (mirroring
-        // AddTaskFabGroup's add-task FAB on Tasks/Board) so the topbar's
-        // right side is just the account button, and search stays reachable
-        // one-thumb from anywhere on the dashboard.
+        // to the command palette — shown on every tab so it's reachable
+        // one-thumb from anywhere. On tabs with their own FAB group (Tasks
+        // list/Board, Calendar) it renders as the top-most member of that
+        // group instead (see AddTaskFabGroup/CalendarPage's onOpenSearch) so
+        // it naturally stacks above — and shifts with — that group's own
+        // mini-FABs on expand/collapse; here, with no such group present, it
+        // just floats standalone in the same bottom-right corner.
         <button
-          className="btn btn-primary mobile-search-fab"
+          className="btn btn-primary fab-round mobile-search-fab mobile-search-fab-standalone"
           onClick={() => setShowCommandPalette(true)}
           aria-label="Open command palette"
           title="Search / commands"

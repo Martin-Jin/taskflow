@@ -99,6 +99,7 @@ export default function TaskListPanel({
   onOpenManageProjects,
   openAddTaskSignal,
   onOpenSettings,
+  onOpenSearch,
 }) {
   const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
   const { requestComplete } = useCompleteTask();
@@ -428,12 +429,23 @@ export default function TaskListPanel({
         {view === 'list' && (
           <div className="tasklist-toolbar">
             <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
-            <AddTaskFabGroup onAddTask={() => setShowAddModal(true)} onAIQuickAdd={() => setShowAIQuickAdd(true)} />
+            <AddTaskFabGroup
+              onAddTask={() => setShowAddModal(true)}
+              onAIQuickAdd={() => setShowAIQuickAdd(true)}
+              onOpenSearch={isMobile ? onOpenSearch : undefined}
+            />
           </div>
         )}
       </div>
 
-      {view === 'board' && <BoardView projectId={activeProjectId} onProjectChange={onResolveBoardProject} filter={filter} />}
+      {view === 'board' && (
+        <BoardView
+          projectId={activeProjectId}
+          onProjectChange={onResolveBoardProject}
+          filter={filter}
+          onOpenSearch={isMobile ? onOpenSearch : undefined}
+        />
+      )}
       {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}
 
       {view === 'list' && (
