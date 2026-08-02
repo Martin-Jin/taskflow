@@ -63,9 +63,11 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
   const [showViewMenu, setShowViewMenu] = useState(false);
   // Mobile-only speed-dial state for the bottom-right FAB (see .calendar-fab
   // below) — expands into "Re-balance schedule" + "New event" mini-FABs
-  // instead of the desktop FAB's single always-visible "New event" action,
-  // mirroring AddTaskFabGroup's mobile expand/collapse pattern.
+  // instead of the desktop FAB's single always-visible action. Desktop uses
+  // a small popover menu instead of a single-action button so it can expose
+  // the "Schedule manually for today" option like mobile does.
   const [fabExpanded, setFabExpanded] = useState(false);
+  const [fabMenuOpen, setFabMenuOpen] = useState(false); // desktop popover
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
@@ -80,6 +82,8 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
     syncNow,
     isSyncing,
     ensureGoogleRangeSynced,
+    manualPlanTodayMode,
+    toggleManualPlanToday,
   } = useScheduler();
   // ---- Mobile swipe-to-page carousel --------------------------------------
   // A live-tracking 3-page carousel (prev/current/next, see the render below)
@@ -119,13 +123,16 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
   }, [showViewMenu]);
 
   useEffect(() => {
-    if (!fabExpanded) return undefined;
+    if (!fabExpanded && !fabMenuOpen) return undefined;
     function onDocMouseDown(e) {
-      if (fabGroupRef.current && !fabGroupRef.current.contains(e.target)) setFabExpanded(false);
+      if (fabGroupRef.current && !fabGroupRef.current.contains(e.target)) {
+        setFabExpanded(false);
+        setFabMenuOpen(false);
+      }
     }
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [fabExpanded]);
+  }, [fabExpanded, fabMenuOpen]);
   // _v2: the zoom level table gained more zoom-in steps above the original
   // max, so a v1 key persisted from before that change would pin returning
   // users to what is now a mid-range level instead of the new top/default.
@@ -581,19 +588,39 @@ export default function CalendarPage({ dayJumpRequest } = {}) {
             if (isMobile) {
               setFabExpanded((v) => !v);
             } else {
-              setCreatingEvent({
-                date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()),
-                startTime: '',
-                endTime: '',
-              });
+              // Desktop: open a small popover menu exposing the "Schedule
+              // manually for today" action (mirrors mobile speed-dial).
+              setFabMenuOpen((v) => !v);
             }
           }}
-          aria-label={isMobile && fabExpanded ? 'Close' : 'New event'}
-          aria-expanded={isMobile ? fabExpanded : undefined}
+          aria-label={isMobile && fabExpanded ? 'Close' : 'Actions'}
+          aria-expanded={isMobile ? fabExpanded : fabMenuOpen}
         >
-          {isMobile ? fabExpanded ? <X size={22} /> : <PenSquare size={22} /> : <Plus size={22} />}
+          {isMobile ? (fabExpanded ? <X size={22} /> : <PenSquare size={22} />) : <PenSquare size={22} />}
         </button>
-      </div>
+        {/* Desktop popover menu for the FAB */}
+        {!isMobile && fabMenuOpen && (
+          <div className="calendar-fab-popover" role="menu">
+            <button
+              className="btn"
+              onClick={() => {
+                setFabMenuOpen(false);
+                toggleManualPlanToday(!manualPlanTodayMode);
+              }}
+            >
+              {manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                setFabMenuOpen(false);
+                setCreatingEvent({ date: view === 'day' || view === 'threeDay' ? anchorDate : toISODate(new Date()), startTime: '', endTime: '' });
+              }}
+            >
+              New event
+            </button>
+          </div>
+        )}      </div>
 
       {selectedBlock && (
         <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} onOpenTask={handleOpenTask} />

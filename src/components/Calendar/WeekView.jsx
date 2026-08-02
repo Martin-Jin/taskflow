@@ -335,7 +335,7 @@ export default function WeekView({
   onCreateEvent,
   onSelectDay,
 }) {
-  const { tasks, blocks, events, projects, updateBlock, toggleBlockLock, updateEvent, scheduleTaskManually } = useScheduler();
+  const { tasks, blocks, events, projects, updateBlock, toggleBlockLock, updateEvent, scheduleTaskManually, manualPlanTodayMode } = useScheduler();
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
@@ -687,7 +687,10 @@ export default function WeekView({
       if (!task) return;
       const durationHours = Math.max(task.minChunkHours ?? 0.5, Math.min(task.unplacedHours || 1, task.maxChunkHours ?? 4));
       const newStartMin = computeSnappedStartMinute(relY, pxPerMin, Math.round(durationHours * 60));
-      scheduleTaskManually(id, day, minutesToTime(newStartMin), durationHours);
+      // If Manual Plan Today mode is enabled, force all manual placements to
+      // land on today's column regardless of which day the user dropped onto.
+      const targetDay = manualPlanTodayMode ? todayIso : day;
+      scheduleTaskManually(id, targetDay, minutesToTime(newStartMin), durationHours);
       return;
     }
     let source;
@@ -981,7 +984,11 @@ export default function WeekView({
     // the tray needs its own outer element here (not a bare Fragment) to
     // stack above the grid vertically without fighting that outer layout.
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
-      {unscheduledTasks.length > 0 && (
+      {/* Unscheduled tray is shown only when the user opted into Manual Plan
+          Today mode — it lets the user drag tasks to build a manual TODAY
+          schedule. Hidden otherwise so these draggable chips don't clutter
+          the calendar when automatic scheduling is the primary workflow. */}
+      {manualPlanTodayMode && unscheduledTasks.length > 0 && (
         <div className="unscheduled-tray">
           <button className="unscheduled-tray-toggle" onClick={() => setTrayExpanded((v) => !v)}>
             {trayExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
