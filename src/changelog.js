@@ -17,6 +17,23 @@
 
 export const CHANGELOG = [
   {
+    version: '1.67.0',
+    date: '2026-08-02',
+    title: 'Scheduler now splits a task across free gaps instead of falsely reporting a conflict',
+    changes: [
+      'Fixed a bug where a fixed-time recurring task (e.g. Piano) that genuinely collided with a real event or routine at its exact time was reported as "no free time left" for the whole day, even when plenty of free time was still open later — it now falls back to that later time instead.',
+      'Also fixed a deeper issue: when a task\'s remaining time didn\'t fit into any single continuous open slot, the scheduler reported it as unschedulable instead of using the day\'s free time at all. It still prefers one uninterrupted block when possible, but will now split a task across several smaller gaps as a last resort, rather than leaving visibly free time unused and reporting a false conflict.',
+    ],
+  },
+  {
+    version: '1.66.0',
+    date: '2026-08-02',
+    title: 'Calendar FAB menu redesigned as animated floating buttons',
+    changes: [
+      'The desktop calendar "+" button no longer opens a dropdown list — tapping it now pops out "Schedule manually for today" and "New event" as two separate floating buttons, animating in the same way the task-list "Add task" button does.',
+    ],
+  },
+  {
     version: '1.65.0',
     date: '2026-08-02',
     title: 'Fixed a third false "no free time" conflict for fixed-time recurring tasks',

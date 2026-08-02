@@ -106,20 +106,20 @@ describe('rebalance', () => {
     expect(result.blocks.some((b) => b.id === 'b6')).toBe(true);
   });
 
-  it('reports a fixed_time_conflict reason (with the conflicting event) when a fixedTime task collides with an event', () => {
+  it('falls back to later same-day capacity (no conflict reported) when a fixedTime, single-day task collides with an event but the rest of the day is free', () => {
     const tasks = [
       { id: 't7', title: 'Standup prep', isCompleted: false, estimatedHours: 1, dueDate: today, enforceDueDate: true, fixedTime: '09:00' },
     ];
     const events = [{ id: 'ev1', date: today, startTime: '09:00', endTime: '10:00', title: 'Team Standup' }];
     const result = rebalance({ tasks, existingBlocks: [], routines: [], events, rules: baseRules, fromDate: today });
-    expect(result.overflow).toHaveLength(1);
-    expect(result.overflow[0]).toMatchObject({
-      taskId: 't7',
-      reason: {
-        type: 'fixed_time_conflict',
-        conflictingItem: { id: 'ev1', type: 'event', label: 'Team Standup', start: '09:00', end: '10:00' },
-      },
-    });
+    // The 09:00 pinned slot collides with the standup, but the work day runs
+    // until 17:00 — a real conflict at the fixed slot only rules out THAT
+    // slot, not the rest of the day, so the leftover hour should land
+    // elsewhere today instead of being reported as unschedulable.
+    expect(result.overflow).toHaveLength(0);
+    const block = result.blocks.find((b) => b.taskId === 't7');
+    expect(block).toBeTruthy();
+    expect(block.startTime).not.toBe('09:00');
   });
 
   it('reports a dependency_blocked reason (naming the blocking task) for a task whose dependency is incomplete', () => {
@@ -282,11 +282,11 @@ describe('allocateTasks: fixedTime + single-day window fallback', () => {
     expect(blocks[0].durationHours).toBe(1);
   });
 
-  it('still reports fixed_time_conflict (no same-day relocation) when a real event occupies the fixed slot, even in a single-day window', () => {
-    // A genuine collision (something identifiable sitting on the fixed time)
-    // must still be surfaced as a specific conflict rather than silently
-    // relocated — only an UNIDENTIFIABLE failure (nowClamp/outside-work-day)
-    // should fall back to same-day placement. See placeAndRecordBlocks.
+  it('falls back to later same-day capacity (no conflict reported) when a real event occupies the fixed slot but the rest of the day is free', () => {
+    // A genuine collision at the pinned slot only rules out THAT slot — it
+    // says nothing about the rest of the day. With hours of open capacity
+    // still left (10:00-22:00 here), the task should relocate there instead
+    // of being reported as unschedulable while the calendar is visibly free.
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
       routines: [], blocks: [], rules,
       events: [{ id: 'ev1', date: '2026-07-01', startTime: '09:00', endTime: '10:00', title: 'Piano lesson' }],
@@ -296,6 +296,25 @@ describe('allocateTasks: fixedTime + single-day window fallback', () => {
       dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '09:00', isRecurring: true,
     };
     const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(0);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].startTime >= '10:00').toBe(true);
+    expect(blocks[0].durationHours).toBe(1);
+  });
+
+  it('still reports fixed_time_conflict when a real event occupies the fixed slot AND the rest of the day has no room left', () => {
+    // Genuine conflict at the pinned slot, and nothing else free that day —
+    // this is the one case that should still surface as unschedulable.
+    const tightRules = { ...rules, workDayStart: '09:00', workDayEnd: '10:00' };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules: tightRules,
+      events: [{ id: 'ev1', date: '2026-07-01', startTime: '09:00', endTime: '10:00', title: 'Piano lesson' }],
+    });
+    const task = {
+      id: 'occ2', title: 'Piano', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '09:00', isRecurring: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, tightRules, '2026-07-01');
     expect(blocks).toHaveLength(0);
     expect(overflow).toEqual([{
       taskId: 'occ2',
@@ -327,5 +346,63 @@ describe('allocateTasks: fixedTime + single-day window fallback', () => {
     // Placed on 07-02 (or 07-03) at the fixed time, NOT relocated to later on 07-01.
     expect(blocks[0].date).not.toBe('2026-07-01');
     expect(blocks[0].startTime).toBe('09:00');
+  });
+});
+
+describe('allocateTasks: last-resort splitting when no continuous block fits', () => {
+  const rules = { workDayStart: '09:00', workDayEnd: '18:00', maxDailyDeepWorkHours: 8, minGapBetweenBlocksMins: 0, horizonWeeks: 1, bufferDays: 0 };
+
+  it('splits a task across several small non-contiguous gaps when no single gap can hold the full remaining duration', () => {
+    // Three 1-hour meetings carve the day into four 45-min-or-shorter gaps —
+    // none individually big enough for a continuous 2-hour block, but they
+    // sum to well over 2 hours. The task's default minChunkHours (0.5h) is
+    // bigger than some of these gaps, so a continuous placement is genuinely
+    // impossible; the task should still fully place by splitting.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules,
+      events: [
+        { id: 'ev1', date: '2026-07-01', startTime: '09:45', endTime: '10:45', title: 'Meeting A' },
+        { id: 'ev2', date: '2026-07-01', startTime: '11:15', endTime: '12:15', title: 'Meeting B' },
+        { id: 'ev3', date: '2026-07-01', startTime: '12:45', endTime: '13:45', title: 'Meeting C' },
+      ],
+    });
+    // Free gaps: 09:00-09:45 (45m), 10:45-11:15 (30m), 12:15-12:45 (30m), 13:45-18:00 (4h15m).
+    const task = {
+      id: 'tsplit', title: 'Deep work', estimatedHours: 2, remainingHours: 2,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(0);
+    const totalHours = blocks.reduce((sum, b) => sum + b.durationHours, 0);
+    expect(totalHours).toBeCloseTo(2, 5);
+  });
+
+  it('still prefers a single continuous block when one is available, and does not fragment unnecessarily', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules, events: [],
+    });
+    const task = {
+      id: 'tcontig', title: 'Deep work', estimatedHours: 2, remainingHours: 2,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(0);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].durationHours).toBe(2);
+  });
+
+  it('reports genuine no_capacity when the day truly cannot fit the remaining hours even split', () => {
+    const tightRules = { ...rules, workDayStart: '09:00', workDayEnd: '10:00' };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules: tightRules, events: [],
+    });
+    const task = {
+      id: 'tnone', title: 'Deep work', estimatedHours: 5, remainingHours: 5,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const { overflow } = allocateTasks([task], capacityMap, tightRules, '2026-07-01');
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('no_capacity');
+    expect(overflow[0].unplacedHours).toBeCloseTo(4, 5);
   });
 });
