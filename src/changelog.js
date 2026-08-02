@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.68.0',
+    date: '2026-08-02',
+    title: 'Fixed white background behind the Google sign-in icon',
+    changes: [
+      'The "Sign in with Google" button showed a white square around the Google icon in dark mode. It now uses our own themed button instead of Google\'s rendered icon widget, so it matches the rest of the UI.',
+    ],
+  },
+  {
     version: '1.67.0',
     date: '2026-08-02',
     title: 'Scheduler now splits a task across free gaps instead of falsely reporting a conflict',

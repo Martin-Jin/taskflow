@@ -7,24 +7,29 @@
  * cloud-sync effects in SchedulerContext/ThemeContext for the actual sync.
  * This context only owns "who is signed in", not the app data itself.
  *
- * SIGN-IN FLOW: renders Google's own "Sign in with Google" button via
- * Identity Services' (GIS) *identity* API (`google.accounts.id`), not its
- * OAuth *authorization* API (`google.accounts.oauth2`, still used as-is by
- * googleCalendarService.js for actual Calendar API access — different
- * problem, different tool). That distinction matters here: both Firebase's
- * signInWithPopup/signInWithRedirect AND google.accounts.oauth2's token popup
- * rely on window.open() producing a genuine second browsing context. On some
- * mobile browsers (confirmed on Firefox for Android) window.open() instead
- * just navigates the *current* tab to the target URL — so every popup-based
- * attempt degraded into the same failure: the user's only tab gets yanked to
- * an external page with no way back, whether that page was Firebase's own
- * intermediate OAuth handler (missing-initial-state error) or Google's own
- * accounts.google.com (blank page, no popup to report a result back to).
+ * SIGN-IN FLOW: triggers Google's Identity Services (GIS) *identity* API
+ * (`google.accounts.id`) One Tap prompt from our own fully-stylable button,
+ * not its OAuth *authorization* API (`google.accounts.oauth2`, still used
+ * as-is by googleCalendarService.js for actual Calendar API access —
+ * different problem, different tool). That distinction matters here: both
+ * Firebase's signInWithPopup/signInWithRedirect AND google.accounts.oauth2's
+ * token popup rely on window.open() producing a genuine second browsing
+ * context. On some mobile browsers (confirmed on Firefox for Android)
+ * window.open() instead just navigates the *current* tab to the target URL —
+ * so every popup-based attempt degraded into the same failure: the user's
+ * only tab gets yanked to an external page with no way back, whether that
+ * page was Firebase's own intermediate OAuth handler (missing-initial-state
+ * error) or Google's own accounts.google.com (blank page, no popup to report
+ * a result back to).
  *
  * google.accounts.id sidesteps window.open() entirely for the base case —
- * it resolves via an iframe/overlay in the same page, delivering a Google ID
- * token to a JS callback, which is exchanged for a Firebase credential via
- * signInWithCredential(). Same VITE_GOOGLE_CLIENT_ID, no extra setup.
+ * prompt() resolves via an iframe/overlay in the same page, delivering a
+ * Google ID token to a JS callback, which is exchanged for a Firebase
+ * credential via signInWithCredential(). Same VITE_GOOGLE_CLIENT_ID, no extra
+ * setup. (Google's own *rendered* button — renderButton() — was used here
+ * previously, but its icon-only variant always draws on a fixed white square
+ * inside a cross-origin iframe we can't restyle; prompt() gets the same
+ * flow without that visual artifact.)
  *
  * This still doesn't work when TaskFlow is launched from an iOS/Android
  * home-screen icon (standalone display mode) — that isolated context breaks
@@ -77,20 +82,12 @@ async function ensureGisIdentity(onCredential) {
 }
 
 /**
- * Mounts Google's own rendered "Sign in with Google" button into `container`
- * — the actual click target; our own UI just provides the container div and
- * an `onCredential(idToken)` callback for when the user completes sign-in.
+ * Triggers Google's One Tap sign-in prompt — call this from our own button's
+ * onClick. `onCredential(idToken)` fires when the user completes sign-in.
  */
-export async function renderGoogleSignInButton(container, onCredential, options = {}) {
+export async function promptGoogleSignIn(onCredential) {
   await ensureGisIdentity((resp) => onCredential(resp.credential));
-  window.google.accounts.id.renderButton(container, {
-    theme: 'filled_black',
-    size: 'large',
-    shape: 'pill',
-    text: 'signin_with',
-    use_fedcm_for_button: false,
-    ...options,
-  });
+  window.google.accounts.id.prompt();
 }
 
 export function AuthProvider({ children }) {
