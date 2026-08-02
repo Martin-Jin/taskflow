@@ -1714,6 +1714,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: text;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.routine-block:hover .routine-block-label,
+.routine-block-label:focus-visible {
+  opacity: 1;
 }
 
 .routine-block-label-input {
@@ -1759,6 +1766,12 @@
   color: var(--color-text-secondary);
   font-size: 10px;
   margin-top: 1px;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.routine-block:hover .routine-block-time {
+  opacity: 1;
 }
 
 .routine-block-time-inline {

@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.88.0',
+    date: '2026-08-03',
+    title: 'Progress ring and Fixed routines fixes',
+    changes: [
+      "Fixed the Dashboard's progress ring percentage rendering off-center.",
+      'Fixed routines in Settings now only show their label and time on hover, so a busy day of blocked-out routines reads as a cleaner strip of colored blocks at a glance.',
+    ],
+  },
+  {
     version: '1.87.0',
     date: '2026-08-03',
     title: 'Make the Dashboard more compact and readable on mobile',

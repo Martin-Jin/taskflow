@@ -85,11 +85,21 @@ every day an equal share; front-loaded pacing (for urgent/high-priority
 tasks, when enabled) ramps effort up as the deadline approaches.
 
 **Placement** is greedy and runs in three passes — an ideal-day pass
-clamped to `[minChunkHours, maxChunkHours]` and available capacity, a sweep
-pass that mops up hours that didn't fit their ideal day into any other open
-capacity in the window, and a final spill pass into the buffer-to-due-date
-range. Only after all three passes still have leftover hours does a task
-show up in the "couldn't be fully scheduled" overflow.
+clamped to `maxChunkHours` and available capacity, a sweep pass that mops
+up hours that didn't fit their ideal day into any other open capacity in
+the window, and a final spill pass into the buffer-to-due-date range. Only
+after all three passes still have leftover hours does a task show up in
+the "couldn't be fully scheduled" overflow.
+
+A task's total remaining hours may only be split into as many pieces as
+`round(durationHours * 60 / 30)` allows (`maxChunksFor` in `allocator.js`)
+— a chunk-COUNT cap, not a per-chunk minimum-size floor. The only hard
+floor on an individual chunk's size is a flat 5 minutes
+(`MIN_CHUNK_HOURS`), and even that's waived for a task whose entire
+remaining time is already at or under 5 minutes, so it can still place as
+one small block instead of being skipped. The per-task `minChunkHours`
+field still exists on `Task` but is no longer read by the allocator (see
+`types/index.js`).
 
 ### 3. Rebalancing (`rebalanceEngine.js`)
 

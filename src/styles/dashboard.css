@@ -991,6 +991,7 @@
   font-size: 18px;
   font-weight: 600;
   transform: rotate(90deg);
+  transform-box: fill-box;
   transform-origin: center;
 }
 
