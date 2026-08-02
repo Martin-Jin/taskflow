@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.89.0',
+    date: '2026-08-03',
+    title: 'Fixed routines hover behavior swapped back',
+    changes: [
+      "Fixed routines now always show their label and time in Settings, and only reveal them on hover on the Calendar page (this was accidentally swapped in the previous release).",
+      'Removed the border/background from the calendar view-switcher (hamburger) button.',
+    ],
+  },
+  {
     version: '1.88.0',
     date: '2026-08-03',
     title: 'Progress ring and Fixed routines fixes',

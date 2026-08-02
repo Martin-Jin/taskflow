@@ -526,6 +526,11 @@ export default function WeekView({
   // passes over several densely-packed items on its way somewhere else.
   const [hoverPreview, setHoverPreview] = useState(null); // { rect, ...content }
   const hoverTimer = useRef(null);
+  // Keyed by day-string, so a routine block's mousedown (which passes through
+  // pointer-events:none normally, but needs auto to support hover-reveal of
+  // its label) can still measure against the day-column's own rect rather
+  // than its own smaller rect when forwarding to handleColumnMouseDown.
+  const dayColumnRefs = useRef({});
   const HOVER_DELAY_MS = 350;
   function scheduleHoverPreview(rect, content) {
     clearTimeout(hoverTimer.current);
@@ -838,9 +843,9 @@ export default function WeekView({
   // Only fires when the mousedown lands directly on the day-column element
   // itself (not one of its absolutely-positioned block/event children), so
   // it never fights with dragging an existing block or clicking an event.
-  function handleColumnMouseDown(e, day) {
-    if (isMobile || e.target !== e.currentTarget || e.button !== 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+  function handleColumnMouseDown(e, day, columnEl) {
+    if (isMobile || (e.target !== e.currentTarget && !columnEl) || e.button !== 0) return;
+    const rect = (columnEl || e.currentTarget).getBoundingClientRect();
 
     function minuteFromEvent(evt) {
       const relY = evt.clientY - rect.top;
@@ -972,6 +977,7 @@ export default function WeekView({
           <div
             key={day}
             data-day={day}
+            ref={(el) => { dayColumnRefs.current[day] = el; }}
             className={`day-column ${dragOverDay === day ? 'is-dragover' : ''}`}
             style={{ height: gridHeight }}
             onDragOver={(e) => handleDragOverDay(e, day)}
@@ -988,6 +994,7 @@ export default function WeekView({
                   key={r.id}
                   className="cal-routine-block"
                   style={{ top, height }}
+                  onMouseDown={(e) => handleColumnMouseDown(e, day, dayColumnRefs.current[day])}
                 >
                   <span className="cal-routine-block-label">
                     {r.label}
