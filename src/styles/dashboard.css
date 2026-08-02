@@ -175,6 +175,11 @@
 .now-block-title {
   font-size: var(--text-md);
   font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .now-block-time {
@@ -222,11 +227,15 @@
 .next-block-info {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .next-block-title {
   font-size: var(--text-base);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .next-block-meta {
@@ -998,6 +1007,8 @@
 
 .missed-tasks-title {
   color: var(--color-text-primary);
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

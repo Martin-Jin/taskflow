@@ -22,7 +22,7 @@ export const CHANGELOG = [
     title: 'Fix mobile horizontal scroll on Tasks and Dashboard',
     changes: [
       'Fixed the Tasks page being able to wiggle/scroll sideways on mobile screens.',
-      'Fixed long task titles in the Dashboard\'s "Today\'s Agenda" widget overflowing the page instead of truncating.',
+      'Fixed long task titles in the Dashboard\'s "Right now", "Up next", and "Today\'s Agenda" widgets overflowing the page instead of truncating.',
     ],
   },
   {
