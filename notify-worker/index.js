@@ -3,7 +3,7 @@
 const admin = require('firebase-admin');
 const { Resend } = require('resend');
 
-const { computeCandidates } = require('./src/computeNotifications');
+const { computeCandidates, isCandidateStillValid } = require('./src/computeNotifications');
 const { claimNotification, clearNotificationState } = require('./src/notificationState');
 const { buildNotificationEmail, buildDueTodayDigestEmail } = require('./src/emailTemplate');
 
@@ -104,6 +104,14 @@ async function main() {
         continue;
       }
       if (!claimed) continue; // already sent this one, or its throttle says not yet
+
+      // Re-check against a fresh read, not the run's initial snapshot
+      // (`tasks`/`blocks` above) — see isCandidateStillValid's doc comment.
+      if (candidate.type !== 'dueTodayDigest') {
+        const freshUserSnap = await userDoc.ref.get();
+        const freshData = freshUserSnap.data() || {};
+        if (!isCandidateStillValid(candidate, freshData.tasks || [], freshData.blocks || [])) continue;
+      }
 
       const { subject, html } =
         candidate.type === 'dueTodayDigest'

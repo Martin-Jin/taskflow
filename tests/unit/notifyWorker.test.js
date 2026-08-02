@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeCandidates } from '../../notify-worker/src/computeNotifications';
+import { computeCandidates, isCandidateStillValid } from '../../notify-worker/src/computeNotifications';
 import { claimNotification, clearNotificationState } from '../../notify-worker/src/notificationState';
 
 const BASE_SETTINGS = { taskStartingSoon: true, taskOverdue: true, taskDueToday: true, startingSoonMinutes: 10, timezone: 'UTC' };
@@ -231,6 +231,44 @@ describe('claimNotification', () => {
 
     const rescheduled = { ...candidate, scheduledAt: '2026-08-02T15:30' };
     expect(await claimNotification(db, 'u1', rescheduled, t0 + 2000)).toBe(true);
+  });
+});
+
+describe('isCandidateStillValid', () => {
+  it('always considers a dueTodayDigest candidate valid (no per-task completion to race against)', () => {
+    expect(isCandidateStillValid({ type: 'dueTodayDigest' }, [], [])).toBe(true);
+  });
+
+  it('rejects a missed/overdue candidate if the task was completed since the snapshot was taken', () => {
+    const candidate = { type: 'missed', task: { id: 't1' }, block: { id: 'b1' } };
+    const freshTasks = [{ id: 't1', isCompleted: true }];
+    const freshBlocks = [{ id: 'b1', status: 'scheduled' }];
+    expect(isCandidateStillValid(candidate, freshTasks, freshBlocks)).toBe(false);
+  });
+
+  it('rejects a missed candidate if the block was marked done since the snapshot was taken', () => {
+    const candidate = { type: 'missed', task: { id: 't1' }, block: { id: 'b1' } };
+    const freshTasks = [{ id: 't1', isCompleted: false }];
+    const freshBlocks = [{ id: 'b1', status: 'done' }];
+    expect(isCandidateStillValid(candidate, freshTasks, freshBlocks)).toBe(false);
+  });
+
+  it('rejects a candidate whose task or block was deleted since the snapshot was taken', () => {
+    const candidate = { type: 'missed', task: { id: 't1' }, block: { id: 'b1' } };
+    expect(isCandidateStillValid(candidate, [], [])).toBe(false);
+  });
+
+  it('accepts a still-incomplete task/block combo unchanged since the snapshot', () => {
+    const candidate = { type: 'missed', task: { id: 't1' }, block: { id: 'b1' } };
+    const freshTasks = [{ id: 't1', isCompleted: false }];
+    const freshBlocks = [{ id: 'b1', status: 'scheduled' }];
+    expect(isCandidateStillValid(candidate, freshTasks, freshBlocks)).toBe(true);
+  });
+
+  it('accepts an overdue candidate (no block) whose task is still incomplete', () => {
+    const candidate = { type: 'overdue', task: { id: 't1' } };
+    const freshTasks = [{ id: 't1', isCompleted: false }];
+    expect(isCandidateStillValid(candidate, freshTasks, [])).toBe(true);
   });
 });
 

@@ -222,4 +222,25 @@ function computeCandidates({ tasks, blocks, settings, rules, now }) {
   return { toNotify, toClear };
 }
 
-module.exports = { computeCandidates, todayISOInZone };
+/**
+ * Re-validates a candidate against a freshly-read tasks/blocks snapshot,
+ * taken right before send — the snapshot `computeCandidates` originally ran
+ * against can be stale by then (a transaction + network round trip per
+ * candidate ahead of it), so a task/block completed in the gap would
+ * otherwise still get a "missed"/"overdue"/"startingSoon" email despite
+ * already being done. Pure function, no Firestore access, so the freshness
+ * check itself is unit-testable in isolation — see index.js for the actual
+ * re-fetch this consumes.
+ */
+function isCandidateStillValid(candidate, freshTasks, freshBlocks) {
+  if (candidate.type === 'dueTodayDigest') return true;
+  const freshTask = freshTasks.find((t) => t.id === candidate.task.id);
+  if (!freshTask || freshTask.isCompleted) return false;
+  if (candidate.block) {
+    const freshBlock = freshBlocks.find((b) => b.id === candidate.block.id);
+    if (!freshBlock || freshBlock.status === 'done') return false;
+  }
+  return true;
+}
+
+module.exports = { computeCandidates, todayISOInZone, isCandidateStillValid };
