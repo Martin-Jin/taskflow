@@ -1478,8 +1478,12 @@ input.search-bar-input {
   overflow-y: auto;
 }
 
+/* Uses the accent green (same token as .nav-item.active) rather than the
+   plain hover background — that background is barely distinguishable from
+   the surface color, making keyboard-arrow highlighting hard to see. */
 .command-palette-item.active {
-  background: var(--color-bg-surface-hover);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
 }
 
 /* Swaps the generic button:focus-visible ring (above) for the same
@@ -1489,7 +1493,8 @@ input.search-bar-input {
    everywhere else in this list. */
 .command-palette-item:focus-visible {
   outline: none;
-  background: var(--color-bg-surface-hover);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
 }
 
 .chip {
