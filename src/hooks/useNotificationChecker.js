@@ -6,12 +6,6 @@ import { fireNotification } from '../services/notificationService';
 // minutes) to be caught promptly, without polling aggressively.
 const CHECK_INTERVAL_MS = 60 * 1000;
 
-// High/urgent overdue tasks re-notify periodically instead of once (see
-// TODO.md #10's confirmed decisions — exact cadence was left an open
-// question). Once per hour keeps a still-overdue urgent task surfaced
-// several times across a working day without spamming on every 60s tick.
-const OVERDUE_RENOTIFY_MS = 60 * 60 * 1000;
-
 /**
  * Scans tasks/scheduled blocks on an interval and surfaces in-app
  * notification triggers (task starting soon / overdue / due today) per
@@ -43,10 +37,9 @@ export function useNotificationChecker({ tasks, blocks, notificationSettings, se
   // Dedupe trackers, kept across ticks in refs (not persisted — a fresh page
   // load starts clean, which is fine since every trigger here is time-
   // relative and re-evaluates correctly from scratch).
-  const firedStartingSoonRef = useRef(new Set()); // blockId -> already notified
-  const firedOverdueOnceRef = useRef(new Set()); // taskId -> low/medium overdue, notified once
-  const lastOverdueRenotifyRef = useRef(new Map()); // taskId -> ms timestamp, high/urgent throttled repeat
-  const firedDueTodayRef = useRef(new Map()); // taskId -> ISO date string last notified
+  const firedStartingSoonRef = useRef(new Map()); // blockId -> `${date}T${startTime}` last notified for
+  const firedOverdueRef = useRef(new Map()); // taskId -> { date: ISO date last notified, dueDate: value at that time }
+  const firedDueTodayRef = useRef(new Map()); // taskId -> { date: ISO date last notified, dueDate: value at that time }
 
   useEffect(() => {
     if (!inAppEnabled || !anyTriggerEnabled) return undefined;
@@ -67,13 +60,17 @@ export function useNotificationChecker({ tasks, blocks, notificationSettings, se
         const thresholdMs = startingSoonMinutes * 60 * 1000;
         for (const block of blocks) {
           if (block.status !== 'scheduled') continue;
-          if (firedStartingSoonRef.current.has(block.id)) continue;
-          const start = new Date(`${block.date}T${block.startTime}:00`);
+          const scheduledAt = `${block.date}T${block.startTime}`;
+          // A reschedule after this block already fired once is a new
+          // occurrence, not a repeat — re-arm instead of permanently
+          // suppressing it for the block's lifetime.
+          if (firedStartingSoonRef.current.get(block.id) === scheduledAt) continue;
+          const start = new Date(`${scheduledAt}:00`);
           const diffMs = start.getTime() - now;
           if (diffMs <= 0 || diffMs > thresholdMs) continue;
           const task = tasks.find((t) => t.id === block.taskId);
           if (!task || task.isCompleted) continue;
-          firedStartingSoonRef.current.add(block.id);
+          firedStartingSoonRef.current.set(block.id, scheduledAt);
           notify('info', `Starting soon: ${task.title}`, `Starts at ${block.startTime}`);
         }
       }
@@ -84,29 +81,30 @@ export function useNotificationChecker({ tasks, blocks, notificationSettings, se
           const isOverdue = task.dueDate < todayISO;
 
           // Once a task is no longer overdue (completed, rescheduled forward,
-          // or its recurring due date advanced), clear its dedupe entries so
-          // a LATER overdue period for this same task id notifies again
+          // or its recurring due date advanced), clear its dedupe entry so a
+          // LATER overdue period for this same task id notifies again
           // instead of staying silently suppressed forever.
           if (!isOverdue) {
-            firedOverdueOnceRef.current.delete(task.id);
-            lastOverdueRenotifyRef.current.delete(task.id);
+            firedOverdueRef.current.delete(task.id);
           }
 
           if (taskOverdue && isOverdue) {
-            const isUrgentish = task.priority === 'high' || task.priority === 'urgent';
-            if (isUrgentish) {
-              const lastFired = lastOverdueRenotifyRef.current.get(task.id) || 0;
-              if (now - lastFired >= OVERDUE_RENOTIFY_MS) {
-                lastOverdueRenotifyRef.current.set(task.id, now);
-                notify('warning', `Overdue: ${task.title}`, `Was due ${task.dueDate}`);
-              }
-            } else if (!firedOverdueOnceRef.current.has(task.id)) {
-              firedOverdueOnceRef.current.add(task.id);
+            // Once per calendar day regardless of priority — matches the
+            // email worker's cadence (an hourly repeat for urgent/high tasks
+            // used to fire ~24x/day, which read as spam). Also re-arms
+            // immediately if dueDate changed, even within the same day, so a
+            // reschedule is always treated as fresh news.
+            const prev = firedOverdueRef.current.get(task.id);
+            const dueDateChanged = prev && prev.dueDate !== task.dueDate;
+            if (!prev || dueDateChanged || prev.date !== todayISO) {
+              firedOverdueRef.current.set(task.id, { date: todayISO, dueDate: task.dueDate });
               notify('warning', `Overdue: ${task.title}`, `Was due ${task.dueDate}`);
             }
           } else if (taskDueToday && task.dueDate === todayISO) {
-            if (firedDueTodayRef.current.get(task.id) !== todayISO) {
-              firedDueTodayRef.current.set(task.id, todayISO);
+            const prev = firedDueTodayRef.current.get(task.id);
+            const dueDateChanged = prev && prev.dueDate !== task.dueDate;
+            if (!prev || dueDateChanged || prev.date !== todayISO) {
+              firedDueTodayRef.current.set(task.id, { date: todayISO, dueDate: task.dueDate });
               notify('info', `Due today: ${task.title}`, 'Due date is today');
             }
           }

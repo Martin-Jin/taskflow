@@ -312,36 +312,68 @@ export function useCloudSync({
   // The fingerprint stamp/rollback decision itself lives in the pure,
   // exported computePushStampPlan — this just performs the actual write and
   // ref mutation around it.
+  const runPushNow = useCallback(async () => {
+    if (!user) return;
+    const currentState = stateRef.current;
+    const plan = computePushStampPlan(currentState, lastPushedFingerprintRef.current);
+    if (!plan.shouldPush) return; // no change
+    setIsPushingCloud(true);
+    try {
+      // Stamp the ref before the write resolves, not after — otherwise a
+      // local change made while this push is in flight can race the live
+      // listener below, which would mistake the server echo for a genuine
+      // remote change and stomp whatever just changed locally.
+      lastPushedFingerprintRef.current = plan.fingerprint;
+      await pushUserData(user.uid, currentState);
+    } catch (err) {
+      console.warn('[useCloudSync] Push failed', err);
+      // Roll back the optimistic stamp — otherwise this fingerprint looks
+      // "already pushed" even though the write never landed, so if the
+      // user makes no further edit, every future schedulePush sees "no
+      // change" and this edit is silently dropped from Firestore forever.
+      // Restoring the previous value means the very next state change
+      // (including one identical to this failed push) will retry it.
+      lastPushedFingerprintRef.current = plan.rollbackFingerprint;
+      setNotification({ type: 'error', message: 'Failed to sync to the cloud. Your changes are saved locally and will retry on your next edit.' });
+    } finally {
+      setIsPushingCloud(false);
+    }
+  }, [user, stateRef, setNotification]);
+
   const schedulePush = useCallback(() => {
     if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    pushTimerRef.current = setTimeout(async () => {
-      if (!user) return;
-      const currentState = stateRef.current;
-      const plan = computePushStampPlan(currentState, lastPushedFingerprintRef.current);
-      if (!plan.shouldPush) return; // no change
-      setIsPushingCloud(true);
-      try {
-        // Stamp the ref before the write resolves, not after — otherwise a
-        // local change made while this push is in flight can race the live
-        // listener below, which would mistake the server echo for a genuine
-        // remote change and stomp whatever just changed locally.
-        lastPushedFingerprintRef.current = plan.fingerprint;
-        await pushUserData(user.uid, currentState);
-      } catch (err) {
-        console.warn('[useCloudSync] Push failed', err);
-        // Roll back the optimistic stamp — otherwise this fingerprint looks
-        // "already pushed" even though the write never landed, so if the
-        // user makes no further edit, every future schedulePush sees "no
-        // change" and this edit is silently dropped from Firestore forever.
-        // Restoring the previous value means the very next state change
-        // (including one identical to this failed push) will retry it.
-        lastPushedFingerprintRef.current = plan.rollbackFingerprint;
-        setNotification({ type: 'error', message: 'Failed to sync to the cloud. Your changes are saved locally and will retry on your next edit.' });
-      } finally {
-        setIsPushingCloud(false);
+    pushTimerRef.current = setTimeout(runPushNow, PUSH_DEBOUNCE_MS);
+  }, [runPushNow]);
+
+  // Flush a pending debounced push immediately when the tab is about to go
+  // away (backgrounded or closed) instead of waiting out the full
+  // PUSH_DEBOUNCE_MS. Without this, completing a task (or any other edit)
+  // and then quickly switching tabs/closing the browser can lose the write
+  // entirely — the debounce timer never fires, so e.g. a just-completed
+  // task's isCompleted:true never reaches Firestore, and the notify-worker
+  // cron keeps reading the stale incomplete task and emailing overdue
+  // reminders for something the user already finished. `visibilitychange`
+  // (not just `beforeunload`) is used because iOS Safari/backgrounded tabs
+  // don't reliably fire beforeunload/pagehide's async continuation.
+  useEffect(() => {
+    if (!user || !cloudSynced) return undefined;
+    const flush = () => {
+      if (pushTimerRef.current) {
+        clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+        runPushNow();
       }
-    }, PUSH_DEBOUNCE_MS);
-  }, [user, stateRef, setNotification]);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [user, cloudSynced, runPushNow]);
 
   // ---- Apply remote data (from Firestore snapshot or an initial pull) ------
   // Mirrors applyBackupPayload below field-for-field, but routes tasks/blocks

@@ -915,6 +915,30 @@ export function SchedulerProvider({ children }) {
     return result;
   }, [tasks, blocks, routines, events, rules, commit]);
 
+  // Always-current ref to runRebalance so the debounced callback below never
+  // fires against a stale tasks/blocks closure captured when it was queued.
+  const runRebalanceRef = useRef(runRebalance);
+  useEffect(() => {
+    runRebalanceRef.current = runRebalance;
+  }, [runRebalance]);
+
+  // Debounce ref for the due-date-triggered auto-rebalance below — several
+  // updateTask calls can land in the same tick/burst, and this collapses
+  // them into a single runRebalance() call instead of one per change.
+  const dueDateRebalanceTimeoutRef = useRef(null);
+  const queueDueDateRebalance = useCallback(() => {
+    if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
+    dueDateRebalanceTimeoutRef.current = setTimeout(() => {
+      dueDateRebalanceTimeoutRef.current = null;
+      runRebalanceRef.current();
+    }, 300);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
+    };
+  }, []);
+
   /**
    * Lighter, day-scoped sibling of runRebalance: only clears and replans
    * TODAY's unlocked blocks (see algorithms/rebalanceEngine.planToday for
@@ -985,6 +1009,16 @@ export function SchedulerProvider({ children }) {
    */
   const updateTask = useCallback(
     (taskId, updates) => {
+      // Did this task's due date actually move, and does it currently have
+      // any scheduled block? If so, its existing block(s) are now stale —
+      // queue a rebalance below. Read from the current `tasks`/`blocks`
+      // closure (fine here since, unlike the commit() function-form calls
+      // elsewhere in this file, we're not chaining off another mutation in
+      // the same tick).
+      const prevTask = tasks.find((t) => t.id === taskId);
+      const dueDateChanged = prevTask && 'dueDate' in updates && updates.dueDate !== prevTask.dueDate;
+      const hasScheduledBlock = dueDateChanged && blocks.some((b) => b.taskId === taskId && !b.isLocked);
+
       // Function form — see addTask's comment just above.
       commit(
         (current) => ({
@@ -1011,8 +1045,17 @@ export function SchedulerProvider({ children }) {
         }),
         `Updated task`
       );
+
+      // Queue rather than call runRebalance() synchronously: several
+      // updateTask calls can land in the same tick (e.g. aiPlanService
+      // applying a multi-task plan), and each closes over the same
+      // pre-commit `blocks`/`tasks` — rebalancing after every single one
+      // would run the engine redundantly against still-stale snapshots.
+      // Debouncing collapses a burst into exactly one rebalance, run after
+      // the batch's commits have all landed.
+      if (hasScheduledBlock) queueDueDateRebalance();
     },
-    [commit]
+    [commit, tasks, blocks, queueDueDateRebalance]
   );
 
   /**

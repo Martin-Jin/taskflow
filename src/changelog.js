@@ -17,6 +17,24 @@
 
 export const CHANGELOG = [
   {
+    version: '1.72.0',
+    date: '2026-08-02',
+    title: 'Fixed email/in-app notifications spamming and firing for completed tasks',
+    changes: [
+      'Overdue notifications for high/urgent priority tasks used to re-send as often as every hour, which could add up to dozens of emails a day for a single task. They now fire at most once per day, matching every other notification type.',
+      'Notifications now re-fire right away if a task\'s due date (or a scheduled block\'s time) changes, instead of staying silently suppressed because "something" already notified for that task today.',
+      'Fixed a bug where completing a task right before closing the tab or switching apps could lose that change before it synced to the cloud, causing overdue reminders to keep arriving for a task you\'d already finished.',
+    ],
+  },
+  {
+    version: '1.71.0',
+    date: '2026-08-02',
+    title: 'Changing a scheduled task\'s due date now auto-rebalances the schedule',
+    changes: [
+      'Previously, moving a task\'s due date left its old scheduled block sitting on the calendar until you manually clicked "Re-balance schedule." Now, editing the due date of any task that already has a scheduled (unlocked) block automatically triggers a rebalance, so the calendar stays in sync with the new deadline right away.',
+    ],
+  },
+  {
     version: '1.70.0',
     date: '2026-08-02',
     title: 'Unscheduled tray no longer shows up outside Manual Plan Today',
