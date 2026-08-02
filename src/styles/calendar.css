@@ -279,10 +279,9 @@
 }
 
 /* The main FAB expands into a speed-dial of mini-FABs (see CalendarPage.jsx):
-   mobile gets "Re-balance schedule" + "Plan today" + "New event" (those
-   toolbar buttons are removed from the mobile toolbar to save vertical
-   space), desktop gets "Schedule manually for today" + "New event" as a
-   floating pair rather than the old dropdown menu list. Positioning mirrors
+   mobile gets "Re-balance schedule" + "New event" (that toolbar button is
+   removed from the mobile toolbar to save vertical space) as a floating
+   pair rather than the old dropdown menu list. Positioning mirrors
    .add-task-fab-group in tasklist.css: the group itself carries the fixed
    bottom-right placement so the main button no longer needs its own,
    letting it stack in normal flow with the mini-FABs above it (DOM order =
@@ -307,71 +306,6 @@
   .calendar-fab-group {
     bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
   }
-}
-
-/* "Unscheduled" tray — draggable chips for tasks with unplaced remaining
-   hours, sitting above the day grid so they can be dragged (or, on touch,
-   long-press-dragged) straight onto a day column. See WeekView's
-   unscheduledTasks/applyDrop for the scheduling logic. */
-.unscheduled-tray {
-  flex-shrink: 0;
-  margin-bottom: 8px;
-}
-
-.unscheduled-tray-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  padding: 4px 2px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.unscheduled-tray-toggle:hover {
-  color: var(--color-text-primary);
-}
-
-.unscheduled-tray-chips {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 2px 2px 6px;
-}
-
-.unscheduled-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  max-width: 220px;
-  padding: 5px 9px;
-  border-radius: var(--radius-sm);
-  border-left: 3px solid;
-  background: var(--color-bg-surface-raised);
-  box-shadow: var(--shadow-sm);
-  font-size: 12px;
-  cursor: grab;
-}
-
-.unscheduled-chip-grip {
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-}
-
-.unscheduled-chip-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.unscheduled-chip-hours {
-  flex-shrink: 0;
-  color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums;
 }
 
 .week-grid {
@@ -479,6 +413,37 @@
   background: var(--color-bg-surface-raised);
   box-shadow: var(--shadow-sm);
   transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
+}
+
+/* Routine (Fixed-availability) background: purely informational — sits
+   behind blocks/events, never intercepts clicks/drags, so the "create
+   event" drag-to-block-out gesture on the column still works right through
+   it. Deliberately much quieter than .cal-block/.cal-event (no border,
+   shadow, or saturated fill) so it reads as "unavailable" without
+   competing with real scheduled items for attention. */
+.cal-routine-block {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: color-mix(in srgb, var(--color-border) 55%, transparent);
+  pointer-events: none;
+  overflow: hidden;
+  padding: 3px 7px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+  z-index: 0;
+}
+
+.cal-routine-block-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.cal-routine-block-time {
+  opacity: 0.8;
 }
 
 .cal-block:hover {

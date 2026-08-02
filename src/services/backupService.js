@@ -49,8 +49,6 @@ export const BACKUP_FIELDS = [
   'notes',
   'shortcutBindings',
   'events',
-  'manualPlanTodayMode',
-  'savedAutoScheduledBlocksForToday',
 ];
 
 /**
@@ -80,8 +78,6 @@ export const FIELD_TYPES = {
   notes: 'object',
   shortcutBindings: 'object',
   events: 'array',
-  manualPlanTodayMode: 'boolean',
-  savedAutoScheduledBlocksForToday: 'array',
 };
 
 /** Does `value` match the runtime shape FIELD_TYPES declares for `field`? */

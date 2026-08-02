@@ -12,7 +12,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, Sunrise, RefreshCw, PenSquare, X, CalendarClock, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X, Search } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -64,8 +64,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   const [showViewMenu, setShowViewMenu] = useState(false);
   // Speed-dial state for the bottom-right FAB (see .calendar-fab below) —
   // expands into mini-FABs instead of the FAB's single always-visible
-  // action: mobile gets Re-balance schedule + Plan today + New event,
-  // desktop gets Schedule manually for today + New event.
+  // action: Re-balance schedule + New event.
   const [fabExpanded, setFabExpanded] = useState(false);
   const dateWrapRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
@@ -76,14 +75,11 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
     events,
     tasks,
     runRebalance,
-    runPlanToday,
     isLoading,
     googleConnected,
     syncNow,
     isSyncing,
     ensureGoogleRangeSynced,
-    manualPlanTodayMode,
-    toggleManualPlanToday,
   } = useScheduler();
   // ---- Mobile swipe-to-page carousel --------------------------------------
   // A live-tracking 3-page carousel (prev/current/next, see the render below)
@@ -459,7 +455,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
             )}
           </div>
           {/* Mobile only — on desktop this stays in .calendar-toolbar-actions
-              alongside Re-balance/Plan today. On mobile it's placed here,
+              alongside Re-balance. On mobile it's placed here,
               in-line with the date title and hamburger menu, pushed to the
               right via margin-left: auto (see calendar.css). Only useful once
               Google Calendar is actually connected — hidden rather than
@@ -489,25 +485,12 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                 <Zap size={14} />
                 Re-balance schedule
               </button>
-              {/* Lighter sibling of Re-balance: only touches today's unlocked
-                  blocks instead of the whole visible horizon — see
-                  algorithms/rebalanceEngine.planToday for why this can't just
-                  reuse the full rebalance and discard the rest. */}
-              <button className="btn" data-tour="plan-today" onClick={runPlanToday} disabled={isLoading}>
-                <Sunrise size={14} />
-                Plan today
-              </button>
-              {/* Single combined help button covering both actions above,
-                  kept right-most in the toolbar instead of one HelpTooltip
-                  per button — same info, one less repeated "?" in the row. */}
-              <HelpTooltip label="How do Re-balance schedule and Plan today work?">
+              {/* Kept right-most in the toolbar, matching the "one help button
+                  per cluster" pattern used elsewhere. */}
+              <HelpTooltip label="How does Re-balance schedule work?">
                 <strong>Re-balance schedule</strong> re-plans every unlocked block across your work hours and buffer
                 days — weighting urgency by due date, priority, and whatever depends on it, splitting work across
                 free gaps, and falling back to a task's fixed time if it has one.
-                <br />
-                <br />
-                <strong>Plan today</strong> uses the same logic but only touches today's unlocked blocks — every
-                other day is left exactly as it was.
               </HelpTooltip>
               {/* Only useful once Google Calendar is actually connected — hidden
                   rather than shown-but-disabled, matching how Settings' own
@@ -559,13 +542,11 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
       {/* Floating action button — replaces the old inline "New event"
           toolbar button, matching TaskListPanel's "Add task" FAB style
           (see .calendar-fab in calendar.css, mirroring .add-task-btn). On
-          mobile it expands into a three-item speed-dial (Re-balance schedule +
-          Plan today + New event), since those toolbar buttons were removed
-          from the mobile toolbar above to save vertical space. On desktop it
-          expands into a two-item speed-dial (Schedule manually for today +
-          New event) as a pair of mini-FABs — same .fab-mini shell/animation
-          as mobile's, not a dropdown list — mirrors AddTaskFabGroup's
-          expand/collapse pattern throughout. */}
+          mobile it expands into a two-item speed-dial (Re-balance schedule +
+          New event), since that toolbar button was removed from the mobile
+          toolbar above to save vertical space, as a pair of mini-FABs — same
+          .fab-mini shell/animation as mobile's, not a dropdown list — mirrors
+          AddTaskFabGroup's expand/collapse pattern throughout. */}
       <div className="calendar-fab-group" ref={fabGroupRef}>
         {onOpenSearch && (
           <button
@@ -594,34 +575,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                 >
                   <Zap size={16} />
                 </button>
-                <button
-                  className="btn btn-primary fab-mini"
-                  data-tour="plan-today"
-                  onClick={() => {
-                    setFabExpanded(false);
-                    runPlanToday();
-                  }}
-                  disabled={isLoading}
-                  aria-label="Plan today"
-                  title="Plan today"
-                >
-                  <Sunrise size={16} />
-                </button>
               </>
-            )}
-            {!isMobile && (
-              <button
-                className="btn btn-primary fab-mini"
-                data-tour="manual-plan-today"
-                onClick={() => {
-                  setFabExpanded(false);
-                  toggleManualPlanToday(!manualPlanTodayMode);
-                }}
-                aria-label={manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
-                title={manualPlanTodayMode ? 'Disable manual plan for today' : 'Schedule manually for today'}
-              >
-                <CalendarClock size={16} />
-              </button>
             )}
             <button
               className="btn btn-primary fab-mini"

@@ -17,6 +17,32 @@
 
 export const CHANGELOG = [
   {
+    version: '1.81.0',
+    date: '2026-08-03',
+    title: 'Google Calendar: fix reconnect on refresh; restore calendar events without a connection',
+    changes: [
+      'Fixed a bug where Google Calendar required manually clicking "Connect Calendar" again after every page refresh, even though it was already connected — the app now waits for sign-in to finish restoring before attempting the silent reconnect.',
+      'Removed an outdated "Rebuilt your synced events..." message left over from a past one-time sync fix; connecting or syncing now just says "Google Calendar connected."',
+      'If Google Calendar isn’t connected and a device has no locally saved calendar events (e.g. a new device, or after signing back in), your events — including recurring ones — are now automatically restored from your most recent cloud backup instead of showing an empty calendar.',
+    ],
+  },
+  {
+    version: '1.80.0',
+    date: '2026-08-03',
+    title: 'Fix repeated "missed task" emails',
+    changes: [
+      'Fixed a bug where "missed scheduled slot" email notifications could fire for tasks that were missed long ago (days or weeks in the past), sometimes producing a large burst of emails at once. Missed-slot emails now only fire for slots missed within the last 24 hours.',
+    ],
+  },
+  {
+    version: '1.79.0',
+    date: '2026-08-03',
+    title: 'Remove Plan Today and manual plan mode',
+    changes: [
+      'Removed the standalone "Plan today" button and manual "Plan Today" mode (the toggle, the "Unscheduled Today" tray, and the forced drag-onto-today behavior). "Re-balance schedule" remains the way to auto-schedule your tasks, and normal drag-and-drop of existing blocks onto any day is unaffected.',
+    ],
+  },
+  {
     version: '1.78.0',
     date: '2026-08-03',
     title: 'Fix zero-duration scheduled blocks; add a 30-minute minimum split size',

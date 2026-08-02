@@ -10,7 +10,7 @@
  * block out time, edge-drag to resize) so the gesture feels familiar.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { X } from 'lucide-react';
 import { timeToMinutes, minutesToTime } from '../../utils/dateUtils';
 
 const GRID_END_MIN = 24 * 60;
@@ -223,15 +223,20 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove })
                     {r.label}
                   </button>
                 )}
+                {!showTime && (
+                  <span className="routine-block-time routine-block-time-inline">
+                    {r.startTime}–{r.endTime}
+                  </span>
+                )}
                 <button
                   type="button"
-                  className="btn btn-icon routine-block-remove"
+                  className="routine-block-remove"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => onRemove(r.id)}
                   aria-label={`Delete ${r.label}`}
                   title="Delete routine"
                 >
-                  <Trash2 size={12} />
+                  <X size={13} />
                 </button>
               </div>
               {showTime && (

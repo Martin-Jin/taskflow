@@ -108,6 +108,7 @@ export function useGoogleCalendarSync({
   commit,
   stateRef,
   pushActionToast,
+  authLoading,
   onEventsChanged,
 }) {
   const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
@@ -302,10 +303,17 @@ export function useGoogleCalendarSync({
   }, []);
 
   // ---- Initial silent re-auth on mount ------------------------------------
+  // Waits for Firebase's own auth state restore (authLoading) before running
+  // — on a plain page refresh, onAuthStateChanged resolves asynchronously,
+  // so firing this immediately on mount would often hit auth.currentUser as
+  // still null (see getFirebaseIdToken in googleCalendarService.js), throw,
+  // and disconnect the user even though they were never actually logged out
+  // of Google Calendar — forcing a manual "Connect Calendar" click every
+  // refresh for no reason.
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!googleConnected) return;
+      if (authLoading || !googleConnected) return;
       try {
         const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
@@ -321,13 +329,7 @@ export function useGoogleCalendarSync({
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
             const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
             if (!cancelled) {
-              const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-              if (didHardReset) {
-                setNotification({
-                  type: 'info',
-                  message: 'Rebuilt your synced events from Google Calendar to clean up a past sync issue.',
-                });
-              }
+              applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
               if (failedCalendars.length > 0) {
                 console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
               }
@@ -350,7 +352,7 @@ export function useGoogleCalendarSync({
     load();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authLoading]);
 
   // ---- Periodic polling ----------------------------------------------------
   useEffect(() => {
@@ -363,13 +365,7 @@ export function useGoogleCalendarSync({
       try {
         const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
         const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-        if (didHardReset) {
-          setNotification({
-            type: 'info',
-            message: 'Rebuilt your synced events from Google Calendar to clean up a past sync issue.',
-          });
-        }
+        applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
       } catch (err) {
         if (err?.isGoogleAuthError) {
           console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
@@ -453,15 +449,14 @@ export function useGoogleCalendarSync({
       try {
         const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
         const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-        const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
+        applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
         if (failedCalendars.length > 0) {
           setNotification({
             type: 'warning',
-            message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.${resetSuffix}`,
+            message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.`,
           });
         } else {
-          setNotification({ type: 'success', message: `Connected to Google Calendar.${resetSuffix}` });
+          setNotification({ type: 'success', message: 'Google Calendar connected.' });
         }
       } finally {
         googleFetchInFlightRef.current = false;
@@ -489,15 +484,14 @@ export function useGoogleCalendarSync({
     try {
       const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-      const didHardReset = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-      const resetSuffix = didHardReset ? ' Rebuilt your synced events from Google Calendar to clean up a past sync issue.' : '';
+      applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
-          message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.${resetSuffix}`,
+          message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.`,
         });
       } else {
-        setNotification({ type: 'success', message: `Pulled latest events from Google Calendar.${resetSuffix}` });
+        setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
       }
     } catch (err) {
       console.error(err);

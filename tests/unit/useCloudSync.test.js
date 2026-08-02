@@ -42,6 +42,7 @@ import {
   planRemoteDataMerge,
   computePushStampPlan,
   planAutoBackupPrune,
+  shouldRestoreEventsFromBackup,
 } from '../../src/hooks/useCloudSync.js';
 
 describe('isValidFieldValue', () => {
@@ -107,8 +108,6 @@ describe('isValidBackupPayload', () => {
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
     events: [],
-    manualPlanTodayMode: false,
-    savedAutoScheduledBlocksForToday: [],
   };
 
   it('accepts a payload with every backup field present and correctly typed', () => {
@@ -427,5 +426,26 @@ describe('computePushStampPlan', () => {
     const plan = computePushStampPlan(state, null);
     expect(plan.shouldPush).toBe(true);
     expect(plan.rollbackFingerprint).toBe(null);
+  });
+});
+
+describe('shouldRestoreEventsFromBackup', () => {
+  it('restores when events is empty and Google Calendar is not connected', () => {
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: false })).toBe(true);
+  });
+
+  it('does not restore when Google Calendar is connected, even with no local events', () => {
+    // Google Calendar's own silent reconnect already repopulates events in
+    // this case — falling back to a possibly-stale backup here could
+    // resurrect an event the user (or Google) already deleted.
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: true })).toBe(false);
+  });
+
+  it('does not restore when local events already has data, regardless of Google connection', () => {
+    expect(shouldRestoreEventsFromBackup({ events: [{ id: '1' }], googleConnected: false })).toBe(false);
+  });
+
+  it('treats a missing/undefined events array as empty', () => {
+    expect(shouldRestoreEventsFromBackup({ events: undefined, googleConnected: false })).toBe(true);
   });
 });

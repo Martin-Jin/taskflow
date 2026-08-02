@@ -150,7 +150,7 @@ function stripOccurrenceSuffix(id) {
 /**
  * Build one overflow-shaped entry per task excluded from allocation because
  * an incomplete dependency is blocking it (see `schedulable`/`eligibleTasks`
- * in rebalance()/planToday() above) — these tasks never reach allocateTasks
+ * in rebalance() above) — these tasks never reach allocateTasks
  * at all, so they'd otherwise vanish from the "couldn't schedule" reporting
  * entirely instead of surfacing WHY. Appended into the same overflow/
  * unfitToday array the allocator itself populates, so the UI has one list to
@@ -248,7 +248,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // occurrence date is already completed) is a historical record even though
   // it's dated today/future and unlocked — it must survive rebalance the same
   // way completeTask itself preserves it (see SchedulerContext.completeTask),
-  // otherwise "Reschedule"/"Plan today" wipes a just-completed task's block
+  // otherwise "Re-balance" wipes a just-completed task's block
   // off Today's Agenda and the calendar since a completed task is never
   // re-eligible for allocation and nothing regenerates it.
   const completedBlocks = futureBlocks.filter(
@@ -403,188 +403,4 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   };
 
   return { blocks: finalBlocks, overflow, stats };
-}
-
-/**
- * ============================================================================
- * PLAN TODAY
- * ============================================================================
- * A lighter, day-scoped sibling of rebalance() above, for the "Plan today"
- * action: instead of recalibrating the whole visible horizon, it only clears
- * and re-plans TODAY's unlocked blocks, leaving every other day — past AND
- * future — completely untouched (rebalance(), by contrast, wipes and
- * replans every unlocked block from today through the end of the horizon).
- *
- * This deliberately does NOT reuse allocateTasks' normal multi-day pacing:
- * feeding it a single-day capacity map while leaving a task's real (multi-
- * day) due-date window in place would dilute today's placement based on
- * "ideal daily share" math that assumes runway the caller can't actually see
- * here, and would misreport tasks as unschedulable overflow just because
- * their later days aren't in view. Instead this calls allocateTasks with
- * `{ dayScoped: true }` (see allocator.js), which greedily fills today's
- * capacity in priority order for every task, exactly like the allocator's
- * existing "blocker" fast-path.
- *
- * IMPORTANT: because future blocks are left untouched here (unlike
- * rebalance(), which wipes and replans them), their hours must still count
- * as "spent" against a task's remainingHours — otherwise a task with, say,
- * a block already sitting on tomorrow would get its full remaining hours
- * crammed into today ON TOP OF what's already booked later, double-
- * scheduling it.
- *
- * @param {Object} params
- * @param {import('../types').Task[]} params.tasks
- * @param {import('../types').ScheduledBlock[]} params.existingBlocks
- * @param {import('../types').FixedRoutine[]} params.routines
- * @param {import('../types').CalendarEvent[]} params.events
- * @param {import('../types').SchedulingRules} params.rules
- * @param {string} [params.fromDate] - Defaults to today; the one day this touches.
- * @returns {{ blocks: import('../types').ScheduledBlock[], unfitToday: Array<{taskId:string,unplacedHours:number,reason:Object}>, stats: Object }}
- *   See rebalance()'s equivalent note: `unfitToday` includes dependency-blocked tasks too.
- */
-export function planToday({ tasks, existingBlocks, routines, events, rules, fromDate }) {
-  const today = fromDate || toISODate(new Date());
-
-  // 1. Partition blocks: only TODAY's blocks are ever candidates to be
-  //    cleared/replanned below — a FUTURE day is left alone completely
-  //    unconditionally, regardless of lock or completion state (that's the
-  //    whole point of "today only": planToday must never reach forward and
-  //    touch a day it hasn't been asked to plan). A PAST day's block gets
-  //    the same locked-or-completed-survives / else-cleared rule as
-  //    rebalance()'s historicalBlocks (see its step 1 for the full
-  //    reasoning) — a stale, never-completed block sitting on a past day
-  //    would otherwise both linger forever AND wrongly count its hours as
-  //    "spent," blocking its task from ever being replanned today.
-  const taskByIdForCompletion = new Map(tasks.map((t) => [t.id, t]));
-  const pastBlocks = existingBlocks.filter((b) => b.date < today);
-  const futureBlocks = existingBlocks.filter((b) => b.date > today);
-  const todaysBlocks = existingBlocks.filter((b) => b.date === today);
-  const pastLocked = pastBlocks.filter((b) => b.isLocked);
-  const pastCompleted = pastBlocks.filter(
-    (b) => !b.isLocked && isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
-  );
-  const pastClearedIds = new Set(
-    pastBlocks.filter((b) => !b.isLocked && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))).map((b) => b.id)
-  );
-  const todaysLocked = todaysBlocks.filter((b) => b.isLocked);
-  // See rebalance()'s identical guard: a completed task's (or completed
-  // recurring occurrence's) block for today is a historical record even
-  // though it's unlocked, and must survive being cleared/replanned here too.
-  const todaysCompleted = todaysBlocks.filter(
-    (b) => !b.isLocked && isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
-  );
-  const clearedBlockIds = new Set(
-    [...pastClearedIds, ...todaysBlocks.filter((b) => !b.isLocked && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))).map((b) => b.id)]
-  );
-
-  // 2. Recompute remainingHours per task: estimatedHours minus hours already
-  //    committed elsewhere — future blocks (untouched by this run, see
-  //    above) + past locked/completed blocks + today's locked blocks.
-  //    Today's UNLOCKED blocks (and any stale, never-completed past block)
-  //    are NOT counted as spent since they're about to be cleared/replanned
-  //    or have already been cleared, same as rebalance()'s treatment.
-  const spentHoursByTask = new Map();
-  // Per (taskId, date) spent hours, from the same untouched blocks — needed
-  // for a recurring task's per-occurrence remaining-hours accounting (see
-  // rebalanceEngine's expandRecurringTasks above); irrelevant/unused for
-  // non-recurring tasks.
-  const spentHoursByTaskDate = new Map();
-  for (const b of [...futureBlocks, ...pastLocked, ...pastCompleted, ...todaysLocked, ...todaysCompleted]) {
-    spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
-    const dateKey = `${b.taskId}::${b.date}`;
-    spentHoursByTaskDate.set(dateKey, (spentHoursByTaskDate.get(dateKey) || 0) + b.durationHours);
-  }
-
-  // See rebalance()'s identical guard (resolveTaskRecurrenceRule) for why a
-  // recurring task always keeps its full estimatedHours here instead of the
-  // whole-task spent-hours subtraction below.
-  const tasksWithRemaining = tasks.map((t) => {
-    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
-    const spent = spentHoursByTask.get(t.id) || 0;
-    const remaining = t.isLocked ? 0 : Math.max(0, t.estimatedHours - spent);
-    return { ...t, remainingHours: remaining };
-  });
-
-  // 3. Compute capacity for TODAY ONLY, treating today's locked blocks as
-  //    busy. nowClamp mirrors rebalance()'s: only meaningful for a live run
-  //    (fromDate unset or equal to the real current date) so planning at
-  //    5pm doesn't open up capacity earlier in the day.
-  const now = new Date();
-  const nowClamp = !fromDate || fromDate === toISODate(now) ? { date: today, minutes: now.getHours() * 60 + now.getMinutes() } : null;
-  // See rebalance()'s equivalent comment: expand recurring events so an
-  // occurrence past the first still counts as busy time for today.
-  const expandedEvents = expandEventsForRange(events, today, today);
-  const capacityMap = computeHorizonCapacity(today, 1, {
-    routines,
-    events: expandedEvents,
-    blocks: [...todaysLocked, ...todaysCompleted],
-    rules,
-    nowClamp,
-  });
-
-  // 4. Same eligibility rules as rebalance() (see its step 4 for the
-  //    reasoning behind each): container parents and undated top-level
-  //    tasks are never directly schedulable, and a task with unmet
-  //    dependencies is held back until they're complete.
-  const taskById = new Map(tasks.map((t) => [t.id, t]));
-  const parentIds = new Set(tasks.filter((t) => t.parentId).map((t) => t.parentId));
-  const schedulable = tasksWithRemaining.filter(
-    (t) =>
-      !t.isLocked &&
-      !t.isCompleted &&
-      t.remainingHours > 0 &&
-      !parentIds.has(t.id) &&
-      (!!t.dueDate || !!t.parentId) &&
-      // allocateTasks below runs with dayScoped: true, which forces every
-      // task's window to [today, today] regardless of getTaskWindow — that
-      // would silently override an enforceDueDate task's real due date, so
-      // exclude it here unless today actually is that due date.
-      (!t.enforceDueDate || t.dueDate === today)
-  );
-  const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
-  const dependencyBlockedTasks = schedulable.filter((t) => !areDependenciesMet(t, taskById));
-  const blockedByDependencies = dependencyBlockedTasks.length;
-
-  // Same recurring-task expansion as rebalance() (see expandRecurringTasks
-  // above), just scoped to a single-day [today, today] range — a recurring
-  // task whose recurrence doesn't land on today simply produces no
-  // occurrence here, same as any other task not due today.
-  const { normal: normalEligible, virtualOccurrences } = expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, today);
-  const { blocks: rawBlocks, overflow: rawUnfitToday } = allocateTasks(
-    [...normalEligible, ...virtualOccurrences],
-    capacityMap,
-    rules,
-    today,
-    withVirtualEntries(taskById, virtualOccurrences),
-    { dayScoped: true }
-  );
-  const { blocks: newBlocks, overflow: allocatorUnfitToday } = stripVirtualIds(rawBlocks, rawUnfitToday);
-  // See rebalance()'s identical comment: dependency-blocked tasks never
-  // reach allocateTasks, so they're appended here.
-  const unfitToday = resolveConflictLabels(
-    [...allocatorUnfitToday, ...buildDependencyBlockedEntries(dependencyBlockedTasks, taskById)],
-    taskById
-  );
-
-  // 5. Merge: future (untouched) + past locked/completed (untouched) +
-  //    today's locked (untouched) + today's completed (untouched) + freshly
-  //    allocated for today. A stale, never-completed past block is
-  //    deliberately NOT included — it was cleared in step 1.
-  const finalBlocks = [...futureBlocks, ...pastLocked, ...pastCompleted, ...todaysLocked, ...todaysCompleted, ...newBlocks];
-
-  const stats = {
-    tasksRescheduled: eligibleTasks.length,
-    blocksCleared: clearedBlockIds.size,
-    blocksCreated: newBlocks.length,
-    blocksPreservedLocked: todaysLocked.length,
-    // Note: unlike rebalance()'s overflowTaskCount, this does NOT mean "at
-    // risk of missing its deadline" — it just means the task didn't fully
-    // fit in today's remaining capacity, which may be entirely expected
-    // (plenty of runway on later days). Callers must not reuse rebalance's
-    // "at risk" copy for this.
-    unfitTodayCount: unfitToday.length,
-    blockedByDependencies,
-  };
-
-  return { blocks: finalBlocks, unfitToday, stats };
 }

@@ -34,8 +34,6 @@ function makeSampleState() {
     notes: { folders: [], notes: [] },
     shortcutBindings: { addTask: 'n' },
     events: [{ id: 'e1', title: 'Standup', date: '2026-07-31' }],
-    manualPlanTodayMode: false,
-    savedAutoScheduledBlocksForToday: [],
   };
 }
 

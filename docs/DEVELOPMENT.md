@@ -100,18 +100,6 @@ unlocked-future (cleared and re-planned); recomputes each task's
 remainder; merges everything back together. Locked blocks are never
 destroyed by a rebalance.
 
-**Plan today** (same file, `planToday()`) is a lighter sibling: it only
-clears and re-plans *today's* unlocked blocks — every other day, past or
-future, is left untouched. It can't just reuse `allocateTasks`'s normal
-multi-day pacing against a one-day capacity map (that would dilute today's
-placement based on due-date runway it can no longer see, and misreport
-plenty-of-time tasks as overflow) — instead it calls `allocateTasks` with
-`{ dayScoped: true }`, which greedily targets each task's full remaining
-hours against today alone (the same fast-path the allocator already used
-for "blocker" tasks — see above). Future blocks aren't touched, so their
-hours still count as already-spent when recomputing `remainingHours`, or a
-task with work already booked tomorrow would get double-scheduled.
-
 ### Sub-tasks and containers
 
 A sub-task (`parentId` set) is scheduled exactly like a top-level task —

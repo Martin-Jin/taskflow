@@ -82,6 +82,19 @@ function pickValid(field, value, fallback) {
 }
 
 /**
+ * Pure decision for the events-fallback-from-backup effect (see its own doc
+ * comment on the effect below): whether local `events` is missing with no
+ * live Google Calendar connection to repopulate it, so a recent Firestore
+ * backup's `events` field should be restored instead. Extracted so this
+ * narrow "is restoring even applicable" condition is unit-testable without
+ * rendering the hook — separate from `pickValid`'s job of validating the
+ * fetched backup payload once one is actually found.
+ */
+export function shouldRestoreEventsFromBackup({ events, googleConnected }) {
+  return !googleConnected && (events?.length ?? 0) === 0;
+}
+
+/**
  * Hashes/serializes the syncable subset of state so callers can detect "is
  * this remote update just an echo of what I just pushed" by string equality.
  * Pure and stateless — hoisted out of the hook (it never closed over
@@ -106,8 +119,6 @@ export function computeFingerprint(source) {
     notificationSettings: source.notificationSettings,
     notes: source.notes,
     shortcutBindings: source.shortcutBindings,
-    manualPlanTodayMode: source.manualPlanTodayMode,
-    savedAutoScheduledBlocksForToday: source.savedAutoScheduledBlocksForToday,
   };
   return JSON.stringify(relevant);
 }
@@ -191,16 +202,6 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
   if ('shortcutBindings' in remoteData) {
     plan.shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings);
   }
-  if ('manualPlanTodayMode' in remoteData) {
-    plan.manualPlanTodayMode = pickValid('manualPlanTodayMode', remoteData.manualPlanTodayMode, localState.manualPlanTodayMode);
-  }
-  if ('savedAutoScheduledBlocksForToday' in remoteData) {
-    plan.savedAutoScheduledBlocksForToday = pickValid(
-      'savedAutoScheduledBlocksForToday',
-      remoteData.savedAutoScheduledBlocksForToday,
-      localState.savedAutoScheduledBlocksForToday
-    );
-  }
 
   // Only stamp "already synced" when tasks/blocks were actually applied
   // as-is — when skipTasksBlocks is true, local tasks/blocks now differ from
@@ -215,9 +216,8 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/soundEnabled/soundVolume/
- *   animationsEnabled/notificationSettings/notes/shortcutBindings/
- *   manualPlanTodayMode/savedAutoScheduledBlocksForToday) — a plain object
- *   recomputed whenever any of those fields changes, purely so the
+ *   animationsEnabled/notificationSettings/notes/shortcutBindings) — a plain
+ *   object recomputed whenever any of those fields changes, purely so the
  *   push-scheduling effect below has something to depend on. Deliberately
  *   excludes `events` — see backupService.js's BACKUP_FIELDS doc comment.
  * @param {React.MutableRefObject} deps.stateRef - Ref mirroring `state`, read
@@ -244,8 +244,6 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Function} deps.setNotificationSettings - Setter for notificationSettings
  * @param {Function} deps.setNotes - Setter for notes
  * @param {Function} deps.setShortcutBindings - Setter for shortcutBindings
- * @param {Function} deps.setManualPlanTodayMode - Setter for manualPlanTodayMode
- * @param {Function} deps.setSavedAutoScheduledBlocksForToday - Setter for savedAutoScheduledBlocksForToday
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.
@@ -255,6 +253,10 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  *   can capture it — see BACKUP_FIELDS' doc comment for why events are
  *   backed-up but not live-synced.
  * @param {Function} deps.setEvents - Applies a restored backup's events.
+ * @param {boolean} deps.googleConnected - Whether Google Calendar is
+ *   currently connected — gates the events-fallback-from-backup effect (see
+ *   its own doc comment) so it only fires when there's no live Google
+ *   Calendar connection to repopulate `events` from instead.
  * @returns {Object} Cloud sync state and callbacks
  */
 export function useCloudSync({
@@ -275,12 +277,11 @@ export function useCloudSync({
   setNotificationSettings,
   setNotes,
   setShortcutBindings,
-  setManualPlanTodayMode,
-  setSavedAutoScheduledBlocksForToday,
   theme,
   setTheme,
   events,
   setEvents,
+  googleConnected,
 }) {
   const { user } = useAuth();
   // Defaults to true (rather than requiring an opt-in toggle) so a signed-in
@@ -409,8 +410,6 @@ export function useCloudSync({
       // remote binding immediately, not just on this device's next local rebind.
       savePersisted('shortcutBindings', plan.shortcutBindings);
     }
-    if ('manualPlanTodayMode' in plan) setManualPlanTodayMode(plan.manualPlanTodayMode);
-    if ('savedAutoScheduledBlocksForToday' in plan) setSavedAutoScheduledBlocksForToday(plan.savedAutoScheduledBlocksForToday);
     // Stamp what we just applied as "already synced" so the debounced push
     // effect doesn't immediately echo this same data straight back to
     // Firestore — but only when tasks/blocks were actually applied as-is
@@ -432,8 +431,6 @@ export function useCloudSync({
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
-    setManualPlanTodayMode,
-    setSavedAutoScheduledBlocksForToday,
   ]);
 
   // ---- Applies a full backup payload (local file or cloud backup) ----------
@@ -480,14 +477,6 @@ export function useCloudSync({
       setShortcutBindings(shortcutBindings);
       savePersisted('shortcutBindings', shortcutBindings);
     }
-    if ('manualPlanTodayMode' in payload) {
-      setManualPlanTodayMode(pickValid('manualPlanTodayMode', payload.manualPlanTodayMode, stateRef.current.manualPlanTodayMode));
-    }
-    if ('savedAutoScheduledBlocksForToday' in payload) {
-      setSavedAutoScheduledBlocksForToday(
-        pickValid('savedAutoScheduledBlocksForToday', payload.savedAutoScheduledBlocksForToday, stateRef.current.savedAutoScheduledBlocksForToday)
-      );
-    }
   }, [
     commit,
     stateRef,
@@ -504,8 +493,6 @@ export function useCloudSync({
     theme,
     setNotes,
     setShortcutBindings,
-    setManualPlanTodayMode,
-    setSavedAutoScheduledBlocksForToday,
     events,
     setEvents,
   ]);
@@ -570,6 +557,46 @@ export function useCloudSync({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, cloudSynced]);
+
+  // ---- Fallback: restore events from the latest backup if there's nothing
+  // to show and no live Google Calendar connection to repopulate them -------
+  // `events` is deliberately excluded from the live cross-device sync above
+  // (see BACKUP_FIELDS' doc comment) — Google Calendar is the normal
+  // day-to-day authoritative store, and `useGoogleCalendarSync`'s own silent
+  // reconnect repopulates `events` from Google on every mount/refresh. This
+  // only covers the gap that leaves: a new device (or wiped localStorage)
+  // where Google Calendar isn't connected has no other way to see events
+  // again, even though a recent Firestore backup already has them. Restoring
+  // ONLY the `events` field (not a full backup restore) keeps this narrow —
+  // tasks/blocks/settings already come back via the live sync above. Fires
+  // only when local `events` is genuinely empty, so it can never clobber
+  // (or resurrect a deleted event out of) whatever the user already has
+  // locally — same reasoning that keeps `events` out of the continuously-
+  // reconciled live-sync path in the first place.
+  useEffect(() => {
+    if (!user || !cloudSynced) return;
+    if (!shouldRestoreEventsFromBackup({ events, googleConnected })) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const backups = await listBackups(user.uid);
+        const latest = backups[0];
+        if (!latest || cancelled) return;
+        const payload = await getBackup(user.uid, latest.id);
+        if (cancelled || !payload || !('events' in payload)) return;
+        const restoredEvents = pickValid('events', payload.events, []);
+        if (restoredEvents.length > 0) {
+          setEvents(restoredEvents);
+          setNotification({ type: 'info', message: 'Restored your calendar events from your latest backup.' });
+        }
+      } catch (err) {
+        console.warn('[useCloudSync] Events fallback-from-backup failed', err);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, cloudSynced, googleConnected]);
 
   // ---- Schedule push whenever state changes --------------------------------
   useEffect(() => {
