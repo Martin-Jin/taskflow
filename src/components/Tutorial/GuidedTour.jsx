@@ -211,12 +211,16 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
     setStepIndex((i) => Math.max(0, i - 1));
   }
 
-  // On mobile, nav steps target the bottom tab bar — anchoring the tooltip
-  // beside it (as on desktop's left sidebar) plants it right on top of the
-  // bar it's supposed to be explaining. Center it on screen instead; the
-  // spotlight still highlights the real tab.
-  const isBottomNavStep = isMobile && step.selector.startsWith('[data-tour="nav-');
-  const tooltipPos = computeTooltipPosition(rect, isBottomNavStep ? 'center' : step.placement, tooltipHeight);
+  // On mobile, nav steps target the bottom tab bar, and the very first step
+  // targets the brand mark in the corner of the topbar — both are small,
+  // edge-anchored elements with no room on their `right`/`left` side for a
+  // 300px tooltip, so computeTooltipPosition's overflow fallback just flips
+  // it back on top of the element it's supposed to be explaining. Center the
+  // tooltip on screen instead for these; the spotlight still highlights the
+  // real element.
+  const isEdgeAnchoredMobileStep =
+    isMobile && (step.selector.startsWith('[data-tour="nav-') || step.selector === '[data-tour="brand"]');
+  const tooltipPos = computeTooltipPosition(rect, isEdgeAnchoredMobileStep ? 'center' : step.placement, tooltipHeight);
 
   return (
     <div className={`guided-tour-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
