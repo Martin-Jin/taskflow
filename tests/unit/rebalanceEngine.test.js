@@ -406,3 +406,58 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
     expect(overflow[0].unplacedHours).toBeCloseTo(4, 5);
   });
 });
+
+// Regression coverage: horizonEnd (the last date in capacityMap, e.g. "3
+// weeks out" by default) is a display/computation window, not the task's
+// real deadline. A task whose resolved due date is beyond horizonEnd still
+// has genuine runway past the visible horizon, so running out of capacity
+// WITHIN the horizon must not be reported as a false 'no_capacity' conflict
+// — see allocator.js's final overflow push in allocateTasks.
+describe('allocateTasks: no false no_capacity overflow when due date is beyond the horizon', () => {
+  const rules = { workDayStart: '09:00', workDayEnd: '10:00', maxDailyDeepWorkHours: 8, minGapBetweenBlocksMins: 0, horizonWeeks: 1, bufferDays: 0 };
+
+  it('does not report no_capacity for a task due beyond the horizon even though it cannot fit within the visible window', () => {
+    // Only a 3-day horizon (1 hour/day = 3 hours total capacity), but the
+    // task is due well beyond it and needs more than those 3 hours.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 3, {
+      routines: [], events: [], blocks: [], rules,
+    });
+    const task = {
+      id: 'tfar', title: 'Long-runway task', estimatedHours: 5, remainingHours: 5,
+      dueDate: '2026-08-15', // far beyond the 2026-07-01..2026-07-03 horizon
+    };
+    const { overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(0);
+  });
+
+  it('still reports no_capacity for a task due WITHIN the horizon that genuinely cannot fit', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 3, {
+      routines: [], events: [], blocks: [], rules,
+    });
+    const task = {
+      id: 'tnear', title: 'Due within horizon', estimatedHours: 5, remainingHours: 5,
+      dueDate: '2026-07-03', enforceDueDate: true,
+    };
+    const { overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('no_capacity');
+  });
+
+  it('still reports fixed_time_conflict (untouched by the horizon suppression) for a task due WITHIN the horizon whose pinned slot is genuinely occupied', () => {
+    // Sanity check that the new due-date-vs-horizon suppression is scoped to
+    // the no_capacity case only, per the fix's own requirement — a real
+    // fixed_time_conflict within the horizon must keep reporting exactly as
+    // before.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 3, {
+      routines: [], blocks: [], rules,
+      events: [{ id: 'ev1', date: '2026-07-01', startTime: '09:00', endTime: '10:00', title: 'Meeting' }],
+    });
+    const task = {
+      id: 'tfixed', title: 'Fixed, due within horizon', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '09:00',
+    };
+    const { overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('fixed_time_conflict');
+  });
+});

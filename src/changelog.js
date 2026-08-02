@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.69.0',
+    date: '2026-08-02',
+    title: 'Fixed a false scheduling conflict for tasks due beyond the visible planning window',
+    changes: [
+      'Fixed a bug where a task due well beyond the visible planning horizon (3 weeks by default) was incorrectly flagged as a scheduling conflict just because it couldn\'t fit into that visible window — it still has real time left before its actual due date, so it no longer shows up as "no free time left." A genuine conflict at a fixed time slot is still reported as before.',
+    ],
+  },
+  {
     version: '1.68.0',
     date: '2026-08-02',
     title: 'Fixed white background behind the Google sign-in icon',
