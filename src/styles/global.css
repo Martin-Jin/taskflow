@@ -395,7 +395,8 @@ select:focus-visible,
 
 .main-content {
   grid-area: main;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
   /* Replaces the old desktop topbar row — page content just starts a bit
      lower instead of a dedicated header housing Undo/Redo. Mobile
