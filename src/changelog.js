@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.70.0',
+    date: '2026-08-02',
+    title: 'Unscheduled tray no longer shows up outside Manual Plan Today',
+    changes: [
+      'The "Unscheduled" list of draggable tasks above the calendar was appearing all the time, even when Manual Plan Today mode wasn\'t turned on. It\'s now only shown while that mode is active, and has been renamed to "Unscheduled Today" to make that clearer.',
+    ],
+  },
+  {
     version: '1.69.0',
     date: '2026-08-02',
     title: 'Fixed a false scheduling conflict for tasks due beyond the visible planning window',

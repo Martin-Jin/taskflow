@@ -985,15 +985,16 @@ export default function WeekView({
     // stack above the grid vertically without fighting that outer layout.
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
       {/* Unscheduled tray: lets the user drag any task the allocator
-          couldn't place onto a day itself. Shown whenever there's unplaced
-          work, regardless of Manual Plan Today mode — that mode only
-          affects WHERE a drag from this tray lands (forced to today, see
-          the drop handler above), it doesn't gate the tray's visibility. */}
-      {unscheduledTasks.length > 0 && (
+          couldn't place onto a day itself. Only shown once the user has
+          opted into Manual Plan Today mode (see the drop handler above,
+          which forces drags from this tray onto today's column) — otherwise
+          these draggable chips would clutter the calendar when automatic
+          scheduling is the primary workflow. */}
+      {manualPlanTodayMode && unscheduledTasks.length > 0 && (
         <div className="unscheduled-tray">
           <button className="unscheduled-tray-toggle" onClick={() => setTrayExpanded((v) => !v)}>
             {trayExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            Unscheduled ({unscheduledTasks.length})
+            Unscheduled Today ({unscheduledTasks.length})
           </button>
           {trayExpanded && (
             <div className="unscheduled-tray-chips">
