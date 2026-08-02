@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.82.0',
+    date: '2026-08-03',
+    title: 'Improve command palette keyboard-highlight contrast',
+    changes: [
+      'The command palette (Ctrl/Cmd+K) now highlights the selected row with a clearly visible green background when navigating with arrow keys or Tab, instead of a barely-visible shade close to the surface color.',
+    ],
+  },
+  {
     version: '1.81.0',
     date: '2026-08-03',
     title: 'Google Calendar: fix reconnect on refresh; restore calendar events without a connection',
