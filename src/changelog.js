@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.84.0',
+    date: '2026-08-03',
+    title: 'Fix scheduler failing to use small leftover free time',
+    changes: [
+      'Fixed the scheduler reporting "No free time left" for a task even when a real, smaller free slot was available — it was wrongly requiring every split piece of a task to be at least 30 minutes long.',
+      'Splitting a task across multiple time slots now only limits how many separate pieces it can be split into, not how small each piece can be, so short leftover gaps (as small as 5 minutes) can now be used.',
+    ],
+  },
+  {
     version: '1.83.0',
     date: '2026-08-03',
     title: 'Fix mobile horizontal scroll on Tasks and Dashboard',

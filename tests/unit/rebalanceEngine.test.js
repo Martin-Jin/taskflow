@@ -305,12 +305,11 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
   it('splits a task across several small non-contiguous gaps when no single gap can hold the full remaining duration', () => {
     // Three 1-hour meetings carve the day into four 45-min-or-shorter gaps —
     // none individually big enough for a continuous 1.75-hour block, but they
-    // sum to well over that. The task's default minChunkHours (0.5h) is
-    // bigger than some of these gaps, so a continuous placement is genuinely
-    // impossible; the task should still fully place by splitting, as long as
-    // it divides evenly into pieces that each clear the 30-minute split floor
-    // (MIN_SPLIT_CHUNK_HOURS in allocator.js) — see the "does not shrink a
-    // split chunk below 30 minutes" test below for the case where it doesn't.
+    // sum to well over that. A continuous placement is genuinely impossible,
+    // so the task should still fully place by splitting across several of
+    // these gaps, as long as it doesn't exceed its chunk-count budget
+    // (round(105/30) = 4 chunks — see maxChunksFor in allocator.js) and no
+    // individual chunk drops below the 5-minute floor (MIN_CHUNK_HOURS).
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
       routines: [], blocks: [], rules,
       events: [
@@ -330,17 +329,17 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
     expect(overflow).toHaveLength(0);
     const totalHours = blocks.reduce((sum, b) => sum + b.durationHours, 0);
     expect(totalHours).toBeCloseTo(1.75, 5);
-    for (const block of blocks) {
-      expect(block.durationHours).toBeGreaterThanOrEqual(0.5 - 1e-9);
-    }
+    expect(blocks.length).toBeLessThanOrEqual(4);
   });
 
-  it('does not shrink a split chunk below 30 minutes, even if that leaves a small remainder unplaced', () => {
-    // Same fragmented day as above, but the task's total (2h) doesn't divide
-    // evenly into pieces that each clear the 30-minute floor once the first
-    // three gaps (0.75+0.5+0.5=1.75h) are consumed — the leftover 0.25h must
-    // overflow rather than being carved out of the wide-open fourth gap as a
-    // sub-30-minute sliver.
+  it('fully places a task even when its chunks must go below 30 minutes, as long as the chunk-count cap and 5-minute floor are respected', () => {
+    // Same fragmented day as above. A 2-hour task's chunk budget is
+    // round(120/30) = 4 -- exactly enough to use all three fragmented gaps
+    // (0.75+0.5+0.5 = 1.75h) plus a fourth chunk from the wide-open remainder
+    // for the last 0.25h. Unlike the old flat 30-minute floor (which used to
+    // force this 0.25h into overflow), a sub-30-minute final chunk is fine
+    // here since it's still >= the 5-minute floor and the chunk count is
+    // within budget.
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
       routines: [], blocks: [], rules,
       events: [
@@ -354,11 +353,42 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
       dueDate: '2026-07-01', enforceDueDate: true,
     };
     const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
-    for (const block of blocks) {
-      expect(block.durationHours).toBeGreaterThanOrEqual(0.5 - 1e-9);
-    }
+    expect(overflow).toHaveLength(0);
+    const totalHours = blocks.reduce((sum, b) => sum + b.durationHours, 0);
+    expect(totalHours).toBeCloseTo(2, 5);
+    expect(blocks.length).toBeLessThanOrEqual(4);
+  });
+
+  it('overflows the remainder once the chunk-count cap is exhausted, even though free time is visibly still available', () => {
+    // Five small/medium gaps this time -- 09:00-09:20 (20m), 09:45-09:55
+    // (10m), 10:45-11:15 (30m), 12:15-12:45 (30m), then a wide-open
+    // 13:45-18:00. A 1-hour task's chunk budget is round(60/30) = 2, and
+    // first-fit placement claims the FIRST two gaps it reaches (20m + 10m =
+    // 30m) rather than skipping ahead to the wide-open one -- so 30 minutes
+    // is left over with its chunk budget already spent, even though the
+    // calendar visibly still has plenty of free time later that day. This is
+    // the intended behavior: the chunk-count cap limits fragmentation even
+    // when doing so leaves some capacity unused, rather than fragmenting
+    // further to fully place the task.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
+      routines: [], blocks: [], rules,
+      events: [
+        { id: 'ev1', date: '2026-07-01', startTime: '09:20', endTime: '09:45' },
+        { id: 'ev2', date: '2026-07-01', startTime: '09:55', endTime: '10:45', title: 'Meeting A' },
+        { id: 'ev3', date: '2026-07-01', startTime: '11:15', endTime: '12:15', title: 'Meeting B' },
+        { id: 'ev4', date: '2026-07-01', startTime: '12:45', endTime: '13:45', title: 'Meeting C' },
+      ],
+    });
+    const task = {
+      id: 'tcap', title: 'Deep work', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+    expect(blocks.length).toBeLessThanOrEqual(2);
+    const totalHours = blocks.reduce((sum, b) => sum + b.durationHours, 0);
+    expect(totalHours).toBeCloseTo(0.5, 5);
     expect(overflow).toHaveLength(1);
-    expect(overflow[0].unplacedHours).toBeCloseTo(0.25, 5);
+    expect(overflow[0].unplacedHours).toBeCloseTo(0.5, 5);
   });
 
   it('still prefers a single continuous block when one is available, and does not fragment unnecessarily', () => {
