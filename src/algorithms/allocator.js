@@ -642,6 +642,11 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  *       `label: null`; the caller resolves it from the owning task, see rebalanceEngine.js).
  *     - `{ type: 'no_capacity' }` — ran out of free time in the task's window; either it isn't `fixedTime`, or
  *       nothing tagged could be identified as the specific blocker (e.g. the fixed time is outside working hours).
+ *       Never reported when the task's resolved due date is beyond `horizonEnd` (the capacityMap's last date):
+ *       `no_capacity` there would just mean "ran out of visible horizon," not "no room before the real due
+ *       date" — the task still has genuine runway past the horizon. `fixed_time_conflict` is unaffected by this
+ *       (it's a real conflict on a specific day, not a horizon artifact), and a task with no resolvable due date
+ *       at all keeps reporting as before, since there's nothing to compare against the horizon.
  */
 export function allocateTasks(tasks, capacityMap, rules, today, taskById, options = {}) {
   const { dayScoped = false } = options;
@@ -807,7 +812,20 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
       const reason = conflict
         ? { type: 'fixed_time_conflict', conflictingItem: { id: conflict.id, type: conflict.source, label: conflict.label, start: minutesToTime(conflict.start), end: minutesToTime(conflict.end) } }
         : { type: 'no_capacity' };
-      overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100, reason, dueDate: task.dueDate ?? null });
+      // A `no_capacity` reason means "ran out of visible planning horizon,"
+      // not "no room before the real due date" — if the task's resolved due
+      // date (own, or a borrowed ancestor's — see resolveDueDate) is beyond
+      // horizonEnd, it still has genuine runway that just isn't in the
+      // current capacity map, so suppress the false report. A
+      // fixed_time_conflict is a real, specific-day conflict regardless of
+      // horizon, so it's still reported. Tasks with no resolvable due date
+      // at all have nothing to compare against the horizon, so they keep
+      // reporting as before.
+      const resolvedDueDate = resolveDueDate(task, taskById);
+      const isFalseHorizonOverflow = reason.type === 'no_capacity' && resolvedDueDate && resolvedDueDate > horizonEnd;
+      if (!isFalseHorizonOverflow) {
+        overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100, reason, dueDate: task.dueDate ?? null });
+      }
     }
   }
 
