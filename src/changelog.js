@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.85.0',
+    date: '2026-08-03',
+    title: 'Fix remaining dashboard overflow on mobile',
+    changes: [
+      'Fixed the Dashboard cards themselves (not just individual text) still rendering wider than the screen on mobile, cutting off content on the right edge.',
+    ],
+  },
+  {
     version: '1.84.0',
     date: '2026-08-03',
     title: 'Fix scheduler failing to use small leftover free time',
