@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.78.0',
+    date: '2026-08-03',
+    title: 'Fix zero-duration scheduled blocks; add a 30-minute minimum split size',
+    changes: [
+      'Fixed a rare scheduling bug where a task could end up with a scheduled block whose start and end time were identical (shown as, e.g., a task starting and ending at the same minute) when the auto-scheduler was forced to squeeze in a tiny leftover sliver of time.',
+      'The auto-scheduler no longer splits a task across multiple time slots into pieces smaller than 30 minutes. A task with 30 minutes or less of work remaining is now always scheduled as a single sitting rather than being fragmented.',
+    ],
+  },
+  {
     version: '1.77.0',
     date: '2026-08-03',
     title: 'Fix multi-weekday recurrence and email notification timing; add auto-reschedule toggle; move mobile calendar refresh button',
