@@ -387,6 +387,14 @@
   flex-shrink: 0;
 }
 
+.today-agenda-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .today-agenda-pulse {
   width: 6px;
   height: 6px;

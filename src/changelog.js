@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.83.0',
+    date: '2026-08-03',
+    title: 'Fix mobile horizontal scroll on Tasks and Dashboard',
+    changes: [
+      'Fixed the Tasks page being able to wiggle/scroll sideways on mobile screens.',
+      'Fixed long task titles in the Dashboard\'s "Today\'s Agenda" widget overflowing the page instead of truncating.',
+    ],
+  },
+  {
     version: '1.82.0',
     date: '2026-08-03',
     title: 'Improve command palette keyboard-highlight contrast',
