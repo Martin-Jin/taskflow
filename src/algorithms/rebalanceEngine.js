@@ -284,7 +284,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // `schedulable` before it ever reaches expansion. So a recurring task
   // always keeps its full estimatedHours here instead.
   const tasksWithRemaining = tasks.map((t) => {
-    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
+    if (t.isRecurring) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
     const spent = spentHoursByTask.get(t.id) || 0;
     const remaining = t.isLocked
       ? 0 // fully locked tasks are excluded from re-allocation entirely
@@ -489,8 +489,8 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   // recurring task always keeps its full estimatedHours here instead of the
   // whole-task spent-hours subtraction below.
   const tasksWithRemaining = tasks.map((t) => {
-    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
-    const spent = spentHoursByTask.get(t.id) || 0;
+    if (t.isRecurring) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
+    const spent = spentHoursByTask.get(t.id) || 0;  
     const remaining = t.isLocked ? 0 : Math.max(0, t.estimatedHours - spent);
     return { ...t, remainingHours: remaining };
   });
