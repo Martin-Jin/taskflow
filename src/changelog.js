@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.74.1',
+    date: '2026-08-02',
+    title: 'Fix Settings search bar alignment and Tasks docking distance',
+    changes: [
+      'Fixed the Settings search bar rendering wider than the page content and centered instead of left-aligned, a regression from the previous release\'s blur fix.',
+      'The Tasks page\'s floating header now actually docks closer to the top of the screen once scrolled — the previous release\'s fix for this wasn\'t visibly taking effect.',
+    ],
+  },
+  {
     version: '1.74.0',
     date: '2026-08-02',
     title: 'Settings search bar blur, sticky header docking, and command palette fixes',

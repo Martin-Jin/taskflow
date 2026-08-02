@@ -1331,16 +1331,16 @@ input.search-bar-input {
 }
 
 /* Settings page's "jump to section" search — capped to the same 720px
-   width as the settings column below it (via max-width + auto margins),
-   instead of SearchBar's own 320px toolbar cap. Unlike .tasklist-toolbar
-   (a wrapper row around .search-bar), this element IS the .search-bar
-   itself; it no longer needs its own position/sticky styling since
-   .settings-search-bar-wrap (above) is the sticky element now. */
+   width as the settings column below it, left-aligned to match (no auto
+   margins — this wrapper spans the full page width, but the column below
+   starts at its left edge, not centered), instead of SearchBar's own 320px
+   toolbar cap. Unlike .tasklist-toolbar (a wrapper row around .search-bar),
+   this element IS the .search-bar itself; it no longer needs its own
+   position/sticky styling since .settings-search-bar-wrap (above) is the
+   sticky element now. */
 .settings-search-bar {
   max-width: 720px;
   width: 100%;
-  margin-left: auto;
-  margin-right: auto;
   border-radius: var(--radius-md);
 }
 
