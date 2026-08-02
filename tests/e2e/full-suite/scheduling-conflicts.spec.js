@@ -102,4 +102,55 @@ test.describe('Scheduling conflict details', () => {
 
     expectNoErrors(errors);
   });
+
+  test('Changing a scheduled task\'s due date auto-triggers a rebalance', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    const title = `E2E Due Date Autobalance ${RUN_ID}`;
+    const today = todayIso();
+
+    // Task due today with an estimate, so the manual rebalance below actually
+    // places a block for it.
+    await openAddTask(page);
+    await page.getByPlaceholder('Task name').fill(title);
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click();
+    await page.locator('.addtask-pill-panel input[type="date"]').fill(today);
+    await pills.nth(0).click();
+    await submitAddTask(page);
+
+    // Manually rebalance once so the task gets an actual scheduled block —
+    // otherwise there'd be nothing stale for the due-date edit to invalidate.
+    await gotoTab(page, 'Calendar');
+    await page.getByRole('button', { name: 'Re-balance schedule' }).click();
+    await page.waitForTimeout(500);
+    await expect(page.locator('.toast')).toBeVisible();
+    // Dismiss the toast so the next one (from the auto-rebalance) is unambiguous.
+    await page.waitForTimeout(3000);
+
+    // Now push the due date out a week via the task's detail modal — this
+    // should auto-queue a rebalance (SchedulerContext.updateTask) without any
+    // manual "Re-balance schedule" click.
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill(title);
+    await page.waitForTimeout(300);
+    await page.getByText(title, { exact: false }).first().click();
+    await page.waitForTimeout(300);
+
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const nextWeekIso = `${nextWeek.getFullYear()}-${String(nextWeek.getMonth() + 1).padStart(2, '0')}-${String(nextWeek.getDate()).padStart(2, '0')}`;
+    await dueDateInput.fill(nextWeekIso);
+    await page.keyboard.press('Escape');
+
+    // The debounced auto-rebalance (300ms) should fire and surface its own
+    // "Schedule rebalanced"/conflict toast without any further user action.
+    await expect(page.locator('.toast')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('.toast')).toContainText(/rebalanced|couldn't be fully scheduled/i);
+
+    expectNoErrors(errors);
+  });
 });

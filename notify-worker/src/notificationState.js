@@ -1,7 +1,5 @@
 'use strict';
 
-const { OVERDUE_RENOTIFY_MS } = require('./constants');
-
 /**
  * ============================================================================
  * DEDUPE / THROTTLE STATE (Firestore-backed, safe against duplicate sends)
@@ -59,31 +57,42 @@ async function claimNotification(db, uid, candidate, now) {
     let nextState = null;
 
     switch (candidate.type) {
-      case 'startingSoon':
-        // Fires once ever per block id — a scheduled block is a one-shot
-        // calendar placement (mirrors the client's firedStartingSoonRef Set,
-        // which is likewise never reset for a given block id).
-        eligible = prev === null;
-        nextState = { type: 'startingSoon', lastNotifiedAt: now };
+      case 'startingSoon': {
+        // Fires once per block id UNLESS the block's own date/time has
+        // changed since the last time it fired (a reschedule after the
+        // original notification already went out is a new occurrence, not a
+        // repeat of the old one) — mirrors the client's firedStartingSoonRef
+        // Set, except that one has no reschedule-awareness at all.
+        const rescheduled = prev !== null && prev.scheduledAt !== candidate.scheduledAt;
+        eligible = prev === null || rescheduled;
+        nextState = { type: 'startingSoon', lastNotifiedAt: now, scheduledAt: candidate.scheduledAt };
         break;
+      }
 
-      case 'overdue':
-        if (candidate.isUrgentish) {
-          // High/urgent: re-notify at most once per OVERDUE_RENOTIFY_MS.
-          eligible = prev === null || now - prev.lastNotifiedAt >= OVERDUE_RENOTIFY_MS;
-        } else {
-          // Low/medium: once only, until computeNotifications' toClear
-          // resets it (task no longer overdue).
-          eligible = prev === null;
-        }
-        nextState = { type: 'overdue', lastNotifiedAt: now };
+      case 'overdue': {
+        // Once per calendar date for every priority, same as dueToday — a
+        // still-overdue task should surface once/day, not spam every 5-
+        // minute worker tick (which an hourly-repeat rule used to do for
+        // urgent/high tasks: up to ~24 emails/day). Re-arms immediately,
+        // regardless of date, if the task's dueDate itself changed (e.g. a
+        // reschedule that's still in the past) so that's always treated as
+        // fresh news worth a new email.
+        const dueDateChanged = prev !== null && prev.dueDate !== candidate.dueDate;
+        eligible = prev === null || dueDateChanged || prev.lastNotifiedDate !== candidate.todayISO;
+        nextState = { type: 'overdue', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO, dueDate: candidate.dueDate };
         break;
+      }
 
-      case 'dueToday':
-        // Once per calendar date; a new day's "due today" fires again.
-        eligible = prev === null || prev.lastNotifiedDate !== candidate.todayISO;
-        nextState = { type: 'dueToday', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO };
+      case 'dueToday': {
+        // Once per calendar date; a new day's "due today" fires again. Also
+        // re-arms if dueDate changed (moved off today and back onto today
+        // within the same calendar day would otherwise stay silently
+        // suppressed by the date-only check below).
+        const dueDateChanged = prev !== null && prev.dueDate !== candidate.dueDate;
+        eligible = prev === null || dueDateChanged || prev.lastNotifiedDate !== candidate.todayISO;
+        nextState = { type: 'dueToday', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO, dueDate: candidate.dueDate };
         break;
+      }
 
       default:
         return false;

@@ -39,8 +39,6 @@
  * ============================================================================
  */
 
-const { OVERDUE_RENOTIFY_MS } = require('./constants');
-
 /** Falls back to UTC for a missing/invalid IANA zone name instead of throwing. */
 function resolveTimeZone(timeZone) {
   if (!timeZone) return 'UTC';
@@ -100,7 +98,9 @@ function zonedWallTimeToEpochMs(dateStr, timeStr, timeZone) {
 /**
  * @param {{tasks: object[], blocks: object[], settings: object, now: number}} args
  * @returns {{toNotify: object[], toClear: {stateId: string}[]}}
- *   toNotify entries: { type: 'startingSoon'|'overdue'|'dueToday', task, block?, stateId, isUrgentish?, todayISO? }
+ *   toNotify entries: { type: 'startingSoon'|'overdue'|'dueToday', task, block?, stateId, isUrgentish?,
+ *     todayISO?, dueDate?, scheduledAt? } — dueDate/scheduledAt let notificationState.js detect a
+ *     rescheduled task/block and re-arm even if it already notified once for the old date.
  *   toClear entries: stale dedupe-state docs to delete (task no longer overdue), independent of whether anything fires this run.
  */
 function computeCandidates({ tasks, blocks, settings, now }) {
@@ -122,7 +122,17 @@ function computeCandidates({ tasks, blocks, settings, now }) {
       if (diffMs <= 0 || diffMs > thresholdMs) continue;
       const task = tasksById.get(block.taskId);
       if (!task || task.isCompleted) continue;
-      toNotify.push({ type: 'startingSoon', task, block, stateId: `startingSoon_${block.id}` });
+      // Include the block's own date+startTime so a reschedule after this
+      // block already fired once is treated as a fresh occurrence instead of
+      // being permanently suppressed (see notificationState.js's eligibility
+      // check, which compares this against what it has stored).
+      toNotify.push({
+        type: 'startingSoon',
+        task,
+        block,
+        stateId: `startingSoon_${block.id}`,
+        scheduledAt: `${block.date}T${block.startTime}`,
+      });
     }
   }
 
@@ -137,9 +147,11 @@ function computeCandidates({ tasks, blocks, settings, now }) {
           task,
           stateId: `overdue_${task.id}`,
           isUrgentish: task.priority === 'high' || task.priority === 'urgent',
+          todayISO,
+          dueDate: task.dueDate,
         });
       } else if (settings.taskDueToday && task.dueDate === todayISO) {
-        toNotify.push({ type: 'dueToday', task, stateId: `dueToday_${task.id}`, todayISO });
+        toNotify.push({ type: 'dueToday', task, stateId: `dueToday_${task.id}`, todayISO, dueDate: task.dueDate });
       }
 
       // Once a task is no longer overdue (completed, rescheduled forward, or
@@ -156,4 +168,4 @@ function computeCandidates({ tasks, blocks, settings, now }) {
   return { toNotify, toClear };
 }
 
-module.exports = { computeCandidates, todayISOInZone, OVERDUE_RENOTIFY_MS };
+module.exports = { computeCandidates, todayISOInZone };
