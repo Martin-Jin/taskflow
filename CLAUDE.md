@@ -140,6 +140,11 @@ do this before considering the change done, not as an afterthought.**
 - Synced text (e.g. synced with Google Calendar and Todoist) doesn't need to be
   surfaced everywhere — only where it's relevant.
 - Update the tutorial and README when a change affects what they document.
+  The README was split: user-facing setup/usage stays in `README.md`;
+  scheduler internals, data model, project layout, persistence, contributing
+  conventions, tech stack, and testing live in `docs/DEVELOPMENT.md` — update
+  whichever file actually documents the area you changed (a change can touch
+  both).
 - Before changing a component, check what else depends on it. E.g. adding a new
   input field may also require updating integrations with other apps (syncing/
   importing that new field).

@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.74.0',
+    date: '2026-08-02',
+    title: 'Settings search bar blur, sticky header docking, and command palette fixes',
+    changes: [
+      'The Settings page\'s floating search bar now blurs the full width of the page while scrolled, matching the Tasks page, instead of leaving the area beside it unblurred.',
+      'The Tasks page\'s floating header now docks a bit closer to the top of the screen once you scroll, instead of sitting at the same distance whether scrolled or not.',
+      'Command palette (Ctrl/Cmd+K): quick Actions now show first in the results, pressing Tab from the search box now jumps to the first result instead of the close button, and the keyboard-selection highlight now matches the hover highlight instead of a boxy outline.',
+    ],
+  },
+  {
     version: '1.73.0',
     date: '2026-08-02',
     title: 'Mobile search button now available on every tab',

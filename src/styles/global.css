@@ -1279,47 +1279,46 @@ input.search-bar-input {
   }
 }
 
-/* Settings page's "jump to section" search — full width like the rest of
-   the settings column, instead of SearchBar's own 320px toolbar cap. Unlike
-   .tasklist-toolbar (a wrapper row around .search-bar), this element IS the
-   .search-bar itself, so it can be the sticky element directly — its own
-   parent (the settings column) is tall enough to give it room to float.
-   Same `top` offset and the same negative margin-top pull as
-   .taskpage-sticky-header (tasklist.css) — undone on mobile below, for the
-   same reason — so both pages' floating search bars sit a consistent
-   distance from the top of the page. */
-.settings-search-bar {
-  max-width: none;
+/* Full-width sticky wrapper around .settings-search-bar (SettingsPanel.jsx),
+   kept outside the settings column's own `maxWidth: 720` div so its blur
+   backdrop (.settings-search-bar-backdrop below) can bleed edge-to-edge
+   across .main-content the same way .taskpage-sticky-header-backdrop
+   (tasklist.css) does — inside that 720px column, the bleed would only
+   ever reach the column's own edges, leaving the rest of the page
+   unblurred while scrolled. This element (not .settings-search-bar itself)
+   is the sticky one, so the backdrop child can be full width while the
+   search input row inside stays capped to the column's own 720px. Same
+   `top` offset and the same negative margin-top pull as
+   .taskpage-sticky-header — undone on mobile below, for the same reason —
+   so both pages' floating search bars sit a consistent distance from the
+   top of the page. */
+.settings-search-bar-wrap {
   position: sticky;
   top: 0;
   z-index: 120;
-  border-radius: var(--radius-md);
   margin-top: -16px;
   /* The column's own `gap: 20` (SettingsPanel.jsx) reads as barely-there
      once this bar is floating/blurred right above the first card — its own
-     bottom blur bleed (18px, see ::before below) eats into that gap
-     visually. A dedicated margin-bottom, on top of the column gap, restores
-     real breathing room between the floating bar and "Account & sync". */
+     bottom blur bleed (18px, see .settings-search-bar-backdrop below) eats
+     into that gap visually. A dedicated margin-bottom restores real
+     breathing room between the floating bar and "Account & sync". */
   margin-bottom: 12px;
 }
 
-.app-shell.is-mobile .settings-search-bar {
+.app-shell.is-mobile .settings-search-bar-wrap {
   margin-top: 0;
 }
 
-/* The actual blur/background, on a ::before rather than directly on this
-   element — same bleed trick as .taskpage-sticky-header-backdrop
-   (tasklist.css): up by a fixed 200px (comfortably past .main-content's own
-   padding-top on every breakpoint, so there's never a gap of unblurred
-   content peeking above the header — .main-content's own overflow:auto
-   clips the excess), sideways by .main-content's own 20px padding, and 18px
-   past this element's own bottom edge — so the blur reads as one continuous
-   wash over the whole top of the page instead of a card floating over a
-   visibly-unblurred strip. Only .search-bar-input paints its own opaque
-   background, so without this the gap around it let scrolled content show
-   straight through once it went sticky. */
-.settings-search-bar::before {
-  content: '';
+/* Bleeds past the wrapper's own box on every side rather than a plain
+   inset: 0 — same trick as .taskpage-sticky-header-backdrop (tasklist.css):
+   up by a fixed 200px (comfortably past .main-content's own padding-top on
+   every breakpoint, so there's never a gap of unblurred content peeking
+   above the header — .main-content's own overflow:auto clips the excess),
+   sideways by .main-content's own 20px padding (edge to edge, matching the
+   Tasks page), and 18px past the search bar's own bottom edge — so the
+   blur reads as one continuous wash over the whole top of the page instead
+   of a card floating over a visibly-unblurred strip. */
+.settings-search-bar-backdrop {
   position: absolute;
   top: -200px;
   left: -20px;
@@ -1329,6 +1328,20 @@ input.search-bar-input {
   backdrop-filter: blur(1px);
   -webkit-backdrop-filter: blur(3px);
   pointer-events: none;
+}
+
+/* Settings page's "jump to section" search — capped to the same 720px
+   width as the settings column below it (via max-width + auto margins),
+   instead of SearchBar's own 320px toolbar cap. Unlike .tasklist-toolbar
+   (a wrapper row around .search-bar), this element IS the .search-bar
+   itself; it no longer needs its own position/sticky styling since
+   .settings-search-bar-wrap (above) is the sticky element now. */
+.settings-search-bar {
+  max-width: 720px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  border-radius: var(--radius-md);
 }
 
 .search-bar-dropdown {
@@ -1429,6 +1442,16 @@ input.search-bar-input {
 }
 
 .command-palette-item.active {
+  background: var(--color-bg-surface-hover);
+}
+
+/* Swaps the generic button:focus-visible ring (above) for the same
+   background highlight as .active/:hover — an outline here sat flush
+   against the "ACTIONS"/"VIEWS"/etc. group label above it with no visual
+   gap, and looked out of place next to the mouse-hover treatment used
+   everywhere else in this list. */
+.command-palette-item:focus-visible {
+  outline: none;
   background: var(--color-bg-surface-hover);
 }
 

@@ -73,7 +73,7 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="ai-quick-add"]',
     placement: 'bottom',
     title: 'AI Quick Add',
-    body: 'Type — or paste a screenshot of an email, text, or flyer — and let AI propose changes across your tasks, events, projects, and subtasks/dependencies. You review and approve each change before anything is applied. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
+    body: 'Type — or paste a screenshot of an email, text, or flyer — and let AI propose changes across your tasks, events, projects, and subtasks/dependencies: creating, editing, moving, or deleting them. You review and approve each change before anything is applied. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
   },
   {
     tab: 'tasks',

@@ -14,6 +14,7 @@ see the main [README](../README.md).
 - [Contributing / working in this codebase](#contributing--working-in-this-codebase)
 - [Tech stack](#tech-stack)
 - [Testing](#testing)
+- [Local dev tips](#local-dev-tips)
 
 ## How the scheduler works
 
@@ -361,3 +362,106 @@ suite skips with a clear message rather than failing — there's no
 expectation that a Todoist test account is available in every environment
 this runs in. Never commit the storage-state file (it's a real logged-in
 session) — it's already gitignored.
+
+## Local dev tips
+
+A few things worth knowing when working on this repo day to day. Anything
+machine-specific to your own setup (account IDs, your own OAuth client's
+exact origins, your own deployment domain) belongs in a local, gitignored
+notes file instead of here — this section only covers what's true for
+anyone working on the project.
+
+**Local hosting is just `npm run dev`.** If you've previously set this repo
+up as a persistent LAN-reachable service (e.g. a background `vite preview`
+process, a Startup-folder shortcut, scoped firewall rules so another device
+on your network can reach it), remember to tear all of that down again if
+you stop using it — a stale shortcut/firewall rule pointed at a dev server
+that's no longer running is easy to forget about.
+
+**A public-network firewall rule that opens a Node.js process to any
+device** is a general security footgun worth knowing about independent of
+this repo: Windows can have a pre-existing rule (commonly named "Node.js
+JavaScript Runtime") that allows any device, on any port, to reach
+`node.exe` whenever the active network is categorized "Public." This isn't
+specific to TaskFlow — it affects any Node process (dev servers, scripts)
+— but it's worth checking for and disabling if you don't specifically need
+inbound access to a local Node process from other devices:
+
+```powershell
+Get-NetFirewallRule -DisplayName "Node.js JavaScript Runtime" | Disable-NetFirewallRule
+```
+
+**Google Calendar OAuth troubleshooting**: if Google Calendar connect ever
+fails with an origin/referrer error after changing how or where you run
+this locally, double check the OAuth client's **Authorized JavaScript
+origins** (Google Cloud Console) include whatever origin you're actually
+loading the app from (e.g. `http://localhost:5173` for a default Vite dev
+server — exempt from Google's HTTPS requirement) — and that the API key's
+own "Website restrictions" have the same origin added too, since that's a
+separate setting from the OAuth client's origins and easy to miss.
+
+### AI Quick Add — local Worker dev loop (test worker changes before deploying)
+
+Two separate dev servers, two separate terminals — Wrangler (the Worker) and
+Vite (the main app) know nothing about each other directly; they only
+connect because the app's `.env` points at whatever URL the Worker is
+running on.
+
+**Terminal 1 — run the Worker locally:**
+```powershell
+cd cloudflare-worker
+npx wrangler dev
+```
+Leave this running. It prints `Ready on http://127.0.0.1:8787`. A bare
+`GET /` in a browser correctly 405s — the worker only accepts `POST` — that's
+not a bug, it's confirmation the server is up.
+
+**Terminal 2 (repo root) — point the app at that local Worker:**
+Add/edit this line in the repo root's `.env` (create the file if it doesn't
+exist yet):
+```
+VITE_AI_QUICKADD_WORKER_URL=http://127.0.0.1:8787
+```
+Then:
+```powershell
+npm run dev
+```
+Open the app, add a real Anthropic/Gemini API key under Settings →
+Integrations → AI Quick Add (only needs doing once — it's saved in
+`localStorage`), and use AI Quick Add normally. Every request now hits your
+local Worker instead of the deployed one, so edits to
+`cloudflare-worker/src/index.js` take effect on the next request — no
+restart needed, Wrangler hot-reloads it.
+
+**Quick manual test of just the Worker** (no app/browser needed, checks
+request validation without spending real API credits — swap in a real key to
+test the full provider round trip):
+```powershell
+$body = @{
+  provider = "anthropic"
+  apiKey = "fake-key-just-checking-validation"
+  text = "Buy groceries tomorrow"
+  contextMarkdown = "# test`n## Existing projects (0 total)`n[]"
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://127.0.0.1:8787" -Method Post -Body $body -ContentType "application/json"
+```
+
+**Switching back to the deployed Worker** once done testing locally: change
+`.env`'s `VITE_AI_QUICKADD_WORKER_URL` back to the `*.workers.dev` URL (see
+[README's AI Quick Add section](../README.md#ai-quick-add) for the deploy
+steps) and restart `npm run dev`. Stop the `wrangler dev` terminal with
+Ctrl+C whenever — it's not needed unless actively iterating on the Worker.
+
+When locking down the deployed Worker's CORS (`ALLOWED_ORIGIN`, see
+`cloudflare-worker/README.md`), point it at your own actual deployment
+domain — this is a per-deployer value, not something to hardcode here.
+
+**No service worker — ruled out as a caching suspect, if it comes up
+again.** TaskFlow is installable (manifest.json + iOS meta tags, see
+[README's "Using the app"](../README.md#using-the-app)) but has **no
+service worker** — confirmed by grepping the whole repo for
+`navigator.serviceWorker`/`sw.js`/`workbox`/`vite-plugin-pwa` and finding
+nothing. If the app ever "still looks stale after deploy," that's ordinary
+browser/CDN HTTP caching (a hard refresh fixes it), not a service worker
+deciding on its own when to fetch a new version — there isn't one to
+suspect.

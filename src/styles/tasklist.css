@@ -32,12 +32,16 @@
    TaskListPanel, based on how far .main-content has scrolled) without also
    fading the title/search text sitting above it. The negative margin-top
    pulls it up out of .main-content's 40px padding-top so there's less dead
-   space above the title (matches .settings-search-bar's same pull, in
+   space above the title (matches .settings-search-bar-wrap's same pull, in
    global.css, for a consistent gap across both pages) — undone on mobile
    below, where that padding is already tight. */
+/* `top: -8px` (rather than 0) so the docked/stuck position sits visibly
+   closer to the top of the viewport than the header's resting position
+   before it docks — otherwise both look identical since `margin-top: -16px`
+   below only affects layout flow, not where a stuck sticky element locks. */
 .taskpage-sticky-header {
   position: sticky;
-  top: 0;
+  top: -8px;
   z-index: 120;
   border-radius: var(--radius-md);
   margin-bottom: 14px;
