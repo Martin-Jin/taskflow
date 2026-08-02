@@ -83,6 +83,12 @@
   color: var(--color-text-primary);
 }
 
+@media (max-width: 640px) {
+  .dashboard-stat-tile {
+    text-align: center;
+  }
+}
+
 /* -------------------------------------------------------------------- */
 /* Grid layout                                                           */
 /* -------------------------------------------------------------------- */
@@ -401,12 +407,63 @@
   flex-shrink: 0;
 }
 
-.today-agenda-title {
+.today-agenda-time-compact {
+  display: none;
+}
+
+.today-agenda-title,
+.today-agenda-title-wrap {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.today-agenda-title-marquee {
+  min-width: 0;
+}
+
+.today-agenda-title-link-icon {
+  flex-shrink: 0;
+}
+
+/* Full label text ("Completed late", "Due today") on desktop; a shorter
+   variant swaps in on narrow screens (see the max-width: 640px block below)
+   so the row's fixed-width label column never forces the row wider than a
+   phone viewport. */
+.today-agenda-status-compact {
+  display: none;
+}
+
+/* The exact completion timestamp is a nice-to-have on a roomy desktop row,
+   but on mobile every row is already tight on width just fitting time +
+   title + status label — drop it there rather than truncating something
+   more useful. */
+@media (max-width: 640px) {
+  .today-agenda-time-full {
+    display: none;
+  }
+
+  .today-agenda-time-compact {
+    display: inline;
+  }
+
+  .today-agenda-time {
+    min-width: 0;
+  }
+
+  .today-agenda-status-full {
+    display: none;
+  }
+
+  .today-agenda-status-compact {
+    display: inline;
+  }
+
+  .today-agenda-completed-timestamp {
+    display: none;
+  }
 }
 
 .today-agenda-pulse {
@@ -892,6 +949,14 @@
 @media (max-width: 639px) {
   .progress-ring-row {
     flex-direction: column;
+  }
+
+  .progress-ring-body {
+    justify-content: center;
+  }
+
+  .progress-ring-detail {
+    align-items: center;
   }
 }
 

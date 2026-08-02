@@ -6,6 +6,7 @@ import { toISODate, timeToMinutes, formatTime12h as formatTime, formatDisplayDat
 import { isBlockMissed, isBlockCompletedLate, isBlockTaskCompleted } from '../../utils/missedTasks';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
+import MarqueeText from '../Common/MarqueeText';
 
 export default function TodayAgenda() {
   const { tasks, blocks, events } = useScheduler();
@@ -110,7 +111,10 @@ export default function TodayAgenda() {
               {isCurrent && <span className="today-agenda-pulse" />}
               {!item.isCompleted && item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}
               <span className="today-agenda-time">
-                {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                <span className="today-agenda-time-full">
+                  {formatTime(item.startTime)}{'–'}{formatTime(item.endTime)}
+                </span>
+                <span className="today-agenda-time-compact">{formatTime(item.startTime)}</span>
               </span>
               {item.link ? (
                 <a
@@ -122,20 +126,21 @@ export default function TodayAgenda() {
                   onClick={(e) => e.stopPropagation()}
                   style={item.isCompleted ? { textDecoration: 'line-through', opacity: 0.55 } : undefined}
                 >
-                  {item.title}
-                  <ExternalLink size={11} aria-hidden="true" />
+                  <MarqueeText text={item.title} className="today-agenda-title-marquee" />
+                  <ExternalLink size={11} aria-hidden="true" className="today-agenda-title-link-icon" />
                 </a>
               ) : (
                 <span
                   className="today-agenda-title"
                   style={item.isCompleted ? { textDecoration: 'line-through', opacity: 0.55 } : undefined}
                 >
-                  {item.title}
+                  <MarqueeText text={item.title} className="today-agenda-title-marquee" />
                 </span>
               )}
               {item.isCompleted ? (
                 <span className={item.isCompletedLate ? 'today-agenda-completed-late-label' : 'today-agenda-completed-label'}>
-                  {item.isCompletedLate ? 'Completed late' : 'Completed'}
+                  <span className="today-agenda-status-full">{item.isCompletedLate ? 'Completed late' : 'Completed'}</span>
+                  <span className="today-agenda-status-compact">Completed</span>
                   {item.completedAt ? (
                     <span className="today-agenda-completed-timestamp">  {formatDisplayDateTime(item.completedAt)}</span>
                   ) : null}
@@ -143,7 +148,12 @@ export default function TodayAgenda() {
               ) : (
                 <>
                   {item.isMissed && <span className="today-agenda-missed-label">Missed</span>}
-                  {!item.isMissed && item.isDueToday && <span className="today-agenda-due-label">Due today</span>}
+                  {!item.isMissed && item.isDueToday && (
+                    <span className="today-agenda-due-label">
+                      <span className="today-agenda-status-full">Due today</span>
+                      <span className="today-agenda-status-compact">Due</span>
+                    </span>
+                  )}
                 </>
               )}
             </li>

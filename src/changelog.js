@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.87.0',
+    date: '2026-08-03',
+    title: 'Make the Dashboard more compact and readable on mobile',
+    changes: [
+      'Quick Stats and the progress rings are now centered on mobile instead of left-aligned.',
+      'Today\'s Agenda rows are more compact on mobile: times show just the start time, "Due today" becomes "Due", and the completion timestamp is hidden — so every row fits without being cut off.',
+      'Long task/event names in Today\'s Agenda now auto-scroll into view instead of being cut off or silently truncated.',
+    ],
+  },
+  {
     version: '1.86.0',
     date: '2026-08-03',
     title: 'Fix "missed task" emails for already-completed tasks',
