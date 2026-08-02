@@ -394,8 +394,24 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
  * respecting min/max chunk size. Mutates `dayFreeIntervals` (minute-based,
  * array of {start,end}) in place and returns the number of hours actually
  * placed plus the concrete {start,end} minute ranges used.
+ *
+ * `allowUndersizedChunks` is a last-resort override of the min-chunk floor,
+ * used only by allocateTasks' final "split what's left" pass after every
+ * normal pass (weighted share, sweep, buffer overflow) has already tried and
+ * failed to fit the task's remaining hours into a single chunk per interval
+ * that clears `minChunkHours`. Normally a free interval smaller than the
+ * floor is skipped entirely — that's the deliberate "no slivers" behavior
+ * that keeps a big task's leftover fragments from getting scattered across
+ * tiny gaps. But when that's the ONLY reason a task with real remaining
+ * hours would end up reported as unschedulable, on a day that visibly still
+ * has free time (just spread across intervals individually below the
+ * floor), splitting into those smaller pieces is strictly better than
+ * reporting a false conflict — the user explicitly wants a continuous block
+ * preferred, but a split allowed when a continuous one is genuinely
+ * impossible. With this flag, any interval too small for `effectiveMinChunk`
+ * is still used for whatever it can hold instead of being skipped.
  */
-function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, floorHours = hours) {
+function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, floorHours = hours, allowUndersizedChunks = false) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
   // A task's total remaining time can itself be smaller than its own
   // minChunkHours (e.g. a 5-minute task against the default 30-minute min
@@ -407,7 +423,7 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, 
   // earlier pass — e.g. 5 minutes left over from a 1-hour task — still
   // has to clear the real 30-minute floor instead of the floor shrinking
   // down to match the sliver itself.
-  const effectiveMinChunk = Math.min(minChunkHours, floorHours);
+  const effectiveMinChunk = allowUndersizedChunks ? EPSILON_HOURS : Math.min(minChunkHours, floorHours);
   const placements = [];
 
   for (let i = 0; i < dayFreeIntervals.length && hoursToPlace >= effectiveMinChunk - EPSILON_HOURS; i++) {
@@ -536,9 +552,16 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
  * free intervals — see allocateTasks' `singleDayWindow` for when/why this is
  * enabled (a single-day window, from enforceDueDate or dayScoped, has no
  * other day for the task to retry on, unlike fixedTime's normal multi-day
- * "try again tomorrow" behavior).
+ * "try again tomorrow" behavior). This fallback runs whether or not something
+ * identifiable conflicted with the pinned slot itself — a real event sitting
+ * on the fixed time only explains why THAT slot didn't work, it says nothing
+ * about whether the rest of the day is free. Splitting the remainder across
+ * whatever open intervals are left (this same function's caller already
+ * loops this per-day, and placeHoursInDay itself already splits across
+ * multiple intervals within a day) is strictly better than reporting the
+ * whole task as unschedulable while the calendar visibly shows free time.
  */
-function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, allowSameDayFallback = false) {
+function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, allowSameDayFallback = false, allowUndersizedChunks = false) {
   const minChunkHours = task.minChunkHours ?? 0.5;
   const maxChunkHours = task.maxChunkHours ?? 4;
   // Floor the min-chunk check against the task's true total remaining hours,
@@ -547,27 +570,23 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
   const floorHours = task.remainingHours;
   const result = task.fixedTime
     ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime), floorHours, dayBusyIntervals, gapMins)
-    : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours, floorHours);
+    : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours, floorHours, allowUndersizedChunks);
   let { placedHours, placements } = result;
   const { conflict } = result;
   // Same-day fallback: the fixed slot couldn't take everything (or anything)
-  // this task needed today, there's no other day in its window to retry on,
-  // AND nothing IDENTIFIABLE is occupying the slot (conflict === null — see
-  // findFixedTimeConflict). That last condition matters: if a real event/
-  // routine/block is sitting on the fixed time, that's a genuine, worth-
-  // knowing-about conflict (e.g. "Standup prep" colliding with an actual
-  // Standup) and should still be reported as fixed_time_conflict rather than
-  // silently relocated — a fixedTime task exists specifically to happen at
-  // that time, not "sometime that day". But when nothing tagged conflicts
-  // (the far more common case: the fixed time has simply already passed
-  // today per nowClamp, or falls outside the work day), there's nothing
-  // meaningful to report a conflict WITH, and reporting a bare "no_capacity"
-  // on a visibly free day is actively misleading — so fall back to ordinary
-  // first-fit placement for the leftover hours instead.
-  if (task.fixedTime && allowSameDayFallback && !conflict) {
+  // this task needed today, and there's no other day in its window to retry
+  // on — so instead of giving up, try to place whatever's left over into the
+  // rest of THIS day's free intervals via ordinary first-fit. This runs
+  // regardless of whether a conflict was identified at the pinned slot: a
+  // real event/routine/block sitting on the fixed time only explains why
+  // THAT slot specifically didn't work, it says nothing about whether the
+  // rest of the day is free — and a fixedTime task still has to actually get
+  // done somewhere. The conflict (if any) is still recorded below so it can
+  // be reported as the reason if the fallback ALSO comes up short.
+  if (task.fixedTime && allowSameDayFallback) {
     const leftoverHours = hours - placedHours;
     if (leftoverHours > EPSILON_HOURS) {
-      const fallback = placeHoursInDay(leftoverHours, dayIntervals, minChunkHours, maxChunkHours, floorHours - placedHours);
+      const fallback = placeHoursInDay(leftoverHours, dayIntervals, minChunkHours, maxChunkHours, floorHours - placedHours, allowUndersizedChunks);
       if (fallback.placedHours > EPSILON_HOURS) {
         placedHours += fallback.placedHours;
         placements = [...placements, ...fallback.placements];
@@ -700,12 +719,12 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
     // Clamps `hours` to the day's remaining deep-work budget (passive tasks
     // are exempt — see dailyBudgetMins' own comment), places into `dayIntervals`,
     // then deducts whatever was actually placed back out of that budget.
-    const placeWithinDailyBudget = (date, hours, dayIntervals, idSuffix) => {
+    const placeWithinDailyBudget = (date, hours, dayIntervals, idSuffix, allowUndersizedChunks = false) => {
       const budget = dailyBudgetMins.get(date);
       const cappedHours = task.isPassive || budget == null ? hours : Math.min(hours, Math.max(0, budget / 60));
       const placedHours = placeAndRecordBlocks(
         task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
-        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, singleDayWindow
+        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, singleDayWindow, allowUndersizedChunks
       );
       if (!task.isPassive && budget != null) dailyBudgetMins.set(date, budget - Math.round(placedHours * 60));
       return placedHours;
@@ -759,6 +778,27 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById, option
             remaining -= placeWithinDailyBudget(date, remaining, freeForTask.get(date), '_overflow');
           }
         }
+      }
+    }
+
+    // Fourth pass, genuinely last resort: every pass above only ever placed a
+    // chunk into a free interval that could hold at least `minChunkHours`
+    // continuously — the deliberate "prefer one uninterrupted block" bias
+    // (see module doc comment). If hours are STILL left after that, the
+    // remaining free time (if any) is fragmented into pieces individually
+    // smaller than the floor. Rather than reporting that as unschedulable
+    // while the day visibly has open time, split into whatever's left,
+    // wherever it is — across the same window this task already searched
+    // (including the buffer-overflow days above). Only engages when a
+    // continuous block truly isn't possible; every earlier pass had first
+    // claim on any interval long enough to avoid fragmenting this task at
+    // all.
+    if (remaining > EPSILON_HOURS) {
+      for (const { date } of dayWeights) {
+        if (remaining <= EPSILON_HOURS) break;
+        const dayIntervals = freeForTask.get(date);
+        if (!dayIntervals || dayIntervals.length === 0) continue;
+        remaining -= placeWithinDailyBudget(date, remaining, dayIntervals, '_split', true);
       }
     }
 
