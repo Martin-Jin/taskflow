@@ -19,6 +19,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Wind } from 'lucide-react';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
+import { formatDisplayDateTime } from '../../utils/dateUtils';
 
 const WIDTH = 220;
 const EST_HEIGHT = 90;
@@ -47,6 +48,7 @@ export default function HoverPreviewCard({ rect, title, timeText, priority, proj
       </div>
       {parentTitle && <div className="cal-hover-preview-parent">Sub-task of {parentTitle}</div>}
       {timeText && <div className="cal-hover-preview-time">{timeText}</div>}
+      {completedAt && <div className="cal-hover-preview-completed">Completed at {formatDisplayDateTime(completedAt)}</div>}
       {(priority || projectName) && (
         <div className="cal-hover-preview-meta">
           {priority && (

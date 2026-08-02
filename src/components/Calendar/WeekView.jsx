@@ -1280,6 +1280,7 @@ export default function WeekView({
                             projectName: projectById[task.projectId]?.name,
                             parentTitle: parentTask?.title,
                             isPassive: block.isPassive,
+                            completedAt: task?.completedAt ?? null,
                           })
                   }
                   onMouseLeave={isMobile ? undefined : cancelHoverPreview}
