@@ -283,8 +283,18 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // remainingHours almost immediately and wrongly exclude the task from
   // `schedulable` before it ever reaches expansion. So a recurring task
   // always keeps its full estimatedHours here instead.
+  //
+  // This must use the SAME gate as expandRecurringTasks
+  // (resolveTaskRecurrenceRule, not the bare t.isRecurring flag). A task can
+  // have isRecurring=true but no resolvable rule (missing dueDate, or an
+  // unparseable recurrenceString) — expandRecurringTasks falls back to
+  // treating it as a normal single-window task in that case, and if this
+  // full-estimatedHours short-circuit still fired for it, allocateTasks would
+  // try to fit the task's ENTIRE remaining hours into one single-occurrence
+  // window and spuriously report `no_capacity`, even though nothing is
+  // actually wrong with capacity — the task just isn't expandable.
   const tasksWithRemaining = tasks.map((t) => {
-    if (t.isRecurring) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
+    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
     const spent = spentHoursByTask.get(t.id) || 0;
     const remaining = t.isLocked
       ? 0 // fully locked tasks are excluded from re-allocation entirely
@@ -489,8 +499,8 @@ export function planToday({ tasks, existingBlocks, routines, events, rules, from
   // recurring task always keeps its full estimatedHours here instead of the
   // whole-task spent-hours subtraction below.
   const tasksWithRemaining = tasks.map((t) => {
-    if (t.isRecurring) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
-    const spent = spentHoursByTask.get(t.id) || 0;  
+    if (resolveTaskRecurrenceRule(t)) return { ...t, remainingHours: t.isLocked ? 0 : t.estimatedHours };
+    const spent = spentHoursByTask.get(t.id) || 0;
     const remaining = t.isLocked ? 0 : Math.max(0, t.estimatedHours - spent);
     return { ...t, remainingHours: remaining };
   });

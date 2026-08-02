@@ -141,6 +141,30 @@ describe('rebalance', () => {
     const overflowEntry = result.overflow.find((o) => o.taskId === 't10');
     expect(overflowEntry.reason).toEqual({ type: 'no_capacity' });
   });
+
+  // Regression test: a task with isRecurring=true but no resolvable
+  // recurrenceRule/recurrenceString isn't eligible for expandRecurringTasks's
+  // per-occurrence expansion, so tasksWithRemaining must use the same
+  // resolveTaskRecurrenceRule gate rather than the bare isRecurring flag —
+  // otherwise it wrongly skips subtracting this task's already-spent hours
+  // (a treatment meant only for tasks actually going through per-occurrence
+  // expansion), so a task with lots of historical/locked hours already
+  // logged keeps reporting its FULL estimatedHours as still remaining. The
+  // allocator then tries to fit that inflated remainder into one
+  // single-window day and spuriously reports no_capacity even though the
+  // task is nearly done and what's left easily fits.
+  it('subtracts already-spent hours for a recurring-flagged task with no resolvable recurrence rule, instead of re-demanding its full estimatedHours', () => {
+    const tasks = [
+      { id: 't11', title: 'Recurring but unparseable', isRecurring: true, isCompleted: false, estimatedHours: 2, dueDate: today },
+    ];
+    const existingBlocks = [
+      { id: 'b11', taskId: 't11', date: '2026-06-30', startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: true },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: { ...baseRules, bufferDays: 1 }, fromDate: today });
+    expect(result.overflow.find((o) => o.taskId === 't11')).toBeUndefined();
+    const newBlock = result.blocks.find((b) => b.taskId === 't11' && b.id !== 'b11');
+    expect(newBlock?.durationHours).toBe(1);
+  });
 });
 
 describe('planToday', () => {
