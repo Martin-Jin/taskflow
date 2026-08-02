@@ -18,8 +18,10 @@
  *   3. Priority-first ordering when capacity is scarce.
  *   4. Even pacing across the available runway for lower-urgency tasks,
  *      front-loading for urgent/high priority tasks near deadline.
- *   5. min/max chunk sizes per task (no 6-minute slivers, no marathon
- *      8-hour blocks that ignore human context-switching limits).
+ *   5. A per-task cap on how many chunks it may be split into (no marathon
+ *      8-hour blocks courtesy of maxChunkHours; no unbounded fragmentation
+ *      courtesy of maxChunksFor), plus a flat 5-minute floor on individual
+ *      chunk size (MIN_CHUNK_HOURS) so nothing lands as a sliver.
  *   6. Passive tasks (task.isPassive — e.g. laundry, something baking) are
  *      allowed to overlap other blocks in time, since they don't need
  *      attention. See "PASSIVE TASK PLACEMENT" below.
@@ -101,7 +103,8 @@
  *       except a blocker task (see computeBlockerIds), which targets ALL of
  *       its remaining hours every day instead of an ideal share, so it
  *       greedily consumes whatever capacity that day actually has.
- *     - Clamp to [minChunkHours, maxChunkHours] and to remaining day capacity
+ *     - Clamp to maxChunkHours, the task's remaining chunk budget, and to
+ *       remaining day capacity
  *     - Slice from the day's free intervals (first-fit)
  *     - Deduct from both the task's remainingHours and the day's capacity
  *   Continue until remainingHours hits 0 or the window is exhausted (in
@@ -138,15 +141,42 @@ const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
 // a threshold tighter than that spuriously carries a fully-schedulable task
 // through the sweep/spill passes and into the overflow report.
 const EPSILON_HOURS = 1 / 120;
-// Hard floor for any chunk produced by SPLITTING a task across multiple
-// blocks — 30 minutes. Unlike the old per-task `minChunkHours` (which a task
-// could set smaller), this floor is never overridden: a task whose total
-// remaining time is at or under this floor is never split at all (it must
-// land as one single block, even if that means waiting for a later day with
-// a big-enough opening — see the `remainingHours <= MIN_SPLIT_CHUNK_HOURS`
-// checks below), and a task larger than this floor may still be split, but
-// never into a piece smaller than it.
-const MIN_SPLIT_CHUNK_HOURS = 0.5;
+// Absolute floor for any single placed chunk — 5 minutes. A task can still
+// be split into many chunks (see maxChunksFor below), but no individual
+// placement is ever allowed to be smaller than this, EXCEPT when the task's
+// entire remaining duration is itself at or under this floor, in which case
+// that shorter amount is placed as one single chunk (see floorHours handling
+// in placeHoursInDay/placeFixedTimeInDay).
+const MIN_CHUNK_HOURS = 5 / 60;
+// Pacing-preference threshold used ONLY by allocateTasks' first (weighted-
+// share) pass below — separate from MIN_CHUNK_HOURS, which is the real hard
+// floor on any placed chunk's size. A multi-day window's per-day "ideal
+// share" (remainingHours split evenly/front-loaded across the window) is
+// often a small fraction of the task's total on any single day; without a
+// gate here, pass 1 would happily commit a tiny few-minute sliver on each
+// day of the window and burn through the task's whole chunk-count budget
+// (see maxChunksFor) before the sweep/overflow passes below ever get a
+// chance to give it fuller, more useful placements. This purely prevents
+// that low-value pacing behavior — it does not participate in the actual
+// split-count-cap or minimum-chunk-size rules, and a day skipped here is
+// still eligible for placement by the later passes.
+const PACING_SHARE_THRESHOLD_HOURS = 0.5;
+
+/**
+ * How many separate chunks a task's total duration may ever be split across.
+ * This is a CAP on chunk count, not a per-chunk minimum size — chunks can be
+ * as small as MIN_CHUNK_HOURS (5 min) as long as the count doesn't exceed
+ * this. Computed from the task's estimated (not remaining) duration so a
+ * partially-completed task doesn't get a smaller budget just because some of
+ * it is already done: round(durationHours * 60 / 30), minimum 1.
+ *   - 1h   -> round(60/30)  = 2 max chunks
+ *   - 1h20 -> round(80/30)  = 3 max chunks
+ *   - 1h10 -> round(70/30)  = 2 max chunks
+ */
+function maxChunksFor(task) {
+  const durationHours = task.estimatedHours ?? task.remainingHours ?? 0;
+  return Math.max(1, Math.round((durationHours * 60) / 30));
+}
 
 /**
  * Walk up `task.parentId` (arbitrarily deep — nesting is capped at 2 levels
@@ -400,50 +430,38 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
 
 /**
  * Attempt to carve `hours` worth of time out of a day's free intervals,
- * respecting min/max chunk size. Mutates `dayFreeIntervals` (minute-based,
- * array of {start,end}) in place and returns the number of hours actually
- * placed plus the concrete {start,end} minute ranges used.
+ * respecting max chunk size and the task's chunk-count budget. Mutates
+ * `dayFreeIntervals` (minute-based, array of {start,end}) in place and
+ * returns the number of hours actually placed plus the concrete {start,end}
+ * minute ranges used.
  *
- * `allowUndersizedChunks` is a last-resort relaxation of the min-chunk floor
- * down to MIN_SPLIT_CHUNK_HOURS (30 min), used only by allocateTasks' final
- * "split what's left" pass after every normal pass (weighted share, sweep,
- * buffer overflow) has already tried and failed to fit the task's remaining
- * hours into a single chunk per interval that clears the task's own (or
- * `floorHours`-capped) `minChunkHours`. Normally a free interval smaller than
- * that floor is skipped entirely — the deliberate "no slivers" behavior that
- * keeps a big task's leftover fragments from getting scattered across tiny
- * gaps. But when that's the ONLY reason a task with real remaining hours
- * would end up reported as unschedulable, on a day that visibly still has
- * free time (just spread across several DIFFERENT intervals, each still
- * >= MIN_SPLIT_CHUNK_HOURS but individually below the task's own larger
- * floor), splitting across those intervals is strictly better than
- * reporting a false conflict — the user explicitly wants a continuous block
- * preferred, but a split allowed when a continuous one is genuinely
- * impossible. This flag never relaxes the floor below MIN_SPLIT_CHUNK_HOURS
- * itself, though — a single placed piece is never allowed to be shorter than
- * that, no matter how this pass is invoked (see MIN_SPLIT_CHUNK_HOURS above).
+ * `chunkState` (`{ used, max }`, mutated in place) tracks how many separate
+ * chunks this task has already been split into across the WHOLE allocation
+ * run (all passes, all days — see maxChunksFor) versus how many it's allowed.
+ * Each placement produced by this call (one per free interval consumed)
+ * increments `chunkState.used`. Once `used` reaches `max`, this function
+ * still places into the NEXT interval it considers (so the last permitted
+ * chunk can still absorb whatever remains — see the loop condition below),
+ * but stops after that rather than fragmenting further.
+ *
+ * Every placed chunk must be at least MIN_CHUNK_HOURS (5 min), EXCEPT when
+ * the task's entire remaining duration (`floorHours`) is itself at or under
+ * that floor — then that shorter total may be placed as one single chunk.
  */
-function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, floorHours = hours, allowUndersizedChunks = false) {
+function placeHoursInDay(hours, dayFreeIntervals, maxChunkHours, chunkState, floorHours = hours) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
-  // A task's total remaining time can itself be smaller than its own
-  // minChunkHours (e.g. a 5-minute task against the default 30-minute min
-  // chunk) — the "no slivers" rule exists to stop a big task's leftover
-  // fragments from getting scattered, not to make a task that's inherently
-  // shorter than the floor permanently unplaceable. Cap the floor at
-  // `floorHours` (the task's full remaining total, not whatever fragment
-  // this particular call/pass is placing) so a leftover sliver from an
-  // earlier pass — e.g. 5 minutes left over from a 1-hour task — still
-  // has to clear the real 30-minute floor instead of the floor shrinking
-  // down to match the sliver itself.
-  // Even the last-resort `allowUndersizedChunks` pass never drops below
-  // MIN_SPLIT_CHUNK_HOURS (30 min) per placed piece — that pass exists to
-  // stitch together several DIFFERENT intervals each still >= the floor when
-  // no single one held the task's continuous total, not to shave a piece
-  // under 30 min out of a too-small interval (see MIN_SPLIT_CHUNK_HOURS above).
-  const effectiveMinChunk = allowUndersizedChunks ? MIN_SPLIT_CHUNK_HOURS : Math.min(minChunkHours, floorHours);
+  // Normally a placed chunk must clear MIN_CHUNK_HOURS. But a task whose
+  // ENTIRE remaining duration is already at or under that floor is allowed
+  // to place that shorter total as a single chunk rather than being
+  // permanently unplaceable (see MIN_CHUNK_HOURS above).
+  const effectiveMinChunk = floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
   const placements = [];
 
-  for (let i = 0; i < dayFreeIntervals.length && hoursToPlace >= effectiveMinChunk - EPSILON_HOURS; i++) {
+  for (
+    let i = 0;
+    i < dayFreeIntervals.length && hoursToPlace >= effectiveMinChunk - EPSILON_HOURS && chunkState.used < chunkState.max;
+    i++
+  ) {
     const interval = dayFreeIntervals[i];
     const availableMins = interval.end - interval.start;
     const availableHours = availableMins / 60;
@@ -461,6 +479,7 @@ function placeHoursInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, 
     placements.push({ start: placementStart, end: placementEnd });
     interval.start = placementEnd; // shrink the free interval from the front
     hoursToPlace -= takeHours;
+    chunkState.used += 1;
   }
 
   // Clean up now-empty intervals.
@@ -504,27 +523,34 @@ function findFixedTimeConflict(fixedStartMins, neededMins, busyIntervals, gapMin
  * slice, if any, stays free) instead of always shrinking from the front like
  * placeHoursInDay does.
  *
- * If no free interval contains the fixed start time, or the interval doesn't
- * have enough room from that point to fit at least `minChunkHours`, this
- * places nothing for the day — consistent with how the rest of the allocator
- * treats a day that can't fit a task's requirements: the hours simply aren't
- * placed there, and the caller's normal overflow reporting picks up any
- * hours that end up unplaceable across the whole window (see allocateTasks).
- * No fallback to a different time is attempted HERE; the whole point of
- * `fixedTime` is that the task is done at that time or not that day — a
- * multi-day window simply retries the same fixed time on the next day. The
- * one exception (a single-day window with nowhere else to retry) is handled
- * one level up, by placeAndRecordBlocks' allowSameDayFallback.
+ * If no free interval contains the fixed start time, the task's chunk budget
+ * is already exhausted (see `chunkState`/maxChunksFor), or the interval
+ * doesn't have enough room from that point to fit at least MIN_CHUNK_HOURS
+ * (unless the task's whole remaining duration is itself under that floor —
+ * see `floorHours`), this places nothing for the day — consistent with how
+ * the rest of the allocator treats a day that can't fit a task's
+ * requirements: the hours simply aren't placed there, and the caller's
+ * normal overflow reporting picks up any hours that end up unplaceable
+ * across the whole window (see allocateTasks). No fallback to a different
+ * time is attempted HERE; the whole point of `fixedTime` is that the task is
+ * done at that time or not that day — a multi-day window simply retries the
+ * same fixed time on the next day. The one exception (a single-day window
+ * with nowhere else to retry) is handled one level up, by
+ * placeAndRecordBlocks' allowSameDayFallback.
  *
  * On failure, also attempts to identify WHAT occupies the slot (see
  * findFixedTimeConflict) using `dayBusyIntervals`/`gapMins` — surfaced as
  * `conflict` on the returned object (null if nothing tagged overlaps) so the
  * caller can report a specific reason rather than a generic one.
  */
-function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHours, fixedStartMins, floorHours = hours, dayBusyIntervals, gapMins = 0) {
+function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartMins, chunkState, floorHours = hours, dayBusyIntervals, gapMins = 0) {
   const hoursToPlace = Math.min(hours, maxChunkHours);
-  const effectiveMinChunk = Math.min(minChunkHours, floorHours);
+  const effectiveMinChunk = floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
   const neededMins = Math.round(effectiveMinChunk * 60);
+
+  if (chunkState.used >= chunkState.max) {
+    return { placedHours: 0, placements: [], conflict: null };
+  }
 
   const idx = dayFreeIntervals.findIndex((iv) => iv.start <= fixedStartMins && iv.end > fixedStartMins);
   if (idx === -1) {
@@ -550,6 +576,7 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
   if (placementEnd < interval.end) remainder.push({ start: placementEnd, end: interval.end });
   dayFreeIntervals.splice(idx, 1, ...remainder);
 
+  chunkState.used += 1;
   return { placedHours: takeHours, placements: [{ start: placementStart, end: placementEnd }], conflict: null };
 }
 
@@ -581,20 +608,22 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, minChunkHours, maxChunkHou
  * loops this per-day, and placeHoursInDay itself already splits across
  * multiple intervals within a day) is strictly better than reporting the
  * whole task as unschedulable while the calendar visibly shows free time.
+ *
+ * `chunkState` (`{ used, max }`, mutated in place, shared across every call
+ * for this task across all passes/days — see maxChunksFor/allocateTasks)
+ * caps how many separate chunks the task may ever be split into; individual
+ * chunk size is otherwise only bounded below by MIN_CHUNK_HOURS (5 min, with
+ * a shorter-total exception — see placeHoursInDay).
  */
-function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, allowSameDayFallback = false, allowUndersizedChunks = false) {
-  // 30 minutes is a hard floor for any SPLIT chunk — never shrunk by a
-  // smaller task.minChunkHours (see MIN_SPLIT_CHUNK_HOURS above). A task can
-  // still ask for a larger minimum chunk than this via task.minChunkHours.
-  const minChunkHours = Math.max(task.minChunkHours ?? MIN_SPLIT_CHUNK_HOURS, MIN_SPLIT_CHUNK_HOURS);
+function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, chunkState, allowSameDayFallback = false) {
   const maxChunkHours = task.maxChunkHours ?? 4;
   // Floor the min-chunk check against the task's true total remaining hours,
   // not `hours` (which may already be a shrunk-down leftover from an earlier
   // pass) — see placeHoursInDay's floorHours comment.
   const floorHours = task.remainingHours;
   const result = task.fixedTime
-    ? placeFixedTimeInDay(hours, dayIntervals, minChunkHours, maxChunkHours, timeToMinutes(task.fixedTime), floorHours, dayBusyIntervals, gapMins)
-    : placeHoursInDay(hours, dayIntervals, minChunkHours, maxChunkHours, floorHours, allowUndersizedChunks);
+    ? placeFixedTimeInDay(hours, dayIntervals, maxChunkHours, timeToMinutes(task.fixedTime), chunkState, floorHours, dayBusyIntervals, gapMins)
+    : placeHoursInDay(hours, dayIntervals, maxChunkHours, chunkState, floorHours);
   let { placedHours, placements } = result;
   const { conflict } = result;
   // Same-day fallback: the fixed slot couldn't take everything (or anything)
@@ -610,7 +639,7 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
   if (task.fixedTime && allowSameDayFallback) {
     const leftoverHours = hours - placedHours;
     if (leftoverHours > EPSILON_HOURS) {
-      const fallback = placeHoursInDay(leftoverHours, dayIntervals, minChunkHours, maxChunkHours, floorHours - placedHours, allowUndersizedChunks);
+      const fallback = placeHoursInDay(leftoverHours, dayIntervals, maxChunkHours, chunkState, floorHours - placedHours);
       if (fallback.placedHours > EPSILON_HOURS) {
         placedHours += fallback.placedHours;
         placements = [...placements, ...fallback.placements];
@@ -729,16 +758,19 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
 
     let remaining = task.remainingHours;
     const totalWeight = dayWeights.reduce((s, d) => s + d.weight, 0) || 1;
+    // Chunk-count budget for this task, shared (and mutated) across every
+    // placement pass/day below — see maxChunksFor.
+    const chunkState = { used: 0, max: maxChunksFor(task) };
 
     // Clamps `hours` to the day's remaining deep-work budget (passive tasks
     // are exempt — see dailyBudgetMins' own comment), places into `dayIntervals`,
     // then deducts whatever was actually placed back out of that budget.
-    const placeWithinDailyBudget = (date, hours, dayIntervals, idSuffix, allowUndersizedChunks = false) => {
+    const placeWithinDailyBudget = (date, hours, dayIntervals, idSuffix) => {
       const budget = dailyBudgetMins.get(date);
       const cappedHours = task.isPassive || budget == null ? hours : Math.min(hours, Math.max(0, budget / 60));
       const placedHours = placeAndRecordBlocks(
         task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
-        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, singleDayWindow, allowUndersizedChunks
+        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, chunkState, singleDayWindow
       );
       if (!task.isPassive && budget != null) dailyBudgetMins.set(date, budget - Math.round(placedHours * 60));
       return placedHours;
@@ -750,7 +782,7 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
 
       const idealShare = task.remainingHours * (weight / totalWeight);
       const targetHours = isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
-      if (targetHours < Math.max(task.minChunkHours ?? MIN_SPLIT_CHUNK_HOURS, MIN_SPLIT_CHUNK_HOURS) - EPSILON_HOURS) continue;
+      if (targetHours < PACING_SHARE_THRESHOLD_HOURS - EPSILON_HOURS) continue;
 
       remaining -= placeWithinDailyBudget(date, targetHours, freeForTask.get(date), '');
     }
@@ -795,30 +827,23 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       }
     }
 
-    // Fourth pass, genuinely last resort: every pass above only ever placed a
-    // chunk into a free interval that could hold at least `minChunkHours`
-    // continuously — the deliberate "prefer one uninterrupted block" bias
-    // (see module doc comment). If hours are STILL left after that, the
-    // remaining free time (if any) is fragmented into pieces individually
-    // smaller than the floor. Rather than reporting that as unschedulable
-    // while the day visibly has open time, split into whatever's left,
-    // wherever it is — across the same window this task already searched
-    // (including the buffer-overflow days above). Only engages when a
-    // continuous block truly isn't possible; every earlier pass had first
-    // claim on any interval long enough to avoid fragmenting this task at
-    // all.
-    //
-    // A task whose ENTIRE remaining time is at or under MIN_SPLIT_CHUNK_HOURS
-    // (30 min) is never allowed to fragment at all, even as a last resort —
-    // it must land as one single block or not be placed this run (falling
-    // through to overflow below). Splitting a task that's already ≤30 min
-    // into still-smaller pieces defeats the point of a minimum chunk size.
-    if (remaining > EPSILON_HOURS && task.remainingHours > MIN_SPLIT_CHUNK_HOURS + EPSILON_HOURS) {
+    // Fourth pass, genuinely last resort: earlier passes above walk the
+    // window day-by-day targeting an ideal share/sweep/overflow amount per
+    // day, which can leave hours unplaced even though the task's chunk
+    // budget (chunkState) isn't exhausted yet — e.g. a day's only remaining
+    // free interval is smaller than what an earlier pass was trying to place
+    // there in one go. This pass makes a final attempt to place whatever's
+    // left into ANY remaining opening across the same window (including the
+    // buffer-overflow days above), still governed by the same chunk-count
+    // cap and MIN_CHUNK_HOURS floor as every other pass — see maxChunksFor/
+    // MIN_CHUNK_HOURS above. It naturally does nothing once the task's chunk
+    // budget is used up or no interval clears the 5-minute floor.
+    if (remaining > EPSILON_HOURS) {
       for (const { date } of dayWeights) {
         if (remaining <= EPSILON_HOURS) break;
         const dayIntervals = freeForTask.get(date);
         if (!dayIntervals || dayIntervals.length === 0) continue;
-        remaining -= placeWithinDailyBudget(date, remaining, dayIntervals, '_split', true);
+        remaining -= placeWithinDailyBudget(date, remaining, dayIntervals, '_split');
       }
     }
 

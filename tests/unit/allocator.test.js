@@ -66,17 +66,114 @@ describe('allocateTasks: no zero-duration blocks from last-resort splitting', ()
   });
 });
 
-// Regression coverage for the 30-minute split floor: a task at or under 30
-// minutes total must never be fragmented into multiple blocks, even as a
-// last resort, and any task large enough to be split must never produce a
-// chunk smaller than 30 minutes -- even when the task's own minChunkHours
-// asks for something smaller.
-describe('allocateTasks: 30-minute minimum split chunk', () => {
-  it('never splits a task whose entire remaining time is <=30 minutes, even across fragmented free time', () => {
-    // Two short meetings fragment the day into slivers no single one of
-    // which can hold the whole 20-minute task on its own until the last
-    // (wide-open) interval -- if splitting were still allowed, the old
-    // last-resort pass would have scattered pieces across the earlier slivers.
+// Regression coverage for the chunk-count-cap + 5-minute-floor rule
+// (replacing the old, incorrect flat 30-minute-per-chunk floor): a task may
+// be split into at most round(durationMinutes / 30) chunks -- this caps chunk
+// COUNT, not individual chunk size. Individual chunks have no minimum other
+// than 5 minutes, except a task whose entire remaining duration is itself
+// <=5 minutes may still be placed as a single (shorter) chunk.
+describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () => {
+  it('caps a 1-hour task at 2 max chunks (round(60/30))', () => {
+    // One small 15-minute gap, then the rest of the day wide open. A 1-hour
+    // task's chunk budget is exactly 2, which is exactly enough to use the
+    // 15-minute sliver as one chunk and take the remaining 45 minutes as a
+    // second, continuous chunk from the open remainder -- this is the exact
+    // shape of the original bug report (a 1-hour "Piano" task should be able
+    // to use a real 15-minute leftover slot instead of discarding it).
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:30' },
+    ];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
+
+    const task = {
+      id: 't2', title: '1-hour task', estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-01',
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    expect(blocks.length).toBeLessThanOrEqual(2);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(1, 5);
+  });
+
+  it('allows a 1h20m task up to 3 max chunks (round(80/30))', () => {
+    // Two small 15-minute gaps, then the rest of the day wide open. Max
+    // chunks = round(80/30) = 3, exactly enough to use both slivers as two
+    // chunks and take the remaining 50 minutes as a third, continuous chunk.
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:30' },
+      { id: 'ev2', date: '2026-07-01', startTime: '09:45', endTime: '10:00' },
+    ];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
+
+    const task = {
+      id: 't3', title: '1h20m task', estimatedHours: 80 / 60, remainingHours: 80 / 60, dueDate: '2026-07-01',
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    expect(blocks.length).toBeLessThanOrEqual(3);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(80 / 60, 5);
+  });
+
+  it('caps a 1h10m task at 2 max chunks (round(70/30))', () => {
+    const task = {
+      id: 't4', title: '1h10m task', estimatedHours: 70 / 60, remainingHours: 70 / 60, dueDate: '2026-07-01',
+    };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+
+    const { blocks } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(blocks.length).toBeLessThanOrEqual(2);
+  });
+
+  it('places a chunk smaller than 30 minutes (down to the 5-minute floor) as long as the chunk-count cap allows it', () => {
+    // A single 15-minute gap, immediately followed by a wide-open remainder
+    // of the day. A 1-hour task's max-chunks budget is 2, so it may place a
+    // sub-30-minute 15-minute chunk here and take the rest (45min) from the
+    // open remainder -- this is exactly the bug scenario described (a 1-hour
+    // "Piano" task should be able to use a real 15-minute leftover slot).
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:30' },
+    ];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
+
+    const task = {
+      id: 't5', title: 'Piano', estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-01',
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(1, 5);
+    // At least one placed chunk should be the small 15-minute leftover slot.
+    expect(blocks.some((b) => Math.abs(b.durationHours - 15 / 60) < 1e-9)).toBe(true);
+  });
+
+  it('reports no_capacity when only the 15-minute slot exists and no other free time is available', () => {
+    const tightRules = { ...baseRules, workDayStart: '09:00', workDayEnd: '09:30' };
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:20' },
+    ];
+    // Free time: 09:00-09:15 (15m) + 09:20-09:30 (10m) = 25 minutes total,
+    // nowhere near enough for a 1-hour task.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: tightRules, events });
+
+    const task = {
+      id: 't6', title: 'Piano', estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-01', enforceDueDate: true,
+    };
+
+    const { overflow } = allocateTasks([task], capacityMap, tightRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('no_capacity');
+  });
+
+  it('never fragments a task whose entire remaining time is already <=5 minutes', () => {
     const events = [
       { id: 'ev1', date: '2026-07-01', startTime: '09:10', endTime: '09:35' },
       { id: 'ev2', date: '2026-07-01', startTime: '09:45', endTime: '10:10' },
@@ -84,48 +181,22 @@ describe('allocateTasks: 30-minute minimum split chunk', () => {
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
 
     const task = {
-      id: 't2',
-      title: 'Short task',
-      estimatedHours: 20 / 60,
-      remainingHours: 20 / 60,
-      dueDate: '2026-07-01',
-      minChunkHours: 0.25,
-      maxChunkHours: 4,
+      id: 't7', title: 'Tiny task', estimatedHours: 5 / 60, remainingHours: 5 / 60, dueDate: '2026-07-01',
     };
 
     const { blocks } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
 
     expect(blocks.length).toBe(1);
-    expect(blocks[0].durationHours).toBeCloseTo(20 / 60, 5);
+    expect(blocks[0].durationHours).toBeCloseTo(5 / 60, 5);
   });
 
-  it('never produces a split chunk smaller than 30 minutes, even when the task requests a smaller minChunkHours', () => {
-    // A single 40-minute free gap, immediately followed by a 20-minute gap.
-    // A 1-hour task asking for a 0.25h minChunkHours would, pre-fix, be
-    // allowed to split 40min + 20min across the two gaps. The 30-minute
-    // floor should instead force the 20-minute gap to be skipped as too
-    // small, leaving the remainder to overflow/spill rather than producing
-    // a sub-30-minute block.
-    const events = [
-      { id: 'ev1', date: '2026-07-01', startTime: '09:40', endTime: '10:00' },
-      { id: 'ev2', date: '2026-07-01', startTime: '10:20', endTime: '17:00' },
-    ];
-    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
-
+  it('has no maximum chunk-size floor beyond MIN_CHUNK_HOURS -- a large continuous gap is used as one chunk, not needlessly split', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
     const task = {
-      id: 't3',
-      title: 'Task needing a floored split',
-      estimatedHours: 1,
-      remainingHours: 1,
-      dueDate: '2026-07-01',
-      minChunkHours: 0.25,
-      maxChunkHours: 4,
+      id: 't8', title: 'Deep work', estimatedHours: 2, remainingHours: 2, dueDate: '2026-07-01', enforceDueDate: true,
     };
-
     const { blocks } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
-
-    for (const block of blocks) {
-      expect(block.durationHours).toBeGreaterThanOrEqual(0.5 - 1e-9);
-    }
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].durationHours).toBe(2);
   });
 });
