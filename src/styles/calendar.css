@@ -260,10 +260,6 @@
    already needs the toolbar space back on all widths since the old button
    is gone). */
 .calendar-fab {
-  position: fixed;
-  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
-  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
-  z-index: 120;
   width: 56px;
   height: 56px;
   padding: 0;
@@ -274,33 +270,34 @@
   box-shadow: var(--shadow-elevated);
 }
 
+/* The main FAB expands into a speed-dial of mini-FABs (see CalendarPage.jsx):
+   mobile gets "Re-balance schedule" + "Plan today" + "New event" (those
+   toolbar buttons are removed from the mobile toolbar to save vertical
+   space), desktop gets "Schedule manually for today" + "New event" as a
+   floating pair rather than the old dropdown menu list. Positioning mirrors
+   .add-task-fab-group in tasklist.css: the group itself carries the fixed
+   bottom-right placement so the main button no longer needs its own,
+   letting it stack in normal flow with the mini-FABs above it (DOM order =
+   mini-FABs, then main button — top-to-bottom the way they should read). */
+.calendar-fab-group {
+  position: fixed;
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.calendar-fab-group .calendar-fab {
+  position: static;
+}
+
 @media (max-width: 639px) {
   /* Clear the fixed mobile bottom-tab-bar, same offset .add-task-btn uses. */
-  .calendar-fab {
-    bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
-  }
-
-  /* On mobile the main FAB expands into a "Re-balance schedule" + "New
-     event" speed-dial (see CalendarPage.jsx) instead of opening "New event"
-     directly — Re-balance schedule was removed from the toolbar above to
-     save vertical space. Positioning here mirrors .add-task-fab-group in
-     tasklist.css: the group itself carries the fixed bottom-right placement
-     so the main button no longer needs its own, letting it stack in normal
-     flow with the mini-FABs above it (DOM order = rebalance, new event, main
-     button — top-to-bottom the way they should read). */
   .calendar-fab-group {
-    position: fixed;
-    right: calc(var(--space-4) + env(safe-area-inset-right, 0));
     bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
-    z-index: 120;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .calendar-fab-group .calendar-fab {
-    position: static;
   }
 }
 
