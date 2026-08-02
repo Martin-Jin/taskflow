@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.59.0',
+    date: '2026-08-02',
+    title: 'Removed the floating Google account popup on the sign-in button',
+    changes: [
+      "Signed-out users could see a floating \"Sign in as ...\" Google account bubble pop up over the sidebar, overlapping other buttons. That bubble is Chrome's own account suggestion, and it turned out to be tied to the text-style \"Sign in with Google\" button specifically. The sign-in button is now Google's compact icon-only button (with our own \"Sign in with Google\" text drawn next to it) instead, which doesn't trigger the popup.",
+    ],
+  },
+  {
     version: '1.58.0',
     date: '2026-08-02',
     title: 'Google sign-in fixed for real this time, using Google\'s own button',

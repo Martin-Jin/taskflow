@@ -87,6 +87,24 @@
   background: var(--color-bg-surface-hover);
 }
 
+/* GoogleSignInButton — Google's real GIS button is rendered icon-only
+   (see component comment for why); this is our own label drawn beside it. */
+.google-signin-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.google-signin-wrap.compact {
+  width: auto;
+}
+
+.google-signin-label {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
 .account-avatar {
   width: 26px;
   height: 26px;

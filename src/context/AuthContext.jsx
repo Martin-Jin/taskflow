@@ -68,6 +68,7 @@ async function ensureGisIdentity(onCredential) {
         callback: (resp) => latestOnCredential?.(resp),
         auto_select: false,
         cancel_on_tap_outside: true,
+        use_fedcm_for_prompt: false,
       });
       identityInited = true;
     })();
@@ -87,6 +88,7 @@ export async function renderGoogleSignInButton(container, onCredential, options 
     size: 'large',
     shape: 'pill',
     text: 'signin_with',
+    use_fedcm_for_button: false,
     ...options,
   });
 }
