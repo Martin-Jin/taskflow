@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.62.0',
+    date: '2026-08-02',
+    title: 'Fixed false "no free time" scheduling conflicts',
+    changes: [
+      "Fixed a bug where a recurring task without a usable recurrence pattern could be flagged as a scheduling conflict (\"No free time left in this task's window\") even on days with plenty of open time, or after it had already been scheduled — the scheduler was double-demanding its full remaining hours instead of subtracting what was already scheduled/completed.",
+    ],
+  },
+  {
     version: '1.61.0',
     date: '2026-08-02',
     title: "Fixed the calendar FAB's popover styling",
