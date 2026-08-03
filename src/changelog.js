@@ -17,6 +17,22 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.6',
+    date: '2026-08-03',
+    title: 'Scheduler now reschedules when a task\'s estimated time changes',
+    changes: [
+      'Changing a task\'s Estimated time now automatically re-balances its existing scheduled block(s), the same way changing its due date already did — previously an already-scheduled task kept its old block size until the next manual "Re-balance schedule".',
+    ],
+  },
+  {
+    version: '1.90.5',
+    date: '2026-08-03',
+    title: 'Removed the redundant Calendar event overrides settings section',
+    changes: [
+      'Settings no longer has a "Calendar event overrides" list for marking events as free time — you can already do this by opening an event on the calendar, checking "Ignore this event", and choosing to apply it to the whole series.',
+    ],
+  },
+  {
     version: '1.90.4',
     date: '2026-08-03',
     title: 'Fixed smart parse locking up when editing a task',
