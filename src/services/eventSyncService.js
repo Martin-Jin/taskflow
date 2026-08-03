@@ -123,6 +123,42 @@ function instanceDeleteKey(masterGoogleEventId, occurrenceDateIso) {
 }
 
 /**
+ * Carry forward the local-only "ignore from scheduler" flag(s) from the
+ * existing local event onto its freshly-pulled replacement. `isFreeTime` is
+ * TaskFlow-only state (Google Calendar has no concept of it — see
+ * SchedulerContext.setEventIgnored), so a pulled event never has it set;
+ * without this, every sync silently un-ignores anything the user had
+ * marked ignored, since the pulled version otherwise wholesale-replaces the
+ * local one below. Covers both the whole-event/series-level flag
+ * (`isFreeTime` on the top-level event) and any per-occurrence override
+ * (`overrides[date].isFreeTime`) recorded on a recurring master for a
+ * single-occurrence ignore.
+ */
+function preserveIgnoredFlag(localEvent, pulledEvent) {
+  let result = pulledEvent;
+
+  if (localEvent.isFreeTime && !pulledEvent.isFreeTime) {
+    result = { ...result, isFreeTime: true };
+  }
+
+  const localOverrides = localEvent.overrides;
+  if (localOverrides) {
+    let mergedOverrides = null;
+    for (const [date, override] of Object.entries(localOverrides)) {
+      if (!override?.isFreeTime) continue;
+      if (result.overrides?.[date]?.isFreeTime) continue;
+      mergedOverrides = mergedOverrides || { ...(result.overrides || {}) };
+      mergedOverrides[date] = { ...mergedOverrides[date], isFreeTime: true };
+    }
+    if (mergedOverrides) {
+      result = { ...result, overrides: mergedOverrides };
+    }
+  }
+
+  return result;
+}
+
+/**
  * Fold "recently instance-deleted" suppression into one pulled master
  * event's `overrides`. Unlike the whole-event suppression above (which drops
  * a pulled event entirely), a single-occurrence delete must still let the
@@ -220,13 +256,21 @@ export function mergePulledGoogleEvents(
     existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
   );
 
+  const existingByGoogleEventId = new Map(
+    existingEvents.filter((e) => e.source === 'google' && e.googleEventId).map((e) => [e.googleEventId, e])
+  );
+
   const freshPulled = pulledGoogleEvents
     .filter(
       (e) =>
         !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs) &&
         !manualOwnedGoogleEventIds.has(e.googleEventId)
     )
-    .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs));
+    .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs))
+    .map((e) => {
+      const local = existingByGoogleEventId.get(e.googleEventId);
+      return local ? preserveIgnoredFlag(local, e) : e;
+    });
 
   const pulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
 

@@ -125,6 +125,14 @@ test('command palette can launch "Quick Add with AI" when configured', async ({ 
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Dashboard');
 
+  // App.jsx's paletteActions gates this action's run() on a stored BYOK key
+  // (getStoredApiKey) on top of the isAIQuickAddConfigured() visibility gate
+  // below — without a key it shows an error notification instead of opening
+  // the modal. Seed a fake key the same way timer-and-ai-quickadd.spec.js does.
+  await page.evaluate(() => {
+    window.localStorage.setItem('taskflow:v1:aiGeminiApiKey', JSON.stringify('e2e-fake-test-key'));
+  });
+
   await page.keyboard.press('Control+K');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();

@@ -86,6 +86,85 @@ describe('mergePulledGoogleEvents — base merge policy (no suppression)', () =>
   });
 });
 
+describe('mergePulledGoogleEvents — preserving the local-only "ignore from scheduler" flag across a sync', () => {
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('carries forward isFreeTime onto the pulled replacement when the local event was marked ignored', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title', isFreeTime: true });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title' });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([{ ...pulled, isFreeTime: true }]);
+  });
+
+  it('does not add isFreeTime when the local event was never marked ignored', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title' });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title' });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
+  });
+
+  it('carries forward a per-occurrence overrides[date].isFreeTime on a recurring master, alongside the pull\'s own overrides', () => {
+    const local = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-10': { isFreeTime: true } },
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-03': { deleted: true } },
+    });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result[0].overrides).toEqual({
+      '2026-08-03': { deleted: true },
+      '2026-08-10': { isFreeTime: true },
+    });
+  });
+
+  it('merges isFreeTime into the pull\'s own override entry for a date it already has one for, rather than replacing it', () => {
+    const local = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-10': { isFreeTime: true } },
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-10': { deleted: true } },
+    });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result[0].overrides).toEqual({ '2026-08-10': { deleted: true, isFreeTime: true } });
+  });
+
+  it('leaves an already-ignored pull override untouched instead of double-applying it', () => {
+    const local = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-10': { isFreeTime: true } },
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      recurrenceRule: 'FREQ=WEEKLY',
+      overrides: { '2026-08-10': { isFreeTime: true } },
+    });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result[0].overrides).toEqual({ '2026-08-10': { isFreeTime: true } });
+  });
+
+  it('does not affect a manual event or a brand-new pulled event with no local counterpart', () => {
+    const pulled = googleEvent({ id: 'g2', googleEventId: 'g2' });
+    const result = mergePulledGoogleEvents([], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
+  });
+});
+
 describe('mergePulledGoogleEvents — manual-event echo suppression', () => {
   const rangeStart = '2026-08-01';
   const rangeEnd = '2026-08-31';

@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.7',
+    date: '2026-08-03',
+    title: 'Fixed "ignore from scheduler" being lost on Google Calendar sync',
+    changes: [
+      'Events marked "Ignore this event" (so the scheduler treats them as free time) no longer get silently un-ignored the next time Google Calendar syncs — the ignored flag is now preserved across the sync instead of being overwritten by the freshly-pulled copy.',
+    ],
+  },
+  {
     version: '1.90.6',
     date: '2026-08-03',
     title: 'Scheduler now reschedules when a task\'s estimated time changes',
