@@ -1065,12 +1065,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   /**
    * Cascades this (container) task's shared fields — priority, due
-   * date/enforcement, project/section, labels, and passive flag — down onto
-   * every descendant sub-task (direct and nested, see getAllDescendants).
-   * Only offered when the task actually has sub-tasks (isContainer) — see
-   * the Save row below, which hides the button otherwise and re-hides it the
-   * moment the last sub-task is removed (isContainer recomputes from the
-   * live `tasks` list each render).
+   * date/enforcement, recurrence, project/section, labels, and passive flag
+   * — down onto every descendant sub-task (direct and nested, see
+   * getAllDescendants). Only offered when the task actually has sub-tasks
+   * (isContainer) AND the user has actually edited one of these shared
+   * fields this session (isDirty) — see the Save row below, which hides the
+   * button otherwise. isContainer re-hides it the moment the last sub-task
+   * is removed (recomputed from the live `tasks` list each render); isDirty
+   * re-hides it once changes are saved/cancelled (snapshot reset).
    *
    * Deliberately excludes title/notes/estimatedHours/dependsOn/fixedTime —
    * those are meant to stay per-task (a shared title would collide, a shared
@@ -1083,10 +1085,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   function handleApplyToAllSubtasks() {
     const descendants = getAllDescendants(task.id, tasks);
     if (descendants.length === 0) return;
+    const nextIsRecurring = isRecurring && !!dueDate;
+    const nextRecurrenceString = nextIsRecurring ? buildRecurrenceString(recurrenceCount, recurrenceUnit, recurrenceDays) : null;
     const sharedUpdates = {
       priority,
       dueDate: dueDate || null,
       enforceDueDate: enforceDueDate && !!dueDate,
+      isRecurring: nextIsRecurring,
+      recurrenceString: nextRecurrenceString,
       projectId: projectId || null,
       sectionId: sectionId || null,
       labelIds,
@@ -1510,7 +1516,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 </div>
               </div>
 
-              {(mainDirty || isContainer) && (
+              {(mainDirty || (isContainer && isDirty)) && (
                 <div className="detail-save-row">
                   {fixedTimeError && <p className="form-error">{fixedTimeError}</p>}
                   {mainDirty && (
@@ -1523,12 +1529,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       </button>
                     </>
                   )}
-                  {isContainer && (
+                  {isContainer && isDirty && (
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btn-primary"
                       onClick={handleApplyToAllSubtasks}
-                      title="Copy this task's priority, due date, project/section, labels, and passive flag onto every sub-task"
+                      title="Copy this task's priority, due date, recurrence, project/section, labels, and passive flag onto every sub-task"
                     >
                       Apply to all sub-tasks
                     </button>
