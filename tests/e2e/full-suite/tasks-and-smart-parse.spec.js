@@ -178,16 +178,25 @@ test.describe('Sub-tasks', () => {
     await expect(applyAllBtn).toBeVisible();
     await expect(applyAllBtn).toHaveClass(/btn-primary/);
     await applyAllBtn.click();
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(600); // let the sidebar's debounced auto-save land
 
-    // Apply resets the dirty snapshot, so the button hides again until the next edit.
-    await expect(applyAllBtn).not.toBeVisible();
+    // The button should stay visible for the rest of this modal session even
+    // after the auto-save resets the dirty snapshot back to "clean" — it
+    // only re-hides when the modal is reopened on a task.
+    await expect(applyAllBtn).toBeVisible();
 
     await closeAnyModal(page);
     await page.waitForTimeout(300);
 
     await searchAndOpen(page, 'E2E apply-all child');
     await expect(page.locator('.detail-recurrence-toggle-active, .detail-recurrence-toggle')).toContainText(/every/i);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Reopening the parent starts a fresh session — the button hides again
+    // until the next edit.
+    await searchAndOpen(page, title);
+    await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).not.toBeVisible();
 
     await closeAnyModal(page);
     expectNoErrors(errors);

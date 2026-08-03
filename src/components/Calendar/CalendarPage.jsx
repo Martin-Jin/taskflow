@@ -390,7 +390,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               <button className="btn btn-icon calendar-nav-prev" onClick={goPrev} aria-label="Previous">
                 <ChevronLeft size={16} />
               </button>
-              <button className="btn" onClick={goToday}>
+              <button className="btn calendar-today-btn" onClick={goToday}>
                 Today
               </button>
               <button className="btn btn-icon calendar-nav-next" onClick={goNext} aria-label="Next">
@@ -500,7 +500,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                   consistent busy state if one is already running. */}
               {googleConnected && (
                 <button
-                  className="btn btn-icon"
+                  className="btn btn-icon calendar-refresh-btn"
                   onClick={syncNow}
                   disabled={isSyncing}
                   aria-label="Refresh Google Calendar events"
