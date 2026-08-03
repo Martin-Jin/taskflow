@@ -154,6 +154,46 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
     expect(blocks.some((b) => Math.abs(b.durationHours - 15 / 60) < 1e-9)).toBe(true);
   });
 
+  // Regression coverage for the "piano" bug: the scheduler's greedy first-fit
+  // used to always bite into the EARLIEST free interval first, even a tiny
+  // one, which could burn a task's LAST available chunk on a small partial
+  // placement while leaving genuine unplaced time -- even though a LATER
+  // interval that same day was big enough to hold the whole remainder as one
+  // continuous block. placeHoursInDay now looks ahead: on the task's last
+  // available chunk, if the current interval can't fit the full remainder
+  // but a later one can, it skips ahead to the later interval instead of
+  // fragmenting.
+  it('prefers a later interval that fits the whole remainder over spending the last chunk on a partial slot', () => {
+    // maxChunksFor(1h) = 2. A single early 15-minute gap (09:00-09:15) uses
+    // up chunk #1, leaving 45 minutes remaining on the task's LAST chunk.
+    // Without the lookahead, that last chunk would be forced into the next
+    // gap the front-to-back walk reaches -- 09:30-10:00 (30min), too small
+    // to finish the task, leaving 15 unplaceable minutes even though
+    // 19:00-22:00 is wide open. With the lookahead, the last chunk skips the
+    // undersized 09:30 gap and takes the whole 45-minute remainder from the
+    // 19:00 opening instead, as one continuous block.
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:30' },
+      { id: 'ev2', date: '2026-07-01', startTime: '10:00', endTime: '19:00' },
+    ];
+    const rules = { ...baseRules, workDayStart: '09:00', workDayEnd: '22:00' };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules, events });
+
+    const task = {
+      id: 't_piano', title: 'Piano', estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-01', enforceDueDate: true,
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(1, 5);
+    // The last chunk should be a single continuous 45-minute block starting
+    // at 19:00 (the wide-open remainder), not fragmented further.
+    expect(blocks.some((b) => b.startTime === '19:00' && Math.abs(b.durationHours - 45 / 60) < 1e-9)).toBe(true);
+    expect(blocks).toHaveLength(2);
+  });
+
   it('reports no_capacity when only the 15-minute slot exists and no other free time is available', () => {
     const tightRules = { ...baseRules, workDayStart: '09:00', workDayEnd: '09:30' };
     const events = [

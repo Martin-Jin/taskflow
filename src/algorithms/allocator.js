@@ -447,6 +447,20 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
  * Every placed chunk must be at least MIN_CHUNK_HOURS (5 min), EXCEPT when
  * the task's entire remaining duration (`floorHours`) is itself at or under
  * that floor — then that shorter total may be placed as one single chunk.
+ *
+ * Whole-block lookahead: plain first-fit would always bite into the earliest
+ * interval first, even a small one, which can burn the task's LAST available
+ * chunk on a partial placement while a later interval that same day is big
+ * enough to hold the entire remaining duration as a single continuous block
+ * (e.g. a piano task splits into two earlier slivers, then can't fit its
+ * final chunk at 09:00 even though 20:00-22:00 is wide open and would've
+ * taken the whole thing). So before consuming a chunk on interval `i`, we
+ * check: is this the LAST chunk this task gets (`chunkState.used + 1 >=
+ * chunkState.max`), does interval `i` fail to cover the FULL remaining
+ * `hoursToPlace` on its own, and does some LATER interval in this same day
+ * cover it in full? If so, skip ahead and place the whole remainder there
+ * instead of fragmenting into a partial chunk here. This only ever changes
+ * WHICH interval absorbs the last chunk, never how many chunks get used.
  */
 function placeHoursInDay(hours, dayFreeIntervals, maxChunkHours, chunkState, floorHours = hours) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
@@ -466,6 +480,17 @@ function placeHoursInDay(hours, dayFreeIntervals, maxChunkHours, chunkState, flo
     const availableMins = interval.end - interval.start;
     const availableHours = availableMins / 60;
     if (availableHours < effectiveMinChunk) continue;
+
+    // Last-chunk whole-block lookahead (see doc comment above): if taking a
+    // partial bite here would spend the task's final chunk, and this interval
+    // can't cover the full remainder on its own, prefer a later interval that
+    // CAN take the whole thing in one continuous block over fragmenting here.
+    if (chunkState.used + 1 >= chunkState.max && availableHours < hoursToPlace - EPSILON_HOURS) {
+      const laterFullFitIdx = dayFreeIntervals.findIndex(
+        (later, j) => j > i && (later.end - later.start) / 60 >= hoursToPlace - EPSILON_HOURS
+      );
+      if (laterFullFitIdx !== -1) continue; // skip this partial slot; the loop will reach the full-fit interval
+    }
 
     const takeHours = Math.min(hoursToPlace, availableHours);
     const takeMins = Math.round(takeHours * 60);
