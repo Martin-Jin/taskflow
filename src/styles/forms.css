@@ -1341,8 +1341,15 @@
 
 .subtask-add-row {
   display: flex;
+  align-items: flex-start;
   gap: 6px;
   margin-top: 4px;
+}
+
+/* Without this, the row's default flex stretch grows the button to match
+   the textarea's height as it wraps to more lines. */
+.subtask-add-row .btn {
+  flex-shrink: 0;
 }
 
 .subtask-add-textarea {
