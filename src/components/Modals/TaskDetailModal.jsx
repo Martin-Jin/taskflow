@@ -123,7 +123,7 @@ import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
-import { getEffectiveEstimatedHours } from '../../utils/taskHierarchy';
+import { getEffectiveEstimatedHours, findNearestAncestorDueDate, getAllDescendants } from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';
 
 // Default estimated hours for a quick-added sub-task — matches
@@ -869,6 +869,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // block it from silently autosaving (or from the explicit Save button)
   // until a time is actually picked.
   const fixedTimeError = fixedTimeEnabled && !fixedTime ? 'Pick a time, or turn off "Fixed time".' : '';
+  // A sub-task's own due date can never be later than its nearest dated
+  // ancestor's — that ancestor's due date is the hard "finish everything
+  // toward this goal by this day" deadline (see allocator.js's
+  // resolveDueDate/getTaskWindow); a step scheduled past its own goal's
+  // deadline would never be able to actually finish the goal on time. Only
+  // meaningful when the ancestor chain actually has a due date somewhere —
+  // an undated parent imposes no ceiling at all (the sub-task is free to use
+  // whatever due date it likes, or none).
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const ancestorDueDate = useMemo(() => findNearestAncestorDueDate(task, tasksById), [task, tasksById]);
+  const dueDateError = ancestorDueDate && dueDate && dueDate > ancestorDueDate
+    ? `Can't be later than "${tasks.find((t) => t.id === task.parentId)?.title || 'parent task'}"'s due date (${formatDisplayDate(ancestorDueDate)}).`
+    : '';
 
   function handleNotesChange(value) {
     setNotes(value);
@@ -1045,19 +1058,56 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // (mirrors AddTaskModal's handleSubmit) — the sidebar autosave effect
     // below already blocks its own debounced commit the same way, but the
     // Save/Cancel row is reachable whenever mainDirty is also true.
-    if (fixedTimeError) return;
+    if (fixedTimeError || dueDateError) return;
     commitChanges();
     requestClose();
+  }
+
+  /**
+   * Cascades this (container) task's shared fields — priority, due
+   * date/enforcement, project/section, labels, and passive flag — down onto
+   * every descendant sub-task (direct and nested, see getAllDescendants).
+   * Only offered when the task actually has sub-tasks (isContainer) — see
+   * the Save row below, which hides the button otherwise and re-hides it the
+   * moment the last sub-task is removed (isContainer recomputes from the
+   * live `tasks` list each render).
+   *
+   * Deliberately excludes title/notes/estimatedHours/dependsOn/fixedTime —
+   * those are meant to stay per-task (a shared title would collide, a shared
+   * dependsOn would create nonsensical self-references, hours are each
+   * sub-task's own real work estimate). dueDate IS included: a descendant's
+   * own due date is still capped at its nearest dated ancestor's (enforced
+   * in commitChanges' dueDateError above) — applying the container's own due
+   * date can never violate that, since the container IS that ancestor.
+   */
+  function handleApplyToAllSubtasks() {
+    const descendants = getAllDescendants(task.id, tasks);
+    if (descendants.length === 0) return;
+    const sharedUpdates = {
+      priority,
+      dueDate: dueDate || null,
+      enforceDueDate: enforceDueDate && !!dueDate,
+      projectId: projectId || null,
+      sectionId: sectionId || null,
+      labelIds,
+      isPassive,
+    };
+    descendants.forEach((d) => updateTask(d.id, sharedUpdates));
+    setNotification({
+      type: 'success',
+      message: `Applied to ${descendants.length} sub-task${descendants.length === 1 ? '' : 's'}.`,
+    });
   }
 
   // Sidebar fields auto-save (debounced) without needing the explicit
   // Save/Cancel row — that row is reserved for mainDirty (title/notes)
   // below. Skips entirely while mainDirty is also true, since in that case
   // Save/Cancel is already visible and will commit both together. Also skips
-  // while fixedTimeError is set, so an enabled-but-empty "Fixed time" never
+  // while fixedTimeError or dueDateError is set, so an enabled-but-empty
+  // "Fixed time" or a due date past the parent goal's deadline never
   // silently autosaves.
   useEffect(() => {
-    if (mainDirty || !sidebarDirty || fixedTimeError) return undefined;
+    if (mainDirty || !sidebarDirty || fixedTimeError || dueDateError) return undefined;
     const handle = setTimeout(() => commitChanges(), 500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1065,6 +1115,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     mainDirty,
     sidebarDirty,
     fixedTimeError,
+    dueDateError,
     estimatedHours,
     priority,
     dueDate,
@@ -1459,15 +1510,29 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 </div>
               </div>
 
-              {mainDirty && (
+              {(mainDirty || isContainer) && (
                 <div className="detail-save-row">
                   {fixedTimeError && <p className="form-error">{fixedTimeError}</p>}
-                  <button type="button" className="btn" onClick={handleCancel}>
-                    Cancel
-                  </button>
-                  <button type="button" className="btn btn-primary" onClick={handleSave} disabled={!!fixedTimeError}>
-                    Save
-                  </button>
+                  {mainDirty && (
+                    <>
+                      <button type="button" className="btn" onClick={handleCancel}>
+                        Cancel
+                      </button>
+                      <button type="button" className="btn btn-primary" onClick={handleSave} disabled={!!fixedTimeError || !!dueDateError}>
+                        Save
+                      </button>
+                    </>
+                  )}
+                  {isContainer && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleApplyToAllSubtasks}
+                      title="Copy this task's priority, due date, project/section, labels, and passive flag onto every sub-task"
+                    >
+                      Apply to all sub-tasks
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1483,7 +1548,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
               <div className="form-row">
                 <div className="subtask-header">
-                  <label>Sub-tasks {childTasks.length > 0 ? `(${completedChildTasks}/${childTasks.length})` : ''}</label>
+                  <span className="subtask-header-label">
+                    <label>Sub-tasks {childTasks.length > 0 ? `(${completedChildTasks}/${childTasks.length})` : ''}</label>
+                    <HelpTooltip label="How do sub-tasks work?">
+                      A sub-task is a normal task in every way — priority, dependencies, search — except it's shown nested
+                      under its parent here. It needs its own due date (or one borrowed from its nearest dated ancestor) to
+                      be auto-scheduled, exactly like a top-level task needs one. A sub-task's own due date can never be
+                      later than that ancestor's — the ancestor's due date is the deadline for finishing every step toward
+                      it. Once a task has its own sub-task, it becomes a goal/container: it's never scheduled itself, and
+                      its hours become a live total of its sub-tasks' hours. Nesting is capped at 2 levels (a sub-task of a
+                      sub-task can't have its own sub-tasks).
+                    </HelpTooltip>
+                  </span>
                   {completedChildTasks > 0 && (
                     <button type="button" className="subtask-hide-completed" onClick={() => setHideCompletedSubtasks((v) => !v)}>
                       {hideCompletedSubtasks ? 'Show completed' : 'Hide completed'}
@@ -1732,7 +1808,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
               <DetailField icon={CalendarClock} label="Due date">
                 <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                {isContainer ? (
+                {dueDateError ? (
+                  <p className="form-error">{dueDateError}</p>
+                ) : isContainer ? (
                   <p className="form-hint">
                     A container's own due date isn't scheduled directly — it feeds urgency for sub-tasks that don't have their own.
                   </p>

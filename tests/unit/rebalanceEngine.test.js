@@ -190,6 +190,68 @@ describe('rebalance', () => {
     const block = result.blocks.find((b) => b.taskId === 't12');
     expect(block).toMatchObject({ startTime: '22:00', endTime: '23:00' });
   });
+
+  // A sub-task is otherwise schedulable exactly like a top-level task, but
+  // BOTH need a resolvable due date (own or, for a sub-task, an ancestor's)
+  // to ever reach the allocator — an undated sub-task under an undated
+  // parent is a checklist item, same as an undated top-level task, not
+  // schedulable work. See rebalanceEngine.js's `schedulable` filter.
+  it('does not schedule an undated sub-task whose parent is also undated', () => {
+    const tasks = [
+      { id: 'parent', title: 'Undated goal', estimatedHours: 0, parentId: undefined },
+      { id: 'sub1', title: 'Undated step', estimatedHours: 2, remainingHours: 2, parentId: 'parent' },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'sub1')).toBe(false);
+  });
+
+  it('schedules an undated sub-task once its parent has a due date, using the parent\'s date as urgency pressure', () => {
+    const tasks = [
+      { id: 'parent', title: 'Dated goal', estimatedHours: 0, dueDate: today },
+      { id: 'sub1', title: 'Undated step', estimatedHours: 2, remainingHours: 2, parentId: 'parent' },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: { ...baseRules, bufferDays: 0 }, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'sub1')).toBe(true);
+  });
+
+  it('schedules a sub-task with its own due date even when its parent is undated', () => {
+    const tasks = [
+      { id: 'parent', title: 'Undated goal', estimatedHours: 0 },
+      { id: 'sub1', title: 'Dated step', estimatedHours: 2, remainingHours: 2, parentId: 'parent', dueDate: today },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: { ...baseRules, bufferDays: 0 }, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'sub1')).toBe(true);
+  });
+
+  // A container parent (has >=1 sub-task) is never itself scheduled, dated
+  // or not — only its leaf sub-tasks ever get calendar blocks.
+  it('never schedules a container parent task directly, even with its own due date and remaining hours', () => {
+    const tasks = [
+      { id: 'parent', title: 'Container goal', estimatedHours: 3, remainingHours: 3, dueDate: today },
+      { id: 'sub1', title: 'Step', estimatedHours: 1, remainingHours: 1, parentId: 'parent', dueDate: today },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: { ...baseRules, bufferDays: 0 }, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'parent')).toBe(false);
+    expect(result.blocks.some((b) => b.taskId === 'sub1')).toBe(true);
+  });
+
+  // enforceDueDate on a parent must NOT collapse an undated sub-task's whole
+  // window onto that single day — the parent's due date is a soft "must
+  // finish everything by this day" deadline for its steps (a window END),
+  // never a hard "every step happens on this exact day" constraint. Only a
+  // task's OWN enforceDueDate+dueDate collapses its own window.
+  it("does not force an undated sub-task onto its enforceDueDate parent's exact day — schedules it earlier within the horizon instead", () => {
+    const dueDate = '2026-07-03'; // 2 days into the 1-week horizon from `today`
+    const tasks = [
+      { id: 'parent', title: 'Hard-deadline goal', estimatedHours: 0, dueDate, enforceDueDate: true },
+      { id: 'sub1', title: 'Undated step', estimatedHours: 1, remainingHours: 1, parentId: 'parent' },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: { ...baseRules, bufferDays: 0 }, fromDate: today });
+    const block = result.blocks.find((b) => b.taskId === 'sub1');
+    expect(block).toBeDefined();
+    // Scheduled somewhere at/before the parent's deadline, not necessarily ON it.
+    expect(block.date <= dueDate).toBe(true);
+  });
 });
 
 // Regression coverage for a false "no free time left" report on a recurring,

@@ -41,6 +41,7 @@ import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
 import { isBlockCompletedLate, isBlockTaskCompleted } from '../../utils/missedTasks';
+import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import HoverPreviewCard from './HoverPreviewCard';
 
 const GRID_START_MIN = 6 * 60; // 06:00
@@ -59,11 +60,6 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 // (SHORT_BLOCK_MAX_MIN itself lives in calendarGrouping.js, shared with MonthView.)
 const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
-// A sub-task's block gets an extra "parent task" subtitle line (see the
-// block render below) — below this height there isn't room for title +
-// parent line + time line together, so the time line is dropped in favor
-// of the parent context, which is the more useful of the two at a glance.
-const THREE_LINE_MIN_HEIGHT = 50;
 
 // Within an overlap group (see layoutDayItems), an item this long or longer
 // always gets its own visible side-by-side lane, even if it overlaps
@@ -334,7 +330,7 @@ export default function WeekView({
   onCreateEvent,
   onSelectDay,
 }) {
-  const { tasks, blocks, events, projects, routines, updateBlock, toggleBlockLock, updateEvent } = useScheduler();
+  const { tasks, blocks, events, projects, routines, updateBlock, toggleBlockLock, updateEvent, setNotification } = useScheduler();
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
@@ -667,6 +663,19 @@ export default function WeekView({
     const newEndMin = newStartMin + duration;
     const updates = { date: day, startTime: minutesToTime(newStartMin), endTime: minutesToTime(newEndMin) };
     if (type === 'block') {
+      // A sub-task's block can never be dragged past its nearest dated
+      // ancestor's due date — that ancestor's due date is the hard deadline
+      // for finishing every step toward it (see TaskDetailModal's matching
+      // due-date validation, and allocator.js's resolveDueDate).
+      const task = taskById[source.taskId];
+      const ancestorDueDate = task ? findNearestAncestorDueDate(task, taskById) : null;
+      if (ancestorDueDate && day > ancestorDueDate) {
+        setNotification({
+          type: 'error',
+          message: `Can't schedule past "${taskById[task.parentId]?.title || 'parent task'}"'s due date (${formatDisplayDate(ancestorDueDate)}).`,
+        });
+        return;
+      }
       updateBlock(id, { ...updates, isAutoScheduled: false });
     } else {
       updateEvent(id, updates);
@@ -1197,12 +1206,15 @@ export default function WeekView({
               const { isDragging, isResizing, endTime, height, liveTimeOnly } = itemLiveState(item);
               const task = taskById[block.taskId];
               if (!task) return null;
-              // A sub-task's block gets a second, muted line naming its parent task
-              // right under the title, so which goal it belongs to is readable
-              // without opening the block — see THREE_LINE_MIN_HEIGHT above.
+              // A sub-task's block displays its PARENT task's name as the primary
+              // label — the parent is the user-facing "goal", the sub-task is just
+              // the concrete step — with the actual sub-task title only revealed
+              // once the block is opened (see BlockDetailModal). displayTitle is
+              // what's shown on the block itself; the real task.title is still what
+              // hover/hint text and the detail modal show.
               const parentTask = task.parentId ? taskById[task.parentId] : null;
-              const showParentLine = !!parentTask && height >= TWO_LINE_MIN_HEIGHT;
-              const showTimeLine = height >= (parentTask ? THREE_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT);
+              const displayTitle = parentTask?.title || task.title;
+              const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
               const isCompleted = isBlockTaskCompleted(block, task);
               const isCompletedLate = isBlockCompletedLate(block, task);
               return (
@@ -1226,11 +1238,10 @@ export default function WeekView({
                       ? undefined
                       : (e) =>
                           scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
-                            title: task.title,
+                            title: displayTitle,
                             timeText: `${block.startTime}–${block.endTime}`,
                             priority: task.priority,
                             projectName: projectById[task.projectId]?.name,
-                            parentTitle: parentTask?.title,
                             isPassive: block.isPassive,
                             completedAt: task?.completedAt ?? null,
                           })
@@ -1246,9 +1257,12 @@ export default function WeekView({
                   }}
                   // Desktop gets the richer HoverPreviewCard instead (see
                   // below) — mobile keeps this as its native tooltip fallback.
+                  // Both surface displayTitle (the parent's name for a sub-task
+                  // block) rather than the real sub-task title — that's only
+                  // revealed once the block is opened (see BlockDetailModal).
                   title={
                     isMobile
-                      ? `${task.title}${parentTask ? ` (sub-task of ${parentTask.title})` : ''}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`
+                      ? `${displayTitle}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`
                       : undefined
                   }
                 >
@@ -1265,10 +1279,9 @@ export default function WeekView({
                   {!liveTimeOnly && (
                     <div className="cal-block-title">
                       {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
-                      {task.title}
+                      {displayTitle}
                     </div>
                   )}
-                  {showParentLine && <div className="cal-block-parent">{parentTask.title}</div>}
                   {/* Mid-resize this is the live readout of the new end time
                       (see itemLiveState), highlighted so the change is
                       obvious — otherwise it's the block's own time range. */}

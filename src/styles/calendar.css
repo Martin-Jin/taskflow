@@ -724,18 +724,6 @@
   margin-top: 1px;
 }
 
-/* Sub-task blocks only (see WeekView's parentTask) — names the parent task
-   right under the title so its goal is readable without opening the block.
-   Italic + muted so it reads as secondary context, not a second title. */
-.cal-block-parent {
-  color: var(--color-text-secondary);
-  font-size: 10px;
-  font-style: italic;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 16px;
-}
 
 /* Base look for a writable Google-sourced event — a solid card (not the
    diagonal-stripe/dashed "blocked out" texture this used to have) with a
@@ -1060,15 +1048,6 @@
     var(--color-bg-surface) 4px,
     var(--color-bg-surface) 8px
   );
-}
-
-/* Sub-task chips only (see MonthView's parentTask) — muted inline suffix
-   naming the parent task, sharing the chip's existing single-line ellipsis
-   overflow rather than adding a true second line (see MonthView's comment
-   for why month cells can't afford that). */
-.month-chip-parent {
-  color: var(--color-text-secondary);
-  font-style: italic;
 }
 
 .month-chip-cluster {

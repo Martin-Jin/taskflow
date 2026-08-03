@@ -17,6 +17,18 @@
 
 export const CHANGELOG = [
   {
+    version: '1.91.0',
+    date: '2026-08-03',
+    title: 'Overhauled sub-task scheduling: real deadlines, not a free pass',
+    changes: [
+      'Sub-tasks now need a due date (their own, or one inherited from their nearest dated parent/grandparent) to be auto-scheduled — same rule as any top-level task. A sub-task with no date anywhere in its chain is a checklist item, not schedulable work.',
+      'A sub-task\'s own due date can no longer be set later than its parent goal\'s — editing it in the task panel or dragging its calendar block past that deadline now shows a warning and is blocked.',
+      'A scheduled sub-task\'s calendar block now shows its PARENT task\'s name (the goal), not its own — open the block to see which specific step it actually is.',
+      'Added an "Apply to all sub-tasks" button on a task with sub-tasks, to copy its priority, due date, project/section, labels, and passive flag onto every sub-task and nested sub-sub-task at once.',
+      'Added a "How do sub-tasks work?" help tooltip next to the Sub-tasks section explaining scheduling, nesting limits, and due-date rules.',
+    ],
+  },
+  {
     version: '1.90.7',
     date: '2026-08-03',
     title: 'Fixed "ignore from scheduler" being lost on Google Calendar sync',
