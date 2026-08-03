@@ -193,6 +193,13 @@ export default function TaskListPanel({
   const HEADER_DOCK_PULL_PX = 16;
   const headerDockOffsetPx = headerScrollFraction * HEADER_DOCK_PULL_PX;
   const [editingTaskId, setEditingTaskId] = useState(null);
+  // Board view owns its own separate editingTaskId/TaskDetailModal (its cards
+  // open it directly too), but the search bar that can trigger it now
+  // renders here, in the shared sticky header, not inside BoardView (see
+  // .taskpage-sticky-header comment for why) — BoardView writes its setter
+  // into this ref on mount so the one shared SearchBar can reach whichever
+  // view's modal state is actually active.
+  const boardSelectTaskRef = useRef(null);
   const [filterByView, setFilterByView] = useState(DEFAULT_FILTER_BY_VIEW);
   const filter = filterByView[view]; // active | completed | all | noDueDate
   function setFilter(key) {
@@ -473,9 +480,13 @@ export default function TaskListPanel({
           </div>
         </div>
 
-        {view === 'list' && (
+        {(view === 'list' || view === 'board') && (
           <div className="tasklist-toolbar">
-            <SearchBar onSelectProject={onChangeActiveProject} onSelectTask={setEditingTaskId} />
+            <SearchBar
+              placeholder={view === 'board' ? 'Search board…' : undefined}
+              onSelectProject={view === 'list' ? onChangeActiveProject : undefined}
+              onSelectTask={view === 'board' ? (id) => boardSelectTaskRef.current?.(id) : setEditingTaskId}
+            />
           </div>
         )}
       </div>
@@ -502,6 +513,7 @@ export default function TaskListPanel({
           filter={filter}
           onOpenSearch={isMobile ? onOpenSearch : undefined}
           openAIQuickAddSignal={openAIQuickAddSignal}
+          onSelectTaskRef={boardSelectTaskRef}
         />
       )}
       {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}

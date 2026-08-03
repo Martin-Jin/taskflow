@@ -69,7 +69,7 @@ import { useMotionEnabled } from '../../hooks/useMotionEnabled';
 import AddTaskModal from '../Modals/AddTaskModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
-import SearchBar, { taskMatchesQuery } from '../Common/SearchBar';
+import { taskMatchesQuery } from '../Common/SearchBar';
 import AddTaskFabGroup from '../Common/AddTaskFabGroup';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
@@ -94,7 +94,7 @@ const CARD_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease:
 // first time anyone ever switched to the Board view.
 let lastHandledBoardAIQuickAddSignal = 0;
 
-export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal }) {
+export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal, onSelectTaskRef }) {
   const {
     tasks,
     sections,
@@ -111,6 +111,17 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   // ensures edits made in the modal (e.g. removing a subtask) show up
   // immediately instead of requiring a close/reopen.
   const [editingTaskId, setEditingTaskId] = useState(null);
+  // The search bar itself now renders in TaskListPanel's shared sticky header
+  // (see its own comment for why), not here — but "select a task from the
+  // dropdown" still needs to open *this* view's own local editingTaskId
+  // state, so TaskListPanel writes its setter into this ref on mount instead
+  // of the SearchBar living here and calling it directly.
+  useEffect(() => {
+    if (onSelectTaskRef) onSelectTaskRef.current = setEditingTaskId;
+    return () => {
+      if (onSelectTaskRef && onSelectTaskRef.current === setEditingTaskId) onSelectTaskRef.current = null;
+    };
+  }, [onSelectTaskRef]);
   const [addingToSectionId, setAddingToSectionId] = useState(undefined); // undefined = modal closed
   const [showAIQuickAdd, setShowAIQuickAdd] = useState(false);
   // Command palette's "Quick Add with AI" action (see App.jsx's
@@ -362,14 +373,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
 
   return (
     <div className="board-page">
-      <div className="board-toolbar tasklist-toolbar">
-        <SearchBar placeholder="Search board…" onSelectTask={setEditingTaskId} />
-        <AddTaskFabGroup
-          onAddTask={() => setAddingToSectionId('')}
-          onAIQuickAdd={() => setShowAIQuickAdd(true)}
-          onOpenSearch={onOpenSearch}
-        />
-      </div>
+      <AddTaskFabGroup
+        onAddTask={() => setAddingToSectionId('')}
+        onAIQuickAdd={() => setShowAIQuickAdd(true)}
+        onOpenSearch={onOpenSearch}
+      />
 
       {!selectedProject ? (
         <div className="board-column-empty" style={{ padding: 30 }}>
