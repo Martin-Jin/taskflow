@@ -240,3 +240,227 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
     expect(blocks[0].durationHours).toBe(2);
   });
 });
+
+// Regression coverage for the fixedTime pre-pass: a fixedTime task's pinned
+// slot must always win against a competing task, regardless of the other
+// task's priority/urgency score -- a fixed time commitment is a real-world
+// clock-time commitment, not just a preference. Before this pre-pass existed,
+// allocateTasks placed every task (fixedTime or not) in one single
+// priority-sorted pass, so a higher-scored non-fixedTime task could claim a
+// fixedTime task's exact slot first.
+describe('allocateTasks: fixedTime pre-pass (priority immunity for the exact pinned slot)', () => {
+  it("a low-priority fixedTime task keeps its exact slot even though a same-day urgent non-fixedTime task scores far higher", () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const fixedTask = {
+      id: 'low_fixed', title: 'Low-priority fixed', priority: 'low', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '10:00',
+    };
+    // Urgent, high-scoring, due the same day -- would normally place FIRST
+    // and could otherwise grab 10:00-11:00 for itself.
+    const urgentTask = {
+      id: 'urgent_flex', title: 'Urgent flexible', priority: 'urgent', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+
+    const { blocks, overflow } = allocateTasks([urgentTask, fixedTask], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const fixedBlock = blocks.find((b) => b.taskId === 'low_fixed');
+    expect(fixedBlock.startTime).toBe('10:00');
+    // The urgent flexible task should have been placed elsewhere (not
+    // 10:00-11:00, since that slot was carved out by the pre-pass already).
+    const urgentBlock = blocks.find((b) => b.taskId === 'urgent_flex');
+    expect(urgentBlock.startTime).not.toBe('10:00');
+  });
+
+  it('among two competing fixedTime tasks for the same slot, the higher-priority/urgency one still wins (pre-pass sorts by score too)', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const lowFixed = {
+      id: 'low', title: 'Low fixed', priority: 'low', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '10:00',
+    };
+    const urgentFixed = {
+      id: 'urgent', title: 'Urgent fixed', priority: 'urgent', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '10:00',
+    };
+
+    const { blocks, overflow } = allocateTasks([lowFixed, urgentFixed], capacityMap, baseRules, '2026-07-01');
+
+    // The urgent one claims 10:00; the low-priority one has no other day to
+    // retry on (enforceDueDate) and no fallback slot configured here beyond
+    // ordinary first-fit -- it should still get scheduled elsewhere same day
+    // via the same-day fallback (single-day window), just not at 10:00.
+    const urgentBlock = blocks.find((b) => b.taskId === 'urgent');
+    expect(urgentBlock.startTime).toBe('10:00');
+    const lowBlock = blocks.find((b) => b.taskId === 'low');
+    expect(lowBlock).toBeTruthy();
+    expect(lowBlock.startTime).not.toBe('10:00');
+    expect(overflow).toHaveLength(0);
+  });
+
+  it('a passive fixedTime task is excluded from the pre-pass and can overlap a non-passive task at the same slot', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const passiveFixed = {
+      id: 'laundry', title: 'Laundry', estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-01',
+      enforceDueDate: true, fixedTime: '10:00', isPassive: true,
+    };
+    const nonPassive = {
+      id: 'meeting', title: 'Meeting', estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-01',
+      enforceDueDate: true, fixedTime: '10:00',
+    };
+
+    const { blocks, overflow } = allocateTasks([passiveFixed, nonPassive], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const laundryBlock = blocks.find((b) => b.taskId === 'laundry');
+    const meetingBlock = blocks.find((b) => b.taskId === 'meeting');
+    // Both land at 10:00 -- passive tasks are allowed to overlap, and since
+    // laundry never competed in the pre-pass, the non-passive task still got
+    // first crack at 10:00 in the normal pass with nothing carved out yet.
+    expect(laundryBlock.startTime).toBe('10:00');
+    expect(meetingBlock.startTime).toBe('10:00');
+  });
+});
+
+// Regression coverage for Change 2: a fixedTime task's same-day fallback
+// (allowSameDayFallback, only possible with a single-day/enforceDueDate
+// window) must be flagged to the caller even when it fully succeeds --
+// landing at an unrequested time-of-day is worth surfacing regardless of
+// whether every hour got placed.
+describe('allocateTasks: timeShifted -- fixed-time same-day fallback is always flagged', () => {
+  it('flags a fixedTime task in timeShifted when the fallback engages and fully places the leftover hours elsewhere', () => {
+    // 09:00-10:00 busy (an event), so the 10:00 fixedTime slot is actually
+    // free -- instead conflict it directly: an event sits ON the fixed time.
+    const events = [{ id: 'ev1', date: '2026-07-01', startTime: '10:00', endTime: '10:30' }];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
+    const task = {
+      id: 'fixed1', title: 'Fixed task', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '10:00',
+    };
+
+    const { blocks, overflow, timeShifted } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    // Fully placed -- not in overflow.
+    expect(overflow).toHaveLength(0);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(1, 5);
+    // But NOT at 10:00 (the event occupies it), so it must be flagged.
+    expect(blocks.every((b) => b.startTime !== '10:00')).toBe(true);
+    expect(timeShifted).toHaveLength(1);
+    expect(timeShifted[0].taskId).toBe('fixed1');
+    expect(timeShifted[0].reason.type).toBe('fixed_time_shifted');
+    expect(timeShifted[0].reason.conflictingItem.id).toBe('ev1');
+  });
+
+  it('does not flag a fixedTime task in timeShifted when it places cleanly at its pinned time', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const task = {
+      id: 'fixed2', title: 'Fixed task', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '10:00',
+    };
+
+    const { blocks, overflow, timeShifted } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    expect(timeShifted).toHaveLength(0);
+    expect(blocks[0].startTime).toBe('10:00');
+  });
+
+  it('does not flag a multi-day (non-single-day-window) fixedTime task -- the fallback only ever engages for a single-day window', () => {
+    // Multi-day window (no enforceDueDate): day 1 is entirely busy (an
+    // all-day event), so the task's pacing never even attempts a placement
+    // there. remainingHours is kept under PACING_SHARE_THRESHOLD_HOURS's
+    // per-day ideal-share gate (0.5h) so pass 1 doesn't fragment a sliver
+    // onto day 2 at the fixed time either -- it's fully claimed there in one
+    // continuous chunk by the sweep pass instead. No same-day fallback (that
+    // only ever applies to a single-day/enforceDueDate window) should engage.
+    const events = [{ id: 'ev1', date: '2026-07-01', startTime: '00:00', endTime: '23:59' }];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 2, { routines: [], blocks: [], rules: baseRules, events });
+    const task = {
+      id: 'fixed3', title: 'Fixed task', estimatedHours: 0.4, remainingHours: 0.4,
+      dueDate: '2026-07-02', fixedTime: '10:00',
+    };
+
+    const { blocks, overflow, timeShifted } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    expect(timeShifted).toHaveLength(0);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].date).toBe('2026-07-02');
+    expect(blocks[0].startTime).toBe('10:00');
+  });
+});
+
+// Regression coverage: a fixedTime slot outside working hours entirely (not
+// occupied by anything -- just never in bounds) must be reported as a
+// distinct, specific reason instead of falling through to generic
+// no_capacity, so the UI can say "outside your working hours" rather than a
+// vague capacity message.
+describe('allocateTasks: fixed_time_outside_hours', () => {
+  it('reports fixed_time_outside_hours when the pinned time is before the work day starts', () => {
+    // A multi-day window (dueDate two days out, no enforceDueDate) where
+    // EVERY day's pinned time is outside working hours -- windowStart !==
+    // windowEnd, so the same-day fallback (Change 2, single-day-window only)
+    // never engages, and the task genuinely can't be placed anywhere in its
+    // window: a clean `overflow`-reported `fixed_time_outside_hours`.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 2, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const task = {
+      id: 'early', title: 'Too early', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-02', fixedTime: '06:00', // workDayStart is 09:00
+    };
+
+    const { overflow } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
+
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('fixed_time_outside_hours');
+  });
+
+  it('reports fixed_time_outside_hours when the pinned time is at/after the work day ends', () => {
+    const capacityMap = computeHorizonCapacity('2026-07-01', 2, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const task = {
+      id: 'late', title: 'Too late', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-02', fixedTime: '18:00', // workDayEnd is 17:00
+    };
+
+    const { overflow } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
+
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('fixed_time_outside_hours');
+  });
+
+  it('still reports fixed_time_conflict (not outside_hours) when the pinned time IS within working hours but occupied', () => {
+    const events = [{ id: 'ev1', date: '2026-07-01', startTime: '09:00', endTime: '17:00' }]; // whole day busy
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events });
+    const task = {
+      id: 'occupied', title: 'Occupied slot', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '10:00',
+    };
+
+    const { overflow } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].reason.type).toBe('fixed_time_conflict');
+    expect(overflow[0].reason.conflictingItem.id).toBe('ev1');
+  });
+
+  it('a single-day-window fixedTime task with an outside-hours pinned time still gets rescued by the same-day fallback and reported as fixed_time_shifted, not overflow', () => {
+    // Single-day window (today === dueDate under a 1-day horizon) DOES allow
+    // the same-day fallback to engage (see allowSameDayFallback) regardless
+    // of WHY the pinned slot failed -- an outside-hours bounds issue is no
+    // different from an occupied-slot conflict here. So this ends up fully
+    // placed (via ordinary first-fit) and flagged via `timeShifted`, not
+    // reported as unplaced `overflow`.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const task = {
+      id: 'early_singleday', title: 'Too early, single day', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', fixedTime: '06:00',
+    };
+
+    const { blocks, overflow, timeShifted } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    expect(blocks).toHaveLength(1);
+    expect(timeShifted).toHaveLength(1);
+    expect(timeShifted[0].reason.type).toBe('fixed_time_shifted');
+  });
+});

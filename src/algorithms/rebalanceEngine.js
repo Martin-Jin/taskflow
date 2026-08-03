@@ -168,12 +168,14 @@ function buildDependencyBlockedEntries(blockedTasks, taskById) {
 }
 
 /**
- * Resolve a `fixed_time_conflict` overflow entry's `conflictingItem.label`
- * when it's `null` — only ever true for a `block` source (see
- * capacityEngine.js's collectBusyIntervals, which has no task lookup of its
- * own), where `conflictingItem.id` is the OWNING TASK's id. Every other
- * source (`event`/`routine`) already carries its real label from
- * capacityEngine and is left untouched.
+ * Resolve a `fixed_time_conflict` (or `fixed_time_shifted`) entry's
+ * `conflictingItem.label` when it's `null` — only ever true for a `block`
+ * source (see capacityEngine.js's collectBusyIntervals, which has no task
+ * lookup of its own), where `conflictingItem.id` is the OWNING TASK's id.
+ * Every other source (`event`/`routine`) already carries its real label from
+ * capacityEngine and is left untouched. Works generically off
+ * `entry.reason?.conflictingItem`, so the same call resolves both `overflow`
+ * and `timeShifted` lists (see allocateTasks' doc comment for their shapes).
  */
 function resolveConflictLabels(overflow, taskById) {
   return overflow.map((entry) => {
@@ -185,15 +187,15 @@ function resolveConflictLabels(overflow, taskById) {
 
 /**
  * Strip the `::occurrenceDate` virtual-id suffix off every returned block's
- * (and overflow entry's) `taskId` — this must never leak into persisted
- * state. The block's own `date` field (already set to the occurrence date by
- * expandRecurringTasks above) is what distinguishes one occurrence's block
- * from another everywhere else in the app.
+ * (and overflow/timeShifted entry's) `taskId` — this must never leak into
+ * persisted state. The block's own `date` field (already set to the
+ * occurrence date by expandRecurringTasks above) is what distinguishes one
+ * occurrence's block from another everywhere else in the app.
  */
-function stripVirtualIds(newBlocks, overflow) {
+function stripVirtualIds(newBlocks, overflow, timeShifted) {
+  const strip = (o) => (o.taskId.includes('::') ? { ...o, taskId: stripOccurrenceSuffix(o.taskId) } : o);
   const blocks = newBlocks.map((b) => (b.taskId.includes('::') ? { ...b, taskId: stripOccurrenceSuffix(b.taskId) } : b));
-  const strippedOverflow = overflow.map((o) => (o.taskId.includes('::') ? { ...o, taskId: stripOccurrenceSuffix(o.taskId) } : o));
-  return { blocks, overflow: strippedOverflow };
+  return { blocks, overflow: overflow.map(strip), timeShifted: timeShifted.map(strip) };
 }
 
 /**
@@ -204,9 +206,13 @@ function stripVirtualIds(newBlocks, overflow) {
  * @param {import('../types').CalendarEvent[]} params.events
  * @param {import('../types').SchedulingRules} params.rules
  * @param {string} [params.fromDate] - Defaults to today; days before this are never touched.
- * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}>, stats: Object }}
+ * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}>, timeShifted: Array<{taskId:string,reason:Object}>, stats: Object }}
  *   `overflow` includes both allocator-reported entries (see allocator.js's allocateTasks) and dependency-blocked
  *   tasks that never reached the allocator (`reason.type === 'dependency_blocked'`) — see buildDependencyBlockedEntries.
+ *   `timeShifted` passes through allocateTasks' own `timeShifted` list unchanged (label-resolved/virtual-id-stripped
+ *   the same way as `overflow`) — every fixedTime task whose same-day fallback placed it at an unrequested
+ *   time-of-day, regardless of whether its hours were fully placed. Dependency-blocked tasks never reach the
+ *   allocator, so they can never appear here.
  */
 export function rebalance({ tasks, existingBlocks, routines, events, rules, fromDate }) {
   const today = fromDate || toISODate(new Date());
@@ -368,14 +374,14 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // handed to allocateTasks; its occurrences supersede it entirely.
   const horizonEnd = addDays(today, horizonDays - 1);
   const { normal: normalEligible, virtualOccurrences } = expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizonEnd);
-  const { blocks: rawBlocks, overflow: rawOverflow } = allocateTasks(
+  const { blocks: rawBlocks, overflow: rawOverflow, timeShifted: rawTimeShifted } = allocateTasks(
     [...normalEligible, ...virtualOccurrences],
     capacityMap,
     rules,
     today,
     withVirtualEntries(taskById, virtualOccurrences)
   );
-  const { blocks: newBlocks, overflow: allocatorOverflow } = stripVirtualIds(rawBlocks, rawOverflow);
+  const { blocks: newBlocks, overflow: allocatorOverflow, timeShifted: strippedTimeShifted } = stripVirtualIds(rawBlocks, rawOverflow, rawTimeShifted);
   // Dependency-blocked tasks never reach allocateTasks, so they're appended
   // here rather than coming back through stripVirtualIds — see
   // buildDependencyBlockedEntries.
@@ -383,6 +389,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     [...allocatorOverflow, ...buildDependencyBlockedEntries(dependencyBlockedTasks, taskById)],
     taskById
   );
+  const timeShifted = resolveConflictLabels(strippedTimeShifted, taskById);
 
   // 5. Merge: historical locked/completed (untouched) + locked (untouched) +
   //    completed (untouched) + freshly allocated. A stale, never-completed
@@ -399,5 +406,5 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     blockedByDependencies,
   };
 
-  return { blocks: finalBlocks, overflow, stats };
+  return { blocks: finalBlocks, overflow, timeShifted, stats };
 }

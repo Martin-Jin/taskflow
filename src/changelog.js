@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.92.0',
+    date: '2026-08-04',
+    title: 'Fixed-time tasks now always keep their exact slot',
+    changes: [
+      'A task with a fixed time (e.g. "Piano at 5pm") no longer loses its exact slot to a higher-priority flexible task during rebalancing — fixed-time tasks are now placed first, so their pinned time always wins unless another, more urgent fixed-time task genuinely needs the same slot.',
+      'If a fixed-time task can\'t get its exact slot on a day with nowhere else to go and ends up placed at a different time that same day, that\'s now flagged as a scheduling conflict you can review, even when every hour still got scheduled somewhere.',
+      'A fixed time that falls entirely outside your working hours is now called out with its own clear message ("outside your working hours") instead of a generic "not enough capacity" one.',
+    ],
+  },
+  {
     version: '1.91.3',
     date: '2026-08-04',
     title: '"Apply to all sub-tasks" stays put; calendar toolbar cleanup',

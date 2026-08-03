@@ -141,11 +141,20 @@
  *                                              exactly this time on whatever day the allocator schedules them —
  *                                              overriding the normal first-fit placement within a day (the task is
  *                                              still scheduled/paced across its window like any other task; only the
- *                                              *time of day* is pinned, not the day itself). If that exact slot is
- *                                              already taken on a given day, that day's placement is simply skipped
- *                                              (no fallback to another time), and any hours that can't be placed
- *                                              surface through the normal overflow reporting — see allocator.js's
- *                                              placeFixedTimeInDay. Null/absent means no override (the normal case).
+ *                                              *time of day* is pinned, not the day itself). A non-passive fixedTime
+ *                                              task also gets first crack at its slot via a dedicated pre-pass —
+ *                                              see allocator.js's allocateTasks — so a higher-scored-but-not-fixedTime
+ *                                              task can never bump it from its pinned time. If that exact slot is
+ *                                              already taken on a given day, that day's placement is normally simply
+ *                                              skipped (no fallback to another time) and any hours that can't be
+ *                                              placed surface through the normal overflow reporting — EXCEPT when
+ *                                              the task's whole window is a single day (enforceDueDate) with no other
+ *                                              day to retry on, in which case leftover hours fall back to an ordinary
+ *                                              first-fit slot elsewhere that same day (see placeAndRecordBlocks'
+ *                                              allowSameDayFallback) and the task is flagged as `fixed_time_shifted`
+ *                                              in allocateTasks' returned `timeShifted` list even if every hour still
+ *                                              got placed. See allocator.js's placeFixedTimeInDay. Null/absent means
+ *                                              no override (the normal case).
  * @property {string[]} [labelIds]           - IDs of Labels (see Label typedef) attached to this task, e.g. via the
  *                                              "@tag" smart-parse shorthand in the title. App-local only — has no
  *                                              Todoist equivalent and is never pushed/pulled by todoistService.
@@ -300,6 +309,12 @@
  * @property {number} totalAvailableHours     - Hours left after subtracting routines + calendar events.
  * @property {number} allocatedHours          - Hours already claimed by scheduled blocks (this run).
  * @property {Array<{start:string,end:string}>} freeIntervals - Open time windows, sorted, in "HH:MM" pairs.
+ * @property {Array<Object>} [busyIntervals] - Raw tagged busy intervals (minutes-since-midnight) used by the
+ *   allocator to identify what occupies a fixedTime task's slot on failure — see capacityEngine.js's
+ *   collectBusyIntervals.
+ * @property {{start:number,end:number}} [workWindow] - The day's overall working-hours bounds (minutes-since-
+ *   midnight, nowClamp-adjusted), distinct from freeIntervals — lets the allocator tell "occupied by something"
+ *   apart from "outside working hours entirely" for a fixedTime task (see allocator.js's placeFixedTimeInDay).
  */
 
 /**

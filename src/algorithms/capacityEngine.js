@@ -116,6 +116,14 @@ export function computeDayCapacity(date, ctx) {
     // can identify what's occupying a `fixedTime` task's target slot when
     // placement fails — see collectBusyIntervals' doc comment.
     busyIntervals: busy,
+    // The day's overall working-hours bounds (minutes-since-midnight, already
+    // nowClamp-adjusted for "today") — distinct from freeIntervals, which are
+    // just the OPEN slices within this window after subtracting busy time.
+    // Kept so the allocator can tell "a fixedTime task's pinned slot is inside
+    // working hours but something occupies it" (findFixedTimeConflict) apart
+    // from "the pinned slot was never inside working hours at all" (see
+    // allocator.js's placeFixedTimeInDay / fixed_time_outside_hours).
+    workWindow,
   };
 }
 
