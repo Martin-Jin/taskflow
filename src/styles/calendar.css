@@ -774,7 +774,15 @@
    lighter diagonal texture is a legitimate "look but don't touch" cue here
    specifically (unlike the plain base style, which should read as fully
    interactive). */
+/* Read-only events (subscribed calendars) visually match regular events now.
+   The previous striped read-only styling has been moved to the scheduler
+   "ignored" / free-time style so stripes indicate scheduler-ignored events only. */
 .cal-event.is-readonly {
+  cursor: pointer;
+}
+
+.cal-event.free-time {
+  /* Scheduler-ignored / Treat as free time — visually a muted striped texture */
   background: repeating-linear-gradient(
     45deg,
     var(--color-bg-surface-hover),
@@ -784,15 +792,7 @@
   );
   border-left-style: dashed;
   color: var(--color-text-secondary);
-  /* Not draggable (WeekView disables drag/resize for read-only events), so
-     override .cal-event-item's grab cursor — still clickable, hence pointer
-     rather than default/not-allowed. */
-  cursor: pointer;
-}
-
-.cal-event.free-time {
-  opacity: 0.5;
-  border-left-style: dotted;
+  opacity: 0.95;
 }
 
 /* CalendarEvents get full drag/resize parity with ScheduledBlocks (see
@@ -1045,10 +1045,23 @@
    timetable) — still clickable to view details, but the dashed border +
    muted text is the same "look but don't touch" cue .cal-event.is-readonly
    uses in week/day view. */
+/* Subscribed/read-only month chips should match regular look; the
+   striped/dashed "ignored" treatment is reserved for series marked free-time */
 .month-chip-event.is-readonly {
+  /* keep clickable appearance but no striped/greyed treatment */
+}
+
+.month-chip-event.free-time {
   border-left-style: dashed;
   border-left-color: var(--color-border-strong);
   color: var(--color-text-secondary);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-bg-surface-hover),
+    var(--color-bg-surface-hover) 4px,
+    var(--color-bg-surface) 4px,
+    var(--color-bg-surface) 8px
+  );
 }
 
 /* Sub-task chips only (see MonthView's parentTask) — muted inline suffix

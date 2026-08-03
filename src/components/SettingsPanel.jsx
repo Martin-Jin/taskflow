@@ -4,7 +4,7 @@
  * "Free Time / Ignore" overrides on recurring calendar events.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   Download,
   Upload,
@@ -216,8 +216,30 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     setShowBackupsModal(true);
   }
 
-  const recurringEvents = events.filter((e) => e.seriesId);
-  const allRecurringIgnored = recurringEvents.length > 0 && recurringEvents.every((e) => e.isFreeTime);
+  // Group events by their seriesId so repeating series are represented once
+  const seriesMap = useMemo(() => {
+    const m = new Map();
+    for (const ev of events) {
+      if (ev.seriesId) {
+        const key = ev.seriesId;
+        if (!m.has(key)) m.set(key, []);
+        m.get(key).push(ev);
+      }
+    }
+    return m;
+  }, [events]);
+
+  const recurringSeriesCount = seriesMap.size;
+
+  function isSeriesIgnored(seriesId) {
+    // If there's a master row (id === seriesId), its isFreeTime field represents the whole series
+    const master = events.find((e) => e.id === seriesId);
+    if (master) return !!master.isFreeTime;
+    const group = seriesMap.get(seriesId) || [];
+    return group.length > 0 && group.every((e) => e.isFreeTime);
+  }
+
+  const allRecurringIgnored = recurringSeriesCount > 0 && Array.from(seriesMap.keys()).every((sid) => isSeriesIgnored(sid));
 
   useEffect(() => {
     function handlePointerDown(e) {
@@ -852,7 +874,9 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           </div>
         )}
         <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+          {/* Non-recurring events first, sorted by date/time */}
           {[...events]
+            .filter((ev) => !ev.seriesId)
             .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime))
             .map((e) => (
               <div key={e.id} className="settings-row" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -873,6 +897,34 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                 </label>
               </div>
             ))}
+
+          {/* Repeating series — one row per seriesId */}
+          {Array.from(seriesMap.entries())
+            .map(([seriesId, occs]) => {
+              // sort occurrences and pick earliest to display a representative date/time
+              const sorted = occs.slice().sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+              const rep = events.find((e) => e.id === seriesId) || sorted[0];
+              const earliest = sorted[0];
+              const isIgnored = isSeriesIgnored(seriesId);
+              return { seriesId, rep, earliest, isIgnored };
+            })
+            .sort((a, b) => (a.earliest.date + a.earliest.startTime).localeCompare(b.earliest.date + b.earliest.startTime))
+            .map(({ seriesId, rep, earliest, isIgnored }) => (
+              <div key={`series_${seriesId}`} className="settings-row" style={{ borderBottom: '1px solid var(--color-border)' }}>
+                <span style={{ flex: 1, fontSize: 13, minWidth: 0 }}>
+                  {rep.title} <span style={{ color: 'var(--color-text-secondary)' }}>(repeating · {earliest.date} {earliest.startTime}–{earliest.endTime}{rep.calendarName && rep.calendarName !== 'primary' ? ` · ${rep.calendarName}` : ''})</span>
+                </span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={isIgnored}
+                    onChange={() => setEventIgnored(rep, !isIgnored, 'all')}
+                  />
+                  Treat as free time
+                </label>
+              </div>
+            ))}
+
           {events.length === 0 && (
             <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>No calendar events in the current planning horizon.</p>
           )}
