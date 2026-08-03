@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.2',
+    date: '2026-08-03',
+    title: 'Cleaner calendar overrides list, consistent search bar spacing',
+    changes: [
+      'Settings → Calendar event overrides now lists each repeating event once instead of one row per occurrence, and toggling "Treat as free time" applies to the whole series.',
+      'The striped "look but don\'t touch" styling is now shown only for events marked as free time (ignored by the scheduler) — read-only synced events display normally.',
+      "Fixed the Board view's search bar sitting further from the page title than List view's; the two now match, with a bit more breathing room below Board's search bar.",
+    ],
+  },
+  {
     version: '1.90.1',
     date: '2026-08-03',
     title: 'Fixed a stray border on help tooltip buttons',
