@@ -49,6 +49,51 @@ function isLocalId(id) {
   return typeof id === 'string' && /^new:\d+$/.test(id);
 }
 
+// ISO date (YYYY-MM-DD) / 24h "HH:MM" format checks — the worker only checks
+// these fields are non-empty strings (see cloudflare-worker/src/index.js's
+// normalizeOperationInput), so a malformed value from the LLM (e.g. "next
+// Tuesday", "2pm") would otherwise sail through as "valid" and only surface
+// as a confusing failure deep inside addTask/addManualEvent.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function isValidISODate(value) {
+  if (!ISO_DATE_RE.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+// Per-op field format checks, applied on top of OP_SHAPES' reference
+// validation — field name -> validator returning an error string, or null if valid.
+const FIELD_FORMAT_VALIDATORS = {
+  dueDate: (v) => (isValidISODate(v) ? null : `dueDate "${v}" is not a valid ISO date (YYYY-MM-DD).`),
+  date: (v) => (isValidISODate(v) ? null : `date "${v}" is not a valid ISO date (YYYY-MM-DD).`),
+  fixedTime: (v) => (TIME_RE.test(v) ? null : `fixedTime "${v}" is not a valid 24-hour time (HH:MM).`),
+  startTime: (v) => (TIME_RE.test(v) ? null : `startTime "${v}" is not a valid 24-hour time (HH:MM).`),
+  endTime: (v) => (TIME_RE.test(v) ? null : `endTime "${v}" is not a valid 24-hour time (HH:MM).`),
+};
+
+/** Validates date/time field formats on one operation; empty/omitted values are left to required-field checks. Returns an array of error strings. */
+function validateFieldFormats(operation) {
+  const errors = [];
+  for (const [field, validate] of Object.entries(FIELD_FORMAT_VALIDATORS)) {
+    const value = operation[field];
+    if (value === undefined || value === '') continue;
+    const error = validate(value);
+    if (error) errors.push(error);
+  }
+  if (
+    operation.op === 'create_event' &&
+    TIME_RE.test(operation.startTime) &&
+    TIME_RE.test(operation.endTime) &&
+    operation.endTime <= operation.startTime
+  ) {
+    errors.push(`endTime "${operation.endTime}" must be after startTime "${operation.startTime}".`);
+  }
+  return errors;
+}
+
 function buildRealIdRegistry(context) {
   const registry = {};
   for (const kind of Object.keys(KIND_TO_CONTEXT_KEY)) {
@@ -126,6 +171,8 @@ export function resolvePlan(operations, context) {
         }
       }
     }
+
+    errors.push(...validateFieldFormats(operation));
 
     return {
       index,

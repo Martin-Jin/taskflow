@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.92.1',
+    date: '2026-08-04',
+    title: 'AI Quick Add now catches malformed dates/times before they can be applied',
+    changes: [
+      'A due date, event date, or time that the AI proposes in a bad format (e.g. "next Tuesday" instead of an actual date) is now flagged as invalid on the review screen and can\'t be applied, instead of silently causing a broken date/time once you click Apply.',
+      'An event whose end time isn\'t after its start time is now flagged the same way.',
+    ],
+  },
+  {
     version: '1.92.0',
     date: '2026-08-04',
     title: 'Fixed-time tasks now always keep their exact slot',
