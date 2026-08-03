@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.1',
+    date: '2026-08-03',
+    title: 'Fixed a stray border on help tooltip buttons',
+    changes: [
+      "Removed an unintended border around the small \"?\" help buttons (e.g. next to Repeat's recurrence settings).",
+    ],
+  },
+  {
     version: '1.90.0',
     date: '2026-08-03',
     title: 'Smarter scheduling for split tasks',
