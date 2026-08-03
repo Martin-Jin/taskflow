@@ -1,10 +1,9 @@
 /**
- * SettingsPanel — configure fixed routines (sleep/meals/commute), global
- * SchedulingRules (buffer days, work-day window, pacing), and toggle
- * "Free Time / Ignore" overrides on recurring calendar events.
+ * SettingsPanel — configure fixed routines (sleep/meals/commute) and global
+ * SchedulingRules (buffer days, work-day window, pacing).
  */
 
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Download,
   Upload,
@@ -59,7 +58,6 @@ const SETTINGS_SECTIONS = [
   { id: 'integrations', label: 'Integrations' },
   { id: 'scheduling', label: 'Scheduling rules' },
   { id: 'routines', label: 'Fixed routines' },
-  { id: 'calendarOverrides', label: 'Calendar event overrides' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'tags', label: 'Tags' },
   { id: 'notifications', label: 'Notifications' },
@@ -111,9 +109,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     setRoutines,
     rules,
     setRules,
-    events,
-    setEventIgnored,
-    setAllRecurringIgnored,
     connectGoogleCalendar,
     googleConnected,
     googleNeedsReconnect,
@@ -215,31 +210,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     await refreshCloudBackups();
     setShowBackupsModal(true);
   }
-
-  // Group events by their seriesId so repeating series are represented once
-  const seriesMap = useMemo(() => {
-    const m = new Map();
-    for (const ev of events) {
-      if (ev.seriesId) {
-        const key = ev.seriesId;
-        if (!m.has(key)) m.set(key, []);
-        m.get(key).push(ev);
-      }
-    }
-    return m;
-  }, [events]);
-
-  const recurringSeriesCount = seriesMap.size;
-
-  function isSeriesIgnored(seriesId) {
-    // If there's a master row (id === seriesId), its isFreeTime field represents the whole series
-    const master = events.find((e) => e.id === seriesId);
-    if (master) return !!master.isFreeTime;
-    const group = seriesMap.get(seriesId) || [];
-    return group.length > 0 && group.every((e) => e.isFreeTime);
-  }
-
-  const allRecurringIgnored = recurringSeriesCount > 0 && Array.from(seriesMap.keys()).every((sid) => isSeriesIgnored(sid));
 
   useEffect(() => {
     function handlePointerDown(e) {
@@ -851,84 +821,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           resize — click its dot to pause/resume, click its label to rename.
         </p>
         <RoutineTimeline routines={routines} onAdd={addRoutine} onUpdate={updateRoutine} onRemove={removeRoutine} />
-      </div>
-
-      <div className="card" ref={(el) => (sectionRefs.current.calendarOverrides = el)}>
-        <h3 style={{ marginTop: 0 }}>Calendar event overrides</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6 }}>
-          Mark recurring events (lectures, optional meetings) as "Free Time" so tasks can be scheduled over them.
-          {googleConnected && ' Events are pulled from your primary calendar plus every calendar you subscribe to (e.g. a shared lecture timetable).'}
-        </p>
-        {recurringSeriesCount > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <button
-              className="btn"
-              style={{ fontSize: 12 }}
-              onClick={() => setAllRecurringIgnored(!allRecurringIgnored)}
-            >
-              {allRecurringIgnored ? 'Stop ignoring all repeating events' : 'Ignore all repeating events'}
-            </button>
-            <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
-              {recurringSeriesCount} repeating event{recurringSeriesCount === 1 ? '' : 's'} in the current horizon
-            </span>
-          </div>
-        )}
-        <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-          {/* Non-recurring events first, sorted by date/time */}
-          {[...events]
-            .filter((ev) => !ev.seriesId)
-            .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime))
-            .map((e) => (
-              <div key={e.id} className="settings-row" style={{ borderBottom: '1px solid var(--color-border)' }}>
-                <span style={{ flex: 1, fontSize: 13, minWidth: 0 }}>
-                  {e.title}{' '}
-                  <span style={{ color: 'var(--color-text-secondary)' }}>
-                    ({e.date} {e.startTime}–{e.endTime}
-                    {e.calendarName && e.calendarName !== 'primary' ? ` · ${e.calendarName}` : ''})
-                  </span>
-                </span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={e.isFreeTime}
-                    onChange={() => setEventIgnored(e, !e.isFreeTime, 'this')}
-                  />
-                  Treat as free time
-                </label>
-              </div>
-            ))}
-
-          {/* Repeating series — one row per seriesId */}
-          {Array.from(seriesMap.entries())
-            .map(([seriesId, occs]) => {
-              // sort occurrences and pick earliest to display a representative date/time
-              const sorted = occs.slice().sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
-              const rep = events.find((e) => e.id === seriesId) || sorted[0];
-              const earliest = sorted[0];
-              const isIgnored = isSeriesIgnored(seriesId);
-              return { seriesId, rep, earliest, isIgnored };
-            })
-            .sort((a, b) => (a.earliest.date + a.earliest.startTime).localeCompare(b.earliest.date + b.earliest.startTime))
-            .map(({ seriesId, rep, earliest, isIgnored }) => (
-              <div key={`series_${seriesId}`} className="settings-row" style={{ borderBottom: '1px solid var(--color-border)' }}>
-                <span style={{ flex: 1, fontSize: 13, minWidth: 0 }}>
-                  {rep.title} <span style={{ color: 'var(--color-text-secondary)' }}>(repeating · {earliest.date} {earliest.startTime}–{earliest.endTime}{rep.calendarName && rep.calendarName !== 'primary' ? ` · ${rep.calendarName}` : ''})</span>
-                </span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={isIgnored}
-                    onChange={() => setEventIgnored(rep, !isIgnored, 'all')}
-                  />
-                  Treat as free time
-                </label>
-              </div>
-            ))}
-
-          {events.length === 0 && (
-            <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>No calendar events in the current planning horizon.</p>
-          )}
-        </div>
       </div>
 
       <div className="card" data-tour="appearance-card" ref={(el) => (sectionRefs.current.appearance = el)}>

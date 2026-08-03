@@ -938,7 +938,12 @@ export function SchedulerProvider({ children }) {
       // the same tick).
       const prevTask = tasks.find((t) => t.id === taskId);
       const dueDateChanged = prevTask && 'dueDate' in updates && updates.dueDate !== prevTask.dueDate;
-      const hasScheduledBlock = dueDateChanged && blocks.some((b) => b.taskId === taskId && !b.isLocked);
+      // A duration change is just as disruptive to already-placed blocks as a
+      // due-date move: the existing block(s) reflect the OLD estimatedHours,
+      // so they're stale (too short/too long) the moment this changes — queue
+      // the same rebalance due-date changes use.
+      const durationChanged = prevTask && 'estimatedHours' in updates && updates.estimatedHours !== prevTask.estimatedHours;
+      const hasScheduledBlock = (dueDateChanged || durationChanged) && blocks.some((b) => b.taskId === taskId && !b.isLocked);
 
       // Function form — see addTask's comment just above.
       commit(
@@ -2176,11 +2181,6 @@ export function SchedulerProvider({ children }) {
     );
   }, []);
 
-  /** Bulk-toggle every recurring (seriesId-bearing) event's `isFreeTime` flag at once. */
-  const setAllRecurringIgnored = useCallback((ignored) => {
-    setEvents((prev) => prev.map((e) => (e.seriesId ? { ...e, isFreeTime: ignored } : e)));
-  }, []);
-
   const clearNotification = useCallback(() => setNotification(null), []);
 
   /**
@@ -2281,7 +2281,6 @@ export function SchedulerProvider({ children }) {
       updateEvent,
       deleteEvent,
       setEventIgnored,
-      setAllRecurringIgnored,
       connectGoogleCalendar,
       pullFromGoogleCalendar,
       pushToGoogleCalendar,
@@ -2368,7 +2367,6 @@ export function SchedulerProvider({ children }) {
       updateEvent,
       deleteEvent,
       setEventIgnored,
-      setAllRecurringIgnored,
       connectGoogleCalendar,
       pullFromGoogleCalendar,
       pushToGoogleCalendar,
