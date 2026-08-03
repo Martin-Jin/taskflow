@@ -14,8 +14,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+ /* Pull the board search bar up so it sits closer to the page title (matches List view spacing).
+    The Tasks page's sticky header has a 35px bottom gap while the list toolbar uses a 16px top margin —
+    pulling up by 19px aligns the board's search bar with the list's. Increase the bottom margin so the
+    board columns keep a comfortable space below the search bar (so only the search bar moves, not the
+    whole board content). */
+ margin-top: -19px;
+ margin-bottom: 33px;
+ flex-wrap: wrap;
 }
 
   .board-columns {
