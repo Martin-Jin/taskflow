@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.91.2',
+    date: '2026-08-04',
+    title: 'Fixed recurrence not applying to sub-tasks; tidied up the Apply button',
+    changes: [
+      '"Apply to all sub-tasks" now also copies the repeat setting onto every sub-task — previously it copied priority, due date, project/section, labels, and passive flag but silently skipped recurrence.',
+      '"Apply to all sub-tasks" now only appears after you\'ve actually changed one of the shared fields, instead of always showing whenever a task has sub-tasks — and it now matches the Save button\'s green styling.',
+    ],
+  },
+  {
     version: '1.91.1',
     date: '2026-08-04',
     title: 'Sub-task count indicator, expand arrow moved to row edge',

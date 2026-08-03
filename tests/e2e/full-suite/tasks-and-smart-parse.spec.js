@@ -149,6 +149,49 @@ test.describe('Sub-tasks', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+  test('"Apply to all sub-tasks" stays hidden until an edit is made, then cascades recurrence', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Apply All Parent ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    await page.keyboard.type('E2E apply-all child');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+
+    const applyAllBtn = page.getByRole('button', { name: /apply to all sub-tasks/i });
+    await expect(applyAllBtn).not.toBeVisible();
+
+    // Give the parent a due date, then turn on recurrence.
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await dueDateInput.fill('2026-08-20');
+    await page.getByRole('button', { name: /does not repeat/i }).click();
+    await page.waitForTimeout(200);
+
+    await expect(applyAllBtn).toBeVisible();
+    await expect(applyAllBtn).toHaveClass(/btn-primary/);
+    await applyAllBtn.click();
+    await page.waitForTimeout(300);
+
+    // Apply resets the dirty snapshot, so the button hides again until the next edit.
+    await expect(applyAllBtn).not.toBeVisible();
+
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    await searchAndOpen(page, 'E2E apply-all child');
+    await expect(page.locator('.detail-recurrence-toggle-active, .detail-recurrence-toggle')).toContainText(/every/i);
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Reopening a completed task', () => {
