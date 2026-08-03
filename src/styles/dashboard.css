@@ -193,6 +193,19 @@
   margin-top: 2px;
 }
 
+/* Surfaces other items overlapping the current one (see useNowAndNext's
+   overlapCount) so a same-time task/event doesn't just silently vanish. */
+.now-overlap-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .now-progress-track {
   height: 6px;
   border-radius: 999px;
@@ -405,6 +418,19 @@
   display: none;
 }
 
+/* Flags a row whose time range overlaps another row's — a flat time-sorted
+   list otherwise renders concurrent items identically to sequential ones. */
+.today-agenda-overlap-tag {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .today-agenda-title,
 .today-agenda-title-wrap {
   flex: 1;
@@ -457,6 +483,17 @@
 
   .today-agenda-completed-timestamp {
     display: none;
+  }
+
+  /* Row is already tight fitting time + title + a status label on mobile —
+     shrink the overlap tag to a compact dot instead of the full word. */
+  .today-agenda-overlap-tag {
+    font-size: 0;
+    padding: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-accent);
   }
 }
 

@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.1',
+    date: '2026-08-04',
+    title: 'Recurring calendar events now show on Today\'s agenda; overlaps flagged',
+    changes: [
+      'A recurring calendar event (e.g. a weekly gym slot or tutoring session you created directly in Google Calendar) now shows up correctly in "Today\'s agenda" every week — it used to only appear on the exact date of its very first occurrence and silently disappear every week after that, while non-recurring/subscribed events (like lecture timetables) were unaffected.',
+      '"Right now" can now surface a calendar event, not just a scheduled task, as what\'s currently happening.',
+      'When two or more things overlap at the same time, "Today\'s agenda" now tags the overlapping rows so it\'s clear they\'re concurrent rather than one after another, and "Right now" shows a "+N more" badge instead of silently hiding the other simultaneous item.',
+    ],
+  },
+  {
     version: '1.93.0',
     date: '2026-08-04',
     title: 'More reliable overdue-email sync on tab close',
