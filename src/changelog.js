@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.4',
+    date: '2026-08-03',
+    title: 'Fixed smart parse locking up when editing a task',
+    changes: [
+      'Fixed smart parse (e.g. typing "tomorrow" or "p2" into a task\'s title) permanently stopping in the task detail/edit view after its first suggestion applied — it would silently stop working for the rest of that edit, even for unrelated phrases, until the task was reopened.',
+      'Also removed a leftover empty CSS rule flagged by the editor (no visual change).',
+    ],
+  },
+  {
     version: '1.90.3',
     date: '2026-08-03',
     title: "Fixed Settings crash, Board search bar now matches List view exactly",

@@ -554,6 +554,50 @@ test.describe('Smart parse', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+  test('editing a task title keeps smart parse retriggerable after continuing to type (TaskDetailModal)', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `Edit smart parse retrigger ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    const dialog = page.getByRole('dialog');
+    const titleInput = dialog.locator('.smart-title-input');
+    const chipsRow = dialog.locator('.smart-chip-row');
+    const dueDateInput = dialog.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+
+    // Type a due-date phrase — chip should appear and the field should apply.
+    await titleInput.fill(`${title} tomorrow`);
+    await page.waitForTimeout(300);
+    await expect(chipsRow).toContainText('Due');
+    const dueDateAfterFirstParse = await dueDateInput.inputValue();
+    expect(dueDateAfterFirstParse).toBeTruthy();
+
+    // Continue typing (e.g. a trailing space) — the chip/apply must survive
+    // this, not silently revert-and-lock like the bug this test guards
+    // against (see useSmartTaskTitle.js's isUntouched() contract and each
+    // TaskDetailModal field's lastSmart*Ref guards).
+    await titleInput.fill(`${title} tomorrow `);
+    await page.waitForTimeout(300);
+    await expect(chipsRow).toContainText('Due');
+    await expect(dueDateInput).toHaveValue(dueDateAfterFirstParse);
+
+    // A different due-date phrase must still be able to re-parse afterward —
+    // this is what stayed permanently blocked under the bug.
+    await titleInput.fill(`${title} today`);
+    await page.waitForTimeout(300);
+    await expect(chipsRow).toContainText('Due');
+    const dueDateAfterSecondParse = await dueDateInput.inputValue();
+    expect(dueDateAfterSecondParse).toBeTruthy();
+    expect(dueDateAfterSecondParse).not.toEqual(dueDateAfterFirstParse);
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Validation edge cases', () => {
