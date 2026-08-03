@@ -27,13 +27,26 @@
  *      attention. See "PASSIVE TASK PLACEMENT" below.
  *   7. task.fixedTime ("HH:MM"), when set, pins every block placed for that
  *      task to start at that exact time of day instead of wherever first-fit
- *      would land — see placeFixedTimeInDay below. Exception: when the task's
- *      whole window is a single day (enforceDueDate) and the pinned slot
- *      isn't available that day, there's no OTHER day left to retry on — see
- *      placeAndRecordBlocks' allowSameDayFallback,
- *      which lets the leftover hours fall back to ordinary first-fit
- *      placement elsewhere that same day rather than reporting a visibly free
- *      day as out of capacity.
+ *      would land — see placeFixedTimeInDay below. Every non-passive
+ *      fixedTime task is placed in a dedicated PRE-PASS before any other task
+ *      (fixedTime or not) — see allocateTasks' "FIXED-TIME PRE-PASS" — so a
+ *      fixed time commitment always wins its exact slot regardless of a
+ *      competing task's priority/urgency score; only a higher-scored
+ *      fixedTime task competing for the SAME slot can still take it first.
+ *      Exception: when the task's whole window is a single day
+ *      (enforceDueDate) and the pinned slot isn't available that day, there's
+ *      no OTHER day left to retry on — see placeAndRecordBlocks'
+ *      allowSameDayFallback, which lets the leftover hours fall back to
+ *      ordinary first-fit placement elsewhere that same day rather than
+ *      reporting a visibly free day as out of capacity. Whenever that
+ *      fallback engages, the task is flagged as `fixed_time_shifted` in
+ *      allocateTasks' returned `timeShifted` list — even when every hour
+ *      still gets placed, the task landed at an unrequested time-of-day, and
+ *      that's surfaced to the user rather than staying silent. A pinned time
+ *      that never falls within a day's working hours at all (as opposed to
+ *      being occupied by something) is reported distinctly too, as
+ *      `fixed_time_outside_hours`, instead of falling through to a generic
+ *      "no capacity" reason.
  *   8. A "blocker" task (one with at least one other incomplete task
  *      depending on it — see computeBlockerIds) skips even-pacing/front-load
  *      entirely and greedily claims as much of each day's capacity as it can,
@@ -545,6 +558,22 @@ function findFixedTimeConflict(fixedStartMins, neededMins, busyIntervals, gapMin
 }
 
 /**
+ * True when the fixed time-of-day never fell within the day's working-hours
+ * window at all (e.g. a 06:00 fixedTime task when work hours start at 09:00)
+ * — as opposed to falling inside working hours but being occupied by
+ * something. `workWindow` is capacityEngine's per-day `{start, end}` bounds
+ * (minutes-since-midnight, already nowClamp-adjusted for "today" — see
+ * computeDayCapacity). Returns false (never reports "outside hours") if
+ * `workWindow` wasn't supplied, so callers that don't have it (e.g. a unit
+ * test constructing a bare capacityMap) fall back to the old generic
+ * `no_capacity` behavior instead of a false positive.
+ */
+function isOutsideWorkingHours(fixedStartMins, workWindow) {
+  if (!workWindow) return false;
+  return fixedStartMins < workWindow.start || fixedStartMins >= workWindow.end;
+}
+
+/**
  * Like placeHoursInDay, but for a task with `fixedTime` set: the placement
  * MUST start at `fixedStartMins` (the fixed time-of-day, in minutes) rather
  * than wherever first-fit would land. Finds the single free interval that
@@ -570,27 +599,34 @@ function findFixedTimeConflict(fixedStartMins, neededMins, busyIntervals, gapMin
  *
  * On failure, also attempts to identify WHAT occupies the slot (see
  * findFixedTimeConflict) using `dayBusyIntervals`/`gapMins` — surfaced as
- * `conflict` on the returned object (null if nothing tagged overlaps) so the
- * caller can report a specific reason rather than a generic one.
+ * `conflict` on the returned object (null if nothing tagged overlaps). If
+ * nothing occupies it AND the fixed time was never inside the day's
+ * working-hours bounds at all (see isOutsideWorkingHours/`workWindow`), that
+ * distinction is surfaced separately via `outsideWorkingHours: true` — a
+ * bounds issue, not a "something's in the way" conflict — so the caller can
+ * report a specific reason rather than falling through to generic
+ * `no_capacity`.
  */
-function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartMins, chunkState, floorHours = hours, dayBusyIntervals, gapMins = 0) {
+function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartMins, chunkState, floorHours = hours, dayBusyIntervals, gapMins = 0, workWindow) {
   const hoursToPlace = Math.min(hours, maxChunkHours);
   const effectiveMinChunk = floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
   const neededMins = Math.round(effectiveMinChunk * 60);
 
   if (chunkState.used >= chunkState.max) {
-    return { placedHours: 0, placements: [], conflict: null };
+    return { placedHours: 0, placements: [], conflict: null, outsideWorkingHours: false };
   }
 
   const idx = dayFreeIntervals.findIndex((iv) => iv.start <= fixedStartMins && iv.end > fixedStartMins);
   if (idx === -1) {
-    return { placedHours: 0, placements: [], conflict: findFixedTimeConflict(fixedStartMins, neededMins, dayBusyIntervals, gapMins) };
+    const conflict = findFixedTimeConflict(fixedStartMins, neededMins, dayBusyIntervals, gapMins);
+    return { placedHours: 0, placements: [], conflict, outsideWorkingHours: !conflict && isOutsideWorkingHours(fixedStartMins, workWindow) };
   }
 
   const interval = dayFreeIntervals[idx];
   const availableHours = (interval.end - fixedStartMins) / 60;
   if (availableHours < effectiveMinChunk - EPSILON_HOURS) {
-    return { placedHours: 0, placements: [], conflict: findFixedTimeConflict(fixedStartMins, neededMins, dayBusyIntervals, gapMins) };
+    const conflict = findFixedTimeConflict(fixedStartMins, neededMins, dayBusyIntervals, gapMins);
+    return { placedHours: 0, placements: [], conflict, outsideWorkingHours: !conflict && isOutsideWorkingHours(fixedStartMins, workWindow) };
   }
 
   const takeHours = Math.min(hoursToPlace, availableHours);
@@ -607,7 +643,7 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartM
   dayFreeIntervals.splice(idx, 1, ...remainder);
 
   chunkState.used += 1;
-  return { placedHours: takeHours, placements: [{ start: placementStart, end: placementEnd }], conflict: null };
+  return { placedHours: takeHours, placements: [{ start: placementStart, end: placementEnd }], conflict: null, outsideWorkingHours: false };
 }
 
 /**
@@ -619,10 +655,12 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartM
  * `task.fixedTime` ("HH:MM") routes placement through placeFixedTimeInDay
  * instead of the normal first-fit placeHoursInDay — see that function and
  * the Task.fixedTime typedef for the override's semantics. `dayBusyIntervals`/
- * `gapMins` are only consulted on that path, to identify a conflict on
- * failure; when found (and this is the first day this task has failed on),
- * it's recorded onto `conflictTracker` (Map<taskId, conflict>, mutated in
- * place) for allocateTasks to attach to the task's eventual overflow entry.
+ * `gapMins`/`workWindow` are only consulted on that path, to identify a
+ * conflict (or an outside-working-hours bounds issue) on failure; when found
+ * (and this is the first day this task has failed on), it's recorded onto
+ * `conflictTracker` (Map<taskId, {type, conflict}>, mutated in place — `type`
+ * is `'conflict'` or `'outside_hours'`) for allocateTasks to attach to the
+ * task's eventual overflow entry.
  *
  * `allowSameDayFallback`, when true, lets a `fixedTime` task that couldn't
  * fully place at its pinned time-of-day fall back to ordinary first-fit
@@ -638,6 +676,13 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartM
  * loops this per-day, and placeHoursInDay itself already splits across
  * multiple intervals within a day) is strictly better than reporting the
  * whole task as unschedulable while the calendar visibly shows free time.
+ * Whenever this fallback actually engages (whether or not it fully succeeds),
+ * `fallbackUsedTracker` (Set<taskId>, mutated in place, first-wins like
+ * `conflictTracker`) is marked for this task — even a fully-successful
+ * fallback means the task landed at an unrequested time-of-day, which
+ * allocateTasks surfaces to the user as a distinct `fixed_time_shifted`
+ * conflict entry rather than staying silent just because every hour got
+ * placed somewhere.
  *
  * `chunkState` (`{ used, max }`, mutated in place, shared across every call
  * for this task across all passes/days — see maxChunksFor/allocateTasks)
@@ -645,17 +690,17 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartM
  * chunk size is otherwise only bounded below by MIN_CHUNK_HOURS (5 min, with
  * a shorter-total exception — see placeHoursInDay).
  */
-function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, chunkState, allowSameDayFallback = false) {
+function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, chunkState, allowSameDayFallback = false, workWindow, fallbackUsedTracker) {
   const maxChunkHours = task.maxChunkHours ?? 4;
   // Floor the min-chunk check against the task's true total remaining hours,
   // not `hours` (which may already be a shrunk-down leftover from an earlier
   // pass) — see placeHoursInDay's floorHours comment.
   const floorHours = task.remainingHours;
   const result = task.fixedTime
-    ? placeFixedTimeInDay(hours, dayIntervals, maxChunkHours, timeToMinutes(task.fixedTime), chunkState, floorHours, dayBusyIntervals, gapMins)
+    ? placeFixedTimeInDay(hours, dayIntervals, maxChunkHours, timeToMinutes(task.fixedTime), chunkState, floorHours, dayBusyIntervals, gapMins, workWindow)
     : placeHoursInDay(hours, dayIntervals, maxChunkHours, chunkState, floorHours);
   let { placedHours, placements } = result;
-  const { conflict } = result;
+  const { conflict, outsideWorkingHours } = result;
   // Same-day fallback: the fixed slot couldn't take everything (or anything)
   // this task needed today, and there's no other day in its window to retry
   // on — so instead of giving up, try to place whatever's left over into the
@@ -669,6 +714,7 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
   if (task.fixedTime && allowSameDayFallback) {
     const leftoverHours = hours - placedHours;
     if (leftoverHours > EPSILON_HOURS) {
+      if (fallbackUsedTracker) fallbackUsedTracker.add(task.id);
       const fallback = placeHoursInDay(leftoverHours, dayIntervals, maxChunkHours, chunkState, floorHours - placedHours);
       if (fallback.placedHours > EPSILON_HOURS) {
         placedHours += fallback.placedHours;
@@ -676,7 +722,10 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
       }
     }
   }
-  if (conflict && conflictTracker && !conflictTracker.has(task.id)) conflictTracker.set(task.id, conflict);
+  if (conflictTracker && !conflictTracker.has(task.id)) {
+    if (conflict) conflictTracker.set(task.id, { type: 'conflict', conflict });
+    else if (outsideWorkingHours) conflictTracker.set(task.id, { type: 'outside_hours' });
+  }
   for (const p of placements) {
     newBlocks.push({
       id: `blk_${task.id}_${date}_${p.start}${idSuffix}`,
@@ -696,6 +745,23 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
 }
 
 /**
+ * Convert a `conflictTracker` entry (see placeAndRecordBlocks) into an
+ * overflow-shaped `reason` — `{ type: 'fixed_time_conflict', conflictingItem }`
+ * for an identified conflict, `{ type: 'fixed_time_outside_hours' }` for a
+ * bounds issue, or `null` if there's no tracked entry at all (falls through
+ * to the caller's own default, e.g. generic `no_capacity`).
+ */
+function trackedEntryToReason(tracked) {
+  if (!tracked) return null;
+  if (tracked.type === 'conflict') {
+    const c = tracked.conflict;
+    return { type: 'fixed_time_conflict', conflictingItem: { id: c.id, type: c.source, label: c.label, start: minutesToTime(c.start), end: minutesToTime(c.end) } };
+  }
+  if (tracked.type === 'outside_hours') return { type: 'fixed_time_outside_hours' };
+  return null;
+}
+
+/**
  * Main entry point: allocate remaining hours for all eligible tasks across
  * the capacity map, producing new ScheduledBlocks.
  *
@@ -707,17 +773,36 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
  *   resolve a due-date-less sub-task's nearest ancestor deadline (see resolveDueDate). Omit only if the caller
  *   knows none of `tasks` are ever due-date-less sub-tasks.
  * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}> }}
+ *   Every non-passive `fixedTime` task is placed in a PRE-PASS, before any other task gets a chance to compete for
+ *   its pinned slot — see the "FIXED-TIME PRE-PASS" section below. This means a fixedTime task's exact slot always
+ *   wins against a higher-scored-but-not-fixedTime task; only another, higher-scored fixedTime task (competing for
+ *   the literal same slot) can still take it first. A passive fixedTime task is NOT part of the pre-pass (passive
+ *   tasks never compete for shared capacity at all — see PASSIVE TASK PLACEMENT above) and places in the normal pass
+ *   exactly as before.
+ *
  *   Each overflow entry's `reason` is one of:
  *     - `{ type: 'fixed_time_conflict', conflictingItem: { id, type: 'routine'|'event'|'block', label, start, end } }`
  *       — the task has `fixedTime` set and something identifiable occupies that slot ('block' entries have
  *       `label: null`; the caller resolves it from the owning task, see rebalanceEngine.js).
+ *     - `{ type: 'fixed_time_outside_hours' }` — the task has `fixedTime` set and the pinned time never fell within
+ *       the day's working-hours bounds at all (nothing occupies it — it's a bounds issue, not a conflict).
  *     - `{ type: 'no_capacity' }` — ran out of free time in the task's window; either it isn't `fixedTime`, or
- *       nothing tagged could be identified as the specific blocker (e.g. the fixed time is outside working hours).
- *       Never reported when the task's resolved due date is beyond `horizonEnd` (the capacityMap's last date):
- *       `no_capacity` there would just mean "ran out of visible horizon," not "no room before the real due
- *       date" — the task still has genuine runway past the horizon. `fixed_time_conflict` is unaffected by this
- *       (it's a real conflict on a specific day, not a horizon artifact), and a task with no resolvable due date
- *       at all keeps reporting as before, since there's nothing to compare against the horizon.
+ *       nothing tagged could be identified as the specific blocker and the pinned time WAS within working hours
+ *       (e.g. the chunk budget was already exhausted). Never reported when the task's resolved due date is beyond
+ *       `horizonEnd` (the capacityMap's last date): `no_capacity` there would just mean "ran out of visible
+ *       horizon," not "no room before the real due date" — the task still has genuine runway past the horizon.
+ *       `fixed_time_conflict`/`fixed_time_outside_hours` are unaffected by this (both are real, specific-day issues,
+ *       not a horizon artifact), and a task with no resolvable due date at all keeps reporting as before, since
+ *       there's nothing to compare against the horizon.
+ *   Separately, `timeShifted` lists every `fixedTime` task whose same-day fallback (see placeAndRecordBlocks'
+ *   `allowSameDayFallback`) actually engaged — i.e. the pinned slot couldn't take everything, so leftover hours were
+ *   placed elsewhere that same day — REGARDLESS of whether the task's hours ended up fully placed. A task can appear
+ *   here even when it does NOT appear in `overflow` (full placement, just not at the requested time): entries are
+ *   `{ taskId, reason: { type: 'fixed_time_shifted', conflictingItem? }, dueDate }`, mirroring `overflow`'s shape
+ *   minus `unplacedHours` (omitted — the hours WERE placed) so callers/UI can reuse the same rendering. `conflictingItem`
+ *   is included when something identifiable occupied the pinned slot itself (same shape as `fixed_time_conflict`'s),
+ *   omitted otherwise (e.g. the pinned time was simply outside working hours, or was fully consumed by budget/chunk
+ *   limits rather than another identifiable item).
  */
 export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   const dates = [...capacityMap.keys()].sort();
@@ -742,11 +827,19 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   const blockerIds = computeBlockerIds(tasks, taskById);
   const newBlocks = [];
   const overflow = [];
+  // Every fixedTime task whose same-day fallback actually engaged, whether or
+  // not it fully succeeded — see placeAndRecordBlocks' fallbackUsedTracker
+  // param and this function's own doc comment above (`timeShifted`).
+  const timeShifted = [];
   // First conflict found (if any) for each fixedTime task that fails to
   // place — see placeAndRecordBlocks/placeFixedTimeInDay/findFixedTimeConflict.
   // Kept across all three placement passes below so the earliest, most
   // relevant conflict wins rather than being overwritten by a later day.
+  // Values are `{ type: 'conflict', conflict } | { type: 'outside_hours' }`.
   const conflictTracker = new Map();
+  // First-wins (mirrors conflictTracker) per-task record of whether the
+  // same-day fallback ever engaged — see placeAndRecordBlocks.
+  const fallbackUsedTracker = new Set();
   const gapMins = rules.minGapBetweenBlocksMins ?? 0;
   // Running per-day deep-work budget (minutes remaining), shared across
   // non-passive tasks only — mirrors workingFree's passive/non-passive split,
@@ -759,7 +852,19 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   // holds a day back once ITS hours are genuinely spent by real placements.
   const dailyBudgetMins = new Map([...capacityMap.keys()].map((date) => [date, Math.round(rules.maxDailyDeepWorkHours * 60)]));
 
-  for (const task of prioritized) {
+  /**
+   * Places one task's remaining hours (all four passes: weighted-share,
+   * sweep, buffer-overflow, last-resort split) and appends its overflow entry
+   * if hours are left unplaced at the end. This is the ENTIRE per-task body
+   * `allocateTasks` used to run inline in a single loop over every
+   * priority-sorted task; it's now called twice — once for the non-passive
+   * `fixedTime` pre-pass, once for everyone else (see the "FIXED-TIME
+   * PRE-PASS" section below) — sharing the same `newBlocks`/`overflow`/
+   * `timeShifted`/`conflictTracker`/`fallbackUsedTracker`/`workingFree`/
+   * `passiveTemplate`/`dailyBudgetMins` across both calls so state carries
+   * over correctly between them.
+   */
+  function processTask(task) {
     const isBlocker = blockerIds.has(task.id);
     const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
     const frontLoad = !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
@@ -800,7 +905,8 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       const cappedHours = task.isPassive || budget == null ? hours : Math.min(hours, Math.max(0, budget / 60));
       const placedHours = placeAndRecordBlocks(
         task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
-        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, chunkState, singleDayWindow
+        capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, chunkState, singleDayWindow,
+        capacityMap.get(date)?.workWindow, fallbackUsedTracker
       );
       if (!task.isPassive && budget != null) dailyBudgetMins.set(date, budget - Math.round(placedHours * 60));
       return placedHours;
@@ -878,26 +984,53 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
     }
 
     if (remaining > EPSILON_HOURS) {
-      const conflict = task.fixedTime ? conflictTracker.get(task.id) : null;
-      const reason = conflict
-        ? { type: 'fixed_time_conflict', conflictingItem: { id: conflict.id, type: conflict.source, label: conflict.label, start: minutesToTime(conflict.start), end: minutesToTime(conflict.end) } }
-        : { type: 'no_capacity' };
+      const tracked = task.fixedTime ? conflictTracker.get(task.id) : null;
+      const reason = trackedEntryToReason(tracked) ?? { type: 'no_capacity' };
       // A `no_capacity` reason means "ran out of visible planning horizon,"
       // not "no room before the real due date" — if the task's resolved due
       // date (own, or a borrowed ancestor's — see resolveDueDate) is beyond
       // horizonEnd, it still has genuine runway that just isn't in the
       // current capacity map, so suppress the false report. A
-      // fixed_time_conflict is a real, specific-day conflict regardless of
-      // horizon, so it's still reported. Tasks with no resolvable due date
-      // at all have nothing to compare against the horizon, so they keep
-      // reporting as before.
+      // fixed_time_conflict/fixed_time_outside_hours is a real, specific-day
+      // issue regardless of horizon, so it's still reported. Tasks with no
+      // resolvable due date at all have nothing to compare against the
+      // horizon, so they keep reporting as before.
       const resolvedDueDate = resolveDueDate(task, taskById);
       const isFalseHorizonOverflow = reason.type === 'no_capacity' && resolvedDueDate && resolvedDueDate > horizonEnd;
       if (!isFalseHorizonOverflow) {
         overflow.push({ taskId: task.id, unplacedHours: Math.round(remaining * 100) / 100, reason, dueDate: task.dueDate ?? null });
       }
     }
+
+    // A fixedTime task whose same-day fallback engaged landed at least some
+    // hours at an unrequested time-of-day — surface that even when every hour
+    // still ended up placed (remaining <= EPSILON_HOURS above), since full
+    // placement doesn't mean the user's requested exact time was honored. See
+    // this function's own doc comment (`timeShifted`) and placeAndRecordBlocks'
+    // fallbackUsedTracker.
+    if (task.fixedTime && fallbackUsedTracker.has(task.id)) {
+      const trackedReason = trackedEntryToReason(conflictTracker.get(task.id));
+      const shiftedReason = { type: 'fixed_time_shifted', ...(trackedReason?.conflictingItem ? { conflictingItem: trackedReason.conflictingItem } : {}) };
+      timeShifted.push({ taskId: task.id, reason: shiftedReason, dueDate: task.dueDate ?? null });
+    }
   }
 
-  return { blocks: newBlocks, overflow };
+  // ----------------------------------------------------------------------
+  // FIXED-TIME PRE-PASS: every non-passive fixedTime task places FIRST, so
+  // its pinned slot is carved out of `workingFree` before any other task
+  // (fixedTime or not) gets a chance to compete for that time — a fixed
+  // time commitment should always win its exact slot regardless of the
+  // other task's priority/urgency score. Sorted by the same score as the
+  // main pass so two competing fixedTime tasks still resolve by
+  // priority/urgency, just among themselves first. Passive fixedTime tasks
+  // are excluded (they draw from `passiveTemplate`, never `workingFree` —
+  // see PASSIVE TASK PLACEMENT — so they never compete for shared capacity
+  // regardless of pass ordering) and are left in the normal pass below.
+  // ----------------------------------------------------------------------
+  const fixedTimeTasks = prioritized.filter((t) => t.fixedTime && !t.isPassive);
+  const restTasks = prioritized.filter((t) => !t.fixedTime || t.isPassive);
+  for (const task of fixedTimeTasks) processTask(task);
+  for (const task of restTasks) processTask(task);
+
+  return { blocks: newBlocks, overflow, timeShifted };
 }

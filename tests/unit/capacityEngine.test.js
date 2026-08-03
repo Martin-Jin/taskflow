@@ -16,6 +16,22 @@ describe('computeDayCapacity', () => {
     expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
   });
 
+  // workWindow (minutes-since-midnight) is distinct from freeIntervals -- it's
+  // the day's overall working-hours BOUNDS, used by allocator.js's
+  // placeFixedTimeInDay to tell "a fixedTime slot is occupied by something"
+  // apart from "the slot was never inside working hours at all".
+  it('exposes workWindow as the raw work-hours bounds in minutes, independent of busy time carved out of freeIntervals', () => {
+    const events = [{ date: '2026-07-01', startTime: '11:00', endTime: '12:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events, blocks: [] });
+    expect(result.workWindow).toEqual({ start: 9 * 60, end: 17 * 60 });
+  });
+
+  it('nowClamps workWindow.start forward on the current day without affecting other days', () => {
+    const nowClamp = { date: '2026-07-01', minutes: 13 * 60 }; // 13:00
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events: [], blocks: [], nowClamp });
+    expect(result.workWindow).toEqual({ start: 13 * 60, end: 17 * 60 });
+  });
+
   it('merges routines, events, and blocks into busy time correctly', () => {
     const routines = [{ isActive: true, daysOfWeek: [3], startTime: '09:00', endTime: '10:00' }];
     const events = [{ date: '2026-07-01', startTime: '11:00', endTime: '12:00' }];

@@ -839,13 +839,31 @@ export function SchedulerProvider({ children }) {
       result.stats.blockedByDependencies > 0
         ? ` ${result.stats.blockedByDependencies} task(s) held back pending dependencies.`
         : '';
+    // The toast's own count/message is intentionally based on `overflow`
+    // alone (tasks that genuinely couldn't be fully scheduled) — a
+    // `timeShifted` entry's hours WERE fully placed, just not at the
+    // requested exact time, so it would be misleading to count it toward
+    // "couldn't be fully scheduled." It's still surfaced in the "View
+    // details" modal alongside overflow, since the user should still know
+    // their fixedTime request wasn't honored exactly.
+    const allConflicts = [...result.overflow, ...result.timeShifted];
     if (result.overflow.length > 0) {
       setNotification({
         type: 'warning',
         message: `${result.overflow.length} task(s) couldn't be fully scheduled within their deadline window — consider extending due dates or freeing up capacity.${blockedNote}`,
         actionLabel: 'View details',
         onAction: () => {
-          setSchedulingConflicts(result.overflow);
+          setSchedulingConflicts(allConflicts);
+          setSchedulingConflictsModalOpen(true);
+        },
+      });
+    } else if (result.timeShifted.length > 0) {
+      setNotification({
+        type: 'warning',
+        message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote} ${result.timeShifted.length} fixed-time task(s) shifted to a different time today.`,
+        actionLabel: 'View details',
+        onAction: () => {
+          setSchedulingConflicts(allConflicts);
           setSchedulingConflictsModalOpen(true);
         },
       });

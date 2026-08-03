@@ -1,9 +1,12 @@
 /**
  * SchedulingConflictsModal — "View details" destination for the rebalance
  * toast (see SchedulerContext's runRebalance), listing every task that
- * couldn't be scheduled along with WHY: a fixed-time clash
- * with a specific event/routine/other task's block, an incomplete dependency
- * still blocking it, or simply no free capacity left in its window. Reuses
+ * couldn't be scheduled along with WHY: a fixed-time clash with a specific
+ * event/routine/other task's block, a fixed time that falls outside working
+ * hours entirely, an incomplete dependency still blocking it, simply no free
+ * capacity left in its window, or (distinct from all of those — the task's
+ * hours WERE fully placed) a fixed-time task that got shifted to a different
+ * time-of-day the same day via allocator.js's same-day fallback. Reuses
  * StatListModal (the same scrollable list-modal shell as the Dashboard's
  * "Missed"/"Overdue" tiles) rather than a bespoke layout.
  */
@@ -13,9 +16,15 @@ import { AlertTriangle, Ban, Clock3 } from 'lucide-react';
 import { addDays, formatDisplayDate, formatTime12h, toISODate } from '../../utils/dateUtils';
 import StatListModal from '../Dashboard/StatListModal';
 
-const REASON_ICON = { fixed_time_conflict: Clock3, dependency_blocked: Ban, no_capacity: AlertTriangle };
+const REASON_ICON = {
+  fixed_time_conflict: Clock3,
+  fixed_time_outside_hours: Clock3,
+  fixed_time_shifted: Clock3,
+  dependency_blocked: Ban,
+  no_capacity: AlertTriangle,
+};
 
-/** Plain-English explanation for one overflow entry's `reason`. */
+/** Plain-English explanation for one overflow/timeShifted entry's `reason`. */
 function describeReason(reason, task) {
   if (!reason) return "Couldn't fit in the available capacity.";
   switch (reason.type) {
@@ -24,6 +33,16 @@ function describeReason(reason, task) {
       const timeLabel = task?.fixedTime ? ` at ${formatTime12h(task.fixedTime)}` : '';
       if (!item) return `Couldn't schedule${timeLabel} — that time isn't available.`;
       return `Couldn't schedule${timeLabel} — conflicts with "${item.label}" (${formatTime12h(item.start)}–${formatTime12h(item.end)}).`;
+    }
+    case 'fixed_time_outside_hours': {
+      const timeLabel = task?.fixedTime ? ` (${formatTime12h(task.fixedTime)})` : '';
+      return `This time${timeLabel} is outside your working hours.`;
+    }
+    case 'fixed_time_shifted': {
+      const item = reason.conflictingItem;
+      const timeLabel = task?.fixedTime ? ` at ${formatTime12h(task.fixedTime)}` : '';
+      const conflictNote = item ? ` (conflicts with "${item.label}", ${formatTime12h(item.start)}–${formatTime12h(item.end)})` : '';
+      return `Could not be scheduled${timeLabel}${conflictNote} — placed elsewhere on the same day instead.`;
     }
     case 'dependency_blocked': {
       const deps = reason.blockingDependencies || [];
@@ -103,8 +122,12 @@ export default function SchedulingConflictsModal({ conflicts, tasks, onOpenDay, 
         const dayKey = conflictDayKey(item);
         const isNewDay = index === 0 || dayKey !== conflictDayKey(items[index - 1]);
         const dayLabel = describeDay(dayKey);
+        // Keyed by index rather than bare taskId: a task can legitimately
+        // appear twice in `items` now (e.g. an `overflow` entry AND a
+        // `fixed_time_shifted` `timeShifted` entry for the same fixedTime
+        // task/occurrence on the same run — see allocateTasks' doc comment).
         return (
-          <React.Fragment key={item.taskId}>
+          <React.Fragment key={`${item.taskId}_${dayKey || 'undated'}_${item.reason?.type || 'none'}_${index}`}>
             {isNewDay && <li className="stat-list-section-header">{dayLabel}</li>}
             <li
               className="missed-tasks-item is-openable"
