@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.0',
+    date: '2026-08-04',
+    title: 'More reliable overdue-email sync on tab close',
+    changes: [
+      'Completing a task and immediately closing the tab, switching apps, or putting your device to sleep could sometimes leave the completion un-synced, so the daily overdue-reminder email kept referencing a task you\'d already finished. The sync flush that runs when you leave the app now also triggers on browser tab/window close, closing another gap where the completion could be lost before it reached the cloud.',
+    ],
+  },
+  {
     version: '1.92.1',
     date: '2026-08-04',
     title: 'AI Quick Add now catches malformed dates/times before they can be applied',
