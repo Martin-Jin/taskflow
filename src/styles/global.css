@@ -847,18 +847,9 @@ select:focus-visible,
    visually with real action buttons; the popover itself borrows
    .select-menu-dropdown's surface/border/shadow language for consistency
    with the app's other anchored popups.
+   The trigger's border-color override itself lives further down, next to
+   .project-actions-trigger/.menu-trigger — see the comment there for why.
    ---------------------------------------------------------------------- */
-.help-tooltip-trigger {
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-}
-
-.help-tooltip-trigger:hover {
-  background: var(--color-bg-surface-hover);
-  border: none;
-}
-
 .help-tooltip-popover {
   width: max-content;
   max-width: 260px;
@@ -1069,6 +1060,19 @@ select:focus-visible,
 .project-actions-trigger[aria-expanded='true'],
 .menu-trigger:hover:not(:disabled),
 .menu-trigger[aria-expanded='true'] {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
+/* Same cascade concern as .project-actions-trigger/.menu-trigger above —
+   declared after .btn on purpose so this ghost look actually wins. */
+.help-tooltip-trigger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.help-tooltip-trigger:hover {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
 }
