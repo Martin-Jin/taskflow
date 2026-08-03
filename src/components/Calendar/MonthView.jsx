@@ -85,7 +85,7 @@ export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, on
                   return (
                     <div
                       key={`evt_${evt.id}`}
-                      className={`month-chip month-chip-event ${evt.canEdit === false ? 'is-readonly' : ''}`}
+                      className={`month-chip month-chip-event ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''}`}
                       onClick={() => onSelectEvent?.(evt)}
                       title={evt.title}
                     >
