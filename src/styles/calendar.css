@@ -1045,11 +1045,9 @@
    timetable) — still clickable to view details, but the dashed border +
    muted text is the same "look but don't touch" cue .cal-event.is-readonly
    uses in week/day view. */
-/* Subscribed/read-only month chips should match regular look; the
-   striped/dashed "ignored" treatment is reserved for series marked free-time */
-.month-chip-event.is-readonly {
-  /* keep clickable appearance but no striped/greyed treatment */
-}
+/* Subscribed/read-only month chips intentionally match the regular look; the
+   striped/dashed "ignored" treatment is reserved for series marked free-time.
+   No override rule needed here (kept out of the ruleset to avoid an empty block). */
 
 .month-chip-event.free-time {
   border-left-style: dashed;

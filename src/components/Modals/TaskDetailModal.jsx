@@ -626,21 +626,50 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // matches the value the task loaded with — the moment the user directly
   // touches that field's own widget it stops being "untouched" and smart
   // parse leaves it alone (same idea as handleNotesBlur's hours check below).
+  // Every field's own apply() moves its state away from the task's original
+  // value, which would otherwise permanently look "touched" after the first
+  // successful parse and block re-parsing on later edits (e.g. typing
+  // "tomorrow" then continuing to type would instantly lock dueDate). Each
+  // lastSmart*Ref below tracks the last value smart-parse itself set, so the
+  // field still counts as untouched until the user edits that field's own
+  // widget directly, at which point it genuinely diverges from both values.
   const lastSmartEstimatedHoursRef = useRef(null);
+  const lastSmartLinkRef = useRef(null);
+  const lastSmartDueDateRef = useRef(null);
+  const lastSmartRecurrenceRef = useRef(null);
+  const lastSmartPriorityRef = useRef(null);
+  const lastSmartUnattendedRef = useRef(null);
+  const lastSmartEnforceDueDateRef = useRef(null);
+  const lastSmartProjectRef = useRef(null);
+  const lastSmartDependencyIdRef = useRef(null);
   const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle, resetSmartState } = useSmartTaskTitle({
     tasks,
     projects,
     sections,
     fields: {
       link: {
-        isUntouched: () => link === (task.link || ''),
-        apply: (match) => setLink(match.url),
-        revert: () => setLink(task.link || ''),
+        isUntouched: () =>
+          link === (task.link || '') || (lastSmartLinkRef.current !== null && link === lastSmartLinkRef.current),
+        apply: (match) => {
+          lastSmartLinkRef.current = match.url;
+          setLink(match.url);
+        },
+        revert: () => {
+          lastSmartLinkRef.current = null;
+          setLink(task.link || '');
+        },
       },
       dueDate: {
-        isUntouched: () => dueDate === (task.dueDate || ''),
-        apply: (match) => setDueDate(match.iso),
-        revert: () => setDueDate(task.dueDate || ''),
+        isUntouched: () =>
+          dueDate === (task.dueDate || '') || (lastSmartDueDateRef.current !== null && dueDate === lastSmartDueDateRef.current),
+        apply: (match) => {
+          lastSmartDueDateRef.current = match.iso;
+          setDueDate(match.iso);
+        },
+        revert: () => {
+          lastSmartDueDateRef.current = null;
+          setDueDate(task.dueDate || '');
+        },
       },
       fixedTime: {
         isUntouched: () => !hasEditedFixedTime,
@@ -654,8 +683,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         },
       },
       recurrence: {
-        isUntouched: () => isRecurring === !!task.isRecurring,
+        isUntouched: () =>
+          isRecurring === !!task.isRecurring ||
+          (lastSmartRecurrenceRef.current !== null && isRecurring === lastSmartRecurrenceRef.current),
         apply: (match, detected) => {
+          lastSmartRecurrenceRef.current = true;
           setIsRecurring(true);
           setRecurrenceCount(match.rule.count);
           setRecurrenceUnit(match.rule.unit);
@@ -663,6 +695,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
         },
         revert: () => {
+          lastSmartRecurrenceRef.current = null;
           setIsRecurring(!!task.isRecurring);
           const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
           setRecurrenceCount(rule.count);
@@ -671,9 +704,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         },
       },
       priority: {
-        isUntouched: () => priority === task.priority,
-        apply: (match) => setPriority(match.level),
-        revert: () => setPriority(task.priority),
+        isUntouched: () =>
+          priority === task.priority || (lastSmartPriorityRef.current !== null && priority === lastSmartPriorityRef.current),
+        apply: (match) => {
+          lastSmartPriorityRef.current = match.level;
+          setPriority(match.level);
+        },
+        revert: () => {
+          lastSmartPriorityRef.current = null;
+          setPriority(task.priority);
+        },
       },
       estimatedHours: {
         // Smart parse's own apply() moves estimatedHours away from
@@ -695,13 +735,23 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         },
       },
       unattended: {
-        isUntouched: () => isPassive === !!task.isPassive,
-        apply: () => setIsPassive(true),
-        revert: () => setIsPassive(!!task.isPassive),
+        isUntouched: () =>
+          isPassive === !!task.isPassive || (lastSmartUnattendedRef.current !== null && isPassive === lastSmartUnattendedRef.current),
+        apply: () => {
+          lastSmartUnattendedRef.current = true;
+          setIsPassive(true);
+        },
+        revert: () => {
+          lastSmartUnattendedRef.current = null;
+          setIsPassive(!!task.isPassive);
+        },
       },
       enforceDueDate: {
-        isUntouched: () => enforceDueDate === !!task.enforceDueDate,
+        isUntouched: () =>
+          enforceDueDate === !!task.enforceDueDate ||
+          (lastSmartEnforceDueDateRef.current !== null && enforceDueDate === lastSmartEnforceDueDateRef.current),
         apply: (match, detected) => {
+          lastSmartEnforceDueDateRef.current = true;
           setEnforceDueDate(true);
           // "Enforce due date" is inert without a due date — commitChanges
           // below persists `enforceDueDate: enforceDueDate && !!nextDueDate`,
@@ -711,25 +761,41 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           // box the user just saw get checked. Set one, same as recurrence.
           if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
         },
-        revert: () => setEnforceDueDate(!!task.enforceDueDate),
+        revert: () => {
+          lastSmartEnforceDueDateRef.current = null;
+          setEnforceDueDate(!!task.enforceDueDate);
+        },
       },
       dependency: {
         isUntouched: () =>
-          dependsOn.length === (task.dependsOn || []).length && dependsOn.every((id) => (task.dependsOn || []).includes(id)),
+          (dependsOn.length === (task.dependsOn || []).length && dependsOn.every((id) => (task.dependsOn || []).includes(id))) ||
+          (lastSmartDependencyIdRef.current !== null && dependsOn.includes(lastSmartDependencyIdRef.current)),
         apply: (match) => {
-          if (match.task) setDependsOn((prev) => (prev.includes(match.task.id) ? prev : [...prev, match.task.id]));
+          if (match.task) {
+            lastSmartDependencyIdRef.current = match.task.id;
+            setDependsOn((prev) => (prev.includes(match.task.id) ? prev : [...prev, match.task.id]));
+          }
         },
         revert: (entry) => {
-          if (entry.task) setDependsOn((prev) => prev.filter((id) => id !== entry.task.id));
+          if (entry.task) {
+            if (lastSmartDependencyIdRef.current === entry.task.id) lastSmartDependencyIdRef.current = null;
+            setDependsOn((prev) => prev.filter((id) => id !== entry.task.id));
+          }
         },
       },
       project: {
-        isUntouched: () => projectId === (task.projectId || ''),
+        isUntouched: () =>
+          projectId === (task.projectId || '') ||
+          (lastSmartProjectRef.current !== null && projectId === lastSmartProjectRef.current),
         apply: (match) => {
-          if (match.project) handleProjectChange(match.project.id);
+          if (match.project) {
+            lastSmartProjectRef.current = match.project.id;
+            handleProjectChange(match.project.id);
+          }
           if (match.section && !hasEditedSection) setSectionId(match.section.id);
         },
         revert: () => {
+          lastSmartProjectRef.current = null;
           handleProjectChange(task.projectId || '');
           if (!hasEditedSection) setSectionId(task.sectionId || '');
         },
