@@ -11,6 +11,9 @@
     "jose": "^6.2.4"
   },
   "devDependencies": {
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.118.0"
+  },
+  "overrides": {
+    "undici": "^7.29.0"
   }
 }
