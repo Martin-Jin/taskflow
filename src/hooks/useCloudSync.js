@@ -353,9 +353,14 @@ export function useCloudSync({
   // entirely — the debounce timer never fires, so e.g. a just-completed
   // task's isCompleted:true never reaches Firestore, and the notify-worker
   // cron keeps reading the stale incomplete task and emailing overdue
-  // reminders for something the user already finished. `visibilitychange`
-  // (not just `beforeunload`) is used because iOS Safari/backgrounded tabs
-  // don't reliably fire beforeunload/pagehide's async continuation.
+  // reminders for something the user already finished. Three events are
+  // listened for since no single one is reliable everywhere: `visibilitychange`
+  // catches backgrounding/tab-close on iOS Safari (which doesn't reliably fire
+  // beforeunload/pagehide's async continuation), `pagehide` catches back/
+  // forward-cache navigation, and `beforeunload` catches desktop tab/window
+  // close cases the other two occasionally miss. None of these guarantee the
+  // write lands before teardown (the fetch can still be aborted mid-flight) —
+  // this narrows the race, it doesn't close it.
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
     const flush = () => {
@@ -370,9 +375,11 @@ export function useCloudSync({
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
     };
   }, [user, cloudSynced, runPushNow]);
 
