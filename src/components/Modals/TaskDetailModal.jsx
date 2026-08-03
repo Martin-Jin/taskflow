@@ -395,6 +395,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // (rendered right under the description, Todoist-style, instead of a
   // permanent footer) should show at all.
   const initialSnapshotRef = useRef(null);
+  // Latches true the first time isDirty goes true for this task, and only
+  // resets on task switch (see the [task.id] effect below) — unlike isDirty
+  // itself, this doesn't flip back to false the moment the sidebar's
+  // debounced auto-save (commitChanges) resets initialSnapshotRef to match
+  // the just-saved values. Drives the "Apply to all sub-tasks" button so it
+  // stays visible for the rest of this modal session once the user has
+  // edited a shared field, instead of disappearing ~500ms after each edit.
+  const hasEditedSharedFieldsRef = useRef(false);
   if (!initialSnapshotRef.current) {
     initialSnapshotRef.current = {
       title: task.title,
@@ -464,6 +472,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setLabelIds(task.labelIds || []);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
+    hasEditedSharedFieldsRef.current = false;
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
@@ -865,6 +874,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
   const isDirty = mainDirty || sidebarDirty;
+  if (isDirty) hasEditedSharedFieldsRef.current = true;
   // Checking "Fixed time" with no time chosen yet is an incomplete edit —
   // block it from silently autosaving (or from the explicit Save button)
   // until a time is actually picked.
@@ -1068,11 +1078,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
    * date/enforcement, recurrence, project/section, labels, and passive flag
    * — down onto every descendant sub-task (direct and nested, see
    * getAllDescendants). Only offered when the task actually has sub-tasks
-   * (isContainer) AND the user has actually edited one of these shared
-   * fields this session (isDirty) — see the Save row below, which hides the
-   * button otherwise. isContainer re-hides it the moment the last sub-task
-   * is removed (recomputed from the live `tasks` list each render); isDirty
-   * re-hides it once changes are saved/cancelled (snapshot reset).
+   * (isContainer) AND the user has edited one of these shared fields at some
+   * point this modal session (hasEditedSharedFieldsRef) — see the Save row
+   * below, which hides the button otherwise. isContainer re-hides it the
+   * moment the last sub-task is removed (recomputed from the live `tasks`
+   * list each render); hasEditedSharedFieldsRef only resets when the modal
+   * switches to a different task, NOT on every sidebar auto-save — sidebar
+   * fields debounce-save ~500ms after each edit (see the auto-save effect
+   * below), which resets initialSnapshotRef/isDirty back to false, but the
+   * button should stay available for the rest of the session rather than
+   * flash and disappear right after the edit that triggered it.
    *
    * Deliberately excludes title/notes/estimatedHours/dependsOn/fixedTime —
    * those are meant to stay per-task (a shared title would collide, a shared
@@ -1516,7 +1531,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 </div>
               </div>
 
-              {(mainDirty || (isContainer && isDirty)) && (
+              {(mainDirty || (isContainer && hasEditedSharedFieldsRef.current)) && (
                 <div className="detail-save-row">
                   {fixedTimeError && <p className="form-error">{fixedTimeError}</p>}
                   {mainDirty && (
@@ -1529,7 +1544,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       </button>
                     </>
                   )}
-                  {isContainer && isDirty && (
+                  {isContainer && hasEditedSharedFieldsRef.current && (
                     <button
                       type="button"
                       className="btn btn-primary"

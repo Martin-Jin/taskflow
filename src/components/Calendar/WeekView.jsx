@@ -40,7 +40,7 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
-import { isBlockCompletedLate, isBlockTaskCompleted } from '../../utils/missedTasks';
+import { isBlockTaskCompleted } from '../../utils/missedTasks';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import HoverPreviewCard from './HoverPreviewCard';
 
@@ -1216,12 +1216,11 @@ export default function WeekView({
               const displayTitle = parentTask?.title || task.title;
               const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
               const isCompleted = isBlockTaskCompleted(block, task);
-              const isCompletedLate = isBlockCompletedLate(block, task);
               return (
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${isCompleted ? 'block-completed' : ''} ${isCompletedLate ? 'block-completed-late' : ''}`}
+                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${isCompleted ? 'block-completed' : ''}`}
                   style={{
                     top,
                     height,

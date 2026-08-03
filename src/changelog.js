@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.91.3',
+    date: '2026-08-04',
+    title: '"Apply to all sub-tasks" stays put; calendar toolbar cleanup',
+    changes: [
+      '"Apply to all sub-tasks" no longer flashes and disappears right after an edit — it now stays visible for the rest of the time you have the task open, since the sidebar auto-saves your edit ~500ms later and that used to hide the button again immediately.',
+      'Removed the bordered box around the calendar\'s Refresh, Previous, Today, and Next buttons so they sit flush with the toolbar instead of standing out as separate boxes.',
+      'Fixed a completed-late calendar block showing two overlapping left-edge stripes (its priority color plus a warning accent) — the accent conflicted with the priority color and has been removed; a late completion is still called out with a "Completed late" label in the Today view.',
+    ],
+  },
+  {
     version: '1.91.2',
     date: '2026-08-04',
     title: 'Fixed recurrence not applying to sub-tasks; tidied up the Apply button',
