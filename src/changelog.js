@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.2',
+    date: '2026-08-04',
+    title: 'Sub-task input grows with your text; "+ Add" button stays put',
+    changes: [
+      'The "Add a sub-task" input now wraps to multiple lines (up to 3) as you type instead of scrolling horizontally in a single-line box. Enter still adds the sub-task; Shift+Enter inserts a newline.',
+      'Fixed the "+ Add" button stretching taller alongside the input as it grew to more lines — it now stays a fixed size.',
+    ],
+  },
+  {
     version: '1.93.1',
     date: '2026-08-04',
     title: 'Recurring calendar events now show on Today\'s agenda; overlaps flagged',
