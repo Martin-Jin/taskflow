@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.0',
+    date: '2026-08-03',
+    title: 'Smarter scheduling for split tasks',
+    changes: [
+      "The scheduler no longer wastes a task's last available time-split on a too-small early gap when a single larger block later in the day could fit the whole remaining time instead — fewer unnecessarily fragmented tasks like short practice sessions.",
+    ],
+  },
+  {
     version: '1.89.0',
     date: '2026-08-03',
     title: 'Fixed routines hover behavior swapped back',
