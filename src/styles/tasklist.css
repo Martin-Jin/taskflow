@@ -335,10 +335,8 @@
   background: var(--color-bg-surface-hover);
 }
 
-/* Collapse/expand chevron for a row with children, and a same-width blank
-   spacer for a childless nested row — keeps every depth's title text
-   starting at the same horizontal offset whether or not that particular
-   row has its own chevron. */
+/* Collapse/expand chevron for a row with children — sits at the row's
+   trailing edge (see task-row-restore below for the same pattern). */
 .task-row-collapse {
   flex-shrink: 0;
   align-self: flex-start;
@@ -355,10 +353,14 @@
   border-color: transparent;
 }
 
-.task-row-collapse-spacer {
-  display: inline-block;
-  width: var(--space-6);
-  flex-shrink: 0;
+/* Sub-task count next to the title, alongside the recurring/passive icons. */
+.task-row-subtask-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
 /* Restore action on a completed-tab row (see FILTER_TABS' "completed" tab) —

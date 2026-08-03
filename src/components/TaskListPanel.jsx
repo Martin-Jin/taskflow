@@ -40,7 +40,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw, Inbox } from 'lucide-react';
+import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useSound } from '../context/SoundContext';
@@ -368,13 +368,15 @@ export default function TaskListPanel({
    * they're derived from.
    */
   function renderTaskRow({ task, depth }) {
-    const hasChildren = (childrenByParentId.get(task.id) || []).length > 0;
+    const childCount = (childrenByParentId.get(task.id) || []).length;
+    const hasChildren = childCount > 0;
     return (
       <TaskRow
         key={task.id}
         task={task}
         depth={depth}
         hasChildren={hasChildren}
+        childCount={childCount}
         isCollapsed={collapsedIds.has(task.id)}
         motionEnabled={motionEnabled}
         labelById={labelById}
@@ -584,6 +586,7 @@ const TaskRow = React.memo(function TaskRow({
   task,
   depth,
   hasChildren,
+  childCount,
   isCollapsed,
   motionEnabled,
   labelById,
@@ -604,22 +607,6 @@ const TaskRow = React.memo(function TaskRow({
       style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
       onClick={() => onOpen(task.id)}
     >
-      {hasChildren ? (
-        <button
-          type="button"
-          className="btn btn-icon task-row-collapse"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleCollapse(task.id);
-          }}
-          aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
-          aria-expanded={!isCollapsed}
-        >
-          {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-        </button>
-      ) : (
-        depth > 0 && <span className="task-row-collapse-spacer" aria-hidden="true" />
-      )}
       <button
         className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
         onClick={(e) => {
@@ -648,6 +635,16 @@ const TaskRow = React.memo(function TaskRow({
             </a>
           ) : (
             task.title
+          )}
+          {hasChildren && (
+            <span
+              className="task-row-subtask-count"
+              style={{ verticalAlign: -2, marginLeft: 6 }}
+              title={`${childCount} sub-task${childCount === 1 ? '' : 's'}`}
+            >
+              <ListChecks size={12} aria-hidden="true" />
+              {childCount}
+            </span>
           )}
           {task.isRecurring && (
             <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
@@ -705,6 +702,20 @@ const TaskRow = React.memo(function TaskRow({
           aria-label={`Restore ${task.title}`}
         >
           <RotateCcw size={14} />
+        </button>
+      )}
+      {hasChildren && (
+        <button
+          type="button"
+          className="btn btn-icon task-row-collapse"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse(task.id);
+          }}
+          aria-label={isCollapsed ? `Expand ${task.title}` : `Collapse ${task.title}`}
+          aria-expanded={!isCollapsed}
+        >
+          {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
       )}
     </motion.div>
