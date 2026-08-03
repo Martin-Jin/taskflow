@@ -859,7 +859,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           Mark recurring events (lectures, optional meetings) as "Free Time" so tasks can be scheduled over them.
           {googleConnected && ' Events are pulled from your primary calendar plus every calendar you subscribe to (e.g. a shared lecture timetable).'}
         </p>
-        {recurringEvents.length > 0 && (
+        {recurringSeriesCount > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
             <button
               className="btn"
@@ -869,7 +869,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               {allRecurringIgnored ? 'Stop ignoring all repeating events' : 'Ignore all repeating events'}
             </button>
             <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
-              {recurringEvents.length} repeating event{recurringEvents.length === 1 ? '' : 's'} in the current horizon
+              {recurringSeriesCount} repeating event{recurringSeriesCount === 1 ? '' : 's'} in the current horizon
             </span>
           </div>
         )}

@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.90.3',
+    date: '2026-08-03',
+    title: 'Fixed Settings page crash',
+    changes: [
+      'Fixed a crash that broke the entire Settings page whenever a repeating calendar event existed (introduced by the previous release\'s calendar-overrides grouping change).',
+    ],
+  },
+  {
     version: '1.90.2',
     date: '2026-08-03',
     title: 'Cleaner calendar overrides list, consistent search bar spacing',
