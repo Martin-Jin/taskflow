@@ -267,6 +267,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [labelIds, setLabelIds] = useState(task.labelIds || []);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
+  const newSubtaskInputRef = useRef(null);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
@@ -957,6 +958,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionName: task.sectionName ?? null,
     });
     setNewSubtaskTitle('');
+    if (newSubtaskInputRef.current) newSubtaskInputRef.current.style.height = 'auto';
   }
 
   function handleCancelAddSubtask() {
@@ -1649,12 +1651,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     </p>
                   ) : isAddingSubtask ? (
                     <div className="subtask-add-row">
-                      <input
+                      <textarea
+                        ref={newSubtaskInputRef}
                         autoFocus
+                        rows={1}
                         value={newSubtaskTitle}
-                        onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                        onChange={(e) => {
+                          setNewSubtaskTitle(e.target.value);
+                          const el = e.target;
+                          el.style.height = 'auto';
+                          el.style.height = `${el.scrollHeight}px`;
+                        }}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
+                          if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             handleAddSubtask();
                           } else if (e.key === 'Escape') {
@@ -1665,6 +1674,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           if (!newSubtaskTitle.trim()) setIsAddingSubtask(false);
                         }}
                         placeholder="Add a sub-task…"
+                        className="subtask-add-textarea"
                         style={{ flex: 1 }}
                       />
                       <button type="button" className="btn" onClick={handleAddSubtask}>

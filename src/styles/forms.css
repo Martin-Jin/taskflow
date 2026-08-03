@@ -1345,6 +1345,25 @@
   margin-top: 4px;
 }
 
+.subtask-add-textarea {
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  resize: none;
+  overflow-y: auto;
+  max-height: calc(1.4em * 3 + 12px);
+  line-height: 1.4;
+}
+
+.subtask-add-textarea:focus {
+  border-color: var(--color-accent-border);
+  outline: none;
+}
+
 .subtask-add-trigger {
   display: flex;
   align-items: center;
