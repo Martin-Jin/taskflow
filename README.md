@@ -236,13 +236,14 @@ worth knowing:
   imported tasks is only created once.
 - **Sub-tasks** (Todoist items with a parent) come in as standalone tasks
   linked via `parentId`, listed under their parent in the task detail modal
-  and nested under it in the Tasks list — they're schedulable with or
-  without their own due date, same as a locally-created sub-task (see "How
-  the scheduler works" below). Todoist allows nesting subtasks arbitrarily
-  deep; anything below the first level is flattened onto the top-level
-  task's `parentId` rather than preserving the intermediate grouping (which
-  also means an imported sub-task is never more than 1 level deep, well
-  under the app's own 2-level nesting cap for locally-created sub-tasks).
+  and nested under it in the Tasks list — they're schedulable with their own
+  due date, or one inherited from their nearest dated ancestor, same as a
+  locally-created sub-task (see "How the scheduler works" below). Todoist
+  allows nesting subtasks arbitrarily deep; anything below the first level is
+  flattened onto the top-level task's `parentId` rather than preserving the
+  intermediate grouping (which also means an imported sub-task is never more
+  than 1 level deep, well under the app's own 2-level nesting cap for
+  locally-created sub-tasks).
 
 ### Google Calendar
 

@@ -43,12 +43,15 @@ default-priority, undated sibling sub-tasks) tiebreak on creation order —
 whichever sub-task was added first schedules first.
 
 A sub-task with no due date of its own borrows its nearest ancestor's due
-date for this calculation instead of falling back to the baseline "no
-deadline" urgency — the parent goal's deadline pressures its steps even
-when they aren't individually dated (see `resolveDueDate`). A **container**
-task (any task with ≥1 sub-task of its own) is never scored or scheduled
-directly at all, regardless of whether it has a due date — see "Sub-tasks
-and containers" below.
+date for this calculation (see `resolveDueDate`) — the parent goal's
+deadline pressures its steps even when they aren't individually dated. A
+sub-task needs a resolvable due date (its own, or an ancestor's) to reach
+the allocator at all, exactly like a top-level task needs its own — one
+with no due date anywhere in its ancestor chain is a checklist item, not
+schedulable work (see rebalanceEngine.js's `schedulable` filter). A
+**container** task (any task with ≥1 sub-task of its own) is never scored or
+scheduled directly at all, regardless of whether it has a due date — see
+"Sub-tasks and containers" below.
 
 A task's `effectiveDeadline` also absorbs pressure from anything that
 `dependsOn` it: if B depends on A and B is due soon, A is scored as if it
@@ -112,12 +115,25 @@ destroyed by a rebalance.
 
 ### Sub-tasks and containers
 
-A sub-task (`parentId` set) is scheduled exactly like a top-level task —
-same scoring, same pacing, same placement passes — with one twist: if it
-has no due date of its own, it borrows its nearest ancestor's due date as
-urgency pressure instead of the flat "no deadline" baseline (see
-`resolveDueDate` above). Nesting is capped at 2 levels (task → sub-task →
-sub-task of that sub-task), enforced going forward only.
+A sub-task (`parentId` set) is a normal, independently-schedulable Task in
+every respect (priority, dependencies, search, completion) — scheduled
+exactly like a top-level task, same scoring, same pacing, same placement
+passes — with the same one requirement: a resolvable due date. If it has no
+due date of its own, it borrows its nearest ancestor's due date, both as
+urgency pressure (see `resolveDueDate` above) and as the LATEST day its
+window can extend to (`getTaskWindow`) — a container's due date (enforced
+or not) is a soft "must finish every step by this day" deadline for its
+undated sub-tasks, never a hard "every step happens on this exact day"
+constraint (only a sub-task's own `enforceDueDate` collapses its own
+window). A sub-task with no due date anywhere in its ancestor chain is
+never scheduled, exactly like an undated top-level task (see
+rebalanceEngine.js's `schedulable` filter). A sub-task's own due date can
+never be set later than its nearest dated ancestor's — enforced in the UI
+(TaskDetailModal's save gate, WeekView's drag-to-reschedule guard) rather
+than silently clamped, since a step scheduled past its own goal's deadline
+could never actually finish that goal on time. Nesting is capped at 2
+levels (task → sub-task → sub-task of that sub-task), enforced going
+forward only.
 
 The moment a task has ≥1 sub-task, it becomes a **container**: it never
 gets its own calendar block again, no matter its own due date or hours —
@@ -125,9 +141,13 @@ only its leaf sub-tasks (or deeper leaves, if nested) do. Its
 `estimatedHours`/`remainingHours` become a live rollup of its children's
 own effective hours instead of an independently-editable number (see
 `utils/taskHierarchy.js`), and its own due date becomes purely an input
-into its children's urgency rather than something scheduled directly.
-Everything else on it (priority, lock state, min/max chunk hours, labels)
-stays independently editable, same as before.
+into its children's urgency/deadline rather than something scheduled
+directly. Everything else on it (priority, lock state, min/max chunk hours,
+labels) stays independently editable, same as before. TaskDetailModal offers
+an "Apply to all sub-tasks" action on a container (priority, due
+date/enforcement, project/section, labels, passive flag) that cascades onto
+every descendant, direct and nested (see `utils/taskHierarchy.js`'s
+`getAllDescendants`) — shown only while the task actually has sub-tasks.
 
 ### Dependencies and passive tasks
 

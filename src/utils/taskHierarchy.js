@@ -60,3 +60,66 @@ export function getEffectiveEstimatedHours(task, tasks) {
 export function getEffectiveRemainingHours(task, tasks) {
   return rollupHours(task, tasks, 'remainingHours', new Set());
 }
+
+/**
+ * Walk up `task.parentId` (arbitrarily deep — nesting is capped at 2 levels
+ * by the UI, but this walk stays general/defensive rather than assuming
+ * that) to find the nearest ancestor with its own `dueDate`. Returns null if
+ * `task` has no parent, or every ancestor up the chain is also undated.
+ * `visited` guards against a hand-edited/corrupted backup introducing a
+ * cycle, mirroring the same defensive pattern used elsewhere for parentId
+ * walks (e.g. SchedulerContext's getDescendantIds).
+ *
+ * Used to enforce that a sub-task's own due date can never be scheduled past
+ * its parent goal's deadline — see TaskDetailModal's due-date validation and
+ * WeekView/MonthView's drag-to-reschedule guard. This mirrors (but is a
+ * separate copy of) allocator.js's private findAncestorDueDate, which feeds
+ * the same date in as soft pacing pressure for undated sub-tasks rather than
+ * a hard validation boundary — kept here instead of exported from
+ * allocator.js so UI code doesn't reach into the scheduling engine's
+ * internals for an unrelated purpose.
+ */
+export function findNearestAncestorDueDate(task, tasksById) {
+  if (!task.parentId) return null;
+  const visited = new Set([task.id]);
+  let current = task;
+  while (current.parentId) {
+    const parent = tasksById.get ? tasksById.get(current.parentId) : tasksById[current.parentId];
+    if (!parent || visited.has(parent.id)) return null;
+    if (parent.dueDate) return parent.dueDate;
+    visited.add(parent.id);
+    current = parent;
+  }
+  return null;
+}
+
+/**
+ * All descendants of `taskId` (children, grandchildren, ...) as full Task
+ * objects, via the `parentId` chain — used by TaskDetailModal's "Apply to
+ * all sub-tasks" action, which cascades a parent's shared fields down its
+ * whole subtree (not just direct children), same depth as any other
+ * subtree-wide operation (see SchedulerContext's own getDescendantIds, used
+ * for completeTask/deleteTask's cascades — kept as a separate copy here
+ * since that one is module-private and returns ids only). `visited` guards
+ * against a hand-edited/corrupted backup introducing a `parentId` cycle.
+ */
+export function getAllDescendants(taskId, tasks) {
+  const childrenByParentId = new Map();
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    const siblings = childrenByParentId.get(t.parentId) || [];
+    siblings.push(t);
+    childrenByParentId.set(t.parentId, siblings);
+  }
+  const descendants = [];
+  const visited = new Set([taskId]);
+  const queue = [...(childrenByParentId.get(taskId) || [])];
+  while (queue.length > 0) {
+    const t = queue.pop();
+    if (visited.has(t.id)) continue;
+    visited.add(t.id);
+    descendants.push(t);
+    queue.push(...(childrenByParentId.get(t.id) || []));
+  }
+  return descendants;
+}

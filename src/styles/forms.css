@@ -480,7 +480,10 @@
 /* Inline Save/Cancel, shown right under the description once title/notes/
    any sidebar field actually differs from the last save — replaces a
    permanent footer bar (see TaskDetailModal's `isDirty`). Sits snug against
-   .detail-editbox right below it rather than floating with a gap. */
+   .detail-editbox right below it rather than floating with a gap. Also
+   hosts the "Apply to all sub-tasks" button (shown whenever this task has
+   sub-tasks, independent of mainDirty) — flex-end still reads fine with
+   just that one button when Save/Cancel aren't shown. */
 .detail-save-row {
   display: flex;
   justify-content: flex-end;
@@ -1365,6 +1368,12 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+}
+
+.subtask-header-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .subtask-hide-completed {

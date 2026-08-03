@@ -210,7 +210,7 @@ function findAncestorDueDate(task, taskById) {
  * exists (a top-level task with no due date, or a sub-task whose whole
  * ancestor chain is also undated).
  */
-function resolveDueDate(task, taskById) {
+export function resolveDueDate(task, taskById) {
   return task.dueDate || findAncestorDueDate(task, taskById);
 }
 
@@ -220,9 +220,14 @@ function resolveDueDate(task, taskById) {
  * `enforceDueDate` is set (the buffer doesn't apply — there's no "finish
  * early" cushion once the whole window is collapsed onto the due date).
  * `enforceDueDate` only ever applies against the task's OWN due date (per
- * its typedef) — never against a borrowed ancestor deadline, which is a
- * softer "pressure" signal, not a hard collapse-the-window override.
- * Returns null if there's no due date to resolve at all (see resolveDueDate).
+ * its typedef) — never against a borrowed ancestor deadline. An ancestor's
+ * due date (enforced or not) is always a soft "must finish by" deadline for
+ * an undated sub-task — it clamps the LATEST day the sub-task's window can
+ * extend to (see getTaskWindow), but never forces the sub-task onto one
+ * single day; a "must be done on this day" parent still just means "must be
+ * *finished* by this day" for its steps, not "every step happens on this
+ * exact day." Returns null if there's no due date to resolve at all (see
+ * resolveDueDate).
  */
 function getEffectiveDeadline(task, bufferDays, taskById) {
   const dueDate = resolveDueDate(task, taskById);

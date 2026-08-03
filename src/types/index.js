@@ -98,14 +98,20 @@
  *                                              (task -> sub-task -> sub-task of that sub-task — see
  *                                              TaskDetailModal's handleAddSubtask/isAtMaxSubtaskDepth), forward-only
  *                                              (no backfill against pre-existing data). A sub-task is a normal,
- *                                              independently-schedulable Task — it competes for calendar capacity
- *                                              like any other task, dated or not (see allocator.js's
- *                                              prioritizeTasks/resolveDueDate) — UNLESS it itself has ≥1 sub-task of
- *                                              its own, in which case it becomes a schedule-container (see
- *                                              rebalanceEngine.js and `estimatedHours` above) rather than ever
- *                                              getting its own calendar block. Excluded from Board/Gantt's own
- *                                              top-level card/row lists (see BoardView.jsx / GanttChart.jsx), which
- *                                              roll it up into its parent's progress badge instead.
+ *                                              independently-schedulable Task in every other respect (priority,
+ *                                              dependencies, search, completion) — it competes for calendar capacity
+ *                                              like any other task, needing a resolvable due date of its own or
+ *                                              borrowed from the nearest dated ancestor, exactly like a top-level
+ *                                              task needs its own (see allocator.js's resolveDueDate,
+ *                                              rebalanceEngine.js's schedulable filter) — UNLESS it itself has ≥1
+ *                                              sub-task of its own, in which case it becomes a schedule-container
+ *                                              (see rebalanceEngine.js and `estimatedHours` above) rather than ever
+ *                                              getting its own calendar block. An ancestor's `enforceDueDate` (see
+ *                                              below) also propagates onto an undated sub-task borrowing that
+ *                                              ancestor's due date — "must be done on this day" cascades down to the
+ *                                              steps toward it. Excluded from Board/Gantt's own top-level card/row
+ *                                              lists (see BoardView.jsx / GanttChart.jsx), which roll it up into its
+ *                                              parent's progress badge instead.
  * @property {string} [todoistId]            - The task's raw numeric/string id in Todoist (source === 'todoist' only). Used to push edits back via todoistService.
  * @property {string[]} [dependsOn]          - IDs of other Tasks that must be completed before this one is eligible
  *                                              for auto-scheduling. Empty/absent means no dependencies. Checked by
@@ -125,7 +131,12 @@
  *                                              === windowEnd === dueDate), overriding bufferDays and earliestDate
  *                                              (the more restrictive setting wins) — see allocator.js's
  *                                              getTaskWindow. Only meaningful when `dueDate` is set; ignored
- *                                              otherwise. Falsy/absent means no override (the normal case).
+ *                                              otherwise. Falsy/absent means no override (the normal case). Does NOT
+ *                                              propagate to sub-tasks borrowing this task's `dueDate` as their
+ *                                              ancestor deadline — a container's due date is always a soft
+ *                                              "must finish all steps by this day" deadline for its undated
+ *                                              sub-tasks (see allocator.js's resolveDueDate/getTaskWindow), never a
+ *                                              hard "every step happens on this exact day" constraint.
  * @property {string|null} [fixedTime]       - "HH:MM" 24hr local time. When set, this task's block(s) must start at
  *                                              exactly this time on whatever day the allocator schedules them —
  *                                              overriding the normal first-fit placement within a day (the task is

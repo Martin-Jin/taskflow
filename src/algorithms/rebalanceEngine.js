@@ -21,26 +21,24 @@
  * This guarantees "recalibrates future days without destroying manually
  * locked task blocks" from the requirements.
  *
- * A TOP-LEVEL TASK WITH NO DUE DATE IS NEVER SCHEDULED HERE. It still shows
- * up normally in the Tasks list and Board view (see todoistService.fetchTasks
- * + AddTaskModal), but an undated top-level task has no real deadline to plan
+ * A TASK WITH NO RESOLVABLE DUE DATE IS NEVER SCHEDULED HERE — this applies
+ * identically to top-level tasks and sub-tasks; a sub-task's "resolvable due
+ * date" is its own `dueDate` if set, otherwise the nearest ancestor's
+ * `dueDate` it can borrow (see allocator.js's resolveDueDate/
+ * findAncestorDueDate). Neither is scheduled without one. Such a task still
+ * shows up normally in the Tasks list and Board view (see
+ * todoistService.fetchTasks + AddTaskModal), but has no real deadline to plan
  * against — think a running checklist item like "Eggs" or "Meat" on a
  * shopping list, as opposed to time-blocked work. Handing one to the
  * allocator without a due date used to make it fall back to "spread
  * across the whole planning horizon" (see allocator.js's getTaskWindow),
  * which silently put grocery-list-style items on the calendar as if they
  * were real work blocks — not what a due-date-less task means. So the
- * eligibility filter below excludes an undated TOP-LEVEL task from ever
- * being handed to the allocator; any existing blocks for one are otherwise
- * left alone (locked ones are always preserved; unlocked ones are cleared
- * like any other unlocked block, and since the task is never re-eligible it
- * simply won't be replaced).
- *
- * A SUB-TASK (`parentId` set), by contrast, IS schedulable even with no due
- * date of its own — it's a concrete step toward its parent's goal, not a
- * checklist item, so it competes for capacity like any other undated task
- * (see allocator.js's prioritizeTasks/scoreTask; its parent's own due date,
- * if any, feeds in as urgency pressure — see allocator.js's resolveDueDate).
+ * eligibility filter below excludes any task with no resolvable due date from
+ * ever being handed to the allocator; any existing blocks for one are
+ * otherwise left alone (locked ones are always preserved; unlocked ones are
+ * cleared like any other unlocked block, and since the task is never
+ * re-eligible it simply won't be replaced).
  *
  * A CONTAINER PARENT (any task with ≥1 sub-task of its own, at any depth)
  * is excluded from allocation entirely, regardless of whether it has its
@@ -53,7 +51,7 @@
  */
 
 import { computeHorizonCapacity } from './capacityEngine';
-import { allocateTasks } from './allocator';
+import { allocateTasks, resolveDueDate } from './allocator';
 import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { generateTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
@@ -335,10 +333,9 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   //    behind both:
   //      - A CONTAINER PARENT (has ≥1 sub-task of its own) is never
   //        directly schedulable, dated or not — only its leaf sub-tasks are.
-  //      - A TOP-LEVEL task (no `parentId`) with no `dueDate` is a
-  //        checklist-style item, not schedulable work. A SUB-TASK with no
-  //        `dueDate` IS schedulable (it borrows its parent's due date as
-  //        urgency pressure instead — see allocator.js's resolveDueDate).
+  //      - Any task (top-level or sub-task) with no resolvable due date
+  //        (own or borrowed from an ancestor) is a checklist-style item,
+  //        not schedulable work — see allocator.js's resolveDueDate.
   //
   //    A task with unfinished dependencies (task.dependsOn) is also excluded
   //    entirely — it simply doesn't get a slot until every task it depends
@@ -358,7 +355,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       !t.isCompleted &&
       t.remainingHours > 0 &&
       !parentIds.has(t.id) &&
-      (!!t.dueDate || !!t.parentId)
+      !!resolveDueDate(t, taskById)
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
   const dependencyBlockedTasks = schedulable.filter((t) => !areDependenciesMet(t, taskById));

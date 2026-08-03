@@ -108,24 +108,21 @@ export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, on
                 const block = item.data;
                 const task = taskById[block.taskId];
                 if (!task) return null;
-                // A sub-task's chip appends its parent task's name, muted, on the
-                // SAME line rather than a true second line — month cells are too
-                // tight (only MAX_VISIBLE_ITEMS chips fit before "+N more") to
-                // afford doubling every chip's height, but the ellipsis overflow
-                // already on `.month-chip` still truncates gracefully when it
-                // doesn't fit — see WeekView for the roomier true-second-line
-                // treatment.
+                // A sub-task's chip shows its PARENT task's name instead of its
+                // own — the parent is the user-facing "goal" here, the actual
+                // sub-task title is only revealed once the chip is opened (see
+                // BlockDetailModal) — see WeekView for the same treatment.
                 const parentTask = task.parentId ? taskById[task.parentId] : null;
+                const displayTitle = parentTask?.title || task.title;
                 return (
                   <div
                     key={`blk_${block.id}`}
                     className="month-chip"
                     style={{ borderLeftColor: priorityColor(task.priority) }}
                     onClick={() => onSelectBlock?.(block)}
-                    title={`${task.title}${parentTask ? ` (sub-task of ${parentTask.title})` : ''} · ${block.startTime}–${block.endTime}`}
+                    title={`${displayTitle} · ${block.startTime}–${block.endTime}`}
                   >
-                    {task.title}
-                    {parentTask && <span className="month-chip-parent"> · {parentTask.title}</span>}
+                    {displayTitle}
                   </div>
                 );
               })}
