@@ -4,13 +4,14 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime, formatDisplayDateTime } from '../../utils/dateUtils';
 import { isBlockMissed, isBlockCompletedLate, isBlockTaskCompleted } from '../../utils/missedTasks';
+import { expandEventsForRange, expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import MarqueeText from '../Common/MarqueeText';
 
 export default function TodayAgenda() {
   const { tasks, blocks, events } = useScheduler();
-  const { current } = useNowAndNext(tasks, blocks);
+  const { current } = useNowAndNext(tasks, blocks, events);
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const listRef = useRef(null);
   const currentItemRef = useRef(null);
@@ -47,13 +48,28 @@ export default function TodayAgenda() {
           completedAt: task?.completedAt ?? null,
         };
       });
-    const eventItems = (events || [])
+    const eventItems = expandEventsForRange(events || [], today, today)
       .filter((e) => e.date === today)
       .map((e) => ({ id: e.id, eventId: e.id, startTime: e.startTime, endTime: e.endTime, title: e.title, isMissed: false }));
-    return [...blockItems, ...eventItems].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+    const merged = [...blockItems, ...eventItems].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+
+    // Flag any item whose time range overlaps another item's, so the list
+    // can surface an "overlaps" tag — a flat time-sorted list otherwise
+    // makes concurrent items visually indistinguishable from sequential ones.
+    return merged.map((item, i) => {
+      const startA = timeToMinutes(item.startTime);
+      const endA = timeToMinutes(item.endTime);
+      const overlaps = merged.some((other, j) => {
+        if (i === j) return false;
+        const startB = timeToMinutes(other.startTime);
+        const endB = timeToMinutes(other.endTime);
+        return startA < endB && startB < endA;
+      });
+      return { ...item, overlaps };
+    });
   }, [blocks, events, taskById]);
 
-  const currentId = current?.block.id ?? null;
+  const currentId = current?.kind === 'block' ? current.block.id : current?.kind === 'event' ? current.event.id : null;
 
   useEffect(() => {
     const container = listRef.current;
@@ -116,6 +132,11 @@ export default function TodayAgenda() {
                 </span>
                 <span className="today-agenda-time-compact">{formatTime(item.startTime)}</span>
               </span>
+              {item.overlaps && (
+                <span className="today-agenda-overlap-tag" title="Overlaps with another item at this time">
+                  overlaps
+                </span>
+              )}
               {item.link ? (
                 <a
                   href={item.link}
@@ -165,7 +186,9 @@ export default function TodayAgenda() {
         return task ? <TaskDetailModal task={task} onClose={() => setEditingTaskId(null)} /> : null;
       })()}
       {editingEventId && (() => {
-        const event = (events || []).find((e) => e.id === editingEventId);
+        const { masterId, occurrenceDate, isVirtual } = resolveEventId(editingEventId);
+        const master = (events || []).find((e) => e.id === masterId);
+        const event = isVirtual && master ? expandRecurringEvent(master, occurrenceDate, occurrenceDate)[0] : master;
         return event ? (
           <EventDetailModal
             event={event}
