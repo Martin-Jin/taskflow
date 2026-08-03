@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.91.1',
+    date: '2026-08-04',
+    title: 'Sub-task count indicator, expand arrow moved to row edge',
+    changes: [
+      'A task with sub-tasks now shows a small count badge next to its title (alongside the repeat icon), so you can see how many sub-tasks it has without opening it.',
+      'The expand/collapse arrow for sub-tasks moved from the left of the row to the right edge.',
+    ],
+  },
+  {
     version: '1.91.0',
     date: '2026-08-03',
     title: 'Overhauled sub-task scheduling: real deadlines, not a free pass',
