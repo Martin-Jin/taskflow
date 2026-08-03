@@ -19,9 +19,10 @@ export const CHANGELOG = [
   {
     version: '1.90.3',
     date: '2026-08-03',
-    title: 'Fixed Settings page crash',
+    title: "Fixed Settings crash, Board search bar now matches List view exactly",
     changes: [
       'Fixed a crash that broke the entire Settings page whenever a repeating calendar event existed (introduced by the previous release\'s calendar-overrides grouping change).',
+      "The Board view's search bar now renders in the same shared header as List view's, instead of a separate copy with its own spacing — the two are now visually identical, not just close.",
     ],
   },
   {

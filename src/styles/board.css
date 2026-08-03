@@ -10,24 +10,6 @@
   min-width: 0;
 }
 
-.board-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-/* Pull the board search bar up so it sits closer to the page title (matches List view spacing).
-   The Tasks page's sticky header has a 35px bottom gap while the list toolbar uses a 16px top margin —
-   pulling up by 19px aligns the board's search bar with the list's. Increase the bottom margin so the
-   board columns keep a comfortable space below the search bar (so only the search bar moves, not the
-   whole board content). Doubled-up selector (BoardView.jsx puts both classes on the same element) is
-   needed to out-specificity .tasklist-toolbar's own margin-top, which this element also carries. */
-.board-toolbar.tasklist-toolbar {
-  margin-top: -19px;
-  margin-bottom: 33px;
-}
-
   .board-columns {
     display: flex;
     flex: 1;
