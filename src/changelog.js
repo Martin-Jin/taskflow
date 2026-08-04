@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.18',
+    date: '2026-08-05',
+    title: 'Fixed calendar tasks still overflowing past their real end time',
+    changes: [
+      'The previous fix for this only caught extreme cases at max zoom-out. A short task stretched taller than its real time slot could still push the next task down far enough to overflow at any zoom level — that pair now reliably folds into an "N tasks" chip instead.',
+    ],
+  },
+  {
     version: '1.93.17',
     date: '2026-08-05',
     title: 'Fixed calendar tasks visually overflowing past their real end time at max zoom-out',

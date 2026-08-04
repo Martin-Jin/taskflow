@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN, EXCESSIVE_PUSHDOWN_PX } from '../../src/utils/calendarLayout';
+import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN, EXCESSIVE_PUSHDOWN_MIN, CLUSTER_MAX_GAP_MIN } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
 // minimal fields — the layout logic only reads type/data.isPassive/start/end.
@@ -251,13 +251,16 @@ describe('packLane', () => {
   });
 
   it('still stacks (does not fold) when the inherited pushdown stays within budget', () => {
-    // A single clamp's worth of pushdown onto an item with a comfortable
-    // natural gap should still just stack, not fold — this is the harmless
-    // Google-Calendar-style stretch the pushdown mechanism exists to allow.
+    // A predecessor whose natural height is already close to
+    // MIN_BLOCK_HEIGHT_PX only needs a small clamp-driven stretch, which
+    // translates to only a few real minutes of pushdown on its neighbour at
+    // any zoom — genuinely harmless Google-Calendar-style stretch, not the
+    // "clamp on a near-zero-duration item shoves the neighbour tens of
+    // minutes" case EXCESSIVE_PUSHDOWN_MIN exists to catch.
     const pxPerMin = 1.25;
     const items = [
-      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Short', title: 'Short' } },
-      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Long', title: 'Long' } },
+      { start: 538, end: 560, kind: 'single', type: 'block', data: { id: 'Short', title: 'Short' } }, // 22 real min, ~27.5px natural (barely needs clamping)
+      { start: 560, end: 620, kind: 'single', type: 'block', data: { id: 'Long', title: 'Long' } },
     ];
     const packed = packLane(items, pxPerMin);
     expect(packed).toHaveLength(2);
@@ -299,7 +302,24 @@ describe('packLane', () => {
     }
   });
 
-  it('EXCESSIVE_PUSHDOWN_PX is derived from MIN_BLOCK_HEIGHT_PX, not an independent magic number', () => {
-    expect(EXCESSIVE_PUSHDOWN_PX).toBeGreaterThan(0);
+  it('EXCESSIVE_PUSHDOWN_MIN is a small, positive real-minute budget', () => {
+    expect(EXCESSIVE_PUSHDOWN_MIN).toBeGreaterThan(0);
+    expect(EXCESSIVE_PUSHDOWN_MIN).toBeLessThan(CLUSTER_MAX_GAP_MIN);
+  });
+
+  it('folds regardless of zoom level once a near-zero-duration predecessor clamps to MIN_BLOCK_HEIGHT_PX', () => {
+    // At every real zoom level the app uses, a MIN_BLOCK_HEIGHT_PX clamp on a
+    // near-zero-duration item translates to tens of real minutes of pushdown
+    // (worse at low zoom, but still significant even at max zoom-in) — this
+    // must fold at every level, not just the extreme-zoom-out case.
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const items = [
+        { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Morning tasks', title: 'Morning tasks' } },
+        { start: 540, end: 585, kind: 'single', type: 'block', data: { id: 'Piano', title: 'Piano' } },
+      ];
+      const packed = packLane(items, pxPerMin);
+      expect(packed).toHaveLength(1);
+      expect(packed[0].kind).toBe('cluster');
+    }
   });
 });
