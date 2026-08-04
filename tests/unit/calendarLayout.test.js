@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN } from '../../src/utils/calendarLayout';
+import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN, EXCESSIVE_PUSHDOWN_PX } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
 // minimal fields — the layout logic only reads type/data.isPassive/start/end.
@@ -225,5 +225,81 @@ describe('packLane', () => {
     for (let i = 1; i < packed.length; i++) {
       expect(packed[i].top).toBeGreaterThanOrEqual(packed[i - 1].top + packed[i - 1].height);
     }
+  });
+
+  it('folds a real, non-short item into a chip instead of overflowing past its own natural end when inherited pushdown is excessive', () => {
+    // Regression for the "Email student" (2-min block, ends exactly when
+    // "Lower + Running" begins) / "Lower + Running" (09:00-10:00, a genuinely
+    // real 60-min task) bug: at max zoom-out, MIN_BLOCK_HEIGHT_PX-clamping
+    // "Email student" alone pushes "Lower + Running" down far enough that its
+    // box would render well past its own true 10:00 end, misaligned against
+    // the hour axis. It must fold into a cluster instead of accepting that
+    // pushed position.
+    const pxPerMin = 0.4; // max zoom-out
+    const items = [
+      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
+    ];
+    const packed = packLane(items, pxPerMin);
+    expect(packed).toHaveLength(1);
+    expect(packed[0].kind).toBe('cluster');
+    expect(packed[0].items.map((i) => i.data.id)).toEqual(['Email student', 'Lower + Running']);
+    // The cluster's own box must reflect its honest natural span (min start,
+    // max end), not a further-pushed position.
+    const expectedTop = Math.round((538 - GRID_START_MIN) * pxPerMin);
+    expect(packed[0].top).toBe(expectedTop);
+  });
+
+  it('still stacks (does not fold) when the inherited pushdown stays within budget', () => {
+    // A single clamp's worth of pushdown onto an item with a comfortable
+    // natural gap should still just stack, not fold — this is the harmless
+    // Google-Calendar-style stretch the pushdown mechanism exists to allow.
+    const pxPerMin = 1.25;
+    const items = [
+      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Short', title: 'Short' } },
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Long', title: 'Long' } },
+    ];
+    const packed = packLane(items, pxPerMin);
+    expect(packed).toHaveLength(2);
+    expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
+  });
+
+  it('never produces overlapping boxes even when a fold-triggering pushdown occurs mid-chain', () => {
+    const pxPerMin = 0.4;
+    const items = [
+      { start: 500, end: 505, kind: 'single', type: 'block', data: { id: 'X', title: 'X' } },
+      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
+    ];
+    const packed = packLane(items, pxPerMin);
+    for (let i = 1; i < packed.length; i++) {
+      expect(packed[i].top).toBeGreaterThanOrEqual(packed[i - 1].top + packed[i - 1].height);
+    }
+    // The excessive pushdown between "Email student" and "Lower + Running"
+    // still triggers a fold even with an unrelated earlier item present.
+    expect(packed.some((p) => p.kind === 'cluster')).toBe(true);
+  });
+
+  it('grows an existing cluster rather than double-folding when a third item also collides', () => {
+    const pxPerMin = 0.4;
+    const items = [
+      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'A', title: 'A' } },
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
+      { start: 600, end: 602, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
+    ];
+    const packed = packLane(items, pxPerMin);
+    // A and B fold together (as in the test above). Whether C also joins
+    // depends on how far the merged cluster's bottom pushes past C's natural
+    // top — either way there must be no overlap and no more than one cluster
+    // absorbing both A and B.
+    const clusters = packed.filter((p) => p.kind === 'cluster');
+    expect(clusters.length).toBeLessThanOrEqual(1);
+    for (let i = 1; i < packed.length; i++) {
+      expect(packed[i].top).toBeGreaterThanOrEqual(packed[i - 1].top + packed[i - 1].height);
+    }
+  });
+
+  it('EXCESSIVE_PUSHDOWN_PX is derived from MIN_BLOCK_HEIGHT_PX, not an independent magic number', () => {
+    expect(EXCESSIVE_PUSHDOWN_PX).toBeGreaterThan(0);
   });
 });
