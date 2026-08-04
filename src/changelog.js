@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.16',
+    date: '2026-08-05',
+    title: 'Fixed adjacent calendar tasks still visually overlapping',
+    changes: [
+      'A short task rendered taller than its real time slot could still visually collide with the very next task, since they were positioned independently. They now stack cleanly with no overlap.',
+    ],
+  },
+  {
     version: '1.93.15',
     date: '2026-08-05',
     title: 'Fixed long-enough calendar tasks still getting swallowed into "N tasks" chips',

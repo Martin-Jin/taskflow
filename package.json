@@ -1,7 +1,7 @@
 {
   "name": "taskflow",
   "private": true,
-  "version": "1.93.15",
+  "version": "1.93.16",
   "type": "module",
   "scripts": {
     "dev": "vite",

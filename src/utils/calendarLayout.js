@@ -354,17 +354,40 @@ export function packLane(items, pxPerMin) {
   });
 }
 
-/** Runs packLane independently within each (overlap group, lane) pair so
+/**
+ * Runs packLane independently within each (overlap group, lane) pair so
  * side-by-side (genuinely overlapping-in-time) items don't interfere with
- * each other's stacking — and so unrelated, non-overlapping groups that
- * happen to reuse the same lane index don't get chain-stacked together
- * (lane numbering from layoutDayItems is only unique within one group). */
+ * each other's stacking. Two DIFFERENT (groupId, lane) buckets can still sit
+ * directly adjacent on screen though (e.g. a 5-min item ending exactly when
+ * the next item starts lands each in its own overlap group, since they never
+ * overlap in time — see layoutDayItems) — a naive per-bucket-only pass would
+ * give the second bucket a fresh, unconstrained prevBottom, so nothing stops
+ * the first bucket's MIN_BLOCK_HEIGHT_PX-clamped box (stretched taller than
+ * its natural time slot) from visually overlapping the very next item's box.
+ * So this still buckets by (groupId, lane) to decide which items are lane-
+ * mates, but packs each lane INDEX in start-time order across the whole day,
+ * carrying prevBottom from one bucket into the next only when they're
+ * actually going to render back-to-back — see packLane's own doc comment for
+ * why this doesn't reintroduce the earlier chain-stacking-across-unrelated-
+ * groups bug (see git history) that (groupId, lane) bucketing was
+ * introduced to fix.
+ */
 export function computeDayPositions(items, pxPerMin) {
-  const byLane = new Map();
+  const byGroupLane = new Map();
   for (const item of items) {
     const key = `${item.groupId}:${item.lane}`;
-    if (!byLane.has(key)) byLane.set(key, []);
-    byLane.get(key).push(item);
+    if (!byGroupLane.has(key)) byGroupLane.set(key, []);
+    byGroupLane.get(key).push(item);
+  }
+
+  // Re-bucket by raw lane index so packLane can see every item that will
+  // ever render in that lane column, across every overlap group, in one
+  // continuous start-time-ordered pass.
+  const byLane = new Map();
+  for (const [key, laneItems] of byGroupLane) {
+    const lane = Number(key.split(':')[1]);
+    if (!byLane.has(lane)) byLane.set(lane, []);
+    byLane.get(lane).push(...laneItems);
   }
   const out = [];
   for (const laneItems of byLane.values()) out.push(...packLane(laneItems, pxPerMin));
