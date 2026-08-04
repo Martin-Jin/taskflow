@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseRecurrenceRule,
   computeNextDueDate,
+  computeRecurringDescendantUpdate,
   generateTaskOccurrences,
   findRecurrencePhrase,
   buildRecurrenceString,
@@ -122,6 +123,59 @@ describe('computeNextDueDate', () => {
   it('advances an every-2-weeks-on-Monday rule by a full 2-week cycle after wrapping', () => {
     // 2026-08-03 is a Monday; only day in the list, so wrap uses the 2-week interval.
     expect(computeNextDueDate('2026-08-03', 'every 2 weeks on Mon')).toBe('2026-08-17');
+  });
+});
+
+describe('computeRecurringDescendantUpdate', () => {
+  // Regression coverage for the bug where completing a recurring parent task
+  // unconditionally wiped every sub-task's dueDate to null, even when the
+  // sub-task was independently recurring with its own dueDate (e.g. after
+  // "Apply to all sub-tasks" copied isRecurring/recurrenceString/dueDate down
+  // from the parent) — see SchedulerContext.completeTask's recurring branch.
+
+  it('advances an independently-recurring descendant\'s own dueDate, and clears isCompleted', () => {
+    const descendant = {
+      isRecurring: true,
+      recurrenceString: 'every day',
+      dueDate: '2026-08-03',
+      isCompleted: true,
+    };
+    expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
+      dueDate: '2026-08-06', // based off today (08-05) since 08-03 is overdue, +1 day
+      isCompleted: false,
+    });
+  });
+
+  it('bases the recurring descendant\'s advance off its own dueDate when not overdue', () => {
+    const descendant = { isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-10' };
+    expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
+      dueDate: '2026-08-17',
+      isCompleted: false,
+    });
+  });
+
+  it('leaves a non-recurring descendant\'s dueDate untouched (does not null it out)', () => {
+    const descendant = { dueDate: '2026-08-03', isCompleted: false };
+    expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
+      dueDate: undefined,
+      isCompleted: false,
+    });
+  });
+
+  it('leaves a recurring-but-undated descendant untouched (borrows ancestor dueDate for scheduling, not completion)', () => {
+    const descendant = { isRecurring: true, recurrenceString: 'every day', dueDate: null, isCompleted: false };
+    expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
+      dueDate: undefined,
+      isCompleted: false,
+    });
+  });
+
+  it('preserves whatever isCompleted was for a non-recurring descendant instead of forcing it false', () => {
+    const descendant = { dueDate: '2026-08-01', isCompleted: true };
+    expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
+      dueDate: undefined,
+      isCompleted: true,
+    });
   });
 });
 
