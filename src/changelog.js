@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.3',
+    date: '2026-08-05',
+    title: 'Save on a task no longer closes it',
+    changes: [
+      'Clicking Save on a task\'s edit screen now just saves your changes and leaves the task open, instead of closing it — close it yourself with Escape or the close button when you\'re done.',
+      'The keyboard hint on autocomplete suggestions (e.g. project/section) now shows just "Enter" when there\'s only one match, since there\'s nothing to Tab between.',
+    ],
+  },
+  {
     version: '1.93.2',
     date: '2026-08-04',
     title: 'Sub-task input grows with your text; "+ Add" button stays put',
