@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.20',
+    date: '2026-08-05',
+    title: 'Fixed calendar "N tasks" chips silently dropping tasks when merging',
+    changes: [
+      'When a crowded run of tasks folded a real task together with an already-grouped chip, some of the grouped tasks could silently disappear from the resulting chip (and its count). All merged tasks are now preserved correctly.',
+    ],
+  },
+  {
     version: '1.93.19',
     date: '2026-08-05',
     title: 'Fixed remaining cases of calendar tasks overflowing past their real end time',

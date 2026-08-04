@@ -319,6 +319,38 @@ describe('packLane', () => {
     }
   });
 
+  it('preserves every constituent item when the incoming item is ALREADY a cluster (not just a single)', () => {
+    // Regression: the fold-merge branch used to read item.type/item.data
+    // directly, which is undefined on a `kind: 'cluster'` item (clusters
+    // only carry `.items`) — merging a real task with an already-clustered
+    // run of short tasks silently produced a `{}` placeholder in its place,
+    // dropping every task inside that incoming cluster and under-reporting
+    // the resulting chip's count (e.g. showing "2 tasks" when 4 real items
+    // were actually merged).
+    const pxPerMin = 0.55;
+    const items = [
+      { start: 478, end: 480, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      { start: 480, end: 540, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
+      // Already pre-clustered by an earlier pass (mirrors what
+      // layoutDayItems' flushShortRun/foldSequentialItems would hand to
+      // packLane for a run of short, mutually-close items).
+      {
+        start: 540,
+        end: 543,
+        kind: 'cluster',
+        items: [
+          { type: 'block', data: { id: 't1', title: 't1' } },
+          { type: 'block', data: { id: 't2', title: 't2' } },
+          { type: 'block', data: { id: 't3', title: 't3' } },
+        ],
+      },
+    ];
+    const packed = packLane(items, pxPerMin);
+    const allIds = packed.flatMap((p) => (p.kind === 'cluster' ? p.items.map((i) => i.data.id) : [p.data.id]));
+    expect(allIds).toEqual(expect.arrayContaining(['Email student', 'Lower + Running', 't1', 't2', 't3']));
+    expect(allIds).toHaveLength(5);
+  });
+
   it('never lets a pushed-down item\'s TOP land past its own natural end position, at any zoom level', () => {
     // The hard invariant itself, directly: for every packed item with a
     // predecessor, its rendered top must never exceed its own natural end
