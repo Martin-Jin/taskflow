@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.14',
+    date: '2026-08-05',
+    title: 'Fixed overlapping calendar blocks and zoom-in not un-clustering tasks',
+    changes: [
+      'Two tasks scheduled at overlapping times could render stacked on top of each other instead of side-by-side.',
+      'Zooming in on the calendar now properly un-clusters short tasks into separate boxes once there\'s enough room, instead of leaving them stuck in an "N tasks" chip.',
+    ],
+  },
+  {
     version: '1.93.13',
     date: '2026-08-05',
     title: 'Fixed calendar clustering working backwards when zooming in',
