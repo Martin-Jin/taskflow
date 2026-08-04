@@ -387,7 +387,18 @@ export function packLane(items, pxPerMin) {
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged
       // item), not the rejected pushed-down position.
+      //
+      // EITHER side of the merge may already be a `kind: 'cluster'` itself —
+      // prevPacked can be a cluster this same loop already grew (see below),
+      // and `item` can independently arrive as a cluster straight out of
+      // layoutDayItems' own short-run folding (see flushShortRun) or
+      // foldSequentialItems. A cluster has no top-level `type`/`data` of its
+      // own (only `.items`), so reading `item.type`/`item.data` directly
+      // when `item` is itself a cluster silently produces a `{}` placeholder
+      // and drops every task inside it — always read through `.items` on
+      // whichever side is a cluster.
       const prevItems = prevPacked.kind === 'cluster' ? prevPacked.items : [{ type: prevPacked.type, data: prevPacked.data }];
+      const itemItems = item.kind === 'cluster' ? item.items : [{ type: item.type, data: item.data }];
       const mergedStart = Math.min(prevPacked.start, item.start);
       const mergedEnd = Math.max(prevPacked.end, item.end);
       // prevPacked's own placed `top` may already sit below its natural top
@@ -401,7 +412,7 @@ export function packLane(items, pxPerMin) {
       const cluster = {
         ...prevPacked,
         kind: 'cluster',
-        items: [...prevItems, { type: item.type, data: item.data }],
+        items: [...prevItems, ...itemItems],
         start: mergedStart,
         end: mergedEnd,
         top: mergedTop,
