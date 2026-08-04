@@ -292,46 +292,59 @@ function layoutDayItems(dayItems, pxPerMin) {
 /**
  * Last-resort pass (see TIGHT_GAP_PX/COLLISION_GAP_PX above) for two
  * genuinely time-disjoint, individually long-enough items (not cluster-
- * eligible under LONG_ITEM_MIN, so layoutDayItems gave each its own lane)
- * that still sit close enough together at the current zoom to visually
- * collide. Operates per (groupId, lane) bucket — the same key
- * computeDayPositions uses — since that's the only place two items are
- * guaranteed sequential-in-time neighbours rather than side-by-side.
+ * eligible under LONG_ITEM_MIN) that still sit close enough together at the
+ * current zoom to visually collide. A real time gap between two items means
+ * they can never be side-by-side (that only happens when ranges overlap),
+ * so any two items that are adjacent by start time — regardless of which
+ * overlap group or lane layoutDayItems put them in — are genuine visual
+ * neighbours and fair game here; this deliberately does NOT bucket by
+ * (groupId, lane) the way computeDayPositions does; doing so here would
+ * only ever compare items already known to share one lane within the same
+ * group, which excludes exactly the cross-group case this pass exists for.
  *
  * Two thresholds, checked on the real (natural, unclamped) gap so the
  * decision matches what the user actually sees regardless of how packLane's
  * MIN_BLOCK_HEIGHT_PX floor might later stretch things:
  *   - gap < COLLISION_GAP_PX: even a minimal single-line render would still
- *     crowd its neighbour, so fold just this pair into an overlapChip
- *     (reusing the existing "N events" tap-to-expand chip) rather than
- *     rendering two colliding boxes.
+ *     crowd its neighbour, so this item folds into an overlapChip (reusing
+ *     the existing "N events" tap-to-expand chip) rather than rendering two
+ *     colliding boxes — extending the previous item's chip if it's already
+ *     one, so a whole run of 3+ mutually-tight items becomes ONE growing
+ *     chip instead of a chain of chips sitting flush against each other
+ *     (which would look just as collided as the original boxes).
  *   - COLLISION_GAP_PX <= gap < TIGHT_GAP_PX: leave both items as their own
  *     boxes, but tag them `tightGap: true` so the render below degrades to a
  *     single-line/compact layout instead of the usual two-line one — see
  *     itemLiveState.
- * Only ever considers adjacent `kind: 'single'` items — an existing cluster/
+ * Only ever considers adjacent `kind: 'single'` items in the same lane index
+ * (side-by-side items in a different lane at the same moment are a distinct
+ * concern, not a "consecutive in time" one) — an existing cluster/
  * overlapChip is already a collapsed multi-item unit and shouldn't be folded
  * into a further chip here.
  */
 function collapseTightPairs(items, pxPerMin) {
-  const byBucket = new Map();
+  const byLane = new Map();
   for (const item of items) {
-    const key = `${item.groupId}:${item.lane}`;
-    if (!byBucket.has(key)) byBucket.set(key, []);
-    byBucket.get(key).push(item);
+    if (!byLane.has(item.lane)) byLane.set(item.lane, []);
+    byLane.get(item.lane).push(item);
   }
 
   const out = [];
-  for (const bucket of byBucket.values()) {
-    const sorted = [...bucket].sort((a, b) => a.start - b.start);
+  for (const laneItems of byLane.values()) {
+    const sorted = [...laneItems].sort((a, b) => a.start - b.start);
     const merged = [];
     for (const item of sorted) {
       const prev = merged[merged.length - 1];
       const gapPx = prev ? (item.start - prev.end) * pxPerMin : Infinity;
-      if (prev && prev.kind === 'single' && item.kind === 'single' && gapPx < COLLISION_GAP_PX) {
+      const prevMergeable = prev && (prev.kind === 'single' || prev.kind === 'overlapChip');
+      if (prevMergeable && item.kind === 'single' && gapPx < COLLISION_GAP_PX) {
+        // Extend the run rather than only ever pairing two singles — a third
+        // (or later) item tight against an already-merged chip folds into
+        // that SAME chip instead of starting a fresh one flush against it.
+        const prevItems = prev.kind === 'overlapChip' ? prev.items : [{ type: prev.type, data: prev.data, kind: prev.kind, blocks: prev.blocks }];
         merged[merged.length - 1] = {
           kind: 'overlapChip',
-          items: [prev, item].map((g) => ({ type: g.type, data: g.data, kind: g.kind, blocks: g.blocks })),
+          items: [...prevItems, { type: item.type, data: item.data, kind: item.kind, blocks: item.blocks }],
           start: prev.start,
           end: item.end,
           lane: prev.lane,
@@ -465,7 +478,7 @@ export default function WeekView({
         end: timeToMinutes(e.endTime),
       }));
       const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
-      map.set(day, computeDayPositions(layoutDayItems(merged), pxPerMin));
+      map.set(day, computeDayPositions(layoutDayItems(merged, pxPerMin), pxPerMin));
     }
     return map;
   }, [days, blocksByDay, eventsByDay, pxPerMin]);
