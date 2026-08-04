@@ -331,26 +331,22 @@ export function layoutDayItems(dayItems, pxPerMin) {
 // How far a stretched predecessor is allowed to push the NEXT item's box
 // down past that item's own natural (unpushed) bottom before the pushdown
 // counts as "excessive" rather than harmless Google-Calendar-style
-// stretching — see packLane. Expressed as a pixel budget so it's compared
-// like-for-like with the other box-tightness constants above (TIGHT_GAP_PX,
-// COLLISION_GAP_PX), rather than a fixed minute count that would mean a
-// different number of pixels at every zoom level.
+// stretching — see packLane.
 //
-// A single MIN_BLOCK_HEIGHT_PX clamp on one very short predecessor can, by
-// itself, push the next item down by up to (MIN_BLOCK_HEIGHT_PX minus that
-// predecessor's own natural height) — approaching MIN_BLOCK_HEIGHT_PX for a
-// near-zero-duration item. That's exactly the "one item's own clamp nudges
-// its immediate neighbour a bit" case the pushdown mechanism exists to
-// support (see packLane's own doc comment), so the excessive-pushdown floor
-// must sit comfortably above a single clamp's worth of push, not at or below
-// it — otherwise ordinary single-clamp pushdown would itself misfire as
-// "excessive". Using MIN_BLOCK_HEIGHT_PX itself (rather than some smaller
-// fraction of it) as that floor means one clamp's worth of push is always
-// tolerated, and it's only a second stretched predecessor in the same chain
-// (or one dramatically oversized clamp) that can tip a pushdown over the
-// line — matching the reported bug, which only surfaced once TWO short
-// items compounded their stretch onto a real 60-minute task.
-export const EXCESSIVE_PUSHDOWN_PX = MIN_BLOCK_HEIGHT_PX;
+// Expressed in REAL MINUTES, not pixels: a fixed pixel budget (e.g.
+// MIN_BLOCK_HEIGHT_PX) means a wildly different amount of real time at each
+// zoom level — at the lowest zoom (0.55px/min) a single MIN_BLOCK_HEIGHT_PX
+// clamp alone pushes a neighbour down by up to ~26px, which is nearly 47
+// real minutes (26 / 0.55) — comfortably enough, by itself, to shove a task
+// visually into the NEXT hour slot on the axis, which is exactly the
+// misalignment this check exists to prevent. A pixel budget large enough to
+// tolerate one ordinary clamp at high zoom is therefore already far too
+// permissive at low zoom. A small real-minute budget instead means the same
+// amount of true time-drift reads as "excessive" regardless of zoom level —
+// a few minutes of visual slack is imperceptible whether zoomed in or out,
+// but tens of minutes' worth of drift always deserves folding into a chip
+// instead of silently misrepresenting when an item actually ends.
+export const EXCESSIVE_PUSHDOWN_MIN = 12;
 
 /**
  * Assign a final {top, height} in px to every item in a lane, guaranteeing
@@ -368,8 +364,9 @@ export const EXCESSIVE_PUSHDOWN_PX = MIN_BLOCK_HEIGHT_PX;
  * (e.g. a task truly ending at 10:00 rendering into the 11:00 slot) — a
  * worse lie than the harmless few-px stretch this mechanism is meant to
  * produce. So before accepting a pushed position, check how far past the
- * item's own natural (unpushed) bottom the push would land it; if that
- * exceeds EXCESSIVE_PUSHDOWN_PX, don't render the pair stacked at all —
+ * item's own natural (unpushed) bottom the push would land it (converted to
+ * real minutes via pxPerMin); if that exceeds EXCESSIVE_PUSHDOWN_MIN, don't
+ * render the pair stacked at all —
  * fold the pushed-down item into the previous box as a `kind: 'cluster'`
  * chip instead (same shape foldSequentialItems/layoutDayItems already
  * produce), sized to its own honest natural span rather than a further-
@@ -387,10 +384,10 @@ export function packLane(items, pxPerMin) {
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
     const naturalHeight = Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin);
     const pushedTop = Math.max(naturalTop, prevBottom);
-    const pushdown = pushedTop - naturalTop;
+    const pushdownMin = (pushedTop - naturalTop) / pxPerMin;
 
     const prevPacked = out[out.length - 1];
-    if (prevPacked && pushdown > EXCESSIVE_PUSHDOWN_PX) {
+    if (prevPacked && pushdownMin > EXCESSIVE_PUSHDOWN_MIN) {
       // Fold into (or grow) a cluster instead of accepting a position that
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged
