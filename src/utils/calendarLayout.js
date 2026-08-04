@@ -157,16 +157,32 @@ export function foldSequentialItems(items, pxPerMin) {
       continue;
     }
 
-    // Fold into (or start) a chip if either neighbour is individually too
-    // short to read on its own at this zoom AND they're not too far apart to
-    // read as "the same run" (durationFoldGapMin — otherwise two isolated
-    // 5-minute tasks at opposite ends of the day would wrongly merge into one
-    // chip spanning the gap between them), or the two sit close enough to
-    // collide outright regardless of either one's own duration — same chip
-    // mechanism either way, just two different reasons to trigger it.
-    const durationFold =
-      gapMin <= durationFoldGapMin && ((prev && prev.kind === 'single' && isTooShortAlone(prev)) || isTooShortAlone(single));
-    const shouldFold = prev && !isExempt(prev) && !isExempt(single) && (gapMin < minGapMin || durationFold);
+    // A "long enough to stand alone" prev/single must never be pulled into a
+    // chip by either fold path below — an already-accumulating cluster is
+    // exempt from this (it was only ever formed from too-short-alone items,
+    // so it still needs to fold), but a plain `single` that comfortably fits
+    // its own box at this zoom (e.g. a 45-min task right after a 5-min one,
+    // with zero gap between them) is legitimate back-to-back scheduling, not
+    // visual crowding — it must render standalone even with zero real gap to
+    // its neighbour. Requiring BOTH sides to need it (rather than either) is
+    // what keeps the fold decision genuinely about available space: a
+    // long-enough item always has its own room to render regardless of what
+    // sits next to it, so it should never be forced into a chip just because
+    // its neighbour doesn't.
+    const prevNeedsFold = prev && (prev.kind === 'cluster' || isTooShortAlone(prev));
+    const singleNeedsFold = isTooShortAlone(single);
+
+    // Fold into (or start) a chip if BOTH sides of the pair actually need
+    // it — either because they're not individually tall enough to read
+    // standalone (duration-based, gapMin <= durationFoldGapMin — otherwise
+    // two isolated 5-minute tasks at opposite ends of the day would wrongly
+    // merge into one chip spanning the gap between them), or because the
+    // real gap between them is smaller than COLLISION_GAP_PX's worth of
+    // minutes at this zoom (an outright pixel collision regardless of each
+    // item's own duration).
+    const durationFold = gapMin <= durationFoldGapMin && prevNeedsFold && singleNeedsFold;
+    const collisionFold = gapMin < minGapMin && prevNeedsFold && singleNeedsFold;
+    const shouldFold = prev && !isExempt(prev) && !isExempt(single) && (collisionFold || durationFold);
 
     if (shouldFold) {
       const prevItems = prev.kind === 'cluster' ? prev.items : [{ type: prev.type, data: prev.data }];

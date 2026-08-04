@@ -71,6 +71,41 @@ describe('foldSequentialItems', () => {
     expect(folded).toHaveLength(2);
   });
 
+  it('does not swallow a long-enough item into a chip just because it directly follows a short one', () => {
+    // Regression for the "Morning tasks (5min) + Piano (45min)" bug: Piano is
+    // well above minVisibleMin at any zoom and should render standalone, not
+    // get folded into "Morning tasks"'s chip just because the gap is 0 and
+    // Morning tasks alone is too-short-alone.
+    // Piano's own 45-min duration is only "enough room to stand alone"
+    // (>= MIN_BLOCK_HEIGHT_PX / pxPerMin) once zoomed in enough — at the very
+    // lowest zoom (0.55) even 45 real minutes doesn't reach MIN_BLOCK_HEIGHT_PX
+    // worth of pixels, so it's correctly still fold-eligible there. From 0.8
+    // upward it comfortably has its own room and must never fold, regardless
+    // of "Morning tasks" being short and directly adjacent.
+    const items = [block('Morning tasks', 480, 485), block('Piano', 485, 530)]; // 08:00-08:05, 08:05-08:50
+    for (const pxPerMin of [0.8, 1.0, 1.25]) {
+      const folded = foldSequentialItems(items, pxPerMin);
+      expect(folded).toHaveLength(2);
+      expect(folded.every((f) => f.kind === 'single')).toBe(true);
+    }
+  });
+
+  it('still folds a short item into a short item even when back-to-back with zero gap', () => {
+    const items = [block('A', 480, 485), block('B', 485, 490)]; // both 5-min, zero gap
+    const folded = foldSequentialItems(items, 1.25);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).toBe('cluster');
+  });
+
+  it('does not drag an already-long-enough prev into a chip when a short item follows it', () => {
+    const items = [block('Long', 480, 525), block('Short', 525, 530)]; // 45-min then 5-min, zero gap
+    const folded = foldSequentialItems(items, 1.25);
+    // The short item alone is still too-short-alone, so it may end up
+    // tightGap-tagged or standalone, but it must never pull "Long" into a
+    // cluster with it.
+    expect(folded.some((f) => f.kind === 'cluster' && f.items?.some((it) => it.data.id === 'Long'))).toBe(false);
+  });
+
   it('never treats a passive block as too-short-alone', () => {
     const items = [block('A', 540, 545, { isPassive: true }), block('B', 600, 605, { isPassive: true })];
     const folded = foldSequentialItems(items, 1.25);

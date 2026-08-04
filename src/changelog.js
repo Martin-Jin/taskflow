@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.15',
+    date: '2026-08-05',
+    title: 'Fixed long-enough calendar tasks still getting swallowed into "N tasks" chips',
+    changes: [
+      'A task with plenty of room to show its own name (e.g. 45+ minutes) no longer gets folded into a neighboring chip just because a short task sits right next to it with no gap.',
+    ],
+  },
+  {
     version: '1.93.14',
     date: '2026-08-05',
     title: 'Fixed overlapping calendar blocks and zoom-in not un-clustering tasks',
