@@ -50,7 +50,12 @@ import { playAddSound, playDeleteSound } from '../services/soundService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { computeNextDueDate, computeRecurringDescendantUpdate, deriveRecurrenceRule } from '../utils/recurrence';
+import {
+  computeCompletionHistoryUpdate,
+  computeNextDueDate,
+  computeRecurringDescendantUpdate,
+  deriveRecurrenceRule,
+} from '../utils/recurrence';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -1186,6 +1191,31 @@ export function SchedulerProvider({ children }) {
    * value callers like TaskDetailModal treat as "did this finish
    * synchronously" — don't act as if the task completed when it didn't.
    */
+
+  /**
+   * Re-plan the REST of today (only) into whatever capacity completeTask just
+   * freed up by closing out a task early — e.g. a task originally scheduled
+   * for later this afternoon that just got marked done this morning. Uses
+   * rebalanceEngine's `todayOnly` mode (see its own doc comment) so this
+   * NEVER touches tomorrow or any later day — only today's still-unlocked,
+   * not-yet-completed blocks are eligible to be cleared and re-placed. This
+   * is a separate, additive call path from the manual "Re-balance schedule"
+   * button (runRebalance above), which still does its normal full-horizon
+   * pass and is unchanged by this.
+   *
+   * Safe to call unconditionally after every completeTask — if nothing
+   * actually freed up (no later-today block existed, or no other task had
+   * remaining hours to fill it), rebalance() is a no-op and returns the same
+   * blocks back, same as clicking "Re-balance" with nothing to do.
+   */
+  const rebalanceTodayOnly = useCallback(
+    (currentTasks, currentBlocks) => {
+      const result = rebalance({ tasks: currentTasks, existingBlocks: currentBlocks, routines, events, rules, todayOnly: true });
+      return { tasks: currentTasks, blocks: result.blocks };
+    },
+    [routines, events, rules]
+  );
+
   const completeTask = useCallback(
     (taskId, actualHours) => {
       const existing = tasks.find((t) => t.id === taskId);
@@ -1225,20 +1255,17 @@ export function SchedulerProvider({ children }) {
         // as "completed today" on the dashboard.
         const occurrenceDate = existing.dueDate;
 
-        // Then trim anything older than 7 days out of the raw `completedDates`
-        // list into the monthly `completionHistory` aggregate instead of
-        // dropping it outright — see types/index.js's Task typedef.
-        const sevenDaysAgoIso = addDays(todayIso, -7);
-        const keptDates = [];
-        const nextHistory = { ...(existing.completionHistory || {}) };
-        for (const d of [occurrenceDate, ...(existing.completedDates || [])]) {
-          if (d >= sevenDaysAgoIso) {
-            keptDates.push(d);
-          } else {
-            const monthKey = d.slice(0, 7); // "YYYY-MM"
-            nextHistory[monthKey] = (nextHistory[monthKey] || 0) + 1;
-          }
-        }
+        // Trim anything older than 7 days out of the raw `completedDates` list
+        // into the monthly `completionHistory` aggregate instead of dropping
+        // it outright — see types/index.js's Task typedef, and
+        // computeCompletionHistoryUpdate (shared with the descendant-cascade
+        // branch below so the two can't diverge on this bookkeeping).
+        const { completedDates: keptDates, completionHistory: nextHistory } = computeCompletionHistoryUpdate(
+          occurrenceDate,
+          existing.completedDates,
+          existing.completionHistory,
+          todayIso
+        );
 
         const newTasks = tasks.map((t) => {
           if (t.id === taskId) {
@@ -1259,6 +1286,9 @@ export function SchedulerProvider({ children }) {
               ...t,
               isCompleted: update.isCompleted,
               ...(update.dueDate !== undefined ? { dueDate: update.dueDate } : {}),
+              ...(update.remainingHours !== undefined ? { remainingHours: update.remainingHours } : {}),
+              ...(update.completedDates !== undefined ? { completedDates: update.completedDates } : {}),
+              ...(update.completionHistory !== undefined ? { completionHistory: update.completionHistory } : {}),
               updatedAt: nowIso,
             };
           }
@@ -1286,7 +1316,12 @@ export function SchedulerProvider({ children }) {
         // just advanced above will simply get fresh blocks placed for its new
         // occurrence on the next rebalance, same as any other recurring task.
         const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date >= baseDate);
-        commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
+        // Completing early can free up a later-today slot the just-closed
+        // occurrence was holding — re-plan the REST of today (only) into it.
+        // See rebalanceTodayOnly's own comment for why this is scoped tightly
+        // to today rather than reusing the full-horizon runRebalance.
+        const { tasks: rebalancedTasks, blocks: rebalancedBlocks } = rebalanceTodayOnly(newTasks, newBlocks);
+        commit({ tasks: rebalancedTasks, blocks: rebalancedBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
         return true;
       }
 
@@ -1314,10 +1349,13 @@ export function SchedulerProvider({ children }) {
         }
         return t;
       });
-      commit({ tasks: newTasks, blocks }, `Completed task`);
+      // Completing early can free up a later-today slot this task was
+      // holding — re-plan the REST of today (only) into it.
+      const { tasks: rebalancedTasks, blocks: rebalancedBlocks } = rebalanceTodayOnly(newTasks, blocks);
+      commit({ tasks: rebalancedTasks, blocks: rebalancedBlocks }, `Completed task`);
       return true;
     },
-    [tasks, blocks, commit, setNotification]
+    [tasks, blocks, commit, setNotification, rebalanceTodayOnly]
   );
 
   /**

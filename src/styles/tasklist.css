@@ -60,7 +60,11 @@
    .main-content's own overflow:auto clips the excess), sideways by
    .main-content's own 20px padding (so it spans edge to edge, clipped there
    rather than bleeding into the sidebar since that's a separate grid area),
-   and down by an extra 18px past the search bar. */
+   and down by an extra 18px past the search bar. Needs its own background,
+   not just backdrop-filter alone — a bare blur with nothing behind it to
+   tint reads as basically invisible. `--header-blur-opacity` (set from JS in
+   TaskListPanel, based on scroll position) fades the whole wash in as the
+   page scrolls, rather than snapping it on the instant the header docks. */
 .taskpage-sticky-header-backdrop {
   position: absolute;
   top: -200px;
@@ -68,7 +72,10 @@
   right: -20px;
   bottom: -18px;
   z-index: -1;
-  backdrop-filter: blur(1px);
+  background: color-mix(in srgb, var(--color-bg-page) 94%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  opacity: var(--header-blur-opacity, 0);
   pointer-events: none;
 }
 

@@ -254,6 +254,75 @@ describe('rebalance', () => {
   });
 });
 
+// Coverage for `todayOnly` (used by SchedulerContext.completeTask so
+// finishing a task early re-plans the freed-up slot into the REST of today,
+// without ever touching a future day) — see rebalanceEngine.js's own doc
+// comment on the option for the exact contract.
+describe('rebalance: todayOnly scoping', () => {
+  it("moves another schedulable task into a slot freed by completing an earlier-today task, and leaves a FUTURE day's block completely untouched", () => {
+    const tomorrow = '2026-07-02';
+    const tasks = [
+      // Already completed — its old 09:00-10:00 slot today should be freed.
+      { id: 'done', title: 'Finished early', isCompleted: true, estimatedHours: 1, dueDate: today },
+      // Still has remaining hours and is eligible to claim the freed slot.
+      { id: 'other', title: 'Other task', isCompleted: false, estimatedHours: 1, remainingHours: 1, dueDate: today, enforceDueDate: true },
+      // A separate task with a block on a FUTURE day — must not be touched.
+      { id: 'future', title: 'Future task', isCompleted: false, estimatedHours: 1, remainingHours: 1, dueDate: tomorrow },
+    ];
+    const existingBlocks = [
+      // Completed task's block preserved as historical record (isBlockTaskCompleted).
+      { id: 'b-done', taskId: 'done', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+      // Unlocked, unfinished future-day block that must survive byte-for-byte.
+      { id: 'b-future', taskId: 'future', date: tomorrow, startTime: '11:00', endTime: '12:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({
+      tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today, todayOnly: true,
+    });
+
+    // The other task got a new block placed today (its own remaining hour).
+    const otherBlock = result.blocks.find((b) => b.taskId === 'other');
+    expect(otherBlock).toBeTruthy();
+    expect(otherBlock.date).toBe(today);
+
+    // The future block is byte-for-byte unchanged (same object even).
+    const futureBlock = result.blocks.find((b) => b.id === 'b-future');
+    expect(futureBlock).toEqual(existingBlocks[1]);
+
+    // The completed task's historical block for today is preserved too.
+    expect(result.blocks.some((b) => b.id === 'b-done')).toBe(true);
+  });
+
+  it('does not clear or reschedule a stale, unfinished, unlocked block on a day AFTER today when todayOnly is set', () => {
+    const tomorrow = '2026-07-02';
+    const tasks = [
+      { id: 'later', title: 'Not due yet', isCompleted: false, estimatedHours: 1, remainingHours: 1, dueDate: tomorrow },
+    ];
+    const existingBlocks = [
+      { id: 'b-later', taskId: 'later', date: tomorrow, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({
+      tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today, todayOnly: true,
+    });
+    // A full-horizon rebalance would normally be free to clear/move this
+    // (it's unlocked and unfinished) — todayOnly must leave it alone.
+    expect(result.blocks).toEqual(existingBlocks);
+    expect(result.stats.blocksCleared).toBe(0);
+  });
+
+  it('does not touch a future day even for the manual (non-todayOnly) call path, confirming the option is additive', () => {
+    // Sanity check: omitting todayOnly keeps full-horizon behavior — a
+    // regression here would mean todayOnly's changes leaked into the default path.
+    const tasks = [
+      { id: 't', title: 'Not done', isCompleted: false, estimatedHours: 1, dueDate: today },
+    ];
+    const existingBlocks = [
+      { id: 'b', taskId: 't', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.stats.blocksCleared).toBe(1);
+  });
+});
+
 // Regression coverage for a false "no free time left" report on a recurring,
 // fixedTime task (e.g. "Piano" at a fixed practice time, or "Practice
 // questions" today) whose per-occurrence virtual task collapses its window to

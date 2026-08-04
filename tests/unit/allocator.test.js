@@ -241,6 +241,89 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
   });
 });
 
+// Regression coverage for a "partial placement stranded" bug: a task whose
+// maxChunksFor budget rounds down to 1 (any task <=30min) used to be able to
+// burn its ONLY chunk on a tiny sliver on day 1, then find its chunk budget
+// exhausted for every later pass -- silently overflowing the rest even
+// though later days in the same window had ample free capacity. Fixed via a
+// cross-day whole-block lookahead (hasLaterFullFitDay), the multi-day
+// counterpart to placeHoursInDay's existing same-day lookahead.
+describe('allocateTasks: unplaced remainder is pushed to a later day with room, not stranded', () => {
+  it('pushes a whole 30-minute no-due-date task to day 2 instead of splitting a 5-minute sliver into day 1 and overflowing the rest', () => {
+    // Day 1: only a 5-minute gap (09:00-09:05), the rest of the day busy.
+    // Day 2 onward: wide open. No due date at all -- getTaskWindow already
+    // gives this task the full horizon as its window.
+    const events = [{ id: 'ev1', date: '2026-07-01', startTime: '09:05', endTime: '17:00' }];
+    const rules = { ...baseRules, horizonWeeks: 1 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events });
+    const task = {
+      id: 'no_due', title: '30 min task', estimatedHours: 0.5, remainingHours: 0.5,
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    // The whole 30 minutes lands as ONE continuous block on day 2 -- not
+    // fragmented into day 1's 5-minute sliver plus a stranded remainder.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].date).toBe('2026-07-02');
+    expect(blocks[0].durationHours).toBeCloseTo(0.5, 5);
+  });
+
+  it('still reports overflow (not a horizon spill) for an enforceDueDate single-day task that only partially fits', () => {
+    // Same shape (5-minute gap, task <=30min so maxChunksFor=1), but this
+    // task's due date IS enforced -- its window collapses to that single day
+    // (see getTaskWindow), so the fix must NOT push the remainder to day 2 or
+    // any other day. The 5-minute gap is genuinely all there is on the one
+    // day this task is allowed to use.
+    const events = [{ id: 'ev1', date: '2026-07-01', startTime: '09:05', endTime: '17:00' }];
+    const rules = { ...baseRules, horizonWeeks: 1 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events });
+    const task = {
+      id: 'enforced', title: '30 min task, enforced', estimatedHours: 0.5, remainingHours: 0.5,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    // Single-day window -- the cross-day lookahead must not apply here, so
+    // the 5-minute gap is used (there's nothing else to skip ahead to
+    // anyway) and the remaining 25 minutes genuinely overflow.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].date).toBe('2026-07-01');
+    expect(blocks[0].durationHours).toBeCloseTo(5 / 60, 5);
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].taskId).toBe('enforced');
+    expect(overflow[0].unplacedHours).toBeCloseTo(25 / 60, 2);
+  });
+
+  it('spills a non-enforced due-date task past its due date to the horizon when the due-date-bounded window has no room', () => {
+    // Due date is 07-02 (soft, not enforced) -- windowEnd lands on/near the
+    // due date. Every day up to and including the due date is fully busy;
+    // 07-03 (past the due date, still within the horizon) is wide open. With
+    // enforceDueDate false, the remainder should still land somewhere in the
+    // horizon rather than overflowing just because it's past the soft due
+    // date.
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '00:00', endTime: '23:59' },
+      { id: 'ev2', date: '2026-07-02', startTime: '00:00', endTime: '23:59' },
+    ];
+    const rules = { ...baseRules, horizonWeeks: 1, bufferDays: 0 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events });
+    const task = {
+      id: 'soft_due', title: '1h task, soft due date', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-02',
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    expect(blocks.some((b) => b.date === '2026-07-03')).toBe(true);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(1, 5);
+  });
+});
+
 // Regression coverage for the fixedTime pre-pass: a fixedTime task's pinned
 // slot must always win against a competing task, regardless of the other
 // task's priority/urgency score -- a fixed time commitment is a real-world

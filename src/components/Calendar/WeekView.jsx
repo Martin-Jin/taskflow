@@ -107,8 +107,14 @@ function computeClusterPopoverStyle(rect) {
  * an anonymous "N short tasks" chip would hide it), so this only ever groups
  * `type === 'block'` items — the resulting `kind: 'cluster'` item's `.blocks`
  * array is therefore always `ScheduledBlock[]`.
+ *
+ * `shortMaxMin` is the real-minutes cutoff for "short enough to cluster" —
+ * callers pass a zoom-aware value (see layoutDayItems) rather than the bare
+ * SHORT_BLOCK_MAX_MIN constant, since a block well above that constant can
+ * still render thinner than MIN_BLOCK_HEIGHT_PX once zoomed out far enough
+ * to be unreadable on its own.
  */
-function clusterShortBlocks(items) {
+function clusterShortBlocks(items, shortMaxMin) {
   const out = [];
   let run = [];
 
@@ -128,7 +134,7 @@ function clusterShortBlocks(items) {
   }
 
   for (const item of items) {
-    const isShort = item.type === 'block' && !item.data.isPassive && item.end - item.start <= SHORT_BLOCK_MAX_MIN;
+    const isShort = item.type === 'block' && !item.data.isPassive && item.end - item.start <= shortMaxMin;
     if (!isShort) {
       flushRun();
       out.push({ kind: 'single', type: item.type, data: item.data, start: item.start, end: item.end });
@@ -170,11 +176,21 @@ function clusterShortBlocks(items) {
  * Long items and chips are then lane-packed together in one pass (sorted by
  * start) so a chip that overlaps a long item in time still gets a distinct
  * lane rather than visually colliding with it.
+ *
+ * `pxPerMin` (current zoom level) makes the short-block cluster cutoff
+ * dynamic: a block keeps shrinking proportionally with zoom like any other
+ * (see packLane's naturalHeight) right down to MIN_BLOCK_HEIGHT_PX — only
+ * once a block's real duration would render THINNER than that floor does it
+ * become cluster-eligible, even if its duration is above the static
+ * SHORT_BLOCK_MAX_MIN. Zooming back in shrinks the effective cutoff back
+ * down, so a block that was clustered un-clusters once it can render at a
+ * readable height on its own again.
  */
-function layoutDayItems(dayItems) {
+function layoutDayItems(dayItems, pxPerMin) {
   const items = [...dayItems].sort((a, b) => a.start - b.start || a.end - b.end);
 
-  const clustered = clusterShortBlocks(items);
+  const dynamicShortMaxMin = Math.max(SHORT_BLOCK_MAX_MIN, MIN_BLOCK_HEIGHT_PX / pxPerMin);
+  const clustered = clusterShortBlocks(items, dynamicShortMaxMin);
 
   const results = [];
   let overlapGroup = [];
@@ -973,7 +989,7 @@ export default function WeekView({
           <div
             key={m}
             className="time-label"
-            style={{ position: 'absolute', top: Math.max(0, (m - GRID_START_MIN) * pxPerMin - 6), right: 0 }}
+            style={{ position: 'absolute', top: (m - GRID_START_MIN) * pxPerMin, right: 0, transform: 'translateY(-50%)' }}
           >
             {minutesToTime(m)}
           </div>
