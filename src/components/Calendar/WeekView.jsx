@@ -56,7 +56,7 @@ export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
 // A run of tiny tasks (e.g. several 5-minute defaults back-to-back) renders
-// as unreadable slivers if drawn individually — see clusterShortBlocks below.
+// as unreadable slivers if drawn individually — see foldSequentialItems below.
 // (SHORT_BLOCK_MAX_MIN itself lives in calendarGrouping.js, shared with MonthView.)
 const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
@@ -83,10 +83,22 @@ const BLOCK_GAP_PX = 2;
 // neighbouring items even if their own height would otherwise fit two lines
 // — see itemLiveState's `showTimeLine`. Below the smaller COLLISION_GAP_PX, even
 // that minimal single-line render would still feel like a collision, so as a
-// last resort the pair is folded into the existing overlapChip "N events"
-// mechanism instead (see layoutDayItems' collapseTightPairs).
+// last resort the pair is folded into the existing "N tasks" chip mechanism
+// instead — see foldSequentialItems.
+//
+// Both are PIXEL thresholds by definition (how close two boxes look on
+// screen), but every other cutoff in foldSequentialItems is expressed in real
+// minutes so the whole decision scales with pxPerMin in one consistent unit —
+// see minGapMinFor/minDurationMinFor below, which convert these two back into
+// zoom-scaled minute-equivalents rather than comparing raw pixels directly.
 const TIGHT_GAP_PX = 22;
 const COLLISION_GAP_PX = 8;
+
+// An item this long or longer always gets to render as its own box, however
+// tight the gap to its neighbour — it has plenty of natural height to fall
+// back to a single-line render, so folding it into an anonymous "N events"
+// chip would hide a substantial, easily-legible block for no real gain.
+const CHIP_EXEMPT_MIN = 60;
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
@@ -108,56 +120,98 @@ function computeClusterPopoverStyle(rect) {
 }
 
 /**
- * Group consecutive short blocks (<= SHORT_BLOCK_MAX_MIN long, separated by
- * no more than CLUSTER_MAX_GAP_MIN) into a single "cluster" item so a run of
- * tiny tasks — several 5-minute defaults placed back-to-back, say — renders
- * as one readable chip ("4 short tasks") instead of a stack of slivers.
- * Passive tasks are left alone since they intentionally overlap other work
- * rather than sitting in a sequential run. Runs of exactly one short block
- * are left as a normal single item — nothing to cluster with.
+ * Fold a day's sequential (non-overlapping-in-time) items into "N tasks"
+ * chips using ONE zoom-scaled rule, so the amount of clustering changes
+ * monotonically as the user zooms — more room (higher pxPerMin) can only
+ * ever mean less clustering, never more. This replaces two earlier passes
+ * (clusterShortBlocks + collapseTightPairs) that used different units —
+ * one compared an item's real-minute duration to a zoom-scaled cutoff, the
+ * other compared the real-minute GAP between items to a fixed pixel
+ * threshold — which could disagree about how much room a given zoom level
+ * actually offered, producing more chips at higher zoom than lower zoom in
+ * some layouts (see git history for the bug this replaced).
  *
- * Operates on generic `{ type: 'block'|'event', data, start, end }` items.
- * Events are never cluster-eligible (folding a real user event's title into
- * an anonymous "N short tasks" chip would hide it), so this only ever groups
- * `type === 'block'` items — the resulting `kind: 'cluster'` item's `.blocks`
- * array is therefore always `ScheduledBlock[]`.
+ * Everything here is expressed in real minutes, converted from the pixel
+ * constants (MIN_BLOCK_HEIGHT_PX, COLLISION_GAP_PX, TIGHT_GAP_PX) via the
+ * current pxPerMin, so raising pxPerMin can only shrink every cutoff below:
+ *   - minVisibleMin: an item's OWN duration below this renders thinner than
+ *     MIN_BLOCK_HEIGHT_PX and is a fold-candidate purely for being too short
+ *     to read on its own (only ever applies to blocks — an event's title
+ *     always deserves its own box regardless of duration, so events are
+ *     never fold-candidates on this basis alone).
+ *   - minGapMin: a real gap to the next item below this looks like an
+ *     outright collision at this zoom, so the two items fold into one chip
+ *     regardless of either item's own duration (applies to blocks and
+ *     events alike — this is about visual crowding, not "is this a tiny
+ *     default task").
+ *   - tightGapMin: a real gap at or above minGapMin but below this is still
+ *     too tight for a full two-line render, so both neighbours are tagged
+ *     `tightGap: true` (single-line degrade — see itemLiveState) without
+ *     folding into a chip.
+ * A run of 3+ mutually-close items folds into ONE growing chip rather than
+ * a chain of chips flush against each other. Passive tasks and any item
+ * whose own duration is >= CHIP_EXEMPT_MIN are never folded into a chip
+ * (they may still single-line-degrade under tightGapMin crowding) — they
+ * always keep their own tappable box.
  *
- * `shortMaxMin` is the real-minutes cutoff for "short enough to cluster" —
- * callers pass a zoom-aware value (see layoutDayItems) rather than the bare
- * SHORT_BLOCK_MAX_MIN constant, since a block well above that constant can
- * still render thinner than MIN_BLOCK_HEIGHT_PX once zoomed out far enough
- * to be unreadable on its own.
+ * Operates on generic `{ type: 'block'|'event', data, start, end }` items,
+ * already sorted by start. Only ever considers items adjacent by start time
+ * — genuinely overlapping-in-time items are a distinct concept (see
+ * layoutDayItems' overlap-group/lane split) handled entirely separately,
+ * before this function ever runs on a given lane's own sequential items.
  */
-function clusterShortBlocks(items, shortMaxMin) {
-  const out = [];
-  let run = [];
+function foldSequentialItems(items, pxPerMin) {
+  const minVisibleMin = Math.max(SHORT_BLOCK_MAX_MIN, MIN_BLOCK_HEIGHT_PX / pxPerMin);
+  const minGapMin = COLLISION_GAP_PX / pxPerMin;
+  const tightGapMin = TIGHT_GAP_PX / pxPerMin;
 
-  function flushRun() {
-    if (run.length === 0) return;
-    if (run.length === 1) {
-      out.push({ kind: 'single', type: run[0].type, data: run[0].data, start: run[0].start, end: run[0].end });
-    } else {
-      out.push({
-        kind: 'cluster',
-        blocks: run.map((r) => r.data),
-        start: run[0].start,
-        end: run[run.length - 1].end,
-      });
-    }
-    run = [];
+  // A raw `single`-kind item is a fold candidate purely on its own duration
+  // if it's a non-passive block rendering thinner than minVisibleMin at this
+  // zoom. A `cluster` (already 2+ items folded together) has no duration-
+  // based exemption of its own — it only carries forward whichever items
+  // were already inside it; whether it can still absorb another item is
+  // decided by the gap check below, same as an exempt single would be.
+  function isTooShortAlone(single) {
+    return single.type === 'block' && !single.data.isPassive && single.end - single.start < minVisibleMin;
+  }
+  function isExempt(entry) {
+    return entry.kind === 'single' && entry.end - entry.start >= CHIP_EXEMPT_MIN;
   }
 
-  for (const item of items) {
-    const isShort = item.type === 'block' && !item.data.isPassive && item.end - item.start <= shortMaxMin;
-    if (!isShort) {
-      flushRun();
-      out.push({ kind: 'single', type: item.type, data: item.data, start: item.start, end: item.end });
+  const out = [];
+  for (const raw of items) {
+    const single = { kind: 'single', type: raw.type, data: raw.data, start: raw.start, end: raw.end };
+    const prev = out[out.length - 1];
+    const gapMin = prev ? single.start - prev.end : Infinity;
+
+    // Fold into (or start) a chip if either neighbour is individually too
+    // short to read on its own at this zoom AND they're not too far apart to
+    // read as "the same run" (CLUSTER_MAX_GAP_MIN — otherwise two isolated
+    // 5-minute tasks at opposite ends of the day would wrongly merge into one
+    // chip spanning the gap between them), or the two sit close enough to
+    // collide outright regardless of either one's own duration — same chip
+    // mechanism either way, just two different reasons to trigger it.
+    const durationFold =
+      gapMin <= CLUSTER_MAX_GAP_MIN && ((prev && prev.kind === 'single' && isTooShortAlone(prev)) || isTooShortAlone(single));
+    const shouldFold = prev && !isExempt(prev) && !isExempt(single) && (gapMin < minGapMin || durationFold);
+
+    if (shouldFold) {
+      const prevItems = prev.kind === 'cluster' ? prev.items : [{ type: prev.type, data: prev.data }];
+      out[out.length - 1] = {
+        kind: 'cluster',
+        items: [...prevItems, { type: single.type, data: single.data }],
+        start: prev.start,
+        end: single.end,
+      };
       continue;
     }
-    if (run.length > 0 && item.start - run[run.length - 1].end > CLUSTER_MAX_GAP_MIN) flushRun();
-    run.push(item);
+
+    if (prev && prev.kind === 'single' && gapMin < tightGapMin) {
+      prev.tightGap = true;
+      single.tightGap = true;
+    }
+    out.push(single);
   }
-  flushRun();
   return out;
 }
 
@@ -168,8 +222,11 @@ function clusterShortBlocks(items, shortMaxMin) {
  * other. Items are grouped into "overlap groups" of mutually-overlapping
  * time ranges first, so a lane count only applies within the group it's
  * needed for — an unrelated item later in the day still gets full width.
- * Short blocks are pre-merged into cluster items (see clusterShortBlocks)
- * before lane assignment so a cluster occupies one lane like any other item.
+ * Sequentially-adjacent items are pre-folded into `kind: 'cluster'` chips
+ * (see foldSequentialItems) before lane assignment so a chip occupies one
+ * lane like any other item — this is an entirely separate concept from the
+ * overlap-group split below (a real time gap between two items means they
+ * can never be side-by-side, so folding them never needs a lane decision).
  *
  * `dayItems` is a generic `{ type: 'block'|'event', data, start, end }[]`
  * (blocks and events already merged, see dayItemsByDay) — the caller is
@@ -182,29 +239,21 @@ function clusterShortBlocks(items, shortMaxMin) {
  * only "one group" if a long item happens to bridge them into the same
  * overlap group — removing the long item can split them into two
  * time-disjoint short-runs, which must become two separate chips, not one
- * spanning the gap). Each short-run of 2+ collapses into a single synthetic
- * `kind: 'overlapChip'` item (a tappable "N events" chip, see WeekView's
- * render); a short-run of exactly 1 stays a normal item — nothing to
- * collapse into. Items >= LONG_ITEM_MIN always keep an individual lane,
- * whether that's alongside something shorter or another long item.
- * Long items and chips are then lane-packed together in one pass (sorted by
- * start) so a chip that overlaps a long item in time still gets a distinct
- * lane rather than visually colliding with it.
- *
- * `pxPerMin` (current zoom level) makes the short-block cluster cutoff
- * dynamic: a block keeps shrinking proportionally with zoom like any other
- * (see packLane's naturalHeight) right down to MIN_BLOCK_HEIGHT_PX — only
- * once a block's real duration would render THINNER than that floor does it
- * become cluster-eligible, even if its duration is above the static
- * SHORT_BLOCK_MAX_MIN. Zooming back in shrinks the effective cutoff back
- * down, so a block that was clustered un-clusters once it can render at a
- * readable height on its own again.
+ * spanning the gap). Each short-run of 2+ collapses into a single `kind:
+ * 'cluster'` item (the same tappable "N tasks/events" chip foldSequentialItems
+ * produces — see WeekView's render, which no longer needs to distinguish the
+ * two); a short-run of exactly 1 stays a normal item — nothing to collapse
+ * into. Items >= LONG_ITEM_MIN always keep an individual lane, whether that's
+ * alongside something shorter or another long item — this is what keeps a
+ * long block visible in its own box side-by-side with a chip of short items
+ * it genuinely overlaps, rather than the two merging together. Long items and
+ * chips are then lane-packed together in one pass (sorted by start) so a chip
+ * that overlaps a long item in time still gets a distinct lane rather than
+ * visually colliding with it.
  */
 function layoutDayItems(dayItems, pxPerMin) {
   const items = [...dayItems].sort((a, b) => a.start - b.start || a.end - b.end);
-
-  const dynamicShortMaxMin = Math.max(SHORT_BLOCK_MAX_MIN, MIN_BLOCK_HEIGHT_PX / pxPerMin);
-  const clustered = clusterShortBlocks(items, dynamicShortMaxMin);
+  const folded = foldSequentialItems(items, pxPerMin);
 
   const results = [];
   let overlapGroup = [];
@@ -237,7 +286,7 @@ function layoutDayItems(dayItems, pxPerMin) {
     const shortItems = overlapGroup.filter((it) => it.end - it.start < LONG_ITEM_MIN);
 
     // Re-sweep just the short items (already start-sorted, as a subsequence
-    // of `clustered`) for their own mutual-overlap runs, independent of any
+    // of `folded`) for their own mutual-overlap runs, independent of any
     // long item(s) that pulled them into the same overlapGroup.
     const laneItems = [...longItems];
     let shortRun = [];
@@ -248,8 +297,8 @@ function layoutDayItems(dayItems, pxPerMin) {
         laneItems.push(shortRun[0]);
       } else {
         laneItems.push({
-          kind: 'overlapChip',
-          items: shortRun.map((g) => ({ type: g.type, data: g.data, kind: g.kind, blocks: g.blocks })),
+          kind: 'cluster',
+          items: shortRun.flatMap((g) => (g.kind === 'cluster' ? g.items : [{ type: g.type, data: g.data }])),
           start: Math.min(...shortRun.map((g) => g.start)),
           end: Math.max(...shortRun.map((g) => g.end)),
         });
@@ -274,7 +323,7 @@ function layoutDayItems(dayItems, pxPerMin) {
     groupId += 1;
   }
 
-  for (const item of clustered) {
+  for (const item of folded) {
     if (overlapGroup.length === 0 || item.start < groupEnd) {
       overlapGroup.push(item);
       groupEnd = Math.max(groupEnd, item.end);
@@ -286,82 +335,7 @@ function layoutDayItems(dayItems, pxPerMin) {
   }
   flushGroup();
 
-  return collapseTightPairs(results, pxPerMin);
-}
-
-/**
- * Last-resort pass (see TIGHT_GAP_PX/COLLISION_GAP_PX above) for two
- * genuinely time-disjoint, individually long-enough items (not cluster-
- * eligible under LONG_ITEM_MIN) that still sit close enough together at the
- * current zoom to visually collide. A real time gap between two items means
- * they can never be side-by-side (that only happens when ranges overlap),
- * so any two items that are adjacent by start time — regardless of which
- * overlap group or lane layoutDayItems put them in — are genuine visual
- * neighbours and fair game here; this deliberately does NOT bucket by
- * (groupId, lane) the way computeDayPositions does; doing so here would
- * only ever compare items already known to share one lane within the same
- * group, which excludes exactly the cross-group case this pass exists for.
- *
- * Two thresholds, checked on the real (natural, unclamped) gap so the
- * decision matches what the user actually sees regardless of how packLane's
- * MIN_BLOCK_HEIGHT_PX floor might later stretch things:
- *   - gap < COLLISION_GAP_PX: even a minimal single-line render would still
- *     crowd its neighbour, so this item folds into an overlapChip (reusing
- *     the existing "N events" tap-to-expand chip) rather than rendering two
- *     colliding boxes — extending the previous item's chip if it's already
- *     one, so a whole run of 3+ mutually-tight items becomes ONE growing
- *     chip instead of a chain of chips sitting flush against each other
- *     (which would look just as collided as the original boxes).
- *   - COLLISION_GAP_PX <= gap < TIGHT_GAP_PX: leave both items as their own
- *     boxes, but tag them `tightGap: true` so the render below degrades to a
- *     single-line/compact layout instead of the usual two-line one — see
- *     itemLiveState.
- * Only ever considers adjacent `kind: 'single'` items in the same lane index
- * (side-by-side items in a different lane at the same moment are a distinct
- * concern, not a "consecutive in time" one) — an existing cluster/
- * overlapChip is already a collapsed multi-item unit and shouldn't be folded
- * into a further chip here.
- */
-function collapseTightPairs(items, pxPerMin) {
-  const byLane = new Map();
-  for (const item of items) {
-    if (!byLane.has(item.lane)) byLane.set(item.lane, []);
-    byLane.get(item.lane).push(item);
-  }
-
-  const out = [];
-  for (const laneItems of byLane.values()) {
-    const sorted = [...laneItems].sort((a, b) => a.start - b.start);
-    const merged = [];
-    for (const item of sorted) {
-      const prev = merged[merged.length - 1];
-      const gapPx = prev ? (item.start - prev.end) * pxPerMin : Infinity;
-      const prevMergeable = prev && (prev.kind === 'single' || prev.kind === 'overlapChip');
-      if (prevMergeable && item.kind === 'single' && gapPx < COLLISION_GAP_PX) {
-        // Extend the run rather than only ever pairing two singles — a third
-        // (or later) item tight against an already-merged chip folds into
-        // that SAME chip instead of starting a fresh one flush against it.
-        const prevItems = prev.kind === 'overlapChip' ? prev.items : [{ type: prev.type, data: prev.data, kind: prev.kind, blocks: prev.blocks }];
-        merged[merged.length - 1] = {
-          kind: 'overlapChip',
-          items: [...prevItems, { type: item.type, data: item.data, kind: item.kind, blocks: item.blocks }],
-          start: prev.start,
-          end: item.end,
-          lane: prev.lane,
-          groupId: prev.groupId,
-          totalLanes: prev.totalLanes,
-        };
-        continue;
-      }
-      if (prev && prev.kind === 'single' && item.kind === 'single' && gapPx < TIGHT_GAP_PX) {
-        prev.tightGap = true;
-        item.tightGap = true;
-      }
-      merged.push(item);
-    }
-    out.push(...merged);
-  }
-  return out;
+  return results;
 }
 
 /**
@@ -595,7 +569,7 @@ export default function WeekView({
   }, [pxPerMin]);
   useEffect(() => () => clearTimeout(zoomHintTimer.current), []);
 
-  // Which short-task cluster chip (see clusterShortBlocks) has its popover
+  // Which "N tasks" cluster chip (see foldSequentialItems) has its popover
   // open, plus the chip's own viewport rect at click time so the popover can
   // be positioned as a fixed-position overlay (portal'd to <body>) rather
   // than absolutely inside the densely-packed day column — anchoring it to
@@ -1027,7 +1001,7 @@ export default function WeekView({
       liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
       // Normally a two-line render (title + time) is purely a function of
       // this box's own height (TWO_LINE_MIN_HEIGHT). But a box tagged
-      // `tightGap` (see collapseTightPairs) is tall enough on its own, yet
+      // `tightGap` (see foldSequentialItems) is tall enough on its own, yet
       // sits close enough to its neighbour at this zoom that a full two-line
       // render would still look cramped/collide-adjacent — so it degrades to
       // single-line (title only) regardless of height, same as a genuinely
@@ -1169,7 +1143,7 @@ export default function WeekView({
               const { lane, totalLanes } = item;
               // Items side-by-side within an overlap group — see
               // layoutDayItems above. totalLanes is 1 for the common case
-              // (no overlap, or a lone item next to a collapsed overlapChip),
+              // (no overlap, or a lone item next to a collapsed cluster chip),
               // so this is a no-op then.
               const laneWidthPct = 100 / totalLanes;
               const laneStyle =
@@ -1179,22 +1153,26 @@ export default function WeekView({
 
               if (item.kind === 'cluster') {
                 const clusterKey = `${day}_${item.start}`;
-                const totalMinutes = item.blocks.reduce(
-                  (sum, b) => sum + (timeToMinutes(b.endTime) - timeToMinutes(b.startTime)),
-                  0
-                );
                 // top/height are pre-packed by computeDayPositions so this
                 // box can never overlap whatever comes before/after it in
-                // its lane, regardless of how many short items are chained.
+                // its lane, regardless of how many items are chained.
                 const { top, height } = item;
                 // Below TWO_LINE_MIN_HEIGHT there isn't room for both the
                 // title and time-range lines, so the time line is dropped
                 // rather than left to clip into the block below.
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
-                const isAllCompleted = item.blocks.every((b) => isBlockTaskCompleted(b, taskById[b.taskId]));
-                const openThisCluster = (rect) =>
-                  setOpenCluster({ key: clusterKey, rect, items: item.blocks.map((b) => ({ type: 'block', data: b })) });
+                // Events have no "completed" concept, so a chip containing any
+                // live event is never fully completed — only true when every
+                // underlying block is a completed-task block.
+                const isAllCompleted = item.items.every((it) => it.type === 'block' && isBlockTaskCompleted(it.data, taskById[it.data.taskId]));
+                const hasEvent = item.items.some((it) => it.type === 'event');
+                const hasBlock = item.items.some((it) => it.type === 'block');
+                const label = `${item.items.length} ${hasEvent && hasBlock ? 'tasks/events' : hasEvent ? 'events' : 'tasks'}`;
+                const totalMinutes = item.items
+                  .filter((it) => it.type === 'block')
+                  .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);
+                const openThisCluster = (rect) => setOpenCluster({ key: clusterKey, rect, items: item.items });
                 return (
                   <div
                     key={clusterKey}
@@ -1214,57 +1192,15 @@ export default function WeekView({
                         else openThisCluster(e.currentTarget.getBoundingClientRect());
                       }
                     }}
-                    title={`${item.blocks.length} short tasks · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
+                    title={`${label} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
-                    <div className="cal-block-title">{item.blocks.length} short tasks</div>
+                    <div className="cal-block-title">{label}</div>
                     {showTimeLine && (
                       <div className="cal-block-time">
-                        {minutesToTime(item.start)}–{minutesToTime(item.end)} · {formatHours(totalMinutes / 60)}
+                        {minutesToTime(item.start)}–{minutesToTime(item.end)}
+                        {totalMinutes > 0 && !hasEvent ? ` · ${formatHours(totalMinutes / 60)}` : ''}
                       </div>
                     )}
-                  </div>
-                );
-              }
-
-              if (item.kind === 'overlapChip') {
-                const chipKey = `${day}_overlap_${item.start}`;
-                const { top, height } = item;
-                const isOpen = openCluster?.key === chipKey;
-                // Flatten so the popover lists every real block/event as its
-                // own tappable row — a nested "N short tasks" sub-cluster
-                // inside the group expands out to its individual blocks here
-                // rather than the popover having to render yet another
-                // nested cluster chip.
-                const flatItems = item.items.flatMap((it) =>
-                  it.kind === 'cluster' ? it.blocks.map((b) => ({ type: 'block', data: b })) : [{ type: it.type, data: it.data }]
-                );
-                // Events have no "completed" concept, so a chip containing any
-                // live event is never fully completed — only true when every
-                // underlying block is a completed-task block.
-                const isAllCompleted = flatItems.every((it) => it.type === 'block' && isBlockTaskCompleted(it.data, taskById[it.data.taskId]));
-                const openThisOverlap = (rect) => setOpenCluster({ key: chipKey, rect, items: flatItems });
-                return (
-                  <div
-                    key={chipKey}
-                    className={`cal-block cal-overlap-chip ${isOpen ? 'is-open' : ''} ${isAllCompleted ? 'cal-cluster-completed' : ''}`}
-                    style={{ top, height, ...laneStyle }}
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isOpen) setOpenCluster(null);
-                      else openThisOverlap(e.currentTarget.getBoundingClientRect());
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        if (isOpen) setOpenCluster(null);
-                        else openThisOverlap(e.currentTarget.getBoundingClientRect());
-                      }
-                    }}
-                    title={`${item.items.length} events · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
-                  >
-                    <div className="cal-block-title">{item.items.length} events</div>
                   </div>
                 );
               }

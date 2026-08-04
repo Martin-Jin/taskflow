@@ -809,33 +809,6 @@
   cursor: pointer;
 }
 
-/* "N events" chip — shown instead of side-by-side lanes for a run of
-   mutually-overlapping items that are each shorter than LONG_ITEM_MIN (see
-   layoutDayItems), on both mobile and desktop; narrow phone widths can't
-   readably fit thin slices side by side, and desktop gets noisy too once
-   3+ short items overlap. Styled close to .cal-cluster (also a "N things
-   folded into one chip" pattern) but tinted with the accent color instead,
-   so it doesn't read as just another short-task cluster. */
-.cal-overlap-chip {
-  border-left-style: dashed;
-  border-left-color: var(--color-accent-border);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.cal-overlap-chip .cal-block-title {
-  padding-right: 0;
-}
-
-.cal-overlap-chip.is-open {
-  box-shadow: 0 0 0 1px var(--color-accent-soft), var(--shadow-card);
-}
-
 /* Ghost preview of where something will land: shown while the mouse is held
    down on empty grid space to block out time, and while an existing block/
    event is being dragged to a new slot (see WeekView.renderGhost). Carries
