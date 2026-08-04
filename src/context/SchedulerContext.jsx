@@ -50,7 +50,7 @@ import { playAddSound, playDeleteSound } from '../services/soundService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { computeNextDueDate, deriveRecurrenceRule } from '../utils/recurrence';
+import { computeNextDueDate, computeRecurringDescendantUpdate, deriveRecurrenceRule } from '../utils/recurrence';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -1154,15 +1154,19 @@ export function SchedulerProvider({ children }) {
    *
    * SUB-TASK CASCADE (both branches): completing a task with children
    * (parentId chain, to arbitrary depth) cascades to the whole subtree —
-   * see getDescendantIds. For a recurring parent, every descendant is reset
-   * (isCompleted: false, dueDate: null) rather than "completed", since the
-   * parent itself isn't reaching a final completed state either; a
-   * descendant's own recurrence (if any) is irrelevant here, this is an
-   * unconditional reset. For a non-recurring parent, every descendant is
-   * marked completed right alongside it. There's no upward cascade in
-   * either direction — completing a sub-task never auto-completes its
-   * parent, matching existing behavior (nothing reads sub-task completion
-   * to trigger a parent action).
+   * see getDescendantIds. For a recurring parent, each descendant is
+   * evaluated the same way completeTask would evaluate it standalone: if the
+   * descendant is itself recurring with its own dueDate (e.g. via "Apply to
+   * all sub-tasks" in TaskDetailModal, which copies isRecurring/
+   * recurrenceString/dueDate down onto every sub-task), its dueDate advances
+   * to the next occurrence too; otherwise it's left untouched (no recurrence
+   * reason to clear a plain sub-task deadline) — see
+   * utils/recurrence.js's computeRecurringDescendantUpdate for the exact
+   * per-descendant decision and why. For a non-recurring parent, every
+   * descendant is marked completed right alongside it. There's no upward
+   * cascade in either direction — completing a sub-task never auto-completes
+   * its parent, matching existing behavior (nothing reads sub-task
+   * completion to trigger a parent action).
    *
    * ACTUAL TIME TRACKING: optional second arg `actualHours` — passed only by
    * CompleteTaskContext.requestComplete when the task being completed had a
@@ -1250,7 +1254,13 @@ export function SchedulerProvider({ children }) {
             };
           }
           if (descendantIds.has(t.id)) {
-            return { ...t, isCompleted: false, dueDate: null, updatedAt: nowIso };
+            const update = computeRecurringDescendantUpdate(t, todayIso);
+            return {
+              ...t,
+              isCompleted: update.isCompleted,
+              ...(update.dueDate !== undefined ? { dueDate: update.dueDate } : {}),
+              updatedAt: nowIso,
+            };
           }
           return t;
         });
@@ -1266,6 +1276,15 @@ export function SchedulerProvider({ children }) {
         // rebalanceEngine's generateTaskOccurrences expansion) and must
         // survive. Locked blocks are protected the same way a rebalance
         // protects them, and blocks for other tasks are untouched.
+        //
+        // This filter only ever keyed on the parent's own taskId, and that's
+        // still correct for descendants: a descendant's blocks are scheduled/
+        // rebalanced independently under ITS OWN taskId (allocator.js treats
+        // every task, container or not, as its own schedulable unit — see
+        // resolveDueDate), so they were never touched by this filter before
+        // and don't need to be now either. A descendant whose own dueDate
+        // just advanced above will simply get fresh blocks placed for its new
+        // occurrence on the next rebalance, same as any other recurring task.
         const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date >= baseDate);
         commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
         return true;

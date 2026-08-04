@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.5',
+    date: '2026-08-05',
+    title: 'Fixed recurring parent tasks wiping sub-task due dates',
+    changes: [
+      'Completing a recurring parent task no longer blanks out its sub-tasks\' due dates. If a sub-task was set up to recur on its own (e.g. via "Apply to all sub-tasks"), its due date now correctly advances to its next occurrence instead of disappearing.',
+    ],
+  },
+  {
     version: '1.93.4',
     date: '2026-08-05',
     title: 'Autocomplete popups close immediately after picking a suggestion',

@@ -502,6 +502,53 @@ export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
   return generateRuleOccurrences(task.dueDate, expansionRule, rangeStartIso, rangeEndIso);
 }
 
+/**
+ * Decide how a single descendant (sub-task) should be updated when its
+ * RECURRING ancestor is completed and rolls forward — see
+ * SchedulerContext.completeTask's recurring-parent branch, which calls this
+ * once per entry in getDescendantIds.
+ *
+ * A descendant can independently carry its own `isRecurring`/`recurrenceString`
+ * /`dueDate` (e.g. via TaskDetailModal's "Apply to all sub-tasks", which copies
+ * those fields straight from the parent down onto every sub-task — they're
+ * generic Task fields, not parent-only ones, see types/index.js). Two cases:
+ *
+ *   - Descendant is itself recurring with its own dueDate: advance ITS due
+ *     date to its next occurrence the exact same way the parent's is advanced
+ *     (including the "base off today, not a stale overdue date" rule), and
+ *     reset isCompleted to false — it isn't "done", it just rolled forward.
+ *     completedDates/completionHistory are intentionally NOT mirrored here:
+ *     those exist purely to drive the dashboard's streak/history view for the
+ *     task actually being completed by the user, and completing a container
+ *     task's occurrence isn't the user completing each sub-task's occurrence
+ *     too (there's no independent evidence *that* sub-task's own work happened
+ *     this cycle) — only the top-level completeTask() call for a given task
+ *     records history for it.
+ *   - Descendant is NOT independently recurring (no isRecurring, or recurring
+ *     but with no dueDate of its own): leave it alone entirely. Per
+ *     types/index.js's `dueDate` doc comment, an undated sub-task already
+ *     borrows its nearest ancestor's dueDate for scheduling urgency, and a
+ *     dated-but-non-recurring sub-task's date is just a plain deadline with no
+ *     recurrence reason to clear it — nulling it out (the old, buggy
+ *     behavior) destroyed real user data for no benefit. isCompleted is left
+ *     untouched too: this cascade path only exists to keep a recurring
+ *     parent's re-opening from stranding a sub-task in a stale completed
+ *     state, which doesn't apply to one that a never completed in the first
+ *     place.
+ *
+ * @param {object} descendant - the sub-task Task object
+ * @param {string} todayIso - ISO date (YYYY-MM-DD), pre-computed by the caller
+ * @returns {{dueDate: string|null|undefined, isCompleted: boolean}} fields to
+ *   spread onto the descendant; `dueDate: undefined` means "don't touch it".
+ */
+export function computeRecurringDescendantUpdate(descendant, todayIso) {
+  if (descendant.isRecurring && descendant.dueDate) {
+    const baseDate = descendant.dueDate < todayIso ? todayIso : descendant.dueDate;
+    return { dueDate: computeNextDueDate(baseDate, descendant.recurrenceString), isCompleted: false };
+  }
+  return { dueDate: undefined, isCompleted: descendant.isCompleted };
+}
+
 /** Options for the "Repeats every N ___" unit <select> in AddTaskModal/TaskDetailModal. */
 export const RECURRENCE_UNITS = [
   { value: 'day', label: 'Day(s)' },
