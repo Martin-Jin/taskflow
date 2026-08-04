@@ -585,7 +585,7 @@ export default function WeekView({
     return marks;
   }, []);
 
-  const gridHeight = (GRID_END_MIN - GRID_START_MIN) * pxPerMin;
+  const gridHeight = Math.round((GRID_END_MIN - GRID_START_MIN) * pxPerMin);
   // Rounded to whole pixels so event/now-line edges land on the same pixel
   // grid as the hour lines (see packLane's matching rounding, above).
   const timeToY = (hhmm) => Math.round((timeToMinutes(hhmm) - GRID_START_MIN) * pxPerMin);
@@ -989,7 +989,7 @@ export default function WeekView({
           <div
             key={m}
             className="time-label"
-            style={{ position: 'absolute', top: (m - GRID_START_MIN) * pxPerMin, right: 0, transform: 'translateY(-50%)' }}
+            style={{ position: 'absolute', top: Math.round((m - GRID_START_MIN) * pxPerMin), right: 0, transform: 'translateY(-50%)' }}
           >
             {minutesToTime(m)}
           </div>
@@ -1258,7 +1258,11 @@ export default function WeekView({
                             priority: task.priority,
                             projectName: projectById[task.projectId]?.name,
                             isPassive: block.isPassive,
-                            completedAt: task?.completedAt ?? null,
+                            // completedAt is a single scalar on the shared master task, not
+                            // per-occurrence — for recurring tasks it reflects whichever
+                            // occurrence was most recently completed, which may not be this
+                            // block's date. Only trust it for non-recurring tasks.
+                            completedAt: isCompleted && !task.isRecurring ? task?.completedAt ?? null : null,
                           })
                   }
                   onMouseLeave={isMobile ? undefined : cancelHoverPreview}

@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.9',
+    date: '2026-08-05',
+    title: 'Fixed remaining calendar axis drift and a stale completion tooltip',
+    changes: [
+      'Fixed the hour axis and grid still drifting out of alignment with scheduled blocks at the most zoomed-out level, caused by a floating-point rounding gap the earlier fix missed.',
+      'Hovering a recurring task\'s block no longer shows a stale "Completed at" time left over from a different day\'s occurrence of the same task.',
+    ],
+  },
+  {
     version: '1.93.8',
     date: '2026-08-05',
     title: 'Fixed calendar event alignment and floating search bar blur',
