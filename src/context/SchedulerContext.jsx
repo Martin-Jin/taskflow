@@ -151,6 +151,7 @@ function buildNewTaskObject(taskInput, id) {
     isCompleted: false,
     isRecurring: false,
     recurrenceString: null,
+    priority: 'medium',
     minChunkHours: 0.5,
     maxChunkHours: 4,
     dependsOn: [],
@@ -1267,61 +1268,69 @@ export function SchedulerProvider({ children }) {
           todayIso
         );
 
-        const newTasks = tasks.map((t) => {
-          if (t.id === taskId) {
-            return {
-              ...t,
-              dueDate: nextDueDate,
-              remainingHours: t.estimatedHours,
-              isCompleted: false,
-              completedAt: nowIso,
-              completedDates: keptDates,
-              completionHistory: nextHistory,
-              updatedAt: nowIso,
-            };
-          }
-          if (descendantIds.has(t.id)) {
-            const update = computeRecurringDescendantUpdate(t, todayIso);
-            return {
-              ...t,
-              isCompleted: update.isCompleted,
-              ...(update.dueDate !== undefined ? { dueDate: update.dueDate } : {}),
-              ...(update.remainingHours !== undefined ? { remainingHours: update.remainingHours } : {}),
-              ...(update.completedDates !== undefined ? { completedDates: update.completedDates } : {}),
-              ...(update.completionHistory !== undefined ? { completionHistory: update.completionHistory } : {}),
-              updatedAt: nowIso,
-            };
-          }
-          return t;
-        });
-        // Drop only *unlocked* blocks for occurrences strictly BEFORE the one
-        // actually being closed out (date < baseDate) — those are stale/
-        // missed prior occurrences with nothing left to show. The occurrence
-        // just closed out (date === baseDate) keeps its block so today's
-        // agenda/calendar can keep showing it, crossed out, as a completed
-        // record (see isBlockTaskCompleted in missedTasks.js, which reads
-        // `completedDates` instead of `isCompleted` for this exact reason).
-        // Blocks for LATER dates belong to future occurrences already placed
-        // by the last rebalance (each occurrence gets its own block now, see
-        // rebalanceEngine's generateTaskOccurrences expansion) and must
-        // survive. Locked blocks are protected the same way a rebalance
-        // protects them, and blocks for other tasks are untouched.
-        //
-        // This filter only ever keyed on the parent's own taskId, and that's
-        // still correct for descendants: a descendant's blocks are scheduled/
-        // rebalanced independently under ITS OWN taskId (allocator.js treats
-        // every task, container or not, as its own schedulable unit — see
-        // resolveDueDate), so they were never touched by this filter before
-        // and don't need to be now either. A descendant whose own dueDate
-        // just advanced above will simply get fresh blocks placed for its new
-        // occurrence on the next rebalance, same as any other recurring task.
-        const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date >= baseDate);
-        // Completing early can free up a later-today slot the just-closed
-        // occurrence was holding — re-plan the REST of today (only) into it.
-        // See rebalanceTodayOnly's own comment for why this is scoped tightly
-        // to today rather than reusing the full-horizon runRebalance.
-        const { tasks: rebalancedTasks, blocks: rebalancedBlocks } = rebalanceTodayOnly(newTasks, newBlocks);
-        commit({ tasks: rebalancedTasks, blocks: rebalancedBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
+        // Function form (see addTask's comment above) so two completions
+        // landing in the same tick (double-click, or a recurring task's
+        // checkbox — never disabled, since isCompleted deliberately stays
+        // false for recurring tasks — clicked twice quickly) each compute
+        // off the OTHER's result instead of both reading the same stale
+        // `tasks`/`blocks` closure and the second commit silently
+        // overwriting the first's change.
+        commit((current) => {
+          const newTasks = current.tasks.map((t) => {
+            if (t.id === taskId) {
+              return {
+                ...t,
+                dueDate: nextDueDate,
+                remainingHours: t.estimatedHours,
+                isCompleted: false,
+                completedAt: nowIso,
+                completedDates: keptDates,
+                completionHistory: nextHistory,
+                updatedAt: nowIso,
+              };
+            }
+            if (descendantIds.has(t.id)) {
+              const update = computeRecurringDescendantUpdate(t, todayIso);
+              return {
+                ...t,
+                isCompleted: update.isCompleted,
+                ...(update.dueDate !== undefined ? { dueDate: update.dueDate } : {}),
+                ...(update.remainingHours !== undefined ? { remainingHours: update.remainingHours } : {}),
+                ...(update.completedDates !== undefined ? { completedDates: update.completedDates } : {}),
+                ...(update.completionHistory !== undefined ? { completionHistory: update.completionHistory } : {}),
+                updatedAt: nowIso,
+              };
+            }
+            return t;
+          });
+          // Drop only *unlocked* blocks for occurrences strictly BEFORE the one
+          // actually being closed out (date < baseDate) — those are stale/
+          // missed prior occurrences with nothing left to show. The occurrence
+          // just closed out (date === baseDate) keeps its block so today's
+          // agenda/calendar can keep showing it, crossed out, as a completed
+          // record (see isBlockTaskCompleted in missedTasks.js, which reads
+          // `completedDates` instead of `isCompleted` for this exact reason).
+          // Blocks for LATER dates belong to future occurrences already placed
+          // by the last rebalance (each occurrence gets its own block now, see
+          // rebalanceEngine's generateTaskOccurrences expansion) and must
+          // survive. Locked blocks are protected the same way a rebalance
+          // protects them, and blocks for other tasks are untouched.
+          //
+          // This filter only ever keyed on the parent's own taskId, and that's
+          // still correct for descendants: a descendant's blocks are scheduled/
+          // rebalanced independently under ITS OWN taskId (allocator.js treats
+          // every task, container or not, as its own schedulable unit — see
+          // resolveDueDate), so they were never touched by this filter before
+          // and don't need to be now either. A descendant whose own dueDate
+          // just advanced above will simply get fresh blocks placed for its new
+          // occurrence on the next rebalance, same as any other recurring task.
+          const newBlocks = current.blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date >= baseDate);
+          // Completing early can free up a later-today slot the just-closed
+          // occurrence was holding — re-plan the REST of today (only) into it.
+          // See rebalanceTodayOnly's own comment for why this is scoped tightly
+          // to today rather than reusing the full-horizon runRebalance.
+          return rebalanceTodayOnly(newTasks, newBlocks);
+        }, `Completed recurring task — advanced to ${nextDueDate}`);
         return true;
       }
 
@@ -1331,28 +1340,30 @@ export function SchedulerProvider({ children }) {
       // out of dependsOn — same cleanup deleteTask does when a dependency
       // disappears, just triggered by it being *done* instead of gone.
       const completedIds = new Set([taskId, ...descendantIds]);
-      const newTasks = tasks.map((t) => {
-        if (t.id === taskId) {
-          return {
-            ...t,
-            isCompleted: true,
-            completedAt: nowIso,
-            remainingHours: 0,
-            ...(actualHours != null ? { actualHours } : {}),
-          };
-        }
-        if (descendantIds.has(t.id)) {
-          return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 };
-        }
-        if (t.dependsOn?.some((id) => completedIds.has(id))) {
-          return { ...t, dependsOn: t.dependsOn.filter((id) => !completedIds.has(id)) };
-        }
-        return t;
-      });
-      // Completing early can free up a later-today slot this task was
-      // holding — re-plan the REST of today (only) into it.
-      const { tasks: rebalancedTasks, blocks: rebalancedBlocks } = rebalanceTodayOnly(newTasks, blocks);
-      commit({ tasks: rebalancedTasks, blocks: rebalancedBlocks }, `Completed task`);
+      // Function form — see the recurring branch's comment above.
+      commit((current) => {
+        const newTasks = current.tasks.map((t) => {
+          if (t.id === taskId) {
+            return {
+              ...t,
+              isCompleted: true,
+              completedAt: nowIso,
+              remainingHours: 0,
+              ...(actualHours != null ? { actualHours } : {}),
+            };
+          }
+          if (descendantIds.has(t.id)) {
+            return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 };
+          }
+          if (t.dependsOn?.some((id) => completedIds.has(id))) {
+            return { ...t, dependsOn: t.dependsOn.filter((id) => !completedIds.has(id)) };
+          }
+          return t;
+        });
+        // Completing early can free up a later-today slot this task was
+        // holding — re-plan the REST of today (only) into it.
+        return rebalanceTodayOnly(newTasks, current.blocks);
+      }, `Completed task`);
       return true;
     },
     [tasks, blocks, commit, setNotification, rebalanceTodayOnly]

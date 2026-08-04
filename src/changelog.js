@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.11',
+    date: '2026-08-05',
+    title: 'Fixed AI-created tasks failing to sync and a task-completion flicker',
+    changes: [
+      'Fixed "Failed to sync to the cloud" errors when editing a task the AI Quick Add created without an explicit priority.',
+      'Fixed a task completion sometimes flickering and reverting, requiring a second click to actually mark it done — most noticeable on recurring tasks completed in quick succession.',
+    ],
+  },
+  {
     version: '1.93.10',
     date: '2026-08-05',
     title: 'Fixed calendar blocks incorrectly stacking, and cramped-looking busy days when zoomed out',

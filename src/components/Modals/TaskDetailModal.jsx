@@ -225,7 +225,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [link, setLink] = useState(task.link || '');
   const [notes, setNotes] = useState(() => stripNotesLinks(task.notes || ''));
   const [estimatedHours, setEstimatedHours] = useState(task.estimatedHours);
-  const [priority, setPriority] = useState(task.priority);
+  const [priority, setPriority] = useState(task.priority || 'medium');
   const [dueDate, setDueDate] = useState(task.dueDate || '');
   const [isRecurring, setIsRecurring] = useState(!!task.isRecurring);
   const initialRule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
@@ -410,7 +410,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       link: task.link || '',
       notes: stripNotesLinks(task.notes || ''),
       estimatedHours: task.estimatedHours,
-      priority: task.priority,
+      priority: task.priority || 'medium',
       dueDate: task.dueDate || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: initialRule.count,
@@ -453,7 +453,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setNotesLinkMatches(getInitialNoteLinks(task));
     setIsNotesFocused(false);
     setEstimatedHours(task.estimatedHours);
-    setPriority(task.priority);
+    setPriority(task.priority || 'medium');
     setDueDate(task.dueDate || '');
     setIsRecurring(!!task.isRecurring);
     const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
@@ -479,7 +479,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       link: task.link || '',
       notes: stripNotesLinks(task.notes || ''),
       estimatedHours: task.estimatedHours,
-      priority: task.priority,
+      priority: task.priority || 'medium',
       dueDate: task.dueDate || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: rule.count,
@@ -514,7 +514,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
     const taskValues = {
       estimatedHours: task.estimatedHours,
-      priority: task.priority,
+      priority: task.priority || 'medium',
       dueDate: task.dueDate || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: rule.count,
