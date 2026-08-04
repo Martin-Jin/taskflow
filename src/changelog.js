@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.19',
+    date: '2026-08-05',
+    title: 'Fixed remaining cases of calendar tasks overflowing past their real end time',
+    changes: [
+      'The previous fix still let a small overflow through. Now a stretched task is only allowed to push the next task down as far as that task\'s own real end time — pushing past it always folds into an "N tasks" chip instead.',
+    ],
+  },
+  {
     version: '1.93.18',
     date: '2026-08-05',
     title: 'Fixed calendar tasks still overflowing past their real end time',
