@@ -139,6 +139,12 @@ const TASK_CONTENT_FIELDS = [
     type: 'string',
     description: 'ISO date (YYYY-MM-DD) the task is due, resolved relative to the reference date in context.md.',
   },
+  {
+    name: 'enforceDueDate',
+    type: 'boolean',
+    description:
+      'True only if the task must be done ON its due date specifically (not just by it) — e.g. "must be done on the 5th", "has to happen exactly on Friday". Only meaningful when dueDate is also set; ignored otherwise.',
+  },
   { name: 'isRecurring', type: 'boolean', description: 'True only if the task explicitly repeats (e.g. "every day", "weekly").' },
   {
     name: 'recurrenceString',

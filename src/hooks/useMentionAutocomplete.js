@@ -71,7 +71,7 @@ function findActiveSpan(text, caret) {
 
 export function useMentionAutocomplete({ inputRef, value, onChange, projects = [], sections = [], labels = [] }) {
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const [span, setSpan, refresh] = useCaretActiveSpan(inputRef, value, findActiveSpan, () => setHighlightedIndex(0));
+  const [span, setSpan, refresh, dismiss] = useCaretActiveSpan(inputRef, value, findActiveSpan, () => setHighlightedIndex(0));
 
   let mode = null; // 'label' | 'project' | 'section'
   let matches = [];
@@ -108,7 +108,7 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
     const el = inputRef.current;
     const caret = el ? el.selectionStart : value.length;
     const needsTrailingSpace = !/^\s/.test(value.slice(caret));
-    setSpan(null);
+    dismiss();
     spliceTextAndMoveCaret({
       inputRef,
       value,
@@ -148,7 +148,7 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      setSpan(null);
+      dismiss();
       return true;
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
