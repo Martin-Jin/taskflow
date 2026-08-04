@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.12',
+    date: '2026-08-05',
+    title: 'Fixed the calendar\'s tight-schedule fallback not triggering at all',
+    changes: [
+      "The single-line/\"N events\" fallback for busy, zoomed-out days (added in the previous update) wasn't actually triggering, due to a missing internal value — it now correctly kicks in.",
+      'Fixed a run of 3+ tightly-packed blocks folding into several small overlapping chips instead of one clean chip.',
+    ],
+  },
+  {
     version: '1.93.11',
     date: '2026-08-05',
     title: 'Fixed AI-created tasks failing to sync and a task-completion flicker',
