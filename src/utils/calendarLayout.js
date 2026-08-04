@@ -328,25 +328,19 @@ export function layoutDayItems(dayItems, pxPerMin) {
   return results;
 }
 
-// How far a stretched predecessor is allowed to push the NEXT item's box
-// down past that item's own natural (unpushed) bottom before the pushdown
-// counts as "excessive" rather than harmless Google-Calendar-style
-// stretching — see packLane.
-//
-// Expressed in REAL MINUTES, not pixels: a fixed pixel budget (e.g.
-// MIN_BLOCK_HEIGHT_PX) means a wildly different amount of real time at each
-// zoom level — at the lowest zoom (0.55px/min) a single MIN_BLOCK_HEIGHT_PX
-// clamp alone pushes a neighbour down by up to ~26px, which is nearly 47
-// real minutes (26 / 0.55) — comfortably enough, by itself, to shove a task
-// visually into the NEXT hour slot on the axis, which is exactly the
-// misalignment this check exists to prevent. A pixel budget large enough to
-// tolerate one ordinary clamp at high zoom is therefore already far too
-// permissive at low zoom. A small real-minute budget instead means the same
-// amount of true time-drift reads as "excessive" regardless of zoom level —
-// a few minutes of visual slack is imperceptible whether zoomed in or out,
-// but tens of minutes' worth of drift always deserves folding into a chip
-// instead of silently misrepresenting when an item actually ends.
-export const EXCESSIVE_PUSHDOWN_MIN = 12;
+// A pushed-down item's box TOP is never allowed to cross past the item's own
+// natural END position on the axis — this is a hard geometric limit, not a
+// tunable tolerance. Below this line, some pushdown is always fine no matter
+// how large in isolation: as long as the box's top still lands somewhere
+// within the item's own real time span, it still visually reads as "this
+// box belongs to this time slot," even if crowded. The moment a pushed top
+// would land AFTER the item's own true end time, though, the box's start
+// itself would render later than when the task is even scheduled to
+// finish — an unambiguous misalignment at any zoom level, not a matter of
+// degree, so there's nothing to tune here (unlike a "how many minutes of
+// drift is tolerable" budget, which by definition has to keep being
+// re-justified against whatever zoom level breaks it next). See packLane for
+// where this is enforced.
 
 /**
  * Assign a final {top, height} in px to every item in a lane, guaranteeing
@@ -363,17 +357,18 @@ export const EXCESSIVE_PUSHDOWN_MIN = 12;
  * that it visually overflows past its own true end time on the hour axis
  * (e.g. a task truly ending at 10:00 rendering into the 11:00 slot) — a
  * worse lie than the harmless few-px stretch this mechanism is meant to
- * produce. So before accepting a pushed position, check how far past the
- * item's own natural (unpushed) bottom the push would land it (converted to
- * real minutes via pxPerMin); if that exceeds EXCESSIVE_PUSHDOWN_MIN, don't
- * render the pair stacked at all —
- * fold the pushed-down item into the previous box as a `kind: 'cluster'`
- * chip instead (same shape foldSequentialItems/layoutDayItems already
- * produce), sized to its own honest natural span rather than a further-
- * pushed one. The merged cluster then becomes the new "previous" item, so a
- * third item that would also collide with it goes through the same check
- * and can keep growing the same chip — mirroring foldSequentialItems' own
- * "chain into one growing chip" behaviour for 3+ mutually-close items.
+ * produce. So before accepting a pushed position, check whether the pushed
+ * TOP would land past the item's own natural END position on the axis — a
+ * hard, zoom-independent line (see the comment directly above this function
+ * for why this is a fixed geometric limit rather than a tunable budget). If
+ * it would, don't render the pair stacked at all — fold the pushed-down item
+ * into the previous box as a `kind: 'cluster'` chip instead (same shape
+ * foldSequentialItems/layoutDayItems already produce), sized to its own
+ * honest natural span rather than a further-pushed one. The merged cluster
+ * then becomes the new "previous" item, so a third item that would also
+ * collide with it goes through the same check and can keep growing the same
+ * chip — mirroring foldSequentialItems' own "chain into one growing chip"
+ * behaviour for 3+ mutually-close items.
  */
 export function packLane(items, pxPerMin) {
   const sorted = [...items].sort((a, b) => a.start - b.start);
@@ -382,12 +377,12 @@ export function packLane(items, pxPerMin) {
 
   for (const item of sorted) {
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
+    const naturalEnd = (item.end - GRID_START_MIN) * pxPerMin;
     const naturalHeight = Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin);
     const pushedTop = Math.max(naturalTop, prevBottom);
-    const pushdownMin = (pushedTop - naturalTop) / pxPerMin;
 
     const prevPacked = out[out.length - 1];
-    if (prevPacked && pushdownMin > EXCESSIVE_PUSHDOWN_MIN) {
+    if (prevPacked && pushedTop > naturalEnd) {
       // Fold into (or grow) a cluster instead of accepting a position that
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged
