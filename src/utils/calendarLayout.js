@@ -328,6 +328,30 @@ export function layoutDayItems(dayItems, pxPerMin) {
   return results;
 }
 
+// How far a stretched predecessor is allowed to push the NEXT item's box
+// down past that item's own natural (unpushed) bottom before the pushdown
+// counts as "excessive" rather than harmless Google-Calendar-style
+// stretching — see packLane. Expressed as a pixel budget so it's compared
+// like-for-like with the other box-tightness constants above (TIGHT_GAP_PX,
+// COLLISION_GAP_PX), rather than a fixed minute count that would mean a
+// different number of pixels at every zoom level.
+//
+// A single MIN_BLOCK_HEIGHT_PX clamp on one very short predecessor can, by
+// itself, push the next item down by up to (MIN_BLOCK_HEIGHT_PX minus that
+// predecessor's own natural height) — approaching MIN_BLOCK_HEIGHT_PX for a
+// near-zero-duration item. That's exactly the "one item's own clamp nudges
+// its immediate neighbour a bit" case the pushdown mechanism exists to
+// support (see packLane's own doc comment), so the excessive-pushdown floor
+// must sit comfortably above a single clamp's worth of push, not at or below
+// it — otherwise ordinary single-clamp pushdown would itself misfire as
+// "excessive". Using MIN_BLOCK_HEIGHT_PX itself (rather than some smaller
+// fraction of it) as that floor means one clamp's worth of push is always
+// tolerated, and it's only a second stretched predecessor in the same chain
+// (or one dramatically oversized clamp) that can tip a pushdown over the
+// line — matching the reported bug, which only surfaced once TWO short
+// items compounded their stretch onto a real 60-minute task.
+export const EXCESSIVE_PUSHDOWN_PX = MIN_BLOCK_HEIGHT_PX;
+
 /**
  * Assign a final {top, height} in px to every item in a lane, guaranteeing
  * zero overlap no matter how many short items are packed back-to-back.
@@ -336,22 +360,77 @@ export function layoutDayItems(dayItems, pxPerMin) {
  * so a chain of short blocks/clusters pushes each subsequent box down as
  * far as needed — mirroring how Google Calendar visually stretches a dense
  * run of short meetings rather than letting their boxes collide.
+ *
+ * That pushdown has no upper bound by itself though: if enough predecessors
+ * in a lane were stretched (or one was stretched a lot), the accumulated
+ * push can shove a later, perfectly real-length item's box down far enough
+ * that it visually overflows past its own true end time on the hour axis
+ * (e.g. a task truly ending at 10:00 rendering into the 11:00 slot) — a
+ * worse lie than the harmless few-px stretch this mechanism is meant to
+ * produce. So before accepting a pushed position, check how far past the
+ * item's own natural (unpushed) bottom the push would land it; if that
+ * exceeds EXCESSIVE_PUSHDOWN_PX, don't render the pair stacked at all —
+ * fold the pushed-down item into the previous box as a `kind: 'cluster'`
+ * chip instead (same shape foldSequentialItems/layoutDayItems already
+ * produce), sized to its own honest natural span rather than a further-
+ * pushed one. The merged cluster then becomes the new "previous" item, so a
+ * third item that would also collide with it goes through the same check
+ * and can keep growing the same chip — mirroring foldSequentialItems' own
+ * "chain into one growing chip" behaviour for 3+ mutually-close items.
  */
 export function packLane(items, pxPerMin) {
   const sorted = [...items].sort((a, b) => a.start - b.start);
+  const out = [];
   let prevBottom = -Infinity;
-  return sorted.map((item) => {
+
+  for (const item of sorted) {
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
     const naturalHeight = Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin);
+    const pushedTop = Math.max(naturalTop, prevBottom);
+    const pushdown = pushedTop - naturalTop;
+
+    const prevPacked = out[out.length - 1];
+    if (prevPacked && pushdown > EXCESSIVE_PUSHDOWN_PX) {
+      // Fold into (or grow) a cluster instead of accepting a position that
+      // would misrepresent this item's real end time. The cluster's own
+      // box uses ITS natural span (min start, max end across every merged
+      // item), not the rejected pushed-down position.
+      const prevItems = prevPacked.kind === 'cluster' ? prevPacked.items : [{ type: prevPacked.type, data: prevPacked.data }];
+      const mergedStart = Math.min(prevPacked.start, item.start);
+      const mergedEnd = Math.max(prevPacked.end, item.end);
+      // prevPacked's own placed `top` may already sit below its natural top
+      // (it was itself accepted as a within-budget pushdown against
+      // whatever came before it in the lane) — the merged cluster must
+      // never render EARLIER than that already-validated position, or it
+      // would reopen the exact overlap-with-an-earlier-item problem
+      // prevPacked's own placement was computed to avoid.
+      const mergedTop = Math.max(prevPacked.top, Math.round((mergedStart - GRID_START_MIN) * pxPerMin));
+      const mergedHeight = Math.round(Math.max(MIN_BLOCK_HEIGHT_PX, (mergedEnd - mergedStart) * pxPerMin));
+      const cluster = {
+        ...prevPacked,
+        kind: 'cluster',
+        items: [...prevItems, { type: item.type, data: item.data }],
+        start: mergedStart,
+        end: mergedEnd,
+        top: mergedTop,
+        height: mergedHeight,
+      };
+      out[out.length - 1] = cluster;
+      prevBottom = cluster.top + cluster.height + BLOCK_GAP_PX;
+      continue;
+    }
+
     // Round to whole pixels so block edges land on the same pixel grid as
     // the hour lines (painted at integer --hour-height multiples) — left
     // unrounded, sub-hour offsets go fractional at non-default zoom levels
     // (e.g. 0.55 px/min -> 8.25px per 15min) and drift out of alignment.
-    const top = Math.round(Math.max(naturalTop, prevBottom));
+    const top = Math.round(pushedTop);
     const height = Math.round(naturalHeight);
     prevBottom = top + height + BLOCK_GAP_PX;
-    return { ...item, top, height };
-  });
+    out.push({ ...item, top, height });
+  }
+
+  return out;
 }
 
 /**
