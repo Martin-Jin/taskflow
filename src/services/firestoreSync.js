@@ -41,9 +41,33 @@ export async function pullUserData(uid) {
   return snap.exists() ? snap.data() : null;
 }
 
+/**
+ * Recursively strips `undefined` values out of plain objects/arrays.
+ * Firestore's SDK throws synchronously on ANY `undefined` field value
+ * anywhere in a write payload (including nested in arrays) — a bad shape
+ * upstream (e.g. a task built with an unset optional field) would otherwise
+ * turn into a hard "failed to sync" error instead of just omitting that key,
+ * matching Firestore's own `setDoc(..., {merge: true})` semantics for a
+ * missing field. Defense-in-depth: callers should still avoid producing
+ * `undefined` in the first place, but this keeps one bad field from blocking
+ * the entire sync.
+ */
+export function stripUndefined(value) {
+  if (Array.isArray(value)) return value.map(stripUndefined);
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const result = {};
+    for (const [key, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      result[key] = stripUndefined(v);
+    }
+    return result;
+  }
+  return value;
+}
+
 /** Merge-writes the given fields into the user's doc — never clobbers fields this call doesn't mention. */
 export async function pushUserData(uid, data) {
-  await setDoc(doc(db, 'users', uid), data, { merge: true });
+  await setDoc(doc(db, 'users', uid), stripUndefined(data), { merge: true });
 }
 
 /**
