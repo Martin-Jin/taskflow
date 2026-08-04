@@ -1072,7 +1072,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // Save/Cancel row is reachable whenever mainDirty is also true.
     if (fixedTimeError || dueDateError) return;
     commitChanges();
-    requestClose();
+    // Deliberately does NOT close the modal — per user preference, Save
+    // just commits and leaves the task open; Escape (or the close button)
+    // is how the user dismisses it when they're done.
   }
 
   /**

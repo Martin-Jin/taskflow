@@ -38,7 +38,7 @@ export default function KeywordSuggestPopup({ anchorRect, matches, activeIndex, 
           {candidate}
         </button>
       ))}
-      <span className="keyword-suggest-hint">Tab · Enter</span>
+      <span className="keyword-suggest-hint">{matches.length > 1 ? 'Tab · Enter' : 'Enter'}</span>
     </div>,
     document.body
   );
