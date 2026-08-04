@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN } from '../../src/utils/calendarLayout';
+import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
 // minimal fields — the layout logic only reads type/data.isPassive/start/end.
@@ -168,6 +168,49 @@ describe('layoutDayItems + computeDayPositions (lane packing)', () => {
     expect(longItem).toBeTruthy();
     expect(clusterItem).toBeTruthy();
     expect(longItem.lane).not.toBe(clusterItem.lane);
+  });
+});
+
+describe('cross-group stacking does not resurrect the original chain-stacking bug', () => {
+  it('does not push a genuinely distant, unrelated later item down just because an earlier short-item run inflated prevBottom', () => {
+    // Regression for the ORIGINAL "chain-stacking across unrelated groups"
+    // bug (see git history): a run of short, MIN_BLOCK_HEIGHT_PX-clamped
+    // items early in the day must not push a later, clearly time-disjoint
+    // item's top down — only genuinely adjacent (near-zero natural gap)
+    // items should ever influence each other's position.
+    const items = [
+      block('A', 480, 481), // 08:00-08:01, clamped to MIN_BLOCK_HEIGHT_PX
+      block('B', 481, 482),
+      block('C', 482, 483),
+      block('D', 483, 484),
+      block('E', 484, 485), // run of 5 back-to-back 1-min items
+      block('Later', 800, 830), // 13:20-13:50, hours later — clearly unrelated
+    ];
+    const pxPerMin = 1.25;
+    const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+    const later = positioned.find((i) => i.data?.id === 'Later' || i.items?.some((it) => it.data.id === 'Later'));
+    const expectedNaturalTop = Math.round((800 - GRID_START_MIN) * pxPerMin);
+    expect(later.top).toBe(expectedNaturalTop);
+  });
+});
+
+describe('cross-group sequential visual overlap', () => {
+  it('does not let two sequential, non-overlapping-in-time single items render with overlapping top/height just because they land in different overlap groups', () => {
+    // "Morning tasks" (5min, too-short-alone) then "Piano" (45min, long
+    // enough) with zero gap between them. Because they don't overlap in
+    // time (Piano starts exactly when Morning tasks ends), layoutDayItems'
+    // overlapGroup sweep puts them in two SEPARATE groups, each producing
+    // its own lane 0 — computeDayPositions then packs each group's lane 0
+    // independently (fresh prevBottom per group), so nothing guarantees
+    // Piano's box doesn't visually collide with Morning tasks' box below it.
+    const items = [block('Morning tasks', 480, 485), block('Piano', 485, 530)];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+      const sorted = [...positioned].sort((a, b) => a.top - b.top);
+      for (let i = 1; i < sorted.length; i++) {
+        expect(sorted[i].top).toBeGreaterThanOrEqual(sorted[i - 1].top + sorted[i - 1].height);
+      }
+    }
   });
 });
 
