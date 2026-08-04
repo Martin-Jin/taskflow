@@ -503,6 +503,41 @@ export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
 }
 
 /**
+ * Roll a recurring task/descendant's raw `completedDates` forward: prepend
+ * the just-closed `occurrenceDate`, then trim anything older than 7 days out
+ * into the monthly `completionHistory` aggregate instead of dropping it
+ * outright — see types/index.js's Task typedef. Shared by
+ * SchedulerContext.completeTask's recurring-parent branch and
+ * computeRecurringDescendantUpdate below so the two don't diverge on this
+ * bookkeeping.
+ *
+ * @param {string} occurrenceDate - ISO date of the occurrence being closed out
+ * @param {string[]} existingCompletedDates - task's current `completedDates`
+ * @param {object} existingCompletionHistory - task's current `completionHistory`
+ * @param {string} todayIso - ISO date (YYYY-MM-DD), pre-computed by the caller
+ * @returns {{completedDates: string[], completionHistory: object}}
+ */
+export function computeCompletionHistoryUpdate(
+  occurrenceDate,
+  existingCompletedDates,
+  existingCompletionHistory,
+  todayIso
+) {
+  const sevenDaysAgoIso = addDays(todayIso, -7);
+  const keptDates = [];
+  const nextHistory = { ...(existingCompletionHistory || {}) };
+  for (const d of [occurrenceDate, ...(existingCompletedDates || [])]) {
+    if (d >= sevenDaysAgoIso) {
+      keptDates.push(d);
+    } else {
+      const monthKey = d.slice(0, 7); // "YYYY-MM"
+      nextHistory[monthKey] = (nextHistory[monthKey] || 0) + 1;
+    }
+  }
+  return { completedDates: keptDates, completionHistory: nextHistory };
+}
+
+/**
  * Decide how a single descendant (sub-task) should be updated when its
  * RECURRING ancestor is completed and rolls forward — see
  * SchedulerContext.completeTask's recurring-parent branch, which calls this
@@ -515,15 +550,18 @@ export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
  *
  *   - Descendant is itself recurring with its own dueDate: advance ITS due
  *     date to its next occurrence the exact same way the parent's is advanced
- *     (including the "base off today, not a stale overdue date" rule), and
- *     reset isCompleted to false — it isn't "done", it just rolled forward.
- *     completedDates/completionHistory are intentionally NOT mirrored here:
- *     those exist purely to drive the dashboard's streak/history view for the
- *     task actually being completed by the user, and completing a container
- *     task's occurrence isn't the user completing each sub-task's occurrence
- *     too (there's no independent evidence *that* sub-task's own work happened
- *     this cycle) — only the top-level completeTask() call for a given task
- *     records history for it.
+ *     (including the "base off today, not a stale overdue date" rule), reset
+ *     isCompleted to false (it isn't "done", it just rolled forward), reset
+ *     remainingHours to its own estimatedHours (schedulable again for the new
+ *     occurrence, same as the parent), and record THIS occurrence into its
+ *     OWN completedDates/completionHistory the same way the parent branch
+ *     records its own — see computeCompletionHistoryUpdate. This mirroring
+ *     was added because isBlockTaskCompleted (missedTasks.js) reads a
+ *     recurring task's own completedDates to decide whether ITS calendar
+ *     block/agenda entry should show as done, independent of whichever task
+ *     the user actually clicked complete on — without it, a sub-task
+ *     completed via its recurring parent never shows as done anywhere (the
+ *     bug this comment used to describe as "intentional").
  *   - Descendant is NOT independently recurring (no isRecurring, or recurring
  *     but with no dueDate of its own): leave it alone entirely. Per
  *     types/index.js's `dueDate` doc comment, an undated sub-task already
@@ -538,15 +576,34 @@ export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
  *
  * @param {object} descendant - the sub-task Task object
  * @param {string} todayIso - ISO date (YYYY-MM-DD), pre-computed by the caller
- * @returns {{dueDate: string|null|undefined, isCompleted: boolean}} fields to
- *   spread onto the descendant; `dueDate: undefined` means "don't touch it".
+ * @returns {{dueDate: string|null|undefined, isCompleted: boolean, remainingHours: number|undefined,
+ *   completedDates: string[]|undefined, completionHistory: object|undefined}} fields to spread onto
+ *   the descendant; `dueDate: undefined` means "don't touch it" (mirrored by the other undefined fields).
  */
 export function computeRecurringDescendantUpdate(descendant, todayIso) {
   if (descendant.isRecurring && descendant.dueDate) {
     const baseDate = descendant.dueDate < todayIso ? todayIso : descendant.dueDate;
-    return { dueDate: computeNextDueDate(baseDate, descendant.recurrenceString), isCompleted: false };
+    const { completedDates, completionHistory } = computeCompletionHistoryUpdate(
+      descendant.dueDate,
+      descendant.completedDates,
+      descendant.completionHistory,
+      todayIso
+    );
+    return {
+      dueDate: computeNextDueDate(baseDate, descendant.recurrenceString),
+      isCompleted: false,
+      remainingHours: descendant.estimatedHours,
+      completedDates,
+      completionHistory,
+    };
   }
-  return { dueDate: undefined, isCompleted: descendant.isCompleted };
+  return {
+    dueDate: undefined,
+    isCompleted: descendant.isCompleted,
+    remainingHours: undefined,
+    completedDates: undefined,
+    completionHistory: undefined,
+  };
 }
 
 /** Options for the "Repeats every N ___" unit <select> in AddTaskModal/TaskDetailModal. */

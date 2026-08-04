@@ -3,11 +3,13 @@ import {
   parseRecurrenceRule,
   computeNextDueDate,
   computeRecurringDescendantUpdate,
+  computeCompletionHistoryUpdate,
   generateTaskOccurrences,
   findRecurrencePhrase,
   buildRecurrenceString,
   MAX_RECURRENCE_COUNT,
 } from '../../src/utils/recurrence';
+import { isBlockTaskCompleted } from '../../src/utils/missedTasks';
 
 describe('parseRecurrenceRule', () => {
   it('parses a plain weekly rule', () => {
@@ -139,18 +141,25 @@ describe('computeRecurringDescendantUpdate', () => {
       recurrenceString: 'every day',
       dueDate: '2026-08-03',
       isCompleted: true,
+      estimatedHours: 2,
     };
     expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
       dueDate: '2026-08-06', // based off today (08-05) since 08-03 is overdue, +1 day
       isCompleted: false,
+      remainingHours: 2,
+      completedDates: ['2026-08-03'],
+      completionHistory: {},
     });
   });
 
   it('bases the recurring descendant\'s advance off its own dueDate when not overdue', () => {
-    const descendant = { isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-10' };
+    const descendant = { isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-10', estimatedHours: 3 };
     expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
       dueDate: '2026-08-17',
       isCompleted: false,
+      remainingHours: 3,
+      completedDates: ['2026-08-10'],
+      completionHistory: {},
     });
   });
 
@@ -159,6 +168,9 @@ describe('computeRecurringDescendantUpdate', () => {
     expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
       dueDate: undefined,
       isCompleted: false,
+      remainingHours: undefined,
+      completedDates: undefined,
+      completionHistory: undefined,
     });
   });
 
@@ -167,6 +179,9 @@ describe('computeRecurringDescendantUpdate', () => {
     expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
       dueDate: undefined,
       isCompleted: false,
+      remainingHours: undefined,
+      completedDates: undefined,
+      completionHistory: undefined,
     });
   });
 
@@ -175,6 +190,74 @@ describe('computeRecurringDescendantUpdate', () => {
     expect(computeRecurringDescendantUpdate(descendant, '2026-08-05')).toEqual({
       dueDate: undefined,
       isCompleted: true,
+      remainingHours: undefined,
+      completedDates: undefined,
+      completionHistory: undefined,
+    });
+  });
+
+  it('records the closed-out occurrence into completedDates and resets remainingHours, matching the parent branch', () => {
+    // Regression coverage for the bug where a recurring sub-task's own
+    // completion cascade (via a recurring parent) never updated its
+    // completedDates/remainingHours/completionHistory — so isBlockTaskCompleted
+    // (missedTasks.js) never recognized its block/agenda entry as done.
+    const descendant = {
+      id: 'sub-1',
+      isRecurring: true,
+      recurrenceString: 'every day',
+      dueDate: '2026-08-05',
+      isCompleted: false,
+      estimatedHours: 1.5,
+      remainingHours: 0.5, // simulate partial progress before completion
+      completedDates: [],
+      completionHistory: {},
+    };
+    const update = computeRecurringDescendantUpdate(descendant, '2026-08-05');
+    expect(update.completedDates).toEqual(['2026-08-05']);
+    expect(update.remainingHours).toBe(1.5);
+    expect(update.completionHistory).toEqual({});
+
+    const updatedDescendant = { ...descendant, ...update };
+    const block = { taskId: 'sub-1', date: '2026-08-05' };
+    expect(isBlockTaskCompleted(block, updatedDescendant)).toBe(true);
+  });
+
+  it('rolls dates older than 7 days into completionHistory instead of keeping them in completedDates', () => {
+    const descendant = {
+      isRecurring: true,
+      recurrenceString: 'every day',
+      dueDate: '2026-08-05',
+      estimatedHours: 1,
+      completedDates: ['2026-07-20'], // >7 days before today
+      completionHistory: {},
+    };
+    const update = computeRecurringDescendantUpdate(descendant, '2026-08-05');
+    expect(update.completedDates).toEqual(['2026-08-05']);
+    expect(update.completionHistory).toEqual({ '2026-07': 1 });
+  });
+});
+
+describe('computeCompletionHistoryUpdate', () => {
+  it('prepends the occurrence date and keeps dates within the last 7 days', () => {
+    expect(computeCompletionHistoryUpdate('2026-08-05', ['2026-08-03'], {}, '2026-08-05')).toEqual({
+      completedDates: ['2026-08-05', '2026-08-03'],
+      completionHistory: {},
+    });
+  });
+
+  it('trims dates older than 7 days into completionHistory, aggregated by month', () => {
+    expect(computeCompletionHistoryUpdate('2026-08-05', ['2026-07-01', '2026-07-15'], {}, '2026-08-05')).toEqual({
+      completedDates: ['2026-08-05'],
+      completionHistory: { '2026-07': 2 },
+    });
+  });
+
+  it('adds to an existing completionHistory month count instead of overwriting it', () => {
+    expect(
+      computeCompletionHistoryUpdate('2026-08-05', ['2026-07-01'], { '2026-07': 5 }, '2026-08-05')
+    ).toEqual({
+      completedDates: ['2026-08-05'],
+      completionHistory: { '2026-07': 6 },
     });
   });
 });

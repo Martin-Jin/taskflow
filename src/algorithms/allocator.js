@@ -480,6 +480,32 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
  * instead of fragmenting into a partial chunk here. This only ever changes
  * WHICH interval absorbs the last chunk, never how many chunks get used.
  */
+/**
+ * Cross-day counterpart to placeHoursInDay's same-day whole-block lookahead
+ * (see that function's doc comment) — same idea, one level up. If placing on
+ * `date` would spend the task's LAST available chunk (chunkState) and this
+ * day's free time can't cover the full remaining amount on its own, but some
+ * LATER day in `remainingDates` has a single free interval big enough to take
+ * the whole thing, skip `date` for now so that later day gets it as one
+ * continuous block instead of fragmenting a sliver here and stranding the
+ * rest. Without this, a task whose chunk-count budget rounds down to 1 (any
+ * task <=30min, see maxChunksFor) can burn its only chunk on the first day
+ * that clears MIN_CHUNK_HOURS at all — even a bare 5-minute gap — and every
+ * later pass then finds the budget already exhausted, silently overflowing
+ * the rest despite ample free capacity still sitting later in the window.
+ * Only ever changes WHICH day absorbs the last chunk, never how many chunks
+ * get used or whether a day gets skipped when it isn't the deciding factor.
+ */
+function hasLaterFullFitDay(hoursNeeded, currentDate, remainingDates, freeForTask) {
+  for (const date of remainingDates) {
+    if (date <= currentDate) continue;
+    const intervals = freeForTask.get(date);
+    if (!intervals) continue;
+    if (intervals.some((iv) => (iv.end - iv.start) / 60 >= hoursNeeded - EPSILON_HOURS)) return true;
+  }
+  return false;
+}
+
 function placeHoursInDay(hours, dayFreeIntervals, maxChunkHours, chunkState, floorHours = hours) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
   // Normally a placed chunk must clear MIN_CHUNK_HOURS. But a task whose
@@ -853,9 +879,10 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   const dailyBudgetMins = new Map([...capacityMap.keys()].map((date) => [date, Math.round(rules.maxDailyDeepWorkHours * 60)]));
 
   /**
-   * Places one task's remaining hours (all four passes: weighted-share,
-   * sweep, buffer-overflow, last-resort split) and appends its overflow entry
-   * if hours are left unplaced at the end. This is the ENTIRE per-task body
+   * Places one task's remaining hours (all five passes: weighted-share,
+   * sweep, buffer-overflow, last-resort split, no-enforced-due-date horizon
+   * spill) and appends its overflow entry if hours are left unplaced at the
+   * end. This is the ENTIRE per-task body
    * `allocateTasks` used to run inline in a single loop over every
    * priority-sorted task; it's now called twice — once for the non-passive
    * `fixedTime` pre-pass, once for everyone else (see the "FIXED-TIME
@@ -928,11 +955,25 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
     // still-open capacity across the window, chronologically, before falling
     // through to the buffer-day overflow pass below. This maximizes
     // utilization without ever exceeding a day's real free time.
+    //
+    // Cross-day last-chunk lookahead (see hasLaterFullFitDay): if this would
+    // be the task's LAST chunk and today's free time can't cover it in full,
+    // but a later day in the window can take the whole remainder as one
+    // block, skip today rather than stranding the leftover once the chunk
+    // budget is spent here.
     if (remaining > EPSILON_HOURS) {
+      const sweepDates = dayWeights.map((d) => d.date);
       for (const { date } of dayWeights) {
         if (remaining <= EPSILON_HOURS) break;
         const dayIntervals = freeForTask.get(date);
         if (!dayIntervals || dayIntervals.length === 0) continue;
+        if (
+          chunkState.used + 1 >= chunkState.max &&
+          !dayIntervals.some((iv) => (iv.end - iv.start) / 60 >= remaining - EPSILON_HOURS) &&
+          hasLaterFullFitDay(remaining, date, sweepDates, freeForTask)
+        ) {
+          continue;
+        }
         remaining -= placeWithinDailyBudget(date, remaining, dayIntervals, '_sweep');
       }
     }
@@ -963,23 +1004,56 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       }
     }
 
-    // Fourth pass, genuinely last resort: earlier passes above walk the
-    // window day-by-day targeting an ideal share/sweep/overflow amount per
-    // day, which can leave hours unplaced even though the task's chunk
-    // budget (chunkState) isn't exhausted yet — e.g. a day's only remaining
-    // free interval is smaller than what an earlier pass was trying to place
-    // there in one go. This pass makes a final attempt to place whatever's
-    // left into ANY remaining opening across the same window (including the
-    // buffer-overflow days above), still governed by the same chunk-count
-    // cap and MIN_CHUNK_HOURS floor as every other pass — see maxChunksFor/
-    // MIN_CHUNK_HOURS above. It naturally does nothing once the task's chunk
-    // budget is used up or no interval clears the 5-minute floor.
+    // Fourth pass, genuinely last resort within the due-date-bounded window:
+    // earlier passes above walk the window day-by-day targeting an ideal
+    // share/sweep/overflow amount per day, which can leave hours unplaced
+    // even though the task's chunk budget (chunkState) isn't exhausted yet —
+    // e.g. a day's only remaining free interval is smaller than what an
+    // earlier pass was trying to place there in one go. This pass makes a
+    // final attempt to place whatever's left into ANY remaining opening
+    // across the same window (including the buffer-overflow days above),
+    // still governed by the same chunk-count cap and MIN_CHUNK_HOURS floor as
+    // every other pass — see maxChunksFor/MIN_CHUNK_HOURS above. It naturally
+    // does nothing once the task's chunk budget is used up or no interval
+    // clears the 5-minute floor.
     if (remaining > EPSILON_HOURS) {
+      const splitDates = dayWeights.map((d) => d.date);
       for (const { date } of dayWeights) {
         if (remaining <= EPSILON_HOURS) break;
         const dayIntervals = freeForTask.get(date);
         if (!dayIntervals || dayIntervals.length === 0) continue;
+        if (
+          chunkState.used + 1 >= chunkState.max &&
+          !dayIntervals.some((iv) => (iv.end - iv.start) / 60 >= remaining - EPSILON_HOURS) &&
+          hasLaterFullFitDay(remaining, date, splitDates, freeForTask)
+        ) {
+          continue;
+        }
         remaining -= placeWithinDailyBudget(date, remaining, dayIntervals, '_split');
+      }
+    }
+
+    // Fifth pass, no-enforced-due-date horizon spill: a due date that ISN'T
+    // enforced (task.enforceDueDate falsy) is a soft target, not a hard wall
+    // — pass 3 above already treats the buffer as soft and spills up to the
+    // due date, but stopped there, leaving days between the due date and the
+    // full planning horizon (horizonEnd) permanently out of reach even when
+    // they have real free capacity. Only runs when there's no enforced
+    // cutoff; an enforceDueDate task (single-day window, or a due date that
+    // IS enforced) must never spill past its due date — that boundary is
+    // intentional there, see getTaskWindow. A task with no due date at all
+    // never reaches this pass with hours left anyway, since its window (and
+    // dayWeights) already spans the full horizon via getTaskWindow.
+    if (remaining > EPSILON_HOURS && !task.enforceDueDate) {
+      const dueDate = resolveDueDate(task, taskById);
+      const spillFrom = dueDate && dueDate > windowEnd ? dueDate : windowEnd;
+      if (spillFrom < horizonEnd) {
+        const extraDays = dateRange(addDays(spillFrom, 1), diffDays(spillFrom, horizonEnd));
+        for (const date of extraDays) {
+          if (remaining <= EPSILON_HOURS) break;
+          if (!freeForTask.has(date)) continue;
+          remaining -= placeWithinDailyBudget(date, remaining, freeForTask.get(date), '_horizon');
+        }
       }
     }
 

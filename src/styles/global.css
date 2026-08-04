@@ -1359,7 +1359,10 @@ input.search-bar-input {
    sideways by .main-content's own 20px padding (edge to edge, matching the
    Tasks page), and 18px past the search bar's own bottom edge — so the
    blur reads as one continuous wash over the whole top of the page instead
-   of a card floating over a visibly-unblurred strip. */
+   of a card floating over a visibly-unblurred strip. Needs its own
+   background, not just backdrop-filter alone — a bare blur with nothing
+   behind it to tint reads as basically invisible, which is why this was
+   reported as "not blurring" even though the filter itself was applied. */
 .settings-search-bar-backdrop {
   position: absolute;
   top: -200px;
@@ -1367,8 +1370,9 @@ input.search-bar-input {
   right: -20px;
   bottom: -18px;
   z-index: -1;
-  backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(3px);
+  background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   pointer-events: none;
 }
 

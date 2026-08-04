@@ -206,6 +206,10 @@ function stripVirtualIds(newBlocks, overflow, timeShifted) {
  * @param {import('../types').CalendarEvent[]} params.events
  * @param {import('../types').SchedulingRules} params.rules
  * @param {string} [params.fromDate] - Defaults to today; days before this are never touched.
+ * @param {boolean} [params.todayOnly] - Scope the whole run to a single day (`today`/`fromDate`) instead of the
+ *   full `rules.horizonWeeks * 7` horizon. Used by SchedulerContext.completeTask so finishing a task early
+ *   re-plans the rest of TODAY into the slot it just freed, without reaching into future days at all — see
+ *   the "TODAY-ONLY SCOPING" note below for exactly what stays untouched.
  * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}>, timeShifted: Array<{taskId:string,reason:Object}>, stats: Object }}
  *   `overflow` includes both allocator-reported entries (see allocator.js's allocateTasks) and dependency-blocked
  *   tasks that never reached the allocator (`reason.type === 'dependency_blocked'`) — see buildDependencyBlockedEntries.
@@ -213,9 +217,33 @@ function stripVirtualIds(newBlocks, overflow, timeShifted) {
  *   the same way as `overflow`) — every fixedTime task whose same-day fallback placed it at an unrequested
  *   time-of-day, regardless of whether its hours were fully placed. Dependency-blocked tasks never reach the
  *   allocator, so they can never appear here.
+ *
+ * TODAY-ONLY SCOPING (`todayOnly: true`): the horizon collapses to exactly 1 day (`today`), and any existing
+ * block dated AFTER today is excluded from every partition below and passed straight through into the final
+ * result unmodified — it's neither cleared, re-evaluated, nor eligible to receive newly allocated hours. This
+ * is stricter than just capping the capacity map's horizon: without also excluding those blocks from the
+ * lock/complete/clear partitioning, a today-only run would still (correctly, per the historical-block rule)
+ * clear a stale unlocked future block, which is out of scope for "today only". A task with hours already
+ * committed to one of those untouched future blocks still has those hours excluded from what's handed to
+ * the allocator today (see spentHoursByTask below), so today's run can't double-book the same work.
  */
-export function rebalance({ tasks, existingBlocks, routines, events, rules, fromDate }) {
+export function rebalance({ tasks, existingBlocks, routines, events, rules, fromDate, todayOnly }) {
   const today = fromDate || toISODate(new Date());
+
+  // TODAY-ONLY SCOPING: blocks dated after `today` never participate in this
+  // run at all — carved off before any historical/locked/completed/cleared
+  // partitioning below, and merged back into the final result untouched at
+  // the end. See the module/function doc comments above.
+  const scopedExistingBlocks = todayOnly ? existingBlocks.filter((b) => b.date <= today) : existingBlocks;
+  const untouchedFutureBlocks = todayOnly ? existingBlocks.filter((b) => b.date > today) : [];
+  // Hours already committed to those untouched future blocks still count as
+  // "spent" against the owning task so today's allocator pass doesn't try to
+  // re-place the same work — see spentHoursByTask below, which folds this in
+  // alongside historical/locked/completed blocks.
+  const untouchedFutureSpent = new Map();
+  for (const b of untouchedFutureBlocks) {
+    untouchedFutureSpent.set(b.taskId, (untouchedFutureSpent.get(b.taskId) || 0) + b.durationHours);
+  }
 
   // 1. Partition blocks. A block dated before "today" is "historical" in the
   //    sense that its DAY is in the past, but that alone doesn't make it
@@ -235,8 +263,8 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // pinned to a past/future fromDate still treats everything before it under
   // this same rule, per this function's documented contract above.
   const taskByIdForCompletion = new Map(tasks.map((t) => [t.id, t]));
-  const historicalBlocks = existingBlocks.filter((b) => b.date < today);
-  const futureBlocks = existingBlocks.filter((b) => b.date >= today);
+  const historicalBlocks = scopedExistingBlocks.filter((b) => b.date < today);
+  const futureBlocks = scopedExistingBlocks.filter((b) => b.date >= today);
   const historicalLocked = historicalBlocks.filter((b) => b.isLocked);
   // See the futureBlocks equivalent below: a historical block whose task (or
   // recurring occurrence) is already completed is preserved as a genuine
@@ -275,6 +303,12 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     spentHoursByTask.set(b.taskId, (spentHoursByTask.get(b.taskId) || 0) + b.durationHours);
     const dateKey = `${b.taskId}::${b.date}`;
     spentHoursByTaskDate.set(dateKey, (spentHoursByTaskDate.get(dateKey) || 0) + b.durationHours);
+  }
+  // TODAY-ONLY SCOPING: hours already committed to an untouched future block
+  // (see untouchedFutureSpent above) still count as "spent" so today's pass
+  // doesn't re-place work that's already sitting on a later day's calendar.
+  for (const [taskId, hours] of untouchedFutureSpent) {
+    spentHoursByTask.set(taskId, (spentHoursByTask.get(taskId) || 0) + hours);
   }
 
   // A recurring task with a usable rule is expanded into independent
@@ -317,7 +351,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   //    at 5pm doesn't schedule anything at, say, 9am today.
   const now = new Date();
   const nowClamp = !fromDate || fromDate === toISODate(now) ? { date: today, minutes: now.getHours() * 60 + now.getMinutes() } : null;
-  const horizonDays = rules.horizonWeeks * 7;
+  const horizonDays = todayOnly ? 1 : rules.horizonWeeks * 7;
   // A recurring calendar event (e.g. a weekly class synced from Google
   // Calendar) is stored as one master record describing only its first
   // occurrence — capacityEngine's busy-interval check is a plain date match,
@@ -392,10 +426,12 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   const timeShifted = resolveConflictLabels(strippedTimeShifted, taskById);
 
   // 5. Merge: historical locked/completed (untouched) + locked (untouched) +
-  //    completed (untouched) + freshly allocated. A stale, never-completed
-  //    historical block is deliberately NOT included here — it's cleared
-  //    (see step 1) rather than kept, freeing its task up to be rescheduled.
-  const finalBlocks = [...historicalLocked, ...historicalCompleted, ...lockedBlocks, ...completedBlocks, ...newBlocks];
+  //    completed (untouched) + freshly allocated + (todayOnly runs only) any
+  //    future-day block scoped out at the very top, passed through as-is.
+  //    A stale, never-completed historical block is deliberately NOT included
+  //    here — it's cleared (see step 1) rather than kept, freeing its task up
+  //    to be rescheduled.
+  const finalBlocks = [...historicalLocked, ...historicalCompleted, ...lockedBlocks, ...completedBlocks, ...newBlocks, ...untouchedFutureBlocks];
 
   const stats = {
     tasksRescheduled: eligibleTasks.length,

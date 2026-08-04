@@ -17,6 +17,32 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.8',
+    date: '2026-08-05',
+    title: 'Fixed calendar event alignment and floating search bar blur',
+    changes: [
+      "Calendar events and scheduled blocks now line up exactly with the time axis, instead of rendering a few pixels below where their gridline says they should be.",
+      'When zoomed out far enough that a block would render too small to read, it now folds into a "N short tasks" chip the same way very short tasks already did — zooming back in un-collapses it once there\'s room again.',
+      "The floating search bar on the Tasks and Settings pages now actually blurs the content scrolling underneath it, instead of the blur being too faint to notice.",
+    ],
+  },
+  {
+    version: '1.93.7',
+    date: '2026-08-05',
+    title: 'Fixed completed recurring sub-tasks not showing as done',
+    changes: [
+      'Completing a recurring sub-task (directly, or via its recurring parent) now correctly marks that occurrence as done everywhere — its calendar block gets the crossed-out "done" styling, it\'s protected from rebalancing, and it shows as complete in Today\'s Agenda and the dashboard.',
+    ],
+  },
+  {
+    version: '1.93.6',
+    date: '2026-08-05',
+    title: 'Completing a task early now frees up its slot for the rest of today',
+    changes: [
+      "Completing a task early now automatically opens up its time slot for other tasks scheduled later today, instead of leaving the freed time unused until your next manual re-balance.",
+    ],
+  },
+  {
     version: '1.93.5',
     date: '2026-08-05',
     title: 'Fixed recurring parent tasks wiping sub-task due dates',
