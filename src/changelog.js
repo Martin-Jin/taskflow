@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.10',
+    date: '2026-08-05',
+    title: 'Fixed calendar blocks incorrectly stacking, and cramped-looking busy days when zoomed out',
+    changes: [
+      'Fixed some blocks on a busy day incorrectly chaining/stacking below unrelated, non-overlapping blocks instead of getting their own space.',
+      "On busy days at the most zoomed-out level, two back-to-back blocks with only a little real time between them now shrink to a single line instead of looking like a jumbled, near-overlapping mess — and if there's truly no room even for that, they fold into a tappable \"N events\" chip like short tasks already do.",
+    ],
+  },
+  {
     version: '1.93.9',
     date: '2026-08-05',
     title: 'Fixed remaining calendar axis drift and a stale completion tooltip',
