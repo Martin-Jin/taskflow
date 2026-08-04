@@ -74,6 +74,20 @@ const LONG_ITEM_MIN = 30;
 const MIN_BLOCK_HEIGHT_PX = 26;
 const BLOCK_GAP_PX = 2;
 
+// Two individually "long enough" (non-cluster-eligible, see LONG_ITEM_MIN)
+// items can still read as a jumbled mess at a zoomed-out level if they sit
+// nearly flush against each other — e.g. two 90-min blocks with only 30 real
+// minutes (~16px at the lowest zoom) between them, each rendering a full
+// title+time-range at that height. Below TIGHT_GAP_PX of real (natural,
+// unclamped) gap, drop straight to a single-line/compact render for BOTH
+// neighbouring items even if their own height would otherwise fit two lines
+// — see itemLiveState's `showTimeLine`. Below the smaller COLLISION_GAP_PX, even
+// that minimal single-line render would still feel like a collision, so as a
+// last resort the pair is folded into the existing overlapChip "N events"
+// mechanism instead (see layoutDayItems' collapseTightPairs).
+const TIGHT_GAP_PX = 22;
+const COLLISION_GAP_PX = 8;
+
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
 // Fixed viewport coordinates for a cluster's popover, anchored to the
@@ -195,6 +209,7 @@ function layoutDayItems(dayItems, pxPerMin) {
   const results = [];
   let overlapGroup = [];
   let groupEnd = -Infinity;
+  let groupId = 0;
 
   function packLanes(laneItems) {
     const laneEnds = []; // end minute of the last item placed in each lane
@@ -206,7 +221,10 @@ function layoutDayItems(dayItems, pxPerMin) {
       } else {
         laneEnds[lane] = item.end;
       }
-      results.push({ ...item, lane });
+      // `lane` is only unique within this overlap group — two unrelated,
+      // non-overlapping-in-time groups can both produce a "lane 0". Tag with
+      // groupId too so computeDayPositions doesn't chain-stack them together.
+      results.push({ ...item, lane, groupId });
     }
     const totalLanes = laneEnds.length;
     for (let i = results.length - laneItems.length; i < results.length; i++) results[i].totalLanes = totalLanes;
@@ -253,6 +271,7 @@ function layoutDayItems(dayItems, pxPerMin) {
     laneItems.sort((a, b) => a.start - b.start);
     packLanes(laneItems);
     overlapGroup = [];
+    groupId += 1;
   }
 
   for (const item of clustered) {
@@ -267,7 +286,69 @@ function layoutDayItems(dayItems, pxPerMin) {
   }
   flushGroup();
 
-  return results;
+  return collapseTightPairs(results, pxPerMin);
+}
+
+/**
+ * Last-resort pass (see TIGHT_GAP_PX/COLLISION_GAP_PX above) for two
+ * genuinely time-disjoint, individually long-enough items (not cluster-
+ * eligible under LONG_ITEM_MIN, so layoutDayItems gave each its own lane)
+ * that still sit close enough together at the current zoom to visually
+ * collide. Operates per (groupId, lane) bucket — the same key
+ * computeDayPositions uses — since that's the only place two items are
+ * guaranteed sequential-in-time neighbours rather than side-by-side.
+ *
+ * Two thresholds, checked on the real (natural, unclamped) gap so the
+ * decision matches what the user actually sees regardless of how packLane's
+ * MIN_BLOCK_HEIGHT_PX floor might later stretch things:
+ *   - gap < COLLISION_GAP_PX: even a minimal single-line render would still
+ *     crowd its neighbour, so fold just this pair into an overlapChip
+ *     (reusing the existing "N events" tap-to-expand chip) rather than
+ *     rendering two colliding boxes.
+ *   - COLLISION_GAP_PX <= gap < TIGHT_GAP_PX: leave both items as their own
+ *     boxes, but tag them `tightGap: true` so the render below degrades to a
+ *     single-line/compact layout instead of the usual two-line one — see
+ *     itemLiveState.
+ * Only ever considers adjacent `kind: 'single'` items — an existing cluster/
+ * overlapChip is already a collapsed multi-item unit and shouldn't be folded
+ * into a further chip here.
+ */
+function collapseTightPairs(items, pxPerMin) {
+  const byBucket = new Map();
+  for (const item of items) {
+    const key = `${item.groupId}:${item.lane}`;
+    if (!byBucket.has(key)) byBucket.set(key, []);
+    byBucket.get(key).push(item);
+  }
+
+  const out = [];
+  for (const bucket of byBucket.values()) {
+    const sorted = [...bucket].sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const item of sorted) {
+      const prev = merged[merged.length - 1];
+      const gapPx = prev ? (item.start - prev.end) * pxPerMin : Infinity;
+      if (prev && prev.kind === 'single' && item.kind === 'single' && gapPx < COLLISION_GAP_PX) {
+        merged[merged.length - 1] = {
+          kind: 'overlapChip',
+          items: [prev, item].map((g) => ({ type: g.type, data: g.data, kind: g.kind, blocks: g.blocks })),
+          start: prev.start,
+          end: item.end,
+          lane: prev.lane,
+          groupId: prev.groupId,
+          totalLanes: prev.totalLanes,
+        };
+        continue;
+      }
+      if (prev && prev.kind === 'single' && item.kind === 'single' && gapPx < TIGHT_GAP_PX) {
+        prev.tightGap = true;
+        item.tightGap = true;
+      }
+      merged.push(item);
+    }
+    out.push(...merged);
+  }
+  return out;
 }
 
 /**
@@ -296,13 +377,17 @@ function packLane(items, pxPerMin) {
   });
 }
 
-/** Runs packLane independently within each lane so side-by-side (genuinely
- * overlapping-in-time) items don't interfere with each other's stacking. */
+/** Runs packLane independently within each (overlap group, lane) pair so
+ * side-by-side (genuinely overlapping-in-time) items don't interfere with
+ * each other's stacking — and so unrelated, non-overlapping groups that
+ * happen to reuse the same lane index don't get chain-stacked together
+ * (lane numbering from layoutDayItems is only unique within one group). */
 function computeDayPositions(items, pxPerMin) {
   const byLane = new Map();
   for (const item of items) {
-    if (!byLane.has(item.lane)) byLane.set(item.lane, []);
-    byLane.get(item.lane).push(item);
+    const key = `${item.groupId}:${item.lane}`;
+    if (!byLane.has(key)) byLane.set(key, []);
+    byLane.get(key).push(item);
   }
   const out = [];
   for (const laneItems of byLane.values()) out.push(...packLane(laneItems, pxPerMin));
@@ -927,6 +1012,16 @@ export default function WeekView({
       // mid-resize the live time is the more useful one — so the title gives
       // way to it there, the same trade-off renderGhost makes.
       liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
+      // Normally a two-line render (title + time) is purely a function of
+      // this box's own height (TWO_LINE_MIN_HEIGHT). But a box tagged
+      // `tightGap` (see collapseTightPairs) is tall enough on its own, yet
+      // sits close enough to its neighbour at this zoom that a full two-line
+      // render would still look cramped/collide-adjacent — so it degrades to
+      // single-line (title only) regardless of height, same as a genuinely
+      // short box would. A live resize always overrides this (the user is
+      // actively looking at this one box, and neighbours aren't repacked
+      // until the resize commits — see this function's own doc comment).
+      showTimeLine: isResizing ? true : height >= TWO_LINE_MIN_HEIGHT && !item.tightGap,
     };
   }
 
@@ -1164,7 +1259,7 @@ export default function WeekView({
               if (item.type === 'event') {
                 const evt = item.data;
                 const { top } = item;
-                const { isDragging, isResizing, endTime, height, liveTimeOnly } = itemLiveState(item);
+                const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine } = itemLiveState(item);
                 return (
                   <div
                     key={evt.id}
@@ -1201,7 +1296,7 @@ export default function WeekView({
                     }}
                   >
                     {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
-                    {(height >= TWO_LINE_MIN_HEIGHT || isResizing) && (
+                    {showTimeLine && (
                       <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
                         {evt.startTime}–{endTime}
                       </div>
@@ -1219,7 +1314,7 @@ export default function WeekView({
 
               const block = item.data;
               const { top } = item;
-              const { isDragging, isResizing, endTime, height, liveTimeOnly } = itemLiveState(item);
+              const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine } = itemLiveState(item);
               const task = taskById[block.taskId];
               if (!task) return null;
               // A sub-task's block displays its PARENT task's name as the primary
@@ -1230,7 +1325,6 @@ export default function WeekView({
               // hover/hint text and the detail modal show.
               const parentTask = task.parentId ? taskById[task.parentId] : null;
               const displayTitle = parentTask?.title || task.title;
-              const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
               const isCompleted = isBlockTaskCompleted(block, task);
               return (
                 <div
@@ -1304,7 +1398,7 @@ export default function WeekView({
                   {/* Mid-resize this is the live readout of the new end time
                       (see itemLiveState), highlighted so the change is
                       obvious — otherwise it's the block's own time range. */}
-                  {(showTimeLine || isResizing) && (
+                  {showTimeLine && (
                     <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
                       {block.startTime}–{endTime}
                     </div>
