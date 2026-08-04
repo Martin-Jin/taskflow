@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.4',
+    date: '2026-08-05',
+    title: 'Autocomplete popups close immediately after picking a suggestion',
+    changes: [
+      'Picking a project/section (or keyword) autocomplete suggestion now closes its popup right away, instead of leaving it open until you typed an extra space.',
+      'AI Quick Add can now set "Enforce due date" on a task when you ask for it.',
+    ],
+  },
+  {
     version: '1.93.3',
     date: '2026-08-05',
     title: 'Save on a task no longer closes it',

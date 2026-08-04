@@ -11,10 +11,16 @@
  * re-run on value change" plumbing.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function useCaretActiveSpan(inputRef, value, deriveSpan, onRefresh) {
   const [span, setSpan] = useState(null);
+  // Set right before a selection-driven splice: the caret hasn't physically
+  // moved yet (that happens async via requestAnimationFrame in
+  // spliceTextAndMoveCaret), so the `value`-change effect below would
+  // otherwise re-derive a span from the stale caret position and reopen the
+  // popup it was just told to close, until a later keystroke corrects it.
+  const suppressNextRefresh = useRef(false);
 
   function refresh() {
     const el = inputRef.current;
@@ -23,12 +29,22 @@ export function useCaretActiveSpan(inputRef, value, deriveSpan, onRefresh) {
     onRefresh?.();
   }
 
+  /** Close the popup and skip the next value-triggered re-derivation (see suppressNextRefresh above). */
+  function dismiss() {
+    suppressNextRefresh.current = true;
+    setSpan(null);
+  }
+
   useEffect(() => {
+    if (suppressNextRefresh.current) {
+      suppressNextRefresh.current = false;
+      return;
+    }
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  return [span, setSpan, refresh];
+  return [span, setSpan, refresh, dismiss];
 }
 
 /**

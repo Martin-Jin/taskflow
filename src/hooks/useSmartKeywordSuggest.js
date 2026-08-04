@@ -49,7 +49,7 @@ const VOCABULARY = [
 
 export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = false }) {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [word, setWord, refresh] = useCaretActiveSpan(inputRef, value, findActiveWord, () => setActiveIndex(0));
+  const [word, setWord, refresh, dismiss] = useCaretActiveSpan(inputRef, value, findActiveWord, () => setActiveIndex(0));
 
   const matches = !suppress && word ? findFuzzyKeywordMatches(word.word, VOCABULARY) : [];
   const isOpen = matches.length > 0;
@@ -58,7 +58,7 @@ export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = f
   /** Replace the active word with `candidate` and move the caret right after it. */
   function applyCandidate(candidate) {
     if (!word || !candidate) return;
-    setWord(null);
+    dismiss();
     spliceTextAndMoveCaret({ inputRef, value, onChange, start: word.start, end: word.end, replacement: candidate });
   }
 
@@ -81,7 +81,7 @@ export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = f
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      setWord(null);
+      dismiss();
       return true;
     }
     return false;
