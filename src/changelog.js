@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.13',
+    date: '2026-08-05',
+    title: 'Fixed calendar clustering working backwards when zooming in',
+    changes: [
+      "Zooming in on the calendar (more room per hour) could paradoxically show MORE \"N tasks\" chips than zooming out — now clustering only ever eases up as you zoom in, never the reverse.",
+      'Unrelated tasks/events no longer render with overlapping, collapsed-looking text at any zoom level.',
+    ],
+  },
+  {
     version: '1.93.12',
     date: '2026-08-05',
     title: 'Fixed the calendar\'s tight-schedule fallback not triggering at all',
