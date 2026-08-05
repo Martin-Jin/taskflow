@@ -291,8 +291,11 @@ picks up `tests/unit/**/*.test.js`).
 Current coverage: recurrence & recurrence-expansion date math
 (`src/utils/recurrence.js`, `src/utils/recurrenceExpansion.js`), interval/
 capacity scheduling math (`src/utils/intervalUtils.js`,
-`src/algorithms/capacityEngine.js`), natural-language date/duration parsing
-(`src/utils/dateParse.js`, `src/utils/smartParse.js`,
+`src/algorithms/capacityEngine.js`), the cost-minimizing scheduler
+refinement (`src/algorithms/placementCost.js`, `src/algorithms/localSearch.js`
+— fragmentation/due-date cost terms, never-worse-than-seed guarantee,
+transitive dependency-ordering enforcement), natural-language date/duration
+parsing (`src/utils/dateParse.js`, `src/utils/smartParse.js`,
 `src/utils/durationParser.js`, `src/utils/wordNumbers.js`), backup/restore
 field-parity and payload validation (`src/services/backupService.js`),
 dependency-cycle detection (`src/utils/dependencyUtils.js`), the one-shot
