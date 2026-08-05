@@ -732,7 +732,7 @@ export default function WeekView({
     // WeekView out as one flex ROW child (sized via .week-grid's flex:1).
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
       <div
-        className="week-grid"
+        className={`week-grid ${isMobile && dayCount === 1 ? 'hide-day-header' : ''}`}
         ref={gridRef}
       style={{
         gridTemplateRows: `auto ${gridHeight}px`,

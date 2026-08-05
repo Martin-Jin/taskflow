@@ -398,14 +398,40 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               </button>
             </>
           )}
-          {/* Only worth showing once the user has actually navigated away from
-              the current day/week/month — tapping it when it's already
-              showing today would be a no-op. Sits directly to the left of the
-              date dropdown so it reads as part of the same control cluster. */}
-          {isMobile && !isViewingToday && (
-            <button className="btn calendar-today-btn-solo" onClick={goToday}>
-              Today
-            </button>
+          {/* Mobile: hamburger view-switcher leads the bar, matching Google
+              Calendar's own mobile top bar (menu icon, then the date title).
+              Desktop keeps it trailing the title (see calendar-view-menu-wrap
+              order below via CSS on mobile, not DOM order, isn't worth the
+              complexity — it's simplest as an explicit mobile-only duplicate
+              of the trigger placed first in the DOM). */}
+          {isMobile && (
+            <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
+              <button
+                className="btn btn-icon calendar-view-menu-trigger"
+                onClick={() => setShowViewMenu((v) => !v)}
+                aria-label="Change view"
+                aria-haspopup="true"
+                aria-expanded={showViewMenu}
+              >
+                <Menu size={16} />
+              </button>
+              {showViewMenu && (
+                <div className="calendar-view-menu">
+                  {VIEWS.map((v) => (
+                    <button
+                      key={v.key}
+                      className={view === v.key ? 'active' : ''}
+                      onClick={() => {
+                        setView(v.key);
+                        setShowViewMenu(false);
+                      }}
+                    >
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           <div className="calendar-title-wrap" ref={dateWrapRef}>
             <button
@@ -427,37 +453,49 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               />
             )}
           </div>
-          <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
-            <button
-              className="btn btn-icon calendar-view-menu-trigger"
-              onClick={() => setShowViewMenu((v) => !v)}
-              aria-label="Change view"
-              aria-haspopup="true"
-              aria-expanded={showViewMenu}
-            >
-              <Menu size={16} />
+          {!isMobile && (
+            <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
+              <button
+                className="btn btn-icon calendar-view-menu-trigger"
+                onClick={() => setShowViewMenu((v) => !v)}
+                aria-label="Change view"
+                aria-haspopup="true"
+                aria-expanded={showViewMenu}
+              >
+                <Menu size={16} />
+              </button>
+              {showViewMenu && (
+                <div className="calendar-view-menu">
+                  {VIEWS.map((v) => (
+                    <button
+                      key={v.key}
+                      className={view === v.key ? 'active' : ''}
+                      onClick={() => {
+                        setView(v.key);
+                        setShowViewMenu(false);
+                      }}
+                    >
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {/* Only worth showing once the user has actually navigated away from
+              the current day/week/month — tapping it when it's already
+              showing today would be a no-op. Trails the title/view-menu
+              cluster, pushed to the right edge alongside the refresh icon. */}
+          {isMobile && !isViewingToday && (
+            <button className="btn calendar-today-btn-solo" onClick={goToday}>
+              Today
             </button>
-            {showViewMenu && (
-              <div className="calendar-view-menu">
-                {VIEWS.map((v) => (
-                  <button
-                    key={v.key}
-                    className={view === v.key ? 'active' : ''}
-                    onClick={() => {
-                      setView(v.key);
-                      setShowViewMenu(false);
-                    }}
-                  >
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
           {/* Mobile only — on desktop this stays in .calendar-toolbar-actions
               alongside Re-balance. On mobile it's placed here,
-              in-line with the date title and hamburger menu, pushed to the
-              right via margin-left: auto (see calendar.css). Only useful once
+              at the right edge of the bar, pushed there via margin-left: auto
+              (see calendar.css) unless Today-solo is also showing, in which
+              case Today sits just left of it. Only useful once
               Google Calendar is actually connected — hidden rather than
               shown-but-disabled, matching how Settings' own Google controls
               are gated on googleConnected. Shares isSyncing with Settings'
