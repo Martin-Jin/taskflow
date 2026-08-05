@@ -171,16 +171,19 @@ export function TimerProvider({ children }) {
     [timers]
   );
 
-  const value = {
-    timers,
-    activeTimers,
-    getTimerForTask,
-    startTimer,
-    pauseTimer,
-    resumeTimer,
-    resetTimer,
-    stopTimer,
-  };
+  const value = useMemo(
+    () => ({
+      timers,
+      activeTimers,
+      getTimerForTask,
+      startTimer,
+      pauseTimer,
+      resumeTimer,
+      resetTimer,
+      stopTimer,
+    }),
+    [timers, activeTimers, getTimerForTask, startTimer, pauseTimer, resumeTimer, resetTimer, stopTimer]
+  );
 
   return <TimerContext.Provider value={value}>{children}</TimerContext.Provider>;
 }

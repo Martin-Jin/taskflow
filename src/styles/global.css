@@ -1558,8 +1558,13 @@ input.search-bar-input {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(10, 11, 15, 0.6);
-  backdrop-filter: blur(2px);
+  /* No backdrop-filter: blurring live content behind the overlay forces a
+     continuous repaint of that blurred layer for as long as anything visible
+     behind the modal changes — hover states, the calendar's "now" line, even
+     an autosizing textarea inside the modal itself — not just once on open.
+     This darker solid tint (previously the mobile-only override, back when
+     desktop still blurred) reads as dimmed on its own with no ongoing cost. */
+  background: rgba(10, 11, 15, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1586,9 +1591,8 @@ input.search-bar-input {
   animation: modal-in var(--duration-base) var(--ease-decelerate);
   scrollbar-width: none; /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
   -ms-overflow-style: none;
-  /* Own compositor layer so scrolling/animating the modal doesn't force the
-     browser to recomposite it together with the overlay's backdrop-filter
-     blur behind it — that pairing is what tanks scroll framerate on mobile. */
+  /* Own compositor layer so the modal's entry/exit animation and internal
+     scrolling don't force a full-page repaint on every frame. */
   will-change: transform;
 }
 
@@ -1683,12 +1687,6 @@ input.search-bar-input {
   .modal-overlay {
     align-items: flex-start;
     padding: calc(env(safe-area-inset-top, 0) + var(--space-3)) var(--space-3);
-    /* Blurring behind the modal is expensive to recomposite on mobile GPUs
-       and drags down scroll framerate inside the modal itself. Drop the
-       blur and compensate with a slightly darker solid overlay so the
-       backdrop still reads as dimmed rather than merely tinted. */
-    background: rgba(10, 11, 15, 0.72);
-    backdrop-filter: none;
   }
 
   .modal {
