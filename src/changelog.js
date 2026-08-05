@@ -17,22 +17,31 @@
 
 export const CHANGELOG = [
   {
+    version: '1.95.3',
+    date: '2026-08-05',
+    title: 'Full smart-parsing in sub-tasks',
+    changes: [
+      'Adding a sub-task now catches every natural-language shortcut the main title field does, including recurrence, a fixed time, links, "run unattended," "enforce due date," and task dependencies — not just dates/priority/duration/project.',
+      'The sub-task "Add" button\'s icon now sits after the label instead of before it.',
+    ],
+  },
+  {
     version: '1.95.2',
     date: '2026-08-05',
-    title: 'Fixed a rare change-reverting bug',
+    title: 'Full-bleed mobile calendar, centered date-picker, compact single-day date',
     changes: [
-      'Fixed a bug where a newly added sub-task, or a task you just marked complete, could silently revert a fraction of a second later — most noticeable as a completion checkbox that snapped back and needed a second click.',
-      'A repeating task\'s detail screen now shows only its current/next scheduled time instead of listing every future occurrence.',
+      "The calendar's time grid and month view now run edge-to-edge on mobile instead of sitting inset with side padding, and square off to match the toolbar above them.",
+      'The date-picker dropdown now centers on screen on mobile instead of risking clipping off the side of a narrow phone.',
+      'Single-day view no longer repeats the current date in both the toolbar and the grid — the previously-empty time-column corner now shows a compact date label instead.',
     ],
   },
   {
     version: '1.95.1',
     date: '2026-08-05',
-    title: 'Redesigned the mobile calendar, Google-Calendar style',
+    title: 'Fixed a rare change-reverting bug',
     changes: [
-      'The calendar\'s mobile controls now read as one cohesive, distinctly colored app bar (hamburger menu leading the date title) sitting flush atop a full-screen grid, instead of a background-less toolbar floating above a separately inset card.',
-      'Day view no longer shows the current date twice — the day header\'s repeated day-of-week/day-of-month is gone from the grid (Week and 3 Day views still show it, since it labels several different days there); the now-empty time column corner instead shows a compact date label.',
-      'The date-picker dropdown now centers on screen on mobile instead of risking clipping off the side of a narrow phone.',
+      'Fixed a bug where a newly added sub-task, or a task you just marked complete, could silently revert a fraction of a second later — most noticeable as a completion checkbox that snapped back and needed a second click.',
+      'A repeating task\'s detail screen now shows only its current/next scheduled time instead of listing every future occurrence.',
     ],
   },
   {
