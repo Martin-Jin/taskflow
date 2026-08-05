@@ -640,14 +640,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   );
 
   // Scheduled blocks for this task, oldest first — a task's hours can be
-  // split across multiple days, so this can have more than one entry.
-  const taskScheduledBlocks = useMemo(
-    () =>
-      blocks
-        .filter((b) => b.taskId === task.id)
-        .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date))),
-    [blocks, task.id]
-  );
+  // split across multiple days, so this can have more than one entry. For a
+  // recurring task, every future occurrence gets its own block too (see
+  // SchedulerContext.completeTask's recurring branch), so this is narrowed
+  // to just the earliest occurrence's date — the current/next one — instead
+  // of listing every occurrence out to the scheduling horizon.
+  const taskScheduledBlocks = useMemo(() => {
+    const sorted = blocks
+      .filter((b) => b.taskId === task.id)
+      .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
+    if (!task.isRecurring || sorted.length === 0) return sorted;
+    return sorted.filter((b) => b.date === sorted[0].date);
+  }, [blocks, task.id, task.isRecurring]);
 
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);

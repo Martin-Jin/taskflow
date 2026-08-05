@@ -24,6 +24,37 @@ import { useCallback, useMemo, useState } from 'react';
 const MAX_HISTORY = 50; // Cap memory usage; oldest entries are dropped beyond this.
 
 /**
+ * Pure reducer behind `commit()` — extracted (same rationale as
+ * useCloudSync.js's computeFingerprint/race-guard functions) so the
+ * same-tick-batching resolution behavior (function-form state/label
+ * resolving against the freshest queued `h`, not a stale outer closure) can
+ * be unit tested without mounting a component. Behavior-preserving refactor
+ * only: this is exactly what used to live inline inside `setHistory((h) =>
+ * {...})` below.
+ */
+export function commitReducer(h, newTasksAndBlocksOrUpdater, actionLabelOrFn) {
+  const newTasksAndBlocks =
+    typeof newTasksAndBlocksOrUpdater === 'function'
+      ? newTasksAndBlocksOrUpdater({ tasks: h.present.tasksSnapshot, blocks: h.present.blocksSnapshot })
+      : newTasksAndBlocksOrUpdater;
+  // actionLabel may also be a function of the resolved {tasks, blocks} —
+  // needed by callers (e.g. SchedulerContext's runRebalance) whose label
+  // text depends on a value only known once the function-form state
+  // updater above has actually run (e.g. a block count computed fresh
+  // against `current`, not a stale outer closure).
+  const actionLabel = typeof actionLabelOrFn === 'function' ? actionLabelOrFn(newTasksAndBlocks) : actionLabelOrFn;
+  const entry = {
+    id: `hist_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: Date.now(),
+    actionLabel,
+    tasksSnapshot: newTasksAndBlocks.tasks,
+    blocksSnapshot: newTasksAndBlocks.blocks,
+  };
+  const newPast = [...h.past, h.present].slice(-MAX_HISTORY);
+  return { past: newPast, present: entry, future: [] };
+}
+
+/**
  * @param {{tasks: import('../types').Task[], blocks: import('../types').ScheduledBlock[]}} initialState
  */
 export function useHistoryState(initialState) {
@@ -54,22 +85,8 @@ export function useHistoryState(initialState) {
    * (React processes queued setState updaters in order), fixing that for
    * any same-tick sequence of commits, not just this one call site.
    */
-  const commit = useCallback((newTasksAndBlocksOrUpdater, actionLabel) => {
-    setHistory((h) => {
-      const newTasksAndBlocks =
-        typeof newTasksAndBlocksOrUpdater === 'function'
-          ? newTasksAndBlocksOrUpdater({ tasks: h.present.tasksSnapshot, blocks: h.present.blocksSnapshot })
-          : newTasksAndBlocksOrUpdater;
-      const entry = {
-        id: `hist_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        timestamp: Date.now(),
-        actionLabel,
-        tasksSnapshot: newTasksAndBlocks.tasks,
-        blocksSnapshot: newTasksAndBlocks.blocks,
-      };
-      const newPast = [...h.past, h.present].slice(-MAX_HISTORY);
-      return { past: newPast, present: entry, future: [] };
-    });
+  const commit = useCallback((newTasksAndBlocksOrUpdater, actionLabelOrFn) => {
+    setHistory((h) => commitReducer(h, newTasksAndBlocksOrUpdater, actionLabelOrFn));
   }, []);
 
 
