@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.99.0',
+    date: '2026-08-06',
+    title: 'Recurring sub-tasks now inherit their parent\'s due date, not just its repeat rule',
+    changes: [
+      'Fixed a bug where a sub-task that became recurring (by syncing with a recurring parent, or vice versa) picked up the correct repeat rule but not the due date — it could end up recurring on the wrong day entirely.',
+      'This now also handles weekday-specific repeat rules correctly (e.g. "every Wed and Sun"), snapping the synced due date forward to the first day that actually matches the rule instead of just copying a date that might fall on the wrong weekday.',
+    ],
+  },
+  {
     version: '1.98.0',
     date: '2026-08-06',
     title: 'No more repeat overdue notifications for tasks you already finished',

@@ -444,6 +444,34 @@ function nextWeekdayOccurrence(currentDueDate, days, weekInterval) {
 }
 
 /**
+ * The first date on/after `anchorDate` that actually satisfies
+ * `recurrenceString` — for a weekday-specific rule ("every Wed, Sun") that
+ * means the nearest matching weekday, same-week included; every other rule
+ * shape (plain day/week/month/year interval, no `days` filter) has no
+ * per-date constraint beyond "is a valid date", so the anchor itself always
+ * matches. Falls back to `anchorDate` unchanged if the string isn't
+ * confidently parseable, mirroring computeNextDueDate's own fallback.
+ *
+ * Used to give a newly-recurrence-synced task (see
+ * computeRecurrenceSyncUpdates) a `dueDate` that's actually valid for the
+ * rule it just inherited, rather than blindly copying the recurring
+ * relative's own `dueDate` — a sub-task and its parent can each have been
+ * created on different dates, so "same calendar date" isn't guaranteed to
+ * land on one of the rule's matching weekdays.
+ *
+ * @param {string} anchorDate - ISO date (YYYY-MM-DD) to search forward from
+ * @param {string|null|undefined} recurrenceString
+ * @returns {string} ISO date
+ */
+export function computeFirstMatchingDueDate(anchorDate, recurrenceString) {
+  const rule = parseRecurrenceRule(recurrenceString);
+  if (!rule || rule.unit !== 'week' || !rule.days || !rule.days.length) return anchorDate;
+  const currentWeekday = fromISODate(anchorDate).getDay();
+  if (rule.days.includes(currentWeekday)) return anchorDate;
+  return nextWeekdayOccurrence(anchorDate, rule.days, rule.count);
+}
+
+/**
  * Every occurrence date of a recurring task within [rangeStartIso,
  * rangeEndIso] (inclusive), anchored at the task's own `dueDate` (the first/
  * defining occurrence — see Task.recurrenceRule). Used by rebalanceEngine.js
@@ -656,13 +684,24 @@ export function buildRecurrenceString(count, unit, days) {
  * relative found wins and the rest fall in line with it. Already-consistent
  * tasks (including fully non-recurring chains) are left untouched.
  *
+ * `dueDate` is synced alongside recurrence: a task picking up a new
+ * recurrence rule this way also picks up the recurring relative's `dueDate`
+ * as its own anchor (snapped forward to the first date that actually
+ * matches the rule — see computeFirstMatchingDueDate — since the two tasks
+ * can have been created on different calendar dates, and a weekday-specific
+ * rule like "every Wed, Sun" needs an anchor that's actually a Wed or Sun).
+ * Only set when the recurring relative actually has a dueDate of its own;
+ * a sub-task's dueDate is otherwise left untouched (per types/index.js, an
+ * undated sub-task already borrows its nearest ancestor's dueDate for
+ * scheduling urgency, so there's nothing to change).
+ *
  * `isRecurring: true` is set even on a task with no `dueDate` of its own —
  * consistent with how `isRecurring` is already treated everywhere else in
  * the app (e.g. completeTask, TaskDetailModal's commitChanges), it simply
  * has no effect until a due date exists.
  *
  * @param {import('../types').Task[]} tasks
- * @returns {Map<string, {isRecurring: boolean, recurrenceString: string, recurrenceRule: object|null}>}
+ * @returns {Map<string, {isRecurring: boolean, recurrenceString: string, recurrenceRule: object|null, dueDate?: string}>}
  *   keyed by task id — only entries that actually need to change are included.
  */
 export function computeRecurrenceSyncUpdates(tasks) {
@@ -714,11 +753,15 @@ export function computeRecurrenceSyncUpdates(tasks) {
     const recurringSource = recurringAncestor || getDescendants(task).find((t) => t.isRecurring);
     if (!recurringSource) continue;
 
-    updates.set(task.id, {
+    const update = {
       isRecurring: true,
       recurrenceString: recurringSource.recurrenceString,
       recurrenceRule: deriveRecurrenceRule(recurringSource.recurrenceString),
-    });
+    };
+    if (recurringSource.dueDate) {
+      update.dueDate = computeFirstMatchingDueDate(recurringSource.dueDate, recurringSource.recurrenceString);
+    }
+    updates.set(task.id, update);
   }
   return updates;
 }

@@ -83,4 +83,15 @@ describe('migrateRecurrenceConsistency', () => {
   it('passes through an empty array unchanged', () => {
     expect(migrateRecurrenceConsistency([])).toEqual([]);
   });
+
+  it('syncs dueDate alongside recurrence, snapped to the rule\'s nearest matching weekday', () => {
+    // p1's own dueDate (2026-08-06, a Thursday) isn't itself a Wed/Sun match.
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week on Wed, Sun', dueDate: '2026-08-06' },
+      { id: 's1', parentId: 'p1', isRecurring: false, recurrenceString: null, dueDate: null },
+    ];
+    const result = migrateRecurrenceConsistency(tasks);
+    const s1 = result.find((t) => t.id === 's1');
+    expect(s1.dueDate).toBe('2026-08-09');
+  });
 });

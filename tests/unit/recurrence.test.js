@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseRecurrenceRule,
   computeNextDueDate,
+  computeFirstMatchingDueDate,
   computeRecurringDescendantUpdate,
   computeCompletionHistoryUpdate,
   computeRecurrenceSyncUpdates,
@@ -126,6 +127,31 @@ describe('computeNextDueDate', () => {
   it('advances an every-2-weeks-on-Monday rule by a full 2-week cycle after wrapping', () => {
     // 2026-08-03 is a Monday; only day in the list, so wrap uses the 2-week interval.
     expect(computeNextDueDate('2026-08-03', 'every 2 weeks on Mon')).toBe('2026-08-17');
+  });
+});
+
+describe('computeFirstMatchingDueDate', () => {
+  it('returns the anchor unchanged for a plain (non-weekday-specific) rule', () => {
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week')).toBe('2026-08-06');
+  });
+
+  it('returns the anchor unchanged when it already matches a weekday-specific rule', () => {
+    // 2026-08-06 is a Thursday.
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week on Thu')).toBe('2026-08-06');
+  });
+
+  it('snaps forward to the nearest matching weekday, same week, when the anchor does not match', () => {
+    // 2026-08-06 is a Thursday; "every week on Mon, Wed, Fri" -> next match is Friday 08-07.
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week on Mon, Wed, Fri')).toBe('2026-08-07');
+  });
+
+  it('handles a non-consecutive weekday rule like "every Wed and Sun"', () => {
+    // 2026-08-06 is a Thursday; "every week on Wed, Sun" -> next match wraps to Sunday 08-09.
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week on Wed, Sun')).toBe('2026-08-09');
+  });
+
+  it('falls back to the anchor when the recurrence string does not parse', () => {
+    expect(computeFirstMatchingDueDate('2026-08-06', 'not a recurrence')).toBe('2026-08-06');
   });
 });
 
@@ -418,6 +444,35 @@ describe('computeRecurrenceSyncUpdates', () => {
     ];
     const updates = computeRecurrenceSyncUpdates(tasks);
     expect(updates.get('s1').isRecurring).toBe(true);
+  });
+
+  it('propagates the recurring relative\'s dueDate onto the synced task', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').dueDate).toBe('2026-08-10');
+  });
+
+  it('does not set a dueDate when the recurring relative has none of its own', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week', dueDate: null },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').dueDate).toBeUndefined();
+  });
+
+  it('snaps the propagated dueDate to the first date actually matching a weekday-specific rule', () => {
+    // p1's own dueDate (2026-08-06, a Thursday) doesn't itself fall on Wed/Sun
+    // -- the sub-task's synced dueDate must land on a day the rule allows.
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week on Wed, Sun', dueDate: '2026-08-06' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').dueDate).toBe('2026-08-09'); // next Sunday
   });
 
   it('leaves an already-recurring task untouched even if a relative has a different cadence', () => {
