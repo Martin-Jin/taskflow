@@ -36,6 +36,36 @@ export function getDependentsMap(tasks) {
 }
 
 /**
+ * All ids that `taskId` (directly or transitively) depends on — the full
+ * upstream chain, not just its immediate `dependsOn` list. Used by
+ * localSearch.js to enforce "every chunk of a dependent task must be placed
+ * after the LAST placed chunk of every dependency, direct or transitive"
+ * without needing to walk the chain by hand at every move-validation call.
+ * `taskById` should cover the full task graph (a dependency might not be in
+ * the schedulable subset a caller is otherwise working with). Defensive
+ * against cycles via a `visited` set, mirroring this file's other traversals.
+ * @param {string} taskId
+ * @param {Map<string, import('../types').Task>} taskById
+ * @returns {Set<string>}
+ */
+export function getTransitiveDependencyIds(taskId, taskById) {
+  const result = new Set();
+  const queue = [taskId];
+  const visited = new Set([taskId]);
+  while (queue.length > 0) {
+    const current = queue.pop();
+    const task = taskById.get(current);
+    for (const depId of task?.dependsOn || []) {
+      if (visited.has(depId)) continue;
+      visited.add(depId);
+      result.add(depId);
+      queue.push(depId);
+    }
+  }
+  return result;
+}
+
+/**
  * IDs that must NOT be offered as a dependency for `taskId`: itself, plus
  * every task that (directly or transitively) already depends on it. Picking
  * one of those would create a cycle — two tasks each waiting on the other to

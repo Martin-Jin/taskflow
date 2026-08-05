@@ -186,7 +186,7 @@ const PACING_SHARE_THRESHOLD_HOURS = 0.5;
  *   - 1h20 -> round(80/30)  = 3 max chunks
  *   - 1h10 -> round(70/30)  = 2 max chunks
  */
-function maxChunksFor(task) {
+export function maxChunksFor(task) {
   const durationHours = task.estimatedHours ?? task.remainingHours ?? 0;
   return Math.max(1, Math.round((durationHours * 60) / 30));
 }
@@ -386,7 +386,7 @@ export function prioritizeTasks(tasks, today, bufferDays, taskById) {
  * Compute the [windowStart, windowEnd] ISO date pair a task's remaining
  * hours must be placed within.
  */
-function getTaskWindow(task, today, horizonEnd, bufferDays, taskById) {
+export function getTaskWindow(task, today, horizonEnd, bufferDays, taskById) {
   // enforceDueDate collapses the ENTIRE window onto the due date itself —
   // more restrictive than (and takes precedence over) earliestDate/
   // bufferDays, which only ever clamp the window's edges. Only meaningful

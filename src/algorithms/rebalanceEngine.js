@@ -15,7 +15,11 @@
  *      block).
  *   4. Run the allocator over the remaining unlocked work — excluding any
  *      task whose `dependsOn` list isn't fully completed yet (see step 4
- *      below for details).
+ *      below for details) — then refine that greedy seed with a time-boxed
+ *      cost-minimizing local search (see localSearch.js/placementCost.js)
+ *      that tries relocating individual chunks to reduce total fragmentation/
+ *      due-date cost, guaranteed never to end up worse than the seed or to
+ *      violate a hard constraint along the way.
  *   5. Merge locked blocks + newly generated blocks into the final result.
  *
  * This guarantees "recalibrates future days without destroying manually
@@ -52,6 +56,7 @@
 
 import { computeHorizonCapacity } from './capacityEngine';
 import { allocateTasks, resolveDueDate } from './allocator';
+import { runLocalSearch } from './localSearch';
 import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { generateTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
@@ -408,13 +413,41 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // handed to allocateTasks; its occurrences supersede it entirely.
   const horizonEnd = addDays(today, horizonDays - 1);
   const { normal: normalEligible, virtualOccurrences } = expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizonEnd);
-  const { blocks: rawBlocks, overflow: rawOverflow, timeShifted: rawTimeShifted } = allocateTasks(
-    [...normalEligible, ...virtualOccurrences],
+  const allocatedTasks = [...normalEligible, ...virtualOccurrences];
+  const taskByIdWithVirtual = withVirtualEntries(taskById, virtualOccurrences);
+  const { blocks: seedBlocks, overflow: rawOverflow, timeShifted: rawTimeShifted } = allocateTasks(
+    allocatedTasks,
     capacityMap,
     rules,
     today,
-    withVirtualEntries(taskById, virtualOccurrences)
+    taskByIdWithVirtual
   );
+  // Cost-minimizing local search (see localSearch.js): refine the greedy
+  // seed above by trying to relocate individual chunks to a lower-total-cost
+  // day/time, never worse than the seed and never violating a hard
+  // constraint (capacity, gap, daily budget, or dependency ordering) along
+  // the way. Only non-fixed-time, non-passive blocks are eligible to move —
+  // a fixed-time task's pinned slot and every passive-task block are treated
+  // as immovable context here, same carve-out as allocateTasks itself. Runs
+  // on the virtual-id-expanded block/task set (BEFORE stripVirtualIds below)
+  // so a recurring occurrence's search stays correctly bounded to its own
+  // single-day enforceDueDate window, exactly like the seed's placement was.
+  const movableTaskIds = new Set(
+    allocatedTasks.filter((t) => !t.fixedTime && !t.isPassive).map((t) => t.id)
+  );
+  const movableBlocks = seedBlocks.filter((b) => movableTaskIds.has(b.taskId));
+  const immovableBlocks = seedBlocks.filter((b) => !movableTaskIds.has(b.taskId));
+  const { blocks: searchedMovableBlocks } = runLocalSearch({
+    movableBlocks,
+    immovableBlocks,
+    tasks: allocatedTasks,
+    taskById: taskByIdWithVirtual,
+    capacityMap,
+    rules,
+    today,
+    resolveDueDateFn: (task) => resolveDueDate(task, taskByIdWithVirtual),
+  });
+  const rawBlocks = [...searchedMovableBlocks, ...immovableBlocks];
   const { blocks: newBlocks, overflow: allocatorOverflow, timeShifted: strippedTimeShifted } = stripVirtualIds(rawBlocks, rawOverflow, rawTimeShifted);
   // Dependency-blocked tasks never reach allocateTasks, so they're appended
   // here rather than coming back through stripVirtualIds — see
