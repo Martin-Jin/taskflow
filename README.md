@@ -434,7 +434,10 @@ cached copy.
   - **List** — searchable/filterable; add/edit/complete/delete/lock tasks
     (adding requires a due date); open a task to edit every field, manage
     subtasks, set dependencies, mark it as able to run unattended, or force
-    it to be scheduled entirely on its due date ("Enforce due date").
+    it to be scheduled entirely on its due date ("Enforce due date"). Making
+    a task recurring automatically makes its parent (or sub-tasks) recurring
+    too, since they represent the steps toward the same repeating goal — no
+    need to set it on both sides yourself.
     Every task also has a Todoist-style **comment thread** — post text,
     a file (image, PDF, or common office doc, 10MB max), or both; image
     attachments show as a clickable thumbnail (opens full-size), other

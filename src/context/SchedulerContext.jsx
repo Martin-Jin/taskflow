@@ -54,8 +54,10 @@ import {
   computeCompletionHistoryUpdate,
   computeNextDueDate,
   computeRecurringDescendantUpdate,
+  computeRecurrenceSyncUpdates,
   deriveRecurrenceRule,
 } from '../utils/recurrence';
+import { isCompletedForCurrentOccurrence, areAllChildrenCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -74,6 +76,7 @@ import { dedupeEventsByOccurrence } from '../utils/eventUtils';
 import { nextLabelColor } from '../utils/labelColor';
 import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
 import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
+import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
 
 const SchedulerContext = createContext(null);
 
@@ -333,6 +336,70 @@ function getDescendantIds(taskId, tasks) {
   return descendants;
 }
 
+/**
+ * Upward-completion cascade: after `taskId` (recurring or not) just closed
+ * out its current occurrence within `newTasks`, walk up its `parentId` chain
+ * completing any parent whose ENTIRE set of direct children is now done for
+ * the current cycle too (see taskHierarchy's isCompletedForCurrentOccurrence
+ * / areAllChildrenCompletedForCurrentOccurrence) — repeating up the chain,
+ * since completing a parent can in turn complete a grandparent. A parent
+ * that itself has no dueDate/isRecurring info of its own just follows the
+ * same recurring/non-recurring completion shape completeTask already uses
+ * for a standalone task, so a container parent behaves identically whether
+ * a user clicks it directly or every one of its children happens to close
+ * out this way.
+ *
+ * Pure and pre-commit: returns a new tasks array, doesn't call commit itself
+ * — completeTask folds this into its own single commit so the whole cascade
+ * (leaf + every newly-completed ancestor) lands as one undoable action.
+ * `visited` guards the same hand-edited-backup parentId-cycle case every
+ * other parentId walk in this file guards against.
+ */
+function applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso) {
+  let current = newTasks;
+  let cursor = current.find((t) => t.id === taskId);
+  const visited = new Set([taskId]);
+  while (cursor?.parentId && !visited.has(cursor.parentId)) {
+    visited.add(cursor.parentId);
+    const parentId = cursor.parentId;
+    const parent = current.find((t) => t.id === parentId);
+    if (!parent) break;
+    if (!areAllChildrenCompletedForCurrentOccurrence(parentId, current, todayIso)) break;
+    if (isCompletedForCurrentOccurrence(parent, todayIso)) break; // already done — nothing to cascade, and avoids re-advancing a recurring parent past what it already advanced to
+
+    if (parent.isRecurring && parent.dueDate) {
+      const baseDate = parent.dueDate < todayIso ? todayIso : parent.dueDate;
+      const nextDueDate = computeNextDueDate(baseDate, parent.recurrenceString);
+      const { completedDates, completionHistory } = computeCompletionHistoryUpdate(
+        parent.dueDate,
+        parent.completedDates,
+        parent.completionHistory,
+        todayIso
+      );
+      current = current.map((t) =>
+        t.id === parentId
+          ? {
+            ...t,
+            dueDate: nextDueDate,
+            remainingHours: t.estimatedHours,
+            isCompleted: false,
+            completedAt: nowIso,
+            completedDates,
+            completionHistory,
+            updatedAt: nowIso,
+          }
+          : t
+      );
+    } else {
+      current = current.map((t) =>
+        t.id === parentId ? { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0, updatedAt: nowIso } : t
+      );
+    }
+    cursor = current.find((t) => t.id === parentId);
+  }
+  return current;
+}
+
 export function SchedulerProvider({ children }) {
   const { user, authLoading } = useAuth();
 
@@ -495,6 +562,15 @@ export function SchedulerProvider({ children }) {
   // Task.subtasks array became standalone Tasks linked by parentId).
   const [subtasksMigrationDone, setSubtasksMigrationDone] = usePersistedState('subtasksMigrationDone', false);
 
+  // Guards the one-time migrateRecurrenceConsistency backfill below — see
+  // src/migrations/migrateRecurrenceConsistency.js (parent/sub-task
+  // recurrence used to be able to drift out of sync; addTask/updateTask now
+  // keep them in sync going forward, this just catches up existing data).
+  const [recurrenceConsistencyMigrationDone, setRecurrenceConsistencyMigrationDone] = usePersistedState(
+    'recurrenceConsistencyMigrationDone',
+    false
+  );
+
   // events: seeded from local storage so a refresh doesn't blank the
   // calendar grid while the silent Google re-auth (below) is in flight, or
   // permanently if Google Calendar isn't configured at all (mock events
@@ -641,6 +717,22 @@ export function SchedulerProvider({ children }) {
       commit({ tasks: migrateSubtasksToTasks(stateRef.current.tasks), blocks: stateRef.current.blocks }, 'Migrated sub-tasks to standalone tasks');
     }
     setSubtasksMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateRecurrenceConsistency.js.
+  // Runs after the subtasks migration above (so parentId links are already
+  // in their final standalone-Task shape) and only commits a history entry
+  // when this device actually has an inconsistent parent/sub-task recurrence
+  // chain to fix. Safe to delete this effect once the flag above is true for
+  // all users.
+  useEffect(() => {
+    if (recurrenceConsistencyMigrationDone) return;
+    const synced = migrateRecurrenceConsistency(stateRef.current.tasks);
+    if (synced !== stateRef.current.tasks) {
+      commit({ tasks: synced, blocks: stateRef.current.blocks }, 'Synced recurring parent/sub-task consistency');
+    }
+    setRecurrenceConsistencyMigrationDone(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -947,7 +1039,19 @@ export function SchedulerProvider({ children }) {
       // applying a multi-task plan — each build on the previous call's
       // result instead of each computing from the same stale `tasks` closure
       // and silently clobbering all but the last one.
-      commit((current) => ({ tasks: [...current.tasks, newTask], blocks: current.blocks }), `Added task "${newTask.title}"`);
+      commit((current) => {
+        const nextTasks = [...current.tasks, newTask];
+        // A recurring parent's sub-tasks (and vice versa) must stay
+        // recurrence-consistent — see computeRecurrenceSyncUpdates. A new
+        // recurring sub-task can make its (non-recurring) parent recurring
+        // too, or a new sub-task under a recurring parent picks up that
+        // recurrence automatically.
+        const syncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+        const syncedTasks = syncUpdates.size === 0
+          ? nextTasks
+          : nextTasks.map((t) => (syncUpdates.has(t.id) ? { ...t, ...syncUpdates.get(t.id) } : t));
+        return { tasks: syncedTasks, blocks: current.blocks };
+      }, `Added task "${newTask.title}"`);
       if (soundEnabled) playAddSound(soundVolume);
       // A new task with a due date needs a planning slot — queue the same
       // debounced rebalance updateTask uses for a due-date change, so it
@@ -990,8 +1094,8 @@ export function SchedulerProvider({ children }) {
 
       // Function form — see addTask's comment just above.
       commit(
-        (current) => ({
-          tasks: current.tasks.map((t) => {
+        (current) => {
+          const nextTasks = current.tasks.map((t) => {
             if (t.id !== taskId) return t;
             let merged = { ...t, ...sanitizeTaskUpdate(updates, t), updatedAt: new Date().toISOString() };
             // Editing the due date of an already-completed task means the
@@ -1009,9 +1113,18 @@ export function SchedulerProvider({ children }) {
             // utils/recurrence.js) — recompute it whenever a caller touches
             // recurrenceString so the two can never drift apart.
             return 'recurrenceString' in updates ? { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) } : merged;
-          }),
-          blocks: current.blocks,
-        }),
+          });
+          // A recurring parent's sub-tasks (and vice versa) must stay
+          // recurrence-consistent — see computeRecurrenceSyncUpdates. Only
+          // relevant when this update touched recurrence itself, but running
+          // it unconditionally is cheap and keeps this branch simple; it's a
+          // no-op whenever the edited task's recurrence didn't change.
+          const syncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+          const syncedTasks = syncUpdates.size === 0
+            ? nextTasks
+            : nextTasks.map((t) => (syncUpdates.has(t.id) ? { ...t, ...syncUpdates.get(t.id) } : t));
+          return { tasks: syncedTasks, blocks: current.blocks };
+        },
         `Updated task`
       );
 
@@ -1188,11 +1301,21 @@ export function SchedulerProvider({ children }) {
    * reason to clear a plain sub-task deadline) — see
    * utils/recurrence.js's computeRecurringDescendantUpdate for the exact
    * per-descendant decision and why. For a non-recurring parent, every
-   * descendant is marked completed right alongside it. There's no upward
-   * cascade in either direction — completing a sub-task never auto-completes
-   * its parent, matching existing behavior (nothing reads sub-task
-   * completion to trigger a parent action).
+   * descendant is marked completed right alongside it.
    *
+   * UPWARD CASCADE: after completing a task, if it has a parent, check
+   * whether ALL of that parent's direct children are now "done for the
+   * current cycle" (isCompletedForCurrentOccurrence — isCompleted for a
+   * plain task, today's date in completedDates for a recurring one); if so,
+   * complete the parent too, and repeat one level up (2-level nesting is the
+   * UI's cap, but this walks generally). This mirrors the Tasks list's own
+   * display logic (TaskListPanel's isCheckedForDisplay), so "every sub-task
+   * shows checked" and "the parent auto-completes" stay in agreement. A
+   * recurring parent auto-completed this way advances to its next occurrence
+   * exactly like a manual completion would — there's nothing special about
+   * how it got triggered.
+   *
+
    * ACTUAL TIME TRACKING: optional second arg `actualHours` — passed only by
    * CompleteTaskContext.requestComplete when the task being completed had a
    * Pomodoro timer, confirmed by the user via CompleteTaskConfirmModal. Only
@@ -1322,6 +1445,10 @@ export function SchedulerProvider({ children }) {
             }
             return t;
           });
+          // Upward cascade: if this was a sub-task and every one of its
+          // siblings is now done for today's cycle too, complete its parent
+          // (and so on up the chain) — see applyUpwardCompletionCascade.
+          const cascadedTasks = applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso);
           // Drop only *unlocked* blocks for occurrences strictly BEFORE the one
           // actually being closed out (date < baseDate) — those are stale/
           // missed prior occurrences with nothing left to show. The occurrence
@@ -1348,12 +1475,13 @@ export function SchedulerProvider({ children }) {
           // occurrence was holding — re-plan the REST of today (only) into it.
           // See rebalanceTodayOnly's own comment for why this is scoped tightly
           // to today rather than reusing the full-horizon runRebalance.
-          return rebalanceTodayOnly(newTasks, newBlocks);
+          return rebalanceTodayOnly(cascadedTasks, newBlocks);
         }, `Completed recurring task — advanced to ${nextDueDate}`);
         return true;
       }
 
       const nowIso = new Date().toISOString();
+      const todayIso = toISODate(new Date());
       // Any other task that depended on this one (or one of its completed
       // descendants) is no longer blocked, so scrub those now-satisfied ids
       // out of dependsOn — same cleanup deleteTask does when a dependency
@@ -1379,9 +1507,11 @@ export function SchedulerProvider({ children }) {
           }
           return t;
         });
+        // Upward cascade — see the recurring branch's comment above.
+        const cascadedTasks = applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso);
         // Completing early can free up a later-today slot this task was
         // holding — re-plan the REST of today (only) into it.
-        return rebalanceTodayOnly(newTasks, current.blocks);
+        return rebalanceTodayOnly(cascadedTasks, current.blocks);
       }, `Completed task`);
       return true;
     },
@@ -1389,14 +1519,75 @@ export function SchedulerProvider({ children }) {
   );
 
   /**
-   * Restore a task out of the completed state (undoes completeTask's
-   * non-recurring branch). Only the single task is restored — a parent's
-   * children aren't force-restored alongside it, since completing the parent
-   * cascaded to them but that doesn't mean the reverse should be assumed.
+   * Restore a task out of the completed state (undoes completeTask). Only
+   * the single task (plus, for a recurring one, its own upward-cascaded
+   * ancestors — see below) is restored — a parent's *children* aren't
+   * force-restored alongside it, since completing the parent cascaded to
+   * them but that doesn't mean the reverse should be assumed.
+   *
+   * RECURRING TASKS: the Tasks list's restore button (TaskListPanel) is only
+   * ever shown for a task that's currently displaying as checked — for a
+   * recurring task that means "completed for the current occurrence" (see
+   * taskHierarchy's isCompletedForCurrentOccurrence), not isCompleted (which
+   * completeTask never sets true for a recurring task in the first place).
+   * So restoring one has to undo exactly what completing it just did: drop
+   * today's date back out of `completedDates` (reversing
+   * computeCompletionHistoryUpdate) rather than only touching isCompleted,
+   * which would otherwise leave the task showing checked forever with no way
+   * to un-check it. This deliberately does NOT try to roll dueDate back to
+   * its pre-completion value — recurrence advancement and calendar
+   * placement already happened and reversing them cleanly would need
+   * reconstructing state this function doesn't have (the old dueDate, any
+   * blocks a rebalance already produced for the new occurrence); simply
+   * un-marking today as done is what the restore button visually promises
+   * and is enough to let the task be completed again today if it was
+   * restored by mistake.
+   *
+   * UPWARD-CASCADE SYMMETRY: if completing this task had auto-completed a
+   * parent (and so on up the chain — see applyUpwardCompletionCascade),
+   * restoring it un-does that too, walking up while each ancestor is still
+   * showing completed for today AND was only completed by virtue of every
+   * child being done (i.e. would no longer qualify now that this one just
+   * un-checked) — matching completeTask's cascade the other direction so a
+   * mis-click restore doesn't leave a parent stuck showing done for a child
+   * that no longer is.
    */
   const uncompleteTask = useCallback(
     (taskId) => {
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: false, completedAt: null } : t));
+      const todayIso = toISODate(new Date());
+      const target = tasks.find((t) => t.id === taskId);
+      if (!target) return;
+
+      let newTasks;
+      if (target.isRecurring) {
+        newTasks = tasks.map((t) =>
+          t.id === taskId ? { ...t, completedDates: (t.completedDates || []).filter((d) => d !== todayIso) } : t
+        );
+      } else {
+        newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: false, completedAt: null } : t));
+      }
+
+      // Walk up parentId, un-completing any ancestor that's still showing
+      // "done for today" but would no longer qualify now that this child
+      // just un-checked — same cycle-guard shape as the completion cascade.
+      const visited = new Set([taskId]);
+      let cursor = target;
+      while (cursor?.parentId && !visited.has(cursor.parentId)) {
+        visited.add(cursor.parentId);
+        const parentId = cursor.parentId;
+        const parent = newTasks.find((t) => t.id === parentId);
+        if (!parent || !isCompletedForCurrentOccurrence(parent, todayIso)) break;
+        if (areAllChildrenCompletedForCurrentOccurrence(parentId, newTasks, todayIso)) break; // still legitimately fully done — leave it
+        newTasks = newTasks.map((t) =>
+          t.id === parentId
+            ? parent.isRecurring
+              ? { ...t, completedDates: (t.completedDates || []).filter((d) => d !== todayIso) }
+              : { ...t, isCompleted: false, completedAt: null }
+            : t
+        );
+        cursor = parent;
+      }
+
       commit({ tasks: newTasks, blocks }, `Restored completed task`);
     },
     [tasks, blocks, commit]

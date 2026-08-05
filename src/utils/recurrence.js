@@ -631,3 +631,94 @@ export function buildRecurrenceString(count, unit, days) {
   }
   return `every ${n} ${unit}${n === 1 ? '' : 's'}`;
 }
+
+/**
+ * A parent's sub-tasks are the steps toward its recurring goal, and a
+ * sub-task being made recurring means the goal it belongs to is ongoing too
+ * — so parent/sub-task recurrence must always agree. This computes the set
+ * of tasks that need updating to restore that invariant across the WHOLE
+ * list, given nesting can be up to 2 levels deep (task -> sub-task ->
+ * grand-sub-task): if any task in a parent/descendant chain is recurring,
+ * every task in that chain should be too.
+ *
+ * Shared by SchedulerContext's addTask/updateTask (enforced going forward,
+ * one small chain at a time) and migrateRecurrenceConsistency.js (the
+ * one-time backfill over every existing task at once) — both just need "here
+ * are the tasks, tell me what to change", so the walk itself lives here
+ * rather than being duplicated in both call sites.
+ *
+ * Which `recurrenceString` wins when propagating: the nearest recurring
+ * relative going UP the chain first (parent's cadence describes the overall
+ * goal), falling back to the nearest recurring DESCENDANT if only a
+ * descendant is recurring. Not a full "merge all cadences" — there's no
+ * single sensible merge of e.g. "every day" (a sub-task) and "every month"
+ * (a sibling sub-task) into a parent's own cadence, so the first recurring
+ * relative found wins and the rest fall in line with it. Already-consistent
+ * tasks (including fully non-recurring chains) are left untouched.
+ *
+ * `isRecurring: true` is set even on a task with no `dueDate` of its own —
+ * consistent with how `isRecurring` is already treated everywhere else in
+ * the app (e.g. completeTask, TaskDetailModal's commitChanges), it simply
+ * has no effect until a due date exists.
+ *
+ * @param {import('../types').Task[]} tasks
+ * @returns {Map<string, {isRecurring: boolean, recurrenceString: string, recurrenceRule: object|null}>}
+ *   keyed by task id — only entries that actually need to change are included.
+ */
+export function computeRecurrenceSyncUpdates(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const childrenByParentId = new Map();
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    const siblings = childrenByParentId.get(t.parentId) || [];
+    siblings.push(t);
+    childrenByParentId.set(t.parentId, siblings);
+  }
+
+  /** Walk a task's ancestor chain (parent, grandparent, ...) as an array, nearest first. Guards against a corrupted-backup parentId cycle. */
+  function getAncestors(task) {
+    const ancestors = [];
+    const visited = new Set([task.id]);
+    let current = task;
+    while (current.parentId) {
+      const parent = byId.get(current.parentId);
+      if (!parent || visited.has(parent.id)) break;
+      ancestors.push(parent);
+      visited.add(parent.id);
+      current = parent;
+    }
+    return ancestors;
+  }
+
+  /** Walk a task's descendants (children, grandchildren, ...), nearest first, breadth-first. */
+  function getDescendants(task) {
+    const descendants = [];
+    const visited = new Set([task.id]);
+    const queue = [...(childrenByParentId.get(task.id) || [])];
+    while (queue.length > 0) {
+      const t = queue.shift();
+      if (visited.has(t.id)) continue;
+      visited.add(t.id);
+      descendants.push(t);
+      queue.push(...(childrenByParentId.get(t.id) || []));
+    }
+    return descendants;
+  }
+
+  const updates = new Map();
+  for (const task of tasks) {
+    if (task.isRecurring) continue; // already recurring — nothing to propagate onto it
+
+    // Nearest recurring ancestor wins over a recurring descendant (see doc comment above).
+    const recurringAncestor = getAncestors(task).find((t) => t.isRecurring);
+    const recurringSource = recurringAncestor || getDescendants(task).find((t) => t.isRecurring);
+    if (!recurringSource) continue;
+
+    updates.set(task.id, {
+      isRecurring: true,
+      recurrenceString: recurringSource.recurrenceString,
+      recurrenceRule: deriveRecurrenceRule(recurringSource.recurrenceString),
+    });
+  }
+  return updates;
+}

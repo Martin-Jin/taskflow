@@ -61,7 +61,7 @@ import { useMotionEnabled } from '../hooks/useMotionEnabled';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { getEffectiveEstimatedHours, getEffectiveRemainingHours } from '../utils/taskHierarchy';
+import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -217,6 +217,10 @@ export default function TaskListPanel({
     ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
     : undefined;
 
+  // Today's ISO date, used both for the Overdue/Today/Upcoming grouping below
+  // and (via isCompletedForCurrentOccurrence) each row's "done for today"
+  // display state — computed once per render rather than per row/group.
+  const today = toISODate(new Date());
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
@@ -322,7 +326,6 @@ export default function TaskListPanel({
   const showGroups = filter === 'active' || filter === 'all';
   const taskGroups = useMemo(() => {
     if (!showGroups) return null;
-    const today = toISODate(new Date());
     const overdue = [];
     const todayTasks = [];
     const upcoming = [];
@@ -341,7 +344,7 @@ export default function TaskListPanel({
       // filters them out above, so this group is empty (and hidden) there.
       { key: 'noDueDate', label: 'No due date', tasks: undated },
     ].filter((group) => group.tasks.length > 0);
-  }, [visibleTasks, showGroups]);
+  }, [visibleTasks, showGroups, today]);
 
   /**
    * Expands a top-level task into the flat, in-order list of rows it
@@ -381,6 +384,11 @@ export default function TaskListPanel({
         motionEnabled={motionEnabled}
         labelById={labelById}
         dependenciesMet={areDependenciesMet(task, taskById)}
+        // List-view-only "done for today" display state — a recurring task
+        // never sets isCompleted, so without this a completed-for-today
+        // sub-task would render unchecked here even though its occurrence is
+        // closed out. See taskHierarchy.js's isCompletedForCurrentOccurrence.
+        isCheckedForDisplay={isCompletedForCurrentOccurrence(task, today)}
         effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours}
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
@@ -591,6 +599,7 @@ const TaskRow = React.memo(function TaskRow({
   motionEnabled,
   labelById,
   dependenciesMet,
+  isCheckedForDisplay,
   effectiveRemainingHours,
   effectiveEstimatedHours,
   onToggleCollapse,
@@ -608,19 +617,19 @@ const TaskRow = React.memo(function TaskRow({
       onClick={() => onOpen(task.id)}
     >
       <button
-        className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+        className={`task-checkbox ${task.priority} ${isCheckedForDisplay ? 'checked' : ''}`}
         onClick={(e) => {
           e.stopPropagation();
-          if (!task.isCompleted) onComplete(task.id);
+          if (!isCheckedForDisplay) onComplete(task.id);
         }}
-        disabled={task.isCompleted}
-        title={task.isCompleted ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-        aria-label={task.isCompleted ? `${task.title} completed` : `Mark ${task.title} complete`}
+        disabled={isCheckedForDisplay}
+        title={isCheckedForDisplay ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+        aria-label={isCheckedForDisplay ? `${task.title} completed` : `Mark ${task.title} complete`}
       >
-        {task.isCompleted && <Check size={12} aria-hidden="true" />}
+        {isCheckedForDisplay && <Check size={12} aria-hidden="true" />}
       </button>
       <div className="task-row-main">
-        <div style={{ fontWeight: 600, textDecoration: task.isCompleted ? 'line-through' : 'none', opacity: task.isCompleted ? 0.5 : 1 }}>
+        <div style={{ fontWeight: 600, textDecoration: isCheckedForDisplay ? 'line-through' : 'none', opacity: isCheckedForDisplay ? 0.5 : 1 }}>
           {task.link ? (
             <a
               href={task.link}
@@ -669,7 +678,7 @@ const TaskRow = React.memo(function TaskRow({
             {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
             {task.sectionName ? ` · ${task.sectionName}` : ''}
           </span>
-          {!task.isCompleted && !dependenciesMet && (
+          {!isCheckedForDisplay && !dependenciesMet && (
             <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
               {' · '}
               <Ban size={12} />
@@ -690,7 +699,7 @@ const TaskRow = React.memo(function TaskRow({
           })}
         </div>
       </div>
-      {task.isCompleted && (
+      {isCheckedForDisplay && (
         <button
           type="button"
           className="btn btn-icon task-row-restore"

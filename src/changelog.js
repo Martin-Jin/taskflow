@@ -17,6 +17,26 @@
 
 export const CHANGELOG = [
   {
+    version: '1.97.0',
+    date: '2026-08-06',
+    title: 'Recurring sub-tasks show as done for today, and auto-complete their parent',
+    changes: [
+      'A recurring sub-task now shows checked off in the Tasks list once it\'s completed for today, instead of always looking unchecked (it still resets and shows as due again once its recurrence rolls to the next occurrence).',
+      'Once every sub-task under a parent is completed for the current cycle, the parent now automatically completes too (and repeats up the chain for nested sub-tasks).',
+      'Restoring a completed recurring task or sub-task via the Tasks list now un-checks it for today (and un-completes a parent that had auto-completed because of it), rather than only working for one-off tasks.',
+    ],
+  },
+  {
+    version: '1.96.0',
+    date: '2026-08-06',
+    title: 'Recurring parent and sub-task recurrence now stay in sync',
+    changes: [
+      'A sub-task now automatically becomes recurring when its parent task is recurring (its steps toward a recurring goal should repeat too), and vice versa: making a sub-task recurring now also makes its parent recurring.',
+      'Existing tasks with mismatched recurrence between a parent and its sub-tasks were synced once automatically when this shipped.',
+      'The "Apply to all sub-tasks" button no longer copies recurrence — that now happens automatically, so it stays focused on priority, due date, project/section, labels, and the passive flag.',
+    ],
+  },
+  {
     version: '1.95.4',
     date: '2026-08-06',
     title: 'Fixed the mobile calendar date-picker being unresponsive',
