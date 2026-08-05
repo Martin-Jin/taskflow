@@ -1273,19 +1273,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   /**
    * Cascades this (container) task's shared fields — priority, due
-   * date/enforcement, recurrence, project/section, labels, and passive flag
-   * — down onto every descendant sub-task (direct and nested, see
-   * getAllDescendants). Only offered when the task actually has sub-tasks
-   * (isContainer) AND the user has edited one of these shared fields at some
-   * point this modal session (hasEditedSharedFieldsRef) — see the Save row
-   * below, which hides the button otherwise. isContainer re-hides it the
-   * moment the last sub-task is removed (recomputed from the live `tasks`
-   * list each render); hasEditedSharedFieldsRef only resets when the modal
-   * switches to a different task, NOT on every sidebar auto-save — sidebar
-   * fields debounce-save ~500ms after each edit (see the auto-save effect
-   * below), which resets initialSnapshotRef/isDirty back to false, but the
-   * button should stay available for the rest of the session rather than
-   * flash and disappear right after the edit that triggered it.
+   * date/enforcement, project/section, labels, and passive flag — down onto
+   * every descendant sub-task (direct and nested, see getAllDescendants).
+   * Only offered when the task actually has sub-tasks (isContainer) AND the
+   * user has edited one of these shared fields at some point this modal
+   * session (hasEditedSharedFieldsRef) — see the Save row below, which hides
+   * the button otherwise. isContainer re-hides it the moment the last
+   * sub-task is removed (recomputed from the live `tasks` list each render);
+   * hasEditedSharedFieldsRef only resets when the modal switches to a
+   * different task, NOT on every sidebar auto-save — sidebar fields
+   * debounce-save ~500ms after each edit (see the auto-save effect below),
+   * which resets initialSnapshotRef/isDirty back to false, but the button
+   * should stay available for the rest of the session rather than flash and
+   * disappear right after the edit that triggered it.
    *
    * Deliberately excludes title/notes/estimatedHours/dependsOn/fixedTime —
    * those are meant to stay per-task (a shared title would collide, a shared
@@ -1294,18 +1294,20 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
    * own due date is still capped at its nearest dated ancestor's (enforced
    * in commitChanges' dueDateError above) — applying the container's own due
    * date can never violate that, since the container IS that ancestor.
+   *
+   * Recurrence is deliberately NOT included here anymore: parent/sub-task
+   * recurrence now stays consistent automatically (see
+   * computeRecurrenceSyncUpdates, wired into SchedulerContext's
+   * addTask/updateTask) the moment either side's recurrence changes, so a
+   * manual copy step would be redundant.
    */
   function handleApplyToAllSubtasks() {
     const descendants = getAllDescendants(task.id, tasks);
     if (descendants.length === 0) return;
-    const nextIsRecurring = isRecurring && !!dueDate;
-    const nextRecurrenceString = nextIsRecurring ? buildRecurrenceString(recurrenceCount, recurrenceUnit, recurrenceDays) : null;
     const sharedUpdates = {
       priority,
       dueDate: dueDate || null,
       enforceDueDate: enforceDueDate && !!dueDate,
-      isRecurring: nextIsRecurring,
-      recurrenceString: nextRecurrenceString,
       projectId: projectId || null,
       sectionId: sectionId || null,
       labelIds,
@@ -1747,7 +1749,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       type="button"
                       className="btn btn-primary"
                       onClick={handleApplyToAllSubtasks}
-                      title="Copy this task's priority, due date, recurrence, project/section, labels, and passive flag onto every sub-task"
+                      title="Copy this task's priority, due date, project/section, labels, and passive flag onto every sub-task"
                     >
                       Apply to all sub-tasks
                     </button>

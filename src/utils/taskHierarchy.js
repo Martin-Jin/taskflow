@@ -94,6 +94,38 @@ export function findNearestAncestorDueDate(task, tasksById) {
 }
 
 /**
+ * Is `task` "done for now"? For a plain task this is just `isCompleted`. For
+ * a recurring task, `isCompleted` is deliberately never set true on a normal
+ * completion (see SchedulerContext.completeTask) — instead each closed-out
+ * occurrence's date is recorded into `completedDates`, so "done for now"
+ * means today's date is in there. This is purely a "does today's occurrence
+ * still need doing" check — it says nothing about whether the task will ever
+ * be permanently done, which is why TaskDetailModal (editing the recurring
+ * task itself) should keep reading `isCompleted` directly rather than this;
+ * it's meant for list-style views that want to show "done for today".
+ */
+export function isCompletedForCurrentOccurrence(task, todayIso) {
+  if (task.isRecurring) return !!task.completedDates?.includes(todayIso);
+  return !!task.isCompleted;
+}
+
+/**
+ * True if `taskId` has at least one direct sub-task and every one of them is
+ * "done for now" (see isCompletedForCurrentOccurrence) — the rollup that
+ * drives auto-completing a parent once its whole checklist is done for the
+ * current cycle (see SchedulerContext.completeTask's upward cascade). A task
+ * with no children is never "all children done" (there's nothing to roll
+ * up), so this is false for a leaf — callers should gate on hasChildTasks
+ * first if they need to tell "no children" apart from "children, not all
+ * done".
+ */
+export function areAllChildrenCompletedForCurrentOccurrence(taskId, tasks, todayIso) {
+  const children = getDirectChildren(taskId, tasks);
+  if (children.length === 0) return false;
+  return children.every((child) => isCompletedForCurrentOccurrence(child, todayIso));
+}
+
+/**
  * All descendants of `taskId` (children, grandchildren, ...) as full Task
  * objects, via the `parentId` chain — used by TaskDetailModal's "Apply to
  * all sub-tasks" action, which cascades a parent's shared fields down its

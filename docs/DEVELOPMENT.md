@@ -210,6 +210,38 @@ date/enforcement, project/section, labels, passive flag) that cascades onto
 every descendant, direct and nested (see `utils/taskHierarchy.js`'s
 `getAllDescendants`) — shown only while the task actually has sub-tasks.
 
+`isRecurring`/`recurrenceString` are deliberately excluded from that manual
+action: a parent's sub-tasks represent steps toward its recurring goal, so
+parent/sub-task recurrence is kept consistent automatically instead —
+`utils/recurrence.js`'s `computeRecurrenceSyncUpdates` walks a task's full
+ancestor/descendant chain (up to the 2-level nesting cap) and is run by
+SchedulerContext's `addTask`/`updateTask` on every write, propagating a
+recurring task's cadence onto any non-recurring relative in its chain
+(nearest recurring ancestor wins over a recurring descendant when both
+exist). The one-time `migrateRecurrenceConsistency` migration applied this
+once to any pre-existing inconsistent data — see its file-level comment for
+removal timing.
+
+**"Done for today" vs. `isCompleted`:** a recurring task never sets
+`isCompleted: true` on a normal completion (its due date just advances — see
+"Completion" below), so the Tasks list derives a separate, display-only
+"completed for the current occurrence" state (`utils/taskHierarchy.js`'s
+`isCompletedForCurrentOccurrence` — `completedDates` includes today for a
+recurring task, plain `isCompleted` otherwise) to decide a row's checked/
+strikethrough state, restore button, etc. (`TaskListPanel.jsx`'s
+`isCheckedForDisplay`). This is purely a list-view concern — TaskDetailModal
+still shows a recurring task as ongoing, never permanently done. Once every
+one of a parent's direct sub-tasks is "done for today" this way, the parent
+itself auto-completes too (recursing up the chain for nested sub-tasks) —
+see `SchedulerContext.completeTask`'s `applyUpwardCompletionCascade`, folded
+into the same commit as the leaf completion so the whole cascade is one
+undoable action. Restoring a completed task from the list undoes this
+symmetrically (`uncompleteTask`): for a recurring task/sub-task that means
+dropping today back out of `completedDates` (not just flipping `isCompleted`,
+which a recurring completion never set), and un-completing any ancestor whose
+auto-completion depended on the just-restored task, walking up while doing so
+is still warranted.
+
 ### Dependencies and passive tasks
 
 A task can list other tasks it `dependsOn`. `rebalanceEngine` excludes a task
@@ -289,7 +321,8 @@ src/
 │   └── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 ├── migrations/
 │   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
-│   └── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
+│   ├── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
+│   └── migrateRecurrenceConsistency.js # One-time migration syncing recurrence across mismatched parent/sub-task chains — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
 │   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull)

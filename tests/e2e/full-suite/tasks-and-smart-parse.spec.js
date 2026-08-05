@@ -30,6 +30,18 @@ async function clearSearch(page) {
   await search.fill('').catch(() => {});
 }
 
+// Local-time "today" as YYYY-MM-DD, matching the app's own toISODate
+// (dateUtils.js) — Date#toISOString() is UTC and can disagree with the app's
+// local-time "today" near a UTC day boundary, which would make a "due today"
+// assertion flaky/wrong depending on the machine's time zone.
+function todayIsoLocal() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 test.describe('Task CRUD', () => {
   test('creates a task with full metadata, edits it, then deletes it', async ({ page }) => {
     const errors = trackConsoleErrors(page);
@@ -484,8 +496,8 @@ test.describe('Recurring tasks', () => {
     await closeAnyModal(page);
     await page.waitForTimeout(200);
 
-    // Complete it from the list — should advance the due date, not move it
-    // to Completed (see CLAUDE.md: recurring tasks are never marked
+    // Complete it from the list — should advance the due date, not set
+    // isCompleted (see CLAUDE.md: recurring tasks are never marked
     // isCompleted on finishing an occurrence).
     await clearSearch(page);
     await page.getByPlaceholder(/search tasks/i).fill(title);
@@ -494,17 +506,152 @@ test.describe('Recurring tasks', () => {
     await completeBtn.click();
     await page.waitForTimeout(400);
 
-    // Still visible in the default (non-completed) search results, and its
-    // "Mark complete" button is still present (never got checked/disabled).
+    // Still visible in the default (non-completed) search results — a
+    // recurring task never moves to the Completed filter. Its due date was
+    // today, so it now shows CHECKED for today's occurrence (the "done for
+    // today" list-view display — see taskHierarchy.isCompletedForCurrentOccurrence)
+    // rather than with an active "Mark complete" button; that's distinct
+    // from isCompleted, which stays false underneath (confirmed by the due
+    // date having advanced below, and by TaskDetailModal below not treating
+    // it as permanently done).
     await expect(page.getByText(title, { exact: false }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `${title} completed` })).toBeVisible();
 
-    // Due date should have advanced.
+    // Due date should have advanced, and the detail modal's own recurrence
+    // controls should still treat the task as an ongoing recurring task
+    // (not a one-off marked permanently done) — confirming isCompleted
+    // itself was never set true.
     await searchAndOpen(page, title);
     const dueDateAfterInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
     const dueDateAfter = await dueDateAfterInput.inputValue();
     expect(dueDateAfter).not.toEqual(dueDateBefore);
+    await expect(page.getByText(/Every week on Mon/i)).toBeVisible();
     await closeAnyModal(page);
+
+    expectNoErrors(errors);
+  });
+
+  test('a recurring sub-task shows checked in the Tasks list once completed for today, without checking its parent', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Recurring Subtask Parent ${RUN_ID}`;
+    const childTitle = `E2E recurring child ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    // A second, never-completed sibling so the parent can't auto-complete
+    // in this test — isolates "does the completed child show checked" from
+    // "does completing every child auto-complete the parent" (covered below).
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    await page.keyboard.type(childTitle);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    // The "Add a sub-task…" row stays open after adding one (see
+    // TaskDetailModal.handleAddSubtask), so the second sibling is typed
+    // straight into it rather than re-clicking the (now gone) trigger button.
+    await page.keyboard.type(`E2E recurring sibling ${RUN_ID}`);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Give the child a due date of today, then make it recurring — a
+    // recurring task needs a due date to be saveable, and it needs to be
+    // TODAY for completing it to record today's date into completedDates.
+    await searchAndOpen(page, childTitle);
+    const today = todayIsoLocal();
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await dueDateInput.fill(today);
+    await page.getByRole('button', { name: /does not repeat/i }).click();
+    await page.waitForTimeout(600); // let the sidebar's debounced auto-save land
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Sub-tasks never appear in the list's top-level search results on their
+    // own (TaskListPanel.visibleTasks filters out anything with a parentId
+    // before matching the query) — they only ever render nested under their
+    // parent row. So search for the PARENT to bring both it and its children
+    // into view, then act on the child's own row underneath it.
+    await clearSearch(page);
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(300);
+    const childCompleteBtn = page.getByRole('button', { name: new RegExp(`Mark ${childTitle} complete`) });
+    await childCompleteBtn.click();
+    await page.waitForTimeout(400);
+
+    // The child now shows checked (its "Mark complete" button is gone,
+    // replaced by a disabled/checked state) even though completeTask never
+    // set isCompleted for a recurring task.
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${childTitle} complete`) })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `${childTitle} completed` })).toBeVisible();
+
+    // The parent (with an incomplete sibling) must NOT show checked.
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();
+
+    expectNoErrors(errors);
+  });
+
+  test('completing the last remaining recurring sub-task auto-completes its parent', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Auto-Complete Parent ${RUN_ID}`;
+    const child1 = `E2E auto-complete child1 ${RUN_ID}`;
+    const child2 = `E2E auto-complete child2 ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    await page.keyboard.type(child1);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    // The "Add a sub-task…" row stays open after adding one (see
+    // TaskDetailModal.handleAddSubtask), so the second child is typed
+    // straight into it rather than re-clicking the (now gone) trigger button.
+    await page.keyboard.type(child2);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Complete both children (plain, non-recurring — simplest way to check
+    // the upward cascade without needing today-dated recurrence on both).
+    // Sub-tasks never appear in the list's top-level search results on their
+    // own (TaskListPanel.visibleTasks filters out anything with a parentId
+    // before matching the query) — search for the PARENT so both it and its
+    // children render, then act on each child's own row underneath it.
+    await clearSearch(page);
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: new RegExp(`Mark ${child1} complete`) }).click();
+    await page.waitForTimeout(400);
+
+    // Parent still incomplete — one sibling remains.
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();
+
+    // Complete the last remaining sub-task — the parent should auto-complete
+    // (a *plain* completion, isCompleted: true, since the parent itself
+    // isn't recurring — see SchedulerContext.applyUpwardCompletionCascade).
+    await page.getByRole('button', { name: new RegExp(`Mark ${child2} complete`) }).click();
+    await page.waitForTimeout(400);
+
+    // A completed non-recurring task drops out of the default ("Scheduled")
+    // filter's search results entirely (see TaskListPanel.visibleTasks) —
+    // switch to the "Completed" filter chip to confirm the parent really did
+    // auto-complete.
+    await expect(page.getByText(title, { exact: false })).toHaveCount(0);
+    await page.getByRole('button', { name: /change view or filter/i }).click();
+    await page.getByRole('menuitemradio', { name: 'Completed' }).click();
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('button', { name: `${title} completed` })).toBeVisible();
 
     expectNoErrors(errors);
   });

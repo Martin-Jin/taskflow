@@ -4,6 +4,7 @@ import {
   computeNextDueDate,
   computeRecurringDescendantUpdate,
   computeCompletionHistoryUpdate,
+  computeRecurrenceSyncUpdates,
   generateTaskOccurrences,
   findRecurrencePhrase,
   buildRecurrenceString,
@@ -337,6 +338,113 @@ describe('findRecurrencePhrase', () => {
     const result = findRecurrencePhrase('take out trash weekly on Tuesdays');
     expect(result).not.toBeNull();
     expect(result.rule.unit).toBe('week');
+  });
+});
+
+describe('computeRecurrenceSyncUpdates', () => {
+  it('returns an empty map when no tasks are recurring', () => {
+    const tasks = [{ id: 'p1' }, { id: 's1', parentId: 'p1' }];
+    expect(computeRecurrenceSyncUpdates(tasks).size).toBe(0);
+  });
+
+  it('returns an empty map when a parent/sub-task chain already agrees on recurrence', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1', isRecurring: true, recurrenceString: 'every week' },
+    ];
+    expect(computeRecurrenceSyncUpdates(tasks).size).toBe(0);
+  });
+
+  it('propagates a recurring parent\'s cadence down onto a non-recurring sub-task', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(1);
+    expect(updates.get('s1')).toEqual({
+      isRecurring: true,
+      recurrenceString: 'every week',
+      recurrenceRule: { unit: 'week', count: 1 },
+    });
+  });
+
+  it('propagates a recurring sub-task\'s cadence up onto its non-recurring parent', () => {
+    const tasks = [
+      { id: 'p1' },
+      { id: 's1', parentId: 'p1', isRecurring: true, recurrenceString: 'every month' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(1);
+    expect(updates.get('p1')).toEqual({
+      isRecurring: true,
+      recurrenceString: 'every month',
+      recurrenceRule: { unit: 'month', count: 1 },
+    });
+  });
+
+  it('prefers the nearest recurring ANCESTOR over a recurring descendant when both exist', () => {
+    // p1 is recurring "every week"; sub-task s1 is not recurring, but its own
+    // child gs1 is recurring "every day". s1 should adopt the parent's cadence.
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1' },
+      { id: 'gs1', parentId: 's1', isRecurring: true, recurrenceString: 'every day' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1')).toEqual({
+      isRecurring: true,
+      recurrenceString: 'every week',
+      recurrenceRule: { unit: 'week', count: 1 },
+    });
+  });
+
+  it('falls back to a recurring descendant when no ancestor is recurring, walking 2 levels deep', () => {
+    const tasks = [
+      { id: 'p1' },
+      { id: 's1', parentId: 'p1' },
+      { id: 'gs1', parentId: 's1', isRecurring: true, recurrenceString: 'every 3 days' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(2);
+    expect(updates.get('p1').recurrenceString).toBe('every 3 days');
+    expect(updates.get('s1').recurrenceString).toBe('every 3 days');
+  });
+
+  it('sets isRecurring on a propagated task even when it has no dueDate of its own', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1', dueDate: null },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').isRecurring).toBe(true);
+  });
+
+  it('leaves an already-recurring task untouched even if a relative has a different cadence', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1', isRecurring: true, recurrenceString: 'every day' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('does not propagate across unrelated tasks or sibling sub-tasks with no shared recurring relative', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 'p2' },
+      { id: 's1', parentId: 'p2' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('guards against a corrupted parentId cycle instead of looping forever', () => {
+    const tasks = [
+      { id: 'a', parentId: 'b', isRecurring: true, recurrenceString: 'every day' },
+      { id: 'b', parentId: 'a' },
+    ];
+    expect(() => computeRecurrenceSyncUpdates(tasks)).not.toThrow();
   });
 });
 
