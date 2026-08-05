@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.21',
+    date: '2026-08-05',
+    title: 'Fixed calendar tasks still drifting past their real end time in a chain',
+    changes: [
+      'A chain of several short, crowded tasks could compound their visual stretch enough to push a real task\'s box well past its own end time, even though each individual push looked small. That chain now folds into an "N tasks" chip before the drift adds up.',
+    ],
+  },
+  {
     version: '1.93.20',
     date: '2026-08-05',
     title: 'Fixed calendar "N tasks" chips silently dropping tasks when merging',
