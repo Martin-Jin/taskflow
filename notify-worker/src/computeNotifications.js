@@ -109,9 +109,14 @@ function zonedWallTimeToEpochMs(dateStr, timeStr, timeZone) {
  *       the past (independent of any scheduled block).
  *   dueDate/scheduledAt let notificationState.js detect a rescheduled task/block and re-arm even if it
  *   already notified once for the old date. toClear entries: stale dedupe-state docs to delete (task no
- *   longer overdue), independent of whether anything fires this run.
+ *   longer overdue, completed, or deleted outright), independent of whether anything fires this run.
+ *
+ * `existingOverdueStateIds` is the set of `overdue_*` doc ids currently in the user's
+ * notificationState collection (read by index.js). It's what makes clearing correct for
+ * completed/deleted tasks — see the toClear loop below for why deriving it from `tasks` couldn't work.
+ * Defaults to empty so callers that don't care about clearing can omit it.
  */
-function computeCandidates({ tasks, blocks, settings, rules, now }) {
+function computeCandidates({ tasks, blocks, settings, rules, now, existingOverdueStateIds = [] }) {
   const toNotify = [];
   const toClear = [];
   const timeZone = resolveTimeZone(settings.timezone);
@@ -177,11 +182,13 @@ function computeCandidates({ tasks, blocks, settings, rules, now }) {
 
   if (settings.taskOverdue || settings.taskDueToday) {
     const dueTodayTasks = [];
+    const stillOverdueIds = new Set();
     for (const task of tasks) {
       if (task.isCompleted || !task.dueDate) continue;
       const isOverdue = task.dueDate < todayISO;
 
       if (settings.taskOverdue && isOverdue) {
+        stillOverdueIds.add(task.id);
         toNotify.push({
           type: 'overdue',
           task,
@@ -193,14 +200,28 @@ function computeCandidates({ tasks, blocks, settings, rules, now }) {
       } else if (settings.taskDueToday && task.dueDate === todayISO) {
         dueTodayTasks.push(task);
       }
+    }
 
-      // Once a task is no longer overdue (completed, rescheduled forward, or
-      // a recurring task's due date advanced), clear its overdue dedupe
-      // state so a LATER overdue period for this same task id notifies again
-      // instead of staying silently suppressed forever — mirrors the
-      // client's identical reset-on-resolve behavior.
-      if (!isOverdue) {
-        toClear.push({ stateId: `overdue_${task.id}` });
+    // Clear the overdue dedupe state of every task that is NOT currently
+    // overdue, derived from `existingOverdueStateIds` (what's actually in
+    // Firestore) rather than from a pass over `tasks`. That distinction is
+    // the whole point: this used to live inside the loop above, after its
+    // `if (task.isCompleted || !task.dueDate) continue`, so it was
+    // unreachable for exactly the cases it exists to handle — a completed
+    // task bailed at that `continue`, and a DELETED task isn't in `tasks` to
+    // be iterated at all. Both leaked their state doc forever. Driving the
+    // clear from the stored doc ids instead reaps completed, deleted, and
+    // rescheduled-forward tasks alike.
+    // Gated on taskOverdue: stillOverdueIds is only populated by the branch
+    // above, which doesn't run when the user has overdue notifications off.
+    // Without this guard, a user with only "due today" enabled would have
+    // every overdue state doc cleared each run — then get one stale email per
+    // task the moment they re-enabled overdue notifications.
+    if (settings.taskOverdue) {
+      for (const stateId of existingOverdueStateIds) {
+        if (!stillOverdueIds.has(stateId.slice('overdue_'.length))) {
+          toClear.push({ stateId });
+        }
       }
     }
 

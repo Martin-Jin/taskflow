@@ -70,15 +70,26 @@ async function claimNotification(db, uid, candidate, now) {
       }
 
       case 'overdue': {
-        // Once per calendar date for every priority, same as dueToday — a
-        // still-overdue task should surface once/day, not spam every 5-
-        // minute worker tick (which an hourly-repeat rule used to do for
-        // urgent/high tasks: up to ~24 emails/day). Re-arms immediately,
-        // regardless of date, if the task's dueDate itself changed (e.g. a
-        // reschedule that's still in the past) so that's always treated as
-        // fresh news worth a new email.
+        // ONCE PER dueDate VALUE — not once per calendar day. A daily re-arm
+        // (`prev.lastNotifiedDate !== candidate.todayISO`) was the direct
+        // cause of the "I keep getting overdue emails for tasks I already
+        // finished days ago" bug: the client's push of isCompleted:true is
+        // debounced and its flush-on-teardown is explicitly best-effort (see
+        // useCloudSync.js), so a completion made shortly before the tab
+        // closed can fail to reach Firestore. The worker then reads a task
+        // that still looks incomplete and overdue, and — because midnight
+        // moved todayISO on — re-arms and emails again. Every following day
+        // did it again, indefinitely.
+        //
+        // Keying on dueDate instead means one email per overdue task per due
+        // date. It re-arms only when the dueDate genuinely changes (a
+        // reschedule that's still in the past is fresh news), which is
+        // sync-timing-independent: a stale snapshot can no longer manufacture
+        // a new trigger just by the clock rolling over. lastNotifiedDate is
+        // still written, for diagnostics and so an existing state doc from
+        // the old rule keeps a readable shape, but it's no longer consulted.
         const dueDateChanged = prev !== null && prev.dueDate !== candidate.dueDate;
-        eligible = prev === null || dueDateChanged || prev.lastNotifiedDate !== candidate.todayISO;
+        eligible = prev === null || dueDateChanged;
         nextState = { type: 'overdue', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO, dueDate: candidate.dueDate };
         break;
       }

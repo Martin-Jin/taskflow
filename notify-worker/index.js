@@ -86,7 +86,16 @@ async function main() {
     const tasks = data.tasks || [];
     const blocks = data.blocks || [];
     const rules = data.rules || {};
-    const { toNotify, toClear } = computeCandidates({ tasks, blocks, settings, rules, now });
+
+    // The overdue dedupe docs that currently exist, so computeCandidates can
+    // work out which ones are now stale. Reading these (rather than inferring
+    // from `tasks`) is what lets a COMPLETED or DELETED task's state get
+    // cleared — neither survives the tasks-array pass. See computeCandidates'
+    // toClear loop.
+    const overdueStateSnap = await db.collection('users').doc(uid).collection('notificationState').get();
+    const existingOverdueStateIds = overdueStateSnap.docs.map((d) => d.id).filter((id) => id.startsWith('overdue_'));
+
+    const { toNotify, toClear } = computeCandidates({ tasks, blocks, settings, rules, now, existingOverdueStateIds });
 
     // Clearing stale overdue dedupe-state is independent of whether
     // anything fires this run, so it always runs regardless.

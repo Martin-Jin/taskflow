@@ -123,6 +123,43 @@ export function computeFingerprint(source) {
   return JSON.stringify(relevant);
 }
 
+/** Ids of every task currently marked completed, as a Set for cheap diffing. */
+function completedTaskIds(tasks) {
+  const ids = new Set();
+  for (const task of tasks || []) {
+    if (task.isCompleted) ids.add(task.id);
+  }
+  return ids;
+}
+
+/**
+ * True if `nextTasks` marks any task completed that `prevTasks` didn't.
+ *
+ * Completions bypass the push debounce (see shouldPushImmediately's use in
+ * schedulePush) because they're the one edit whose delay has a consequence
+ * beyond this device: the notify-worker cron reads Firestore directly, so a
+ * completion still sitting in a debounce timer when the tab closes leaves the
+ * worker seeing an incomplete, overdue task and emailing about something the
+ * user already finished. Every other edit only costs a slightly-late sync.
+ *
+ * Deliberately one-directional — UN-completing a task (restore) doesn't
+ * qualify. That direction's failure mode is a missing notification, not a
+ * spurious one, so it doesn't justify giving up the debounce.
+ *
+ * `prevTasks` is null before the first push of a session, which is not a
+ * completion event: the initial snapshot is whatever was already loaded, so
+ * treating its existing completed tasks as "just completed" would force an
+ * immediate push on mount for no reason.
+ */
+export function hasNewCompletion(prevTasks, nextTasks) {
+  if (prevTasks === null || prevTasks === undefined) return false;
+  const before = completedTaskIds(prevTasks);
+  for (const task of nextTasks || []) {
+    if (task.isCompleted && !before.has(task.id)) return true;
+  }
+  return false;
+}
+
 /**
  * The race guard shared by the live-listener and initial-pull effects: did a
  * local commit land (currentActionId changed) after `baselineActionId` was
@@ -299,6 +336,9 @@ export function useCloudSync({
 
   const pushTimerRef = useRef(null);
   const lastPushedFingerprintRef = useRef(null);
+  // The tasks array as of the previous schedulePush call, so a newly-completed
+  // task can be spotted and pushed without the debounce (see schedulePush).
+  const lastSeenTasksRef = useRef(null);
   const unsubscribeRef = useRef(null);
   // Mirrors lastAutoBackupAt so the periodic check (a setInterval callback
   // captured once per mount, see the automatic-backup effect) always reads
@@ -341,19 +381,45 @@ export function useCloudSync({
     }
   }, [user, stateRef, setNotification]);
 
-  const schedulePush = useCallback(() => {
-    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    pushTimerRef.current = setTimeout(runPushNow, PUSH_DEBOUNCE_MS);
-  }, [runPushNow]);
+  // Push completions straight away instead of waiting out the debounce — see
+  // hasNewCompletion for why this one edit type earns the exception.
+  //
+  // `nextTasks` is passed in by the caller rather than read from
+  // stateRef.current: that ref is populated by an effect in SchedulerContext,
+  // and this runs from an effect too, so reading it here would make
+  // correctness depend on effect ordering between the two. The push effect
+  // already has `state` as a dependency, so it can just hand over the value
+  // it's reacting to.
+  //
+  // The comparison baseline is the tasks array as of the last scheduling
+  // decision, not the last successful push: a failed push leaves
+  // lastPushedFingerprint rolled back but shouldn't make the NEXT unrelated
+  // edit re-detect the same completion and skip its debounce again.
+  const schedulePush = useCallback(
+    (nextTasks) => {
+      const immediate = hasNewCompletion(lastSeenTasksRef.current, nextTasks);
+      lastSeenTasksRef.current = nextTasks;
+
+      if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
+      if (immediate) {
+        pushTimerRef.current = null;
+        runPushNow();
+        return;
+      }
+      pushTimerRef.current = setTimeout(runPushNow, PUSH_DEBOUNCE_MS);
+    },
+    [runPushNow]
+  );
 
   // Flush a pending debounced push immediately when the tab is about to go
   // away (backgrounded or closed) instead of waiting out the full
-  // PUSH_DEBOUNCE_MS. Without this, completing a task (or any other edit)
-  // and then quickly switching tabs/closing the browser can lose the write
-  // entirely — the debounce timer never fires, so e.g. a just-completed
-  // task's isCompleted:true never reaches Firestore, and the notify-worker
-  // cron keeps reading the stale incomplete task and emailing overdue
-  // reminders for something the user already finished. Three events are
+  // PUSH_DEBOUNCE_MS. Without this, an edit made and then quickly followed by
+  // switching tabs/closing the browser can lose the write entirely — the
+  // debounce timer never fires. Completions no longer depend on this path at
+  // all (schedulePush pushes them immediately, see hasNewCompletion), which
+  // matters because none of the three events below can actually guarantee an
+  // in-flight write completes; this remains a best-effort net for every OTHER
+  // edit type, where a late sync is the only cost. Three events are
   // listened for since no single one is reliable everywhere: `visibilitychange`
   // catches backgrounding/tab-close on iOS Safari (which doesn't reliably fire
   // beforeunload/pagehide's async continuation), `pagehide` catches back/
@@ -608,7 +674,7 @@ export function useCloudSync({
   // ---- Schedule push whenever state changes --------------------------------
   useEffect(() => {
     if (!user || !cloudSynced) return;
-    schedulePush();
+    schedulePush(state.tasks);
   }, [state, user, cloudSynced, schedulePush]);
 
   // ---- Toggle cloud sync ---------------------------------------------------

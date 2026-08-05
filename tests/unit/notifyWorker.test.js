@@ -74,7 +74,7 @@ describe('computeCandidates', () => {
     expect(toNotify[0]).toMatchObject({ type: 'overdue', stateId: 'overdue_t1', dueDate: '2026-07-30' });
   });
 
-  it('clears stale overdue state once a task is no longer overdue', () => {
+  it('clears stale overdue state once a task is rescheduled forward and no longer overdue', () => {
     const tasks = [{ id: 't1', title: 'Fixed', isCompleted: false, dueDate: '2026-08-05', priority: 'medium' }];
     const { toNotify, toClear } = computeCandidates({
       tasks,
@@ -82,9 +82,82 @@ describe('computeCandidates', () => {
       settings: BASE_SETTINGS,
       rules: BASE_RULES,
       now: Date.parse('2026-08-02T12:00:00Z'),
+      existingOverdueStateIds: ['overdue_t1'],
     });
     expect(toNotify).toEqual([]);
     expect(toClear).toEqual([{ stateId: 'overdue_t1' }]);
+  });
+
+  // The three cases below are the actual stale-notification bug: each one used
+  // to leak its state doc forever, because the clear lived inside the tasks
+  // loop after `if (task.isCompleted || !task.dueDate) continue`.
+  it('clears overdue state for a task that has since been COMPLETED', () => {
+    const tasks = [{ id: 't1', title: 'Finished it', isCompleted: true, dueDate: '2026-07-30', priority: 'high' }];
+    const { toNotify, toClear } = computeCandidates({
+      tasks,
+      blocks: [],
+      settings: BASE_SETTINGS,
+      rules: BASE_RULES,
+      now: Date.parse('2026-08-02T12:00:00Z'),
+      existingOverdueStateIds: ['overdue_t1'],
+    });
+    expect(toNotify).toEqual([]);
+    expect(toClear).toEqual([{ stateId: 'overdue_t1' }]);
+  });
+
+  it('clears overdue state for a task that has since been DELETED', () => {
+    const { toNotify, toClear } = computeCandidates({
+      tasks: [],
+      blocks: [],
+      settings: BASE_SETTINGS,
+      rules: BASE_RULES,
+      now: Date.parse('2026-08-02T12:00:00Z'),
+      existingOverdueStateIds: ['overdue_gone'],
+    });
+    expect(toNotify).toEqual([]);
+    expect(toClear).toEqual([{ stateId: 'overdue_gone' }]);
+  });
+
+  it('clears overdue state for a task whose dueDate was removed entirely', () => {
+    const tasks = [{ id: 't1', title: 'No due date now', isCompleted: false, dueDate: null, priority: 'medium' }];
+    const { toClear } = computeCandidates({
+      tasks,
+      blocks: [],
+      settings: BASE_SETTINGS,
+      rules: BASE_RULES,
+      now: Date.parse('2026-08-02T12:00:00Z'),
+      existingOverdueStateIds: ['overdue_t1'],
+    });
+    expect(toClear).toEqual([{ stateId: 'overdue_t1' }]);
+  });
+
+  it('does not clear overdue state when the user has overdue notifications turned off', () => {
+    // Only "due today" is on, so nothing computes overdue-ness this run —
+    // clearing here would silently drop state and cause a burst of stale
+    // emails whenever the user re-enabled the toggle.
+    const tasks = [{ id: 't1', title: 'Still late', isCompleted: false, dueDate: '2026-07-30', priority: 'medium' }];
+    const { toClear } = computeCandidates({
+      tasks,
+      blocks: [],
+      settings: { ...BASE_SETTINGS, taskOverdue: false },
+      rules: BASE_RULES,
+      now: Date.parse('2026-08-02T12:00:00Z'),
+      existingOverdueStateIds: ['overdue_t1', 'overdue_t2'],
+    });
+    expect(toClear).toEqual([]);
+  });
+
+  it('keeps the state doc of a task that IS still overdue', () => {
+    const tasks = [{ id: 't1', title: 'Still late', isCompleted: false, dueDate: '2026-07-30', priority: 'medium' }];
+    const { toClear } = computeCandidates({
+      tasks,
+      blocks: [],
+      settings: BASE_SETTINGS,
+      rules: BASE_RULES,
+      now: Date.parse('2026-08-02T12:00:00Z'),
+      existingOverdueStateIds: ['overdue_t1'],
+    });
+    expect(toClear).toEqual([]);
   });
 
   it('includes scheduledAt on startingSoon candidates for reschedule detection', () => {
@@ -173,19 +246,51 @@ describe('computeCandidates', () => {
 });
 
 describe('claimNotification', () => {
-  it('only claims an overdue notification once per calendar day for urgent priority', async () => {
+  it('claims an overdue notification only ONCE per dueDate, never re-arming on a new calendar day', async () => {
     const db = makeFirestore();
     const candidate = { type: 'overdue', stateId: 'overdue_t1', isUrgentish: true, todayISO: '2026-08-02', dueDate: '2026-07-30' };
     const t0 = Date.parse('2026-08-02T08:00:00Z');
     expect(await claimNotification(db, 'u1', candidate, t0)).toBe(true);
 
-    // Same day, an hour later — used to re-fire hourly for urgent tasks; now must stay suppressed.
+    // Same day, an hour later — suppressed (as before).
     const t1 = t0 + 60 * 60 * 1000;
     expect(await claimNotification(db, 'u1', candidate, t1)).toBe(false);
 
-    // Next calendar day — fires again.
-    const t2 = { ...candidate, todayISO: '2026-08-03' };
-    expect(await claimNotification(db, 'u1', t2, t1 + 20 * 60 * 60 * 1000)).toBe(true);
+    // Crossing midnight must NOT re-arm. This is the regression guard for the
+    // repeat-overdue-email bug: a daily re-arm meant a task whose completion
+    // never reached Firestore got re-emailed every single day, indefinitely.
+    const nextDay = { ...candidate, todayISO: '2026-08-03' };
+    expect(await claimNotification(db, 'u1', nextDay, t1 + 20 * 60 * 60 * 1000)).toBe(false);
+
+    // Still suppressed several days on, same unchanged dueDate.
+    const muchLater = { ...candidate, todayISO: '2026-08-09' };
+    expect(await claimNotification(db, 'u1', muchLater, t0 + 7 * 24 * 60 * 60 * 1000)).toBe(false);
+  });
+
+  it('re-arms overdue across days when the dueDate itself changed', async () => {
+    const db = makeFirestore();
+    const t0 = Date.parse('2026-08-02T08:00:00Z');
+    const first = { type: 'overdue', stateId: 'overdue_t1', isUrgentish: false, todayISO: '2026-08-02', dueDate: '2026-07-30' };
+    expect(await claimNotification(db, 'u1', first, t0)).toBe(true);
+
+    // Pushed to a new (still past) due date on a later day — fresh news.
+    const moved = { ...first, todayISO: '2026-08-04', dueDate: '2026-08-03' };
+    expect(await claimNotification(db, 'u1', moved, t0 + 2 * 24 * 60 * 60 * 1000)).toBe(true);
+    // ...but only once for that new date.
+    expect(await claimNotification(db, 'u1', moved, t0 + 2 * 24 * 60 * 60 * 1000 + 5000)).toBe(false);
+  });
+
+  it('re-notifies after a cleared state doc, so a task going overdue again is not silently suppressed', async () => {
+    const db = makeFirestore();
+    const t0 = Date.parse('2026-08-02T08:00:00Z');
+    const candidate = { type: 'overdue', stateId: 'overdue_t1', isUrgentish: false, todayISO: '2026-08-02', dueDate: '2026-07-30' };
+    expect(await claimNotification(db, 'u1', candidate, t0)).toBe(true);
+    expect(await claimNotification(db, 'u1', candidate, t0 + 1000)).toBe(false);
+
+    // Task completed (or rescheduled forward) → computeCandidates emits a
+    // toClear → state doc removed. A later overdue period must notify again.
+    await clearNotificationState(db, 'u1', 'overdue_t1');
+    expect(await claimNotification(db, 'u1', candidate, t0 + 10 * 24 * 60 * 60 * 1000)).toBe(true);
   });
 
   it('re-arms immediately within the same day when the overdue dueDate changes', async () => {
