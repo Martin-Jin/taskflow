@@ -216,9 +216,14 @@ parent/sub-task recurrence is kept consistent automatically instead —
 `utils/recurrence.js`'s `computeRecurrenceSyncUpdates` walks a task's full
 ancestor/descendant chain (up to the 2-level nesting cap) and is run by
 SchedulerContext's `addTask`/`updateTask` on every write, propagating a
-recurring task's cadence onto any non-recurring relative in its chain
-(nearest recurring ancestor wins over a recurring descendant when both
-exist). The one-time `migrateRecurrenceConsistency` migration applied this
+recurring task's cadence — and `dueDate` — onto any non-recurring relative
+in its chain (nearest recurring ancestor wins over a recurring descendant
+when both exist). The propagated `dueDate` is snapped forward to the first
+date that actually satisfies the inherited rule via
+`computeFirstMatchingDueDate` (a no-op for plain interval rules, but
+necessary for a weekday-specific rule like "every Wed, Sun" since the
+recurring relative's own `dueDate` may not itself fall on one of those
+days). The one-time `migrateRecurrenceConsistency` migration applied this
 once to any pre-existing inconsistent data — see its file-level comment for
 removal timing.
 
