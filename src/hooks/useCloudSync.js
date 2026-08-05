@@ -119,6 +119,7 @@ export function computeFingerprint(source) {
     notificationSettings: source.notificationSettings,
     notes: source.notes,
     shortcutBindings: source.shortcutBindings,
+    sharedProjectIds: source.sharedProjectIds,
   };
   return JSON.stringify(relevant);
 }
@@ -239,6 +240,9 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
   if ('shortcutBindings' in remoteData) {
     plan.shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings);
   }
+  if ('sharedProjectIds' in remoteData) {
+    plan.sharedProjectIds = pickValid('sharedProjectIds', remoteData.sharedProjectIds, localState.sharedProjectIds);
+  }
 
   // Only stamp "already synced" when tasks/blocks were actually applied
   // as-is — when skipTasksBlocks is true, local tasks/blocks now differ from
@@ -253,10 +257,11 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/soundEnabled/soundVolume/
- *   animationsEnabled/notificationSettings/notes/shortcutBindings) — a plain
- *   object recomputed whenever any of those fields changes, purely so the
- *   push-scheduling effect below has something to depend on. Deliberately
- *   excludes `events` — see backupService.js's BACKUP_FIELDS doc comment.
+ *   animationsEnabled/notificationSettings/notes/shortcutBindings/
+ *   sharedProjectIds) — a plain object recomputed whenever any of those
+ *   fields changes, purely so the push-scheduling effect below has
+ *   something to depend on. Deliberately excludes `events` — see
+ *   backupService.js's BACKUP_FIELDS doc comment.
  * @param {React.MutableRefObject} deps.stateRef - Ref mirroring `state`, read
  *   from async callbacks (the debounced push, backup builders) that need the
  *   LATEST snapshot rather than whatever was closed over when they were created.
@@ -281,6 +286,7 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
  * @param {Function} deps.setNotificationSettings - Setter for notificationSettings
  * @param {Function} deps.setNotes - Setter for notes
  * @param {Function} deps.setShortcutBindings - Setter for shortcutBindings
+ * @param {Function} deps.setSharedProjectIds - Setter for sharedProjectIds
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.
@@ -314,6 +320,7 @@ export function useCloudSync({
   setNotificationSettings,
   setNotes,
   setShortcutBindings,
+  setSharedProjectIds,
   theme,
   setTheme,
   events,
@@ -483,6 +490,7 @@ export function useCloudSync({
       // remote binding immediately, not just on this device's next local rebind.
       savePersisted('shortcutBindings', plan.shortcutBindings);
     }
+    if ('sharedProjectIds' in plan) setSharedProjectIds(plan.sharedProjectIds);
     // Stamp what we just applied as "already synced" so the debounced push
     // effect doesn't immediately echo this same data straight back to
     // Firestore — but only when tasks/blocks were actually applied as-is
@@ -504,6 +512,7 @@ export function useCloudSync({
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
+    setSharedProjectIds,
   ]);
 
   // ---- Applies a full backup payload (local file or cloud backup) ----------
@@ -550,6 +559,9 @@ export function useCloudSync({
       setShortcutBindings(shortcutBindings);
       savePersisted('shortcutBindings', shortcutBindings);
     }
+    if ('sharedProjectIds' in payload) {
+      setSharedProjectIds(pickValid('sharedProjectIds', payload.sharedProjectIds, stateRef.current.sharedProjectIds));
+    }
   }, [
     commit,
     stateRef,
@@ -566,6 +578,7 @@ export function useCloudSync({
     theme,
     setNotes,
     setShortcutBindings,
+    setSharedProjectIds,
     events,
     setEvents,
   ]);

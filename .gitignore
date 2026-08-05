@@ -42,6 +42,9 @@ pnpm-debug.log*
 # Cloudflare Worker local dev cache (cloudflare-worker/) — never commit secrets set via `wrangler secret put`.
 .wrangler/
 
+# Firebase CLI local state (emulator data exports, etc.) — used by `npm run test:rules`.
+.firebase/
+
 # ==========================
 # Testing
 # ==========================
@@ -87,11 +90,6 @@ temp/
 .pnpm-store/
 .npm/
 .yarn/
-
-# ==========================
-# Developer notes (private, machine-specific)
-# ==========================
-DEV_NOTES.md
 
 # ==========================
 # Claude

@@ -293,13 +293,106 @@ See `src/types/index.js` for full JSDoc typedefs.
 |---|---|
 | `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, capped at 2 levels deep — see "Sub-tasks and containers"), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed). |
 | `Section` | A Todoist Section — Board view column |
-| `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar |
+| `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar. Optional `ownerId`/`sharedProjectId` mark it as a collaborative project (see "Shared projects" below); a personal project has neither |
+| `SharedProject` | A project shared with other users, living in its own top-level `sharedProjects/{projectId}` Firestore doc rather than inside `users/{uid}` — holds `ownerId` and a `collaborators` map. Deliberately does NOT hold the view/edit share links/tokens — see "Shared projects" below |
+| `Collaborator` | One entry in `SharedProject.collaborators`: role (`viewer`/`editor`), display name, photo, joined-at. The owner is deliberately NOT in this map — they're identified by `ownerId` |
 | `ScheduledBlock` | A concrete dated/timed slice of a `Task` on the calendar |
 | `FixedRoutine` | Recurring non-negotiable time (sleep, meals, commute) |
 | `CalendarEvent` | External (Google) or manual event; `isFreeTime` enables the "ignore" override |
 | `SchedulingRules` | Global config: buffer days, work-day window, pacing, horizon |
 | `DayCapacity` | Derived per-day free-time snapshot the allocator consumes |
 | `HistoryEntry` | One Undo/Redo snapshot (full tasks+blocks state) |
+
+### Shared projects (collaboration)
+
+Personal projects live entirely inside the owner's `users/{uid}` doc, as they
+always have. Sharing is **opt-in per project**: only a project explicitly
+turned into a shared one moves into its own top-level
+`sharedProjects/{projectId}` doc (with its `tasks`/`sections`/`comments` as
+subcollections), and gains `ownerId` + `sharedProjectId` on the local
+`Project` record so app code knows which store to read/write. Nothing is
+migrated retroactively.
+
+Access rules (`firestore.rules`) — the app's first cross-user data path, so
+the constraints are deliberate and worth understanding before touching them:
+
+- **`list` is never granted on `sharedProjects`.** A project is only fetchable
+  by exact document ID, and only for its owner or a uid present in its
+  `collaborators` map. Omitting `list` is load-bearing, not an oversight: it's
+  what makes projects non-discoverable. Never replace the `allow get` with a
+  bare `allow read` (which would grant `list` too).
+- **Share tokens don't live on the project document at all — they're in a
+  separate, client-unreadable doc.** This wasn't the original design. Tokens
+  used to sit directly on `sharedProjects/{projectId}` as a `links` map, and
+  that turned out to be a CRITICAL privilege-escalation bug caught in
+  security review: a `get` returns the WHOLE document, and every collaborator
+  (including view-only ones) must be able to `get` this doc just to use the
+  project — so any viewer could read `links.edit.token` straight out of it,
+  re-join presenting that token, and escalate themselves to editor. Proven
+  end-to-end against the emulator: read the token, re-join as editor, write
+  tasks. Firestore has no field-level read rules — the smallest unit of a
+  read is one whole document — so a secret can never safely share a document
+  with a broader read audience than the secret's own. The fix: tokens now
+  live at `sharedProjects/{projectId}/private/links`, locked with
+  `allow read, write: if false` — **no client can read or write it, not even
+  the project's own owner.** Rules still evaluate a presented token by
+  reading that private doc with `get()` (a rules-internal read, not a client
+  one). The token a joining visitor presents never travels as a document
+  field either (an earlier version did that too, which persisted it into the
+  project doc on the join write and leaked it to every later reader — same
+  class of bug); instead it arrives as a custom auth claim
+  (`request.auth.token.joinToken`), minted server-side by the join endpoint
+  only after that endpoint has validated the token against `private/links`
+  itself. One consequence worth calling out: because owner-facing "show me my
+  share link" can no longer be a client read of anything, it has to be served
+  by that same server-side join endpoint too — generating, rotating,
+  revoking, and displaying links are all now endpoint operations, not
+  Firestore reads/writes a client performs directly.
+- **Editors can't touch access control.** `ownerId` and `collaborators` are
+  off-limits to non-owners, or "editor" would silently mean "can promote
+  themselves to owner". Non-owners also can't smuggle a `links` field back
+  onto the project document — it must never exist there at all, per above.
+- **Ownership transfer is narrow**: owner-only, the recipient must already be
+  a collaborator (a project can't be pushed onto a stranger), anonymous users
+  can never become owners, and the outgoing owner is retained as an editor.
+  The anonymous check works via an `isAnonymous` flag stamped onto each
+  collaborator entry at join time from the joiner's own verified
+  `sign_in_provider` claim — rules can only inspect the *requester's* provider,
+  never a third party's, so the fact has to be recorded when they join to be
+  checkable when someone later tries to hand them the project. Transferring to
+  an anonymous identity would leave the project effectively unowned once that
+  visitor cleared their storage: nobody able to delete it, rotate its links, or
+  manage its collaborators.
+- **Every write is shape- and size-validated**, which is less incidental than
+  it sounds. `diff().affectedKeys()` reports only that a *top-level* field
+  changed, never what's inside it — so without an explicit per-entry check, a
+  joiner could stuff arbitrary keys (`adminOverride: true`) or hundreds of KB
+  of junk inside their own `collaborators` entry, on a document every member
+  downloads on every read. The same reasoning caps `presence` and
+  `anonProfiles` docs and restricts the project document to a known key set.
+  A new project must also start with an *empty* `collaborators` map, so that
+  map only ever grows through a token-verified join — the whole access model
+  rests on it. Note rules can bound these values but can't sanitize them:
+  `displayName`/`photoURL` are user-supplied and must still be treated as
+  untrusted when rendered.
+- **Anonymous participants** go through Firebase Anonymous Auth so rules have
+  a stable uid to authorize against; their chosen display name lives in
+  `anonProfiles/{uid}`, which holds a name and nothing else — keep it that way.
+- **Link expiry** (`private/links.{view,edit}.expiresAt`) is stored as a
+  Firestore **timestamp**, not this app's usual ISO string: rules have no
+  ISO-8601 parser, so a string would make expiry unenforceable server-side.
+  It's compared against `request.time`, never a client-supplied clock. Expiry
+  gates *joining* only — it never retroactively evicts an existing
+  collaborator.
+
+The pure decision logic (token→role resolution, effective-role precedence,
+join and ownership-transfer planning) is extracted into
+`src/utils/sharedProjectAccess.js` with no Firebase imports, so it's
+unit-testable in isolation (`tests/unit/sharedProjectAccess.test.js`) — same
+precedent as `computeFingerprint` in `useCloudSync.js`. The rules themselves
+are tested against the Firestore emulator (see [Testing](#testing)); the
+client-side logic mirrors them for fast, specific failure messages, but the
+rules remain the only real enforcement boundary.
 
 ## Project layout
 
@@ -423,6 +516,23 @@ in the README), the same data also syncs to Firestore — `localStorage` on
 the current device stays the always-on, works-offline source of truth, and
 the cloud copy is what a second device pulls down.
 
+**Shared projects invert that model**, and it's the one place in the app where
+Firestore — not `localStorage` — is the source of truth: a project several
+people edit concurrently can't have a per-device local authority. Two
+consequences for persistence:
+
+- `sharedProjectIds` (which shared projects you're a member of) IS persisted,
+  synced, and backed up. It's a short list of ids — unambiguously your own
+  data, and losing it would lose your way back into boards you'd joined.
+  Restoring it re-lists those projects but grants nothing: membership is
+  enforced by the `collaborators` map in Firestore rules, not by this array.
+- A shared project's **content** (its tasks/sections/comments) is deliberately
+  excluded from every backup payload. It isn't solely yours to snapshot or roll
+  back — restoring a months-old backup must not resurrect tasks a collaborator
+  deliberately deleted, or re-create content from a project you've since been
+  removed from. See the doc comment above `FIELD_TYPES` in
+  `src/services/backupService.js` for the full rationale.
+
 ## Contributing / working in this codebase
 
 **Data flows one way, through one place.** `SchedulerContext.jsx` holds all
@@ -521,10 +631,11 @@ user-visible effect (internal refactors, migration code).
 `npm run build` is the main correctness check for everything in this repo
 (catches type/import/build errors).
 
-Two additional suites cover more than the build check can:
+Three additional suites cover more than the build check can:
 
 ```bash
 npm run test:unit                              # Vitest, ~3s, no setup needed
+npm run test:rules                             # Firestore security rules, needs Java (emulator)
 npm run test:e2e -- tests/e2e/full-suite       # Playwright, boots its own dev server
 ```
 
@@ -533,6 +644,24 @@ pure-logic coverage (date/recurrence math, natural-language parsing,
 backup/restore, dependency-cycle detection, cloud-sync merge/race-guard
 logic). Output (pass/fail counts per file) prints straight to the terminal
 when it finishes.
+
+`npm run test:rules` runs the Firestore **security rules** suite
+(`tests/rules/`) against the local Firestore emulator, using
+`@firebase/rules-unit-testing`. It's kept out of `npm run test:unit`
+deliberately — it has its own config (`vitest.rules.config.js`) because it
+needs a running emulator (and therefore a Java runtime), whereas the unit
+suite must stay fast and dependency-free. `firebase emulators:exec` starts and
+tears the emulator down for you on port 8571 (`firebase.json`); no manual
+setup, and it never touches a real Firebase project.
+
+The suite is adversarial by design — most of it asserts what *must fail*:
+that a stranger can't read or enumerate someone else's shared project, that an
+editor can't escalate to owner or rotate share tokens, that a joiner can't add
+anyone but themselves or claim a role stronger than their link grants, that
+expired and disabled links are rejected outright, and that ownership can't be
+transferred to a non-collaborator. **Run it after any change to
+`firestore.rules`** — the rules are the only real boundary protecting
+cross-user data, and a mistake there is not visible in the UI.
 
 `npm run test:e2e -- tests/e2e/full-suite` runs the tracked
 [Playwright](https://playwright.dev) suite covering user-facing behavior

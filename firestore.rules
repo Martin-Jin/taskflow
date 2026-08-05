@@ -17,5 +17,434 @@ service cloud.firestore {
     match /users/{userId}/googleCalendarAuth/{document=**} {
       allow read, write: if false;
     }
+
+    // ========================================================================
+    // SHARED PROJECTS (collaboration — Phase 0)
+    // ========================================================================
+    // This is the app's FIRST cross-user data path. Everything above is
+    // "only ever your own uid"; everything below deliberately lets another
+    // user in, so the rules here carry the whole weight of the feature's
+    // security requirement:
+    //
+    //   The ONLY way to reach another user's project is that project's own
+    //   share link. Nothing may let a user enumerate, query, or read
+    //   projects they haven't been explicitly added to.
+    //
+    // WHERE TOKENS LIVE, AND WHY NOT ON THIS DOCUMENT
+    // -----------------------------------------------
+    // Share tokens are secrets. They live in `sharedProjects/{id}/private/links`,
+    // which NO client can read (`allow read: if false` below) — not the owner,
+    // not a collaborator, nobody. Rules can still compare against them with
+    // get(), which is the only access anything needs.
+    //
+    // They are deliberately NOT stored on the project document itself. That
+    // was the original design and it was a CRITICAL privilege-escalation bug,
+    // caught by an emulator probe during security review rather than by
+    // reading the rules:
+    //
+    //   A `get` returns the ENTIRE document. Collaborators must be able to
+    //   read the project doc to use the project at all — so with the tokens
+    //   on that doc, ANY member could read `links.edit.token` in plaintext,
+    //   re-join presenting it, and upgrade themselves viewer -> editor. A
+    //   view-only collaborator could grant themselves write access to
+    //   everything. Proven end-to-end: read token, re-join as editor, write
+    //   tasks.
+    //
+    // The lesson generalizes: never put a secret in a document whose read rule
+    // is broader than the secret's audience. Field-level read rules do not
+    // exist in Firestore — the granularity of a read is one whole document —
+    // so "secret" and "readable" have to be different documents.
+    //
+    // WHY TOKENS ARE CHECKED ON A WRITE, NEVER A READ
+    // ----------------------------------------------
+    // Token resolution is a join (a WRITE): presenting a valid token adds you
+    // to `collaborators` at that link's role, and from then on ordinary
+    // uid-based access applies. Gating a READ on a presented token instead
+    // would be circular — you would need to read the doc to authorize reading
+    // the doc.
+    //
+    // The presented token arrives as a custom auth claim (`request.auth.token
+    // .joinToken`), NOT as a field in the written document. An earlier version
+    // passed it as a doc field, which persisted it into the project document
+    // on the join write and leaked it to every subsequent reader — same class
+    // of bug as above. A claim is never written to Firestore, so it cannot
+    // linger.
+    //
+    // Consequence, by design: an anonymous or logged-in visitor CANNOT read a
+    // shared project until they have joined it. There is no read-only-by-token
+    // path. That's intentional — it keeps "who can read this" answerable by
+    // looking at exactly one field (`collaborators`) rather than by reasoning
+    // about token propagation.
+    match /sharedProjects/{projectId} {
+
+      function existing() {
+        return resource.data;
+      }
+      function incoming() {
+        return request.resource.data;
+      }
+      function signedIn() {
+        return request.auth != null;
+      }
+      function isOwner() {
+        return signedIn() && existing().ownerId == request.auth.uid;
+      }
+      // A key in the collaborators map == has been admitted to THIS project.
+      function isCollaborator() {
+        return signedIn()
+          && existing().collaborators is map
+          && request.auth.uid in existing().collaborators;
+      }
+      function myRole() {
+        return existing().collaborators[request.auth.uid].role;
+      }
+      function isEditor() {
+        return isCollaborator() && myRole() == 'editor';
+      }
+      // Reading is membership-only — see the "WHY TOKENS ARE NOT CHECKED IN A
+      // READ RULE" note above.
+      function isMember() {
+        return isOwner() || isCollaborator();
+      }
+
+      // --- Reads -------------------------------------------------------
+      // `get` only, and only for members. `list` is NEVER granted on this
+      // collection: without it, a project is unreachable unless you already
+      // know its exact document ID, so no query can sweep up other people's
+      // projects even if some other rule were mistakenly loosened. Note that
+      // omitting `list` is not merely "we didn't add it" — it is the load-
+      // bearing half of the non-discoverability requirement. Do not replace
+      // these with a bare `allow read`, which grants list as well.
+      allow get: if isMember();
+
+      // --- Create ------------------------------------------------------
+      // Only ever creates a project owned by yourself, and you must start as
+      // the sole collaborator-of-record. Anonymous users can't create shared
+      // projects — sharing is initiated by a real account.
+      // A new shared project starts EMPTY of collaborators. Previously this
+      // was only asserted in a comment, which let a creator prefill the map
+      // with other people's uids at whatever role they liked — harmless alone
+      // (those users would still need the project ID) but it made
+      // "collaborators only ever grows by a verified join" untrue, and the
+      // whole access model rests on that map.
+      allow create: if signedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && incoming().ownerId == request.auth.uid
+        && incoming().collaborators is map
+        && incoming().collaborators.keys().size() == 0
+        && incoming().name is string
+        && incoming().name.size() > 0
+        && incoming().name.size() <= 200
+        && incoming().keys().hasAll(['ownerId', 'name', 'collaborators'])
+        // No `links` on this document — tokens live in private/links, which
+        // only server-side code writes (see the private/ match below).
+        && !('links' in incoming());
+
+      // --- Owner writes ------------------------------------------------
+      // The owner controls everything about the project. `ownerId` is the one
+      // field with special handling: it may only change via a deliberate
+      // ownership TRANSFER (below), never as an incidental part of some other
+      // update, so a buggy client can't quietly reassign a project.
+      // `collaborators` must stay a map on every owner write. `isCollaborator()`
+      // guards with `collaborators is map` and returns false otherwise, so an
+      // owner who wrote a string here (a plausible client bug, not just malice)
+      // would lock every collaborator out of a project they can still see in
+      // their own list. Owner-recoverable, but cheap to prevent outright.
+      function ownerFieldsUnchanged() {
+        return incoming().ownerId == existing().ownerId
+          && incoming().collaborators is map
+          && !('links' in incoming());
+      }
+
+      // --- Ownership transfer ------------------------------------------
+      // Owner-only, and deliberately narrow: the recipient must ALREADY be a
+      // collaborator on this project, so a project can never be pushed onto
+      // an arbitrary uid who never agreed to it. The recipient must also be a
+      // real account — an anonymous visitor has no durable identity to own
+      // anything. The outgoing owner stays on as an editor rather than losing
+      // access to a project they may have created.
+      // Rules cannot inspect the RECIPIENT's sign-in provider — `request.auth`
+      // only ever describes the requester, and here the requester is the
+      // outgoing owner. So anonymity is recorded on the collaborator entry at
+      // join time from the joiner's own verified token (see
+      // `joinEntryWellFormed`, which pins `isAnonymous` to the joiner's real
+      // provider and so cannot be self-declared), and read back here.
+      //
+      // This check was previously only enforced client-side while the comment
+      // above claimed the rules did it — a security review caught the gap. The
+      // client is not a boundary: without this, a project could be handed to an
+      // ephemeral anonymous identity that disappears when the visitor clears
+      // storage, leaving it permanently unowned — nobody able to delete it,
+      // rotate its links, or manage its collaborators.
+      function recipientIsRealAccount() {
+        return existing().collaborators[incoming().ownerId].isAnonymous != true;
+      }
+      function isTransferringOwnership() {
+        return isOwner()
+          && incoming().ownerId != existing().ownerId
+          // Recipient was already admitted to this project.
+          && incoming().ownerId in existing().collaborators
+          && recipientIsRealAccount()
+          // Outgoing owner is retained as an editor, not dropped.
+          && incoming().collaborators[request.auth.uid].role == 'editor'
+          // A transfer touches ownership and membership and nothing else. The
+          // share tokens aren't on this document at all (private/links), so a
+          // transfer can't disturb them.
+          && request.resource.data.diff(existing()).affectedKeys()
+               .hasOnly(['ownerId', 'collaborators']);
+      }
+
+      // --- Editor writes -----------------------------------------------
+      // An editor may edit project CONTENT but must not touch the fields that
+      // govern access — `collaborators` (who's in) or `ownerId`. Without this,
+      // "editor" would silently mean "can promote themselves to owner". The
+      // share tokens are unreachable either way (private/links), and an editor
+      // must not smuggle a `links` field back onto this document.
+      // An editor may also only write the fields this document is actually made
+      // of. Unconstrained, an editor could append arbitrary junk (a 500KB blob
+      // was confirmed in review) to a document every member downloads on every
+      // read — a storage/bandwidth cost borne by everyone, including the owner.
+      function projectFieldsAllowed() {
+        return incoming().keys().hasOnly(['ownerId', 'name', 'color', 'collaborators', 'createdAt', 'updatedAt'])
+          && incoming().name is string
+          && incoming().name.size() > 0
+          && incoming().name.size() <= 200
+          && (!('color' in incoming())
+              || (incoming().color is string && incoming().color.size() <= 40));
+      }
+      function accessFieldsUnchanged() {
+        return incoming().ownerId == existing().ownerId
+          && incoming().collaborators == existing().collaborators
+          && !('links' in incoming())
+          && projectFieldsAllowed();
+      }
+
+      // --- Join-by-token (the ONE place a token is evaluated) ----------
+      // A visitor presenting a valid, enabled token adds ONLY themselves to
+      // collaborators, at exactly the role that link grants. Everything else
+      // about the document must be untouched by this write.
+      //
+      // The token comes from the client but is compared against the token
+      // stored in the document by these rules, so the client cannot assert a
+      // role it wasn't given. `request.resource.data.links` being required to
+      // equal the existing links also means a joiner can't rotate tokens on
+      // the way in.
+      // A link is usable only if it exists, is enabled, and has not expired.
+      // `expiresAt` is optional — absent/null means "never expires". When set
+      // it is a Firestore TIMESTAMP (not an ISO string like most dates in this
+      // app's own data model): rules can compare timestamps directly against
+      // request.time but have no ISO-8601 parser, so storing it as a string
+      // here would make the expiry check unenforceable server-side. The
+      // comparison uses the server's own clock (request.time), never a
+      // client-supplied "now", so a visitor can't revive a dead link by lying
+      // about the time. Expiry is enforced here as well as client-side because
+      // rules are the only real boundary; the client check exists purely to
+      // render a friendly "link expired" state instead of an opaque
+      // permission error.
+      // The share links (tokens + enabled/expiry state) live in a document no
+      // client can read — see "WHERE TOKENS LIVE" at the top of this block.
+      // Rules read it with get(); that's the only access required.
+      function links() {
+        return get(/databases/$(database)/documents/sharedProjects/$(projectId)/private/links).data;
+      }
+      function linkUsable(linkKey) {
+        return exists(/databases/$(database)/documents/sharedProjects/$(projectId)/private/links)
+          && linkKey in links()
+          && links()[linkKey].enabled == true
+          && links()[linkKey].token is string
+          && links()[linkKey].token.size() >= 20
+          && (
+            !('expiresAt' in links()[linkKey])
+            || links()[linkKey].expiresAt == null
+            || (links()[linkKey].expiresAt is timestamp
+                && request.time < links()[linkKey].expiresAt)
+          );
+      }
+
+      // `linkKey` ('edit'/'view', the key into `links`) and `collabRole`
+      // ('editor'/'viewer', the value stored on a collaborators entry) are
+      // deliberately two separate parameters, not one reused value — they
+      // share a root word but are NOT the same string, and collapsing them
+      // into a single parameter previously made this whole join path
+      // silently always-false (comparing a stored role of 'editor' against
+      // the literal 'edit' can never match).
+      // The joiner's own entry must have exactly the expected shape. Without
+      // this, `affectedKeys()` only sees that `collaborators` changed and never
+      // inspects the entry's CONTENTS — a joiner could stuff arbitrary keys
+      // (`adminOverride: true`) or hundreds of KB of junk inside their own
+      // entry, on a document every member reads. Caught in security review.
+      //
+      // `isAnonymous` is pinned to the joiner's real, token-verified sign-in
+      // provider rather than accepted from the client, because the ownership
+      // transfer rule reads it back to refuse handing a project to an
+      // ephemeral identity (see `recipientIsRealAccount`). A self-declared
+      // value would make that check worthless.
+      function joinEntry() {
+        return incoming().collaborators[request.auth.uid];
+      }
+      function joinEntryWellFormed(collabRole) {
+        return joinEntry().keys().hasOnly(['role', 'displayName', 'photoURL', 'joinedAt', 'isAnonymous'])
+          && joinEntry().keys().hasAll(['role', 'displayName', 'joinedAt'])
+          && joinEntry().role == collabRole
+          && joinEntry().displayName is string
+          && joinEntry().displayName.size() > 0
+          && joinEntry().displayName.size() <= 120
+          && (!('photoURL' in joinEntry())
+              || joinEntry().photoURL == null
+              || (joinEntry().photoURL is string && joinEntry().photoURL.size() <= 500))
+          && joinEntry().isAnonymous ==
+               (request.auth.token.firebase.sign_in_provider == 'anonymous');
+      }
+
+      function joiningWithToken(linkKey, collabRole) {
+        return signedIn()
+          && linkUsable(linkKey)
+          // A join may ONLY add the joiner's own entry to `collaborators` and
+          // touch nothing else on the document — no extra fields, no edits to
+          // anyone else's entry.
+          && request.resource.data.diff(existing()).affectedKeys().hasOnly(['collaborators'])
+          && incoming().collaborators.diff(existing().collaborators).affectedKeys().hasOnly([request.auth.uid])
+          && joinEntryWellFormed(collabRole);
+      }
+      // The presented token arrives as a custom auth claim, never as a field on
+      // the written document — a doc field would be persisted into the project
+      // and leak the token to every later reader (see the header comment). A
+      // claim is verified by rules and never stored in Firestore.
+      //
+      // Minting that claim is the join endpoint's job (the token-resolution
+      // step in Phase 0's spec): it validates the token server-side and issues
+      // a custom token carrying `joinToken`. That keeps the secret comparison
+      // on the server and off the document.
+      function presentedTokenMatches(linkKey) {
+        return request.auth.token.joinToken is string
+          && request.auth.token.joinToken == links()[linkKey].token;
+      }
+
+      allow update: if
+        // Owner: full control, but ownership itself only moves via the
+        // dedicated transfer path below.
+        (isOwner() && ownerFieldsUnchanged())
+        // Owner hands the project to an existing collaborator.
+        || isTransferringOwnership()
+        // Editor: content only, never the access-control fields.
+        || (isEditor() && accessFieldsUnchanged())
+        // Self-join at a link's role, token verified against the stored token.
+        || (joiningWithToken('edit', 'editor') && presentedTokenMatches('edit'))
+        || (joiningWithToken('view', 'viewer') && presentedTokenMatches('view'));
+
+      // Only the owner can delete a shared project outright.
+      allow delete: if isOwner();
+
+      // --- Project content subcollections ------------------------------
+      // Tasks/sections/comments of a shared project. Access is derived from
+      // the PARENT project's membership via get() — so a valid link to one
+      // project grants nothing anywhere else, satisfying "a link only ever
+      // grants access to that one project's own data".
+      function parent() {
+        return get(/databases/$(database)/documents/sharedProjects/$(projectId)).data;
+      }
+      function parentOwner() {
+        return signedIn() && parent().ownerId == request.auth.uid;
+      }
+      function parentCollaborator() {
+        return signedIn()
+          && parent().collaborators is map
+          && request.auth.uid in parent().collaborators;
+      }
+      function parentEditor() {
+        return parentCollaborator()
+          && parent().collaborators[request.auth.uid].role == 'editor';
+      }
+
+      // Tasks and sections: members read, owner/editors write. `list` IS
+      // allowed here (unlike the project collection itself) — you can only
+      // reach this path by already knowing the project ID and passing the
+      // membership check, so querying within a project you belong to is fine
+      // and is what the live sync listener needs.
+      match /tasks/{taskId} {
+        allow read: if parentOwner() || parentCollaborator();
+        allow write: if parentOwner() || parentEditor();
+
+        // Comments live under their task. Any member (including viewers) may
+        // post — commenting is deliberately NOT an edit privilege, since a
+        // view-only collaborator is still expected to participate in
+        // discussion. A comment's author is pinned to the writer's own uid so
+        // nobody can post under someone else's name, and existing comments
+        // can only be deleted by their author or the project owner (no
+        // editing others' messages).
+        match /comments/{commentId} {
+          allow read: if parentOwner() || parentCollaborator();
+          allow create: if (parentOwner() || parentCollaborator())
+            && request.resource.data.authorUid == request.auth.uid;
+          allow update: if parentOwner()
+            || (parentCollaborator() && resource.data.authorUid == request.auth.uid);
+          allow delete: if parentOwner()
+            || (parentCollaborator() && resource.data.authorUid == request.auth.uid);
+        }
+      }
+
+      match /sections/{sectionId} {
+        allow read: if parentOwner() || parentCollaborator();
+        allow write: if parentOwner() || parentEditor();
+      }
+
+      // Presence heartbeats (Phase 1 uses these for viewer avatars). You may
+      // only ever write your OWN presence doc, and its shape is constrained:
+      // unvalidated, a viewer could write hundreds of KB here, or set
+      // `displayName: 'Owner'` and impersonate someone in the avatar strip.
+      // Presence is display-only data, so keep it to the few small fields the
+      // UI actually renders.
+      match /presence/{presenceUid} {
+        allow read: if parentOwner() || parentCollaborator();
+        allow write: if (parentOwner() || parentCollaborator())
+          && request.auth.uid == presenceUid
+          && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'lastSeenAt'])
+          && (!('displayName' in request.resource.data)
+              || (request.resource.data.displayName is string
+                  && request.resource.data.displayName.size() <= 120))
+          && (!('photoURL' in request.resource.data)
+              || request.resource.data.photoURL == null
+              || (request.resource.data.photoURL is string
+                  && request.resource.data.photoURL.size() <= 500));
+      }
+
+      // Share-link secrets: `private/links` holds the view/edit tokens plus
+      // their enabled/expiry state. NO client may read or write this, ever —
+      // not even the project owner. Rules read it via get() (see links()
+      // above), and only privileged server code (the join endpoint / a
+      // service-account context, which bypasses these rules entirely) creates
+      // or rotates it. Same pattern as the googleCalendarAuth block above:
+      // a hard `false` is the guarantee that no client-side SDK call, however
+      // buggy or malicious, can exfiltrate a token.
+      //
+      // Owner-facing "show me my share link" therefore cannot read this doc
+      // directly — the server hands the owner their link when they generate or
+      // request it. That's deliberate: the alternative (let the owner read it)
+      // reintroduces a readable secret and, since rules can't express "only
+      // the owner may read this ONE field", would put us back where the
+      // escalation bug came from.
+      match /private/{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    // Display names chosen by anonymous link visitors. A visitor owns exactly
+    // their own doc, keyed by their anonymous auth uid. Readable by any signed
+    // in user because collaborator avatars/names have to render for everyone
+    // in a shared project — these docs hold a self-chosen display name and
+    // nothing else, so keep it that way: never add anything sensitive here.
+    // Shape-constrained for the same reason as presence above: without it an
+    // anonymous user can write an arbitrarily large document here. `list` is
+    // deliberately not granted, so these can't be swept up in bulk — a reader
+    // has to already know a specific (unguessable) uid.
+    match /anonProfiles/{profileUid} {
+      allow get: if request.auth != null;
+      allow write: if request.auth != null
+        && request.auth.uid == profileUid
+        && request.resource.data.keys().hasOnly(['displayName', 'updatedAt'])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 120;
+    }
   }
 }

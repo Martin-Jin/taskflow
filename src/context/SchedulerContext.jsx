@@ -589,6 +589,12 @@ export function SchedulerProvider({ children }) {
   // Todoist labels onto these (creating any that don't exist yet by name),
   // but nothing here is ever pushed back to Todoist.
   const [labels, setLabels] = useState(() => loadPersisted('labels', null) ?? []);
+  // sharedProjectIds: ids of Collaborative Projects (Firestore
+  // `sharedProjects/{projectId}`) this user is a member of — just a pointer
+  // list so joined projects re-list on every device and survive a restore;
+  // the projects' actual content lives in Firestore, not here (see
+  // backupService.js's SHARED PROJECTS doc comment above BACKUP_FIELDS).
+  const [sharedProjectIds, setSharedProjectIds] = useState(() => loadPersisted('sharedProjectIds', null) ?? []);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -694,6 +700,10 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     savePersisted('labels', labels);
   }, [labels]);
+
+  useEffect(() => {
+    savePersisted('sharedProjectIds', sharedProjectIds);
+  }, [sharedProjectIds]);
 
   useEffect(() => {
     savePersisted('events', events);
@@ -819,6 +829,7 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
+      sharedProjectIds,
     }),
     [
       tasks,
@@ -834,6 +845,7 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
+      sharedProjectIds,
     ]
   );
   const cloudStateRef = useRef(cloudSyncState);
@@ -869,6 +881,7 @@ export function SchedulerProvider({ children }) {
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
+    setSharedProjectIds,
     theme,
     setTheme,
     events,
@@ -2510,6 +2523,7 @@ export function SchedulerProvider({ children }) {
       sections,
       projects,
       labels,
+      sharedProjectIds,
       searchQuery,
       isLoading,
       isSyncing,
@@ -2540,6 +2554,7 @@ export function SchedulerProvider({ children }) {
       setRoutines,
       setEvents,
       setRules,
+      setSharedProjectIds,
       soundEnabled,
       setSoundEnabled,
       soundVolume,
@@ -2607,6 +2622,7 @@ export function SchedulerProvider({ children }) {
       sections,
       projects,
       labels,
+      sharedProjectIds,
       searchQuery,
       isLoading,
       isSyncing,
