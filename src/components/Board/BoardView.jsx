@@ -40,6 +40,18 @@
  * button, and a trailing "+ Add section" column creates a new one — all
  * synced to Todoist via SchedulerContext when a token is configured.
  *
+ * COLUMN REORDER: columns are drag-to-reorder by their header grip handle,
+ * with the order persisted per project in localStorage (see
+ * utils/boardColumnOrder.js — it's deliberately local rather than written
+ * back onto the Todoist-synced Section.order). The gesture deliberately
+ * starts only from the grip, not the whole column: a column is itself a drop
+ * target for card drags, and making the entire thing draggable would make
+ * "drag a card out of column A" ambiguous with "drag column A". The two
+ * drags also carry different dataTransfer types for the same reason.
+ * Desktop only, matching the card drag (no drag gesture on touch).
+ * The synthetic "No Section" column is not reorderable — it isn't a real
+ * Section and always leads, so it has no persisted id.
+ *
  * CARD MOTION: cards are framer-motion elements so that a card leaving a
  * column (completed, deleted, dragged to another column, filtered out) lets
  * the ones below it slide up into place instead of snapping — the same FLIP
@@ -61,11 +73,12 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink } from 'lucide-react';
+import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink, GripVertical } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMotionEnabled } from '../../hooks/useMotionEnabled';
+import { usePersistedState } from '../../hooks/usePersistedState';
 import AddTaskModal from '../Modals/AddTaskModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
@@ -77,6 +90,7 @@ import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 import { getEffectiveRemainingHours } from '../../utils/taskHierarchy';
+import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../../utils/boardColumnOrder';
 
 // Card reorder/removal motion — see CARD MOTION above. Mirrors
 // TaskListPanel's row timings (the CSS --duration-base/--ease-standard
@@ -84,6 +98,12 @@ import { getEffectiveRemainingHours } from '../../utils/taskHierarchy';
 // scaled mid-animation.
 const CARD_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
 const CARD_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
+
+// Custom dataTransfer type marking a column-reorder drag, so it's
+// distinguishable from the card drag's `text/plain` payload (see COLUMN
+// REORDER in the doc comment above). Must be lowercase — the DnD spec
+// lowercases format strings, so a mixed-case type wouldn't match on read.
+const COLUMN_DRAG_TYPE = 'application/x-taskflow-column';
 
 // Baseline for the openAIQuickAddSignal prop below — kept at module scope
 // (not a component-instance ref) because BoardView unmounts/remounts on
@@ -150,6 +170,14 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const motionEnabled = useMotionEnabled();
   const [dragTaskId, setDragTaskId] = useState(null);
   const [dragOverColumnId, setDragOverColumnId] = useState(undefined); // undefined = none, null = "No Section" column
+  // Column reordering — a separate drag from the card drag above, started
+  // only from the header's grip handle so it can't hijack a card drop (see
+  // COLUMN REORDER in the module doc). Persisted per project; see
+  // utils/boardColumnOrder.js for why this is local-only rather than written
+  // back onto the synced Section records.
+  const [columnOrder, setColumnOrder] = usePersistedState(BOARD_COLUMN_ORDER_KEY, {});
+  const [dragColumnId, setDragColumnId] = useState(null);
+  const [dragOverReorderId, setDragOverReorderId] = useState(null);
 
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
@@ -183,12 +211,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const selectedProjectId = projectId;
   const selectedProject = sortedProjects.find((p) => p.id === selectedProjectId);
 
+  // Natural (synced) order, then the user's local drag arrangement layered on
+  // top — see utils/boardColumnOrder.js.
   const projectSections = useMemo(
-    () =>
-      sections
-        .filter((s) => s.projectId === selectedProjectId)
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
-    [sections, selectedProjectId]
+    () => applySavedColumnOrder(sections.filter((s) => s.projectId === selectedProjectId), columnOrder[selectedProjectId]),
+    [sections, selectedProjectId, columnOrder]
   );
 
   const hasSections = projectSections.length > 0;
@@ -262,10 +289,48 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     e.preventDefault();
     setDragOverColumnId(undefined);
     setDragTaskId(null);
+    // A column-reorder drag passes over column bodies on its way to its drop
+    // target; ignore it here so it can't also be treated as a card drop.
+    // Checks the dataTransfer type rather than only `dragColumnId`, so the
+    // payload itself is what disambiguates the two gestures.
+    if (dragColumnId || e.dataTransfer.types.includes(COLUMN_DRAG_TYPE)) return;
     const taskId = e.dataTransfer.getData('text/plain');
     const task = tasks.find((t) => t.id === taskId);
     if (!task || task.sectionId === col.id) return; // no-op: dropped back on its current section
     updateTask(taskId, { sectionId: col.id, sectionName: col.isNoSection ? null : col.name });
+  }
+
+  // --- Column reorder (drag the header grip; see COLUMN REORDER note) --------
+  function handleColumnReorderStart(e, col) {
+    // Distinct dataTransfer type from the card drag's `text/plain`, so the two
+    // gestures can never be confused for one another.
+    e.dataTransfer.setData(COLUMN_DRAG_TYPE, col.id);
+    e.dataTransfer.effectAllowed = 'move';
+    setDragColumnId(col.id);
+  }
+
+  function handleColumnReorderOver(e, col) {
+    if (!dragColumnId || col.isNoSection || col.id === dragColumnId) return;
+    e.preventDefault();
+    e.stopPropagation(); // don't also light up the card-drop target underneath
+    setDragOverReorderId(col.id);
+  }
+
+  function handleColumnReorderDrop(e, col) {
+    if (!dragColumnId || col.isNoSection) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = dragColumnId;
+    setDragColumnId(null);
+    setDragOverReorderId(null);
+    if (draggedId === col.id) return;
+    const nextIds = moveColumn(projectSections, draggedId, col.id);
+    setColumnOrder((prev) => ({ ...prev, [selectedProjectId]: nextIds }));
+  }
+
+  function handleColumnReorderEnd() {
+    setDragColumnId(null);
+    setDragOverReorderId(null);
   }
 
   function renderCard(task) {
@@ -435,8 +500,30 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
       ) : (
         <div className="board-columns">
           {columns.map((col) => (
-            <div key={col.id ?? 'no-section'} className={`board-column ${col.isNoSection ? 'no-section' : ''}`}>
+            <div
+              key={col.id ?? 'no-section'}
+              className={`board-column ${col.isNoSection ? 'no-section' : ''} ${
+                dragColumnId === col.id ? 'is-column-dragging' : ''
+              } ${dragOverReorderId === col.id ? 'is-column-dragover' : ''}`}
+              // Reorder drop target is the whole column, so there's a generous
+              // area to aim at; the *start* of the gesture is still limited to
+              // the grip handle below.
+              onDragOver={isMobile ? undefined : (e) => handleColumnReorderOver(e, col)}
+              onDrop={isMobile ? undefined : (e) => handleColumnReorderDrop(e, col)}
+            >
               <div className="board-column-header">
+                {!col.isNoSection && !isMobile && (
+                  <span
+                    className="board-column-grip"
+                    title="Drag to reorder column"
+                    aria-hidden="true"
+                    draggable
+                    onDragStart={(e) => handleColumnReorderStart(e, col)}
+                    onDragEnd={handleColumnReorderEnd}
+                  >
+                    <GripVertical size={13} />
+                  </span>
+                )}
                 {!col.isNoSection && editingColumnId === col.id ? (
                   <input
                     autoFocus

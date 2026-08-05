@@ -345,6 +345,7 @@ src/
 │   ├── dependencyUtils.js    # Cycle detection + transitive dependency/dependent traversal for dependsOn graphs
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
 │   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
+│   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
 │   └── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
 ├── types/
 │   └── index.js               # JSDoc typedefs for the whole domain model
@@ -371,6 +372,19 @@ in Firestore, written by the Cloudflare Worker; see
 [Google Calendar](../README.md#google-calendar) in the README). A recurring
 calendar event is stored once with its RRULE recurrence rule, not as one
 record per occurrence — occurrences are expanded for display only.
+
+Some state is deliberately device-local and stays out of both backups and
+cross-device sync — view/filter selections, dashboard widget visibility, and
+Board's drag-chosen column order (`src/utils/boardColumnOrder.js`). The
+column order is a per-project list of section ids layered over the synced
+`Section.order` at render time rather than written back onto the Sections
+themselves: sections come from Todoist, so persisting a local arrangement
+into `order` would be clobbered by the next import, and pushing it upstream
+would reorder the user's sections inside Todoist as a side effect of a view
+preference. Because it's a sparse id list, sections added/removed/synced
+later don't invalidate it — unknown ids are ignored and unlisted sections
+fall back to their natural order, so no migration is needed when the section
+set drifts.
 
 In practice: nothing is ever re-fetched from Todoist automatically — your
 local tasks are always the source of truth, and a Todoist import only ever

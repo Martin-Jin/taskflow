@@ -449,7 +449,11 @@ cached copy.
     leading "No Section" column (or a flat list if the project has no
     Sections yet). Rename/delete columns, add sections, drag cards between
     them on desktop/tablet (on mobile, open a card and change its Section
-    field instead, since there's no drag gesture to hook into).
+    field instead, since there's no drag gesture to hook into). Columns
+    themselves can be dragged into a different order by the grip handle in
+    their header — that order is remembered per project on this device only
+    (it isn't pushed to Todoist or synced across devices), and the leading
+    "No Section" column always stays first.
   - **Gantt** — multi-week burn-down: one row per leaf task (a task with
     sub-tasks gets no row of its own — each sub-task gets its own row
     instead, with the parent named as a subtitle), bar spans from first

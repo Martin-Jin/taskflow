@@ -58,6 +58,40 @@
   font-weight: 500;
 }
 
+/* Column reorder handle — only the grip starts a column drag, so the column
+   body stays free for card drops (see BoardView's COLUMN REORDER note).
+   Stays dim until the header is hovered to keep the board uncluttered. */
+.board-column-grip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: -2px;
+  color: var(--color-text-secondary);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.board-column-header:hover .board-column-grip {
+  opacity: 0.7;
+}
+
+.board-column-grip:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+
+.board-column.is-column-dragging {
+  opacity: 0.5;
+}
+
+/* Drop indicator for a reorder — a leading accent edge showing where the
+   dragged column will land, rather than tinting the whole column (which
+   would clash with .board-column-body.is-dragover's card-drop highlight). */
+.board-column.is-column-dragover {
+  box-shadow: inset 3px 0 0 0 var(--color-accent);
+}
+
 .board-column-title {
   font-weight: 700;
   font-size: 13px;
