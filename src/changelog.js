@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.95.1',
+    date: '2026-08-05',
+    title: 'Redesigned the mobile calendar toolbar',
+    changes: [
+      'The calendar\'s mobile controls now read as one cohesive bar (background, border, hamburger menu leading the date title) instead of floating unstyled above the grid, inspired by Google Calendar\'s mobile app.',
+      'Day view no longer shows the current date twice — the redundant day header directly under the toolbar title is gone; Week and 3 Day views still show it since it labels several different days there.',
+    ],
+  },
+  {
     version: '1.95.0',
     date: '2026-08-05',
     title: 'Smarter scheduling, and fixed app-wide lag',

@@ -249,37 +249,74 @@
 }
 
 @media (max-width: 639px) {
-  /* The toolbar's date-nav group and action buttons together are too wide
-     for a phone in one row — previously this just overflowed the viewport
-     (Block time / Re-balance schedule ran off-screen with no way to reach
-     them). Let each group wrap onto its own row instead — and give every
-     one of those rows the same full width + centered content, so they read
-     as a consistent stack instead of some rows spanning edge to edge while
-     others (short on content) hug the left with a chunk of empty space or
-     dead background trailing off to one side. */
+  /* Mobile reads as one cohesive app bar — inspired by Google Calendar's
+     mobile top bar (hamburger, date title, then trailing icon actions all
+     in a single bordered/backgrounded strip) rather than the old plain,
+     background-less row that didn't read as a toolbar at all. Negative
+     side-margins bleed it to the viewport's edges (undoing the page's own
+     content padding) since a toolbar reading edge-to-edge is what makes it
+     look like a bar rather than a floating cluster of controls. */
   .calendar-toolbar {
-    justify-content: center;
+    justify-content: flex-start;
+    margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) var(--space-3);
+    padding: 8px var(--space-3);
+    background: var(--color-bg-surface-raised);
+    border-bottom: 1px solid var(--color-border);
   }
 
   .calendar-toolbar-left {
     width: 100%;
-    justify-content: center;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 4px;
   }
 
-  /* Pushes the refresh button to the right edge of the same row as the date
-     title and hamburger menu, rather than centered/wrapped onto its own row
-     below (see CalendarPage.jsx for why it moved into .calendar-toolbar-left
-     on mobile). */
+  /* Google Calendar's mobile bar keeps the date as the largest, most
+     prominent element after the hamburger — bumped up from the shared
+     desktop size (which sits comfortably next to prev/today/next arrows
+     that don't exist here). min-width: 0 + truncation lets it shrink first
+     (rather than pushing Today/refresh off the edge of the bar) on the
+     narrowest phones or longest titles (e.g. Week view's date-range label). */
+  .calendar-title-wrap {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .calendar-toolbar-title-btn {
+    padding: 4px 8px 4px 4px;
+    min-width: 0;
+  }
+
+  .calendar-toolbar-title {
+    font-size: 17px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Pushes Today + the refresh icon to the bar's right edge as a single
+     trailing cluster, rather than centered/wrapped onto their own row
+     below (see CalendarPage.jsx for why they live in .calendar-toolbar-left
+     on mobile). Both are given the same margin-left: auto — when both are
+     present only the first (Today) actually needs to push, but auto-margin
+     on a later flex sibling is a no-op once an earlier one has already
+     claimed the free space, so there's no need to conditionally strip it
+     back off for the two-button case. */
+  .calendar-today-btn-solo,
   .calendar-refresh-btn-mobile {
+    width: auto;
     margin-left: auto;
   }
 
-  /* The prev/next arrows are desktop-only (see CalendarPage.jsx) — Today
-     stands in for them on mobile, sitting directly left of the date
-     dropdown in the same row, and only shows once the user has actually
-     navigated away from today. */
-  .calendar-today-btn-solo {
-    width: auto;
+  /* On mobile the hamburger trigger leads the bar (near the left edge, see
+     CalendarPage.jsx), the opposite of desktop where it trails the title —
+     so its dropdown opens right-aligned-to-trigger there but would run off
+     the left edge of a phone screen with that same anchoring. Override to
+     open from the trigger's left edge instead. */
+  .calendar-view-menu {
+    left: 0;
+    right: auto;
   }
 
   .calendar-toolbar-actions {
@@ -405,6 +442,21 @@
   background: var(--color-bg-surface-raised);
   z-index: 3;
   border-top-left-radius: var(--radius-md);
+}
+
+/* Mobile Day view: the toolbar title above already shows this single day's
+   full date (see CalendarPage's calendar-toolbar-title), so repeating it in
+   the grid's own day-header row is pure duplication — Week/3 Day keep this
+   row since there it's the only place each of the several visible days is
+   labeled. Collapses the whole header row rather than just hiding its
+   contents, so the grid doesn't reserve a fixed-height, now-empty banner. */
+.week-grid.hide-day-header {
+  grid-template-rows: 0 1fr !important;
+}
+
+.week-grid.hide-day-header .day-header,
+.week-grid.hide-day-header .time-gutter-cell {
+  display: none;
 }
 
 .time-label {
