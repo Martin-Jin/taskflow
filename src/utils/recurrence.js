@@ -531,6 +531,55 @@ export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
 }
 
 /**
+ * Like generateTaskOccurrences, but consults `task.overrides` the same way
+ * recurrenceExpansion.js's expandRecurringEvent consults a CalendarEvent's —
+ * see Task.overrides in types/index.js. Each returned entry's `date` is
+ * where the occurrence should actually be scheduled/displayed (the
+ * override's moved-to date if one exists, otherwise the plain pattern
+ * date), while `originalDate` stays the untouched pattern date the override
+ * is keyed by — callers (rebalanceEngine.js's expandRecurringTasks) key
+ * virtual occurrence ids off `originalDate` so `spentHoursByTaskDate`/
+ * completedDates lookups keyed by the pattern date keep working after a
+ * move, exactly like CalendarEvent's `${masterId}::${originalDate}` virtual
+ * ids do.
+ *
+ * A `deleted: true` override drops that occurrence entirely. A moved
+ * occurrence whose ORIGINAL date wouldn't naturally fall in
+ * [rangeStartIso, rangeEndIso], but whose overridden date does (or vice
+ * versa), is still included/excluded correctly — checked in both
+ * directions, same as expandRecurringEvent.
+ *
+ * Backward compatible: a task with no `overrides` (the pre-existing case)
+ * behaves identically to generateTaskOccurrences.
+ *
+ * @param {import('../types').Task} task
+ * @param {string} rangeStartIso - "YYYY-MM-DD"
+ * @param {string} rangeEndIso - "YYYY-MM-DD"
+ * @returns {{originalDate: string, date: string}[]} ascending by `date`.
+ */
+export function expandTaskOccurrences(task, rangeStartIso, rangeEndIso) {
+  const overrides = task?.overrides || {};
+  const patternDates = generateTaskOccurrences(task, rangeStartIso, rangeEndIso);
+
+  // Occurrences whose pattern date isn't naturally in range, but whose
+  // override moved them INTO it — mirrors expandRecurringEvent's movedInDates.
+  const movedInDates = Object.keys(overrides).filter((originalDate) => {
+    if (patternDates.includes(originalDate)) return false;
+    const movedTo = overrides[originalDate]?.date;
+    return movedTo && movedTo >= rangeStartIso && movedTo <= rangeEndIso;
+  });
+
+  return [...patternDates, ...movedInDates]
+    .map((originalDate) => ({ originalDate, date: overrides[originalDate]?.date || originalDate }))
+    .filter((occ) => !overrides[occ.originalDate]?.deleted)
+    // A pattern date whose override moved it OUT of [rangeStartIso, rangeEndIso]
+    // must not surface here — patternDates only guarantees the ORIGINAL date is
+    // in range, not the resolved one.
+    .filter((occ) => occ.date >= rangeStartIso && occ.date <= rangeEndIso)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+/**
  * Roll a recurring task/descendant's raw `completedDates` forward: prepend
  * the just-closed `occurrenceDate`, then trim anything older than 7 days out
  * into the monthly `completionHistory` aggregate instead of dropping it
@@ -666,9 +715,23 @@ export function computeRecurringDescendantUpdate(descendant, todayIso) {
  *     new due date are left alone: those are genuinely earlier occurrences
  *     that stay closed out.
  *
+ * A third case: if the new due date falls OFF the recurrence pattern (e.g.
+ * moving a single occurrence of a "every week on Mon/Wed/Fri" task onto a
+ * Thursday), re-anchoring the whole series onto that date would be wrong —
+ * `generateTaskOccurrences` filters every future date by the same pattern,
+ * so an off-pattern DTSTART just makes the series generate nothing near it
+ * (see this repo's rebalanceEngine.js expandRecurringTasks: this is what
+ * silently drops the occurrence from the scheduler and zeroes its remaining
+ * hours). Instead, the move is recorded as a one-occurrence `overrides`
+ * entry (see types/index.js's Task.overrides, same convention as
+ * CalendarEvent.overrides) keyed by the task's current `dueDate` — the
+ * pattern's own anchor/most-recent occurrence stays untouched, so the rest
+ * of the series keeps landing on Mon/Wed/Fri while this one occurrence shows
+ * up on Thursday instead (see utils/recurrence.js's expandTaskOccurrences).
+ *
  * @param {object} task - the task's CURRENT (pre-update) fields
  * @param {object} updates - the partial update being applied
- * @returns {{dueDate?: string, completedDates?: string[]}} fields to merge
+ * @returns {{dueDate?: string, completedDates?: string[], overrides?: object}} fields to merge
  *   on top of `updates` — only the keys that actually need overriding.
  */
 export function computeRecurringRescheduleUpdate(task, updates) {
@@ -680,7 +743,18 @@ export function computeRecurringRescheduleUpdate(task, updates) {
     result.dueDate = task.dueDate;
   }
   if (nextDueDate && nextDueDate !== task.dueDate) {
-    result.completedDates = (updates.completedDates ?? task.completedDates ?? []).filter((d) => d < nextDueDate);
+    const rule = task.recurrenceRule || deriveRecurrenceRule(task.recurrenceString);
+    const isOffPattern =
+      rule && task.dueDate && generateTaskOccurrences(task, nextDueDate, nextDueDate).length === 0;
+    if (isOffPattern) {
+      // Keep the series anchored where it was; record this single move as
+      // an override instead, and leave completedDates alone (nothing about
+      // the pattern's own occurrences changed).
+      result.dueDate = task.dueDate;
+      result.overrides = { ...task.overrides, [task.dueDate]: { date: nextDueDate } };
+    } else {
+      result.completedDates = (updates.completedDates ?? task.completedDates ?? []).filter((d) => d < nextDueDate);
+    }
   }
   return result;
 }
@@ -752,7 +826,7 @@ export function buildRecurrenceString(count, unit, days) {
  * has no effect until a due date exists.
  *
  * @param {import('../types').Task[]} tasks
- * @returns {Map<string, {isRecurring: boolean, recurrenceString: string, recurrenceRule: object|null, dueDate?: string}>}
+ * @returns {Map<string, {isRecurring: boolean, recurrenceString: string, recurrenceRule: object|null, dueDate?: string, isCompleted?: boolean, remainingHours?: number}>}
  *   keyed by task id — only entries that actually need to change are included.
  */
 export function computeRecurrenceSyncUpdates(tasks) {
@@ -811,6 +885,22 @@ export function computeRecurrenceSyncUpdates(tasks) {
     };
     if (recurringSource.dueDate) {
       update.dueDate = computeFirstMatchingDueDate(recurringSource.dueDate, recurringSource.recurrenceString);
+    }
+    // A task becoming recurring for the first time is starting a fresh
+    // occurrence, not resuming one already in progress — reset a stale
+    // remainingHours left over from its previous non-recurring life (most
+    // commonly 0 from a task that was `isCompleted: true` before it/its
+    // parent became recurring, e.g. migrateSubtasksToTasks.js's embedded
+    // `sub.isCompleted` → `remainingHours: 0`; that reset never happens
+    // because this path isn't completeTask's occurrence-advance, it's a
+    // one-time recurring/non-recurring conversion). Also clears the
+    // `isCompleted` flag a plain (non-recurring) task may still be
+    // carrying — a recurring task tracks "done for now" via
+    // `completedDates` instead (see isCompletedForCurrentOccurrence), never
+    // via `isCompleted`.
+    if (task.isCompleted || task.remainingHours <= 0) {
+      update.isCompleted = false;
+      update.remainingHours = task.estimatedHours;
     }
     updates.set(task.id, update);
   }

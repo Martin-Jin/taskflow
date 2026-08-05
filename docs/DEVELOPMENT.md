@@ -262,6 +262,39 @@ it isn't a valid edit. `TaskDetailModal` blocks this at the form level too
 does), but `updateTask`'s guard covers any other caller (AI plan assistant,
 Todoist import).
 
+**Moving one occurrence off its repeat pattern:** if the new due date doesn't
+match the recurrence rule (e.g. moving one occurrence of an "every week on
+Mon/Wed/Fri" task onto a Thursday), `computeRecurringRescheduleUpdate` does
+NOT re-anchor the series onto that date — `generateTaskOccurrences` filters
+every future date by the same weekday rule, so an off-pattern anchor would
+make the series generate nothing near it, silently dropping the occurrence
+from the scheduler and its remaining hours. Instead it records a one-
+occurrence entry in `task.overrides` (keyed by the pattern's own occurrence
+date, same `{date, deleted}` shape as `CalendarEvent.overrides` — see
+`types/index.js`) and leaves `dueDate` where it was. `utils/recurrence.js`'s
+`expandTaskOccurrences` (used by `rebalanceEngine.js`'s
+`expandRecurringTasks` instead of the plain pattern-only
+`generateTaskOccurrences`) layers `overrides` on top the same way
+`recurrenceExpansion.js`'s `expandRecurringEvent` already does for Calendar
+Events, so the moved occurrence is scheduled on its actual (moved-to) date
+while every other occurrence keeps landing on its normal pattern day.
+Completing the moved occurrence (`completeTask`) advances `dueDate` from the
+untouched pattern anchor as normal and prunes that occurrence's now-closed-
+out override entry.
+
+**A task newly becoming recurring starts a fresh occurrence, not a resumed
+one:** `computeRecurrenceSyncUpdates` (parent/sub-task recurrence sync, see
+above) resets `remainingHours` to `estimatedHours` and clears `isCompleted`
+whenever it flips a task's `isRecurring` to `true` and that task was already
+`isCompleted` or sitting at `remainingHours <= 0`. Without this, a task that
+was completed (or migrated in already-completed — see
+`migrateSubtasksToTasks.js`'s `sub.isCompleted ? 0 : 0.5`) BEFORE it or its
+parent became recurring stayed permanently stuck showing 0 remaining, since
+becoming recurring isn't `completeTask`'s occurrence-advance (the only other
+place that reset happens). `migrateStaleRecurringRemainingHours.js` is the
+matching one-time backfill for tasks that were already stuck like this
+before the live sync above existed to catch it going forward.
+
 ### Dependencies and passive tasks
 
 A task can list other tasks it `dependsOn`. `rebalanceEngine` excludes a task
@@ -435,7 +468,8 @@ src/
 ├── migrations/
 │   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
 │   ├── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
-│   └── migrateRecurrenceConsistency.js # One-time migration syncing recurrence across mismatched parent/sub-task chains — see file-level comments for removal timing
+│   ├── migrateRecurrenceConsistency.js # One-time migration syncing recurrence across mismatched parent/sub-task chains — see file-level comments for removal timing
+│   └── migrateStaleRecurringRemainingHours.js # One-time migration repairing a recurring task stuck at remainingHours 0 from before it became recurring — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
 │   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull)

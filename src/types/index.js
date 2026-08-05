@@ -74,6 +74,18 @@
  *                                              trend/streak view can show history arbitrarily far back without
  *                                              keeping every raw date forever. Only meaningful for `isRecurring`
  *                                              tasks; undefined for everything else.
+ * @property {Object<string,{date?: string, deleted?: boolean}>} [overrides] - Per-occurrence override map keyed by
+ *                                              the occurrence's ORIGINAL (recurrence-rule-generated) ISO date, even
+ *                                              if that occurrence was later moved — mirrors CalendarEvent.overrides
+ *                                              (see below), scoped down to what a Task occurrence actually needs:
+ *                                              `date` moves that single occurrence off its normal pattern day
+ *                                              without re-anchoring the task's own `dueDate` or shifting any other
+ *                                              occurrence, and `deleted: true` skips that one occurrence entirely.
+ *                                              Consulted by utils/recurrence.js's generateTaskOccurrences and
+ *                                              rebalanceEngine.js's expandRecurringTasks the same way
+ *                                              recurrenceExpansion.expandRecurringEvent consults an event's own
+ *                                              overrides. Only meaningful for `isRecurring` tasks; undefined for
+ *                                              everything else.
  * @property {string} [projectId]            - Todoist project id, if synced.
  * @property {'todoist'|'manual'} source     - Where the task originated.
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.

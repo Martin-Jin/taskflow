@@ -59,7 +59,7 @@ import { allocateTasks, resolveDueDate } from './allocator';
 import { runLocalSearch } from './localSearch';
 import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { generateTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
+import { expandTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
 import { expandEventsForRange } from '../utils/recurrenceExpansion';
 import { isBlockTaskCompleted } from '../utils/missedTasks';
 
@@ -100,10 +100,24 @@ function resolveTaskRecurrenceRule(task) {
  * below) assumes a single shared window, which is no longer true once each
  * occurrence gets its own independent block. A future occurrence with nothing
  * yet placed on its date naturally comes out fresh at its full estimatedHours.
+ * Keyed by the block's actual placed date (`b.date`), so for a moved
+ * occurrence that's the MOVED-TO date, not the original pattern date — see
+ * the `date` lookup below.
  *
  * The real (unexpanded) recurring task itself must NOT also be handed to
  * allocateTasks — the caller excludes it from `normal` before merging back,
  * since it's entirely superseded by its virtual occurrences here.
+ *
+ * Uses expandTaskOccurrences (not the plain pattern-only generateTaskOccurrences)
+ * so a single occurrence moved off-pattern via `task.overrides` (see
+ * types/index.js's Task.overrides) still gets a virtual occurrence placed on
+ * its MOVED-TO date, instead of silently vanishing from scheduling — the
+ * virtual occurrence's id stays keyed by the occurrence's ORIGINAL (pattern)
+ * date (so completedDates lookups elsewhere keep working after a move,
+ * exactly like CalendarEvent's `${masterId}::${originalDate}` convention),
+ * while its `dueDate`/spentHoursByTaskDate lookup use the actual (moved-to)
+ * date, since that's where the occurrence really lives and where any block
+ * for it is actually placed.
  */
 function expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizonEnd) {
   const normal = [];
@@ -115,12 +129,12 @@ function expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizo
       continue;
     }
     const recurringTask = task.recurrenceRule ? task : { ...task, recurrenceRule: rule };
-    const occurrenceDates = generateTaskOccurrences(recurringTask, today, horizonEnd);
-    for (const date of occurrenceDates) {
+    const occurrences = expandTaskOccurrences(recurringTask, today, horizonEnd);
+    for (const { originalDate, date } of occurrences) {
       const spent = spentHoursByTaskDate.get(`${task.id}::${date}`) || 0;
       const remainingHours = Math.max(0, task.estimatedHours - spent);
       if (remainingHours <= 0) continue; // this occurrence is already fully covered by a locked/historical block
-      virtualOccurrences.push({ ...recurringTask, id: `${task.id}::${date}`, dueDate: date, enforceDueDate: true, remainingHours });
+      virtualOccurrences.push({ ...recurringTask, id: `${task.id}::${originalDate}`, dueDate: date, enforceDueDate: true, remainingHours });
     }
   }
   return { normal, virtualOccurrences };

@@ -204,6 +204,7 @@ export default function CommandPalette({
                       data-active={index === activeIndex}
                       className={`search-bar-dropdown-item command-palette-item ${index === activeIndex ? 'active' : ''}`}
                       onMouseEnter={() => setActiveIndex(index)}
+                      onFocus={() => setActiveIndex(index)}
                       onClick={() => runItem(item)}
                     >
                       <Icon size={14} />

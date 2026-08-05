@@ -8,6 +8,7 @@ import {
   computeCompletionHistoryUpdate,
   computeRecurrenceSyncUpdates,
   generateTaskOccurrences,
+  expandTaskOccurrences,
   findRecurrencePhrase,
   buildRecurrenceString,
   MAX_RECURRENCE_COUNT,
@@ -309,6 +310,45 @@ describe('computeRecurringRescheduleUpdate', () => {
     const task = { isRecurring: true, dueDate: null, completedDates: [] };
     expect(computeRecurringRescheduleUpdate(task, { dueDate: '' })).toEqual({});
   });
+
+  // Regression coverage for the bug where moving a single occurrence of a
+  // Mon/Wed/Fri task onto an off-pattern day (e.g. Thursday) re-anchored the
+  // WHOLE series onto that day — since generateTaskOccurrences still filters
+  // by the same weekdays, the series then generated no nearby occurrences at
+  // all, so the scheduler silently dropped it and its remaining hours showed
+  // as 0. See rebalanceEngine.js's expandRecurringTasks / expandTaskOccurrences.
+  describe('off-pattern single-occurrence moves', () => {
+    const mwfTask = {
+      isRecurring: true,
+      dueDate: '2026-08-07', // Friday
+      recurrenceRule: { unit: 'week', count: 1, days: [1, 3, 5] }, // Mon/Wed/Fri
+      completedDates: [],
+    };
+
+    it('records an override and keeps the series anchored when moved off-pattern', () => {
+      expect(computeRecurringRescheduleUpdate(mwfTask, { dueDate: '2026-08-06' })).toEqual({
+        dueDate: '2026-08-07',
+        overrides: { '2026-08-07': { date: '2026-08-06' } },
+      });
+    });
+
+    it('merges into any pre-existing overrides rather than replacing them', () => {
+      const withOverrides = { ...mwfTask, overrides: { '2026-07-31': { date: '2026-08-01' } } };
+      expect(computeRecurringRescheduleUpdate(withOverrides, { dueDate: '2026-08-06' })).toEqual({
+        dueDate: '2026-08-07',
+        overrides: {
+          '2026-07-31': { date: '2026-08-01' },
+          '2026-08-07': { date: '2026-08-06' },
+        },
+      });
+    });
+
+    it('re-anchors normally (no override) when moved to an on-pattern date', () => {
+      expect(computeRecurringRescheduleUpdate(mwfTask, { dueDate: '2026-08-10' })).toEqual({
+        completedDates: [],
+      });
+    });
+  });
 });
 
 describe('computeCompletionHistoryUpdate', () => {
@@ -388,6 +428,88 @@ describe('generateTaskOccurrences', () => {
     const task = { dueDate: '2024-02-29', recurrenceRule: { unit: 'year', count: 1 } };
     const occurrences = generateTaskOccurrences(task, '2024-01-01', '2026-12-31');
     expect(occurrences).toEqual(['2024-02-29', '2025-02-28', '2026-02-28']);
+  });
+});
+
+describe('expandTaskOccurrences', () => {
+  it('behaves identically to generateTaskOccurrences when there are no overrides (backward compatible)', () => {
+    const task = { dueDate: '2026-07-01', recurrenceRule: { unit: 'day', count: 1 } };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-02', date: '2026-07-02' },
+      { originalDate: '2026-07-03', date: '2026-07-03' },
+      { originalDate: '2026-07-04', date: '2026-07-04' },
+      { originalDate: '2026-07-05', date: '2026-07-05' },
+    ]);
+  });
+
+  it('moves a single occurrence off-pattern to its overridden date without touching the others', () => {
+    // Mon/Wed/Fri task; move the 2026-07-06 (Monday) occurrence to Thursday 2026-07-09.
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'week', count: 1, days: [1, 3, 5] },
+      overrides: { '2026-07-06': { date: '2026-07-09' } },
+    };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-10');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-03', date: '2026-07-03' },
+      { originalDate: '2026-07-08', date: '2026-07-08' },
+      { originalDate: '2026-07-06', date: '2026-07-09' },
+      { originalDate: '2026-07-10', date: '2026-07-10' },
+    ]);
+  });
+
+  it('includes an occurrence moved INTO the requested range even though its original date is outside it', () => {
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'day', count: 1 },
+      overrides: { '2026-06-29': { date: '2026-07-02' } },
+    };
+    // 2026-06-29 isn't a valid occurrence of this daily task anchored 2026-07-01
+    // anyway, so use a task whose pattern legitimately includes a date outside
+    // the query range but moved into it.
+    const weekdayTask = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'week', count: 1, days: [3] }, // every Wednesday
+      overrides: { '2026-06-24': { date: '2026-07-02' } }, // a Wed before the query range, moved into it
+    };
+    expect(expandTaskOccurrences(weekdayTask, '2026-07-01', '2026-07-08')).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-06-24', date: '2026-07-02' },
+      { originalDate: '2026-07-08', date: '2026-07-08' },
+    ]);
+  });
+
+  it('excludes an occurrence moved OUT of the requested range', () => {
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'day', count: 1 },
+      overrides: { '2026-07-03': { date: '2026-07-20' } },
+    };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-02', date: '2026-07-02' },
+      { originalDate: '2026-07-04', date: '2026-07-04' },
+      { originalDate: '2026-07-05', date: '2026-07-05' },
+    ]);
+  });
+
+  it('drops an occurrence entirely when its override sets deleted: true', () => {
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'day', count: 1 },
+      overrides: { '2026-07-03': { deleted: true } },
+    };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-02', date: '2026-07-02' },
+      { originalDate: '2026-07-04', date: '2026-07-04' },
+      { originalDate: '2026-07-05', date: '2026-07-05' },
+    ]);
   });
 });
 
@@ -547,6 +669,46 @@ describe('computeRecurrenceSyncUpdates', () => {
       { id: 'b', parentId: 'a' },
     ];
     expect(() => computeRecurrenceSyncUpdates(tasks)).not.toThrow();
+  });
+
+  // Regression coverage: a sub-task migrated from the old embedded-Subtask
+  // model (migrateSubtasksToTasks.js) that was `isCompleted: true` at
+  // migration time comes out with `remainingHours: 0` and `isRecurring:
+  // false`. If its parent later becomes recurring, this sync used to set
+  // isRecurring/dueDate but leave remainingHours stuck at 0 forever, since
+  // this path isn't completeTask's occurrence-advance (the only other place
+  // that resets it) — showing the sub-task (and any parent rolling its hours
+  // up, see taskHierarchy.js's getEffectiveRemainingHours) as permanently
+  // "0m remaining" even though the new occurrence hasn't started yet.
+  describe('resetting a stale remainingHours/isCompleted when a task newly becomes recurring', () => {
+    it('resets remainingHours to estimatedHours for a task with remainingHours stuck at 0', () => {
+      const tasks = [
+        { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+        { id: 's1', parentId: 'p1', estimatedHours: 0.5, remainingHours: 0 },
+      ];
+      const updates = computeRecurrenceSyncUpdates(tasks);
+      expect(updates.get('s1').remainingHours).toBe(0.5);
+    });
+
+    it('clears a leftover isCompleted flag and resets remainingHours', () => {
+      const tasks = [
+        { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+        { id: 's1', parentId: 'p1', estimatedHours: 0.5, remainingHours: 0.5, isCompleted: true },
+      ];
+      const updates = computeRecurrenceSyncUpdates(tasks);
+      expect(updates.get('s1').isCompleted).toBe(false);
+      expect(updates.get('s1').remainingHours).toBe(0.5);
+    });
+
+    it('leaves remainingHours untouched when it is already a healthy positive value', () => {
+      const tasks = [
+        { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+        { id: 's1', parentId: 'p1', estimatedHours: 1, remainingHours: 1 },
+      ];
+      const updates = computeRecurrenceSyncUpdates(tasks);
+      expect(updates.get('s1').remainingHours).toBeUndefined();
+      expect(updates.get('s1').isCompleted).toBeUndefined();
+    });
   });
 });
 
