@@ -272,11 +272,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // Smart-parse draft state for the "Add sub-task" row — mirrors
   // AddTaskModal's blank-start fields (not this modal's own edit-mode fields
   // above, which compare against task.* originals) since a new sub-task
-  // starts blank the same way a brand-new top-level task does. Deliberately
-  // a narrower field set than the main Title field: only dueDate/priority/
-  // estimatedHours/project(+section)/labels are wired — recurrence,
-  // dependency, unattended, enforceDueDate, link and fixedTime would need
-  // their own pickers/defaults for a compact inline row and are out of scope.
+  // starts blank the same way a brand-new top-level task does. Every field
+  // the main Title field smart-parses is wired here too, even though this
+  // compact row has no picker widget for recurrence/dependency/unattended/
+  // enforceDueDate/link/fixedTime — those simply have no way to become
+  // "touched" (no hasEdited flag) since there's nothing to edit them with
+  // other than smart-parse itself, so isUntouched() for them is just `true`.
   const [subtaskProjectId, setSubtaskProjectId] = useState(task.projectId ?? '');
   const [subtaskHasEditedProject, setSubtaskHasEditedProject] = useState(false);
   const [subtaskSectionId, setSubtaskSectionId] = useState(task.sectionId ?? '');
@@ -288,6 +289,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [subtaskEstimatedHours, setSubtaskEstimatedHours] = useState(DEFAULT_SUBTASK_ESTIMATED_HOURS);
   const [subtaskHasEditedHours, setSubtaskHasEditedHours] = useState(false);
   const [subtaskLabelIds, setSubtaskLabelIds] = useState([]);
+  const [subtaskLink, setSubtaskLink] = useState('');
+  const [subtaskFixedTime, setSubtaskFixedTime] = useState('');
+  const [subtaskFixedTimeEnabled, setSubtaskFixedTimeEnabled] = useState(false);
+  const [subtaskIsRecurring, setSubtaskIsRecurring] = useState(false);
+  const [subtaskRecurrenceCount, setSubtaskRecurrenceCount] = useState(1);
+  const [subtaskRecurrenceUnit, setSubtaskRecurrenceUnit] = useState('week');
+  const [subtaskRecurrenceDays, setSubtaskRecurrenceDays] = useState(null);
+  const [subtaskIsPassive, setSubtaskIsPassive] = useState(false);
+  const [subtaskEnforceDueDate, setSubtaskEnforceDueDate] = useState(false);
+  const [subtaskDependsOn, setSubtaskDependsOn] = useState([]);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
@@ -870,10 +881,40 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     projects,
     sections,
     fields: {
+      link: {
+        isUntouched: () => true,
+        apply: (match) => setSubtaskLink(match.url),
+        revert: () => setSubtaskLink(''),
+      },
       dueDate: {
         isUntouched: () => !subtaskHasEditedDueDate,
         apply: (match) => setSubtaskDueDate(match.iso),
         revert: () => setSubtaskDueDate(''),
+      },
+      fixedTime: {
+        isUntouched: () => true,
+        apply: (match) => {
+          setSubtaskFixedTime(match.time);
+          setSubtaskFixedTimeEnabled(true);
+        },
+        revert: () => {
+          setSubtaskFixedTime('');
+          setSubtaskFixedTimeEnabled(false);
+        },
+      },
+      recurrence: {
+        isUntouched: () => true,
+        apply: (match, detected) => {
+          setSubtaskIsRecurring(true);
+          setSubtaskRecurrenceCount(match.rule.count);
+          setSubtaskRecurrenceUnit(match.rule.unit);
+          setSubtaskRecurrenceDays(match.rule.days || null);
+          if (!subtaskDueDate && !detected.dueDate) setSubtaskDueDate(toISODate(new Date()));
+        },
+        revert: () => {
+          setSubtaskIsRecurring(false);
+          setSubtaskRecurrenceDays(null);
+        },
       },
       priority: {
         isUntouched: () => !subtaskHasEditedPriority,
@@ -884,6 +925,28 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         isUntouched: () => !subtaskHasEditedHours,
         apply: (match) => setSubtaskEstimatedHours(match.hours),
         revert: () => setSubtaskEstimatedHours(DEFAULT_SUBTASK_ESTIMATED_HOURS),
+      },
+      unattended: {
+        isUntouched: () => true,
+        apply: () => setSubtaskIsPassive(true),
+        revert: () => setSubtaskIsPassive(false),
+      },
+      enforceDueDate: {
+        isUntouched: () => true,
+        apply: (match, detected) => {
+          setSubtaskEnforceDueDate(true);
+          if (!subtaskDueDate && !detected.dueDate) setSubtaskDueDate(toISODate(new Date()));
+        },
+        revert: () => setSubtaskEnforceDueDate(false),
+      },
+      dependency: {
+        isUntouched: () => true,
+        apply: (match) => {
+          if (match.task) setSubtaskDependsOn((prev) => (prev.includes(match.task.id) ? prev : [...prev, match.task.id]));
+        },
+        revert: (entry) => {
+          if (entry.task) setSubtaskDependsOn((prev) => prev.filter((id) => id !== entry.task.id));
+        },
       },
       project: {
         isUntouched: () => !subtaskHasEditedProject,
@@ -1039,6 +1102,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setSubtaskEstimatedHours(DEFAULT_SUBTASK_ESTIMATED_HOURS);
     setSubtaskHasEditedHours(false);
     setSubtaskLabelIds([]);
+    setSubtaskLink('');
+    setSubtaskFixedTime('');
+    setSubtaskFixedTimeEnabled(false);
+    setSubtaskIsRecurring(false);
+    setSubtaskRecurrenceCount(1);
+    setSubtaskRecurrenceUnit('week');
+    setSubtaskRecurrenceDays(null);
+    setSubtaskIsPassive(false);
+    setSubtaskEnforceDueDate(false);
+    setSubtaskDependsOn([]);
     resetSubtaskSmartState();
   }
 
@@ -1068,6 +1141,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionId: subtaskHasEditedProject ? subtaskSectionId || null : task.sectionId ?? null,
       sectionName: subtaskHasEditedProject ? section?.name ?? null : task.sectionName ?? null,
       labelIds: finalLabelIds,
+      link: subtaskLink || null,
+      isRecurring: subtaskIsRecurring && !!subtaskDueDate,
+      recurrenceString:
+        subtaskIsRecurring && subtaskDueDate
+          ? buildRecurrenceString(subtaskRecurrenceCount, subtaskRecurrenceUnit, subtaskRecurrenceDays)
+          : null,
+      dependsOn: subtaskDependsOn,
+      isPassive: subtaskIsPassive,
+      enforceDueDate: subtaskEnforceDueDate && !!subtaskDueDate,
+      fixedTime: subtaskFixedTimeEnabled && subtaskFixedTime ? subtaskFixedTime : null,
     });
     resetSubtaskDraft();
   }
@@ -1793,8 +1876,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           onEnter={handleAddSubtask}
                         />
                         <button type="button" className="btn" onClick={handleAddSubtask}>
-                          <Plus size={14} />
                           Add
+                          <Plus size={14} />
                         </button>
                       </div>
                       <SmartChips chips={subtaskSmartChips} onDismiss={dismissSubtaskSmartChip} />
