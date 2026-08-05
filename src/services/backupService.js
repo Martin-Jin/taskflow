@@ -49,7 +49,42 @@ export const BACKUP_FIELDS = [
   'notes',
   'shortcutBindings',
   'events',
+  'sharedProjectIds',
 ];
+
+/**
+ * SHARED PROJECTS (collaboration) — what a personal backup does and doesn't
+ * capture, and why. Third exception in this file, alongside `theme` and
+ * `events` above.
+ *
+ * `sharedProjectIds` (above) is IN: it's just the list of shared projects
+ * you're a member of — a pointer, a few strings, unambiguously your own data.
+ * Losing it would mean losing your way back into boards you'd joined, which is
+ * exactly the "my localStorage got wiped" case backups exist for. Restoring it
+ * re-lists those projects; it doesn't grant access, since membership is
+ * enforced by the `collaborators` map in Firestore rules, not by this array.
+ *
+ * A shared project's CONTENT (its tasks, sections, comments — everything under
+ * `sharedProjects/{projectId}/`) is deliberately OUT of every backup payload,
+ * and this is the important half:
+ *
+ *   - It isn't solely yours to snapshot or roll back. Restoring a 3-month-old
+ *     backup must not resurrect tasks a collaborator deliberately deleted last
+ *     week, or silently revert their edits — a personal, one-directional
+ *     restore is the wrong instrument for data several people co-own.
+ *   - You may no longer be a member. Re-creating content from a project you
+ *     were removed from (or that was deleted) would be both broken and a
+ *     privacy problem.
+ *   - Firestore is the live source of truth for shared projects, not
+ *     localStorage — the opposite of the rest of this app's model (see
+ *     firestoreSync.js's header). There's nothing local to back up that isn't
+ *     already a cache of the server's copy.
+ *
+ * So: a restore puts your shared-project MEMBERSHIP back and the live sync
+ * re-fetches current content from Firestore. Personal (non-shared) projects
+ * are unaffected by any of this — they stay in `projects` and are backed up in
+ * full exactly as before.
+ */
 
 /**
  * Expected runtime shape per BACKUP_FIELDS entry — used both by
@@ -78,6 +113,7 @@ export const FIELD_TYPES = {
   notes: 'object',
   shortcutBindings: 'object',
   events: 'array',
+  sharedProjectIds: 'array',
 };
 
 /** Does `value` match the runtime shape FIELD_TYPES declares for `field`? */

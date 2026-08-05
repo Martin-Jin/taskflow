@@ -172,6 +172,119 @@
  */
 
 /**
+ * @typedef {Object} Collaborator
+ * A single entry in a SharedProject's `collaborators` map (keyed by uid) —
+ * see SharedProject typedef below. Written once at join time
+ * (utils/sharedProjectAccess.js's planCollaboratorJoin) and updated
+ * thereafter only by the project owner changing a role or removing the
+ * entry. Covers both a logged-in Firebase user and an anonymous link visitor
+ * (see Firebase Anonymous Auth in the Collaborative Projects spec, TODO.md).
+ *
+ * `firestore.rules` validates this shape on every join (see its
+ * `joinEntryWellFormed`) — no extra keys are accepted, and the string fields
+ * are length-capped. That's deliberate: `affectedKeys()` only reports that
+ * `collaborators` changed, never what's inside an entry, so without an explicit
+ * shape check a joiner could stuff arbitrary keys (`adminOverride: true`) or
+ * hundreds of KB of junk into a document every member downloads. Keep this
+ * typedef and that rule in sync — adding a field here means allowing it there.
+ * @property {'editor'|'viewer'} role   - See utils/sharedProjectAccess.js's SHARE_ROLES. Never 'owner' — the
+ *                                        owner is identified by SharedProject.ownerId, not an entry in this map.
+ * @property {string} displayName       - Shown on avatars/mention autocomplete; user-chosen for anonymous
+ *                                        visitors (prompted once, cached in localStorage per link/browser).
+ *                                        Capped at 120 chars by the rules.
+ * @property {string|null} photoURL     - Null for anonymous visitors (no profile photo to show). Capped at 500
+ *                                        chars. Treat as untrusted when rendering — it's user-supplied, so never
+ *                                        interpolate it into an href/src without validating the scheme (a
+ *                                        `javascript:` URL here is exactly the kind of thing rules can't catch).
+ * @property {string} joinedAt          - ISO datetime this uid first joined the project.
+ * @property {boolean} isAnonymous      - Whether this uid is a Firebase Anonymous Auth visitor rather than a real
+ *                                        account. Set at join time by the rules from the joiner's own verified
+ *                                        `sign_in_provider` claim, NOT self-declared — a client that sends the
+ *                                        wrong value simply fails the join. Exists because ownership can never be
+ *                                        transferred to an anonymous identity (no durable account to own the
+ *                                        project — it would vanish when they clear storage, leaving it
+ *                                        unowned), and rules can only inspect the REQUESTER's provider, never a
+ *                                        third party's, so the fact has to be recorded here at join time to be
+ *                                        checkable later (see firestore.rules' `recipientIsRealAccount`).
+ */
+
+/**
+ * @typedef {Object} SharedProjectLink
+ * One of the two link types (view/edit) a SharedProject can expose. NOT a
+ * field on the SharedProject document itself — see that typedef below for
+ * why. Instead, this is the shape of an entry in the separate, client-
+ * unreadable doc `sharedProjects/{projectId}/private/links`
+ * (`{view: SharedProjectLink, edit: SharedProjectLink}`), which
+ * `firestore.rules` locks with `allow read, write: if false` — no client,
+ * not even the project owner, may read or write it directly. Only
+ * server-side code (the join endpoint, running with privileged/service
+ * credentials that bypass these rules) creates, rotates, or reads it;
+ * `firestore.rules` itself reads it via `get()` to evaluate a presented
+ * token (see its `links()`/`linkUsable()` helpers). Owner-facing "show me my
+ * share link" is therefore also served by that same server-side endpoint,
+ * never by a client-side Firestore read.
+ * @property {string} token      - Unguessable random id (see utils/sharedProjectAccess.js's generateShareToken),
+ *                                  NOT the Firestore doc id — lets the owner "revoke" a link by rotating just
+ *                                  this token, without deleting/recreating the whole project doc.
+ * @property {boolean} enabled   - False once revoked. A disabled link's token must never grant access again,
+ *                                  even if presented (see utils/sharedProjectAccess.js's resolveTokenRole) — the
+ *                                  owner re-enabling sharing generates a fresh token rather than flipping this
+ *                                  back to true against the old one.
+ * @property {*} [expiresAt]     - Optional expiry. Stored as a Firestore TIMESTAMP (not this app's usual ISO
+ *                                  string) because `firestore.rules` has no ISO-8601 parser and must compare it
+ *                                  directly against `request.time` — see `firestore.rules`' `linkUsable`.
+ */
+
+/**
+ * @typedef {Object} SharedProject
+ * A project a user has explicitly turned into a multi-user collaborative
+ * project (Collaborative Projects feature, TODO.md — Phase 0). Lives in its
+ * own top-level Firestore collection, `sharedProjects/{projectId}`, WITH ITS
+ * OWN tasks/sections/comments as subcollections
+ * (`sharedProjects/{projectId}/tasks/{taskId}`, etc.) — never inside a
+ * `users/{uid}` doc, since more than one uid needs read/write access to it.
+ * Per the feature's non-negotiable security requirement, this collection is
+ * never `list`-able by Firestore rules — a doc is only reachable by exact id,
+ * and only readable/writable by its owner, an existing collaborator, or
+ * someone presenting one of its two live link tokens (see
+ * utils/sharedProjectAccess.js's computeEffectiveRole, which is the single
+ * source of truth both client code and (mirrored) Firestore rules must agree
+ * with for this decision).
+ *
+ * DELIBERATELY DOES NOT HAVE a `links` FIELD. Share tokens used to live here
+ * as `links: {view, edit}` — that was a CRITICAL privilege-escalation bug,
+ * caught during security review: a Firestore `get` returns the WHOLE
+ * document, and collaborators must be able to `get` this doc to use the
+ * project at all, so ANY viewer could read `links.edit.token` straight out of
+ * it, re-join presenting that token, and escalate themselves to editor.
+ * Firestore has no field-level read rules — the unit of a read is one whole
+ * document — so a secret and a document readable by a broader audience than
+ * that secret's own can never coexist safely. The fix was to move tokens off
+ * this document entirely, into the separate `sharedProjects/{projectId}
+ * /private/links` doc, which `firestore.rules` locks with
+ * `allow read, write: if false` (see SharedProjectLink typedef above for that
+ * doc's shape, and `firestore.rules`' own header comment "WHERE TOKENS LIVE,
+ * AND WHY NOT ON THIS DOCUMENT" for the full writeup). Rules still evaluate a
+ * presented token via `get()` against that private doc when a visitor joins —
+ * that's a privileged, rules-internal read, not a client one. The token a
+ * visitor presents when joining arrives as a custom auth claim
+ * (`request.auth.token.joinToken`), minted server-side by the join endpoint
+ * after it validates the token — never as a field written onto this document
+ * (an earlier version did that too, which persisted the token into the doc on
+ * the join write and leaked it to every later reader, the same class of bug).
+ * Client code must never expect a `links` key here, and any write that tries
+ * to add one is rejected by `firestore.rules`.
+ * @property {string} id
+ * @property {string} ownerId                          - The creating user's Firebase uid. Always the strongest
+ *                                                        role (OWNER) regardless of any collaborators entry —
+ *                                                        see computeEffectiveRole.
+ * @property {string} name
+ * @property {string} [color]
+ * @property {string} createdAt                         - ISO datetime.
+ * @property {Record<string, Collaborator>} collaborators - Keyed by uid. Does NOT include the owner (see ownerId).
+ */
+
+/**
  * @typedef {Object} CommentAttachment
  * A single file attached to a Comment, stored in Firebase Storage under
  * `users/{uid}/attachments/{taskId}/...` (see services/attachmentService.js).
@@ -186,11 +299,32 @@
  * @typedef {Object} Comment
  * A single entry in a Task's comment thread (see Task.comments). Mirrors
  * Todoist's task comments: plain text, an optional single file attachment,
- * or both.
+ * or both. The `author*`/`mentions` fields below are OPTIONAL extensions
+ * added for the Collaborative Projects feature (TODO.md) — they're only ever
+ * populated for a comment on a SharedProject's task (see SharedProject
+ * typedef above), where a comment needs an attributable author and
+ * @-mentionable participants. A comment on a personal (non-shared) task has
+ * no audience to attribute/mention against, so these stay absent there —
+ * this is the same embedded `Task.comments` array either way, not a
+ * separate Comment shape/subcollection for shared projects.
  * @property {string} id
  * @property {string} text                        - May be empty if the comment is attachment-only.
  * @property {CommentAttachment|null} [attachment]
  * @property {string} createdAt                    - ISO datetime.
+ * @property {string} [authorUid]                  - Firebase uid (real or anonymous) of whoever posted this
+ *                                                    comment. Shared-project tasks only; absent for personal tasks
+ *                                                    (there is exactly one possible author — the signed-in user —
+ *                                                    so attribution is redundant there).
+ * @property {string} [authorDisplayName]          - Denormalized display name at post time, so a later name change
+ *                                                    (or a since-removed collaborator) doesn't retroactively alter
+ *                                                    or blank out history.
+ * @property {string|null} [authorPhotoURL]        - Denormalized alongside authorDisplayName, same reasoning. Null
+ *                                                    for anonymous authors.
+ * @property {string[]} [mentions]                 - Uids of collaborators @-mentioned in this comment's text —
+ *                                                    stable references (see utils/sharedProjectAccess.js's
+ *                                                    Collaborator), so a mention still resolves correctly even
+ *                                                    after the mentioned user's display name changes. Drives the
+ *                                                    notification fan-out (Phase 4). Shared-project tasks only.
  */
 
 /**
@@ -226,6 +360,29 @@
  * @property {number} [order]
  * @property {boolean} [isPinned]      - Shown at the top of the sidebar's project list.
  * @property {string} [lastVisitedAt]  - ISO timestamp, updated whenever this project becomes the active one.
+ * @property {string} [ownerId]         - Set only once this project has been explicitly turned into a
+ *                                        collaborative one (Collaborative Projects feature, TODO.md — Phase 0).
+ *                                        A personal (non-shared) project has no owner field at all and stays
+ *                                        exactly as it is today, living entirely inside this user's own
+ *                                        `users/{uid}` doc — sharing is opt-in per project, never automatic/
+ *                                        retroactive, so most Project records never gain this field.
+ *                                        Comparing this against the current user's uid is what distinguishes the
+ *                                        THREE states the projects screen must show — deliberately NOT collapsed
+ *                                        into a single `isShared` boolean, which can't express the difference and
+ *                                        would hide exactly the fact users most need (which direction it's shared):
+ *                                          - no ownerId          -> personal, private to you
+ *                                          - ownerId === your uid -> "shared with others", you're the owner and
+ *                                                                    other people can see it
+ *                                          - ownerId !== your uid -> "shared with you", someone else owns it and
+ *                                                                    your own role comes from their
+ *                                                                    SharedProject.collaborators[yourUid].role
+ *                                        Don't replace this with a boolean flag for convenience.
+ * @property {string} [sharedProjectId] - Pointer to the corresponding `sharedProjects/{projectId}` Firestore doc
+ *                                        (see SharedProject typedef above) once this project has moved there.
+ *                                        Only an explicitly-shared project's tasks/sections/comments actually
+ *                                        live under that doc's subcollections; everything else stays put — this
+ *                                        field is how app code decides which store (personal vs shared) to
+ *                                        read/write a given project's data from/to.
  */
 
 /**

@@ -113,6 +113,7 @@ describe('isValidBackupPayload', () => {
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
     events: [],
+    sharedProjectIds: [],
   };
 
   it('accepts a payload with every backup field present and correctly typed', () => {
@@ -191,6 +192,35 @@ describe('computeFingerprint', () => {
   it('ignores fields outside the syncable subset (e.g. extra local-only keys)', () => {
     const withExtra = { ...baseState, someLocalOnlyField: 'ignored' };
     expect(computeFingerprint(baseState)).toBe(computeFingerprint(withExtra));
+  });
+
+  it('is sensitive to sharedProjectIds (unlike events, this membership list IS live cross-device synced)', () => {
+    const withShared = { ...baseState, sharedProjectIds: ['sp1'] };
+    expect(computeFingerprint(baseState)).not.toBe(computeFingerprint(withShared));
+  });
+
+  // Documents a deliberate, benign one-off effect of adding sharedProjectIds to
+  // the fingerprint: a cloud doc written before the field existed has no
+  // `sharedProjectIds` key at all, and JSON.stringify omits undefined, so its
+  // fingerprint differs from a current client's (which defaults to []). On the
+  // first sync after upgrading, an existing signed-in user therefore sees one
+  // spurious "something changed" signal and pushes once, writing
+  // `sharedProjectIds: []` and converging permanently after that.
+  //
+  // This is safe rather than lossy because every consumer guards on
+  // `'sharedProjectIds' in ...` with a pickValid fallback (see
+  // planRemoteDataMerge / applyRemoteData / applyBackupPayload), so a legacy
+  // doc or legacy backup is never clobbered — the absent field is left alone.
+  // Asserted explicitly so nobody "fixes" this into a silent default that would
+  // make a genuinely-empty membership list indistinguishable from a missing one.
+  it('distinguishes a legacy doc with no sharedProjectIds key from an explicit empty list', () => {
+    const legacyRemote = { ...baseState };
+    delete legacyRemote.sharedProjectIds;
+    const currentLocal = { ...baseState, sharedProjectIds: [] };
+    expect(computeFingerprint(legacyRemote)).not.toBe(computeFingerprint(currentLocal));
+    // ...and the legacy fingerprint simply omits the key rather than encoding null.
+    expect(computeFingerprint(legacyRemote)).not.toContain('sharedProjectIds');
+    expect(computeFingerprint(currentLocal)).toContain('"sharedProjectIds":[]');
   });
 });
 

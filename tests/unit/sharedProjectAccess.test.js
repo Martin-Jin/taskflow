@@ -1,0 +1,575 @@
+import { describe, it, expect } from 'vitest';
+import {
+  SHARE_ROLES,
+  OWNER,
+  resolveTokenRole,
+  computeEffectiveRole,
+  canEdit,
+  canView,
+  canManageSharing,
+  planCollaboratorJoin,
+  planOwnershipTransfer,
+  isSharedProject,
+  generateShareToken,
+} from '../../src/utils/sharedProjectAccess';
+
+function projectWithLinks({
+  viewToken = 'view-tok',
+  viewEnabled = true,
+  viewExpiresAt,
+  editToken = 'edit-tok',
+  editEnabled = true,
+  editExpiresAt,
+} = {}) {
+  return {
+    ownerId: 'owner-1',
+    collaborators: {},
+    links: {
+      view: { token: viewToken, enabled: viewEnabled, expiresAt: viewExpiresAt ?? null },
+      edit: { token: editToken, enabled: editEnabled, expiresAt: editExpiresAt ?? null },
+    },
+  };
+}
+
+const NOW = new Date('2026-06-15T12:00:00.000Z').getTime();
+const PAST = new Date('2026-01-01T00:00:00.000Z').getTime();
+const FUTURE = new Date('2027-01-01T00:00:00.000Z').getTime();
+
+describe('resolveTokenRole', () => {
+  it('resolves the view token to viewer', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, 'view-tok')).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('resolves the edit token to editor', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, 'edit-tok')).toBe(SHARE_ROLES.EDITOR);
+  });
+
+  it('returns null for a disabled view link even with the correct token', () => {
+    const project = projectWithLinks({ viewEnabled: false });
+    expect(resolveTokenRole(project, 'view-tok')).toBeNull();
+  });
+
+  it('returns null for a disabled edit link even with the correct token', () => {
+    const project = projectWithLinks({ editEnabled: false });
+    expect(resolveTokenRole(project, 'edit-tok')).toBeNull();
+  });
+
+  it('returns null for a rotated/stale token (no longer matches the current stored token)', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, 'old-view-tok')).toBeNull();
+  });
+
+  it('returns null for a token that has never existed', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, 'totally-unknown')).toBeNull();
+  });
+
+  it('returns null for an empty string token', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, '')).toBeNull();
+  });
+
+  it('returns null for a null token', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, null)).toBeNull();
+  });
+
+  it('returns null for an undefined token', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, undefined)).toBeNull();
+  });
+
+  it('returns null for a non-string token', () => {
+    const project = projectWithLinks();
+    expect(resolveTokenRole(project, 12345)).toBeNull();
+    expect(resolveTokenRole(project, { token: 'view-tok' })).toBeNull();
+  });
+
+  it('returns null when links is missing entirely (malformed doc)', () => {
+    expect(resolveTokenRole({ ownerId: 'owner-1' }, 'view-tok')).toBeNull();
+  });
+
+  it('returns null when sharedProject itself is missing/malformed', () => {
+    expect(resolveTokenRole(null, 'view-tok')).toBeNull();
+    expect(resolveTokenRole(undefined, 'view-tok')).toBeNull();
+    expect(resolveTokenRole('not-an-object', 'view-tok')).toBeNull();
+  });
+
+  it('does not throw when a link entry itself is malformed (missing token/enabled)', () => {
+    const project = { ownerId: 'owner-1', links: { view: {}, edit: null } };
+    expect(() => resolveTokenRole(project, 'view-tok')).not.toThrow();
+    expect(resolveTokenRole(project, 'view-tok')).toBeNull();
+  });
+});
+
+describe('computeEffectiveRole', () => {
+  it('gives the owner uid the owner role regardless of collaborators/token', () => {
+    const project = projectWithLinks();
+    expect(computeEffectiveRole(project, 'owner-1', null)).toBe(OWNER);
+  });
+
+  it('owner precedence beats even a presented token from someone else\'s link', () => {
+    const project = projectWithLinks();
+    expect(computeEffectiveRole(project, 'owner-1', 'edit-tok')).toBe(OWNER);
+  });
+
+  it('returns the stored collaborator role when no token is presented', () => {
+    const project = projectWithLinks();
+    project.collaborators['user-a'] = { role: SHARE_ROLES.EDITOR, displayName: 'A', photoURL: null, joinedAt: 'x' };
+    expect(computeEffectiveRole(project, 'user-a', null)).toBe(SHARE_ROLES.EDITOR);
+  });
+
+  it('an existing editor presenting a view-only link stays editor (no silent downgrade)', () => {
+    const project = projectWithLinks();
+    project.collaborators['user-a'] = { role: SHARE_ROLES.EDITOR, displayName: 'A', photoURL: null, joinedAt: 'x' };
+    expect(computeEffectiveRole(project, 'user-a', 'view-tok')).toBe(SHARE_ROLES.EDITOR);
+  });
+
+  it('an existing viewer presenting an edit link is upgraded to editor', () => {
+    const project = projectWithLinks();
+    project.collaborators['user-a'] = { role: SHARE_ROLES.VIEWER, displayName: 'A', photoURL: null, joinedAt: 'x' };
+    expect(computeEffectiveRole(project, 'user-a', 'edit-tok')).toBe(SHARE_ROLES.EDITOR);
+  });
+
+  it('a brand new uid with only a view token resolves to viewer', () => {
+    const project = projectWithLinks();
+    expect(computeEffectiveRole(project, 'stranger', 'view-tok')).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('a brand new uid with a disabled token resolves to null', () => {
+    const project = projectWithLinks({ viewEnabled: false });
+    expect(computeEffectiveRole(project, 'stranger', 'view-tok')).toBeNull();
+  });
+
+  it('returns null when there is no collaborator entry and no valid token', () => {
+    const project = projectWithLinks();
+    expect(computeEffectiveRole(project, 'stranger', null)).toBeNull();
+    expect(computeEffectiveRole(project, 'stranger', 'bogus')).toBeNull();
+  });
+
+  it('does not throw and returns null for a malformed/missing links object', () => {
+    const project = { ownerId: 'owner-1', collaborators: {} };
+    expect(() => computeEffectiveRole(project, 'stranger', 'view-tok')).not.toThrow();
+    expect(computeEffectiveRole(project, 'stranger', 'view-tok')).toBeNull();
+  });
+
+  it('does not throw for a completely malformed sharedProject doc', () => {
+    expect(() => computeEffectiveRole(null, 'user-a', 'tok')).not.toThrow();
+    expect(computeEffectiveRole(null, 'user-a', 'tok')).toBeNull();
+    expect(computeEffectiveRole({}, 'user-a', 'tok')).toBeNull();
+  });
+
+  it('ignores a garbage stored role value on a collaborator entry', () => {
+    const project = projectWithLinks();
+    project.collaborators['user-a'] = { role: 'superadmin', displayName: 'A', photoURL: null, joinedAt: 'x' };
+    expect(computeEffectiveRole(project, 'user-a', null)).toBeNull();
+  });
+});
+
+describe('canEdit / canView / canManageSharing', () => {
+  it('owner can do everything', () => {
+    expect(canEdit(OWNER)).toBe(true);
+    expect(canView(OWNER)).toBe(true);
+    expect(canManageSharing(OWNER)).toBe(true);
+  });
+
+  it('editor can edit and view but not manage sharing', () => {
+    expect(canEdit(SHARE_ROLES.EDITOR)).toBe(true);
+    expect(canView(SHARE_ROLES.EDITOR)).toBe(true);
+    expect(canManageSharing(SHARE_ROLES.EDITOR)).toBe(false);
+  });
+
+  it('viewer can view only', () => {
+    expect(canEdit(SHARE_ROLES.VIEWER)).toBe(false);
+    expect(canView(SHARE_ROLES.VIEWER)).toBe(true);
+    expect(canManageSharing(SHARE_ROLES.VIEWER)).toBe(false);
+  });
+
+  it('null role can do nothing', () => {
+    expect(canEdit(null)).toBe(false);
+    expect(canView(null)).toBe(false);
+    expect(canManageSharing(null)).toBe(false);
+  });
+});
+
+describe('planCollaboratorJoin', () => {
+  it('allows a join with a valid view token and returns a viewer collaboratorEntry', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      displayName: 'New User',
+      photoURL: null,
+      presentedToken: 'view-tok',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.role).toBe(SHARE_ROLES.VIEWER);
+    expect(result.collaboratorEntry).toEqual({
+      role: SHARE_ROLES.VIEWER,
+      displayName: 'New User',
+      photoURL: null,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('allows a join with a valid edit token and returns an editor collaboratorEntry', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      displayName: 'New User',
+      presentedToken: 'edit-tok',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.role).toBe(SHARE_ROLES.EDITOR);
+  });
+
+  it('defaults displayName to "Anonymous" when none is provided', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'view-tok',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.collaboratorEntry.displayName).toBe('Anonymous');
+  });
+
+  it('rejects when the token resolves to null (disabled link)', () => {
+    const project = projectWithLinks({ viewEnabled: false });
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'view-tok',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.role).toBeNull();
+    expect(result.collaboratorEntry).toBeUndefined();
+    expect(result.reason).toBeTruthy();
+  });
+
+  it('rejects when the token resolves to null (unknown/stale token)', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'garbage',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.role).toBeNull();
+  });
+
+  it('rejects when no uid is provided', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: null,
+      presentedToken: 'view-tok',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it('rejects (no-op) when the joining uid is already the owner', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'owner-1',
+      presentedToken: 'view-tok',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.role).toBe(OWNER);
+  });
+});
+
+describe('generateShareToken', () => {
+  it('produces a string with at least 128 bits of entropy worth of length', () => {
+    const token = generateShareToken();
+    expect(typeof token).toBe('string');
+    // Base64 encodes 6 bits/char; 128 bits needs >= ~22 chars (16 bytes -> 22 chars, no padding).
+    expect(token.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('is URL-safe (no +, /, or = characters)', () => {
+    const token = generateShareToken();
+    expect(token).not.toMatch(/[+/=]/);
+  });
+
+  it('produces distinct tokens across many calls', () => {
+    const tokens = new Set();
+    for (let i = 0; i < 500; i++) {
+      tokens.add(generateShareToken());
+    }
+    expect(tokens.size).toBe(500);
+  });
+});
+
+describe('link expiry', () => {
+  it('resolveTokenRole rejects an expired view link (millis expiresAt)', () => {
+    const project = projectWithLinks({ viewExpiresAt: PAST });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBeNull();
+  });
+
+  it('resolveTokenRole rejects an expired edit link', () => {
+    const project = projectWithLinks({ editExpiresAt: PAST });
+    expect(resolveTokenRole(project, 'edit-tok', NOW)).toBeNull();
+  });
+
+  it('resolveTokenRole accepts a link with a future expiry', () => {
+    const project = projectWithLinks({ viewExpiresAt: FUTURE });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('resolveTokenRole accepts a link with null expiresAt (never expires)', () => {
+    const project = projectWithLinks({ viewExpiresAt: null });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('resolveTokenRole accepts a link with absent expiresAt entirely', () => {
+    const project = projectWithLinks();
+    delete project.links.view.expiresAt;
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('tolerates a Date instance for expiresAt', () => {
+    const project = projectWithLinks({ viewExpiresAt: new Date(PAST) });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBeNull();
+    const projectFuture = projectWithLinks({ viewExpiresAt: new Date(FUTURE) });
+    expect(resolveTokenRole(projectFuture, 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('tolerates a Firestore-Timestamp-like {seconds, nanoseconds} object', () => {
+    const expiredTimestamp = { seconds: Math.floor(PAST / 1000), nanoseconds: 0 };
+    const project = projectWithLinks({ viewExpiresAt: expiredTimestamp });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBeNull();
+
+    const futureTimestamp = { seconds: Math.floor(FUTURE / 1000), nanoseconds: 0 };
+    const projectFuture = projectWithLinks({ viewExpiresAt: futureTimestamp });
+    expect(resolveTokenRole(projectFuture, 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('tolerates a Timestamp-like object with toMillis()', () => {
+    const project = projectWithLinks({ viewExpiresAt: { toMillis: () => PAST } });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBeNull();
+  });
+
+  it('tolerates a Timestamp-like object with toDate()', () => {
+    const project = projectWithLinks({ viewExpiresAt: { toDate: () => new Date(PAST) } });
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBeNull();
+  });
+
+  it('does not throw on an unrecognized expiresAt shape and treats it as never-expiring', () => {
+    const project = projectWithLinks({ viewExpiresAt: 'not-a-real-timestamp' });
+    expect(() => resolveTokenRole(project, 'view-tok', NOW)).not.toThrow();
+    expect(resolveTokenRole(project, 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('computeEffectiveRole rejects a brand-new uid via an expired token', () => {
+    const project = projectWithLinks({ viewExpiresAt: PAST });
+    expect(computeEffectiveRole(project, 'stranger', 'view-tok', NOW)).toBeNull();
+  });
+
+  it('an EXISTING collaborator is unaffected by their original link later expiring (expiry gates joining, not standing access)', () => {
+    const project = projectWithLinks({ viewExpiresAt: PAST });
+    project.collaborators['user-a'] = { role: SHARE_ROLES.VIEWER, displayName: 'A', photoURL: null, joinedAt: 'x' };
+    // Presenting the now-expired token they originally joined with must not
+    // evict them - their stored role still holds.
+    expect(computeEffectiveRole(project, 'user-a', 'view-tok', NOW)).toBe(SHARE_ROLES.VIEWER);
+    // Even with no token presented at all, standing access is untouched.
+    expect(computeEffectiveRole(project, 'user-a', null, NOW)).toBe(SHARE_ROLES.VIEWER);
+  });
+
+  it('an existing collaborator can still be upgraded via a DIFFERENT, still-valid stronger link', () => {
+    const project = projectWithLinks({ viewExpiresAt: PAST, editExpiresAt: FUTURE });
+    project.collaborators['user-a'] = { role: SHARE_ROLES.VIEWER, displayName: 'A', photoURL: null, joinedAt: 'x' };
+    expect(computeEffectiveRole(project, 'user-a', 'edit-tok', NOW)).toBe(SHARE_ROLES.EDITOR);
+  });
+});
+
+describe('planCollaboratorJoin reasons', () => {
+  it('reason is "invalid_token" for an unknown token', () => {
+    const project = projectWithLinks();
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'garbage',
+      now: '2026-06-15T12:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('invalid_token');
+  });
+
+  it('reason is "link_disabled" for a disabled-but-matching link', () => {
+    const project = projectWithLinks({ viewEnabled: false });
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'view-tok',
+      now: '2026-06-15T12:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('link_disabled');
+  });
+
+  it('reason is "link_expired" for an expired-but-matching link', () => {
+    const project = projectWithLinks({ viewExpiresAt: new Date('2026-01-01T00:00:00.000Z') });
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'view-tok',
+      now: '2026-06-15T12:00:00.000Z',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('link_expired');
+  });
+
+  it('a valid, unexpired link still succeeds (no false-positive expiry)', () => {
+    const project = projectWithLinks({ viewExpiresAt: new Date('2027-01-01T00:00:00.000Z') });
+    const result = planCollaboratorJoin({
+      sharedProject: project,
+      uid: 'new-user',
+      presentedToken: 'view-tok',
+      now: '2026-06-15T12:00:00.000Z',
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.role).toBe(SHARE_ROLES.VIEWER);
+  });
+});
+
+describe('planOwnershipTransfer', () => {
+  function projectForTransfer() {
+    return {
+      ownerId: 'owner-1',
+      collaborators: {
+        'editor-a': { role: SHARE_ROLES.EDITOR, displayName: 'Editor A', photoURL: null, joinedAt: 'x' },
+        'viewer-b': { role: SHARE_ROLES.VIEWER, displayName: 'Viewer B', photoURL: null, joinedAt: 'x' },
+        'anon-c': { role: SHARE_ROLES.EDITOR, displayName: 'Anon C', photoURL: null, joinedAt: 'x', isAnonymous: true },
+      },
+    };
+  }
+
+  it('happy path: owner transfers to an existing non-anonymous collaborator', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'editor-a' });
+    expect(result.allowed).toBe(true);
+    expect(result.newOwnerId).toBe('editor-a');
+    expect(result.collaboratorUpdates).toEqual({ 'owner-1': { role: SHARE_ROLES.EDITOR } });
+  });
+
+  // Regression: the returned plan must express the recipient's REMOVAL from
+  // `collaborators`, not just the outgoing owner's demotion. An owner left
+  // sitting in the map is invisible normally (computeEffectiveRole checks
+  // ownerId first) but would make a later transfer away from them see a stale
+  // "already a collaborator" entry and mis-authorize it.
+  it('removes the new owner from collaborators and demotes the old owner to editor', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'editor-a' });
+    expect(result.allowed).toBe(true);
+    // New owner is no longer a collaborator — they're `ownerId` now.
+    expect(result.collaborators).not.toHaveProperty('editor-a');
+    // Outgoing owner is retained as an editor, not dropped entirely.
+    expect(result.collaborators['owner-1'].role).toBe(SHARE_ROLES.EDITOR);
+    // Everyone else is left exactly as they were.
+    expect(result.collaborators['viewer-b']).toEqual(project.collaborators['viewer-b']);
+    expect(result.collaborators['anon-c']).toEqual(project.collaborators['anon-c']);
+  });
+
+  it('does not mutate the input project when planning a transfer', () => {
+    const project = projectForTransfer();
+    planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'editor-a' });
+    expect(project.ownerId).toBe('owner-1');
+    expect(project.collaborators['editor-a'].role).toBe(SHARE_ROLES.EDITOR);
+    expect(project.collaborators).not.toHaveProperty('owner-1');
+  });
+
+  // The post-transfer map must not leave the new owner resolving as a mere
+  // collaborator, and the old owner must land on exactly `editor`.
+  it('produces a post-transfer state where roles resolve correctly', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'editor-a' });
+    const after = { ...project, ownerId: result.newOwnerId, collaborators: result.collaborators };
+    expect(computeEffectiveRole(after, 'editor-a', undefined)).toBe(OWNER);
+    expect(computeEffectiveRole(after, 'owner-1', undefined)).toBe(SHARE_ROLES.EDITOR);
+    // And a second transfer back is now legitimate, since the ex-owner is a real collaborator.
+    const back = planOwnershipTransfer({ sharedProject: after, actingUid: 'editor-a', recipientUid: 'owner-1' });
+    expect(back.allowed).toBe(true);
+  });
+
+  it('rejects when the acting user is not the current owner', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'editor-a', recipientUid: 'viewer-b' });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('not_owner');
+  });
+
+  it('rejects when the recipient is not an existing collaborator', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'stranger' });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('recipient_not_collaborator');
+  });
+
+  it('rejects a self-transfer', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'owner-1' });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('self_transfer');
+  });
+
+  it('rejects transferring to an anonymous collaborator (via stored isAnonymous flag)', () => {
+    const project = projectForTransfer();
+    const result = planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: 'anon-c' });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('recipient_anonymous');
+  });
+
+  it('rejects transferring to an anonymous collaborator (via injected predicate)', () => {
+    const project = projectForTransfer();
+    delete project.collaborators['editor-a'].isAnonymous;
+    const result = planOwnershipTransfer({
+      sharedProject: project,
+      actingUid: 'owner-1',
+      recipientUid: 'editor-a',
+      isAnonymousUid: (uid) => uid === 'editor-a',
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('recipient_anonymous');
+  });
+
+  it('rejects with missing uids', () => {
+    const project = projectForTransfer();
+    expect(planOwnershipTransfer({ sharedProject: project, actingUid: null, recipientUid: 'editor-a' }).allowed).toBe(false);
+    expect(planOwnershipTransfer({ sharedProject: project, actingUid: 'owner-1', recipientUid: null }).allowed).toBe(false);
+  });
+
+  it('does not throw on a malformed sharedProject', () => {
+    expect(() => planOwnershipTransfer({ sharedProject: null, actingUid: 'owner-1', recipientUid: 'editor-a' })).not.toThrow();
+    expect(planOwnershipTransfer({ sharedProject: null, actingUid: 'owner-1', recipientUid: 'editor-a' }).allowed).toBe(false);
+  });
+});
+
+describe('isSharedProject', () => {
+  it('is false for a personal project with no sharedProjectId', () => {
+    expect(isSharedProject({ id: 'p1', name: 'Personal' })).toBe(false);
+  });
+
+  it('is true once a project has a sharedProjectId', () => {
+    expect(isSharedProject({ id: 'p1', name: 'Team', sharedProjectId: 'sp1' })).toBe(true);
+  });
+
+  it('is false for an empty-string sharedProjectId', () => {
+    expect(isSharedProject({ id: 'p1', sharedProjectId: '' })).toBe(false);
+  });
+
+  it('is false for null/undefined input', () => {
+    expect(isSharedProject(null)).toBe(false);
+    expect(isSharedProject(undefined)).toBe(false);
+  });
+});
