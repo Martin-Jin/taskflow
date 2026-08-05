@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.95.2',
+    date: '2026-08-05',
+    title: 'Fixed a rare change-reverting bug',
+    changes: [
+      'Fixed a bug where a newly added sub-task, or a task you just marked complete, could silently revert a fraction of a second later — most noticeable as a completion checkbox that snapped back and needed a second click.',
+      'A repeating task\'s detail screen now shows only its current/next scheduled time instead of listing every future occurrence.',
+    ],
+  },
+  {
     version: '1.95.1',
     date: '2026-08-05',
     title: 'Redesigned the mobile calendar toolbar',

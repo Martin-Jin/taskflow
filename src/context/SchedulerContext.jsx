@@ -838,8 +838,27 @@ export function SchedulerProvider({ children }) {
 
   // ---- Core action: run the rebalance/reschedule engine -------------------
   const runRebalance = useCallback(() => {
-    const result = rebalance({ tasks, existingBlocks: blocks, routines, events, rules });
-    commit({ tasks, blocks: result.blocks }, `Re-balanced schedule (${result.stats.blocksCreated} blocks placed)`);
+    // Function-form commit (see addTask's comment above, and useHistoryState's
+    // own doc comment) — this can be invoked from a debounced timer
+    // (queueDueDateRebalance) that may fire in the same tick as another
+    // commit (a second addTask/updateTask, a completeTask, a Google Calendar
+    // sync callback, etc.). rebalance() itself must run against `current`
+    // (the freshest queued tasks/blocks), not the closure's stale `tasks`/
+    // `blocks` — otherwise it could schedule against a task that was just
+    // deleted, or silently drop one just added. `result` is captured via this
+    // outer `let` so the notification logic below (which needs
+    // result.overflow/stats/timeShifted) still has access to it after commit,
+    // and so the actionLabel (below) can report the real block count.
+    let result;
+    commit(
+      (current) => {
+        result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
+        return { tasks: current.tasks, blocks: result.blocks };
+      },
+      // Function-form label (see useHistoryState's commit) — result.stats
+      // isn't known until the updater above has actually run.
+      () => `Re-balanced schedule (${result.stats.blocksCreated} blocks placed)`
+    );
     setLastOverflow(result.overflow);
     const blockedNote =
       result.stats.blockedByDependencies > 0
@@ -877,7 +896,7 @@ export function SchedulerProvider({ children }) {
       setNotification({ type: 'success', message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
     }
     return result;
-  }, [tasks, blocks, routines, events, rules, commit]);
+  }, [routines, events, rules, commit]);
 
   // Always-current ref to runRebalance so the debounced callback below never
   // fires against a stale tasks/blocks closure captured when it was queued.
