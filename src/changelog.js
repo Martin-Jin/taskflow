@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '2.1.2',
+    date: '2026-08-06',
+    title: 'Fixed recurring tasks not scheduling when moved off their usual repeat days',
+    changes: [
+      'Fixed a bug where moving a single occurrence of a recurring task onto a day outside its normal repeat pattern (e.g. moving one occurrence of a Mon/Wed/Fri task to a Thursday) could leave it showing "0m remaining" and never get scheduled. The rest of the series now stays on its normal days, and completing the moved occurrence correctly advances to the next real occurrence.',
+      'Fixed some recurring sub-tasks getting stuck showing "0m remaining" forever after becoming recurring (most commonly ones migrated from an old checklist-style sub-task) — a one-time fix repairs any task already stuck like this.',
+      'Fixed the command palette (Ctrl/Cmd+K) keeping the first result highlighted when tabbing past it with the keyboard instead of following focus.',
+    ],
+  },
+  {
     version: '2.1.1',
     date: '2026-08-06',
     title: 'Fixed recurring tasks staying marked complete after being rescheduled',

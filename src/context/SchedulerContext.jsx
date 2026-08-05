@@ -78,6 +78,7 @@ import { nextLabelColor } from '../utils/labelColor';
 import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
 import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
+import { migrateStaleRecurringRemainingHours } from '../migrations/migrateStaleRecurringRemainingHours';
 
 const SchedulerContext = createContext(null);
 
@@ -572,6 +573,15 @@ export function SchedulerProvider({ children }) {
     false
   );
 
+  // Guards the one-time migrateStaleRecurringRemainingHours backfill below —
+  // see src/migrations/migrateStaleRecurringRemainingHours.js (a recurring
+  // task that became recurring while already isCompleted/remainingHours: 0
+  // used to stay stuck there forever).
+  const [staleRecurringRemainingHoursMigrationDone, setStaleRecurringRemainingHoursMigrationDone] = usePersistedState(
+    'staleRecurringRemainingHoursMigrationDone',
+    false
+  );
+
   // events: seeded from local storage so a refresh doesn't blank the
   // calendar grid while the silent Google re-auth (below) is in flight, or
   // permanently if Google Calendar isn't configured at all (mock events
@@ -744,6 +754,22 @@ export function SchedulerProvider({ children }) {
       commit({ tasks: synced, blocks: stateRef.current.blocks }, 'Synced recurring parent/sub-task consistency');
     }
     setRecurrenceConsistencyMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateStaleRecurringRemainingHours.js.
+  // Runs after the two migrations above (so it sees final isRecurring state)
+  // and only commits a history entry when this device actually has a
+  // recurring task stuck at remainingHours <= 0 with nothing legitimately
+  // backing it. Safe to delete this effect once the flag above is true for
+  // all users.
+  useEffect(() => {
+    if (staleRecurringRemainingHoursMigrationDone) return;
+    const repaired = migrateStaleRecurringRemainingHours(stateRef.current.tasks);
+    if (repaired !== stateRef.current.tasks) {
+      commit({ tasks: repaired, blocks: stateRef.current.blocks }, 'Fixed recurring tasks stuck at 0 remaining hours');
+    }
+    setStaleRecurringRemainingHoursMigrationDone(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1416,6 +1442,14 @@ export function SchedulerProvider({ children }) {
         // as "completed today" on the dashboard.
         const occurrenceDate = existing.dueDate;
 
+        // If this occurrence was moved off-pattern (see
+        // computeRecurringRescheduleUpdate's overrides branch), its entry is
+        // keyed by this same occurrenceDate — drop it now that the occurrence
+        // it described is closed out, so it doesn't linger as dead data.
+        const nextOverrides = existing.overrides && occurrenceDate in existing.overrides
+          ? Object.fromEntries(Object.entries(existing.overrides).filter(([key]) => key !== occurrenceDate))
+          : existing.overrides;
+
         // Trim anything older than 7 days out of the raw `completedDates` list
         // into the monthly `completionHistory` aggregate instead of dropping
         // it outright — see types/index.js's Task typedef, and
@@ -1446,6 +1480,7 @@ export function SchedulerProvider({ children }) {
                 completedAt: nowIso,
                 completedDates: keptDates,
                 completionHistory: nextHistory,
+                overrides: nextOverrides,
                 updatedAt: nowIso,
               };
             }
