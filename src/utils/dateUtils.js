@@ -184,6 +184,13 @@ export function formatDisplayDate(iso) {
   });
 }
 
+/** Format an ISO date compactly, e.g. "Aug 5" — no weekday/year, for tight
+ * spaces like the mobile Day view's time-gutter date label. */
+export function formatShortDate(iso) {
+  const date = fromISODate(iso);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 /**
  * Format a full ISO datetime (unlike the other formatters here, this takes a
  * timestamp with a time component — e.g. Comment.createdAt — not a bare
