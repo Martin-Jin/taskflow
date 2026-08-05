@@ -19,6 +19,10 @@
  *     stamp lastPushedFingerprintRef).
  *   - `computePushStampPlan(currentState, lastPushedFingerprint)` —
  *     schedulePush's optimistic-stamp/rollback fingerprint sequencing.
+ *   - `hasNewCompletion(prevTasks, nextTasks)` — whether an edit just marked a
+ *     task completed, which schedulePush uses to bypass the push debounce so
+ *     the notify-worker can't read a stale incomplete task and email an
+ *     overdue reminder for something already finished.
  * The hook still performs all the actual React state-setting/Firestore I/O;
  * these functions only compute the decisions, so they're safe to test in
  * isolation while trusting (per a read-through of useCloudSync.js) that the
@@ -43,6 +47,7 @@ import {
   computePushStampPlan,
   planAutoBackupPrune,
   shouldRestoreEventsFromBackup,
+  hasNewCompletion,
 } from '../../src/hooks/useCloudSync.js';
 
 describe('isValidFieldValue', () => {
@@ -426,6 +431,52 @@ describe('computePushStampPlan', () => {
     const plan = computePushStampPlan(state, null);
     expect(plan.shouldPush).toBe(true);
     expect(plan.rollbackFingerprint).toBe(null);
+  });
+});
+
+describe('hasNewCompletion', () => {
+  const incomplete = { id: 't1', title: 'A', isCompleted: false };
+  const complete = { id: 't1', title: 'A', isCompleted: true };
+
+  it('detects a task that just became completed', () => {
+    expect(hasNewCompletion([incomplete], [complete])).toBe(true);
+  });
+
+  it('ignores a task that was already completed before', () => {
+    expect(hasNewCompletion([complete], [complete])).toBe(false);
+  });
+
+  it('ignores an un-completion (restore), which only risks a missing notification', () => {
+    expect(hasNewCompletion([complete], [incomplete])).toBe(false);
+  });
+
+  it('detects a newly-added task that arrives already completed', () => {
+    expect(hasNewCompletion([incomplete], [incomplete, { id: 't2', isCompleted: true }])).toBe(true);
+  });
+
+  it('ignores unrelated edits to an incomplete task', () => {
+    expect(hasNewCompletion([incomplete], [{ ...incomplete, title: 'A renamed' }])).toBe(false);
+  });
+
+  it('treats the first-ever call (null baseline) as no completion, so mount does not force a push', () => {
+    expect(hasNewCompletion(null, [complete])).toBe(false);
+    expect(hasNewCompletion(undefined, [complete])).toBe(false);
+  });
+
+  it('tolerates missing/empty task arrays', () => {
+    expect(hasNewCompletion([], [])).toBe(false);
+    expect(hasNewCompletion([], undefined)).toBe(false);
+    expect(hasNewCompletion([complete], [])).toBe(false);
+  });
+
+  it('detects a completion among many unchanged tasks', () => {
+    const before = [
+      { id: 'a', isCompleted: true },
+      { id: 'b', isCompleted: false },
+      { id: 'c', isCompleted: false },
+    ];
+    const after = before.map((t) => (t.id === 'c' ? { ...t, isCompleted: true } : t));
+    expect(hasNewCompletion(before, after)).toBe(true);
   });
 });
 

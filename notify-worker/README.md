@@ -19,7 +19,18 @@ design.
   regardless of the task's own due date — the email distinguishes "due today
   and missed" from "missed but not due today/overdue" and always includes
   the due date. Re-arms if the task is rescheduled and misses again.
-- **Overdue** (task's own `dueDate` is in the past) is unchanged.
+- **Overdue** (task's own `dueDate` is in the past) fires **once per `dueDate`
+  value**, not once per day the task stays overdue. It re-arms only when the
+  due date genuinely changes, so a rescheduled-but-still-late task does get a
+  fresh email. This replaced an earlier once-per-calendar-day rule that caused
+  repeat emails for already-finished tasks: the client's `isCompleted` push is
+  debounced and best-effort on tab teardown, so a completion could fail to
+  reach Firestore, and the daily re-arm then re-sent the same overdue email
+  every day indefinitely. Keying on `dueDate` makes the trigger independent of
+  sync timing. Relatedly, the "clear stale overdue state" pass is driven by the
+  `overdue_*` docs that actually exist in `notificationState` rather than by a
+  walk over the tasks array — a completed task is skipped by that walk and a
+  deleted task isn't in it at all, so both used to leak their state doc forever.
 - **Starting soon** is unchanged: fires once a scheduled block's start time
   is within the user's configured threshold, re-arming on reschedule.
 

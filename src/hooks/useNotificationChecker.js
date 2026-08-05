@@ -76,27 +76,29 @@ export function useNotificationChecker({ tasks, blocks, notificationSettings, se
       }
 
       if (taskOverdue || taskDueToday) {
+        // Which tasks are overdue as of this tick, used below to reap dedupe
+        // entries for tasks that no longer are. Collected separately from the
+        // notify pass because the reset can't live inside it: the loop's
+        // `if (task.isCompleted || !task.dueDate) continue` skips completed
+        // tasks, and a deleted task isn't in `tasks` at all — so an in-loop
+        // delete was unreachable for both of the cases it was written for
+        // (same bug the email worker had; see computeNotifications.js).
+        const stillOverdueIds = new Set();
+
         for (const task of tasks) {
           if (task.isCompleted || !task.dueDate) continue;
           const isOverdue = task.dueDate < todayISO;
 
-          // Once a task is no longer overdue (completed, rescheduled forward,
-          // or its recurring due date advanced), clear its dedupe entry so a
-          // LATER overdue period for this same task id notifies again
-          // instead of staying silently suppressed forever.
-          if (!isOverdue) {
-            firedOverdueRef.current.delete(task.id);
-          }
-
           if (taskOverdue && isOverdue) {
-            // Once per calendar day regardless of priority — matches the
-            // email worker's cadence (an hourly repeat for urgent/high tasks
-            // used to fire ~24x/day, which read as spam). Also re-arms
-            // immediately if dueDate changed, even within the same day, so a
-            // reschedule is always treated as fresh news.
+            stillOverdueIds.add(task.id);
+            // Once per dueDate VALUE, not once per calendar day — mirrors the
+            // email worker's rule (see notificationState.js's 'overdue' case
+            // for why a daily re-arm caused repeat notifications for
+            // already-completed tasks). Re-arms only on a genuine dueDate
+            // change.
             const prev = firedOverdueRef.current.get(task.id);
             const dueDateChanged = prev && prev.dueDate !== task.dueDate;
-            if (!prev || dueDateChanged || prev.date !== todayISO) {
+            if (!prev || dueDateChanged) {
               firedOverdueRef.current.set(task.id, { date: todayISO, dueDate: task.dueDate });
               notify('warning', `Overdue: ${task.title}`, `Was due ${task.dueDate}`);
             }
@@ -107,6 +109,17 @@ export function useNotificationChecker({ tasks, blocks, notificationSettings, se
               firedDueTodayRef.current.set(task.id, { date: todayISO, dueDate: task.dueDate });
               notify('info', `Due today: ${task.title}`, 'Due date is today');
             }
+          }
+        }
+
+        // Reap dedupe entries for tasks that are no longer overdue — completed,
+        // rescheduled forward, deleted, or a recurring due date that advanced —
+        // so a LATER overdue period for the same task id notifies again rather
+        // than staying suppressed for the page's lifetime. Driven by the
+        // stillOverdueIds set gathered above, for the reason explained there.
+        if (taskOverdue) {
+          for (const taskId of firedOverdueRef.current.keys()) {
+            if (!stillOverdueIds.has(taskId)) firedOverdueRef.current.delete(taskId);
           }
         }
       }

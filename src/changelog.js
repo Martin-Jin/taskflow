@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.98.0',
+    date: '2026-08-06',
+    title: 'No more repeat overdue notifications for tasks you already finished',
+    changes: [
+      'Fixed overdue notifications (email and in-app) repeating day after day for tasks that were already completed or deleted. Completing or deleting a task now properly clears its notification state — previously that only worked if you pushed the due date forward, so a finished task could keep emailing you indefinitely.',
+      'An overdue task is now notified about once per due date, rather than once every day it stays overdue. Changing a task\'s due date re-arms it, so a rescheduled-but-still-late task still gets a fresh reminder.',
+      'Completing a task now syncs to the cloud immediately instead of after a short delay, so closing the tab right after ticking something off no longer leaves the reminder system thinking it\'s still outstanding.',
+    ],
+  },
+  {
     version: '1.97.0',
     date: '2026-08-06',
     title: 'Recurring sub-tasks show as done for today, and auto-complete their parent',
