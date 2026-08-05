@@ -17,6 +17,7 @@ import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, Pen
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
+import CalendarFilterMenu from './CalendarFilterMenu';
 import BlockDetailModal from '../Modals/BlockDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
@@ -26,6 +27,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
+import { DEFAULT_CALENDAR_FILTER, filterCalendarItems, isCalendarFilterActive, normalizeCalendarFilter } from '../../utils/calendarFilter';
 import HelpTooltip from '../Common/HelpTooltip';
 
 function getWeekStart(iso) {
@@ -83,6 +85,23 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
     isSyncing,
     ensureGoogleRangeSynced,
   } = useScheduler();
+
+  // Calendar filter (show mode + project/tag multi-select) — device-local,
+  // like Tasks' own filterByView, so not part of BACKUP_FIELDS/cloud sync
+  // (see CLAUDE.md's Backups section). normalizeCalendarFilter guards
+  // against a stale/partial persisted shape from an earlier version.
+  const [rawCalendarFilter, setCalendarFilter] = usePersistedState('taskflow_calendar_filter_v1', DEFAULT_CALENDAR_FILTER);
+  const calendarFilter = normalizeCalendarFilter(rawCalendarFilter);
+  const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const { filteredBlocks, filteredEvents } = useMemo(
+    () => filterCalendarItems(blocks, events, calendarFilter, taskById),
+    [blocks, events, calendarFilter, taskById]
+  );
+  // Whether ANY filter is currently narrowing the calendar — WeekView/
+  // MonthView each compute their own visible-range-specific "did the filter
+  // hide something in THIS range" check (see their filterIsActive prop use)
+  // since only they know which days are on screen.
+  const calendarFilterIsActive = isCalendarFilterActive(calendarFilter);
   // ---- Mobile swipe-to-page carousel --------------------------------------
   // A live-tracking 3-page carousel (prev/current/next, see the render below)
   // instead of the old "detect a swipe past a threshold, then jump" — the
@@ -249,6 +268,12 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
       return (
         <MonthView
           monthStart={base}
+          blocks={filteredBlocks}
+          events={filteredEvents}
+          unfilteredBlocks={blocks}
+          unfilteredEvents={events}
+          filterIsActive={calendarFilterIsActive}
+          onClearFilter={() => setCalendarFilter(DEFAULT_CALENDAR_FILTER)}
           onSelectBlock={(block) => setSelectedBlockId(block.id)}
           onSelectEvent={(evt) => setSelectedEventId(evt.id)}
           onSelectDay={jumpToDay}
@@ -261,6 +286,12 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
         dayCount={dayCount}
         isMobile={isMobile}
         pxPerMin={pxPerMin}
+        blocks={filteredBlocks}
+        events={filteredEvents}
+        unfilteredBlocks={blocks}
+        unfilteredEvents={events}
+        filterIsActive={calendarFilterIsActive}
+        onClearFilter={() => setCalendarFilter(DEFAULT_CALENDAR_FILTER)}
         onZoomDelta={handleZoomDelta}
         onSelectBlock={(block) => setSelectedBlockId(block.id)}
         onSelectEvent={(evt) => setSelectedEventId(evt.id)}
@@ -536,12 +567,18 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
             </button>
           )}
+          {/* Mobile: filter trigger joins the same trailing cluster as
+              Today/refresh (see calendar.css's margin-left: auto handling
+              for the first of that cluster) — desktop's copy lives in
+              .calendar-toolbar-actions below instead. */}
+          {isMobile && <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />}
         </div>
         <div className="calendar-toolbar-actions">
           {/* Desktop only — on mobile this moves into the FAB speed-dial
               below (see .calendar-fab) instead of wrapping onto its own row. */}
           {!isMobile && (
             <>
+              <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
               <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
                 <Zap size={14} />
                 Re-balance schedule

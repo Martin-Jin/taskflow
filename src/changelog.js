@@ -9,7 +9,11 @@
  *
  * Entries are newest-first. `CURRENT_VERSION` is always the first entry's
  * version — bump it (and add a new entry above) with every push that ships
- * a user-visible change. Written in plain English for end users, not a raw
+ * a user-visible change. Versions are normal semver: the minor rolls into
+ * the next major at 9, so 1.99.0 is followed by 2.0.0 — never 1.100.0.
+ * (1.100.0/1.101.0 briefly shipped and were renumbered to 2.0.0/2.1.0;
+ * `lastSeenChangelogVersion` is compared with `!==`, not ordered semver,
+ * so renumbering only costs an extra "What's New" pop.) Written in plain English for end users, not a raw
  * commit log — group related commits into one entry if they shipped together
  * (e.g. same day) and skip anything with no user-visible effect.
  * ============================================================================
@@ -17,7 +21,17 @@
 
 export const CHANGELOG = [
   {
-    version: '1.100.0',
+    version: '2.1.0',
+    date: '2026-08-06',
+    title: 'A filter menu for the Calendar toolbar',
+    changes: [
+      'Added a Filter button to the Calendar toolbar (desktop and mobile) to narrow what shows on the grid: switch between "Tasks & events", "Tasks only", or "Events only", and multi-select by Project or Tag — projects/tags you add later are included automatically unless you\'ve explicitly narrowed the list. The trigger shows a small dot whenever a filter is active.',
+      'When a filter hides everything in the visible week/month, the calendar now shows a clear "Nothing matches your filters" message with a one-tap "Clear filters" button, instead of looking like an empty calendar.',
+      'Fixed the Tasks page\'s List/Board/Gantt status filter (Active/Completed/All/No due date) resetting back to its default every time you reloaded the app.',
+    ],
+  },
+  {
+    version: '2.0.0',
     date: '2026-08-06',
     title: 'Reorder Board columns by dragging',
     changes: [

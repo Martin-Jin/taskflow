@@ -27,8 +27,23 @@ import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGroupi
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MAX_VISIBLE_ITEMS = 3; // per day cell before collapsing into "+N more"
 
-export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, onSelectDay }) {
-  const { tasks, blocks, events } = useScheduler();
+export default function MonthView({
+  monthStart,
+  onSelectBlock,
+  onSelectEvent,
+  onSelectDay,
+  // See WeekView's matching props for why these default to raw context
+  // state and what the unfiltered/filterIsActive pair is for.
+  blocks: blocksProp,
+  events: eventsProp,
+  unfilteredBlocks,
+  unfilteredEvents,
+  filterIsActive = false,
+  onClearFilter,
+}) {
+  const { tasks, blocks: contextBlocks, events: contextEvents } = useScheduler();
+  const blocks = blocksProp ?? contextBlocks;
+  const events = eventsProp ?? contextEvents;
   const todayIso = toISODate(new Date());
   const taskById = useMemo(() => Object.fromEntries(tasks.map((t) => [t.id, t])), [tasks]);
 
@@ -38,8 +53,28 @@ export default function MonthView({ monthStart, onSelectBlock, onSelectEvent, on
 
   const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days), [blocks, events, days]);
 
+  // Same empty-filter-overlay logic as WeekView — see its own comment for
+  // why the check is scoped to whether THIS visible range had anything
+  // before filtering, not just whether the filter itself is active.
+  const showEmptyFilterOverlay = useMemo(() => {
+    if (!filterIsActive || !unfilteredBlocks || !unfilteredEvents) return false;
+    if (blocksByDay.size > 0 || eventsByDay.size > 0) return false;
+    const unfiltered = groupItemsByDay(unfilteredBlocks, unfilteredEvents, days);
+    return unfiltered.blocksByDay.size > 0 || unfiltered.eventsByDay.size > 0;
+  }, [filterIsActive, unfilteredBlocks, unfilteredEvents, blocksByDay, eventsByDay, days]);
+
   return (
-    <div className="month-grid">
+    <div className="month-grid" style={{ position: 'relative' }}>
+      {showEmptyFilterOverlay && (
+        <div className="calendar-empty-filter-overlay">
+          <div className="calendar-empty-filter-message">
+            <p>Nothing matches your filters.</p>
+            <button type="button" className="btn btn-primary" onClick={onClearFilter}>
+              Clear filters
+            </button>
+          </div>
+        </div>
+      )}
       {DOW_LABELS.map((label) => (
         <div key={label} className="month-dow-header">
           {label}

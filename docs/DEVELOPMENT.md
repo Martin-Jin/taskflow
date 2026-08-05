@@ -12,6 +12,7 @@ see the main [README](../README.md).
 - [Project layout](#project-layout)
 - [Persistence](#persistence)
 - [Contributing / working in this codebase](#contributing--working-in-this-codebase)
+  - [Versioning and the changelog](#versioning-and-the-changelog)
 - [Tech stack](#tech-stack)
 - [Testing](#testing)
 - [Local dev tips](#local-dev-tips)
@@ -298,7 +299,7 @@ src/
 │   └── rebalanceEngine.js    # Orchestrates capacity+allocator+search, preserves locks
 ├── components/
 │   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, WeeklyProgressRing, NotesCard (+ notesModel.js)
-│   ├── Calendar/              # WeekView (day/week time-grid, drag/resize), MonthView (density overview), CalendarPage
+│   ├── Calendar/              # WeekView (day/week time-grid, drag/resize), MonthView (density overview), CalendarPage, CalendarFilterMenu (show-type/project/tag filter — predicate lives in utils/calendarFilter.js)
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
@@ -392,6 +393,17 @@ happens when you click **Settings → Import from Todoist**. Use
 **Settings → Reset local data** to wipe everything and start fresh from
 mock data.
 
+Some persisted state is deliberately **device-local** — it lives in
+`localStorage` (usually via `usePersistedState`) but is deliberately kept
+out of `BACKUP_FIELDS` and cloud sync, because it's a per-device view
+preference rather than data a user would be sad to lose on a device switch:
+dashboard widget visibility, calendar zoom level, the Tasks page's
+per-view status filter (`taskflow_tasks_filter_by_view_v1`), and the
+Calendar's filter menu (`taskflow_calendar_filter_v1`). Use a versioned key
+for these so a shape change can't strand users on a stale persisted value,
+and merge the loaded value over the defaults defensively rather than
+trusting it.
+
 If signed in (see [Account & cross-device sync](../README.md#account--cross-device-sync)
 in the README), the same data also syncs to Firestore — `localStorage` on
 the current device stays the always-on, works-offline source of truth, and
@@ -441,6 +453,40 @@ Read [How the scheduler works](#how-the-scheduler-works),
 [Data model](#data-model), and [Project layout](#project-layout) before
 making structural changes — they cover what the app does architecturally;
 this section covers how the pieces talk to each other.
+
+### Versioning and the changelog
+
+Every push shipping a user-visible change adds an entry (newest-first) to
+`src/changelog.js` and bumps the version. There is **one** version number
+in three places that must always agree: the first `CHANGELOG` entry's
+`version`, `CURRENT_VERSION` (derived from it automatically), and
+`package.json`'s `version`.
+
+Versions are **standard semver — `MAJOR.MINOR.PATCH`, each part an integer
+that rolls over at 9, never a multi-digit "1.100.0"**:
+
+- **Patch** (`2.1.0` → `2.1.1`) — a bug fix or small correction to
+  something already shipped, with no new capability.
+- **Minor** (`2.1.3` → `2.2.0`) — a new user-visible feature or a
+  meaningful change to an existing one. This is the common case.
+- **Major** (`2.9.0` → `3.0.0`) — reserved for the minor rolling past 9,
+  or a genuine overhaul of how the app works. **`x.9.0` is followed by
+  `(x+1).0.0`** — not `x.10.0`. Resetting the lower parts to zero on a
+  roll-over is what keeps this readable.
+
+This was wrong once already (`1.99.0` was followed by `1.100.0`/`1.101.0`,
+since renumbered to `2.0.0`/`2.1.0`) — that's the exact mistake this rule
+exists to prevent, so check the previous entry's numbers rather than
+blindly incrementing the last component.
+
+Renumbering an already-shipped entry is safe but not free: `App.jsx`
+compares `lastSeenChangelogVersion` to `CURRENT_VERSION` with `!==`, not
+ordered semver, so a rename just re-pops the "What's New" modal once for
+users who'd already seen it. Prefer getting it right the first time.
+
+Write entries in plain English for end users, not a commit log — group
+same-day/same-branch commits into one entry and skip anything with no
+user-visible effect (internal refactors, migration code).
 
 ## Tech stack
 

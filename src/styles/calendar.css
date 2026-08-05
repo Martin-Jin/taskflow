@@ -297,7 +297,8 @@
      claimed the free space, so there's no need to conditionally strip it
      back off for the two-button case. */
   .calendar-today-btn-solo,
-  .calendar-refresh-btn-mobile {
+  .calendar-refresh-btn-mobile,
+  .calendar-filter-trigger {
     width: auto;
     margin-left: auto;
   }
@@ -1208,4 +1209,126 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* ----------------------------------------------------------------------
+   CalendarFilterMenu (src/components/Calendar/CalendarFilterMenu.jsx) —
+   reuses .project-actions-dropdown's popover shell (same as ViewFilterMenu/
+   DashboardCustomizeMenu) for the Show/Projects/Tags groups.
+   ---------------------------------------------------------------------- */
+.calendar-filter-trigger {
+  position: relative;
+}
+
+.calendar-filter-trigger.is-active {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* Small accent dot signalling an active filter even when the trigger's own
+   icon color change (see .is-active above) might be easy to miss at a
+   glance — matches the app's existing convention of a dot for "something's
+   different here" rather than inventing a badge/count. */
+.calendar-filter-active-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-solid-bg);
+}
+
+.calendar-filter-dropdown {
+  width: 230px;
+}
+
+.calendar-filter-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.calendar-filter-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 2px 8px 4px;
+  cursor: pointer;
+}
+
+.calendar-filter-group-heading {
+  margin: 0;
+}
+
+.calendar-filter-group-summary {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.calendar-filter-chevron {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-filter-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.calendar-filter-group-body {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.calendar-filter-reset-item {
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 2px;
+  padding-bottom: 9px;
+}
+
+.calendar-filter-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ----------------------------------------------------------------------
+   Empty-filter overlay (see WeekView/MonthView's emptyFilterMessage) — a
+   centered message over the grid, shown only when an active filter hid
+   every block/event that would otherwise be in the visible range. Sits
+   above the grid but lets clicks through to it (pointer-events: none on
+   the overlay itself; only the "Clear filters" button re-enables them) so
+   the empty grid underneath stays usable (e.g. click-to-create-event).
+   ---------------------------------------------------------------------- */
+.calendar-empty-filter-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.calendar-empty-filter-message {
+  pointer-events: auto;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: min(280px, 90vw);
+}
+
+.calendar-empty-filter-message p {
+  margin: 0 0 8px;
 }

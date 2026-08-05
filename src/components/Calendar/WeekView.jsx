@@ -112,8 +112,21 @@ export default function WeekView({
   onSelectEvent,
   onCreateEvent,
   onSelectDay,
+  // blocks/events default to raw context state (unfiltered) so any other
+  // consumer of this component that doesn't pass them keeps working
+  // unchanged; CalendarPage always passes the calendar-filter-applied
+  // arrays plus the unfiltered ones (see filterIsActive/onClearFilter below,
+  // used only to decide whether to show the empty-filter overlay).
+  blocks: blocksProp,
+  events: eventsProp,
+  unfilteredBlocks,
+  unfilteredEvents,
+  filterIsActive = false,
+  onClearFilter,
 }) {
-  const { tasks, blocks, events, projects, routines, updateBlock, toggleBlockLock, updateEvent, setNotification } = useScheduler();
+  const { tasks, blocks: contextBlocks, events: contextEvents, projects, routines, updateBlock, toggleBlockLock, updateEvent, setNotification } = useScheduler();
+  const blocks = blocksProp ?? contextBlocks;
+  const events = eventsProp ?? contextEvents;
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
@@ -125,6 +138,20 @@ export default function WeekView({
   // layout with useMemo — this is otherwise redone on every render,
   // including every dragover event that fires continuously while dragging.
   const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days), [blocks, events, days]);
+
+  // Empty-filter overlay: only worth showing when a filter is actually
+  // active AND it hid something that would otherwise be visible in THIS
+  // range — a genuinely empty week with no filters applied should keep
+  // looking like a normal empty calendar, not trigger the "nothing
+  // matches" messaging. Recomputing groupItemsByDay against the unfiltered
+  // arrays here is cheap (same days range, no lane-packing) and only runs
+  // while a filter is on.
+  const showEmptyFilterOverlay = useMemo(() => {
+    if (!filterIsActive || !unfilteredBlocks || !unfilteredEvents) return false;
+    if (blocksByDay.size > 0 || eventsByDay.size > 0) return false;
+    const unfiltered = groupItemsByDay(unfilteredBlocks, unfilteredEvents, days);
+    return unfiltered.blocksByDay.size > 0 || unfiltered.eventsByDay.size > 0;
+  }, [filterIsActive, unfilteredBlocks, unfilteredEvents, blocksByDay, eventsByDay, days]);
   // Blocks and events are laid out together (one lane-packing pass sees
   // both) so an overlapping block+event pair packs into side-by-side lanes
   // (or, if short enough, collapses into one "N events" chip) exactly like
@@ -730,7 +757,19 @@ export default function WeekView({
   return (
     // A single flex-column wrapper — CalendarPage's own wrapping div lays
     // WeekView out as one flex ROW child (sized via .week-grid's flex:1).
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+    // position:relative so the empty-filter overlay below can cover just
+    // this component's own grid, not the whole page.
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
+      {showEmptyFilterOverlay && (
+        <div className="calendar-empty-filter-overlay">
+          <div className="calendar-empty-filter-message">
+            <p>Nothing matches your filters.</p>
+            <button type="button" className="btn btn-primary" onClick={onClearFilter}>
+              Clear filters
+            </button>
+          </div>
+        </div>
+      )}
       <div
         className={`week-grid ${isMobile && dayCount === 1 ? 'is-single-day-mobile' : ''}`}
         ref={gridRef}
