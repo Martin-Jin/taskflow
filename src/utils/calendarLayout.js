@@ -328,19 +328,34 @@ export function layoutDayItems(dayItems, pxPerMin) {
   return results;
 }
 
-// A pushed-down item's box TOP is never allowed to cross past the item's own
-// natural END position on the axis — this is a hard geometric limit, not a
-// tunable tolerance. Below this line, some pushdown is always fine no matter
-// how large in isolation: as long as the box's top still lands somewhere
-// within the item's own real time span, it still visually reads as "this
-// box belongs to this time slot," even if crowded. The moment a pushed top
-// would land AFTER the item's own true end time, though, the box's start
-// itself would render later than when the task is even scheduled to
-// finish — an unambiguous misalignment at any zoom level, not a matter of
-// degree, so there's nothing to tune here (unlike a "how many minutes of
-// drift is tolerable" budget, which by definition has to keep being
-// re-justified against whatever zoom level breaks it next). See packLane for
-// where this is enforced.
+// Maximum pushdown (in PIXELS, not real minutes) a single item is allowed to
+// inherit from its predecessor(s) in the same lane before it's folded into a
+// chip instead of stacked — see packLane.
+//
+// Pixels are the right unit here, not real minutes: a real-minute budget (an
+// earlier version of this check used one — see git history) has to mean a
+// different number of pixels at every zoom level, so it either tolerates too
+// much crowding at low zoom or folds too eagerly at high zoom. Pixels are the
+// zoom-INVARIANT measure of "how far off does this look on screen" — 26px of
+// drift reads the same amount of "off" whether zoomed in or out. One
+// MIN_BLOCK_HEIGHT_PX clamp on a single near-zero-duration predecessor
+// legitimately needs to push its immediate neighbour down by close to
+// MIN_BLOCK_HEIGHT_PX — that's the harmless "one item's own clamp nudges the
+// next box down a bit" case this pushdown mechanism exists to support. What
+// this budget catches is a CHAIN of predecessors compounding their pushdown
+// well past what any single clamp could produce alone, which is what
+// eventually shoves a real item's box down far enough to visually overflow
+// past its own true end time — see the original bug report (several short
+// tasks stacked ahead of a real one at any zoom level, not just extreme
+// zoom-out).
+//
+// +BLOCK_GAP_PX accounts for the inter-item breathing room packLane always
+// adds after a box's bottom (see prevBottom below) — without it, even a
+// single legitimate near-zero-duration predecessor's clamp (worth exactly
+// MIN_BLOCK_HEIGHT_PX of pushdown on its own) would tip over a bare
+// MIN_BLOCK_HEIGHT_PX budget once that gap is added in, misfiring on the
+// single-clamp case this budget is meant to tolerate.
+export const EXCESSIVE_PUSHDOWN_PX = MIN_BLOCK_HEIGHT_PX + BLOCK_GAP_PX;
 
 /**
  * Assign a final {top, height} in px to every item in a lane, guaranteeing
@@ -352,16 +367,21 @@ export function layoutDayItems(dayItems, pxPerMin) {
  * run of short meetings rather than letting their boxes collide.
  *
  * That pushdown has no upper bound by itself though: if enough predecessors
- * in a lane were stretched (or one was stretched a lot), the accumulated
- * push can shove a later, perfectly real-length item's box down far enough
- * that it visually overflows past its own true end time on the hour axis
- * (e.g. a task truly ending at 10:00 rendering into the 11:00 slot) — a
- * worse lie than the harmless few-px stretch this mechanism is meant to
- * produce. So before accepting a pushed position, check whether the pushed
- * TOP would land past the item's own natural END position on the axis — a
- * hard, zoom-independent line (see the comment directly above this function
- * for why this is a fixed geometric limit rather than a tunable budget). If
- * it would, don't render the pair stacked at all — fold the pushed-down item
+ * in a lane were stretched (each pushdown adding to the last), the
+ * accumulated push can shove a later, perfectly real-length item's box down
+ * far enough that it visually overflows past its own true end time on the
+ * hour axis (e.g. a task truly ending at 10:00 rendering well into the 11:00
+ * slot) — a worse lie than the harmless few-px stretch this mechanism is
+ * meant to produce. Critically, this is NOT caught by checking the pushed
+ * TOP alone against the item's own natural end (an earlier version of this
+ * check did just that): a chain of several small pushdowns can each
+ * individually leave the TOP well before the item's own end, while their sum
+ * still drags the BOTTOM (top + height) past it — the top-only check misses
+ * exactly the multi-predecessor chain that causes the worst overflow. So
+ * before accepting a pushed position, check how far the pushdown itself
+ * (pushedTop - naturalTop, in pixels) exceeds EXCESSIVE_PUSHDOWN_PX (see its
+ * own doc comment for why pixels, not real minutes, are the right unit). If
+ * it does, don't render the pair stacked at all — fold the pushed-down item
  * into the previous box as a `kind: 'cluster'` chip instead (same shape
  * foldSequentialItems/layoutDayItems already produce), sized to its own
  * honest natural span rather than a further-pushed one. The merged cluster
@@ -377,12 +397,12 @@ export function packLane(items, pxPerMin) {
 
   for (const item of sorted) {
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
-    const naturalEnd = (item.end - GRID_START_MIN) * pxPerMin;
     const naturalHeight = Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin);
     const pushedTop = Math.max(naturalTop, prevBottom);
+    const pushdownPx = pushedTop - naturalTop;
 
     const prevPacked = out[out.length - 1];
-    if (prevPacked && pushedTop > naturalEnd) {
+    if (prevPacked && pushdownPx > EXCESSIVE_PUSHDOWN_PX) {
       // Fold into (or grow) a cluster instead of accepting a position that
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN } from '../../src/utils/calendarLayout';
+import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN, EXCESSIVE_PUSHDOWN_PX } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
 // minimal fields — the layout logic only reads type/data.isPassive/start/end.
@@ -227,27 +227,22 @@ describe('packLane', () => {
     }
   });
 
-  it('folds a real, non-short item into a chip instead of overflowing past its own natural end when inherited pushdown is excessive', () => {
-    // Regression for the "Email student" (2-min block, ends exactly when
-    // "Lower + Running" begins) / "Lower + Running" (09:00-10:00, a genuinely
-    // real 60-min task) bug: at max zoom-out, MIN_BLOCK_HEIGHT_PX-clamping
-    // "Email student" alone pushes "Lower + Running" down far enough that its
-    // box would render well past its own true 10:00 end, misaligned against
-    // the hour axis. It must fold into a cluster instead of accepting that
-    // pushed position.
-    const pxPerMin = 0.4; // max zoom-out
-    const items = [
-      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
-      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
-    ];
-    const packed = packLane(items, pxPerMin);
-    expect(packed).toHaveLength(1);
-    expect(packed[0].kind).toBe('cluster');
-    expect(packed[0].items.map((i) => i.data.id)).toEqual(['Email student', 'Lower + Running']);
-    // The cluster's own box must reflect its honest natural span (min start,
-    // max end), not a further-pushed position.
-    const expectedTop = Math.round((538 - GRID_START_MIN) * pxPerMin);
-    expect(packed[0].top).toBe(expectedTop);
+  it('still stacks (does not fold) a single legitimate clamp onto a real, non-short item', () => {
+    // "Email student" (2-min block, ends exactly when "Lower + Running"
+    // begins) is a single clamped predecessor — its own MIN_BLOCK_HEIGHT_PX
+    // clamp pushes "Lower + Running" down by only one clamp's worth (plus the
+    // inter-item gap), which is exactly the harmless "one item's own clamp
+    // nudges the next box down a bit" case EXCESSIVE_PUSHDOWN_PX is sized to
+    // tolerate — so this must NOT fold, at any zoom level.
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const items = [
+        { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+        { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
+      ];
+      const packed = packLane(items, pxPerMin);
+      expect(packed).toHaveLength(2);
+      expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
+    }
   });
 
   it('still stacks (does not fold) when the pushed top still lands within the item\'s own natural time span', () => {
@@ -351,33 +346,37 @@ describe('packLane', () => {
     expect(allIds).toHaveLength(5);
   });
 
-  it('never lets a pushed-down item\'s TOP land past its own natural end position, at any zoom level', () => {
+  it('never lets any packed item inherit more than EXCESSIVE_PUSHDOWN_PX of pushdown from its predecessor(s), at any zoom level', () => {
     // The hard invariant itself, directly: for every packed item with a
-    // predecessor, its rendered top must never exceed its own natural end
-    // pixel position — this is what replaces the old fixed-budget check,
-    // and unlike a minute budget it holds by construction at every zoom
-    // level with no re-tuning.
+    // predecessor, (pushedTop - naturalTop) must never exceed
+    // EXCESSIVE_PUSHDOWN_PX — a zoom-invariant PIXEL budget, unlike an
+    // earlier version of this check that compared the pushed TOP against
+    // the item's own natural END, which missed exactly the multi-
+    // predecessor chains that compound enough small pushdowns to still drag
+    // the BOTTOM past the item's own end even while the top stays "before"
+    // it (see git history for the bug that replaced).
     const shapes = [
-      // Morning tasks (2min, clamped) directly followed by Piano (45min) —
-      // Piano has plenty of its own natural span to absorb a single clamp's
-      // worth of pushdown, so this should stack cleanly except at the most
-      // extreme zoom-out where even Piano's own natural span is tight.
       [
         { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Morning tasks', title: 'Morning tasks' } },
         { start: 540, end: 585, kind: 'single', type: 'block', data: { id: 'Piano', title: 'Piano' } },
       ],
-      // Email student (2min) directly followed by a real 60-min task — same
-      // shape as the originally reported bug.
       [
         { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
         { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
       ],
-      // A chain of several near-zero-duration items back to back.
       [
         { start: 480, end: 481, kind: 'single', type: 'block', data: { id: 'A', title: 'A' } },
         { start: 481, end: 482, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
         { start: 482, end: 483, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
         { start: 483, end: 500, kind: 'single', type: 'block', data: { id: 'D', title: 'D' } },
+      ],
+      // The originally reported "2 tasks/events 09:00-10:15" shape: a short
+      // clamped predecessor directly ahead of a 75-min real span, then
+      // another real task immediately after.
+      [
+        { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+        { start: 540, end: 615, kind: 'single', type: 'block', data: { id: 'RealTask', title: 'RealTask' } },
+        { start: 615, end: 660, kind: 'single', type: 'block', data: { id: 'Laundry', title: 'Laundry' } },
       ],
     ];
     for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
@@ -388,39 +387,38 @@ describe('packLane', () => {
           // No overlap, ever.
           expect(p.top).toBeGreaterThanOrEqual(prevBottom);
           prevBottom = p.top + p.height + 2;
-          // No box's top exceeds its own honest natural end position.
-          const naturalEnd = Math.round((p.end - GRID_START_MIN) * pxPerMin);
-          expect(p.top).toBeLessThanOrEqual(naturalEnd);
+          // Pushdown from this item's own natural top is bounded.
+          const naturalTop = Math.round((p.start - GRID_START_MIN) * pxPerMin);
+          expect(p.top - naturalTop).toBeLessThanOrEqual(EXCESSIVE_PUSHDOWN_PX + 1); // +1 rounding slack
         }
       }
     }
   });
 
-  it('folds once a chain of several short clamped items compounds enough pushdown to cross a later item\'s own end line', () => {
-    // A single small clamp is easily absorbed by almost any real-length
-    // neighbour (see the "still stacks" tests above) — but several short
-    // clamped items back-to-back compound their stretch, and that
-    // accumulated pushdown can cross even a moderately-long item's own
-    // natural end line. This is the shape of the originally reported bug
-    // (several short tasks stacked ahead of a real one), reproduced at max
-    // zoom-out where the clamp-to-real-time ratio is worst.
-    const pxPerMin = 0.55;
-    const items = [
-      { start: 480, end: 481, kind: 'single', type: 'block', data: { id: 'A', title: 'A' } },
-      { start: 481, end: 482, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
-      { start: 482, end: 483, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
-      { start: 483, end: 503, kind: 'single', type: 'block', data: { id: 'D', title: 'D' } }, // 20-min real item
-    ];
-    const packed = packLane(items, pxPerMin);
-    // Whatever the exact grouping, the chain must fold rather than let D's
-    // (or any item's) pushed top land past its own natural end.
-    expect(packed.some((p) => p.kind === 'cluster')).toBe(true);
-    let prevBottom = -Infinity;
-    for (const p of packed) {
-      const naturalEnd = Math.round((p.end - GRID_START_MIN) * pxPerMin);
-      expect(p.top).toBeLessThanOrEqual(naturalEnd);
-      expect(p.top).toBeGreaterThanOrEqual(prevBottom);
-      prevBottom = p.top + p.height + 2;
+  it('folds once a chain of several short clamped items compounds enough pushdown to exceed the pixel budget', () => {
+    // A single small clamp is easily absorbed (see the "still stacks" test
+    // above) — but several short clamped items back-to-back compound their
+    // stretch past EXCESSIVE_PUSHDOWN_PX, which is what eventually shoves a
+    // real item's box down far enough to visually overflow past its own true
+    // end time. This is the shape of the originally reported bug (several
+    // short tasks stacked ahead of a real one), and unlike the top-only
+    // check this must trigger at EVERY zoom level, not just extreme
+    // zoom-out — a fixed pixel budget doesn't get more permissive as the
+    // real-minute cost of a clamp shrinks at higher zoom.
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const items = [
+        { start: 480, end: 481, kind: 'single', type: 'block', data: { id: 'A', title: 'A' } },
+        { start: 481, end: 482, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
+        { start: 482, end: 483, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
+        { start: 483, end: 503, kind: 'single', type: 'block', data: { id: 'D', title: 'D' } }, // 20-min real item
+      ];
+      const packed = packLane(items, pxPerMin);
+      expect(packed.some((p) => p.kind === 'cluster')).toBe(true);
+      let prevBottom = -Infinity;
+      for (const p of packed) {
+        expect(p.top).toBeGreaterThanOrEqual(prevBottom);
+        prevBottom = p.top + p.height + 2;
+      }
     }
   });
 });
