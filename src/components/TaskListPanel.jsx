@@ -58,6 +58,7 @@ import MarqueeText from './Common/MarqueeText';
 import AccountButton from './Nav/AccountButton';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
+import { usePersistedState } from '../hooks/usePersistedState';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -200,8 +201,13 @@ export default function TaskListPanel({
   // into this ref on mount so the one shared SearchBar can reach whichever
   // view's modal state is actually active.
   const boardSelectTaskRef = useRef(null);
-  const [filterByView, setFilterByView] = useState(DEFAULT_FILTER_BY_VIEW);
-  const filter = filterByView[view]; // active | completed | all | noDueDate
+  // Persisted (device-local view state, not synced/backed up — see CLAUDE.md's
+  // Backups section) so the per-view status filter survives a reload. Merged
+  // defensively over DEFAULT_FILTER_BY_VIEW rather than trusting the stored
+  // shape outright — an older/partial persisted value (missing a view key
+  // added since, e.g.) would otherwise leave `filter` undefined below.
+  const [filterByView, setFilterByView] = usePersistedState('taskflow_tasks_filter_by_view_v1', DEFAULT_FILTER_BY_VIEW);
+  const filter = filterByView[view] ?? DEFAULT_FILTER_BY_VIEW[view]; // active | completed | all | noDueDate
   function setFilter(key) {
     setFilterByView((prev) => ({ ...prev, [view]: key }));
   }

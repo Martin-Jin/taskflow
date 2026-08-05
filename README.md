@@ -404,7 +404,15 @@ cached copy.
   one note per bookmark.
 - **Calendar** — Month / Week / 3 Day / Day views, picked from the hamburger
   menu next to the date title (tap the date itself to drop down a
-  Google-Calendar-style month-strip date picker and jump to any day).
+  Google-Calendar-style month-strip date picker and jump to any day). A
+  **Filter** button in the toolbar narrows what the grid shows: tasks and
+  events, tasks only, or events only, plus multi-select by project and by
+  tag (both only apply to task blocks — events have neither). Projects and
+  tags you add later are included automatically unless you've explicitly
+  narrowed the list, the trigger shows a dot whenever a filter is active,
+  and if a filter hides everything in the visible range the grid says so
+  with a one-tap **Clear filters** instead of just looking empty. The
+  filter is remembered per device, not synced across them.
   Clicking a day-of-week header in Week/3 Day view jumps straight into Day
   view for that date, same as clicking a day number in Month view. Both
   scheduled task blocks and calendar events (Google-sourced or created in

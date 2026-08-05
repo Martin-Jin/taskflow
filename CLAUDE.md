@@ -116,6 +116,31 @@ do this before considering the change done, not as an afterthought.**
   (the first entry's `version`) — this drives the "What's New" popup
   (`ChangelogModal`, auto-shown once per version bump and reachable anytime
   from Settings → Versions).
+
+### Version numbering (standard semver — read before bumping)
+
+`MAJOR.MINOR.PATCH`, **each part a single digit that rolls over at 9**. Never
+write a multi-digit part like `1.100.0`.
+
+- **Patch** (`2.1.0` → `2.1.1`) — bug fix / small correction to something
+  already shipped, no new capability.
+- **Minor** (`2.1.3` → `2.2.0`) — a new user-visible feature, or a meaningful
+  change to an existing one. The common case.
+- **Major** (`2.9.0` → `3.0.0`) — the minor rolling past 9, or a genuine
+  overhaul of how the app works. **`x.9.0` is followed by `(x+1).0.0`, not
+  `x.10.0`** — reset the lower parts to zero on roll-over.
+
+Always look at the previous entry's number and roll it properly rather than
+incrementing the last component blindly. This has already gone wrong once
+(`1.99.0` → `1.100.0`/`1.101.0`, since renumbered to `2.0.0`/`2.1.0`), which
+is why the rule is spelled out here. Renumbering a shipped entry is safe —
+`App.jsx` compares `lastSeenChangelogVersion` with `!==`, not ordered semver,
+so it only re-pops "What's New" once — but get it right the first time.
+
+The same number must appear in all three places: the first `CHANGELOG`
+entry's `version`, `CURRENT_VERSION` (derived automatically), and
+`package.json`'s `version`. See `docs/DEVELOPMENT.md` → "Versioning and the
+changelog" for the same rule in the contributor docs.
 - Write entries in plain English for end users, not a raw commit log — group
   same-day/same-branch commits into one entry, and skip anything with no
   user-visible effect (internal refactors, one-time migration code, etc.).
