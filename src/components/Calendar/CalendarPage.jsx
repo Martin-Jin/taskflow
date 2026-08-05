@@ -12,6 +12,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X, Search } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
@@ -24,6 +25,7 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { useMenuPosition } from '../../hooks/useMenuPosition';
 import HelpTooltip from '../Common/HelpTooltip';
 
 function getWeekStart(iso) {
@@ -66,7 +68,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   // expands into mini-FABs instead of the FAB's single always-visible
   // action: Re-balance schedule + New event.
   const [fabExpanded, setFabExpanded] = useState(false);
-  const dateWrapRef = useRef(null);
+  const dateTitleBtnRef = useRef(null);
   const viewMenuWrapRef = useRef(null);
   const fabGroupRef = useRef(null);
   const fabTriggerRef = useRef(null);
@@ -96,18 +98,27 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   // animation, so the CSS transition only applies for that brief animation.
   const [swipeSettlePhase, setSwipeSettlePhase] = useState(null);
 
-  // Close the date-picker/view-menu dropdowns on an outside click — each ref
-  // wraps BOTH its trigger button and its dropdown panel, so clicks on the
-  // trigger itself (which already toggles open/closed in its own onClick)
-  // don't get double-handled here.
-  useEffect(() => {
-    if (!showDatePicker) return;
-    function onDocMouseDown(e) {
-      if (dateWrapRef.current && !dateWrapRef.current.contains(e.target)) setShowDatePicker(false);
-    }
-    document.addEventListener('mousedown', onDocMouseDown);
-    return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [showDatePicker]);
+  // Positions the date-picker dropdown — anchored under the title button on
+  // desktop (where there's room to spare), but forced into useMenuPosition's
+  // centered-with-backdrop mode on mobile: the title now sits near the left
+  // edge of the mobile toolbar bar (right after the hamburger menu, see
+  // render below), so anchoring the ~320px-wide picker under it would run
+  // most of it off the right edge of a phone screen. This also replaces the
+  // old manual outside-click effect — useMenuPosition owns that already.
+  const {
+    menuRef: datePickerRef,
+    mode: datePickerMode,
+    style: datePickerStyle,
+  } = useMenuPosition({
+    isOpen: showDatePicker,
+    anchorRef: dateTitleBtnRef,
+    onClose: () => setShowDatePicker(false),
+    forceCentered: isMobile,
+    computeAnchored: (anchorRect, menuRect) => ({
+      left: Math.max(8, anchorRect.left + anchorRect.width / 2 - menuRect.width / 2),
+      top: anchorRect.bottom + 6,
+    }),
+  });
 
   useEffect(() => {
     if (!showViewMenu) return;
@@ -433,8 +444,9 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               )}
             </div>
           )}
-          <div className="calendar-title-wrap" ref={dateWrapRef}>
+          <div className="calendar-title-wrap">
             <button
+              ref={dateTitleBtnRef}
               className={`calendar-toolbar-title-btn ${showDatePicker ? 'is-open' : ''}`}
               onClick={() => setShowDatePicker((v) => !v)}
               aria-haspopup="true"
@@ -443,15 +455,26 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               <span className="calendar-toolbar-title">{title}</span>
               <ChevronDown size={14} className="chevron" />
             </button>
-            {showDatePicker && (
-              <CalendarDatePickerDropdown
-                value={anchorDate}
-                onSelect={(date) => {
-                  setAnchorDate(date);
-                  setShowDatePicker(false);
-                }}
-              />
-            )}
+            {showDatePicker &&
+              createPortal(
+                <>
+                  {datePickerMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowDatePicker(false)} />}
+                  <div
+                    ref={datePickerRef}
+                    className={datePickerMode === 'centered' ? 'menu-popover-centered' : undefined}
+                    style={datePickerMode === 'anchored' ? datePickerStyle : undefined}
+                  >
+                    <CalendarDatePickerDropdown
+                      value={anchorDate}
+                      onSelect={(date) => {
+                        setAnchorDate(date);
+                        setShowDatePicker(false);
+                      }}
+                    />
+                  </div>
+                </>,
+                document.body
+              )}
           </div>
           {!isMobile && (
             <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>

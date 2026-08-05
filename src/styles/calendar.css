@@ -87,21 +87,19 @@
   transform: rotate(180deg);
 }
 
-/* Date-picker dropdown — see CalendarDatePickerDropdown.jsx. Drops down
-   from the title button, centered under it regardless of where that button
-   ends up sitting once the toolbar wraps on narrow widths. */
+/* Date-picker dropdown — see CalendarDatePickerDropdown.jsx. Positioned by
+   its portal wrapper in CalendarPage.jsx (useMenuPosition: anchored under
+   the title button on desktop, or centered-with-backdrop on mobile — see
+   that hook and .menu-popover-centered/.menu-popover-backdrop in
+   global.css) — this class only owns the panel's own visual styling. */
 .calendar-date-picker-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 200;
   width: min(320px, 94vw);
   background: var(--color-bg-surface-raised);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 10px;
-  animation: dropdown-in-centered var(--duration-fast) var(--ease-standard);
+  animation: dropdown-in var(--duration-fast) var(--ease-standard);
 }
 
 .calendar-date-picker-months {
@@ -241,24 +239,19 @@
   }
 }
 
-@keyframes dropdown-in-centered {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-6px);
-  }
-}
-
 @media (max-width: 639px) {
-  /* Mobile reads as one cohesive app bar — inspired by Google Calendar's
-     mobile top bar (hamburger, date title, then trailing icon actions all
-     in a single bordered/backgrounded strip) rather than the old plain,
-     background-less row that didn't read as a toolbar at all. Negative
-     side-margins bleed it to the viewport's edges (undoing the page's own
-     content padding) since a toolbar reading edge-to-edge is what makes it
-     look like a bar rather than a floating cluster of controls. */
+  /* Mobile reads as one cohesive full-screen surface — inspired by Google
+     Calendar's mobile layout: a distinctly colored app-bar strip (hamburger,
+     date title, trailing icon actions) sitting flush atop the grid, both
+     bled edge-to-edge, rather than the old plain background-less toolbar
+     floating above a separately inset, rounded-card grid below it. Negative
+     side-margins undo .main-content's own page padding; zero bottom margin
+     on the toolbar keeps it flush against the grid (see .week-grid/
+     .month-grid's own matching edge-to-edge override further below) instead
+     of leaving a page-padding-sized gap between the two surfaces. */
   .calendar-toolbar {
     justify-content: flex-start;
-    margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) var(--space-3);
+    margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
     padding: 8px var(--space-3);
     background: var(--color-bg-surface-raised);
     border-bottom: 1px solid var(--color-border);
@@ -442,21 +435,40 @@
   background: var(--color-bg-surface-raised);
   z-index: 3;
   border-top-left-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
 }
 
 /* Mobile Day view: the toolbar title above already shows this single day's
-   full date (see CalendarPage's calendar-toolbar-title), so repeating it in
-   the grid's own day-header row is pure duplication — Week/3 Day keep this
-   row since there it's the only place each of the several visible days is
-   labeled. Collapses the whole header row rather than just hiding its
-   contents, so the grid doesn't reserve a fixed-height, now-empty banner. */
-.week-grid.hide-day-header {
-  grid-template-rows: 0 1fr !important;
+   full date (see CalendarPage's calendar-toolbar-title), so the day-header
+   cell's own dow/dom repeating it directly underneath is pure duplication —
+   Week/3 Day keep that text since there it's the only place each of the
+   several visible days is labeled. The gutter cell (otherwise empty in this
+   row) shows a compact "Aug 5" label instead — still useful as the one
+   place a user looking at just the time column sees which day they're on —
+   sized/wrapped to fit the existing 56px-wide gutter column rather than
+   widening it (see WeekView's gridTemplateColumns), with line-breaking
+   allowed since "Aug" and the day number can't always fit on one line at
+   that width in every locale/font. */
+.week-grid.is-single-day-mobile .day-header {
+  padding: 0;
 }
 
-.week-grid.hide-day-header .day-header,
-.week-grid.hide-day-header .time-gutter-cell {
+.week-grid.is-single-day-mobile .day-header .dow,
+.week-grid.is-single-day-mobile .day-header .dom {
   display: none;
+}
+
+.time-gutter-date {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-align: center;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  padding: 0 2px;
 }
 
 .time-label {
@@ -1125,6 +1137,28 @@
   .calendar-toolbar-title {
     min-width: 0;
     font-size: var(--text-base);
+  }
+
+  /* Bleeds the grid edge-to-edge to match the toolbar above it (see its own
+     mobile override) — squared-off corners (no border-radius) so the two
+     read as one continuous full-screen surface with a distinctly colored
+     header strip on top, rather than a colored bar sitting above a separate
+     rounded card. Only the sides need undoing .main-content's page padding;
+     the top is already flush against the toolbar (which itself has zero
+     bottom margin on mobile) and the bottom safely stays inset from the
+     fixed bottom tab bar. */
+  .week-grid,
+  .month-grid {
+    margin: 0 calc(var(--space-3) * -1);
+    border-radius: 0;
+  }
+
+  /* These corners round to match .week-grid's own border-radius when it's a
+     card — moot now that it's squared off above, and an unmatched rounded
+     corner would look like a stray artifact on an otherwise-square edge. */
+  .time-gutter-cell,
+  .day-header.is-last-col {
+    border-radius: 0;
   }
 
   .week-grid {

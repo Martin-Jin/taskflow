@@ -35,7 +35,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Lock, Unlock, Wind } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
-import { addDays, dateRange, dayOfWeek, formatDisplayDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
+import { addDays, dateRange, dayOfWeek, formatDisplayDate, formatShortDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
 import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
@@ -732,7 +732,7 @@ export default function WeekView({
     // WeekView out as one flex ROW child (sized via .week-grid's flex:1).
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
       <div
-        className={`week-grid ${isMobile && dayCount === 1 ? 'hide-day-header' : ''}`}
+        className={`week-grid ${isMobile && dayCount === 1 ? 'is-single-day-mobile' : ''}`}
         ref={gridRef}
       style={{
         gridTemplateRows: `auto ${gridHeight}px`,
@@ -741,7 +741,16 @@ export default function WeekView({
       }}
     >
       {zoomHint && <div className="zoom-hint">{zoomHint}</div>}
-      <div className="time-gutter-cell" />
+      {/* Mobile Day view: the toolbar title above already spells out this
+          single day's full date, so the day-header row's own dow/dom
+          duplicated it directly underneath (see is-single-day-mobile's CSS
+          for the header cells this hides). The gutter cell that would
+          otherwise sit empty in that row instead gets a compact "Aug 5"
+          label — still useful there since it's the one place in the grid a
+          user glancing at just the time column sees which day they're on. */}
+      <div className="time-gutter-cell">
+        {isMobile && dayCount === 1 && <span className="time-gutter-date">{formatShortDate(days[0])}</span>}
+      </div>
       {days.map((day, i) => (
         <div
           key={day}
