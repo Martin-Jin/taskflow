@@ -87,12 +87,19 @@ ahead of it.
 every day an equal share; front-loaded pacing (for urgent/high-priority
 tasks, when enabled) ramps effort up as the deadline approaches.
 
-**Placement** is greedy and runs in three passes — an ideal-day pass
-clamped to `maxChunkHours` and available capacity, a sweep pass that mops
-up hours that didn't fit their ideal day into any other open capacity in
-the window, and a final spill pass into the buffer-to-due-date range. Only
-after all three passes still have leftover hours does a task show up in
-the "couldn't be fully scheduled" overflow.
+**Placement** is greedy and runs in five passes — a weighted-share pass
+targeting each day's ideal slice (clamped to `maxChunkHours`, available
+capacity, and a same-day whole-block lookahead that prefers a later
+full-fit day over fragmenting a task's last permitted chunk on a sliver),
+a sweep pass that mops up hours that didn't fit their ideal day into any
+other open capacity in the window, a buffer-overflow spill pass into the
+buffer-to-due-date range, a last-resort split pass into any remaining
+opening in the window, and — only for tasks without "Enforce due date" —
+a horizon-spill pass past the due date into the rest of the planning
+horizon. Only after all five passes still have leftover hours does a task
+show up in the "couldn't be fully scheduled" overflow. Fixed-time tasks
+(`task.fixedTime`) are placed in their own pre-pass before any of this,
+pinned to their exact time of day regardless of score.
 
 A task's total remaining hours may only be split into as many pieces as
 `round(durationHours * 60 / 30)` allows (`maxChunksFor` in `allocator.js`)
@@ -104,14 +111,68 @@ one small block instead of being skipped. The per-task `minChunkHours`
 field still exists on `Task` but is no longer read by the allocator (see
 `types/index.js`).
 
-### 3. Rebalancing (`rebalanceEngine.js`)
+### 3. Cost-minimizing refinement (`placementCost.js` + `localSearch.js`)
+
+The greedy allocator above always produces a valid schedule, but "first
+slot that fits" isn't the same as "best" schedule — it has no way to
+weigh a task fragmented across five days against one placed as a single
+block, or to reward finishing early versus just-in-time. After allocation,
+`rebalanceEngine.js` runs a second, optional refinement layer that treats
+the greedy result as a starting point (a "seed") and searches for a
+lower-cost rearrangement of it.
+
+**`placementCost.js`** is a pure function that scores a candidate
+placement — lower is better. Two terms, both scaled by a per-priority
+multiplier (`PRIORITY_MULTIPLIER`: `urgent 1.4, high 1.2, medium 1.0, low
+0.8` — fractional, not the allocator's integer scoring weights, since this
+is a gentler nudge rather than a strict ordering rule):
+
+- **Fragmentation** — `(daysUsed − 1) × FRAG_DAY_PENALTY` for spreading a
+  task's hours across extra days, plus `SMALL_CHUNK_PENALTY` for every
+  individual chunk under `SMALL_CHUNK_THRESHOLD_MINS` (15 min). Both apply
+  together, so a task split into several tiny same-day slivers still costs
+  more than one continuous block even though it didn't use an extra day.
+- **Due date** — a small linear reward per day of slack finished ahead of
+  the due date, or a penalty that grows quadratically (not flatly) with
+  days late if a task's last chunk lands after its due date, so being a
+  little late costs much less than being very late.
+
+There's deliberately no separate "unplaced" cost term — an unplaced task
+already surfaces through the allocator's own `overflow` reporting, and
+priority only ever multiplies the two terms above, never stands alone.
+
+**`localSearch.js`** takes the greedy seed and runs a time-boxed
+simulated-annealing search (default ~100ms wall-clock or 2000 iterations,
+whichever comes first) over single-chunk relocate moves, trying to reduce
+total cost. Locked, fixed-time, and passive blocks are never candidates
+for a move — they're treated as fixed busy time. Every candidate move is
+checked against capacity, `minGapBetweenBlocksMins`, the daily deep-work
+budget, and dependency ordering (see below) *before* it's accepted, never
+merely penalized after the fact, so the search can never wander into an
+invalid state. The search tracks the best placement seen and always
+returns that — if it never finds an improvement (or times out
+immediately), the original greedy seed comes back unchanged. This is a
+hard guarantee, not a tuning goal: the returned placement's cost is never
+worse than the seed's.
+
+Because the greedy allocator has no dependency awareness of its own (it
+places purely by priority/urgency score), a high-priority dependent can
+occasionally land earlier than a lower-priority task it depends on in the
+seed itself. `localSearch.js` repairs any such violation topologically
+before search begins, so this guarantee — every chunk of a dependent task
+starts at or after the last chunk of all its (transitive) dependencies —
+holds unconditionally, not just because `rebalanceEngine.js`'s own
+upstream filter happens to exclude incomplete dependencies from a given
+run.
+
+### 4. Rebalancing (`rebalanceEngine.js`)
 
 Backs the **Re-balance schedule** button: partitions existing blocks into
 historical (before today, untouched), locked (protected, untouched), and
 unlocked-future (cleared and re-planned); recomputes each task's
-`remainingHours`; runs capacity + allocation over just the unlocked
-remainder; merges everything back together. Locked blocks are never
-destroyed by a rebalance.
+`remainingHours`; runs capacity + allocation, then the cost-minimizing
+refinement above, over just the unlocked remainder; merges everything back
+together. Locked blocks are never destroyed by a rebalance.
 
 ### Sub-tasks and containers
 
@@ -159,6 +220,12 @@ scoring: a blocker's effective urgency rises to match whatever depends on it
 waiting on it gets scheduled earlier, not just eventually. The Edit modal
 blocks picking a dependency that would create a cycle.
 
+The cost-minimizing refinement pass (see above) additionally enforces
+dependency ordering as a real, jointly-checked constraint on the whole
+transitive chain — every chunk of a dependent task must start at or after
+the last chunk of every task it depends on — rather than relying solely on
+the upstream "exclude if incomplete" filter.
+
 A task marked **"can run unattended"** (`isPassive` — laundry, something
 baking) gets its own capacity track: it's placed against a fresh copy of
 each day's free time rather than the pool other tasks carve into, so any
@@ -188,8 +255,10 @@ See `src/types/index.js` for full JSDoc typedefs.
 src/
 ├── algorithms/               # Pure scheduling logic, framework-agnostic
 │   ├── capacityEngine.js     # Day-by-day free-time computation
-│   ├── allocator.js          # Priority/deadline-aware hour distribution
-│   └── rebalanceEngine.js    # Orchestrates capacity+allocator, preserves locks
+│   ├── allocator.js          # Priority/deadline-aware hour distribution (greedy seed)
+│   ├── placementCost.js      # Cost function (fragmentation + due-date terms) scoring a placement
+│   ├── localSearch.js        # Time-boxed search that refines the greedy seed to lower cost
+│   └── rebalanceEngine.js    # Orchestrates capacity+allocator+search, preserves locks
 ├── components/
 │   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, WeeklyProgressRing, NotesCard (+ notesModel.js)
 │   ├── Calendar/              # WeekView (day/week time-grid, drag/resize), MonthView (density overview), CalendarPage
@@ -235,7 +304,7 @@ src/
 │   ├── recurrence.js         # Free-text recurrence phrase detection (task due-date recurrence, e.g. "every monday")
 │   ├── recurrenceExpansion.js # RRULE parsing + display-time expansion of recurring calendar events into visual instances
 │   ├── smartParse.js         # Composes the above + priority/dependency detection
-│   ├── dependencyUtils.js    # Cycle detection for dependsOn graphs
+│   ├── dependencyUtils.js    # Cycle detection + transitive dependency/dependent traversal for dependsOn graphs
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
 │   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
 │   └── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
