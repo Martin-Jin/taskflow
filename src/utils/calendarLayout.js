@@ -328,34 +328,23 @@ export function layoutDayItems(dayItems, pxPerMin) {
   return results;
 }
 
-// Maximum pushdown (in PIXELS, not real minutes) a single item is allowed to
-// inherit from its predecessor(s) in the same lane before it's folded into a
-// chip instead of stacked — see packLane.
-//
-// Pixels are the right unit here, not real minutes: a real-minute budget (an
-// earlier version of this check used one — see git history) has to mean a
-// different number of pixels at every zoom level, so it either tolerates too
-// much crowding at low zoom or folds too eagerly at high zoom. Pixels are the
-// zoom-INVARIANT measure of "how far off does this look on screen" — 26px of
-// drift reads the same amount of "off" whether zoomed in or out. One
-// MIN_BLOCK_HEIGHT_PX clamp on a single near-zero-duration predecessor
-// legitimately needs to push its immediate neighbour down by close to
-// MIN_BLOCK_HEIGHT_PX — that's the harmless "one item's own clamp nudges the
-// next box down a bit" case this pushdown mechanism exists to support. What
-// this budget catches is a CHAIN of predecessors compounding their pushdown
-// well past what any single clamp could produce alone, which is what
-// eventually shoves a real item's box down far enough to visually overflow
-// past its own true end time — see the original bug report (several short
-// tasks stacked ahead of a real one at any zoom level, not just extreme
-// zoom-out).
-//
-// +BLOCK_GAP_PX accounts for the inter-item breathing room packLane always
-// adds after a box's bottom (see prevBottom below) — without it, even a
-// single legitimate near-zero-duration predecessor's clamp (worth exactly
-// MIN_BLOCK_HEIGHT_PX of pushdown on its own) would tip over a bare
-// MIN_BLOCK_HEIGHT_PX budget once that gap is added in, misfiring on the
-// single-clamp case this budget is meant to tolerate.
-export const EXCESSIVE_PUSHDOWN_PX = MIN_BLOCK_HEIGHT_PX + BLOCK_GAP_PX;
+// Maximum pushdown (in pixels) a single item is allowed to inherit from its
+// predecessor(s) in the same lane before it's folded into a chip instead of
+// stacked — see packLane. This is a NEAR-ZERO tolerance, not a "how much
+// crowding is acceptable" budget: any pushdown beyond a couple of pixels of
+// rounding slack means the box no longer sits at its own honest position, so
+// it folds rather than silently drift. Several earlier, more permissive
+// versions of this check (a flat pixel budget, a real-minute budget, a
+// fraction of the hour-row height — see git history) each independently
+// turned out to still tolerate real, user-visible misalignment at some zoom
+// level or item shape, because "how much drift is tolerable" is inherently
+// an unstable question to tune — different zoom levels and item durations
+// keep finding the edge of whatever budget was chosen. A near-zero tolerance
+// sidesteps that entirely: there is nothing left to tune, and the rule is
+// simple to reason about — an item either sits at its own real position
+// (give or take rounding) or it's folded into a chip that's honest about
+// spanning multiple items.
+export const EXCESSIVE_PUSHDOWN_PX = 2;
 
 /**
  * Assign a final {top, height} in px to every item in a lane, guaranteeing
@@ -380,8 +369,9 @@ export const EXCESSIVE_PUSHDOWN_PX = MIN_BLOCK_HEIGHT_PX + BLOCK_GAP_PX;
  * exactly the multi-predecessor chain that causes the worst overflow. So
  * before accepting a pushed position, check how far the pushdown itself
  * (pushedTop - naturalTop, in pixels) exceeds EXCESSIVE_PUSHDOWN_PX (see its
- * own doc comment for why pixels, not real minutes, are the right unit). If
- * it does, don't render the pair stacked at all — fold the pushed-down item
+ * own doc comment for why this is a near-zero tolerance rather than a
+ * tunable budget). If it does, don't render the pair stacked at all — fold
+ * the pushed-down item
  * into the previous box as a `kind: 'cluster'` chip instead (same shape
  * foldSequentialItems/layoutDayItems already produce), sized to its own
  * honest natural span rather than a further-pushed one. The merged cluster

@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.93.22',
+    date: '2026-08-05',
+    title: 'Fixed calendar tasks drifting off their real position when crowded',
+    changes: [
+      'A crowded task could still visually drift a noticeable amount from its real scheduled time, even after previous fixes. Any real drift now folds crowded tasks into an "N tasks" chip instead, so a task\'s box always reflects its own actual time.',
+    ],
+  },
+  {
     version: '1.93.21',
     date: '2026-08-05',
     title: 'Fixed calendar tasks still drifting past their real end time in a chain',
