@@ -90,6 +90,49 @@ test.describe('Board view', () => {
     expectNoErrors(errors);
   });
 
+  test('drag a column header grip reorders columns, and the order survives a reload', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+    await switchToProject(page, 'Work');
+    await switchTaskView(page, 'Board');
+
+    // Only real Sections are reorderable — the synthetic "No Section" column
+    // has no grip and always leads (see BoardView's COLUMN REORDER note), so
+    // read the order from the reorderable columns only.
+    const reorderable = page.locator('.board-column:not(.no-section)');
+    await expect(reorderable.first()).toBeVisible();
+    if ((await reorderable.count()) < 2) {
+      console.log('Work project does not have 2+ real sections in this build — skipping reorder assertion.');
+      expectNoErrors(errors);
+      return;
+    }
+
+    const titlesBefore = await reorderable.locator('.board-column-title').allInnerTexts();
+    const firstTitle = titlesBefore[0].trim();
+    const secondTitle = titlesBefore[1].trim();
+
+    // Drag the first column's grip onto the second column — the dragged one
+    // takes the target's slot, so the two swap.
+    await htmlDnd(page, reorderable.first().locator('.board-column-grip'), reorderable.nth(1));
+
+    const expected = [secondTitle, firstTitle, ...titlesBefore.slice(2).map((t) => t.trim())];
+    await expect
+      .poll(async () => (await reorderable.locator('.board-column-title').allInnerTexts()).map((t) => t.trim()))
+      .toEqual(expected);
+
+    // The order is persisted per project in localStorage, so it must survive a
+    // reload (and not be reset by sections re-syncing on boot).
+    await page.reload();
+    await gotoTab(page, 'Tasks');
+    await switchTaskView(page, 'Board');
+    await expect
+      .poll(async () => (await reorderable.locator('.board-column-title').allInnerTexts()).map((t) => t.trim()))
+      .toEqual(expected);
+
+    expectNoErrors(errors);
+  });
+
   // Manual drag-reorder of tasks within the same section/column doesn't
   // exist anywhere in this codebase today — TaskListPanel's rows and
   // BoardView's cards are both purely sorted (by due date/priority/etc,

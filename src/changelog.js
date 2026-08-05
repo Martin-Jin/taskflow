@@ -17,6 +17,16 @@
 
 export const CHANGELOG = [
   {
+    version: '1.100.0',
+    date: '2026-08-06',
+    title: 'Reorder Board columns by dragging',
+    changes: [
+      'Board columns can now be dragged into whatever order you like — hover a column header and drag the grip handle on its left. Previously columns were stuck in a fixed order.',
+      'Your chosen order is remembered per project, so it\'s still there next time you open the board. It\'s saved on this device only and never changes your section order in Todoist.',
+      'New sections are added at the end of your arrangement rather than disturbing it, and the "No Section" column stays first.',
+    ],
+  },
+  {
     version: '1.99.0',
     date: '2026-08-06',
     title: 'Recurring sub-tasks now inherit their parent\'s due date, not just its repeat rule',
