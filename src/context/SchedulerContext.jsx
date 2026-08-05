@@ -54,6 +54,7 @@ import {
   computeCompletionHistoryUpdate,
   computeNextDueDate,
   computeRecurringDescendantUpdate,
+  computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
   deriveRecurrenceRule,
 } from '../utils/recurrence';
@@ -1109,6 +1110,10 @@ export function SchedulerProvider({ children }) {
             if (t.isCompleted && !('isCompleted' in updates) && 'dueDate' in updates && updates.dueDate !== t.dueDate) {
               merged = { ...merged, isCompleted: false, completedAt: null };
             }
+            // Recurring-only due-date guards (never let it end up empty; drop
+            // stale completedDates when rescheduling reopens an occurrence
+            // already marked done) — see computeRecurringRescheduleUpdate.
+            merged = { ...merged, ...computeRecurringRescheduleUpdate(t, updates) };
             // recurrenceRule is a derived cache of recurrenceString (see
             // utils/recurrence.js) — recompute it whenever a caller touches
             // recurrenceString so the two can never drift apart.

@@ -634,6 +634,57 @@ export function computeRecurringDescendantUpdate(descendant, todayIso) {
   };
 }
 
+/**
+ * Decides how a task's `dueDate`/`completedDates` should actually land when
+ * `updateTask` applies a partial update to it — see
+ * SchedulerContext.updateTask, which calls this once per edited task (the
+ * currently-recurring one; NOT its descendants — those stay untouched by a
+ * plain due-date edit, same as any other independently-editable field).
+ * Two independent recurring-only guards, both no-ops for a non-recurring
+ * task or an update that doesn't touch `dueDate`:
+ *
+ *   - Never let `dueDate` end up empty. A recurring task's due date is what
+ *     it advances from each occurrence (see completeTask/computeNextDueDate)
+ *     — clearing it would leave nothing to roll forward from. The task's own
+ *     UI (TaskDetailModal/AddTaskModal) already blocks this at the form
+ *     level, but any other caller (AI plan assistant, Todoist import, a
+ *     future feature) goes through this same guard, falling back to the
+ *     task's current due date rather than silently turning `isRecurring`
+ *     off. Doesn't apply to a recurring task that already had no due date
+ *     (a valid, pre-existing state — see computeRecurringDescendantUpdate's
+ *     doc comment) since there's nothing being "cleared" in that case.
+ *
+ *   - Drop any `completedDates` entries on/after the new due date. Recurring
+ *     tasks never set `isCompleted` true (see completeTask) — "done for now"
+ *     is tracked per-occurrence in `completedDates` instead (see
+ *     isCompletedForCurrentOccurrence). Moving the due date back onto (or
+ *     before) an occurrence already recorded as done is the user
+ *     reopening/rescheduling it, not relabeling a done one — the same intent
+ *     the plain `isCompleted` reset just above this call's site captures for
+ *     a non-recurring task, which never applies to a recurring one since its
+ *     `isCompleted` is never true to begin with. Entries strictly before the
+ *     new due date are left alone: those are genuinely earlier occurrences
+ *     that stay closed out.
+ *
+ * @param {object} task - the task's CURRENT (pre-update) fields
+ * @param {object} updates - the partial update being applied
+ * @returns {{dueDate?: string, completedDates?: string[]}} fields to merge
+ *   on top of `updates` — only the keys that actually need overriding.
+ */
+export function computeRecurringRescheduleUpdate(task, updates) {
+  if (!task.isRecurring || !('dueDate' in updates)) return {};
+
+  const result = {};
+  const nextDueDate = updates.dueDate || task.dueDate;
+  if (!updates.dueDate && task.dueDate) {
+    result.dueDate = task.dueDate;
+  }
+  if (nextDueDate && nextDueDate !== task.dueDate) {
+    result.completedDates = (updates.completedDates ?? task.completedDates ?? []).filter((d) => d < nextDueDate);
+  }
+  return result;
+}
+
 /** Options for the "Repeats every N ___" unit <select> in AddTaskModal/TaskDetailModal. */
 export const RECURRENCE_UNITS = [
   { value: 'day', label: 'Day(s)' },

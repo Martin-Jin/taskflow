@@ -4,6 +4,7 @@ import {
   computeNextDueDate,
   computeFirstMatchingDueDate,
   computeRecurringDescendantUpdate,
+  computeRecurringRescheduleUpdate,
   computeCompletionHistoryUpdate,
   computeRecurrenceSyncUpdates,
   generateTaskOccurrences,
@@ -261,6 +262,52 @@ describe('computeRecurringDescendantUpdate', () => {
     const update = computeRecurringDescendantUpdate(descendant, '2026-08-05');
     expect(update.completedDates).toEqual(['2026-08-05']);
     expect(update.completionHistory).toEqual({ '2026-07': 1 });
+  });
+});
+
+describe('computeRecurringRescheduleUpdate', () => {
+  // Regression coverage for the bug where rescheduling a recurring task's
+  // (or sub-task's) due date back onto an occurrence already recorded as
+  // done left it showing completed forever — see SchedulerContext.updateTask.
+
+  it('drops a completedDates entry on/after the new due date when rescheduling back onto it', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: ['2026-08-06'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-06' })).toEqual({
+      completedDates: [],
+    });
+  });
+
+  it('keeps completedDates entries strictly before the new due date', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-10', completedDates: ['2026-08-03', '2026-08-06'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-06' })).toEqual({
+      completedDates: ['2026-08-03'],
+    });
+  });
+
+  it('is a no-op for a non-recurring task', () => {
+    const task = { isRecurring: false, dueDate: '2026-08-07', completedDates: ['2026-08-07'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-06' })).toEqual({});
+  });
+
+  it('is a no-op when the update does not touch dueDate', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: ['2026-08-07'] };
+    expect(computeRecurringRescheduleUpdate(task, { title: 'Renamed' })).toEqual({});
+  });
+
+  it('is a no-op when dueDate is set to the same value', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: ['2026-08-07'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-07' })).toEqual({});
+  });
+
+  it('falls back to the existing dueDate when the update tries to clear it', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: [] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '' })).toEqual({ dueDate: '2026-08-07' });
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: null })).toEqual({ dueDate: '2026-08-07' });
+  });
+
+  it('leaves dueDate alone when the recurring task never had one (valid pre-existing state)', () => {
+    const task = { isRecurring: true, dueDate: null, completedDates: [] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '' })).toEqual({});
   });
 });
 
