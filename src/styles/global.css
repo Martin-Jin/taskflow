@@ -817,10 +817,16 @@ select:focus-visible,
    dim color so this reads as the same "lightweight modal" language as the
    rest of the app rather than inventing a new one. z-index sits above
    .modal-overlay (160) so it isn't buried by whatever modal the menu's
-   trigger happens to live inside — the menu itself doesn't need a higher
-   z-index than the backdrop's here, since each menu's own dropdown class
-   already carries a z-index in this same 200 tier, and it's portaled as
-   the backdrop's next DOM sibling, so it paints on top regardless.
+   trigger happens to live inside. .menu-popover-centered itself needs an
+   explicit z-index one above the backdrop's, even though its own dropdown
+   child already carries a z-index in this same 200 tier — z-index only
+   resolves within a shared stacking context, and .menu-popover-centered
+   (a plain `position: fixed` box with no z-index of its own) never forms
+   one, so without this its child's z-index is compared against the
+   backdrop's OWN siblings, not against the backdrop directly, and the
+   wrapper itself (implicitly z-index: auto) loses to the backdrop's
+   explicit 200 regardless of DOM order — the backdrop then paints on top,
+   silently swallowing every click and reading as a darkened, inert menu.
    ---------------------------------------------------------------------- */
 .menu-popover-backdrop {
   position: fixed;
@@ -836,6 +842,7 @@ select:focus-visible,
   transform: translate(-50%, -50%);
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
+  z-index: 201;
 }
 
 /* ----------------------------------------------------------------------

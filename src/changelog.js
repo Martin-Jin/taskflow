@@ -17,6 +17,14 @@
 
 export const CHANGELOG = [
   {
+    version: '1.95.4',
+    date: '2026-08-06',
+    title: 'Fixed the mobile calendar date-picker being unresponsive',
+    changes: [
+      'On mobile, the calendar\'s date-picker (and a few other menus that fall back to a centered popup on narrow screens) could open looking darkened and not respond to any taps — its own dimmed backdrop was invisibly sitting on top of it, silently blocking every click.',
+    ],
+  },
+  {
     version: '1.95.3',
     date: '2026-08-05',
     title: 'Full smart-parsing in sub-tasks',
