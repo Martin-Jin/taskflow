@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.95.0',
+    date: '2026-08-05',
+    title: 'Smarter scheduling, and fixed app-wide lag',
+    changes: [
+      'The scheduler now looks for a better overall arrangement of your tasks instead of just filling the first slot that fits — it favors keeping a task\'s time in one continuous block over scattering it across many days, and rewards finishing with some slack before the due date rather than cutting it close.',
+      'Fixed the whole app feeling sluggish (including typing and animations lagging) while a focus timer was running, or while a modal like the calendar\'s edit-event screen was open.',
+    ],
+  },
+  {
     version: '1.94.0',
     date: '2026-08-05',
     title: 'Smart parsing in sub-tasks, and scheduling info on the task screen',
