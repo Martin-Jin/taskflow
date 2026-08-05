@@ -201,6 +201,47 @@ test.describe('Sub-tasks', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+  test('smart-parses a due date and priority typed into the "Add sub-task" field', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Subtask Smart-Parse Parent ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    const childTitle = `E2E smart child ${RUN_ID}`;
+    await page.keyboard.type(`${childTitle} tomorrow p1`);
+    await page.waitForTimeout(400);
+
+    const chipsText = await page.locator('.smart-chip-row').innerText();
+    expect(chipsText).toMatch(/Due/);
+    expect(chipsText).toMatch(/Urgent priority/);
+
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await expect(page.getByText('Sub-tasks (0/1)')).toBeVisible();
+
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Reopen the sub-task itself and confirm the smart-parsed fields landed —
+    // and that the matched phrase was stripped back out of the saved title.
+    await searchAndOpen(page, 'E2E smart child');
+    const titleField = page.locator('.detail-title-wrap textarea').first();
+    await expect(titleField).toHaveValue(childTitle);
+    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
+    await expect(prioritySelect).toHaveValue('urgent');
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await expect(dueDateInput).not.toHaveValue('');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Reopening a completed task', () => {

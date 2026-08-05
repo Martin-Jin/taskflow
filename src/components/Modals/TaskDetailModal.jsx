@@ -70,6 +70,7 @@ import {
   Unlock,
   CalendarClock,
   CalendarCheck,
+  CalendarRange,
   Flag,
   Link2,
   CalendarX2,
@@ -101,7 +102,7 @@ import { useTimers, getLiveRemaining, getDefaultDurationSeconds, formatTimerDura
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useSound } from '../../context/SoundContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
-import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, toISODate } from '../../utils/dateUtils';
+import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, formatTime12h, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
 import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
@@ -191,6 +192,7 @@ function getInitialNoteLinks(task) {
 export default function TaskDetailModal({ task: openedTask, onClose }) {
   const {
     tasks,
+    blocks,
     addTask,
     updateTask,
     deleteTask,
@@ -267,7 +269,25 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [labelIds, setLabelIds] = useState(task.labelIds || []);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
-  const newSubtaskInputRef = useRef(null);
+  // Smart-parse draft state for the "Add sub-task" row — mirrors
+  // AddTaskModal's blank-start fields (not this modal's own edit-mode fields
+  // above, which compare against task.* originals) since a new sub-task
+  // starts blank the same way a brand-new top-level task does. Deliberately
+  // a narrower field set than the main Title field: only dueDate/priority/
+  // estimatedHours/project(+section)/labels are wired — recurrence,
+  // dependency, unattended, enforceDueDate, link and fixedTime would need
+  // their own pickers/defaults for a compact inline row and are out of scope.
+  const [subtaskProjectId, setSubtaskProjectId] = useState(task.projectId ?? '');
+  const [subtaskHasEditedProject, setSubtaskHasEditedProject] = useState(false);
+  const [subtaskSectionId, setSubtaskSectionId] = useState(task.sectionId ?? '');
+  const [subtaskHasEditedSection, setSubtaskHasEditedSection] = useState(false);
+  const [subtaskPriority, setSubtaskPriority] = useState('medium');
+  const [subtaskHasEditedPriority, setSubtaskHasEditedPriority] = useState(false);
+  const [subtaskDueDate, setSubtaskDueDate] = useState('');
+  const [subtaskHasEditedDueDate, setSubtaskHasEditedDueDate] = useState(false);
+  const [subtaskEstimatedHours, setSubtaskEstimatedHours] = useState(DEFAULT_SUBTASK_ESTIMATED_HOURS);
+  const [subtaskHasEditedHours, setSubtaskHasEditedHours] = useState(false);
+  const [subtaskLabelIds, setSubtaskLabelIds] = useState([]);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
@@ -619,6 +639,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     [sections, projectId]
   );
 
+  // Scheduled blocks for this task, oldest first — a task's hours can be
+  // split across multiple days, so this can have more than one entry.
+  const taskScheduledBlocks = useMemo(
+    () =>
+      blocks
+        .filter((b) => b.taskId === task.id)
+        .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date))),
+    [blocks, task.id]
+  );
+
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);
     // Changing project invalidates any section from the old project.
@@ -818,6 +848,60 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     handleSmartTitleChange(value);
   }
 
+  function handleSubtaskProjectChange(newProjectId) {
+    setSubtaskProjectId(newProjectId);
+    if (subtaskSectionId && !sections.find((s) => s.id === subtaskSectionId && s.projectId === newProjectId)) {
+      setSubtaskSectionId('');
+    }
+  }
+
+  const {
+    smartDetected: subtaskSmartDetected,
+    handleTitleChange: handleSubtaskSmartTitleChange,
+    dismissSmartChip: dismissSubtaskSmartChip,
+    buildFinalTitle: buildSubtaskFinalTitle,
+    resetSmartState: resetSubtaskSmartState,
+  } = useSmartTaskTitle({
+    tasks,
+    projects,
+    sections,
+    fields: {
+      dueDate: {
+        isUntouched: () => !subtaskHasEditedDueDate,
+        apply: (match) => setSubtaskDueDate(match.iso),
+        revert: () => setSubtaskDueDate(''),
+      },
+      priority: {
+        isUntouched: () => !subtaskHasEditedPriority,
+        apply: (match) => setSubtaskPriority(match.level),
+        revert: () => setSubtaskPriority('medium'),
+      },
+      estimatedHours: {
+        isUntouched: () => !subtaskHasEditedHours,
+        apply: (match) => setSubtaskEstimatedHours(match.hours),
+        revert: () => setSubtaskEstimatedHours(DEFAULT_SUBTASK_ESTIMATED_HOURS),
+      },
+      project: {
+        isUntouched: () => !subtaskHasEditedProject,
+        apply: (match) => {
+          if (match.project) handleSubtaskProjectChange(match.project.id);
+          if (match.section && !subtaskHasEditedSection) setSubtaskSectionId(match.section.id);
+        },
+        revert: () => {
+          handleSubtaskProjectChange('');
+          if (!subtaskHasEditedSection) setSubtaskSectionId('');
+        },
+      },
+    },
+  });
+
+  function handleSubtaskTitleChange(value) {
+    setNewSubtaskTitle(value);
+    handleSubtaskSmartTitleChange(value);
+  }
+
+  const subtaskSmartChips = useMemo(() => buildSmartChips(subtaskSmartDetected), [subtaskSmartDetected]);
+
   // Commits the free-text repeat edit (see Repeat DetailField below) by
   // running it through the same phrase parser the title field's smart-parse
   // uses — reusing that parser instead of a bespoke day/unit picker for the
@@ -938,31 +1022,54 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     return parts;
   }
 
+  function resetSubtaskDraft() {
+    setNewSubtaskTitle('');
+    setSubtaskProjectId(task.projectId ?? '');
+    setSubtaskHasEditedProject(false);
+    setSubtaskSectionId(task.sectionId ?? '');
+    setSubtaskHasEditedSection(false);
+    setSubtaskPriority('medium');
+    setSubtaskHasEditedPriority(false);
+    setSubtaskDueDate('');
+    setSubtaskHasEditedDueDate(false);
+    setSubtaskEstimatedHours(DEFAULT_SUBTASK_ESTIMATED_HOURS);
+    setSubtaskHasEditedHours(false);
+    setSubtaskLabelIds([]);
+    resetSubtaskSmartState();
+  }
+
   function handleAddSubtask() {
     const trimmed = newSubtaskTitle.trim();
     if (!trimmed || atMaxSubtaskDepth) return;
     // A sub-task is just a top-level task with `parentId` set — created via
-    // the same addTask every other task uses. `dueDate` is deliberately left
-    // unset — an undated sub-task is still immediately schedulable (see
+    // the same addTask every other task uses. `dueDate` defaults to unset —
+    // an undated sub-task is still immediately schedulable (see
     // allocator.js's prioritizeTasks), it just competes for capacity at
     // baseline urgency (or its nearest ancestor's due date, if any) instead
-    // of a deadline of its own.
+    // of a deadline of its own — unless smart-parse (or a manual pick) set
+    // one. Project/section inherit the parent task's by default, same as
+    // before, unless the draft's own project field was touched.
+    const section = sections.find((s) => s.id === subtaskSectionId);
+    const pendingLabelNames = (subtaskSmartDetected.labels || []).map((m) => m.name);
+    const finalLabelIds = [
+      ...new Set([...subtaskLabelIds, ...(pendingLabelNames.length ? getOrCreateLabelIds(pendingLabelNames) : [])]),
+    ];
     addTask({
-      title: trimmed,
+      title: buildSubtaskFinalTitle(newSubtaskTitle),
       parentId: task.id,
-      estimatedHours: DEFAULT_SUBTASK_ESTIMATED_HOURS,
-      priority: 'medium',
-      dueDate: null,
-      projectId: task.projectId ?? null,
-      sectionId: task.sectionId ?? null,
-      sectionName: task.sectionName ?? null,
+      estimatedHours: Number(subtaskEstimatedHours) || DEFAULT_SUBTASK_ESTIMATED_HOURS,
+      priority: subtaskPriority,
+      dueDate: subtaskDueDate || null,
+      projectId: subtaskHasEditedProject ? subtaskProjectId || null : task.projectId ?? null,
+      sectionId: subtaskHasEditedProject ? subtaskSectionId || null : task.sectionId ?? null,
+      sectionName: subtaskHasEditedProject ? section?.name ?? null : task.sectionName ?? null,
+      labelIds: finalLabelIds,
     });
-    setNewSubtaskTitle('');
-    if (newSubtaskInputRef.current) newSubtaskInputRef.current.style.height = 'auto';
+    resetSubtaskDraft();
   }
 
   function handleCancelAddSubtask() {
-    setNewSubtaskTitle('');
+    resetSubtaskDraft();
     setIsAddingSubtask(false);
   }
 
@@ -1652,37 +1759,41 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       Sub-tasks are capped at 2 levels deep — this task is already a sub-task of a sub-task, so it can't have its own.
                     </p>
                   ) : isAddingSubtask ? (
-                    <div className="subtask-add-row">
-                      <textarea
-                        ref={newSubtaskInputRef}
-                        autoFocus
-                        rows={1}
-                        value={newSubtaskTitle}
-                        onChange={(e) => {
-                          setNewSubtaskTitle(e.target.value);
-                          const el = e.target;
-                          el.style.height = 'auto';
-                          el.style.height = `${el.scrollHeight}px`;
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleAddSubtask();
-                          } else if (e.key === 'Escape') {
-                            handleCancelAddSubtask();
-                          }
-                        }}
-                        onBlur={() => {
-                          if (!newSubtaskTitle.trim()) setIsAddingSubtask(false);
-                        }}
-                        placeholder="Add a sub-task…"
-                        className="subtask-add-textarea"
-                        style={{ flex: 1 }}
-                      />
-                      <button type="button" className="btn" onClick={handleAddSubtask}>
-                        <Plus size={14} />
-                        Add
-                      </button>
+                    <div
+                      className="subtask-add-wrap"
+                      onKeyDown={(e) => e.key === 'Escape' && handleCancelAddSubtask()}
+                      onBlur={(e) => {
+                        // Collapse the row back to the "Add sub-task" trigger
+                        // once focus leaves it entirely with nothing typed —
+                        // matches the plain-textarea row's old onBlur, but
+                        // gated on relatedTarget since this now wraps
+                        // SmartTitleInput's own popups (mention/keyword-
+                        // suggest) and the Add button, which shouldn't count
+                        // as "focus left" while still inside this row.
+                        if (!newSubtaskTitle.trim() && !e.currentTarget.contains(e.relatedTarget)) {
+                          setIsAddingSubtask(false);
+                        }
+                      }}
+                    >
+                      <div className="subtask-add-row">
+                        <SmartTitleInput
+                          autoFocus
+                          value={newSubtaskTitle}
+                          onChange={handleSubtaskTitleChange}
+                          smartDetected={subtaskSmartDetected}
+                          onDismiss={dismissSubtaskSmartChip}
+                          placeholder="Add a sub-task…"
+                          projects={projects}
+                          sections={sections}
+                          labels={labels}
+                          onEnter={handleAddSubtask}
+                        />
+                        <button type="button" className="btn" onClick={handleAddSubtask}>
+                          <Plus size={14} />
+                          Add
+                        </button>
+                      </div>
+                      <SmartChips chips={subtaskSmartChips} onDismiss={dismissSubtaskSmartChip} />
                     </div>
                   ) : (
                     <button type="button" className="subtask-add-trigger" onClick={() => setIsAddingSubtask(true)}>
@@ -1855,6 +1966,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   !dueDate && <p className="form-hint">Won't be auto-scheduled without a due date.</p>
                 )}
               </DetailField>
+
+              {!isContainer && taskScheduledBlocks.length > 0 && (
+                <DetailField icon={CalendarRange} label="Scheduled">
+                  <div className="scheduled-blocks-list">
+                    {taskScheduledBlocks.map((b) => (
+                      <p key={b.id} className="form-hint scheduled-block-row">
+                        {formatDisplayDate(b.date)}, {formatTime12h(b.startTime)}–{formatTime12h(b.endTime)}
+                      </p>
+                    ))}
+                  </div>
+                </DetailField>
+              )}
 
               <DetailField icon={Flag} label="Priority">
                 <select value={priority} onChange={(e) => setPriority(e.target.value)}>
