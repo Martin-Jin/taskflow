@@ -248,6 +248,20 @@ which a recurring completion never set), and un-completing any ancestor whose
 auto-completion depended on the just-restored task, walking up while doing so
 is still warranted.
 
+Editing a recurring task's due date (`SchedulerContext.updateTask`) runs it
+through `computeRecurringRescheduleUpdate` (`utils/recurrence.js`), which
+drops any `completedDates` entries on/after the new date — otherwise moving
+the due date back onto (or before) an occurrence already recorded as done
+would leave it showing completed forever, since a recurring task's
+`isCompleted` never flips true for the guard above (the `isCompleted`-reset
+one) to catch. The same function also refuses to let `dueDate` end up empty
+on a recurring task, falling back to its current due date instead — a
+recurring task needs a due date to advance from each occurrence, so clearing
+it isn't a valid edit. `TaskDetailModal` blocks this at the form level too
+(`dueDateRequiredError`, gating Save/autosave the same way `dueDateError`
+does), but `updateTask`'s guard covers any other caller (AI plan assistant,
+Todoist import).
+
 ### Dependencies and passive tasks
 
 A task can list other tasks it `dependsOn`. `rebalanceEngine` excludes a task

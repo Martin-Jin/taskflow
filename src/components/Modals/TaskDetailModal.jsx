@@ -1044,6 +1044,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const dueDateError = ancestorDueDate && dueDate && dueDate > ancestorDueDate
     ? `Can't be later than "${tasks.find((t) => t.id === task.parentId)?.title || 'parent task'}"'s due date (${formatDisplayDate(ancestorDueDate)}).`
     : '';
+  // Recurring tasks are scheduled off their due date advancing each
+  // occurrence (see completeTask/computeNextDueDate) — a recurring task with
+  // no due date has nothing to advance from, so clearing it here would leave
+  // the task in a state the rest of the app doesn't know how to handle.
+  // Blocks the clear the same way fixedTimeError/dueDateError block an
+  // incomplete edit, rather than silently turning isRecurring off (which is
+  // what commitChanges' `isRecurring && !!nextDueDate` used to do).
+  const dueDateRequiredError = isRecurring && !dueDate ? 'Recurring tasks need a due date — pick one, or turn off "Repeats".' : '';
 
   function handleNotesChange(value) {
     setNotes(value);
@@ -1264,7 +1272,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // (mirrors AddTaskModal's handleSubmit) — the sidebar autosave effect
     // below already blocks its own debounced commit the same way, but the
     // Save/Cancel row is reachable whenever mainDirty is also true.
-    if (fixedTimeError || dueDateError) return;
+    if (fixedTimeError || dueDateError || dueDateRequiredError) return;
     commitChanges();
     // Deliberately does NOT close the modal — per user preference, Save
     // just commits and leaves the task open; Escape (or the close button)
@@ -1328,7 +1336,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // "Fixed time" or a due date past the parent goal's deadline never
   // silently autosaves.
   useEffect(() => {
-    if (mainDirty || !sidebarDirty || fixedTimeError || dueDateError) return undefined;
+    if (mainDirty || !sidebarDirty || fixedTimeError || dueDateError || dueDateRequiredError) return undefined;
     const handle = setTimeout(() => commitChanges(), 500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1337,6 +1345,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     sidebarDirty,
     fixedTimeError,
     dueDateError,
+    dueDateRequiredError,
     estimatedHours,
     priority,
     dueDate,
@@ -1739,7 +1748,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       <button type="button" className="btn" onClick={handleCancel}>
                         Cancel
                       </button>
-                      <button type="button" className="btn btn-primary" onClick={handleSave} disabled={!!fixedTimeError || !!dueDateError}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleSave}
+                        disabled={!!fixedTimeError || !!dueDateError || !!dueDateRequiredError}
+                      >
                         Save
                       </button>
                     </>
@@ -2041,7 +2055,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
               <DetailField icon={CalendarClock} label="Due date">
                 <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                {dueDateError ? (
+                {dueDateRequiredError ? (
+                  <p className="form-error">{dueDateRequiredError}</p>
+                ) : dueDateError ? (
                   <p className="form-error">{dueDateError}</p>
                 ) : isContainer ? (
                   <p className="form-hint">

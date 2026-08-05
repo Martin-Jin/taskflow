@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '2.1.1',
+    date: '2026-08-06',
+    title: 'Fixed recurring tasks staying marked complete after being rescheduled',
+    changes: [
+      'Fixed a bug where a recurring task or sub-task you\'d already completed today kept showing as checked off after you moved its due date back onto that day — it now correctly shows as not-yet-done again.',
+      'Fixed the Board view\'s sub-task count (e.g. "2/3") not counting a recurring sub-task as done for today, even when it was.',
+      'Recurring tasks can no longer have their due date cleared — you can move it to a different date, but not blank it, since a recurring task needs a date to know when its next occurrence is due.',
+    ],
+  },
+  {
     version: '2.1.0',
     date: '2026-08-06',
     title: 'A filter menu for the Calendar toolbar',
