@@ -17,6 +17,15 @@
 
 export const CHANGELOG = [
   {
+    version: '1.94.0',
+    date: '2026-08-05',
+    title: 'Smart parsing in sub-tasks, and scheduling info on the task screen',
+    changes: [
+      'Adding a sub-task now understands the same natural-language shortcuts as the main title field — dates, priority, duration, project/section, and tags all get detected and highlighted as you type.',
+      'The task detail screen now shows when a task is currently scheduled (date and time), instead of only being visible on the calendar.',
+    ],
+  },
+  {
     version: '1.93.22',
     date: '2026-08-05',
     title: 'Fixed calendar tasks drifting off their real position when crowded',

@@ -157,4 +157,39 @@ test.describe('Scheduling conflict details', () => {
 
     expectNoErrors(errors);
   });
+
+  test('Task detail modal shows its scheduled date/time once a block exists', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    const title = `E2E Scheduled Field ${RUN_ID}`;
+    const today = todayIso();
+
+    await openAddTask(page);
+    await page.getByPlaceholder('Task name').fill(title);
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click();
+    await page.locator('.addtask-pill-panel input[type="date"]').fill(today);
+    await pills.nth(0).click();
+    await submitAddTask(page);
+
+    // Rebalance so the task actually gets a scheduled block, then open it.
+    await gotoTab(page, 'Calendar');
+    await page.getByRole('button', { name: 'Re-balance schedule', exact: true }).click();
+    await page.waitForTimeout(500);
+    await expect(page.locator('.toast')).toBeVisible();
+
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill(title);
+    await page.waitForTimeout(300);
+    await page.getByText(title, { exact: false }).first().click();
+    await page.waitForTimeout(300);
+
+    const scheduledField = page.locator('.detail-field', { hasText: 'Scheduled' });
+    await expect(scheduledField).toBeVisible();
+    await expect(scheduledField).toContainText(/\d{1,2}:\d{2}\s*(AM|PM)/i);
+
+    expectNoErrors(errors);
+  });
 });
