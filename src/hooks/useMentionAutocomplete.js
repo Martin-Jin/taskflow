@@ -10,11 +10,16 @@
  * confirmed "/" — and if so exposes a filtered candidate list plus the
  * keyboard/selection plumbing needed to splice a choice into the text.
  *
- * Deliberately reuses the same fuzzy substring idea as smartParse.js's
- * matchFragmentAgainstCandidates rather than requiring an exact/ambiguous
- * match — an autocomplete list is expected to show several loose
- * candidates as the user narrows them down, unlike the single confident-or-
- * null resolution the chip detector needs once typing is done.
+ * Deliberately reuses the same ranked/typo-tolerant matcher as every other
+ * project-name search in the app (nameSearch.js's rankByNameSearch, see that
+ * file) rather than requiring an exact/ambiguous match — an autocomplete
+ * list is expected to show several loose candidates as the user narrows
+ * them down, unlike the single confident-or-null resolution the chip
+ * detector needs once typing is done. The one exception is resolving which
+ * project a "#project/section" mention's section-half belongs to (see
+ * `resolveProjectStrict` below) — that's a silent lookup, not a visible list
+ * the user picks from, so it deliberately stays strict (no fuzzy typo
+ * tolerance) to avoid quietly resolving to the wrong project mid-typing.
  *
  * Shares its caret-watching and splice-and-reposition-caret boilerplate with
  * useSmartKeywordSuggest via useCaretActiveSpan.js.
@@ -22,13 +27,32 @@
 
 import { useState } from 'react';
 import { useCaretActiveSpan, spliceTextAndMoveCaret } from './useCaretActiveSpan';
+import { rankByNameSearch, scoreNameMatchStrict } from '../utils/nameSearch';
 
 const MAX_SUGGESTIONS = 8;
 
+/** Ranked/typo-tolerant filter for a visible suggestion dropdown (labels/projects/sections). */
 function fuzzyFilter(query, items, getName) {
-  const q = query.trim().toLowerCase();
-  if (!q) return items.slice(0, MAX_SUGGESTIONS);
-  return items.filter((item) => getName(item).toLowerCase().includes(q)).slice(0, MAX_SUGGESTIONS);
+  return rankByNameSearch(query, items.map((item) => ({ ...item, label: getName(item) }))).slice(0, MAX_SUGGESTIONS);
+}
+
+/**
+ * Resolves which project a "#project/section" mention's already-typed
+ * project half refers to — an exact name match first, then the best strict
+ * (prefix/substring/subsequence, no fuzzy) match. Silent/automatic rather
+ * than a list the user picks from, so a fuzzy typo-match here could
+ * surprise-resolve to the wrong project mid-typing — see this file's doc
+ * comment.
+ */
+function resolveProjectStrict(projectQuery, projects) {
+  const q = projectQuery.trim().toLowerCase();
+  const exact = projects.find((p) => p.name.toLowerCase() === q);
+  if (exact) return exact;
+  const ranked = projects
+    .map((p) => ({ project: p, score: scoreNameMatchStrict(projectQuery, p.name) }))
+    .filter((entry) => entry.score !== null)
+    .sort((a, b) => a.score - b.score);
+  return ranked[0]?.project ?? null;
 }
 
 /**
@@ -87,10 +111,7 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
   } else if (span?.trigger === '#' && span.sectionQuery != null) {
     mode = 'section';
     query = span.sectionQuery;
-    const projectQueryLower = span.projectQuery.trim().toLowerCase();
-    const project =
-      projects.find((p) => p.name.toLowerCase() === projectQueryLower) ||
-      projects.find((p) => p.name.toLowerCase().includes(projectQueryLower));
+    const project = resolveProjectStrict(span.projectQuery, projects);
     const projectSections = project ? sections.filter((s) => s.projectId === project.id) : [];
     matches = fuzzyFilter(query, projectSections, (s) => s.name);
   }

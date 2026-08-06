@@ -13,8 +13,10 @@ import React, { useState } from 'react';
 import { X, Plus, Search, Pin } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
+import { rankByNameSearch } from '../../utils/nameSearch';
 
 export default function ManageProjectsModal({
   projects,
@@ -37,8 +39,40 @@ export default function ManageProjectsModal({
   const [renameValue, setRenameValue] = useState('');
 
   const sortedProjects = sortProjectsForSidebar(projects);
-  const q = query.trim().toLowerCase();
-  const visibleProjects = q ? sortedProjects.filter((p) => p.name.toLowerCase().includes(q)) : sortedProjects;
+  // Same relevance-ranked-with-pinned/recency-tiebreak search as Sidebar.jsx
+  // — see its comment for why sortedProjects (not raw `projects`) is passed in.
+  const visibleProjects = query.trim()
+    ? rankByNameSearch(query, sortedProjects.map((p) => ({ ...p, label: p.name })))
+    : sortedProjects;
+  // Same as Sidebar.jsx: keyboard nav only kicks in once a query has
+  // actually narrowed the list down to ranked results.
+  const isSearching = query.trim().length > 0;
+
+  function pickProject(projectId) {
+    onSelectProject(projectId);
+    requestClose();
+  }
+
+  const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
+    itemCount: isSearching ? visibleProjects.length : 0,
+    onSelect: (index) => {
+      const project = visibleProjects[index];
+      if (project) pickProject(project.id);
+    },
+    resetKey: query,
+  });
+
+  // Unlike CalendarFilterMenu/Sidebar (a portal popover and a persistent nav
+  // rail, neither of which is a modal), Escape here can't be intercepted to
+  // "just clear the query" first — useModalA11y's Escape handler listens on
+  // `document` in the CAPTURE phase, so it always closes the modal before a
+  // React onKeyDown (bubble phase, and scoped to this input besides) even
+  // runs; stopPropagation() on the synthetic event can't reach back to stop
+  // it. That already matches this file's existing rename-input Escape
+  // (below), which likewise closes the modal rather than only cancelling the
+  // rename — so Escape-closes-the-modal is this file's established
+  // behavior, not a regression introduced here.
+  const handleSearchKeyDown = handleKeyDown;
 
   function startRename(project) {
     setRenamingId(project.id);
@@ -72,11 +106,6 @@ export default function ManageProjectsModal({
     }
   }
 
-  function pickProject(projectId) {
-    onSelectProject(projectId);
-    requestClose();
-  }
-
   return (
     <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
@@ -100,14 +129,26 @@ export default function ManageProjectsModal({
           <input
             autoFocus={!autoShowAdd}
             type="text"
+            role="combobox"
+            aria-expanded={isSearching}
+            aria-controls="manage-projects-listbox"
+            aria-activedescendant={
+              isSearching && visibleProjects[activeIndex] ? `manage-projects-option-${visibleProjects[activeIndex].id}` : undefined
+            }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             placeholder="Search projects…"
             aria-label="Search projects"
           />
         </div>
 
-        <div className="sidebar-project-list manage-projects-list">
+        <div
+          className="sidebar-project-list manage-projects-list"
+          id="manage-projects-listbox"
+          role={isSearching ? 'listbox' : undefined}
+          ref={listRef}
+        >
           <button
             className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
             onClick={() => pickProject(ALL_TASKS_PROJECT_ID)}
@@ -115,8 +156,18 @@ export default function ManageProjectsModal({
             <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
           </button>
 
-          {visibleProjects.map((p) => (
-            <div key={p.id} className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''}`}>
+          {visibleProjects.map((p, index) => (
+            <div
+              key={p.id}
+              id={isSearching ? `manage-projects-option-${p.id}` : undefined}
+              role={isSearching ? 'option' : undefined}
+              aria-selected={isSearching ? index === activeIndex : undefined}
+              data-active={isSearching && index === activeIndex}
+              className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''} ${
+                isSearching && index === activeIndex ? 'is-kbd-active' : ''
+              }`}
+              onMouseEnter={() => isSearching && setActiveIndex(index)}
+            >
               {renamingId === p.id ? (
                 <input
                   autoFocus

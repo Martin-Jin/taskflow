@@ -121,6 +121,209 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   expectNoErrors(errors);
 });
 
+test('Manage Projects modal search is typo-tolerant (same ranker as the Sidebar and Calendar filter)', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eTypoSearch${runId}`;
+
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  await dialog.getByPlaceholder('Project name…').fill(projectName);
+  await dialog.getByRole('button', { name: /^add$/i }).click();
+  await page.waitForTimeout(400);
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+
+  // Dropping the trailing digit is a one-edit-distance typo of the seeded
+  // name — should still surface it via the shared nameSearch.js ranker's
+  // fuzzy tier, same as the Calendar filter's own Projects search box.
+  const searchInput = dialog.getByPlaceholder('Search projects…');
+  await searchInput.fill(projectName.slice(0, -1));
+  await page.waitForTimeout(200);
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+
+  // A query with no plausible match (even fuzzily) shows the "no projects
+  // match" empty state instead of a stale/full list.
+  await searchInput.fill('zzzznomatchzzzz');
+  await page.waitForTimeout(200);
+  await expect(dialog.getByText(projectName, { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText('No projects match.')).toBeVisible();
+
+  await searchInput.fill('');
+  await closeAnyModal(page);
+  expectNoErrors(errors);
+});
+
+test('Sidebar project search is typo-tolerant and keeps pinned/recency order for equal-quality matches', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eSidebarTypo${runId}`;
+
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  await dialog.getByPlaceholder('Project name…').fill(projectName);
+  await dialog.getByRole('button', { name: /^add$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  const sidebarSearch = page.getByLabel('Search projects');
+  // Same one-edit-distance-typo case as the Manage Projects modal test above
+  // — the Sidebar's search box is now backed by the same nameSearch.js
+  // ranker, not a plain substring `.includes()`.
+  await sidebarSearch.fill(projectName.slice(0, -1));
+  await page.waitForTimeout(200);
+  await expect(page.locator('.sidebar-project-row-wrap', { hasText: projectName })).toBeVisible();
+
+  await sidebarSearch.fill('');
+  await page.waitForTimeout(200);
+  expectNoErrors(errors);
+});
+
+test('Sidebar project search: Arrow keys move the highlighted row and Enter selects it', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eSidebarKbd${runId}`;
+
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  await dialog.getByPlaceholder('Project name…').fill(projectName);
+  await dialog.getByRole('button', { name: /^add$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  const sidebarSearch = page.getByLabel('Search projects');
+  // A query narrow enough to isolate just the seeded project as the only
+  // (and therefore highlighted-by-default) result.
+  await sidebarSearch.fill(projectName);
+  await page.waitForTimeout(200);
+  const row = page.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  await expect(row).toHaveClass(/is-kbd-active/);
+
+  // With only one result, ArrowDown wraps back onto the same (only) row
+  // (Sidebar uses useListKeyboardNav's default wrap: true) — still exercises
+  // the key handler without needing a second seeded project.
+  await sidebarSearch.press('ArrowDown');
+  await page.waitForTimeout(100);
+  await expect(row).toHaveClass(/is-kbd-active/);
+
+  await sidebarSearch.press('Enter');
+  await page.waitForTimeout(300);
+  // Enter on the highlighted row selects it, same as clicking it — the
+  // Tasks page's "All Tasks"/project switcher should now show this project.
+  await gotoTab(page, 'Tasks');
+  // The project title <h2> loses its implicit "heading" role once a project
+  // is active (it becomes role="button" so it's click-to-rename — see
+  // TaskListPanel.jsx) — check by class/text instead of getByRole.
+  await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
+
+  // Escape clears the query (checked on a fresh sidebar search afterwards).
+  await sidebarSearch.fill(projectName);
+  await page.waitForTimeout(150);
+  await sidebarSearch.press('Escape');
+  await page.waitForTimeout(150);
+  await expect(sidebarSearch).toHaveValue('');
+
+  expectNoErrors(errors);
+});
+
+test('Manage Projects modal search: Arrow keys move the highlighted row and Enter selects it', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eManageKbd${runId}`;
+
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  await dialog.getByPlaceholder('Project name…').fill(projectName);
+  await dialog.getByRole('button', { name: /^add$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog2 = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(dialog2).toBeVisible();
+  const searchInput = dialog2.getByPlaceholder('Search projects…');
+  await searchInput.fill(projectName);
+  await page.waitForTimeout(200);
+  const row = dialog2.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  await expect(row).toHaveClass(/is-kbd-active/);
+
+  await searchInput.press('Enter');
+  await page.waitForTimeout(400);
+  // Enter picks the highlighted project, same as clicking its row — clicking
+  // a row closes the modal and switches the active Tasks view (pickProject).
+  await expect(dialog2).not.toBeVisible();
+  await gotoTab(page, 'Tasks');
+  // The project title <h2> loses its implicit "heading" role once a project
+  // is active (it becomes role="button" so it's click-to-rename — see
+  // TaskListPanel.jsx) — check by class/text instead of getByRole.
+  await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
+
+  // Escape closes the whole modal here rather than only clearing the query
+  // — useModalA11y's capture-phase Escape handler always wins over this
+  // input's own bubble-phase handler, same as this modal's existing
+  // rename-input Escape (see ManageProjectsModal's own comment on this).
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog3 = page.getByRole('dialog', { name: 'Manage projects' });
+  const searchInput2 = dialog3.getByPlaceholder('Search projects…');
+  await searchInput2.fill(projectName);
+  await page.waitForTimeout(150);
+  await searchInput2.press('Escape');
+  await page.waitForTimeout(150);
+  await expect(dialog3).not.toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Manage Projects modal search works at a mobile viewport (tap-to-select, no stuck highlight)', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eManageMobile${runId}`;
+
+  // Create the project at default (desktop) viewport first — "Manage
+  // projects" is reachable from the Sidebar there; the mobile viewport
+  // switch below then reaches the same modal via the Tasks page's project
+  // SelectMenu footer instead (mobile has no Sidebar).
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  await dialog.getByPlaceholder('Project name…').fill(projectName);
+  await dialog.getByRole('button', { name: /^add$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoTab(page, 'Tasks');
+  await page.getByRole('button', { name: 'Switch project' }).click();
+  await page.getByText('See / manage all projects').click();
+  const mobileDialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(mobileDialog).toBeVisible();
+
+  const searchInput = mobileDialog.getByPlaceholder('Search projects…');
+  await searchInput.fill(projectName);
+  await page.waitForTimeout(200);
+  const row = mobileDialog.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  // The keyboard-nav highlight is desktop-relevant, but shouldn't visually
+  // break a touch tap — a plain click on the row (mobile viewports here run
+  // without a touch-enabled browser context, same as every other mobile
+  // test in this suite, so .click() stands in for a tap) must still select
+  // the project regardless of whether it happens to be the keyboard-
+  // highlighted one.
+  await row.getByText(projectName, { exact: true }).click();
+  await page.waitForTimeout(400);
+  await expect(mobileDialog).not.toBeVisible();
+  await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
 test('Deleting the project currently selected as the Tasks view falls back to All Tasks', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   const projectName = `E2E Active Filter Project ${Date.now()}`;

@@ -21,6 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '2.2.0',
+    date: '2026-08-06',
+    title: 'Project search is typo-tolerant and relevance-ranked everywhere',
+    changes: [
+      'Every place you search for a project by name — the sidebar, the "Manage projects" list, the main search bar, "#project" mentions while typing a task title, the command palette (Ctrl/Cmd+K), and the Calendar filter menu\'s Projects list — now uses the same typo-tolerant, relevance-ranked search: prefix and substring matches come first, then close matches, then fuzzy (typo-tolerant) ones. Previously each did a plain "contains this text" match, so a single typo found nothing.',
+      'The sidebar and "Manage projects" search now re-rank by match quality as you type, while still keeping pinned projects first and equally-good matches in their usual most-recently-visited order.',
+      'All of those searches now work from the keyboard: arrow keys move through the results, Enter picks the highlighted one, and the active result is highlighted as you go — the way the command palette already worked.',
+      'The Calendar filter menu\'s Projects list gained its own search box, shown once you have more than a handful of projects.',
+      'Removed project colors, which were an unused leftover from importing Todoist projects (TaskFlow never let you set one) and only ever made the Calendar filter menu\'s Projects list look inconsistent.',
+      'Added keyboard navigation to every project search box above: Arrow Up/Down moves a highlighted result, Enter picks it, and Escape clears the query (in the sidebar and Calendar filter — inside the "Manage projects" modal, Escape closes the whole modal instead, same as its other fields). The main search bar and command palette gained the same highlighted-row behavior for their own dropdowns.',
+    ],
+  },
+  {
     version: '2.1.3',
     date: '2026-08-06',
     title: 'Fixed a few sources of unbounded storage growth',

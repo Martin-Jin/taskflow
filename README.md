@@ -408,12 +408,15 @@ cached copy.
   Google-Calendar-style month-strip date picker and jump to any day). A
   **Filter** button in the toolbar narrows what the grid shows: tasks and
   events, tasks only, or events only, plus multi-select by project and by
-  tag (both only apply to task blocks — events have neither). Projects and
-  tags you add later are included automatically unless you've explicitly
-  narrowed the list, the trigger shows a dot whenever a filter is active,
-  and if a filter hides everything in the visible range the grid says so
-  with a one-tap **Clear filters** instead of just looking empty. The
-  filter is remembered per device, not synced across them.
+  tag (both only apply to task blocks — events have neither). Once you have
+  more than a handful of projects, the Projects list gets a search box —
+  type to narrow it down (typo-tolerant, prefix/substring matches ranked
+  first), with Up/Down/Enter to jump straight to and toggle the top match.
+  Projects and tags you add later are included automatically unless you've
+  explicitly narrowed the list, the trigger shows a dot whenever a filter is
+  active, and if a filter hides everything in the visible range the grid
+  says so with a one-tap **Clear filters** instead of just looking empty.
+  The filter is remembered per device, not synced across them.
   Clicking a day-of-week header in Week/3 Day view jumps straight into Day
   view for that date, same as clicking a day number in Month view. Both
   scheduled task blocks and calendar events (Google-sourced or created in

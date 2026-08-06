@@ -139,7 +139,6 @@ function projectsSection(projects) {
   const rows = (projects || []).map((p) => ({
     id: p.id,
     name: p.name,
-    color: p.color || undefined,
     isPinned: p.isPinned || undefined,
   }));
   return `## Existing projects (${rows.length} total)\n\n\`\`\`json\n${JSON.stringify(rows, null, 2)}\n\`\`\`\n`;

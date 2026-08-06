@@ -253,3 +253,120 @@ test.describe('Calendar filter menu — mobile', () => {
     expectNoErrors(errors);
   });
 });
+
+test.describe('Calendar filter menu — Projects search', () => {
+  // Mock data only seeds 3 projects (Work/Writing/Personal) + "Unassigned" —
+  // one under CalendarFilterMenu's SEARCH_THRESHOLD, so the search box won't
+  // render at all unless there are enough projects. Unlike labels (which
+  // smart-parse's "@tag" shorthand can create on the fly, see this file's
+  // own tag test), a "#Project" mention only ever resolves against EXISTING
+  // projects — so these have to be created for real via the "Manage
+  // projects" modal's own "Add project" form.
+  async function seedExtraProjects(page, runId) {
+    const names = [`E2eSearchAlpha${runId}`, `E2eSearchBeta${runId}`];
+    await page.getByRole('button', { name: 'Manage projects', exact: true }).click();
+    await page.waitForTimeout(300);
+    for (const name of names) {
+      await page.getByRole('button', { name: 'Add project' }).click();
+      await page.getByPlaceholder('Project name…').fill(name);
+      await page.getByRole('button', { name: 'Add', exact: true }).click();
+      await page.waitForTimeout(300);
+    }
+    await closeAnyModal(page);
+    return names;
+  }
+
+  test('search narrows the project list, supports typo tolerance, Enter selects, and shows a no-match state', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    const runId = Date.now();
+    const [alphaName] = await seedExtraProjects(page, runId);
+
+    await gotoTab(page, 'Calendar');
+    await openFilterMenu(page);
+    await page.getByRole('button', { name: /^Projects/ }).click();
+    await page.waitForTimeout(150);
+
+    const searchInput = page.locator('.calendar-filter-search-input');
+    await expect(searchInput).toBeVisible();
+
+    // Narrows: typing the seeded project's exact name should leave only it
+    // (and no other project) visible as a checkbox row.
+    await searchInput.fill(alphaName);
+    await page.waitForTimeout(150);
+    const groupBody = page.locator('.calendar-filter-group-body');
+    await expect(groupBody.getByRole('checkbox', { name: alphaName, exact: true })).toBeVisible();
+    await expect(groupBody.getByRole('checkbox', { name: 'Work', exact: true })).toHaveCount(0);
+
+    // Typo tolerance: dropping one character still finds it via the fuzzy tier.
+    const typo = alphaName.slice(0, -1); // e.g. "E2eSearchAlpha1699..." minus its last digit
+    await searchInput.fill(typo);
+    await page.waitForTimeout(150);
+    await expect(groupBody.getByRole('checkbox', { name: alphaName, exact: true })).toBeVisible();
+
+    // Enter toggles the top-ranked (highlighted) match without needing a
+    // click. Every project starts implicitly selected (selectedIds === null
+    // means "all"), so the checkbox starts checked — Enter here unchecks it.
+    await searchInput.fill(alphaName);
+    await page.waitForTimeout(150);
+    const alphaCheckbox = groupBody.getByRole('checkbox', { name: alphaName, exact: true });
+    await expect(alphaCheckbox).toBeChecked();
+    await searchInput.press('Enter');
+    await page.waitForTimeout(150);
+    await expect(alphaCheckbox).not.toBeChecked();
+
+    // No-match state for a query that can't plausibly match anything.
+    await searchInput.fill('zzzznomatchzzzz');
+    await page.waitForTimeout(150);
+    await expect(page.locator('.calendar-filter-no-match')).toBeVisible();
+
+    // Clean up: clear the query and restore "All projects" so this doesn't
+    // leak a narrowed filter into later tests.
+    await searchInput.fill('');
+    await page.waitForTimeout(150);
+    await page.getByRole('checkbox', { name: 'All projects' }).check();
+    await page.waitForTimeout(300);
+    await closeAnyModal(page);
+
+    expectNoErrors(errors);
+  });
+
+  test('search works at a mobile viewport', async ({ page }) => {
+    // Seed the extra projects at desktop width first — "Manage projects" is
+    // reached via the desktop Sidebar (mobile has no sidebar, see its own
+    // doc comment); the projects persist in localStorage once created, so
+    // switching to a phone viewport afterwards still sees them.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    const runId = Date.now();
+    const [alphaName] = await seedExtraProjects(page, runId);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await gotoTab(page, 'Calendar');
+    await openFilterMenu(page);
+    await page.getByRole('button', { name: /^Projects/ }).click();
+    await page.waitForTimeout(150);
+
+    const searchInput = page.locator('.calendar-filter-search-input');
+    await expect(searchInput).toBeVisible();
+    // >=16px avoids iOS Safari's zoom-on-focus for text inputs.
+    const fontSize = await searchInput.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(fontSize).toBeGreaterThanOrEqual(16);
+
+    await searchInput.fill(alphaName);
+    await page.waitForTimeout(150);
+    const groupBody = page.locator('.calendar-filter-group-body');
+    await expect(groupBody.getByRole('checkbox', { name: alphaName, exact: true })).toBeVisible();
+
+    // The popover itself must still fit the viewport with the search box added.
+    const popover = page.locator('.calendar-filter-dropdown');
+    const box = await popover.boundingBox();
+    expect(box.width).toBeLessThanOrEqual(390);
+
+    await searchInput.fill('');
+    await page.waitForTimeout(150);
+    await closeAnyModal(page);
+
+    expectNoErrors(errors);
+  });
+});

@@ -12,12 +12,21 @@
  * menu stays compact even with many projects/labels.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Filter, ChevronDown, Check } from 'lucide-react';
+import { Filter, ChevronDown, Check, Search } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { UNASSIGNED_PROJECT_ID, isCalendarFilterActive } from '../../utils/calendarFilter';
+import { rankByNameSearch } from '../../utils/nameSearch';
+
+// Below this many items a search box above the list is just noise (a search
+// input over 2-3 checkboxes doesn't save any scrolling/scanning) — only the
+// Projects group tends to grow past this in practice, since a user's project
+// list is usually longer-lived than their tag list.
+const SEARCH_THRESHOLD = 5;
 
 const SHOW_MODE_OPTIONS = [
   { key: 'both', label: 'Tasks & events' },
@@ -38,10 +47,54 @@ function toggleSelection(current, id, allIds) {
  * One collapsible checkbox group (Projects or Tags) — collapsed by default,
  * showing a one-line summary ("All" or "N selected") with a chevron, so
  * several groups can coexist without the menu growing tall by default.
+ *
+ * `searchable` (currently only opted into by the Projects group — see
+ * SEARCH_THRESHOLD) adds a type-to-filter box above the "All ___" reset item:
+ * typing narrows/reorders `items` via nameSearch.js's rankByNameSearch
+ * (prefix > substring > fuzzy). Reuses useComboboxMultiSelect's query state
+ * (the same state DependencyPicker/LabelPicker use for their own filtered
+ * dropdowns) for the query itself, and the shared useListKeyboardNav hook
+ * (also used by CommandPalette/Sidebar/ManageProjectsModal) for Up/Down/Enter
+ * — with `wrap: false` (clamp at the ends rather than wrap around) since
+ * this list sits inside an already-scrollable popover, and Enter *toggles*
+ * the highlighted row rather than closing the menu (this group stays open
+ * across several picks, like the plain checkbox rows below it).
+ *
+ * `showSwatch` renders a color-dot per item — opted into by Tags (Label.color
+ * is always set) but not Projects (projects have no color concept).
  */
-function FilterGroup({ heading, items, selectedIds, onToggle, onReset, resetLabel }) {
+function FilterGroup({ heading, items, selectedIds, onToggle, onReset, resetLabel, searchable, showSwatch }) {
   const [expanded, setExpanded] = useState(false);
+  const { query, setQuery } = useComboboxMultiSelect();
   const summary = selectedIds === null ? 'All' : `${selectedIds.length} selected`;
+
+  const showSearch = searchable && items.length > SEARCH_THRESHOLD;
+  const visibleItems = useMemo(
+    () => (showSearch ? rankByNameSearch(query, items) : items),
+    [showSearch, query, items]
+  );
+
+  const { activeIndex: highlightedIndex, setActiveIndex: setHighlightedIndex, listRef, handleKeyDown } = useListKeyboardNav({
+    itemCount: visibleItems.length,
+    onSelect: (index) => {
+      const target = visibleItems[index];
+      if (target) onToggle(target.id);
+    },
+    wrap: false,
+    resetKey: query,
+  });
+
+  function handleSearchKeyDown(e) {
+    if (e.key === 'Escape' && query) {
+      // First Escape just clears the query; a second (now a no-op query
+      // clear) falls through to the menu's own close-on-Escape handling.
+      e.stopPropagation();
+      setQuery('');
+      return;
+    }
+    handleKeyDown(e);
+  }
+
   return (
     <div className="calendar-filter-group">
       <button
@@ -58,26 +111,63 @@ function FilterGroup({ heading, items, selectedIds, onToggle, onReset, resetLabe
       </button>
       {expanded && (
         <div className="calendar-filter-group-body">
+          {showSearch && (
+            <div className="calendar-filter-search">
+              <Search size={13} className="calendar-filter-search-icon" />
+              <input
+                type="text"
+                className="calendar-filter-search-input"
+                role="combobox"
+                aria-expanded={!!query.trim()}
+                aria-controls={`calendar-filter-listbox-${heading}`}
+                aria-activedescendant={
+                  query.trim() && visibleItems[highlightedIndex] ? `calendar-filter-option-${heading}-${visibleItems[highlightedIndex].id}` : undefined
+                }
+                placeholder={`Search ${heading.toLowerCase()}…`}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+              />
+            </div>
+          )}
           {/* Unchecking "All" (rather than a no-op) explicitly clears the
               selection to empty — otherwise, with a single item in the list,
               unchecking would immediately collapse back to "all" (see
               toggleSelection's own all-selected-collapses-to-null rule) and
               the checkbox would appear stuck checked. */}
-          <label className="dashboard-customize-item calendar-filter-reset-item">
-            <input type="checkbox" checked={selectedIds === null} onChange={() => onReset(selectedIds === null)} />
-            {resetLabel}
-          </label>
-          {items.map(({ id, label, color }) => (
-            <label key={id} className="dashboard-customize-item">
-              <input
-                type="checkbox"
-                checked={selectedIds === null || selectedIds.includes(id)}
-                onChange={() => onToggle(id)}
-              />
-              {color && <span className="calendar-filter-swatch" style={{ background: color }} />}
-              {label}
+          {!(showSearch && query.trim()) && (
+            <label className="dashboard-customize-item calendar-filter-reset-item">
+              <input type="checkbox" checked={selectedIds === null} onChange={() => onReset(selectedIds === null)} />
+              {resetLabel}
             </label>
-          ))}
+          )}
+          {showSearch && query.trim() && visibleItems.length === 0 && (
+            <p className="calendar-filter-no-match">No {heading.toLowerCase()} match "{query.trim()}".</p>
+          )}
+          <div id={`calendar-filter-listbox-${heading}`} role={showSearch && query.trim() ? 'listbox' : undefined} ref={listRef}>
+            {visibleItems.map(({ id, label, color }, i) => {
+              const isHighlighted = showSearch && query.trim() && i === highlightedIndex;
+              return (
+                <label
+                  key={id}
+                  id={showSearch && query.trim() ? `calendar-filter-option-${heading}-${id}` : undefined}
+                  role={showSearch && query.trim() ? 'option' : undefined}
+                  aria-selected={showSearch && query.trim() ? isHighlighted : undefined}
+                  data-active={isHighlighted}
+                  className={`dashboard-customize-item ${isHighlighted ? 'is-highlighted' : ''}`}
+                  onMouseEnter={() => showSearch && query.trim() && setHighlightedIndex(i)}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds === null || selectedIds.includes(id)}
+                    onChange={() => onToggle(id)}
+                  />
+                  {showSwatch && <span className="calendar-filter-swatch" style={{ background: color }} />}
+                  {label}
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -116,7 +206,7 @@ export default function CalendarFilterMenu({ filter, onChange }) {
 
   // "Unassigned" (no project) is always offered alongside real projects —
   // see calendarFilter.js's UNASSIGNED_PROJECT_ID.
-  const projectItems = [...projects.map((p) => ({ id: p.id, label: p.name, color: p.color })), { id: UNASSIGNED_PROJECT_ID, label: 'Unassigned' }];
+  const projectItems = [...projects.map((p) => ({ id: p.id, label: p.name })), { id: UNASSIGNED_PROJECT_ID, label: 'Unassigned' }];
   const allProjectIds = projectItems.map((p) => p.id);
   const allLabelIds = labels.map((l) => l.id);
 
@@ -172,6 +262,8 @@ export default function CalendarFilterMenu({ filter, onChange }) {
                   resetLabel="All projects"
                   onReset={(wasAll) => onChange({ ...filter, projectIds: wasAll ? [] : null })}
                   onToggle={(id) => onChange({ ...filter, projectIds: toggleSelection(filter.projectIds, id, allProjectIds) })}
+                  searchable
+                  showSwatch={false}
                 />
               )}
 
@@ -183,6 +275,7 @@ export default function CalendarFilterMenu({ filter, onChange }) {
                   resetLabel="All tags"
                   onReset={(wasAll) => onChange({ ...filter, labelIds: wasAll ? [] : null })}
                   onToggle={(id) => onChange({ ...filter, labelIds: toggleSelection(filter.labelIds, id, allLabelIds) })}
+                  showSwatch
                 />
               )}
             </div>

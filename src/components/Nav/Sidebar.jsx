@@ -20,7 +20,9 @@
 import React, { useState } from 'react';
 import { FolderKanban, Search, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
+import { rankByNameSearch } from '../../utils/nameSearch';
 
 export default function Sidebar({
   tabs,
@@ -40,8 +42,37 @@ export default function Sidebar({
   const [renameValue, setRenameValue] = useState('');
 
   const sortedProjects = sortProjectsForSidebar(projects);
-  const q = projectQuery.trim().toLowerCase();
-  const visibleProjects = q ? sortedProjects.filter((p) => p.name.toLowerCase().includes(q)) : sortedProjects;
+  // No query: keep today's exact pinned/recency order. With a query: rank by
+  // match quality (typo-tolerant), but break ties between equally-good
+  // matches using that same pinned/recency order rather than an arbitrary
+  // one — rankByNameSearch's tie-break preserves relative input order, and
+  // sortedProjects is already in pinned/recency order, so passing it in
+  // (rather than raw `projects`) gets that for free.
+  const visibleProjects = projectQuery.trim()
+    ? rankByNameSearch(projectQuery, sortedProjects.map((p) => ({ ...p, label: p.name })))
+    : sortedProjects;
+  // Keyboard nav (highlighted row + Arrow/Enter) only makes sense once a
+  // query has actually narrowed the list — the unfiltered pinned/recency
+  // order isn't a "ranked results" list to arrow through.
+  const isSearching = projectQuery.trim().length > 0;
+
+  const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
+    itemCount: isSearching ? visibleProjects.length : 0,
+    onSelect: (index) => {
+      const project = visibleProjects[index];
+      if (project) onSelectProject(project.id);
+    },
+    resetKey: projectQuery,
+  });
+
+  function handleSearchKeyDown(e) {
+    if (e.key === 'Escape' && projectQuery) {
+      e.stopPropagation();
+      setProjectQuery('');
+      return;
+    }
+    handleKeyDown(e);
+  }
 
   function startRename(project) {
     setRenamingId(project.id);
@@ -90,8 +121,15 @@ export default function Sidebar({
           <Search size={13} className="sidebar-project-search-icon" />
           <input
             type="text"
+            role="combobox"
+            aria-expanded={isSearching}
+            aria-controls="sidebar-project-listbox"
+            aria-activedescendant={
+              isSearching && visibleProjects[activeIndex] ? `sidebar-project-option-${visibleProjects[activeIndex].id}` : undefined
+            }
             value={projectQuery}
             onChange={(e) => setProjectQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             placeholder="Search projects…"
             aria-label="Search projects"
           />
@@ -105,9 +143,19 @@ export default function Sidebar({
           <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
         </button>
 
-        <div className="sidebar-project-list">
-          {visibleProjects.map((p) => (
-            <div key={p.id} className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''}`}>
+        <div className="sidebar-project-list" id="sidebar-project-listbox" role={isSearching ? 'listbox' : undefined} ref={listRef}>
+          {visibleProjects.map((p, index) => (
+            <div
+              key={p.id}
+              id={isSearching ? `sidebar-project-option-${p.id}` : undefined}
+              role={isSearching ? 'option' : undefined}
+              aria-selected={isSearching ? index === activeIndex : undefined}
+              data-active={isSearching && index === activeIndex}
+              className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''} ${
+                isSearching && index === activeIndex ? 'is-kbd-active' : ''
+              }`}
+              onMouseEnter={() => isSearching && setActiveIndex(index)}
+            >
               {renamingId === p.id ? (
                 <input
                   autoFocus

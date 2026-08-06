@@ -216,7 +216,7 @@ export async function fetchProjects(apiToken) {
   if (!apiToken) return getMockProjects();
   try {
     const raw = await fetchAllPages('/projects', apiToken);
-    return raw.map((p) => ({ id: String(p.id), name: p.name, color: p.color, order: p.child_order ?? p.order ?? 0 }));
+    return raw.map((p) => ({ id: String(p.id), name: p.name, order: p.child_order ?? p.order ?? 0 }));
   } catch (err) {
     console.warn('[todoistService] Failed to fetch projects, project filter will be unavailable.', err);
     return [];
