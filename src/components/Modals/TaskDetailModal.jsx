@@ -461,6 +461,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       ?.getAsFile();
     if (!file) return;
     e.preventDefault();
+    // Attachments aren't offered on shared tasks (see the attach-button
+    // removal above), but paste doesn't go through that button — guard it
+    // here too so a pasted screenshot can't sneak a file in anyway.
+    if (isSharedTask) {
+      setCommentError('Attachments aren\'t available in shared projects yet.');
+      return;
+    }
     const error = validateAttachment(file);
     if (error) {
       setCommentError(error);
@@ -2132,6 +2139,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   </p>
                 ) : (
                 <div className="comment-input-bar-wrapper">
+                  {/* Shared tasks can't attach files yet (Storage isn't provisioned —
+                      see attachmentService.js's checkAttachmentAllowed), so this note
+                      takes the attach button's place instead of stacking a second
+                      notice under the comment-cap warning above. Only shown once the
+                      cap note above isn't already covering this state's own composer. */}
+                  {isSharedTask && !atCommentCap && (
+                    <p className="comment-viewonly-note">
+                      <Paperclip size={13} aria-hidden="true" />
+                      <span>Attachments aren't available in shared projects yet — text comments work as usual.</span>
+                    </p>
+                  )}
                   {mentionDropdownOpen && (
                     <ul className="mention-dropdown comment-mention-dropdown" role="listbox">
                       {mentionMatches.map((candidate, i) => (
@@ -2183,24 +2201,28 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       placeholder={atCommentCap ? 'Comment limit reached' : isSharedTask ? 'Comment (type @ to mention)' : 'Comment'}
                       disabled={isPostingComment || atCommentCap}
                     />
-                    <input
-                      ref={commentFileInputRef}
-                      type="file"
-                      accept={ATTACHMENT_ACCEPT}
-                      style={{ display: 'none' }}
-                      onChange={handleCommentFileSelect}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-icon comment-attach-btn"
-                      onClick={() =>
-                        user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
-                      }
-                      title={user ? 'Attach a file' : 'Sign in to attach files'}
-                      disabled={isPostingComment || atCommentCap}
-                    >
-                      <Paperclip size={15} />
-                    </button>
+                    {!isSharedTask && (
+                      <>
+                        <input
+                          ref={commentFileInputRef}
+                          type="file"
+                          accept={ATTACHMENT_ACCEPT}
+                          style={{ display: 'none' }}
+                          onChange={handleCommentFileSelect}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-icon comment-attach-btn"
+                          onClick={() =>
+                            user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
+                          }
+                          title={user ? 'Attach a file' : 'Sign in to attach files'}
+                          disabled={isPostingComment || atCommentCap}
+                        >
+                          <Paperclip size={15} />
+                        </button>
+                      </>
+                    )}
                     <button
                       type="button"
                       className="btn btn-icon comment-send-btn"

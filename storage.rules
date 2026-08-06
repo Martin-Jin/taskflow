@@ -1,5 +1,17 @@
 rules_version = '2';
 
+// NOTE: the sharedProjects/... block below is written and reviewed, but NOT
+// currently deployed. Firebase Storage has never been provisioned for this
+// project (provisioning it likely requires switching to the paid Blaze
+// plan, which hasn't been adopted), so this whole file has never been
+// pushed with `firebase deploy --only storage`. Storage denies by default
+// when unprovisioned/undeployed, so shared-task attachment uploads are
+// disabled at the UI and app-logic layers instead (see
+// TaskDetailModal.jsx and SchedulerContext.jsx's addComment) — this file
+// is kept ready so re-enabling is just "provision Storage, deploy this,
+// flip the UI/app-logic guards back on." See docs/DEVELOPMENT.md for the
+// full checklist.
+
 service firebase.storage {
   match /b/{bucket}/o {
     // Mirrors firestore.rules' uid-ownership check: a signed-in user may

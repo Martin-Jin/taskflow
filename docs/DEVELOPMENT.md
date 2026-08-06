@@ -357,6 +357,32 @@ widening that rule (which would let a viewer edit every other task field,
 not just comments), `TaskDetailModal` renders the comment thread read-only
 for viewers.
 
+**Comment file attachments are disabled on shared-project tasks** (text
+comments are unaffected). Personal (non-shared) task attachments upload to
+`users/{uid}/attachments/{taskId}/...`, whose `storage.rules` are deployed
+and working. Shared-task attachments were designed to use a second path,
+`sharedProjects/{sharedProjectId}/attachments/{taskId}/...` (see
+`attachmentService.js`'s `buildAttachmentPath`), with its own rules block
+already written in `storage.rules` — but Firebase Storage has never been
+provisioned for this project, and provisioning it likely requires switching
+to the paid Blaze plan, which hasn't been adopted. An undeployed/unprovisioned
+Storage bucket denies every request, so every shared-task upload would fail
+at runtime if the UI still offered it. The affordance is disabled in three
+places, all reversible: `TaskDetailModal` hides the attach-file button for a
+task with a `sharedProjectId` (showing a short note instead) and shows a note
+explaining why; `SchedulerContext`'s `addComment` refuses a `file` for a
+shared task via `attachmentService.js`'s `checkAttachmentAllowed`, as
+defense in depth against a stale client or a future call site; and
+`storage.rules` carries a header note that its shared-project block is
+written and reviewed but not deployed. Also note `storage.rules` has no
+automated test coverage — `npm run test:rules` (see
+[Testing](#testing)) only exercises `firestore.rules` against the Firestore
+emulator, there's no equivalent Storage-rules emulator test in this repo. To
+re-enable: provision Firebase Storage for the project, run `firebase deploy
+--only storage`, then remove the three guards above (the attach button/note
+in `TaskDetailModal`, the `checkAttachmentAllowed` check in `addComment`, and
+optionally the header note in `storage.rules`).
+
 Access rules (`firestore.rules`) — the app's first cross-user data path, so
 the constraints are deliberate and worth understanding before touching them:
 

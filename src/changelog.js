@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '2.5.1',
+    date: '2026-08-06',
+    title: 'Attachments temporarily unavailable on shared project tasks',
+    changes: [
+      "File attachments on a shared project's task comments were never actually working — uploads would silently fail. The attach-file button is now hidden there with a short explanation, so it's clear upfront rather than failing after you pick a file. Text comments on shared tasks are unaffected, and attachments on your own personal tasks work exactly as before.",
+    ],
+  },
+  {
     version: '2.5.0',
     date: '2026-08-06',
     title: 'Comment threads on shared tasks now show who said what',
