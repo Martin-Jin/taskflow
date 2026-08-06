@@ -65,12 +65,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # NOTE: do not add a `timeout:` input here hoping to survive a slow Pages
+      # queue — 600000ms (10 min) is this action's hard MAXIMUM, not just its
+      # default. A larger value is silently clamped with
+      # "timeout value is greater than the allowed maximum", so it changes
+      # nothing; tried and reverted 2026-08-07. When a deployment sits in
+      # deployment_queued past 10 min the action cancels it and the run fails,
+      # and there is no repo-side knob for that — it's a GitHub Pages service
+      # problem. Re-run the job once Pages is healthy. See TODO.md's
+      # "Deploy slowness" note for the full diagnosis.
       - id: deployment
         uses: actions/deploy-pages@v5
-        with:
-          # GitHub's Pages queue routinely sits in `deployment_queued` for
-          # several minutes, and the action's default timeout (10 min) is short
-          # enough that a slow queue fails an otherwise-perfect build — that's
-          # what happened to 3b83994. The build artifact is already uploaded by
-          # then, so waiting longer costs nothing but runner minutes.
-          timeout: 1800000
