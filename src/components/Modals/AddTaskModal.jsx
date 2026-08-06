@@ -43,6 +43,7 @@ import {
   CalendarX2,
   Flag,
   Link2,
+  Lock,
   Folder,
   Layers,
   Tag,
@@ -51,10 +52,12 @@ import {
   X,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useAuth } from '../../context/AuthContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
+import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -72,7 +75,8 @@ import SmartParseGuideModal from './SmartParseGuideModal';
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes
 
 export default function AddTaskModal({ onClose, initialProjectId = '', initialSectionId = '' }) {
-  const { addTask, tasks, sections, projects, labels, getOrCreateLabelIds } = useScheduler();
+  const { addTask, tasks, sections, projects, sharedProjects, labels, getOrCreateLabelIds } = useScheduler();
+  const { user } = useAuth();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -134,6 +138,18 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const dependencyOptions = tasks.filter((t) => !t.isCompleted);
 
   const availableSections = sections.filter((s) => !projectId || s.projectId === projectId);
+
+  // A viewer-role collaborator can look at a shared project but not create
+  // tasks in it — same read-only precedent as TaskDetailModal's comment
+  // composer and BoardView's section editing (both gated the same way via
+  // computeEffectiveRole). Rules already refuse the write server-side; this
+  // keeps the UI from offering one that would just fail.
+  function isViewerOnlyProject(id) {
+    const project = projects.find((p) => p.id === id);
+    if (!project?.sharedProjectId) return false;
+    return computeEffectiveRole(sharedProjects[project.sharedProjectId], user?.uid) === 'viewer';
+  }
+  const isSelectedProjectViewerOnly = !!projectId && isViewerOnlyProject(projectId);
 
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);
@@ -257,6 +273,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   }
 
   function handleSubmit() {
+    if (isSelectedProjectViewerOnly) return; // UI already hides/disables this path — defense in depth.
     if (!title.trim()) {
       setError('Give the task a title.');
       return;
@@ -626,6 +643,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           </div>
         )}
 
+        {isSelectedProjectViewerOnly && (
+          <p className="comment-viewonly-note" style={{ margin: '0 20px' }}>
+            <Lock size={13} aria-hidden="true" />
+            <span>Adding tasks needs edit access on this project — ask the owner for editor access.</span>
+          </p>
+        )}
+
         <div className="addtask-footer">
           <SelectMenu
             icon={Folder}
@@ -638,7 +662,14 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             options={[
               { value: '', label: 'Inbox' },
               ...projects
-                .filter((p) => p.name.trim().toLowerCase() !== 'inbox')
+                // A viewer-role shared project is excluded here too — not just
+                // disabled on submit — so it's never even offered as a place
+                // to (attempt to) add a task. The current selection is left in
+                // even if it's viewer-only (e.g. opened from a Board column on
+                // such a project) so the dropdown doesn't silently change out
+                // from under the user; the note+disabled button above/below
+                // cover that case instead.
+                .filter((p) => p.name.trim().toLowerCase() !== 'inbox' && (p.id === projectId || !isViewerOnlyProject(p.id)))
                 .map((p) => ({ value: p.id, label: p.name })),
             ]}
           />
@@ -647,7 +678,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             <button className="btn" onClick={requestClose}>
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={handleSubmit}>
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={isSelectedProjectViewerOnly}>
               Add task
             </button>
           </div>

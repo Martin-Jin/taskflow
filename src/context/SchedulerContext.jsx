@@ -44,6 +44,7 @@ import { useGoogleCalendarSync } from '../hooks/useGoogleCalendarSync';
 import { useCloudSync } from '../hooks/useCloudSync';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
+import { auth } from '../firebase';
 import { useTheme } from './ThemeContext';
 import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { playAddSound, playDeleteSound } from '../services/soundService';
@@ -71,7 +72,7 @@ import {
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
-import { planSelfRename, isGuestUser } from '../utils/sharedProjectAccess';
+import { planSelfRename, isGuestUser, computeEffectiveRole } from '../utils/sharedProjectAccess';
 import { renameCachedJoinNames } from '../utils/joinFlow';
 import {
   isSharedTask,
@@ -1280,6 +1281,14 @@ export function SchedulerProvider({ children }) {
    * A due date is OPTIONAL — an undated task simply has no planning window
    * for the allocator, so it never gets auto-scheduled, but it still shows
    * up normally in the Tasks list and Board view (matching Todoist).
+   *
+   * VIEWER REFUSAL (defense in depth): a viewer-role collaborator on a
+   * shared project has no write access to that project's tasks subcollection
+   * (Firestore rules only allow owner/editor) — the UI already hides/disables
+   * every task-creation entry point for a viewer (AddTaskModal, Board's
+   * per-column add), but this throws too, same rationale as addComment's
+   * checkAttachmentAllowed refusal, so a stale client or a future call site
+   * (AI plans, imports) can't silently create a task that syncs nowhere.
    */
   const addTask = useCallback(
     (taskInput) => {
@@ -1292,6 +1301,12 @@ export function SchedulerProvider({ children }) {
       // Every creation path (quick-add, modal, AI plans, imports) funnels
       // through here, so this one lookup covers all of them.
       const owningProject = built.projectId ? projects.find((p) => p.id === built.projectId) : null;
+      if (owningProject?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[owningProject.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Adding tasks needs edit access on this project — ask the owner for editor access.');
+        }
+      }
       const newTask = owningProject?.sharedProjectId
         ? { ...built, sharedProjectId: owningProject.sharedProjectId }
         : built;
@@ -1322,7 +1337,7 @@ export function SchedulerProvider({ children }) {
       if (newTask.dueDate && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
       return newTask;
     },
-    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects]
+    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects, sharedProjects, user]
   );
 
   /**
@@ -2380,18 +2395,33 @@ export function SchedulerProvider({ children }) {
    */
   const joinSharedProject = useCallback(
     async ({ sharedProjectId, projectName, role, displayName, wasAnonymous }) => {
-      if (!user) return { ok: false, reason: 'not_signed_in' };
+      // Read the LIVE Firebase Auth user, not the `user` this callback closed
+      // over. useJoinFlow's join effect runs once (guarded by its own
+      // startedRef) and calls this via a `completeJoin` reference it captured
+      // BEFORE signInAnonymously/resolveShareToken's signInWithCustomToken
+      // resolved — this context's own `user` state only catches up once
+      // AuthContext's onAuthStateChanged listener fires and this provider
+      // re-renders, which is not guaranteed to have happened yet by the time
+      // this runs. Reading `user` here would see the pre-sign-in value (often
+      // `null`) and fail with 'not_signed_in' on a visitor's very first
+      // attempt — exactly the "works on refresh, fails on the first try" bug
+      // this works around. auth.currentUser is synchronous and always current
+      // (see useJoinFlow.js's own identical `auth.currentUser` reads, and its
+      // header comment). Falls back to the React `user` for any caller
+      // outside the join flow where both should already agree.
+      const currentUser = auth.currentUser || user;
+      if (!currentUser) return { ok: false, reason: 'not_signed_in' };
       try {
-        await addSelfAsCollaborator(sharedProjectId, user.uid, {
+        await addSelfAsCollaborator(sharedProjectId, currentUser.uid, {
           role,
-          displayName: displayName || user.displayName || 'Someone',
-          photoURL: user.photoURL || null,
+          displayName: displayName || currentUser.displayName || 'Someone',
+          photoURL: currentUser.photoURL || null,
           // Falls back to user.isAnonymous only for callers outside the join
           // flow. Inside it, `wasAnonymous` (from the refreshed custom-token
           // claim) is the only correct source: after signInWithCustomToken
           // every session reports isAnonymous === false, so trusting it here
           // would write a value the rules reject. See resolveShareToken.
-          isAnonymous: wasAnonymous === undefined ? !!user.isAnonymous : !!wasAnonymous,
+          isAnonymous: wasAnonymous === undefined ? !!currentUser.isAnonymous : !!wasAnonymous,
         });
 
         setProjects((prev) => {

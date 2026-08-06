@@ -272,6 +272,44 @@ describe('planRemoteSectionApply — the in-flight write race guard', () => {
     expect(sections.map((s) => s.id)).toEqual(['new']);
   });
 
+  it('REGRESSION: keeps a just-created local section with no `pending` entry yet — addSection tags sharedProjectId synchronously, but the debounced push (and thus `pending`) has not run yet, so a snapshot landing in that window must not treat "not pending, not remote, not yet known-remote" as deleted', () => {
+    const justCreated = sharedSection({ id: 'brand-new' });
+    const { sections, removedIds } = planRemoteSectionApply({
+      localSections: [justCreated],
+      remoteSections: [],
+      projectId: PROJECT,
+      pending: new Map(),
+      knownRemoteIds: [], // never confirmed to exist server-side — exactly the ambiguous case
+    });
+    expect(sections.map((s) => s.id)).toEqual(['brand-new']);
+    expect(removedIds).toEqual([]);
+  });
+
+  it('still removes a section genuinely deleted by a collaborator, once it was previously known to exist server-side', () => {
+    const local = sharedSection({ id: 'was-here' });
+    const { sections, removedIds } = planRemoteSectionApply({
+      localSections: [local],
+      remoteSections: [],
+      projectId: PROJECT,
+      pending: new Map(),
+      knownRemoteIds: ['was-here'],
+    });
+    expect(sections).toEqual([]);
+    expect(removedIds).toEqual(['was-here']);
+  });
+
+  it('without knownRemoteIds supplied at all (old callers), falls back to the pre-existing behaviour of removing an unpending local section', () => {
+    const local = sharedSection({ id: 'legacy' });
+    const { sections, removedIds } = planRemoteSectionApply({
+      localSections: [local],
+      remoteSections: [],
+      projectId: PROJECT,
+      pending: new Map(),
+    });
+    expect(sections).toEqual([]);
+    expect(removedIds).toEqual(['legacy']);
+  });
+
   it('LWW: a remote rename always wins wholesale — no field-level merge for sections', () => {
     const local = sharedSection({ name: 'Mine', order: 5 });
     const remote = { ...serializeSharedSection(sharedSection()), name: 'Theirs', order: 9 };

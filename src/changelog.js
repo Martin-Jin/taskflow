@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '2.7.1',
+    date: '2026-08-06',
+    title: 'Fixes for adding tasks, joining, and viewer permissions',
+    changes: [
+      'Fixed: a task added to a shared project appeared and then vanished a moment later, for everyone including the project owner. It saved correctly — it was being wrongly treated as deleted before it finished syncing.',
+      'Fixed: opening a share link failed on the first attempt and only worked after reloading the page.',
+      "View-only collaborators are no longer offered an \"add task\" button in a project they can't write to — previously the task appeared briefly and then disappeared.",
+      'Fixed: adding a project could take two attempts, for the same reason deleting one did.',
+      'Fixed: someone who closed their tab stayed listed as viewing a shared project indefinitely, instead of dropping off after a minute or so.',
+    ],
+  },
+  {
     version: '2.7.0',
     date: '2026-08-06',
     title: 'Guests can rename themselves, and keep their projects when signing in',

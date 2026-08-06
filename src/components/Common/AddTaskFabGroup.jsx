@@ -21,6 +21,13 @@
  * fixed-position button in the same corner — that way it naturally stacks
  * above (and shifts with) the AI Quick Add / Add task mini-FABs whenever
  * this group expands or collapses, with no manual offset math needed.
+ *
+ * `addTaskDisabled` (optional): hides the "Add task" affordance entirely —
+ * used by BoardView when the current project is one this user only has
+ * viewer access to (a shared project's viewer collaborator). AI Quick Add
+ * stays available even then, since it isn't scoped to one project the way
+ * Board's FAB is; addTask itself still refuses per-task if a plan tries to
+ * write into a viewer-only project (see SchedulerContext's addTask).
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -28,10 +35,14 @@ import { Plus, Search, Sparkles, X } from 'lucide-react';
 import { isAIQuickAddConfigured, getStoredApiKey } from '../../services/aiQuickAddService';
 import { useScheduler } from '../../context/SchedulerContext';
 
-export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch }) {
+export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch, addTaskDisabled = false }) {
   const { setNotification, requestSettingsSection } = useScheduler();
   const aiConfigured = isAIQuickAddConfigured();
-  const speedDial = aiConfigured;
+  // With "Add task" hidden (viewer-only project), only keep the speed-dial
+  // shape if AI Quick Add is both configured AND still has something to show
+  // — otherwise the single remaining action should just be the main FAB
+  // itself, same as when AI Quick Add isn't configured at all.
+  const speedDial = aiConfigured && !addTaskDisabled;
   const [expanded, setExpanded] = useState(false);
   const [aiShake, setAiShake] = useState(false);
   const rootRef = useRef(null);
@@ -48,6 +59,11 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch 
   function handleMainClick() {
     if (speedDial) {
       setExpanded((prev) => !prev);
+    } else if (addTaskDisabled) {
+      // "Add task" is off (viewer-only project) and there's no speed-dial to
+      // expand into (AI Quick Add isn't configured) — nothing this FAB can
+      // do; see the render below, which hides it entirely in that case.
+      return;
     } else {
       onAddTask();
     }
@@ -108,16 +124,20 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch 
           </button>
         </>
       )}
-      <button
-        className="btn btn-primary add-task-btn"
-        data-tour="add-task"
-        onClick={handleMainClick}
-        aria-label={speedDial && expanded ? 'Close' : 'Add task'}
-        aria-expanded={speedDial ? expanded : undefined}
-      >
-        {speedDial && expanded ? <X size={14} /> : <Plus size={14} />}
-        <span className="add-task-btn-label">Add task</span>
-      </button>
+      {/* addTaskDisabled + no AI Quick Add configured leaves nothing this FAB
+          can do — hidden entirely rather than shown as a dead button. */}
+      {(!addTaskDisabled || aiConfigured) && (
+        <button
+          className="btn btn-primary add-task-btn"
+          data-tour="add-task"
+          onClick={addTaskDisabled ? handleAIQuickAdd : handleMainClick}
+          aria-label={speedDial && expanded ? 'Close' : addTaskDisabled ? 'AI Quick Add' : 'Add task'}
+          aria-expanded={speedDial ? expanded : undefined}
+        >
+          {speedDial && expanded ? <X size={14} /> : addTaskDisabled ? <Sparkles size={14} /> : <Plus size={14} />}
+          <span className="add-task-btn-label">{addTaskDisabled ? 'AI Quick Add' : 'Add task'}</span>
+        </button>
+      )}
     </div>
   );
 }

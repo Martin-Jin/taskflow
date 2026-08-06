@@ -54,6 +54,7 @@ import {
   planSharedSectionWrites,
   sharedTaskFingerprint,
   sharedSectionFingerprint,
+  PRESENCE_STALE_MS,
 } from '../utils/sharedTaskSync';
 
 /** How often to refresh this user's presence heartbeat. Comfortably inside PRESENCE_STALE_MS so a live viewer never flickers out. */
@@ -180,6 +181,11 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
               remoteTasks,
               projectId,
               pending: pendingRef.current,
+              // Ids ever confirmed to exist server-side — lets the race guard
+              // tell "never pushed yet" (keep) apart from "really deleted
+              // remotely" (drop) for a task with no pending entry. See
+              // planRemoteTaskApply's doc comment.
+              knownRemoteIds: syncedFingerprintsRef.current.keys(),
             });
 
             for (const id of confirmedIds) {
@@ -219,6 +225,7 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
               remoteSections,
               projectId,
               pending: sectionPendingRef.current,
+              knownRemoteIds: sectionSyncedFingerprintsRef.current.keys(),
             });
 
             for (const id of confirmedIds) {
@@ -434,6 +441,21 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
   /** Live shared sections, authoritative — used to protect them from cloud-sync pulls/restores (see preserveSharedSections). */
   const liveSharedSections = useMemo(() => partitionSectionsBySharing(sections).sharedSections, [sections]);
 
+  // Staleness is a function of TIME, not of incoming data — and a viewer who
+  // closes their tab stops producing snapshots by definition, so without this
+  // ticker the memo below would never re-run for them and they'd sit in the
+  // avatar strip forever rather than aging out after PRESENCE_STALE_MS. (The
+  // web has no reliable "goodbye" event, which is why presence is heartbeat-
+  // based and expiry has to be evaluated on a clock.) Half the stale window,
+  // so someone disappears within ~45s of the cutoff rather than up to a full
+  // window late.
+  const [presenceTick, setPresenceTick] = useState(0);
+  useEffect(() => {
+    if (!user || !projectIdsKey) return undefined;
+    const timer = setInterval(() => setPresenceTick((n) => n + 1), PRESENCE_STALE_MS / 2);
+    return () => clearInterval(timer);
+  }, [user, projectIdsKey]);
+
   /** Who else is currently viewing each project, keyed by project id. */
   const viewersByProject = useMemo(() => {
     const now = Date.now();
@@ -442,7 +464,8 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
       out[projectId] = computeActiveViewers(entries, now, user?.uid);
     }
     return out;
-  }, [presenceByProject, user?.uid]);
+    // presenceTick is a deliberate re-evaluation trigger, not data — see above.
+  }, [presenceByProject, user?.uid, presenceTick]);
 
   return {
     /** Shared project documents this user is a member of, keyed by id. */
