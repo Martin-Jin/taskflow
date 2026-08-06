@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '2.4.2',
+    date: '2026-08-06',
+    title: 'Fixes for shared projects',
+    changes: [
+      'Fixed: once a project was shared, the menu showed a dead "Shared project" label instead of a way back into the share settings — so links couldn\'t be rotated or revoked, and collaborator roles couldn\'t be changed. This hit mobile hardest, where that menu is the only route to those actions.',
+      'Fixed: when two people completed different occurrences of the same recurring task, the next due date could land on a day already completed instead of moving forward.',
+      'Shared projects now hold back rapid edits for a moment before saving, matching how your personal data already syncs.',
+      'Fixed: the share-link box zoomed the page in when tapped on iPhone.',
+      'The guided tour now mentions project sharing.',
+    ],
+  },
+  {
     version: '2.4.1',
     date: '2026-08-06',
     title: 'Fix recurring task due dates reverting instantly',

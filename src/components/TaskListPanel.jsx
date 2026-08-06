@@ -417,7 +417,6 @@ export default function TaskListPanel({
       onTogglePin: () => togglePinProject(activeProject.id),
       onDelete: handleDeleteProject,
       onShare: () => onShareProject(activeProject.id),
-      onManageSharing: () => onShareProject(activeProject.id),
     }
     : undefined;
 
@@ -535,7 +534,6 @@ export default function TaskListPanel({
                 onTogglePin={() => togglePinProject(activeProject.id)}
                 onDelete={handleDeleteProject}
                 onShare={() => onShareProject(activeProject.id)}
-                onManageSharing={() => onShareProject(activeProject.id)}
               />
             )}
           </div>

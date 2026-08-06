@@ -35,6 +35,7 @@ import {
   getProjectShareState,
   planOwnershipTransfer,
 } from '../../utils/sharedProjectAccess';
+import { initialsOf, isSafePhotoURL } from '../../utils/avatarDisplay';
 import {
   changeCollaboratorRole,
   removeCollaborator,
@@ -55,17 +56,6 @@ function dateInputValue(expiresAt) {
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function initialsOf(name) {
-  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function isSafePhotoURL(url) {
-  return typeof url === 'string' && /^https?:\/\//i.test(url);
 }
 
 /**

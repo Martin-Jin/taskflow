@@ -293,6 +293,53 @@ describe('mergeSharedTask — last-write-wins, except for recurring completions'
     const remote = sharedTask();
     expect(mergeSharedTask(undefined, remote)).toBe(remote);
   });
+
+  it('re-derives dueDate from the MERGED occurrence set, not whatever the remote doc happened to carry', () => {
+    // Two collaborators complete different occurrences of the same daily
+    // task, written from snapshots taken before either saw the other's
+    // completion. Remote's OWN dueDate (computed from its lone completion,
+    // 08-02) still points at 08-02 — a date the merged/unioned set now shows
+    // as already completed. It must be re-derived from the union, not taken
+    // wholesale from remote.
+    const recurring = {
+      ...sharedTask(),
+      isRecurring: true,
+      recurrenceString: 'every day',
+      recurrenceRule: deriveRecurrenceRule('every day'),
+      recurrenceAnchor: '2026-08-01',
+    };
+    // Local completed 08-01 only; its own dueDate advanced to 08-02.
+    const local = { ...recurring, completedOccurrences: ['2026-08-01'], skippedThrough: null, dueDate: '2026-08-02' };
+    // Remote completed 08-02 (never having seen local's 08-01 completion), so
+    // ITS OWN dueDate is still just the occurrence after 08-02: 08-02 itself
+    // was the due date being completed, so remote's stored dueDate is 08-02
+    // (the value it read/advanced from) — stale once unioned with local.
+    const remote = { ...recurring, completedOccurrences: ['2026-08-02'], skippedThrough: null, dueDate: '2026-08-02' };
+    const merged = mergeSharedTask(local, remote, '2026-08-02');
+    expect(merged.completedOccurrences).toEqual(['2026-08-01', '2026-08-02']);
+    // The union completes both 08-01 and 08-02, so the correct next due date
+    // is 08-03 — remote's stale 08-02 (already completed in the union) must
+    // not survive the merge.
+    expect(merged.dueDate).toBe('2026-08-03');
+  });
+
+  it('still honours the mixed-version-device guard after re-deriving: a stored dueDate further ahead than derivation wins', () => {
+    // A pre-migration client can legitimately push dueDate ahead without
+    // recording an occurrence. Re-deriving on merge must not undo that.
+    const recurring = {
+      ...sharedTask(),
+      isRecurring: true,
+      recurrenceString: 'every day',
+      recurrenceRule: deriveRecurrenceRule('every day'),
+      recurrenceAnchor: '2026-08-01',
+    };
+    const local = { ...recurring, completedOccurrences: [], skippedThrough: null, dueDate: '2026-08-01' };
+    // Remote is a stale/pre-migration write that jumped dueDate ahead without
+    // recording the occurrence in completedOccurrences.
+    const remote = { ...recurring, completedOccurrences: [], skippedThrough: null, dueDate: '2026-08-10' };
+    const merged = mergeSharedTask(local, remote, '2026-08-01');
+    expect(merged.dueDate).toBe('2026-08-10');
+  });
 });
 
 describe('preserveSharedTasks — the undo/redo landmine', () => {

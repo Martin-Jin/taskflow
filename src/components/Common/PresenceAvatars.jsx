@@ -19,21 +19,10 @@
  */
 
 import React from 'react';
+import { initialsOf, isSafePhotoURL } from '../../utils/avatarDisplay';
 
 /** Beyond this, remaining viewers collapse into a "+N" chip so a busy project can't overflow the toolbar. */
 const MAX_VISIBLE = 3;
-
-/** Only http(s) image URLs are ever put in an <img src>; anything else falls back to initials. */
-function isSafePhotoURL(url) {
-  return typeof url === 'string' && /^https?:\/\//i.test(url);
-}
-
-function initialsOf(name) {
-  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 export default function PresenceAvatars({ viewers }) {
   if (!viewers || viewers.length === 0) return null;
