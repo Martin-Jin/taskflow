@@ -207,14 +207,33 @@ export function hasLocalEditRaced(baselineActionId, currentActionId) {
  * it. The edit only "sticks" on a second attempt because by then the ack has
  * already settled.
  *
- * A snapshot is stale exactly when its fingerprint matches what THIS device
- * last pushed (`lastPushedFingerprint`) — i.e. it's provably an echo of a
- * write we already know about, not new information — while local state has
- * since diverged from what was pushed (a real local edit landed in the
- * meantime, which the caller's own fingerprint-equality check already
- * establishes by the time this runs). Nothing is lost by dropping it: the
- * newer local edit hasn't been pushed yet, so it'll reach Firestore on its
- * own via the normal debounced push.
+ * A snapshot is stale exactly when its fingerprint matches one of THIS
+ * device's still-in-flight pushes (`inFlightFingerprints` — every push sent
+ * whose echo hasn't arrived yet, see `runPushNow`/`retireInFlightFingerprint`)
+ * — i.e. it's provably an echo of a write we already know about, not new
+ * information — while local state has since diverged from what was pushed (a
+ * real local edit landed in the meantime, which the caller's own
+ * fingerprint-equality check already establishes by the time this runs).
+ * Nothing is lost by dropping it: the newer local edit hasn't been pushed
+ * yet, so it'll reach Firestore on its own via the normal debounced push.
+ *
+ * A single `lastPushedFingerprint` value is NOT enough here: it's
+ * overwritten on every push, so with two pushes in flight (an edit, then
+ * another edit before the first one's ack lands) the FIRST push's echo
+ * arrives carrying a fingerprint that's already been overwritten by the
+ * second push. Checking against every still-unacknowledged push's
+ * fingerprint (not just the latest) is what catches that case — see
+ * `inFlightPushFingerprintsRef` at the call site.
+ *
+ * This can also correctly recognize an echo for a fingerprint the app has
+ * since legitimately returned to (the user edits A -> B -> A): each push
+ * gets its own entry in `inFlightFingerprints`, so the SECOND push of "A"
+ * adds a fresh entry regardless of whether an older "A" entry is still
+ * present — retiring one matching entry per echo (see
+ * `retireInFlightFingerprint`) means a later genuine remote change that
+ * happens to match a fingerprint no longer in the in-flight list (because
+ * its echo already arrived and was retired) is never mistaken for a stale
+ * echo.
  *
  * Deliberately independent of `isFirstSnapshot`/subscribe-time baselines —
  * an own-write echo can arrive as the first snapshot after (re)subscribe or
@@ -224,8 +243,43 @@ export function hasLocalEditRaced(baselineActionId, currentActionId) {
  * arriving concurrently with an in-flight local edit — see
  * `localEditLandedFirst` for the initial-pull-shaped case).
  */
-export function isStaleOwnEcho(remoteFingerprint, lastPushedFingerprint) {
-  return lastPushedFingerprint != null && remoteFingerprint === lastPushedFingerprint;
+export function isStaleOwnEcho(remoteFingerprint, inFlightFingerprints) {
+  return Array.isArray(inFlightFingerprints) && inFlightFingerprints.includes(remoteFingerprint);
+}
+
+// Safety cap on how many in-flight push fingerprints are tracked at once —
+// pushes are debounced 1500ms apart and each ack normally arrives well
+// within that, so this should never realistically fill up. It exists purely
+// so a pathological case (acks never arriving, e.g. a permanently broken
+// listener) can't grow this list forever; the oldest entry is dropped first,
+// same "oldest first" policy as retireInFlightFingerprint's consumption order.
+const MAX_IN_FLIGHT_FINGERPRINTS = 20;
+
+/**
+ * Appends `fingerprint` to the in-flight queue (a push was just sent whose
+ * echo hasn't arrived yet), trimming from the front if it would exceed
+ * MAX_IN_FLIGHT_FINGERPRINTS. Pure — returns a new array, doesn't mutate.
+ */
+export function addInFlightFingerprint(inFlightFingerprints, fingerprint) {
+  const next = [...(inFlightFingerprints || []), fingerprint];
+  return next.length > MAX_IN_FLIGHT_FINGERPRINTS ? next.slice(next.length - MAX_IN_FLIGHT_FINGERPRINTS) : next;
+}
+
+/**
+ * Removes exactly ONE occurrence of `fingerprint` from the in-flight queue —
+ * the oldest one (first match, since the queue is oldest-first) — once its
+ * echo has been recognized by isStaleOwnEcho. Removing only one entry (not
+ * every matching one) is what keeps the A -> B -> A case correct: if "A" was
+ * pushed twice (still in flight twice), consuming one echo leaves the other
+ * entry so a second, later echo for the same fingerprint is still recognized
+ * rather than silently falling through to "genuine remote change". Pure —
+ * returns a new array, doesn't mutate.
+ */
+export function retireInFlightFingerprint(inFlightFingerprints, fingerprint) {
+  const list = inFlightFingerprints || [];
+  const index = list.indexOf(fingerprint);
+  if (index === -1) return list;
+  return [...list.slice(0, index), ...list.slice(index + 1)];
 }
 
 /**
@@ -437,6 +491,12 @@ export function useCloudSync({
 
   const pushTimerRef = useRef(null);
   const lastPushedFingerprintRef = useRef(null);
+  // Fingerprints of every push sent whose server ack (echo) hasn't arrived
+  // yet — see isStaleOwnEcho's doc comment for why lastPushedFingerprintRef
+  // alone (overwritten on every push) isn't enough once two pushes can be in
+  // flight at once. Entries are added in runPushNow and retired in the live
+  // listener once their echo is recognized.
+  const inFlightPushFingerprintsRef = useRef([]);
   // The tasks array as of the previous schedulePush call, so a newly-completed
   // task can be spotted and pushed without the debounce (see schedulePush).
   const lastSeenTasksRef = useRef(null);
@@ -466,6 +526,12 @@ export function useCloudSync({
       // listener below, which would mistake the server echo for a genuine
       // remote change and stomp whatever just changed locally.
       lastPushedFingerprintRef.current = plan.fingerprint;
+      // Record this push as in-flight BEFORE awaiting the write, so the live
+      // listener's echo check (isStaleOwnEcho) can recognize its ack no
+      // matter how many other pushes are ALSO in flight at the same time —
+      // see isStaleOwnEcho's doc comment for why a single overwritten ref
+      // isn't enough.
+      inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       await pushUserData(user.uid, currentState);
     } catch (err) {
       console.warn('[useCloudSync] Push failed', err);
@@ -476,6 +542,11 @@ export function useCloudSync({
       // Restoring the previous value means the very next state change
       // (including one identical to this failed push) will retry it.
       lastPushedFingerprintRef.current = plan.rollbackFingerprint;
+      // A failed write never reaches Firestore, so no echo will ever arrive
+      // for it — retire it immediately rather than leaving a phantom entry
+      // that could otherwise (implausibly, but not impossibly) match some
+      // unrelated later snapshot and cause it to be dropped.
+      inFlightPushFingerprintsRef.current = retireInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       setNotification({ type: 'error', message: 'Failed to sync to the cloud. Your changes are saved locally and will retry on your next edit.' });
     } finally {
       setIsPushingCloud(false);
@@ -703,7 +774,14 @@ export function useCloudSync({
       //   - (First snapshot only, mirroring the initial-pull effect) a local
       //     commit landed in the gap between subscribing and the first
       //     snapshot actually arriving.
-      const isStaleEcho = isStaleOwnEcho(remoteFingerprint, lastPushedFingerprintRef.current);
+      const isStaleEcho = isStaleOwnEcho(remoteFingerprint, inFlightPushFingerprintsRef.current);
+      if (isStaleEcho) {
+        // This echo has now been accounted for — retire exactly one matching
+        // entry so a LATER, genuinely different remote change that happens
+        // to reuse the same fingerprint (e.g. the user edits A -> B -> A,
+        // re-pushing "A") isn't mistaken for a leftover stale echo forever.
+        inFlightPushFingerprintsRef.current = retireInFlightFingerprint(inFlightPushFingerprintsRef.current, remoteFingerprint);
+      }
       const localEditLandedFirst = isFirstSnapshot && hasLocalEditRaced(actionIdAtSubscribe, currentActionIdRef.current);
       applyRemoteData(remoteData, { skipAll: isStaleEcho || localEditLandedFirst });
     });
@@ -842,12 +920,19 @@ export function useCloudSync({
   const pushToCloud = useCallback(async () => {
     if (!user) return;
     setIsPushingCloud(true);
+    // Same in-flight bookkeeping as runPushNow (see isStaleOwnEcho's doc
+    // comment) — this button can just as easily overlap a debounced push (or
+    // another manual push) while the write is in flight, so its echo needs
+    // to be recognizable too.
+    const fingerprint = computeFingerprint(stateRef.current);
+    inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, fingerprint);
     try {
       await pushUserData(user.uid, stateRef.current);
-      lastPushedFingerprintRef.current = computeFingerprint(stateRef.current);
+      lastPushedFingerprintRef.current = fingerprint;
       setNotification({ type: 'success', message: 'Pushed data to cloud.' });
     } catch (err) {
       console.error(err);
+      inFlightPushFingerprintsRef.current = retireInFlightFingerprint(inFlightPushFingerprintsRef.current, fingerprint);
       setNotification({ type: 'error', message: 'Push to cloud failed.' });
     } finally {
       setIsPushingCloud(false);

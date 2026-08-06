@@ -50,6 +50,8 @@ import {
   computeFingerprint,
   hasLocalEditRaced,
   isStaleOwnEcho,
+  addInFlightFingerprint,
+  retireInFlightFingerprint,
   planRemoteDataMerge,
   computePushStampPlan,
   planAutoBackupPrune,
@@ -257,21 +259,107 @@ describe('hasLocalEditRaced', () => {
 });
 
 describe('isStaleOwnEcho', () => {
-  it('flags a snapshot whose fingerprint matches the last thing this device pushed', () => {
+  // isStaleOwnEcho now checks against the FULL list of still-unacknowledged
+  // in-flight push fingerprints (see addInFlightFingerprint/
+  // retireInFlightFingerprint), not just the single most-recently-pushed one
+  // — a single overwritten ref lost track of an OLDER push's fingerprint the
+  // moment a second push started, which is exactly the bug this replaced
+  // (see the multi-in-flight test below).
+
+  it('flags a snapshot whose fingerprint matches a single in-flight push', () => {
     // This is the shape that arrives when the server acknowledges OUR OWN
     // earlier push after local state has since moved on (e.g. the user
     // deleted or shared a project while that push was still in flight) — see
     // isStaleOwnEcho's doc comment for the full sequence.
-    expect(isStaleOwnEcho('fp-A', 'fp-A')).toBe(true);
+    expect(isStaleOwnEcho('fp-A', ['fp-A'])).toBe(true);
   });
 
-  it('does not flag a snapshot that differs from the last push (a genuinely different/newer remote write)', () => {
-    expect(isStaleOwnEcho('fp-B', 'fp-A')).toBe(false);
+  it('does not flag a snapshot that differs from anything in flight (a genuinely different/newer remote write)', () => {
+    expect(isStaleOwnEcho('fp-B', ['fp-A'])).toBe(false);
   });
 
-  it('does not flag anything before this device has ever pushed (lastPushedFingerprint is null)', () => {
+  it('does not flag anything before this device has ever pushed (nothing in flight)', () => {
+    expect(isStaleOwnEcho('fp-A', [])).toBe(false);
     expect(isStaleOwnEcho('fp-A', null)).toBe(false);
     expect(isStaleOwnEcho('fp-A', undefined)).toBe(false);
+  });
+
+  it('TWO pushes in flight: the OLDER push`s echo (no longer the most recent) is still recognized as stale', () => {
+    // Sequence this reproduces: push #1 goes out with fingerprint "fp-old"
+    // (edit A). Before its ack arrives, the user makes another edit and
+    // push #2 goes out with fingerprint "fp-new" (edit B). Push #1's ack
+    // (echo) now arrives carrying "fp-old" — under the OLD single-ref
+    // design this would have been compared only against "fp-new" (the ref
+    // having been overwritten) and wrongly treated as a genuine remote
+    // change, reverting the user's second edit. With both fingerprints
+    // tracked as in-flight, "fp-old" is still recognized.
+    let inFlight = [];
+    inFlight = addInFlightFingerprint(inFlight, 'fp-old'); // push #1 sent
+    inFlight = addInFlightFingerprint(inFlight, 'fp-new'); // push #2 sent, before #1 acked
+    expect(isStaleOwnEcho('fp-old', inFlight)).toBe(true); // push #1's late echo
+    expect(isStaleOwnEcho('fp-new', inFlight)).toBe(true); // push #2's echo, still pending too
+  });
+
+  it('a genuine remote change from ANOTHER device is still applied even with multiple local pushes in flight', () => {
+    let inFlight = [];
+    inFlight = addInFlightFingerprint(inFlight, 'fp-old');
+    inFlight = addInFlightFingerprint(inFlight, 'fp-new');
+    // Some other device pushed something this device never sent.
+    expect(isStaleOwnEcho('fp-from-other-device', inFlight)).toBe(false);
+  });
+
+  it('A -> B -> A fingerprint reuse: retiring one echo does not permanently blind the guard to a later, genuinely new push of the same value', () => {
+    let inFlight = [];
+    // First push of "fp-A" (edit sets state to A).
+    inFlight = addInFlightFingerprint(inFlight, 'fp-A');
+    // Its echo arrives and is retired.
+    expect(isStaleOwnEcho('fp-A', inFlight)).toBe(true);
+    inFlight = retireInFlightFingerprint(inFlight, 'fp-A');
+    expect(inFlight).toEqual([]);
+    // User edits A -> B -> A again; the second "fp-A" push is a NEW push,
+    // tracked as a fresh in-flight entry.
+    inFlight = addInFlightFingerprint(inFlight, 'fp-A');
+    // Its own echo must still be recognized as stale (it's still OUR echo),
+    // not misapplied as if it were a stray already-consumed one.
+    expect(isStaleOwnEcho('fp-A', inFlight)).toBe(true);
+  });
+
+  it('retiring removes only ONE matching entry, so a duplicate in-flight fingerprint is not both cleared by a single echo', () => {
+    // "fp-A" pushed twice while still in flight (e.g. rapid completion-bypass
+    // pushes of equivalent state) — retiring for the first echo must leave
+    // the second entry intact so ITS echo is still recognized too.
+    let inFlight = [];
+    inFlight = addInFlightFingerprint(inFlight, 'fp-A');
+    inFlight = addInFlightFingerprint(inFlight, 'fp-A');
+    inFlight = retireInFlightFingerprint(inFlight, 'fp-A');
+    expect(inFlight).toEqual(['fp-A']);
+    expect(isStaleOwnEcho('fp-A', inFlight)).toBe(true);
+  });
+});
+
+describe('addInFlightFingerprint / retireInFlightFingerprint', () => {
+  it('appends in order and retires the oldest matching entry first', () => {
+    let inFlight = [];
+    inFlight = addInFlightFingerprint(inFlight, 'fp-1');
+    inFlight = addInFlightFingerprint(inFlight, 'fp-2');
+    expect(inFlight).toEqual(['fp-1', 'fp-2']);
+    inFlight = retireInFlightFingerprint(inFlight, 'fp-1');
+    expect(inFlight).toEqual(['fp-2']);
+  });
+
+  it('retiring a fingerprint not present is a no-op', () => {
+    const inFlight = ['fp-1'];
+    expect(retireInFlightFingerprint(inFlight, 'fp-does-not-exist')).toEqual(['fp-1']);
+  });
+
+  it('is bounded so a pathological run of unacknowledged pushes cannot grow forever', () => {
+    let inFlight = [];
+    for (let i = 0; i < 30; i++) {
+      inFlight = addInFlightFingerprint(inFlight, `fp-${i}`);
+    }
+    expect(inFlight.length).toBeLessThanOrEqual(20);
+    // The most recent entries are kept, not the oldest.
+    expect(inFlight[inFlight.length - 1]).toBe('fp-29');
   });
 });
 
