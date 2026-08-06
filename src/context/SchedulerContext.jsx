@@ -70,8 +70,15 @@ import {
 } from '../utils/recurrenceState';
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
-import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks } from '../services/sharedProjectService';
-import { isSharedTask, partitionTasksBySharing, preserveSharedTasks } from '../utils/sharedTaskSync';
+import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections } from '../services/sharedProjectService';
+import {
+  isSharedTask,
+  partitionTasksBySharing,
+  preserveSharedTasks,
+  isSharedSection,
+  partitionSectionsBySharing,
+  preserveSharedSections,
+} from '../utils/sharedTaskSync';
 import { isCompletedForCurrentOccurrence, areAllChildrenCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import {
   fetchTasks as fetchTodoistTasks,
@@ -715,6 +722,17 @@ export function SchedulerProvider({ children }) {
     stateRef.current = state;
   }, [state]);
 
+  // Sections aren't part of useHistoryState's {tasks, blocks} (they're a plain
+  // useState — see the "sections/projects" comment below), but
+  // useSharedProjectSync's async push/pull callbacks need the LATEST array the
+  // same way they need stateRef.current.tasks. Kept as its own ref rather than
+  // folded into `state` so useHistoryState's undo/redo stays scoped to exactly
+  // tasks/blocks, matching sections never being undoable today.
+  const sectionsRef = useRef(sections);
+  useEffect(() => {
+    sectionsRef.current = sections;
+  }, [sections]);
+
 
   // The Todoist token: a per-visitor personal API token entered in Settings
   // (see setTodoistApiToken below), persisted to THIS BROWSER's localStorage
@@ -765,7 +783,9 @@ export function SchedulerProvider({ children }) {
   }, [blocks]);
 
   useEffect(() => {
-    savePersisted('sections', sections);
+    // Shared-project sections are deliberately NOT persisted locally, mirroring
+    // shared tasks above — Firestore is their source of truth.
+    savePersisted('sections', partitionSectionsBySharing(sections).personalSections);
   }, [sections]);
 
   useEffect(() => {
@@ -937,14 +957,19 @@ export function SchedulerProvider({ children }) {
     sharedProjects,
     viewersByProject,
     liveSharedTasks,
+    liveSharedSections,
     noteSharedTaskDeleted,
+    noteSharedSectionDeleted,
   } = useSharedProjectSync({
     tasks,
+    sections,
     stateRef,
+    sectionsRef,
     // Remote changes are applied WITHOUT a history entry — they came from
     // someone else, so they must not be undoable by this user (and must not
     // consume a redo slot), exactly like the cloud-sync listener's own writes.
     applyRemote: overwritePresent,
+    applyRemoteSections: setSections,
     sharedProjectIds,
     user,
     setNotification,
@@ -998,7 +1023,11 @@ export function SchedulerProvider({ children }) {
       // `events` out of live sync (see backupService.js's BACKUP_FIELDS notes).
       tasks: partitionTasksBySharing(tasks).personalTasks,
       blocks,
-      sections,
+      // Personal sections only — same reasoning as tasks above: a shared
+      // project's columns have concurrent writers and sync through
+      // useSharedProjectSync/Firestore, not through this user's own
+      // users/{uid} document (see utils/sharedTaskSync.js's SECTIONS note).
+      sections: partitionSectionsBySharing(sections).personalSections,
       projects,
       labels,
       routines,
@@ -1028,6 +1057,31 @@ export function SchedulerProvider({ children }) {
       sharedProjectIds,
     ]
   );
+
+  // Live shared sections, authoritative — mirrors liveSharedTasksRef above.
+  // Needed so setSectionsGuarded (passed to useCloudSync below) can restore
+  // them after a pull/restore replaces `sections` wholesale, the same
+  // landmine preserveSharedTasks fixes for tasks.
+  const liveSharedSectionsRef = useRef(liveSharedSections);
+  useEffect(() => {
+    liveSharedSectionsRef.current = liveSharedSections;
+  }, [liveSharedSections]);
+
+  // Wraps setSections so every caller inside useCloudSync (applyRemoteData's
+  // live listener/pull, and applyBackupPayload's restore) — both of which
+  // replace `sections` WHOLESALE with a remote/backup array that knows
+  // nothing about shared sections — re-merges the live shared ones back in
+  // afterward, instead of the incoming array silently dropping them until
+  // the next shared-project snapshot happens to arrive.
+  const setSectionsGuarded = useCallback(
+    (next) => {
+      setSections((prev) => {
+        const incoming = typeof next === 'function' ? next(prev) : next;
+        return preserveSharedSections(incoming, liveSharedSectionsRef.current);
+      });
+    },
+    [setSections]
+  );
   const cloudStateRef = useRef(cloudSyncState);
   useEffect(() => {
     cloudStateRef.current = cloudSyncState;
@@ -1050,7 +1104,7 @@ export function SchedulerProvider({ children }) {
     setNotification,
     commit,
     overwritePresent,
-    setSections,
+    setSections: setSectionsGuarded,
     setProjects,
     setLabels,
     setRoutines,
@@ -2218,14 +2272,28 @@ export function SchedulerProvider({ children }) {
         // doesn't have as remotely deleted). The `await` below is therefore
         // load-bearing, and every step after it has to be synchronous.
         const movingTasks = stateRef.current.tasks.filter((t) => t.projectId === projectId);
-        await writeSharedTasks(sharedProjectId, { creates: movingTasks });
+        // Sections upload alongside tasks, same all-or-nothing rule: a
+        // section tagged before its own upload is confirmed would be
+        // stranded exactly like a task would (see the comment above) — gone
+        // from local persistence, absent remotely, then dropped by the first
+        // snapshot treating it as remotely-deleted. Read from sectionsRef,
+        // not `sections`: this callback is async and sections could have
+        // changed since it was invoked.
+        const movingSections = sectionsRef.current.filter((s) => s.projectId === projectId);
+        await Promise.all([
+          writeSharedTasks(sharedProjectId, { creates: movingTasks }),
+          writeSharedSections(sharedProjectId, { creates: movingSections }),
+        ]);
 
         // Read state ONCE, after the last await, and derive every write from
-        // that single snapshot. Re-reading stateRef between the steps below
-        // would let a task added during the upload be tagged without ever
-        // having been uploaded — the exact stranding case described above.
+        // that single snapshot. Re-reading stateRef/sectionsRef between the
+        // steps below would let a task/section added during the upload be
+        // tagged without ever having been uploaded — the exact stranding case
+        // described above.
         const current = stateRef.current;
+        const currentSections = sectionsRef.current;
         const uploadedIds = new Set(movingTasks.map((t) => t.id));
+        const uploadedSectionIds = new Set(movingSections.map((s) => s.id));
 
         setProjects((prev) =>
           prev.map((p) => (p.id === projectId ? { ...p, ownerId: user.uid, sharedProjectId } : p))
@@ -2244,8 +2312,17 @@ export function SchedulerProvider({ children }) {
           ),
           blocks: current.blocks,
         });
-        // Subscribing LAST, once the tasks are both uploaded and tagged, so
-        // the first snapshot can never arrive while the two sides disagree.
+        // Sections aren't part of the tasks/blocks undo history — a plain
+        // setSections call, mirroring the overwritePresent call above for the
+        // same "only tag confirmed uploads" reasoning.
+        setSections(
+          currentSections.map((s) =>
+            s.projectId === projectId && uploadedSectionIds.has(s.id) ? { ...s, sharedProjectId } : s
+          )
+        );
+        // Subscribing LAST, once the tasks/sections are both uploaded and
+        // tagged, so the first snapshot can never arrive while the two sides
+        // disagree.
         setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
         setNotification({ type: 'success', message: `"${project.name}" is now a shared project.` });
         return { ok: true, id: sharedProjectId };
@@ -2258,7 +2335,7 @@ export function SchedulerProvider({ children }) {
         return { ok: false };
       }
     },
-    [user, projects, stateRef, overwritePresent, setNotification]
+    [user, projects, stateRef, sectionsRef, overwritePresent, setNotification]
   );
 
   /**
@@ -2289,14 +2366,19 @@ export function SchedulerProvider({ children }) {
    * project) is harmless.
    */
   const joinSharedProject = useCallback(
-    async ({ sharedProjectId, projectName, role, displayName }) => {
+    async ({ sharedProjectId, projectName, role, displayName, wasAnonymous }) => {
       if (!user) return { ok: false, reason: 'not_signed_in' };
       try {
         await addSelfAsCollaborator(sharedProjectId, user.uid, {
           role,
           displayName: displayName || user.displayName || 'Someone',
           photoURL: user.photoURL || null,
-          isAnonymous: !!user.isAnonymous,
+          // Falls back to user.isAnonymous only for callers outside the join
+          // flow. Inside it, `wasAnonymous` (from the refreshed custom-token
+          // claim) is the only correct source: after signInWithCustomToken
+          // every session reports isAnonymous === false, so trusting it here
+          // would write a value the rules reject. See resolveShareToken.
+          isAnonymous: wasAnonymous === undefined ? !!user.isAnonymous : !!wasAnonymous,
         });
 
         setProjects((prev) => {
@@ -2338,16 +2420,36 @@ export function SchedulerProvider({ children }) {
   }, []);
 
   // ---- Section CRUD (Board view columns) ------------------------------------
+  // Sections follow the exact same sharing model as tasks (see
+  // utils/sharedTaskSync.js's SECTIONS note): a section belonging to a shared
+  // project is tagged `sharedProjectId` and lives in the same `sections`
+  // array, synced by useSharedProjectSync's write-diff rather than by any
+  // direct Firestore call here.
 
   const addSection = useCallback(
     (projectId, name) => {
       const trimmed = name.trim();
       if (!trimmed || !projectId) return null;
-      const newSection = { id: generateLocalId('sec'), name: trimmed, projectId, order: sections.length + 1 };
+      // A section created inside a shared project is tagged immediately so
+      // the write-diff picks it up — mirrors what shareProject does for
+      // tasks moved in bulk, just one at a time here since sections are
+      // created one at a time. Unlike a personal project (own id === own
+      // lookup), a project the CURRENT USER owns and has shared keeps its own
+      // local `id` with a separate `sharedProjectId` pointer (see
+      // shareProject) — the lookup below is what makes this section land in
+      // the right Firestore document either way (owner or joined member).
+      const project = projects.find((p) => p.id === projectId);
+      const newSection = {
+        id: generateLocalId('sec'),
+        name: trimmed,
+        projectId,
+        order: sections.length + 1,
+        ...(project?.sharedProjectId ? { sharedProjectId: project.sharedProjectId } : {}),
+      };
       setSections((prev) => [...prev, newSection]);
       return newSection;
     },
-    [sections.length]
+    [sections.length, projects]
   );
 
   const renameSection = useCallback(
@@ -2375,9 +2477,18 @@ export function SchedulerProvider({ children }) {
 
   const deleteSection = useCallback(
     (sectionId) => {
+      const section = sections.find((s) => s.id === sectionId);
+      // Tell the shared-project sync engine this was deliberate, same
+      // reasoning as noteSharedTaskDeleted — "absent from the array" is
+      // ambiguous (undo/restore/cloud pull all replace it wholesale), so only
+      // an explicit delete call may issue a remote delete.
+      if (section && isSharedSection(section)) noteSharedSectionDeleted(sectionId);
       setSections((prev) => prev.filter((s) => s.id !== sectionId));
       // Tasks in the deleted section fall back to "No Section", matching
-      // what Todoist does. Function form — see addTask's comment above.
+      // what Todoist does (and matching this app's own local behavior before
+      // sharing existed) — kept exactly the same for a shared project's
+      // section, rather than inventing different semantics for the shared
+      // case. Function form — see addTask's comment above.
       commit(
         (current) => ({
           tasks: current.tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionId: null, sectionName: null } : t)),
@@ -2386,7 +2497,7 @@ export function SchedulerProvider({ children }) {
         `Deleted section`
       );
     },
-    [commit]
+    [commit, sections, noteSharedSectionDeleted]
   );
 
   // ---- Block CRUD (manual drag/resize/lock) --------------------------------

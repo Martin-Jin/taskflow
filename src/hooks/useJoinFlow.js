@@ -83,6 +83,9 @@ export function useJoinFlow(onJoined) {
         projectName: resolution.projectName,
         role: resolution.role,
         displayName,
+        // Carried from the resolution's refreshed token claim, not from
+        // user.isAnonymous — see resolveShareToken in shareLinkService.js.
+        wasAnonymous: resolution.wasAnonymous,
       });
 
       if (!result.ok) {

@@ -543,6 +543,53 @@ same precedent as `sharedProjectAccess.js` and `computeFingerprint`. The
 decisions are tested rather than clicked because a concurrency bug found by
 clicking is found late.
 
+**Sections (Board columns) sync the same way, added after tasks.** A shared
+project's sections live in the SAME `state.sections` array as personal ones,
+tagged `sharedProjectId`, synced by their own write-diff/remote-apply pair
+(`planSharedSectionWrites`/`planRemoteSectionApply`, siblings of the task
+functions above, in the same file) and excluded from the same set of places:
+local persistence, the live cloud-sync fingerprint (`computeFingerprint`/
+`planRemoteDataMerge` in `useCloudSync.js`), and backups' personal-only
+snapshot. Unlike tasks, sections are not part of the undo/redo history at all
+(`sections` is a plain `useState`, not `useHistoryState`'s `{tasks, blocks}`),
+so there's no `undo`/`redo` wrapper to re-apply live shared sections —
+instead, `SchedulerContext`'s `setSectionsGuarded` wraps every `setSections`
+call inside `useCloudSync` (the live listener, the initial pull, and backup
+restore — all of which replace `sections` wholesale) with
+`preserveSharedSections`, the section equivalent of `preserveSharedTasks`.
+
+**Conflict policy for sections: plain last-write-wins, no exception** (unlike
+tasks' recurring-completion merge — a section has no accumulator field).
+`order` is the one field worth calling out: it's assigned once, at
+section-creation time, and never rewritten afterward — Board's own column
+drag-reorder is already local-only (`utils/boardColumnOrder.js`, predating
+sharing), never touching the synced `order` field. The only way `order` can
+even collide is two collaborators creating a section at nearly the same
+moment and both computing it from the same stale count, producing a tied
+value — a cosmetic tie-break, not data loss, so plain LWW is enough and no
+fractional-indexing/CRDT scheme was built for it.
+
+A section created directly inside an already-shared project (`addSection`) is
+tagged `sharedProjectId` immediately by looking up the owning `Project`
+record (`project.sharedProjectId`) — necessary because, for the *owner* of a
+shared project, the local `Project.id` and `sharedProjectId` are different
+values (only a *joined* collaborator's local project row has `id ===
+sharedProjectId`, see `joinSharedProject`'s own comment). `shareProject`
+uploads a project's existing sections in bulk alongside its tasks, with the
+same "await the upload before tagging anything" ordering Phase 1 established
+for tasks (see its own comment for the stranding bug that ordering fixes) —
+sections and tasks upload concurrently via `Promise.all`, then are tagged
+from one post-upload snapshot each (`stateRef.current`/`sectionsRef.current`).
+
+A viewer-role collaborator cannot add, rename, delete, or (server-side)
+reorder a section — `firestore.rules`' existing `sections/{sectionId}` block
+already enforces this (`parentOwner() || parentEditor()` for writes); `Board
+View` mirrors it client-side (via `computeEffectiveRole`) by hiding the
+add/rename/delete affordances for a viewer, same precedent as
+`TaskDetailModal`'s read-only comment thread. Column drag-*reorder* itself is
+exempt from this gate, since it never writes to Firestore at all (see
+`order` above).
+
 ### Recurring tasks and concurrency (`recurrenceState.js`)
 
 Recurring completion used to be a read-modify-write on three fields derived from

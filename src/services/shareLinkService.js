@@ -171,12 +171,31 @@ export async function resolveShareToken(token) {
   // uid they already had (the Worker mints it for their own verified uid), so
   // nothing they've done is lost; for a signed-in user it re-authenticates the
   // same account with the extra claim attached.
-  await signInWithCustomToken(auth, result.customToken);
+  const credential = await signInWithCustomToken(auth, result.customToken);
+
+  // Force-refresh the ID token before returning. signInWithCustomToken
+  // resolves once the SESSION exists, but the ID token carrying the new
+  // claims is minted lazily — so the join write that runs straight after this
+  // could otherwise go out with the PREVIOUS token, which has no `joinToken`
+  // and no `wasAnonymous`. firestore.rules needs both: `presentedTokenMatches`
+  // compares joinToken against the stored one, and `joinEntryWellFormed`
+  // requires the written `isAnonymous` to equal the `wasAnonymous` claim.
+  // Without this the rules deny every join with a bare permission-denied,
+  // identically for view and edit links, which reads as "the link is broken"
+  // rather than "the token hadn't propagated yet".
+  const tokenResult = await credential.user.getIdTokenResult(true);
 
   return {
     ok: true,
     projectId: result.projectId,
     role: result.role,
     projectName: typeof result.projectName === 'string' ? result.projectName : '',
+    // The joiner's REAL identity kind, from the refreshed claim rather than
+    // `user.isAnonymous`. After a custom-token sign-in `user.isAnonymous` is
+    // false for everyone — including genuinely anonymous visitors — so using
+    // it would write an `isAnonymous` the rules reject, and (if it ever got
+    // through) would let a project be transferred to an ephemeral identity.
+    // See firestore.rules' joinerIsAnonymous / recipientIsRealAccount.
+    wasAnonymous: tokenResult.claims.wasAnonymous === true,
   };
 }
