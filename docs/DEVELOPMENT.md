@@ -427,6 +427,100 @@ are tested against the Firestore emulator (see [Testing](#testing)); the
 client-side logic mirrors them for fast, specific failure messages, but the
 rules remain the only real enforcement boundary.
 
+### Live sync for shared projects (Phase 1)
+
+`useSharedProjectSync.js` is deliberately a **separate, smaller hook** from
+`useCloudSync.js` rather than an extension of it, because the two have opposite
+truth models and unifying them would mean re-reasoning about every existing
+single-user behaviour under concurrency:
+
+| | `useCloudSync` | `useSharedProjectSync` |
+|---|---|---|
+| Source of truth | localStorage | Firestore |
+| What it reconciles | one person's devices | many people's concurrent edits |
+| Storage granularity | one `users/{uid}` document | one document **per task** |
+
+One document per task matters: two people editing *different* tasks never touch
+the same document, so the last-write-wins policy only ever applies to two people
+editing the *same* task.
+
+**A shared task stays in the same `state.tasks` array as everything else**,
+tagged with `sharedProjectId`. That's what lets Board, search, the task list,
+drag-and-drop, dependencies and the detail modal work on shared tasks with no
+changes at all. What differs is only where it persists, and which subsystems
+must leave it alone:
+
+- **Not persisted locally, not pushed through `users/{uid}`** — otherwise a
+  second, independently-reconciled store would sit behind data that already has
+  concurrent writers (the same failure mode that keeps `events` out of live
+  sync).
+- **Excluded from undo/redo.** `HistoryEntry` snapshots the *entire* task array,
+  so a plain restore would revert collaborators' concurrent edits to tasks the
+  undoing user never touched. `undo`/`redo` are thin wrappers that re-apply the
+  live shared tasks afterwards (`preserveSharedTasks`), so every consumer still
+  calls them unchanged.
+- **Excluded from the auto-scheduler.** `rebalanceEngine` computes against one
+  person's routines, hours and calendar, so a shared task has no single owner's
+  capacity to consume. Manual drag-scheduling still works and produces a block
+  in that one user's own, unshared `blocks`.
+- **Excluded from the 30-day completed sweep**, which would otherwise delete
+  other people's tasks on one user's local clock and retention preference.
+
+**Writes are computed by diffing** the task array rather than hooked into each
+mutation, because tasks are mutated through a whole-array `commit()` from a
+dozen call sites and any new one would otherwise have to remember to sync.
+**Deletes are the exception and are passed in explicitly** — "absent from the
+array" is ambiguous, since an undo, a backup restore or a cloud pull all replace
+it wholesale, and inferring a delete from any of those would destroy a
+collaborator's data.
+
+**Conflict policy: last write wins per task document.** No operational
+transform, no field-level merge — out of scope for v1. The one deliberate
+exception is recurring-task completion state, which is *merged* (see below).
+The remote-apply path also carries a per-task race guard: a snapshot computed
+before our own in-flight write can arrive after it, and applying it naively
+would revert the edit on screen *and* overwrite the copy the pending write
+derived from, losing it outright rather than delaying it.
+
+Everything above is decided by pure functions in `src/utils/sharedTaskSync.js`
+(no Firebase imports), unit-tested in `tests/unit/sharedTaskSync.test.js` — the
+same precedent as `sharedProjectAccess.js` and `computeFingerprint`. The
+decisions are tested rather than clicked because a concurrency bug found by
+clicking is found late.
+
+### Recurring tasks and concurrency (`recurrenceState.js`)
+
+Recurring completion used to be a read-modify-write on three fields derived from
+their own previous value: `dueDate` advanced, `completedDates` appended,
+`completionHistory` incremented. That's fine with one writer and silently
+corrupting with two — last-write-wins is correct for *replace* fields and wrong
+for accumulators, so a completion recorded from a stale snapshot would replace
+the whole array and erase someone else's.
+
+The source of truth is now two fields that merge without coordination:
+
+- **`completedOccurrences`** — merged by **union**
+- **`skippedThrough`** — merged by **max**
+
+Both operations are commutative, associative and idempotent, so concurrent
+completions converge regardless of arrival order and a repeat completion is a
+no-op. `dueDate`, `completedDates` and `completionHistory` keep their exact
+shapes but are now **derived** from those two, so every existing reader is
+unchanged — and being derived makes last-write-wins on them self-healing.
+
+`skippedThrough` exists for one specific reason worth not losing: completing a
+task 30 days overdue jumps to the next occurrence after *today* rather than
+building a 30-day backlog. A plain "first uncompleted occurrence" derivation
+would regress that, so skipped-but-not-completed had to be representable
+separately without inflating streaks.
+
+`planOccurrenceCompaction` keeps the occurrence set bounded. It's the one
+non-commutative operation here, safe only because it never has two writers — a
+personal task has one by definition, a shared task has an owner. This matters
+more on the personal path, where `firestoreSync.js` stores a user's *entire*
+dataset in a single `users/{uid}` document, so growth competes with everything
+else for one 1 MB budget.
+
 ## Project layout
 
 ```

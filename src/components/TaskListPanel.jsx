@@ -53,6 +53,7 @@ import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
 import AddTaskFabGroup from './Common/AddTaskFabGroup';
 import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
+import PresenceAvatars from './Common/PresenceAvatars';
 import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
 import AccountButton from './Nav/AccountButton';
@@ -115,7 +116,7 @@ export default function TaskListPanel({
   onOpenSettings,
   onOpenSearch,
 }) {
-  const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject } = useScheduler();
+  const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, shareProject, viewersByProject } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const isMobile = useIsMobile();
@@ -407,9 +408,11 @@ export default function TaskListPanel({
   const projectActionsProps = activeProject
     ? {
       isPinned: !!activeProject.isPinned,
+      isShared: !!activeProject.sharedProjectId,
       onRename: startRenameProject,
       onTogglePin: () => togglePinProject(activeProject.id),
       onDelete: handleDeleteProject,
+      onShare: () => shareProject(activeProject.id),
     }
     : undefined;
 
@@ -496,13 +499,22 @@ export default function TaskListPanel({
                 doubles as this page's one-tap way to reach account/settings —
                 mirrors the old mobile topbar's AccountButton. */}
             {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={onOpenSettings} />}
+            {/* Who else is in this shared project right now. Renders nothing
+                for a personal project, so it costs no space in the common
+                case — see PresenceAvatars. Placed before the actions menu so
+                the "⋯" stays where users expect it at the end of the row. */}
+            {activeProject?.sharedProjectId && (
+              <PresenceAvatars viewers={viewersByProject[activeProject.sharedProjectId]} />
+            )}
             {!isMobile && activeProject && (
               <ProjectActionsMenu
                 isPinned={!!activeProject.isPinned}
+                isShared={!!activeProject.sharedProjectId}
                 ariaLabel={`Actions for ${activeProject.name}`}
                 onRename={startRenameProject}
                 onTogglePin={() => togglePinProject(activeProject.id)}
                 onDelete={handleDeleteProject}
+                onShare={() => shareProject(activeProject.id)}
               />
             )}
           </div>

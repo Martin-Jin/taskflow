@@ -34,6 +34,7 @@ export default function Sidebar({
   onOpenManageProjects,
   onRenameProject,
   onTogglePinProject,
+  onShareProject,
   onDeleteProject,
   footer,
 }) {
@@ -188,10 +189,12 @@ export default function Sidebar({
               {renamingId !== p.id && (
                 <ProjectActionsMenu
                   isPinned={!!p.isPinned}
+                  isShared={!!p.sharedProjectId}
                   ariaLabel={`Actions for ${p.name}`}
                   onRename={() => startRename(p)}
                   onTogglePin={() => onTogglePinProject(p.id)}
                   onDelete={() => handleDelete(p)}
+                  onShare={onShareProject ? () => onShareProject(p.id) : undefined}
                 />
               )}
             </div>

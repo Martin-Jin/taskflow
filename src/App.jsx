@@ -136,6 +136,7 @@ function AppShell() {
     addProject,
     renameProject,
     togglePinProject,
+    shareProject,
     deleteProject,
     touchProjectVisited,
     tasks,
@@ -333,6 +334,7 @@ function AppShell() {
           onOpenManageProjects={openManageProjects}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
+          onShareProject={shareProject}
           onDeleteProject={handleDeleteProject}
           footer={
             <>
@@ -430,6 +432,7 @@ function AppShell() {
           onAddProject={addProject}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
+          onShareProject={shareProject}
           onDeleteProject={handleDeleteProject}
           autoShowAdd={manageProjectsAutoAdd}
           onClose={() => setShowManageProjects(false)}

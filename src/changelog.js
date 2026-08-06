@@ -21,6 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '2.3.0',
+    date: '2026-08-06',
+    title: 'Shared projects, syncing live across your devices',
+    changes: [
+      'You can now turn a project into a shared project from its "⋯" menu (on mobile, from the view/filter button). Its tasks move to the cloud and sync live, so a change made on your phone shows up on your laptop within moments without a refresh.',
+      'Small avatars show who else is currently looking at a shared project.',
+      'Sharing is opt-in per project — everything else stays private to you exactly as before, and nothing is moved unless you choose to share it.',
+      'Shared projects aren\'t auto-scheduled, since the scheduler plans around one person\'s working hours and calendar. You can still drag a shared task onto your own calendar yourself.',
+      'Undo now leaves shared projects alone, so pressing Ctrl+Z can never quietly reverse a change someone else made.',
+      'Inviting other people by link is still to come — for now sharing a project keeps it in sync across your own devices.',
+    ],
+  },
+  {
     version: '2.2.1',
     date: '2026-08-06',
     title: 'Small Tasks page and Calendar filter tweaks',
@@ -40,6 +53,16 @@ export const CHANGELOG = [
       'The Calendar filter menu\'s Projects list gained its own search box, shown once you have more than a handful of projects.',
       'Removed project colors, which were an unused leftover from importing Todoist projects (TaskFlow never let you set one) and only ever made the Calendar filter menu\'s Projects list look inconsistent.',
       'Added keyboard navigation to every project search box above: Arrow Up/Down moves a highlighted result, Enter picks it, and Escape clears the query (in the sidebar and Calendar filter — inside the "Manage projects" modal, Escape closes the whole modal instead, same as its other fields). The main search bar and command palette gained the same highlighted-row behavior for their own dropdowns.',
+    ],
+  },
+  {
+    version: '2.1.4',
+    date: '2026-08-06',
+    title: 'More reliable recurring task history',
+    changes: [
+      'Un-checking a recurring task now rolls its due date back to the occurrence you reopened, instead of leaving it moved on to the next one.',
+      'Recurring task streaks and completion history are now counted from the record of which occurrences you actually completed, so they can no longer drift out of step with what you ticked off.',
+      'Completing the same occurrence twice — for example from two devices at once, or when a completion is retried after a dropped connection — is now recognised as the same completion rather than counted twice.',
     ],
   },
   {

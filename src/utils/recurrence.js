@@ -580,110 +580,6 @@ export function expandTaskOccurrences(task, rangeStartIso, rangeEndIso) {
 }
 
 /**
- * Roll a recurring task/descendant's raw `completedDates` forward: prepend
- * the just-closed `occurrenceDate`, then trim anything older than 7 days out
- * into the monthly `completionHistory` aggregate instead of dropping it
- * outright — see types/index.js's Task typedef. Shared by
- * SchedulerContext.completeTask's recurring-parent branch and
- * computeRecurringDescendantUpdate below so the two don't diverge on this
- * bookkeeping.
- *
- * @param {string} occurrenceDate - ISO date of the occurrence being closed out
- * @param {string[]} existingCompletedDates - task's current `completedDates`
- * @param {object} existingCompletionHistory - task's current `completionHistory`
- * @param {string} todayIso - ISO date (YYYY-MM-DD), pre-computed by the caller
- * @returns {{completedDates: string[], completionHistory: object}}
- */
-export function computeCompletionHistoryUpdate(
-  occurrenceDate,
-  existingCompletedDates,
-  existingCompletionHistory,
-  todayIso
-) {
-  const sevenDaysAgoIso = addDays(todayIso, -7);
-  const keptDates = [];
-  const nextHistory = { ...(existingCompletionHistory || {}) };
-  for (const d of [occurrenceDate, ...(existingCompletedDates || [])]) {
-    if (d >= sevenDaysAgoIso) {
-      keptDates.push(d);
-    } else {
-      const monthKey = d.slice(0, 7); // "YYYY-MM"
-      nextHistory[monthKey] = (nextHistory[monthKey] || 0) + 1;
-    }
-  }
-  return { completedDates: keptDates, completionHistory: nextHistory };
-}
-
-/**
- * Decide how a single descendant (sub-task) should be updated when its
- * RECURRING ancestor is completed and rolls forward — see
- * SchedulerContext.completeTask's recurring-parent branch, which calls this
- * once per entry in getDescendantIds.
- *
- * A descendant can independently carry its own `isRecurring`/`recurrenceString`
- * /`dueDate` (e.g. via TaskDetailModal's "Apply to all sub-tasks", which copies
- * those fields straight from the parent down onto every sub-task — they're
- * generic Task fields, not parent-only ones, see types/index.js). Two cases:
- *
- *   - Descendant is itself recurring with its own dueDate: advance ITS due
- *     date to its next occurrence the exact same way the parent's is advanced
- *     (including the "base off today, not a stale overdue date" rule), reset
- *     isCompleted to false (it isn't "done", it just rolled forward), reset
- *     remainingHours to its own estimatedHours (schedulable again for the new
- *     occurrence, same as the parent), and record THIS occurrence into its
- *     OWN completedDates/completionHistory the same way the parent branch
- *     records its own — see computeCompletionHistoryUpdate. This mirroring
- *     was added because isBlockTaskCompleted (missedTasks.js) reads a
- *     recurring task's own completedDates to decide whether ITS calendar
- *     block/agenda entry should show as done, independent of whichever task
- *     the user actually clicked complete on — without it, a sub-task
- *     completed via its recurring parent never shows as done anywhere (the
- *     bug this comment used to describe as "intentional").
- *   - Descendant is NOT independently recurring (no isRecurring, or recurring
- *     but with no dueDate of its own): leave it alone entirely. Per
- *     types/index.js's `dueDate` doc comment, an undated sub-task already
- *     borrows its nearest ancestor's dueDate for scheduling urgency, and a
- *     dated-but-non-recurring sub-task's date is just a plain deadline with no
- *     recurrence reason to clear it — nulling it out (the old, buggy
- *     behavior) destroyed real user data for no benefit. isCompleted is left
- *     untouched too: this cascade path only exists to keep a recurring
- *     parent's re-opening from stranding a sub-task in a stale completed
- *     state, which doesn't apply to one that a never completed in the first
- *     place.
- *
- * @param {object} descendant - the sub-task Task object
- * @param {string} todayIso - ISO date (YYYY-MM-DD), pre-computed by the caller
- * @returns {{dueDate: string|null|undefined, isCompleted: boolean, remainingHours: number|undefined,
- *   completedDates: string[]|undefined, completionHistory: object|undefined}} fields to spread onto
- *   the descendant; `dueDate: undefined` means "don't touch it" (mirrored by the other undefined fields).
- */
-export function computeRecurringDescendantUpdate(descendant, todayIso) {
-  if (descendant.isRecurring && descendant.dueDate) {
-    const baseDate = descendant.dueDate < todayIso ? todayIso : descendant.dueDate;
-    const { completedDates, completionHistory } = computeCompletionHistoryUpdate(
-      descendant.dueDate,
-      descendant.completedDates,
-      descendant.completionHistory,
-      todayIso
-    );
-    return {
-      dueDate: computeNextDueDate(baseDate, descendant.recurrenceString),
-      isCompleted: false,
-      remainingHours: descendant.estimatedHours,
-      completedDates,
-      completionHistory,
-    };
-  }
-  return {
-    dueDate: undefined,
-    isCompleted: descendant.isCompleted,
-    remainingHours: undefined,
-    completedDates: undefined,
-    completionHistory: undefined,
-  };
-}
-
-/**
  * Decides how a task's `dueDate`/`completedDates` should actually land when
  * `updateTask` applies a partial update to it — see
  * SchedulerContext.updateTask, which calls this once per edited task (the
@@ -700,7 +596,7 @@ export function computeRecurringDescendantUpdate(descendant, todayIso) {
  *     future feature) goes through this same guard, falling back to the
  *     task's current due date rather than silently turning `isRecurring`
  *     off. Doesn't apply to a recurring task that already had no due date
- *     (a valid, pre-existing state — see computeRecurringDescendantUpdate's
+ *     (a valid, pre-existing state — see utils/recurrenceState.js's computeRecurringDescendantState's
  *     doc comment) since there's nothing being "cleared" in that case.
  *
  *   - Drop any `completedDates` entries on/after the new due date. Recurring

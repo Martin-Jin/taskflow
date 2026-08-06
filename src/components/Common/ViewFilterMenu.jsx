@@ -147,9 +147,11 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
                   {projectActions && (
                     <ProjectActionsItems
                       isPinned={projectActions.isPinned}
+                      isShared={projectActions.isShared}
                       onRename={projectActions.onRename}
                       onTogglePin={projectActions.onTogglePin}
                       onDelete={projectActions.onDelete}
+                      onShare={projectActions.onShare}
                       runAndClose={runAndClose}
                     />
                   )}

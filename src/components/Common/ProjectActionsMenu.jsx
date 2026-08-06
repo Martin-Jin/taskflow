@@ -12,19 +12,36 @@
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Pencil, Pin, PinOff, Trash2, Users } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 
 // The Rename/Pin/Delete buttons themselves, split out so ViewFilterMenu can
 // fold them into its own combined mobile popover (see that file's
 // `projectActions` prop) without duplicating this markup.
-export function ProjectActionsItems({ isPinned, onRename, onTogglePin, onDelete, runAndClose }) {
+export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, runAndClose }) {
   return (
     <>
       <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onRename)}>
         <Pencil size={13} />
         Rename
       </button>
+      {/* Optional so the call sites that don't offer sharing (e.g. the List
+          view's project header) keep working unchanged. Once a project IS
+          shared this becomes a non-interactive status line rather than
+          disappearing — "shared" is exactly the state a user most needs to be
+          certain about, so it shouldn't be invisible. */}
+      {onShare &&
+        (isShared ? (
+          <div className="project-actions-item project-actions-item-static" role="presentation">
+            <Users size={13} />
+            Shared project
+          </div>
+        ) : (
+          <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onShare)}>
+            <Users size={13} />
+            Share project
+          </button>
+        ))}
       <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onTogglePin)}>
         {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
         {isPinned ? 'Unpin' : 'Pin'}
@@ -42,7 +59,7 @@ export function ProjectActionsItems({ isPinned, onRename, onTogglePin, onDelete,
   );
 }
 
-export default function ProjectActionsMenu({ isPinned, onRename, onTogglePin, onDelete, ariaLabel = 'Project actions' }) {
+export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, ariaLabel = 'Project actions' }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -109,9 +126,11 @@ export default function ProjectActionsMenu({ isPinned, onRename, onTogglePin, on
             >
               <ProjectActionsItems
                 isPinned={isPinned}
+                isShared={isShared}
                 onRename={onRename}
                 onTogglePin={onTogglePin}
                 onDelete={onDelete}
+                onShare={onShare}
                 runAndClose={runAndClose}
               />
             </div>

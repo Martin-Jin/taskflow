@@ -25,6 +25,7 @@ export default function ManageProjectsModal({
   onAddProject,
   onRenameProject,
   onTogglePinProject,
+  onShareProject,
   onDeleteProject,
   autoShowAdd = false,
   onClose,
@@ -196,10 +197,12 @@ export default function ManageProjectsModal({
               {renamingId !== p.id && (
                 <ProjectActionsMenu
                   isPinned={!!p.isPinned}
+                  isShared={!!p.sharedProjectId}
                   ariaLabel={`Actions for ${p.name}`}
                   onRename={() => startRename(p)}
                   onTogglePin={() => onTogglePinProject(p.id)}
                   onDelete={() => handleDelete(p)}
+                  onShare={onShareProject ? () => onShareProject(p.id) : undefined}
                 />
               )}
             </div>
