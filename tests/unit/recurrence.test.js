@@ -238,6 +238,40 @@ describe('computeRecurringRescheduleUpdate', () => {
       });
     });
   });
+
+  // Regression coverage for the bug where manually rescheduling a monthly (or
+  // day/year, or plain-weekly-with-no-days) recurring task's due date got
+  // silently reverted back to the old date instantly: since those rules have
+  // no weekday filter, generateTaskOccurrences never finds the new date among
+  // the old anchor's occurrences, so the (mistaken) off-pattern check used to
+  // treat any manual edit as a single-occurrence exception and snap dueDate
+  // back — see SchedulerContext.updateTask's planSeriesReanchor call, which is
+  // the one actually meant to handle a manual due-date move for these rules.
+  describe('rules with no weekday filter never treat a manual move as off-pattern', () => {
+    it('re-anchors normally (no override) for a monthly task moved to any date', () => {
+      const monthlyTask = {
+        isRecurring: true,
+        dueDate: '2026-08-06',
+        recurrenceRule: { unit: 'month', count: 1 },
+        completedDates: [],
+      };
+      expect(computeRecurringRescheduleUpdate(monthlyTask, { dueDate: '2026-08-07' })).toEqual({
+        completedDates: [],
+      });
+    });
+
+    it('re-anchors normally (no override) for a plain weekly task (no specific days) moved to any date', () => {
+      const weeklyTask = {
+        isRecurring: true,
+        dueDate: '2026-08-06',
+        recurrenceRule: { unit: 'week', count: 1, days: null },
+        completedDates: [],
+      };
+      expect(computeRecurringRescheduleUpdate(weeklyTask, { dueDate: '2026-08-07' })).toEqual({
+        completedDates: [],
+      });
+    });
+  });
 });
 
 describe('generateTaskOccurrences', () => {

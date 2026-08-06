@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '2.4.1',
+    date: '2026-08-06',
+    title: 'Fix recurring task due dates reverting instantly',
+    changes: [
+      'Fixed: manually changing the due date of a monthly, yearly, or plain-weekly recurring task snapped it back to the old date right away instead of saving the new one.',
+    ],
+  },
+  {
     version: '2.4.0',
     date: '2026-08-06',
     title: 'Invite people to a shared project by link',
