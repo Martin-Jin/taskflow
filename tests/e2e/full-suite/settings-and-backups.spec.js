@@ -288,8 +288,10 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
 
   // Create the project at default (desktop) viewport first — "Manage
   // projects" is reachable from the Sidebar there; the mobile viewport
-  // switch below then reaches the same modal via the Tasks page's project
-  // SelectMenu footer instead (mobile has no Sidebar).
+  // switch below then reaches the same modal via the Tasks page's combined
+  // view/filter/project "⋯" menu instead (mobile has no Sidebar, and folds
+  // "See / manage all projects" into that popover rather than the desktop's
+  // inline button next to the project title — see ViewFilterMenu).
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -301,7 +303,7 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
 
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoTab(page, 'Tasks');
-  await page.getByRole('button', { name: 'Switch project' }).click();
+  await page.getByRole('button', { name: 'View, filter, and project actions' }).click();
   await page.getByText('See / manage all projects').click();
   const mobileDialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(mobileDialog).toBeVisible();
@@ -320,6 +322,29 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
   await page.waitForTimeout(400);
   await expect(mobileDialog).not.toBeVisible();
   await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Tasks page header "See / manage all projects" button opens Manage Projects on desktop, for both All Tasks and a named project', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+
+  await gotoTab(page, 'Tasks');
+  // "All Tasks" (no active project) still gets the button — managing
+  // projects isn't specific to any one project.
+  await expect(page.locator('.taskpage-project-title', { hasText: 'All Tasks' })).toBeVisible();
+  await page.getByRole('button', { name: 'See / manage all projects' }).click();
+  await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  // Switch to a real project and confirm the same button is still there,
+  // right next to the (now different) project title.
+  await page.getByRole('button', { name: 'Switch project' }).click();
+  await page.getByRole('option').nth(1).click();
+  await page.getByRole('button', { name: 'See / manage all projects' }).click();
+  await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
+  await closeAnyModal(page);
 
   expectNoErrors(errors);
 });
