@@ -33,6 +33,7 @@ import { buildShareUrl } from '../../utils/joinFlow';
 import {
   SHARE_ROLES,
   getProjectShareState,
+  isSharedProject,
   planOwnershipTransfer,
 } from '../../utils/sharedProjectAccess';
 import { initialsOf, isSafePhotoURL } from '../../utils/avatarDisplay';
@@ -185,6 +186,15 @@ export default function ShareProjectModal({ project, onClose }) {
   const sharedProject = sharedProjectId ? sharedProjects[sharedProjectId] : null;
   const shareState = getProjectShareState(project, sharedProject, user?.uid);
   const isOwner = shareState.state === 'shared-by-me';
+  // The project was tagged with sharedProjectId locally (by shareProject, or
+  // by having been shared already) but useSharedProjectSync's live Firestore
+  // subscription hasn't delivered its first snapshot for it yet — briefly
+  // true right after sharing, since that subscription only starts once
+  // sharedProjectIds updates, a render or two after this modal first mounts.
+  // getProjectShareState can't tell this apart from "genuinely not shared"
+  // (both leave `sharedProject` null), so this modal needs its own loading
+  // state rather than trusting shareState's 'personal' fallback here.
+  const isAwaitingFirstSnapshot = isSharedProject(project) && !sharedProject;
 
   const [links, setLinks] = useState(null); // {view, edit} once loaded
   const [loadError, setLoadError] = useState('');
@@ -411,6 +421,8 @@ export default function ShareProjectModal({ project, onClose }) {
             </p>
             <p className="share-modal-readonly-note">Only the project owner can manage sharing.</p>
           </section>
+        ) : isAwaitingFirstSnapshot ? (
+          <div className="now-empty">Setting up sharing…</div>
         ) : (
           <div className="now-empty">This project isn't shared.</div>
         )}
