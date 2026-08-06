@@ -67,3 +67,10 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          # GitHub's Pages queue routinely sits in `deployment_queued` for
+          # several minutes, and the action's default timeout (10 min) is short
+          # enough that a slow queue fails an otherwise-perfect build — that's
+          # what happened to 3b83994. The build artifact is already uploaded by
+          # then, so waiting longer costs nothing but runner minutes.
+          timeout: 1800000
