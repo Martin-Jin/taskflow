@@ -23,8 +23,9 @@ export const CHANGELOG = [
   {
     version: '2.6.0',
     date: '2026-08-06',
-    title: 'Board columns now sync live on shared projects',
+    title: 'Share links now work, and Board columns sync live',
     changes: [
+      "Fixed: opening a share link never worked — joining a project always failed with a permission error, on both view and edit links. Links you've already sent out will now work; there's no need to create new ones.",
       "Board view columns (sections) on a shared project now sync live across everyone in it, the same way tasks already did — add, rename, or delete a column and every collaborator sees it immediately, and tasks land in the right column for everyone instead of just for you.",
       "View-only collaborators can look at a shared project's board but can no longer add, rename, or delete its columns.",
     ],
