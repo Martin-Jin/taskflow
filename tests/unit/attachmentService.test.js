@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAttachmentPath } from '../../src/services/attachmentService';
+import { buildAttachmentPath, checkAttachmentAllowed } from '../../src/services/attachmentService';
 
 describe('buildAttachmentPath', () => {
   it('uses the uid-scoped personal path when sharedProjectId is absent', () => {
@@ -21,5 +21,16 @@ describe('buildAttachmentPath', () => {
   it('keeps the filename verbatim (including any special characters) at the end of the path', () => {
     const path = buildAttachmentPath('uid1', 'task1', 'my file (1).png', 'proj123');
     expect(path.endsWith('my file (1).png')).toBe(true);
+  });
+});
+
+describe('checkAttachmentAllowed', () => {
+  it('refuses a shared-project task with a clear message', () => {
+    expect(checkAttachmentAllowed('proj123')).toMatch(/shared project/i);
+  });
+
+  it('allows a personal task (no sharedProjectId)', () => {
+    expect(checkAttachmentAllowed(undefined)).toBeNull();
+    expect(checkAttachmentAllowed(null)).toBeNull();
   });
 });

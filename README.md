@@ -515,7 +515,9 @@ cached copy.
     signed in — see [Account & cross-device sync](#account--cross-device-sync))
     and sync/back up alongside the rest of the task, same as every other
     field. Once a task hits the 200-comment cap, posting is blocked with a
-    clear message until you delete an older comment to make room.
+    clear message until you delete an older comment to make room. File
+    attachments aren't available on shared projects' tasks yet — text
+    comments still work there as usual.
   - **Board** — Todoist-style Kanban board, one column per Section plus a
     leading "No Section" column (or a flat list if the project has no
     Sections yet). Rename/delete columns, add sections, drag cards between

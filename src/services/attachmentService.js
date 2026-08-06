@@ -14,6 +14,20 @@
  *     it vanishes if the uploader is removed or deletes their account), so
  *     shared-task attachments live under the project instead. See
  *     storage.rules for what that path can and cannot enforce.
+ *
+ *     CURRENTLY UNREACHABLE FROM THE UI: Firebase Storage has never been
+ *     provisioned for this project (likely requires the paid Blaze plan,
+ *     which hasn't been adopted), so storage.rules — including the
+ *     sharedProjects/... block above — has never been deployed. Every
+ *     upload to this path would fail at runtime. TaskDetailModal hides the
+ *     attach-file control for shared tasks, and SchedulerContext's
+ *     addComment refuses a file for a shared task before ever calling
+ *     uploadCommentAttachment, so this branch is dead code from the UI's
+ *     perspective today. It's kept (not deleted) because it's the easiest
+ *     part to re-enable: once Storage is provisioned and `firebase deploy
+ *     --only storage` has been run, remove the two guards above and this
+ *     path starts working immediately. See docs/DEVELOPMENT.md for the
+ *     full re-enable checklist.
  * Called from SchedulerContext's addComment/deleteComment so every write to
  * task.comments and the underlying file happens together.
  * ============================================================================
@@ -52,6 +66,25 @@ const ALLOWED_FILE_TYPES = [
 const ALLOWED_TYPES = new Set(ALLOWED_FILE_TYPES.map((t) => t.mime));
 
 export const ATTACHMENT_ACCEPT = ALLOWED_FILE_TYPES.flatMap((t) => [t.mime, ...t.ext.split(',')]).join(',');
+
+/**
+ * Returns a user-facing error string if a file attachment should be refused
+ * for this task, or null if it's fine to proceed to validateAttachment/
+ * upload. Currently refuses any shared-project task, since Storage isn't
+ * provisioned and every such upload would fail at runtime anyway (see the
+ * "CURRENTLY UNREACHABLE FROM THE UI" note on buildAttachmentPath above).
+ * Kept as its own pure check — rather than inlined in SchedulerContext's
+ * addComment — so it's unit-testable and there's exactly one place to
+ * delete when Storage is provisioned and this is re-enabled.
+ * @param {string|null|undefined} sharedProjectId - The task's `sharedProjectId`, if any.
+ * @returns {string|null}
+ */
+export function checkAttachmentAllowed(sharedProjectId) {
+  if (sharedProjectId) {
+    return 'Attachments aren\'t available on shared project tasks yet.';
+  }
+  return null;
+}
 
 /**
  * Returns a user-facing error string if `file` can't be attached, or null

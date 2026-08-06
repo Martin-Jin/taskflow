@@ -47,7 +47,7 @@ import { useAuth } from './AuthContext';
 import { useTheme } from './ThemeContext';
 import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { playAddSound, playDeleteSound } from '../services/soundService';
-import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
+import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowed } from '../services/attachmentService';
 import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -1437,6 +1437,15 @@ export function SchedulerProvider({ children }) {
    * uid-scoped); text-only comments work whether signed in or not, same as
    * every other local-first field.
    *
+   * SHARED-TASK ATTACHMENTS ARE DISABLED (defense in depth): Firebase
+   * Storage has never been provisioned for this project, so storage.rules
+   * has never been deployed and every upload to the shared-project path
+   * would fail at runtime. TaskDetailModal already hides the attach-file
+   * control for shared tasks; this refuses a `file` here too so a stale
+   * client or a future call site can't trigger a doomed upload. Personal
+   * (non-shared) task attachments are unaffected. See attachmentService.js's
+   * checkAttachmentAllowed and docs/DEVELOPMENT.md for how to re-enable.
+   *
    * AUTHOR ATTRIBUTION (Collaborative Projects, Phase 3): only stamped when
    * the task belongs to a shared project (`sharedProjectId`) — a personal
    * task has exactly one possible author, so authorUid/authorDisplayName/
@@ -1461,6 +1470,8 @@ export function SchedulerProvider({ children }) {
       let attachment = null;
       if (file) {
         if (!user) throw new Error('Sign in to attach files to a comment.');
+        const attachmentError = checkAttachmentAllowed(task?.sharedProjectId);
+        if (attachmentError) throw new Error(attachmentError);
         attachment = await uploadCommentAttachment(user.uid, taskId, file, task?.sharedProjectId);
       }
       const newComment = {
