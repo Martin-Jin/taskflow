@@ -21,6 +21,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2.8.0',
+    date: '2026-08-07',
+    title: 'A dedicated Projects page',
+    changes: [
+      'New "Projects" tab: a directory view with a greeting, a fast project search, and three columns — Recent, Shared, and My projects (sortable by size, duration, or creation date).',
+      "The sidebar's project list is now a short recent-projects strip with a link to the full Projects page, instead of a long scrollable list with its own search box.",
+    ],
+  },
+  {
+    version: '2.7.3',
+    date: '2026-08-07',
+    title: 'Fixed the Escape key going dead after skipping the tour',
+    changes: [
+      "Fixed: on a brand-new visit, skipping the guided tour could silently break the Escape key for closing any dialog, menu, or search dropdown for the rest of that session.",
+    ],
+  },
+  {
     version: '2.7.2',
     date: '2026-08-07',
     title: 'Collaboration fixes: lost comments, undo, and link roles',
