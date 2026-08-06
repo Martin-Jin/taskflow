@@ -28,7 +28,7 @@ import { formatHours, formatHoursLong } from '../../utils/formatHours';
 // Wrapped in memo — `hours`/`onChange` are a stable primitive/setState pair
 // at TaskDetailModal's call site, so this skips re-rendering on unrelated
 // keystrokes (title/notes) elsewhere in the modal.
-function SmartDurationInput({ hours, onChange, placeholder }) {
+function SmartDurationInput({ hours, onChange, placeholder, disabled = false }) {
   const inputRef = useRef(null);
   const [editing, setEditing] = useState(false);
   const [rawText, setRawText] = useState('');
@@ -91,6 +91,7 @@ function SmartDurationInput({ hours, onChange, placeholder }) {
         onScroll={syncScroll}
         onBlur={handleBlur}
         placeholder={placeholder}
+        disabled={disabled}
       />
     </div>
   );

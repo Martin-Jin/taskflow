@@ -730,5 +730,8 @@ restrictions, if using Google Calendar sync from that hostname.
   transactional stack as tasks/blocks. Board sections, Todoist projects, and
   labels live in their own `useState` and are not undoable at all —
   renaming/deleting a Board column or clearing all data cannot currently be
-  undone, only the task-side effects of those actions can.
+  undone, only the task-side effects of those actions can. Tasks in shared
+  projects are deliberately excluded from undo/redo too — undoing only
+  affects your own data, since restoring an old snapshot could otherwise
+  revert a collaborator's concurrent edits.
 </content>

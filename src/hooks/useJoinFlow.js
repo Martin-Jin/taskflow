@@ -52,7 +52,13 @@ import {
  */
 export function useJoinFlow(onJoined) {
   const { authLoading } = useAuth();
-  const { joinSharedProject } = useScheduler();
+  const { joinSharedProject, projects } = useScheduler();
+  // Read through a ref: the owner-opens-own-link branch below runs inside the
+  // async join effect, which must not re-run when the project list changes.
+  const projectsRef = useRef(projects);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
 
   const [status, setStatus] = useState(JOIN_STATUS.IDLE);
   const [projectName, setProjectName] = useState('');
@@ -129,6 +135,23 @@ export function useJoinFlow(onJoined) {
 
         const resolution = await resolveShareToken(token);
         if (!resolution.ok) {
+          // The owner opening their own link isn't a failure — they already have
+          // full access, so just show the project rather than an error. The
+          // server decides this (it's the only side that can read the project's
+          // ownerId before membership exists); nothing is written.
+          if (resolution.reason === 'already_owner' && resolution.projectId) {
+            setProjectName(resolution.projectName || '');
+            setStatus(JOIN_STATUS.SUCCESS);
+            // The owner's LOCAL project keeps its own id and merely carries a
+            // `sharedProjectId` (see shareProject) — unlike a joiner, for whom
+            // the two are the same. Navigate by the local id, falling back to
+            // the shared id if the list hasn't loaded yet.
+            const localId =
+              projectsRef.current?.find((p) => p.sharedProjectId === resolution.projectId)?.id ||
+              resolution.projectId;
+            onJoinedRef.current?.(localId);
+            return;
+          }
           setStatus(joinStatusForReason(resolution.reason));
           return;
         }
@@ -139,6 +162,13 @@ export function useJoinFlow(onJoined) {
         // resolveShareToken has just replaced the auth session with the
         // custom-token one, so read the CURRENT user rather than the `user`
         // this hook closed over, which is a render behind.
+        //
+        // `sharedProject` is deliberately null: this client cannot read the
+        // project document before membership exists, so it cannot evaluate
+        // planJoinStep's "already a member at a strong enough role" rule. That
+        // precedence is enforced SERVER-SIDE instead, by the resolve endpoint's
+        // effectiveJoinRole — `resolution.role` already accounts for any stronger
+        // stored role, so writing it can no longer downgrade anyone.
         const step = planJoinStep({
           resolution,
           user: auth.currentUser,

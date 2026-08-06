@@ -421,60 +421,51 @@ describe('reads/writes by role', () => {
       await seedTask(PROJECT_ID, 'task-1', { title: 'Do the thing' });
     });
 
-    it('a viewer can create a comment (commenting is not an edit privilege)', async () => {
-      const db = asUser(VIEWER);
-      await assertSucceeds(setDoc(
-        doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c1'),
-        { authorUid: VIEWER, text: 'hello' },
-      ));
-    });
-
-    it('an editor can create a comment', async () => {
+    // Comments are NOT a subcollection — they're embedded in the task
+    // document's own `comments` array (with `deletedCommentIds` tombstones, see
+    // utils/sharedTaskSync.js's mergeComments), so they're governed by the task
+    // write rule. The subcollection rule that used to sit here was a leftover of
+    // an abandoned design and granted nothing in practice; it and its tests were
+    // removed. What matters now is that the embedded array follows task
+    // permissions, which is what these assert.
+    it('an editor can post a comment by writing the task comments array', async () => {
       const db = asUser(EDITOR);
-      await assertSucceeds(setDoc(
-        doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c2'),
-        { authorUid: EDITOR, text: 'hello' },
-      ));
+      await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1'), {
+        comments: [{ id: 'c1', text: 'hello', createdAt: '2026-08-01T10:00:00Z', authorUid: EDITOR }],
+      }));
     });
 
-    it('nobody can create a comment with an authorUid that is not their own uid', async () => {
+    it('a viewer CANNOT post a comment — the embedded array is part of the task write', async () => {
+      // This is why the client renders the composer read-only for viewers: a
+      // per-field "only comments changed" carve-out isn't cheaply expressible
+      // in rules, and widening the task write would also let a viewer edit
+      // title/dates/completion.
       const db = asUser(VIEWER);
-      await assertFails(setDoc(
-        doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c3'),
-        { authorUid: EDITOR, text: 'impersonating' },
-      ));
+      await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1'), {
+        comments: [{ id: 'c1', text: 'hello', createdAt: '2026-08-01T10:00:00Z', authorUid: VIEWER }],
+      }));
     });
 
-    it('a stranger (non-member) cannot create a comment even with their own authorUid', async () => {
+    it('a stranger (non-member) cannot post a comment', async () => {
       const db = asUser(STRANGER);
-      await assertFails(setDoc(
-        doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c4'),
-        { authorUid: STRANGER, text: 'intruder' },
-      ));
+      await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1'), {
+        comments: [{ id: 'c1', text: 'intruder', createdAt: '2026-08-01T10:00:00Z', authorUid: STRANGER }],
+      }));
     });
 
-    it('a user cannot delete another user comment', async () => {
-      await seedComment(PROJECT_ID, 'task-1', 'c-viewer', { authorUid: VIEWER, text: 'viewer said this' });
+    it('an editor can write comment tombstones (deletedCommentIds) on a task', async () => {
       const db = asUser(EDITOR);
-      await assertFails(deleteDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c-viewer')));
+      await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1'), {
+        comments: [],
+        deletedCommentIds: ['c1'],
+      }));
     });
 
-    it('a user cannot update another user comment', async () => {
-      await seedComment(PROJECT_ID, 'task-1', 'c-viewer', { authorUid: VIEWER, text: 'viewer said this' });
-      const db = asUser(EDITOR);
-      await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c-viewer'), { text: 'edited by editor' }));
-    });
-
-    it('the owner can delete another user comment', async () => {
-      await seedComment(PROJECT_ID, 'task-1', 'c-viewer', { authorUid: VIEWER, text: 'viewer said this' });
-      const db = asUser(OWNER);
-      await assertSucceeds(deleteDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c-viewer')));
-    });
-
-    it('the author can delete their own comment', async () => {
-      await seedComment(PROJECT_ID, 'task-1', 'c-viewer', { authorUid: VIEWER, text: 'viewer said this' });
+    it('a viewer cannot write comment tombstones either', async () => {
       const db = asUser(VIEWER);
-      await assertSucceeds(deleteDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1', 'comments', 'c-viewer')));
+      await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1'), {
+        deletedCommentIds: ['c1'],
+      }));
     });
   });
 
@@ -649,6 +640,65 @@ describe('join-by-token', () => {
     const after = await readProjectBypassingRules(PROJECT_ID);
     expect(after.collaborators[STRANGER].role).toBe('editor');
     expect(Object.keys(after.collaborators).sort()).toEqual([STRANGER]);
+  });
+
+  // REGRESSION: presenting a weaker link must never demote you. The resolve
+  // endpoint applies this precedence server-side (shareLinkLogic.js's
+  // effectiveJoinRole), but the database enforces it too — otherwise any holder
+  // of a still-valid view link could be demoted by a stale or replayed client.
+  it('an existing editor presenting the VIEW token cannot be downgraded to viewer', async () => {
+    await seedProject(PROJECT_ID, baseProjectData({
+      collaborators: { [EDITOR]: collaboratorEntry('editor', 'Editor') },
+    }));
+    const db = asUserWithToken(EDITOR, VIEW_TOKEN);
+    const before = await readProjectBypassingRules(PROJECT_ID);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      collaborators: {
+        ...before.collaborators,
+        [EDITOR]: collaboratorEntry('viewer', 'Editor'),
+      },
+    }));
+  });
+
+  it('an existing viewer presenting the EDIT token is still a legitimate upgrade', async () => {
+    await seedProject(PROJECT_ID, baseProjectData({
+      collaborators: { [VIEWER]: collaboratorEntry('viewer', 'Viewer') },
+    }));
+    const db = asUserWithToken(VIEWER, EDIT_TOKEN);
+    const before = await readProjectBypassingRules(PROJECT_ID);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      collaborators: {
+        ...before.collaborators,
+        [VIEWER]: collaboratorEntry('editor', 'Viewer'),
+      },
+    }));
+    const after = await readProjectBypassingRules(PROJECT_ID);
+    expect(after.collaborators[VIEWER].role).toBe('editor');
+  });
+
+  // The owner clicking their own share link must not end up in their own
+  // `collaborators` map (it would leave ownerId and that map disagreeing about
+  // who they are). NOTE this is NOT enforceable here: the owner branch
+  // (`isOwner() && ownerFieldsUnchanged()`) independently permits any write to
+  // `collaborators`, and rules cannot tell "the owner deliberately edited the
+  // map" from "the owner accidentally joined" — nor should they, since managing
+  // collaborators is exactly the owner's job. `joiningWithToken`'s owner
+  // exclusion therefore only hardens the token path; the actual fix is
+  // server-side, in the resolve endpoint (shareLinkLogic.js's effectiveJoinRole
+  // returns isOwner and the route answers `already_owner` without minting a
+  // join at all, so the client never attempts this write). Asserted as a
+  // SUCCESS here to document the real boundary rather than imply a guarantee
+  // the rules don't make — see tests/unit/effectiveJoinRole.test.js for the
+  // check that actually prevents it.
+  it('the owner writing their own collaborators entry is allowed by rules (owner branch) — prevented server-side instead', async () => {
+    const db = asUserWithToken(OWNER, EDIT_TOKEN);
+    const before = await readProjectBypassingRules(PROJECT_ID);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      collaborators: {
+        ...before.collaborators,
+        [OWNER]: collaboratorEntry('editor', 'Owner'),
+      },
+    }));
   });
 
   it('after a successful join, the project document does not contain a joinToken field', async () => {

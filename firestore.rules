@@ -370,9 +370,34 @@ service cloud.firestore {
           && request.auth.token.wasAnonymous == true;
       }
 
+      // A join must never WEAKEN what the caller already has. The resolve
+      // endpoint already applies this precedence server-side
+      // (shareLinkLogic.js's effectiveJoinRole), but that alone left the
+      // database itself permissive: any holder of a still-valid VIEW link could
+      // demote themselves — or be demoted by a stale/replayed client — from
+      // editor to viewer. Enforced here too so the floor is a property of the
+      // data, not just of the one endpoint that happens to compute it.
+      //
+      // Only the editor->viewer direction can weaken, so that's the only case
+      // to exclude; a viewer presenting an edit link is a legitimate upgrade.
+      function joinDoesNotDowngrade(collabRole) {
+        return collabRole == 'editor'
+          || !(request.auth.uid in existing().collaborators)
+          || existing().collaborators[request.auth.uid].role != 'editor';
+      }
       function joiningWithToken(linkKey, collabRole) {
         return signedIn()
+          // The owner is never a collaborator on their own project. This closes
+          // the TOKEN path only — it does NOT stop an owner from writing their
+          // own entry, because the owner branch above independently allows any
+          // `collaborators` write (managing collaborators is the owner's job,
+          // and rules can't distinguish a deliberate edit from an accidental
+          // self-join). The real guard is server-side: the resolve endpoint
+          // answers `already_owner` and never mints a join for the owner (see
+          // shareLinkLogic.js's effectiveJoinRole).
+          && request.auth.uid != existing().ownerId
           && linkUsable(linkKey)
+          && joinDoesNotDowngrade(collabRole)
           // A join may ONLY add the joiner's own entry to `collaborators` and
           // touch nothing else on the document — no extra fields, no edits to
           // anyone else's entry.
@@ -463,40 +488,19 @@ service cloud.firestore {
       // reach this path by already knowing the project ID and passing the
       // membership check, so querying within a project you belong to is fine
       // and is what the live sync listener needs.
+      // Comments are NOT a subcollection: they're embedded in the task
+      // document's own `comments` array (with `deletedCommentIds` tombstones
+      // alongside — see utils/sharedTaskSync.js's mergeComments), so they're
+      // covered by the task write rule here and need no rule of their own. That
+      // does mean commenting requires edit rights: a viewer's comment would be
+      // denied at the whole-task level, so the client renders the composer
+      // read-only for viewers (see TaskDetailModal.jsx) rather than loosening
+      // this rule — a per-field "only the comments array changed" exception
+      // isn't cheaply expressible here, and widening the whole-task write would
+      // let a viewer edit title/dates/completion too.
       match /tasks/{taskId} {
         allow read: if parentOwner() || parentCollaborator();
         allow write: if parentOwner() || parentEditor();
-
-        // Comments live under their task. Any member (including viewers) may
-        // post — commenting is deliberately NOT an edit privilege, since a
-        // view-only collaborator is still expected to participate in
-        // discussion. A comment's author is pinned to the writer's own uid so
-        // nobody can post under someone else's name, and existing comments
-        // can only be deleted by their author or the project owner (no
-        // editing others' messages).
-        //
-        // ABANDONED DESIGN — Phase 3 did NOT build this subcollection. Actual
-        // comments are stored embedded in the task document's own `comments`
-        // array field instead, so they fall under the `tasks/{taskId}` rule
-        // above (`parentOwner() || parentEditor()` — no viewer carve-out).
-        // That means a viewer's comment write is denied at the whole-task
-        // level, not granted here as this block's own comment claims — the
-        // client renders the comment composer read-only for viewers instead
-        // (see TaskDetailModal.jsx) rather than loosening this task rule,
-        // since a per-field "only the comments array changed" exception
-        // isn't cheaply expressible in rules and widening the whole-task
-        // write would let a viewer edit title/dates/completion too. This
-        // match block is kept only as a leftover of the earlier subcollection
-        // design; it grants nothing to comments in practice.
-        match /comments/{commentId} {
-          allow read: if parentOwner() || parentCollaborator();
-          allow create: if (parentOwner() || parentCollaborator())
-            && request.resource.data.authorUid == request.auth.uid;
-          allow update: if parentOwner()
-            || (parentCollaborator() && resource.data.authorUid == request.auth.uid);
-          allow delete: if parentOwner()
-            || (parentCollaborator() && resource.data.authorUid == request.auth.uid);
-        }
       }
 
       match /sections/{sectionId} {

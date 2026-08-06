@@ -82,7 +82,7 @@
 
 import { verifyFirebaseIdToken, verifyFirebaseIdTokenWithProvider, lookupProviderInfo, AuthError } from './googleAuth.js';
 import { getDoc, setDoc, deleteDoc } from './firestoreClient.js';
-import { resolveTokenRole, generateShareToken, isSafeFirestoreId } from './shareLinkLogic.js';
+import { resolveTokenRole, generateShareToken, isSafeFirestoreId, effectiveJoinRole } from './shareLinkLogic.js';
 import { mintFirebaseCustomToken } from './firebaseCustomToken.js';
 
 const LINK_TYPES = new Set(['view', 'edit']);
@@ -409,9 +409,30 @@ export async function handleResolveLink(request, env, headers) {
     return jsonResponse({ ok: false, reason: 'invalid_token' }, 200, headers);
   }
 
-  const { role, reason } = resolveTokenRole(links, body.token);
-  if (!role) {
+  const { role: tokenRole, reason } = resolveTokenRole(links, body.token);
+  if (!tokenRole) {
     return jsonResponse({ ok: false, reason }, 200, headers);
+  }
+
+  // The token says what this LINK grants; it does not say what this CALLER
+  // should end up with. An existing collaborator's stored role is a floor, and
+  // the owner is never a collaborator on their own project — see
+  // effectiveJoinRole for why only this route can enforce either.
+  const { role, isOwner } = effectiveJoinRole(project, uid, tokenRole);
+  if (isOwner) {
+    // Answered as a success-shaped rejection: the caller already has full
+    // access, so the client opens the project instead of writing membership
+    // (see joinFlow.js's joinStatusForReason -> ALREADY_MEMBER).
+    return jsonResponse(
+      {
+        ok: false,
+        reason: 'already_owner',
+        projectId: indexEntry.projectId,
+        projectName: typeof project.name === 'string' ? project.name : '',
+      },
+      200,
+      headers
+    );
   }
 
   // `wasAnonymous` carries the caller's REAL identity kind across the

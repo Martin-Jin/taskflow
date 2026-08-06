@@ -8,6 +8,7 @@ import {
   planSharedTaskWrites,
   planRemoteTaskApply,
   mergeSharedTask,
+  mergeComments,
   preserveSharedTasks,
   computeActiveViewers,
   PRESENCE_STALE_MS,
@@ -327,11 +328,128 @@ describe('planRemoteTaskApply — the in-flight write race guard', () => {
   });
 });
 
+/**
+ * The comment thread is the second accumulator field (after recurring
+ * completion state) that must NOT be last-write-wins: addComment appends to
+ * whatever snapshot the client holds and the push writes the whole document,
+ * so two people commenting inside one debounce window would otherwise destroy
+ * each other's comment.
+ */
+describe('mergeComments — convergent join for the comment thread', () => {
+  const c = (id, createdAt, extra = {}) => ({ id, text: id, createdAt, ...extra });
+
+  it('keeps BOTH comments when two collaborators append concurrently', () => {
+    const local = { comments: [c('c1', '2026-08-01T10:00:00Z'), c('cA', '2026-08-01T11:00:00Z')] };
+    const remote = { comments: [c('c1', '2026-08-01T10:00:00Z'), c('cB', '2026-08-01T11:00:30Z')] };
+    const { comments } = mergeComments(local, remote);
+    expect(comments.map((x) => x.id)).toEqual(['c1', 'cA', 'cB']);
+  });
+
+  it('is commutative, associative and idempotent', () => {
+    const a = { comments: [c('cA', '2026-08-01T11:00:00Z')], deletedCommentIds: ['gone1'] };
+    const b = { comments: [c('cB', '2026-08-01T11:00:30Z')] };
+    const d = { comments: [c('cC', '2026-08-01T09:00:00Z')], deletedCommentIds: ['gone2'] };
+
+    expect(mergeComments(a, b)).toEqual(mergeComments(b, a));
+    expect(mergeComments(mergeComments(a, b), d)).toEqual(mergeComments(a, mergeComments(b, d)));
+    expect(mergeComments(a, a)).toEqual(mergeComments(a, {}));
+  });
+
+  it('orders the thread by createdAt so every client renders the same sequence', () => {
+    const local = { comments: [c('late', '2026-08-02T00:00:00Z'), c('early', '2026-08-01T00:00:00Z')] };
+    const { comments } = mergeComments(local, {});
+    expect(comments.map((x) => x.id)).toEqual(['early', 'late']);
+  });
+
+  it('breaks a createdAt tie by id, so identical timestamps still converge', () => {
+    const same = '2026-08-01T10:00:00Z';
+    const one = mergeComments({ comments: [c('b', same), c('a', same)] }, {});
+    const other = mergeComments({ comments: [c('a', same)] }, { comments: [c('b', same)] });
+    expect(one.comments.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(other.comments.map((x) => x.id)).toEqual(['a', 'b']);
+  });
+
+  it('does NOT resurrect a deleted comment that the other side still has', () => {
+    // The deleter's tombstone must beat the peer's stale copy of the body —
+    // otherwise every delete bounces back on the next snapshot.
+    const deleter = { comments: [], deletedCommentIds: ['c1'] };
+    const peer = { comments: [c('c1', '2026-08-01T10:00:00Z')] };
+    expect(mergeComments(deleter, peer).comments).toEqual([]);
+    expect(mergeComments(peer, deleter).comments).toEqual([]);
+  });
+
+  it('lets a delete win over a concurrent re-add of the same id, and keeps the tombstone', () => {
+    const deleter = { comments: [], deletedCommentIds: ['c1'] };
+    const readder = { comments: [c('c1', '2026-08-01T12:00:00Z')] };
+    const merged = mergeComments(deleter, readder);
+    expect(merged.comments).toEqual([]);
+    expect(merged.deletedCommentIds).toEqual(['c1']);
+  });
+
+  it('tolerates missing/!array/malformed input without throwing', () => {
+    expect(mergeComments(undefined, undefined)).toEqual({ comments: [], deletedCommentIds: [] });
+    expect(mergeComments({ comments: null }, { deletedCommentIds: null })).toEqual({ comments: [], deletedCommentIds: [] });
+    // An entry with no id can't be merged by identity — dropped, not crashed on.
+    expect(mergeComments({ comments: [{ text: 'no id' }] }, {}).comments).toEqual([]);
+  });
+});
+
 describe('mergeSharedTask — last-write-wins, except for recurring completions', () => {
   it('takes the remote document wholesale for a plain task', () => {
     const local = sharedTask({ title: 'Mine' });
     const remote = sharedTask({ title: 'Theirs' });
     expect(mergeSharedTask(local, remote).title).toBe('Theirs');
+  });
+
+  it('merges the comment thread on a NON-recurring task (the lost-comment bug)', () => {
+    // Both sides posted from a snapshot predating the other's comment. Before
+    // mergeComments, mergeSharedTask returned `remote` wholesale here and the
+    // local comment was silently gone.
+    const local = sharedTask({ comments: [{ id: 'mine', text: 'mine', createdAt: '2026-08-01T10:00:00Z' }] });
+    const remote = sharedTask({ comments: [{ id: 'theirs', text: 'theirs', createdAt: '2026-08-01T10:00:05Z' }] });
+    expect(mergeSharedTask(local, remote).comments.map((x) => x.id)).toEqual(['mine', 'theirs']);
+  });
+
+  it('merges the comment thread on a RECURRING task too, alongside completion state', () => {
+    const recurring = {
+      ...sharedTask(),
+      isRecurring: true,
+      recurrenceString: 'every day',
+      recurrenceRule: deriveRecurrenceRule('every day'),
+      recurrenceAnchor: '2026-08-01',
+    };
+    const local = {
+      ...recurring,
+      completedOccurrences: ['2026-08-01'],
+      comments: [{ id: 'mine', text: 'mine', createdAt: '2026-08-01T10:00:00Z' }],
+    };
+    const remote = {
+      ...recurring,
+      completedOccurrences: ['2026-08-02'],
+      comments: [{ id: 'theirs', text: 'theirs', createdAt: '2026-08-01T10:00:05Z' }],
+    };
+    const merged = mergeSharedTask(local, remote);
+    expect(merged.comments.map((x) => x.id)).toEqual(['mine', 'theirs']);
+    expect(merged.completedOccurrences).toEqual(['2026-08-01', '2026-08-02']);
+  });
+
+  it('honours a local tombstone so a deleted comment does not come back from remote', () => {
+    const local = sharedTask({ comments: [], deletedCommentIds: ['c1'] });
+    const remote = sharedTask({ comments: [{ id: 'c1', text: 'deleted', createdAt: '2026-08-01T10:00:00Z' }] });
+    expect(mergeSharedTask(local, remote).comments).toEqual([]);
+  });
+
+  it('produces a STABLE fingerprint when re-merged, so two clients cannot write-loop', () => {
+    // The merge result gets written back and echoes to the other side. If merging
+    // an already-merged task changed its fingerprint at all, each client would
+    // read the other's write as a fresh edit and they'd push at each other
+    // forever — the failure mode the whole echo-detection design exists to stop.
+    const local = sharedTask({ comments: [{ id: 'a', text: 'a', createdAt: '2026-08-01T10:00:00Z' }] });
+    const remote = sharedTask({ comments: [{ id: 'b', text: 'b', createdAt: '2026-08-01T10:00:05Z' }] });
+    const once = mergeSharedTask(local, remote);
+    expect(sharedTaskFingerprint(mergeSharedTask(once, once))).toBe(sharedTaskFingerprint(once));
+    // Order-independent too: whichever side's write lands first must converge.
+    expect(sharedTaskFingerprint(mergeSharedTask(remote, local))).toBe(sharedTaskFingerprint(once));
   });
 
   it('unions recurring completions instead of letting one side erase the other', () => {

@@ -156,6 +156,45 @@ describe('insertMention', () => {
     const result = insertMention(text, span, { uid: 'u', displayName: 'Bob' }, caret);
     expect(result.text).toBe('hello @[Bob](u) world');
   });
+
+  // A displayName is attacker-controlled (Firestore rules cap its length but
+  // not its characters), and the token format is purely positional — a `]`
+  // or `)` in the name can close the name/uid segment early, and a `[` or `(`
+  // can open a bogus new one, splicing in a fake uid that isn't the mentioned
+  // candidate's. These assert the token always parses back to exactly one
+  // mention, attributed to the real candidate uid, no matter what's in the name.
+  it('strips "]" from a display name so it cannot close the name segment early', () => {
+    const text = '@x';
+    const span = { start: 0, query: 'x' };
+    const candidate = { uid: 'attacker-uid', displayName: 'Evil](victim-uid)x' };
+    const result = insertMention(text, span, candidate, text.length);
+    expect(extractMentionUids(result.text)).toEqual(['attacker-uid']);
+    expect(parseCommentBody(result.text).filter((s) => s.type === 'mention')).toEqual([
+      { type: 'mention', uid: 'attacker-uid', displayName: 'Evilvictim-uidx' },
+    ]);
+  });
+
+  it('strips "(" and ")" from a display name so it cannot open/close a bogus uid segment', () => {
+    const text = '@x';
+    const span = { start: 0, query: 'x' };
+    const candidate = { uid: 'attacker-uid', displayName: 'Name(victim-uid)' };
+    const result = insertMention(text, span, candidate, text.length);
+    expect(extractMentionUids(result.text)).toEqual(['attacker-uid']);
+    expect(parseCommentBody(result.text).filter((s) => s.type === 'mention')).toEqual([
+      { type: 'mention', uid: 'attacker-uid', displayName: 'Namevictim-uid' },
+    ]);
+  });
+
+  it('strips all of "[]()" together — the proven exploit payload', () => {
+    const text = '@x';
+    const span = { start: 0, query: 'x' };
+    const candidate = { uid: 'attacker-uid', displayName: 'Evil](victim-uid-999)x [Innocent' };
+    const result = insertMention(text, span, candidate, text.length);
+    expect(extractMentionUids(result.text)).toEqual(['attacker-uid']);
+    const mentions = parseCommentBody(result.text).filter((s) => s.type === 'mention');
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]).toEqual({ type: 'mention', uid: 'attacker-uid', displayName: 'Evilvictim-uid-999x Innocent' });
+  });
 });
 
 describe('extractValidMentionUids', () => {

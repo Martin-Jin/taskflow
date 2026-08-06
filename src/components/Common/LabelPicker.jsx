@@ -15,7 +15,7 @@ import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
 // in TaskDetailModal's title/notes fields, which don't touch this picker's
 // props at all — see call sites for the useCallback/useMemo needed to keep
 // `selectedIds`/`onCreateLabel` reference-stable so memo actually pays off.
-function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder = 'Add a tag…' }) {
+function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder = 'Add a tag…', disabled = false }) {
   const { query, setQuery, isOpen, highlightedIndex, setHighlightedIndex, inputRef, handleBlur, handleFocus, resetQuery } =
     useComboboxMultiSelect();
 
@@ -90,6 +90,7 @@ function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder
                 type="button"
                 className="chip-dependency-remove"
                 onClick={() => removeId(l.id)}
+                disabled={disabled}
                 title={`Remove ${l.name}`}
                 aria-label={`Remove ${l.name}`}
               >
@@ -113,9 +114,10 @@ function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder
           onFocus={handleFocus}
           onBlur={handleBlur}
           placeholder={selectedLabels.length > 0 ? 'Add another…' : placeholder}
+          disabled={disabled}
         />
 
-        {isOpen && (
+        {!disabled && isOpen && (
           <div className="dependency-picker-dropdown">
             {filteredOptions.length === 0 && !canCreate ? (
               <div className="dependency-picker-empty">
