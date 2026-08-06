@@ -80,7 +80,7 @@
  * ============================================================================
  */
 
-import { verifyFirebaseIdToken, verifyFirebaseIdTokenWithProvider, AuthError } from './googleAuth.js';
+import { verifyFirebaseIdToken, verifyFirebaseIdTokenWithProvider, lookupProviderInfo, AuthError } from './googleAuth.js';
 import { getDoc, setDoc, deleteDoc } from './firestoreClient.js';
 import { resolveTokenRole, generateShareToken, isSafeFirestoreId } from './shareLinkLogic.js';
 import { mintFirebaseCustomToken } from './firebaseCustomToken.js';
@@ -438,4 +438,166 @@ export async function handleResolveLink(request, env, headers) {
     200,
     headers
   );
+}
+
+// Sanity ceiling on how many projects one migration request may touch — a
+// real guest joins at most a handful of shared boards, and this bounds how
+// many sequential Firestore round-trips a single request can trigger (each
+// project migrated is a read + up to two writes).
+const MAX_MIGRATE_PROJECT_IDS = 50;
+
+/**
+ * POST /share/migrate-guest — body: { oldIdToken, newIdToken, projectIds }
+ *
+ * GUEST IDENTITY MIGRATION (Phase 2 follow-up): when an anonymous share-link
+ * guest signs in with a Google account that ALREADY EXISTS, Firebase's
+ * `signInWithCredential` replaces their session with a brand-new uid — see
+ * AuthContext.jsx's handleGoogleCredential for the full scenario. This is the
+ * FALLBACK path only: whenever the Google account is new, the client instead
+ * uses `linkWithCredential` to upgrade the anonymous account IN PLACE
+ * (same uid, zero migration needed) and never calls this route at all. This
+ * route exists purely for the `credential-already-in-use` case, where linking
+ * is impossible because that Google account is already a distinct Firebase
+ * user.
+ *
+ * This is a MEMBERSHIP MIGRATION, never an ownership transfer: a guest can
+ * only ever be a viewer/editor (rules refuse an anonymous `ownerId`), and
+ * this route defensively re-confirms that per project below rather than
+ * trusting the client's `planGuestMigration` output, which is computed
+ * client-side before this call and could in principle be stale or spoofed.
+ *
+ * WHY THIS CAN'T BE EXPRESSED SAFELY IN firestore.rules, AND MUST GO THROUGH
+ * THE WORKER INSTEAD
+ * --------------------------------------------------------------------------
+ * The write this performs touches a `collaborators` entry for a uid that is
+ * NEITHER the caller's own current uid (adding the NEW uid) NOR the caller at
+ * all any more by the time it's removed (deleting the OLD uid's entry, from a
+ * session that no longer exists once the credential swap has happened).
+ * Every existing `allow update` branch in firestore.rules is deliberately
+ * scoped to "touch only your own entry" (`isRenamingSelf`, `joiningWithToken`)
+ * or "the owner may touch anyone's" (`isOwner() && ownerFieldsUnchanged()`) —
+ * neither fits a NON-owner collaborator's identity being swapped out from
+ * under them by nobody in particular. Rules have no way to verify "the caller
+ * proved they ALSO control this other uid" (that requires a SECOND id token,
+ * verified against a SECOND signature, which rules cannot evaluate — they see
+ * only the single `request.auth` the current request is authenticated as).
+ * Expressing "trust me, that other uid is mine" as a rule would be exactly
+ * the kind of self-asserted privilege escalation firestore.rules' own header
+ * comment warns against. So this is a Worker route: it can independently
+ * verify BOTH identities via their own id tokens (this route requires both
+ * `oldIdToken` and `newIdToken`), which a security-rules match block cannot
+ * do, and it writes via the service account that already bypasses rules for
+ * every other privileged operation in this file.
+ *
+ * ORDER OF OPERATIONS, AND WHAT A MID-WAY FAILURE LEAVES BEHIND
+ * ---------------------------------------------------------------
+ * Per project, in this exact order:
+ *   1. Add the NEW uid to `collaborators` at the OLD uid's existing role.
+ *   2. Remove the OLD uid's entry.
+ * Add-before-remove means a failure between the two steps leaves the new
+ * account WITH access (both uids briefly present) rather than locked out —
+ * the strictly worse failure mode. Projects are migrated ONE AT A TIME, in
+ * the order given, and a failure on one project does not abort the rest: the
+ * response's `migrated`/`failed` arrays tell the client exactly which
+ * projects succeeded, so an old entry is left untouched (not partially
+ * migrated) for anything that failed, and the client can decide whether to
+ * retry just the failed ones.
+ */
+export async function handleMigrateGuest(request, env, headers) {
+  const body = await parseJsonBody(request);
+  if (
+    !body ||
+    typeof body.oldIdToken !== 'string' ||
+    !body.oldIdToken ||
+    typeof body.newIdToken !== 'string' ||
+    !body.newIdToken ||
+    !Array.isArray(body.projectIds)
+  ) {
+    return jsonResponse({ error: 'Missing/invalid `oldIdToken`, `newIdToken`, or `projectIds`.' }, 400, headers);
+  }
+  if (body.projectIds.length === 0) {
+    return jsonResponse({ ok: true, migrated: [], failed: [] }, 200, headers);
+  }
+  if (body.projectIds.length > MAX_MIGRATE_PROJECT_IDS || !body.projectIds.every(isSafeFirestoreId)) {
+    return jsonResponse({ error: 'Invalid `projectIds`.' }, 400, headers);
+  }
+
+  let oldUid, newUid;
+  try {
+    oldUid = await verifyFirebaseIdToken(body.oldIdToken, env);
+    newUid = await verifyFirebaseIdToken(body.newIdToken, env);
+  } catch (err) {
+    if (err instanceof AuthError) return jsonResponse({ error: err.message }, 401, headers);
+    throw err;
+  }
+
+  if (oldUid === newUid) {
+    // Nothing to migrate — the "old" and "new" identity are the same
+    // account. Not an error (a caller could reach this if linking actually
+    // succeeded, or was retried after already completing), just a no-op.
+    return jsonResponse({ ok: true, migrated: [], failed: [] }, 200, headers);
+  }
+
+  // The OLD identity must be a genuine guest — no linked real-account
+  // provider. Without this check, presenting ANY two valid id tokens (e.g.
+  // two of the caller's own real accounts, or a stolen "old" token for some
+  // other real account) would let the caller siphon that other account's
+  // project memberships onto their "new" one. See lookupProviderInfo's doc
+  // comment for why this can't be inferred from the token's own claims.
+  const { hasLinkedProvider } = await lookupProviderInfo(oldUid, env);
+  if (hasLinkedProvider) {
+    return jsonResponse({ error: 'The old identity is not a guest session — refusing to migrate.' }, 403, headers);
+  }
+
+  const migrated = [];
+  const failed = [];
+
+  for (const projectId of body.projectIds) {
+    try {
+      const project = await getDoc(env, projectDocPath(projectId));
+      if (!project) {
+        failed.push({ projectId, reason: 'not_found' });
+        continue;
+      }
+      // Re-derive role/displayName/photoURL from the PROJECT'S OWN stored
+      // entry — never trust anything the client sent about what role it
+      // thinks it should get. A guest is never the owner (rules enforce
+      // this at join time), so this also defensively refuses to touch a
+      // project where the "old" uid is somehow the owner rather than a
+      // collaborator.
+      if (project.ownerId === oldUid) {
+        failed.push({ projectId, reason: 'old_uid_is_owner' });
+        continue;
+      }
+      const oldEntry = project.collaborators?.[oldUid];
+      const role = oldEntry?.role === 'editor' || oldEntry?.role === 'viewer' ? oldEntry.role : null;
+      if (!role) {
+        failed.push({ projectId, reason: 'not_a_member' });
+        continue;
+      }
+
+      const nextCollaborators = { ...project.collaborators };
+      // Step 1 — add the new uid FIRST, so a crash between these two writes
+      // leaves the new account with access rather than locked out.
+      nextCollaborators[newUid] = {
+        role,
+        displayName: oldEntry.displayName || 'Anonymous',
+        photoURL: oldEntry.photoURL ?? null,
+        joinedAt: new Date().toISOString(),
+        isAnonymous: false,
+      };
+      await setDoc(env, projectDocPath(projectId), { ...project, collaborators: nextCollaborators });
+
+      // Step 2 — remove the old uid's entry, now that the new one is live.
+      delete nextCollaborators[oldUid];
+      await setDoc(env, projectDocPath(projectId), { ...project, collaborators: nextCollaborators });
+
+      migrated.push(projectId);
+    } catch (err) {
+      console.error(`[migrate-guest] Failed to migrate project ${projectId}`, err);
+      failed.push({ projectId, reason: 'write_failed' });
+    }
+  }
+
+  return jsonResponse({ ok: true, migrated, failed }, 200, headers);
 }

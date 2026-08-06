@@ -529,6 +529,108 @@ describe('reads/writes by role', () => {
   });
 });
 
+// A collaborator (viewer or editor, anonymous or real) renaming only their
+// OWN `collaborators` entry's `displayName` — see firestore.rules'
+// `isRenamingSelf()`. Neither the owner branch nor the pre-existing editor
+// branch admits this (see that function's comment), so this is its own rule.
+describe('self-rename (collaborator changing own displayName)', () => {
+  beforeEach(async () => {
+    await seedProject(PROJECT_ID, baseProjectData());
+  });
+
+  it('a viewer can rename only their own displayName', async () => {
+    const db = asUser(VIEWER);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'New Viewer Name',
+    }));
+    const data = await readProjectBypassingRules(PROJECT_ID);
+    expect(data.collaborators[VIEWER].displayName).toBe('New Viewer Name');
+  });
+
+  it('an editor can rename only their own displayName', async () => {
+    const db = asUser(EDITOR);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${EDITOR}.displayName`]: 'New Editor Name',
+    }));
+    const data = await readProjectBypassingRules(PROJECT_ID);
+    expect(data.collaborators[EDITOR].displayName).toBe('New Editor Name');
+  });
+
+  it('an anonymous collaborator can rename their own displayName', async () => {
+    await seedProject(PROJECT_ID, baseProjectData({
+      collaborators: {
+        [EDITOR]: collaboratorEntry('editor', 'Editor'),
+        [VIEWER]: collaboratorEntry('viewer', 'Viewer', true),
+      },
+    }));
+    const db = asAnon(VIEWER);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'New Anon Name',
+    }));
+  });
+
+  it('a collaborator cannot rename someone else\'s entry', async () => {
+    const db = asUser(VIEWER);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${EDITOR}.displayName`]: 'Hijacked Name',
+    }));
+  });
+
+  it('a collaborator cannot change their own role while renaming', async () => {
+    const db = asUser(VIEWER);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'New Name',
+      [`collaborators.${VIEWER}.role`]: 'editor',
+    }));
+  });
+
+  it('a collaborator cannot change their own isAnonymous flag while renaming', async () => {
+    const db = asUser(VIEWER);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'New Name',
+      [`collaborators.${VIEWER}.isAnonymous`]: true,
+    }));
+  });
+
+  // Not a case isRenamingSelf() itself needs to cover: the owner already has
+  // full control over `collaborators` via `ownerFieldsUnchanged()` (any owner
+  // write that keeps `collaborators` a map and doesn't touch `ownerId`/`links`
+  // succeeds) — this just confirms that pre-existing owner path, unrelated to
+  // the self-rename rule, tolerates a stray write under the owner's own uid
+  // rather than accidentally rejecting it as malformed.
+  it('the owner writing under their own uid key succeeds via the owner branch, not the self-rename one', async () => {
+    const db = asUser(OWNER);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${OWNER}.displayName`]: 'Owner renamed',
+    }));
+  });
+
+  it('a stranger (not a member) cannot rename anything', async () => {
+    const db = asUser(STRANGER);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'Hijacked Name',
+    }));
+  });
+
+  it('a rename cannot smuggle in an unrelated top-level field', async () => {
+    const db = asUser(VIEWER);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'New Name',
+      name: 'Renamed project too',
+    }));
+  });
+
+  it('an empty or over-long displayName is rejected', async () => {
+    const db = asUser(VIEWER);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: '',
+    }));
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      [`collaborators.${VIEWER}.displayName`]: 'a'.repeat(121),
+    }));
+  });
+});
+
 describe('join-by-token', () => {
   beforeEach(async () => {
     await seedProject(PROJECT_ID, baseProjectData({ collaborators: {} }));

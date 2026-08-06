@@ -199,3 +199,24 @@ export async function resolveShareToken(token) {
     wasAnonymous: tokenResult.claims.wasAnonymous === true,
   };
 }
+
+/**
+ * Migrate a guest's shared-project memberships from their old (anonymous)
+ * uid to their new (just-signed-in Google) uid — the `credential-already-
+ * in-use` fallback in AuthContext.jsx's handleGoogleCredential. See
+ * cloudflare-worker/src/shareLinkRoutes.js's handleMigrateGuest for the full
+ * security reasoning (this can't be a direct Firestore write: it touches a
+ * `collaborators` entry for a uid that isn't the caller's own current one).
+ *
+ * Both id tokens are passed explicitly rather than read from `auth.currentUser`
+ * (unlike every other function in this file) because by the time this is
+ * called the OLD session may already be gone — the caller (AuthContext) must
+ * capture `oldIdToken` BEFORE the credential swap.
+ * @param {string} oldIdToken - The guest's id token, captured before signing in with the new credential.
+ * @param {string} newIdToken - The newly-signed-in account's id token.
+ * @param {string[]} projectIds - Shared project ids to attempt migrating.
+ * @returns {Promise<{ok: true, migrated: string[], failed: Array<{projectId: string, reason: string}>}>}
+ */
+export async function migrateGuestIdentity(oldIdToken, newIdToken, projectIds) {
+  return postShare('/share/migrate-guest', { oldIdToken, newIdToken, projectIds });
+}

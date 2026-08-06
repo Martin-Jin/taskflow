@@ -267,3 +267,27 @@ export function saveCachedJoinName(token, displayName, storage = defaultStorage)
   next[token] = displayName.trim();
   storage.save(ANON_NAMES_KEY, next);
 }
+
+/**
+ * Overwrite every cached name in this browser with `displayName` — called
+ * when an anonymous visitor renames themselves from Settings (see
+ * SettingsPanel's account section). There is only ONE anonymous identity per
+ * browser (one Firebase Anonymous Auth uid), so every token this browser ever
+ * cached a name against belongs to that same visitor; a rename should apply
+ * to all of them, not just the most recent. Tokens themselves are secrets
+ * that are stripped from the URL immediately after use (see this module's
+ * header) and never retained anywhere after joining, so rewriting by token is
+ * not an option — this rewrites every VALUE under the existing keys instead,
+ * without needing to know what those keys are.
+ * @param {string} displayName
+ * @param {JoinNameStorage} [storage]
+ */
+export function renameCachedJoinNames(displayName, storage = defaultStorage) {
+  if (typeof displayName !== 'string' || !displayName.trim()) return;
+  const all = storage.load(ANON_NAMES_KEY, null);
+  if (!all || typeof all !== 'object') return;
+  const trimmed = displayName.trim();
+  const next = {};
+  for (const token of Object.keys(all)) next[token] = trimmed;
+  storage.save(ANON_NAMES_KEY, next);
+}

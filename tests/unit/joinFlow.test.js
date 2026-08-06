@@ -17,6 +17,7 @@ import {
   loadCachedJoinName,
   planJoinStep,
   readJoinToken,
+  renameCachedJoinNames,
   saveCachedJoinName,
   urlWithoutJoinParam,
 } from '../../src/utils/joinFlow';
@@ -246,5 +247,37 @@ describe('cached anonymous display names', () => {
     expect(loadCachedJoinName('tok1', storage)).toBeNull();
     saveCachedJoinName('tok1', 'Ada', storage);
     expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
+  });
+
+  describe('renameCachedJoinNames', () => {
+    it('overwrites every cached token with the new name, not just the most recent', () => {
+      saveCachedJoinName('tok1', 'Ada', storage);
+      saveCachedJoinName('tok2', 'Grace', storage);
+      renameCachedJoinNames('New Name', storage);
+      expect(loadCachedJoinName('tok1', storage)).toBe('New Name');
+      expect(loadCachedJoinName('tok2', storage)).toBe('New Name');
+    });
+
+    it('trims the new name', () => {
+      saveCachedJoinName('tok1', 'Ada', storage);
+      renameCachedJoinNames('  New Name  ', storage);
+      expect(loadCachedJoinName('tok1', storage)).toBe('New Name');
+    });
+
+    it('is a no-op when there is nothing cached yet', () => {
+      renameCachedJoinNames('New Name', storage);
+      expect(store.anonJoinNames).toBeUndefined();
+    });
+
+    it('ignores an empty/whitespace name rather than blanking the cache', () => {
+      saveCachedJoinName('tok1', 'Ada', storage);
+      renameCachedJoinNames('   ', storage);
+      expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
+    });
+
+    it('survives a corrupt stored value instead of throwing', () => {
+      store.anonJoinNames = 'not an object';
+      expect(() => renameCachedJoinNames('New Name', storage)).not.toThrow();
+    });
   });
 });

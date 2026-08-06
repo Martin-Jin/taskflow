@@ -13,6 +13,10 @@ import {
   getProjectShareState,
   generateShareToken,
   resolveOwnerProfile,
+  planSelfRename,
+  planGuestMigration,
+  isGuestUser,
+  findOwnGuestName,
 } from '../../src/utils/sharedProjectAccess';
 
 function projectWithLinks({
@@ -710,5 +714,159 @@ describe('resolveOwnerProfile', () => {
       displayName: 'Project owner',
       photoURL: null,
     });
+  });
+});
+
+describe('planSelfRename', () => {
+  const uid = 'user-1';
+
+  it('returns project ids where the user is a member with a stale displayName', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { [uid]: { role: 'viewer', displayName: 'Old Name' } } },
+      'proj-b': { ownerId: 'owner-y', collaborators: { [uid]: { role: 'editor', displayName: 'Old Name' } } },
+    };
+    expect(planSelfRename(uid, 'New Name', sharedProjects)).toEqual(['proj-a', 'proj-b']);
+  });
+
+  it('skips a project where the stored name already matches (no-op)', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { [uid]: { role: 'viewer', displayName: 'New Name' } } },
+    };
+    expect(planSelfRename(uid, 'New Name', sharedProjects)).toEqual([]);
+  });
+
+  it('skips a project where the user is the owner (no collaborators entry to rename)', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: uid, collaborators: { 'other-uid': { role: 'editor', displayName: 'Someone' } } },
+    };
+    expect(planSelfRename(uid, 'New Name', sharedProjects)).toEqual([]);
+  });
+
+  it('skips a project the user is not a member of at all', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { 'other-uid': { role: 'editor', displayName: 'Someone' } } },
+    };
+    expect(planSelfRename(uid, 'New Name', sharedProjects)).toEqual([]);
+  });
+
+  it('returns an empty array for missing/empty inputs rather than throwing', () => {
+    expect(planSelfRename(null, 'New Name', {})).toEqual([]);
+    expect(planSelfRename(uid, '', {})).toEqual([]);
+    expect(planSelfRename(uid, 'New Name', null)).toEqual([]);
+    expect(planSelfRename(uid, 'New Name', {})).toEqual([]);
+  });
+});
+
+describe('planGuestMigration', () => {
+  const oldUid = 'guest-1';
+
+  it('returns one entry per project the old uid is a viewer/editor on', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { [oldUid]: { role: 'viewer', displayName: 'Ada', photoURL: 'a.png' } } },
+      'proj-b': { ownerId: 'owner-y', collaborators: { [oldUid]: { role: 'editor', displayName: 'Ada' } } },
+    };
+    expect(planGuestMigration(oldUid, sharedProjects)).toEqual([
+      { projectId: 'proj-a', role: 'viewer', displayName: 'Ada', photoURL: 'a.png' },
+      { projectId: 'proj-b', role: 'editor', displayName: 'Ada', photoURL: null },
+    ]);
+  });
+
+  it('skips a project the old uid is not a member of', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { 'other-uid': { role: 'editor', displayName: 'Someone' } } },
+    };
+    expect(planGuestMigration(oldUid, sharedProjects)).toEqual([]);
+  });
+
+  it('defensively skips a project where the old uid is the owner', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: oldUid, collaborators: {} },
+    };
+    expect(planGuestMigration(oldUid, sharedProjects)).toEqual([]);
+  });
+
+  it('falls back to "Anonymous" for a missing displayName', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { [oldUid]: { role: 'viewer' } } },
+    };
+    expect(planGuestMigration(oldUid, sharedProjects)).toEqual([
+      { projectId: 'proj-a', role: 'viewer', displayName: 'Anonymous', photoURL: null },
+    ]);
+  });
+
+  it('ignores a malformed role rather than guessing one', () => {
+    const sharedProjects = {
+      'proj-a': { ownerId: 'owner-x', collaborators: { [oldUid]: { role: 'admin', displayName: 'Ada' } } },
+    };
+    expect(planGuestMigration(oldUid, sharedProjects)).toEqual([]);
+  });
+
+  it('returns an empty array for missing/malformed inputs rather than throwing', () => {
+    expect(planGuestMigration(null, {})).toEqual([]);
+    expect(planGuestMigration(oldUid, null)).toEqual([]);
+    expect(planGuestMigration(oldUid, {})).toEqual([]);
+    expect(planGuestMigration(oldUid, 'not an object')).toEqual([]);
+  });
+
+  it('handles no shared projects at all (trivial case — nothing to migrate)', () => {
+    expect(planGuestMigration(oldUid, {})).toEqual([]);
+  });
+});
+
+describe('isGuestUser', () => {
+  it('is true for a plain anonymous session (empty providerData)', () => {
+    expect(isGuestUser({ isAnonymous: true, providerData: [] })).toBe(true);
+  });
+
+  it('is true for a guest even after a join replaces the session with a custom-token one', () => {
+    // Post-join, Firebase reports isAnonymous: false for everyone (see
+    // shareLinkService.js) — providerData must be what decides this, not
+    // isAnonymous, which is why this case is pinned explicitly.
+    expect(isGuestUser({ isAnonymous: false, providerData: [] })).toBe(true);
+  });
+
+  it('is false for a real Google-linked account, whatever isAnonymous says', () => {
+    expect(isGuestUser({ isAnonymous: false, providerData: [{ providerId: 'google.com' }] })).toBe(false);
+    expect(isGuestUser({ isAnonymous: true, providerData: [{ providerId: 'google.com' }] })).toBe(false);
+  });
+
+  it('is false for null/undefined (signed out)', () => {
+    expect(isGuestUser(null)).toBe(false);
+    expect(isGuestUser(undefined)).toBe(false);
+  });
+
+  it('treats a missing/malformed providerData as a guest rather than throwing', () => {
+    expect(isGuestUser({})).toBe(true);
+    expect(isGuestUser({ providerData: null })).toBe(true);
+  });
+});
+
+describe('findOwnGuestName', () => {
+  const uid = 'guest-1';
+
+  it('finds the name from whichever joined project has an entry', () => {
+    const sharedProjects = {
+      'proj-a': { collaborators: { [uid]: { displayName: 'Guesty' } } },
+    };
+    expect(findOwnGuestName(uid, sharedProjects)).toBe('Guesty');
+  });
+
+  it('returns null when the uid has no entry anywhere', () => {
+    const sharedProjects = { 'proj-a': { collaborators: { 'other-uid': { displayName: 'Someone' } } } };
+    expect(findOwnGuestName(uid, sharedProjects)).toBeNull();
+  });
+
+  it('returns null for missing/empty inputs rather than throwing', () => {
+    expect(findOwnGuestName(null, {})).toBeNull();
+    expect(findOwnGuestName(uid, null)).toBeNull();
+    expect(findOwnGuestName(uid, {})).toBeNull();
+  });
+
+  it('skips a blank displayName in favor of another project that has a real one', () => {
+    const sharedProjects = {
+      'proj-a': { collaborators: { [uid]: { displayName: '   ' } } },
+      'proj-b': { collaborators: { [uid]: { displayName: 'Real Name' } } },
+    };
+    expect(findOwnGuestName(uid, sharedProjects)).toBe('Real Name');
   });
 });

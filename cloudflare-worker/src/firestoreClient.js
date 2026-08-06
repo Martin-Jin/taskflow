@@ -23,11 +23,28 @@ import { SignJWT, importPKCS8 } from 'jose';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FIRESTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
 
-let cachedToken = null; // { accessToken, expiresAt } — expiresAt in epoch seconds
+/** accessToken cache, keyed by OAuth scope — see mintServiceAccountToken's doc comment for why per-scope. */
+const tokenCache = new Map();
 
-async function mintServiceAccountToken(env) {
+/**
+ * Mints (and caches, for the Worker isolate's lifetime) an OAuth access token
+ * for this Worker's own service account, scoped to `scope`. Cached PER SCOPE
+ * — `cacheKey` defaults to `scope` itself, since a Firestore-scoped token
+ * (`FIRESTORE_SCOPE`, used by getDoc/setDoc/deleteDoc below) and a
+ * Firebase-Auth-scoped one (used by shareLinkRoutes.js's guest-identity
+ * lookup, see googleAuth.js's lookupProviderInfo) are not interchangeable —
+ * Google authorizes each access token for only the scope(s) it was minted
+ * with, so caching them under one shared slot would make whichever call
+ * happened first silently poison the token used by the other.
+ * @param {object} env
+ * @param {string} [scope] - Defaults to the Firestore datastore scope.
+ * @returns {Promise<string>}
+ */
+export async function mintServiceAccountToken(env, scope = FIRESTORE_SCOPE) {
   const now = Math.floor(Date.now() / 1000);
-  if (cachedToken && cachedToken.expiresAt > now + 60) return cachedToken.accessToken;
+  const cacheKey = scope;
+  const cached = tokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > now + 60) return cached.accessToken;
 
   if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
     throw new Error('Worker misconfigured: GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY not set.');
@@ -41,7 +58,7 @@ async function mintServiceAccountToken(env) {
     : env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   const privateKey = await importPKCS8(pem, 'RS256');
 
-  const jwt = await new SignJWT({ scope: FIRESTORE_SCOPE })
+  const jwt = await new SignJWT({ scope })
     .setProtectedHeader({ alg: 'RS256' })
     .setIssuer(env.GOOGLE_SERVICE_ACCOUNT_EMAIL)
     .setSubject(env.GOOGLE_SERVICE_ACCOUNT_EMAIL)
@@ -60,8 +77,9 @@ async function mintServiceAccountToken(env) {
   });
   if (!res.ok) throw new Error(`Failed to mint service-account token: ${await res.text()}`);
   const data = await res.json();
-  cachedToken = { accessToken: data.access_token, expiresAt: now + (data.expires_in || 3600) };
-  return cachedToken.accessToken;
+  const token = { accessToken: data.access_token, expiresAt: now + (data.expires_in || 3600) };
+  tokenCache.set(cacheKey, token);
+  return token.accessToken;
 }
 
 function documentUrl(env, path) {

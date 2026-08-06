@@ -11,8 +11,10 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { LogOut, Settings as SettingsIcon, UserRound } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useScheduler } from '../../context/SchedulerContext';
+import { isGuestUser, findOwnGuestName } from '../../utils/sharedProjectAccess';
 import GoogleSignInButton from '../Common/GoogleSignInButton';
 
 /**
@@ -20,6 +22,7 @@ import GoogleSignInButton from '../Common/GoogleSignInButton';
  */
 export default function AccountButton({ compact = false, menuAlign = 'down', onOpenAccountSettings }) {
   const { user, authLoading, logout } = useAuth();
+  const { sharedProjects } = useScheduler();
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapperRef = useRef(null);
 
@@ -38,7 +41,14 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
     return <GoogleSignInButton compact={compact} />;
   }
 
-  const label = user.displayName || user.email || 'Account';
+  // A guest (share-link visitor with no durable account, see isGuestUser's
+  // header for why this isn't user.isAnonymous) has no displayName on the
+  // Firebase user record at all — their chosen name only exists denormalized
+  // onto a shared project's `collaborators` map, so it's read back from
+  // there rather than off `user`.
+  const isGuest = isGuestUser(user);
+  const guestName = isGuest ? findOwnGuestName(user.uid, sharedProjects) : null;
+  const label = isGuest ? guestName || 'Guest' : user.displayName || user.email || 'Account';
 
   return (
     <div className={`account-widget ${compact ? 'compact' : 'full-width'}`} ref={wrapperRef}>
@@ -52,6 +62,10 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
       >
         {user.photoURL ? (
           <img src={user.photoURL} alt="" className="account-avatar" referrerPolicy="no-referrer" />
+        ) : isGuest ? (
+          <span className="account-avatar account-avatar-fallback" aria-hidden="true">
+            <UserRound size={16} />
+          </span>
         ) : (
           <span className="account-avatar account-avatar-fallback">{label[0].toUpperCase()}</span>
         )}
@@ -61,8 +75,14 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
       {menuOpen && (
         <div className={`account-menu account-menu-${menuAlign}`}>
           <div className="account-menu-header">
-            <div className="account-menu-name">{user.displayName || 'Signed in'}</div>
+            <div className="account-menu-name">{isGuest ? `${label} (guest)` : user.displayName || 'Account'}</div>
             {user.email && <div className="account-menu-email">{user.email}</div>}
+            {isGuest && (
+              <div className="account-menu-guest-note">
+                You're browsing as a guest — this data stays on this device only. Sign in with Google to keep it
+                across devices.
+              </div>
+            )}
           </div>
           <button
             className="account-menu-item"
@@ -71,7 +91,7 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
               onOpenAccountSettings?.();
             }}
           >
-            <SettingsIcon size={14} /> Account settings
+            <SettingsIcon size={14} /> {isGuest ? 'Guest settings' : 'Account settings'}
           </button>
           <button
             className="account-menu-item account-menu-danger"
@@ -80,7 +100,7 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
               logout();
             }}
           >
-            <LogOut size={14} /> Sign out
+            <LogOut size={14} /> {isGuest ? 'Leave guest session' : 'Sign out'}
           </button>
         </div>
       )}
