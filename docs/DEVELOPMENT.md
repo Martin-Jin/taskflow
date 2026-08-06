@@ -590,6 +590,19 @@ add/rename/delete affordances for a viewer, same precedent as
 exempt from this gate, since it never writes to Firestore at all (see
 `order` above).
 
+**Presence** ("who else is viewing this project right now") lives at
+`sharedProjects/{id}/presence/{uid}` — one doc per viewer, heartbeated every
+`PRESENCE_HEARTBEAT_MS` (30s, `useSharedProjectSync.js`) while the project is
+open. `firestore.rules` restricts a write to the caller's own uid and caps its
+shape to `displayName`/`photoURL`/`lastSeenAt` only, so a viewer can't write
+someone else's doc or smuggle in arbitrary data. There is no "leaving" write:
+the web has no reliable goodbye event, so a closed tab simply stops
+heartbeating. Staleness is instead decided client-side, by recency —
+`computeActiveViewers` (`utils/sharedTaskSync.js`) filters out any entry whose
+`lastSeenAt` is older than `PRESENCE_STALE_MS` (90s), so a viewer's avatar ages
+out a few missed heartbeats after they disappear rather than staying stuck
+forever.
+
 ### Recurring tasks and concurrency (`recurrenceState.js`)
 
 Recurring completion used to be a read-modify-write on three fields derived from
@@ -639,10 +652,10 @@ src/
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
-│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal, ShortcutsModal (Settings → Keyboard shortcuts)
+│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal, ShortcutsModal (Settings → Keyboard shortcuts), ShareProjectModal (owner link/collaborator management, Phase 2), JoinProjectModal (`?join=<token>` landing, Phase 2)
 │   ├── Nav/                   # Sidebar — desktop/tablet nav + project list (pin/rename/delete via ProjectActionsMenu); BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
-│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion)
+│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── TaskListPanel.jsx
 │   └── SettingsPanel.jsx
@@ -661,18 +674,23 @@ src/
 │   ├── useComboboxMultiSelect.js  # Shared open/close/query state for DependencyPicker + LabelPicker
 │   ├── useListKeyboardNav.js      # Shared Arrow/Enter highlighted-row navigation + scroll-into-view for ranked-results dropdowns (CommandPalette, Sidebar/ManageProjectsModal/CalendarFilterMenu/SearchBar project search) — a separate hook from useComboboxMultiSelect (see that file's own doc comment on why), composed alongside it where a caller needs both (CalendarFilterMenu's FilterGroup)
 │   ├── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
-│   └── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
+│   ├── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
+│   ├── useSharedProjectSync.js    # Live multi-writer Firestore sync for shared projects (Phase 1, Collaborative Projects) — subscriptions, diff-and-push, presence heartbeat
+│   └── useJoinFlow.js             # Drives the `?join=<token>` share-link landing: anonymous sign-in, token resolution, name prompt, membership write (Phase 2)
 ├── migrations/
 │   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
 │   ├── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
 │   ├── migrateRecurrenceConsistency.js # One-time migration syncing recurrence across mismatched parent/sub-task chains — see file-level comments for removal timing
-│   └── migrateStaleRecurringRemainingHours.js # One-time migration repairing a recurring task stuck at remainingHours 0 from before it became recurring — see file-level comments for removal timing
+│   ├── migrateStaleRecurringRemainingHours.js # One-time migration repairing a recurring task stuck at remainingHours 0 from before it became recurring — see file-level comments for removal timing
+│   └── migrateRecurrenceState.js       # One-time migration adopting utils/recurrenceState.js's convergent completedOccurrences/skippedThrough model on existing recurring tasks — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
 │   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull)
 │   ├── eventSyncService.js       # Google-wins merge/reconcile logic for pulled events
 │   ├── firestoreSync.js          # Pull/push/live-subscribe to a signed-in user's synced data
-│   └── mockData.js               # Zero-config sample data
+│   ├── mockData.js               # Zero-config sample data
+│   ├── sharedProjectService.js   # Firestore I/O for collaborative projects (per-task documents, presence, sections) — decisions live in utils/sharedTaskSync.js and utils/sharedProjectAccess.js
+│   └── shareLinkService.js       # Client wrapper around the Cloudflare Worker's `/share/*` endpoints (link create/rotate/revoke, token resolve, guest migration)
 ├── utils/
 │   ├── dateUtils.js          # ISO date / "HH:MM" arithmetic
 │   ├── intervalUtils.js      # Interval merge/subtract math
@@ -680,6 +698,7 @@ src/
 │   ├── dateParse.js          # Free-text due-date phrase detection
 │   ├── recurrence.js         # Free-text recurrence phrase detection (task due-date recurrence, e.g. "every monday")
 │   ├── recurrenceExpansion.js # RRULE parsing + display-time expansion of recurring calendar events into visual instances
+│   ├── recurrenceState.js    # Convergent completedOccurrences (union)/skippedThrough (max) model a recurring task's dueDate/completedDates/completionHistory are derived from — safe under concurrent shared-project writers
 │   ├── smartParse.js         # Composes the above + priority/dependency detection
 │   ├── dependencyUtils.js    # Cycle detection + transitive dependency/dependent traversal for dependsOn graphs
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
@@ -687,7 +706,12 @@ src/
 │   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
 │   ├── nameSearch.js         # Single shared typo-tolerant/relevance-ranked name matcher (rankByNameSearch/scoreNameMatch) — the one source of truth for searching projects (and reused for Views/Actions) in Sidebar, ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette, and CalendarFilterMenu; don't add another ad-hoc `.includes()` matcher for names elsewhere
 │   ├── calendarFilter.js     # Calendar show-mode/project/tag filter predicates (CalendarFilterMenu's logic) — project search itself now lives in nameSearch.js
-│   └── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
+│   ├── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
+│   ├── sharedTaskSync.js     # Pure decision logic for shared-task Firestore sync: which fields merge vs. last-write-wins, presence staleness, in-flight write race guards (Phase 1)
+│   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0)
+│   ├── commentMentions.js    # Parses/renders `@[Name](uid)` mentions in a shared task's comment thread (Phase 3)
+│   ├── joinFlow.js           # Pure sequencing decisions behind useJoinFlow.js (token caching, per-link display-name storage) (Phase 2)
+│   └── avatarDisplay.js      # Shared avatar helpers (safe photoURL check, initials fallback) used by PresenceAvatars/SharedProjectBadge/ShareProjectModal
 ├── types/
 │   └── index.js               # JSDoc typedefs for the whole domain model
 ├── styles/                    # global.css (tokens/breakpoints), calendar.css, gantt.css, board.css, nav.css, tasklist.css, stats.css, forms.css, tutorial.css

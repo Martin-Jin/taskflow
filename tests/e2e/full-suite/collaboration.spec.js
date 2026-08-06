@@ -34,6 +34,18 @@
  * landing that run regardless of whether the token turns out to be valid —
  * URL handling and not crashing for a signed-out visitor — plus the Share
  * dialog's own reachability, extending the Phase 1 pattern above.
+ *
+ * VIEWER-ROLE READ-ONLY UI — also deliberately not here, for the same reason.
+ * A viewer's controls (complete checkbox, sidebar fields, Board card drag,
+ * comment composer) are disabled based on `computeEffectiveRole` against the
+ * live `sharedProjects` map, which is populated ONLY by the Firestore
+ * subscriptions in useSharedProjectSync — the seeded mock data has no shared
+ * projects and no `collaborators` at all, so no viewer state is reachable in
+ * this environment. That behaviour is covered instead by
+ * tests/unit/sharedProjectAccess.test.js (the role precedence itself),
+ * tests/unit/effectiveJoinRole.test.js (a join never downgrading a role), and
+ * the rules emulator suite (which proves the server rejects a viewer's write —
+ * the thing the disabled UI stops the user from running into).
  */
 
 import { test, expect } from '@playwright/test';

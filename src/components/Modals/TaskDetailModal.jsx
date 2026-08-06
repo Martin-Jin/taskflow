@@ -1514,6 +1514,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   }
 
   function handleDelete() {
+    if (isReadOnlyViewer) return; // Defense in depth — menu item is already disabled for viewers.
     deleteTask(task.id);
     requestClose();
   }
@@ -1596,7 +1597,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         </button>
                       </li>
                       <li role="none">
-                        <button type="button" role="menuitem" className="detail-menu-item detail-menu-item-danger" onClick={handleDelete}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="detail-menu-item detail-menu-item-danger"
+                          onClick={handleDelete}
+                          disabled={isReadOnlyViewer}
+                          title={isReadOnlyViewer ? 'Viewers can\'t delete tasks' : undefined}
+                        >
                           <Trash2 size={14} aria-hidden="true" />
                           Delete
                         </button>
@@ -1742,7 +1750,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 <div className="detail-title-row">
                   <button
                     className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+                    disabled={isReadOnlyViewer}
                     onClick={() => {
+                      if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
                       if (!task.isCompleted) {
                         // requestComplete only completes synchronously (returning true)
                         // when there's no tracked-time popup to show first — a task with
@@ -1928,11 +1938,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       <input
                         type="checkbox"
                         checked={child.isCompleted}
-                        disabled={child.isCompleted}
+                        disabled={child.isCompleted || isReadOnlyViewer}
                         // Same "complete, never un-complete" checkbox as a
                         // normal task's row (TaskListPanel) — reused as-is
                         // rather than hand-rolling a new toggle path.
                         onChange={() => {
+                          if (isReadOnlyViewer) return; // Defense in depth — checkbox is already disabled for viewers.
                           if (!child.isCompleted) requestComplete(child.id);
                         }}
                       />
@@ -1970,7 +1981,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       </div>
                       <button
                         className="btn btn-icon subtask-row-remove"
-                        onClick={() => deleteTask(child.id)}
+                        onClick={() => {
+                          if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
+                          deleteTask(child.id);
+                        }}
+                        disabled={isReadOnlyViewer}
                         style={{ color: 'var(--color-danger)' }}
                         aria-label={`Delete ${child.title}`}
                       >
@@ -2246,7 +2261,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
             <div className="detail-sidebar">
               <DetailField icon={Folder} label="Project">
-                <select value={projectId} onChange={(e) => handleProjectChange(e.target.value)}>
+                <select value={projectId} onChange={(e) => handleProjectChange(e.target.value)} disabled={isReadOnlyViewer}>
                   <option value="">No project</option>
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -2263,6 +2278,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     setSectionId(e.target.value);
                     setHasEditedSection(true);
                   }}
+                  disabled={isReadOnlyViewer}
                 >
                   <option value="">No section</option>
                   {availableSections.map((s) => (
@@ -2274,7 +2290,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               </DetailField>
 
               <DetailField icon={CalendarClock} label="Due date">
-                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={isReadOnlyViewer} />
                 {dueDateRequiredError ? (
                   <p className="form-error">{dueDateRequiredError}</p>
                 ) : dueDateError ? (
@@ -2305,7 +2321,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               )}
 
               <DetailField icon={Flag} label="Priority">
-                <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+                <select value={priority} onChange={(e) => setPriority(e.target.value)} disabled={isReadOnlyViewer}>
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
@@ -2319,6 +2335,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   selectedIds={labelIds}
                   onChange={setLabelIds}
                   onCreateLabel={handleCreateLabel}
+                  disabled={isReadOnlyViewer}
                 />
                 {(smartDetected.labels || []).length > 0 && (
                   <p className="form-hint">Pending from the title: {smartDetected.labels.map((m) => `#${m.name}`).join(', ')}</p>
@@ -2334,7 +2351,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     </p>
                   </>
                 ) : (
-                  <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} />
+                  <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} disabled={isReadOnlyViewer} />
                 )}
                 {typeof task.actualHours === 'number' && (
                   <p className="form-hint">Actually spent: {formatHours(task.actualHours)} (tracked via timer)</p>
@@ -2391,6 +2408,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         if (e.key === 'Enter') e.currentTarget.blur();
                         if (e.key === 'Escape') setRepeatEditText(null);
                       }}
+                      disabled={isReadOnlyViewer}
                     />
                   ) : (
                     <div className="detail-field-inline">
@@ -2398,6 +2416,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         type="button"
                         className="detail-recurrence-toggle"
                         style={{ flex: 1 }}
+                        disabled={isReadOnlyViewer}
                         onClick={() =>
                           setRepeatEditText(
                             `every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
@@ -2414,6 +2433,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         type="button"
                         className="btn btn-icon detail-recurrence-clear"
                         onClick={() => setIsRecurring(false)}
+                        disabled={isReadOnlyViewer}
                         aria-label="Turn off repeat"
                         title="Does not repeat"
                       >
@@ -2429,7 +2449,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   <button
                     type="button"
                     className="detail-recurrence-toggle"
-                    disabled={!dueDate}
+                    disabled={!dueDate || isReadOnlyViewer}
                     onClick={() => setIsRecurring(true)}
                   >
                     Does not repeat
@@ -2448,6 +2468,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         setRecurrenceDays(null);
                       }}
                       style={{ width: 56 }}
+                      disabled={isReadOnlyViewer}
                     />
                     <select
                       value={recurrenceUnit}
@@ -2456,6 +2477,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         setRecurrenceDays(null);
                       }}
                       style={{ flex: 1 }}
+                      disabled={isReadOnlyViewer}
                     >
                       {RECURRENCE_UNITS.map((u) => (
                         <option key={u.value} value={u.value}>
@@ -2467,6 +2489,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       type="button"
                       className="btn btn-icon detail-recurrence-clear"
                       onClick={() => setIsRecurring(false)}
+                      disabled={isReadOnlyViewer}
                       aria-label="Turn off repeat"
                       title="Does not repeat"
                     >

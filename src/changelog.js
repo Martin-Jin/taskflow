@@ -21,6 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '2.7.2',
+    date: '2026-08-07',
+    title: 'Collaboration fixes: lost comments, undo, and link roles',
+    changes: [
+      'Fixed: if two people commented on the same shared task at almost the same moment, one of the comments was silently lost. Both are now kept, and a comment you delete stays deleted.',
+      'Fixed: Undo and Redo appeared to do nothing if you were a member of a shared project — the button worked but your change stayed on screen.',
+      "Fixed: re-opening an old view-only link could silently demote you from editor to view-only on a project you'd been given edit access to. Your existing access is now always kept, and a link can only ever raise it.",
+      'Opening your own project\'s share link now just opens the project, instead of adding you to your own collaborator list.',
+      'Fixed: a display name containing brackets could hijack an @-mention, attributing it to the wrong person and garbling the message.',
+      "View-only collaborators no longer see editable checkboxes, date and priority fields, or draggable board cards on a project they can't change — previously those edits appeared to work and then quietly reverted. If a change is refused, you now get told instead of it silently disappearing.",
+    ],
+  },
+  {
     version: '2.7.1',
     date: '2026-08-06',
     title: 'Fixes for adding tasks, joining, and viewer permissions',

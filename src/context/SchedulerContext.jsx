@@ -81,6 +81,7 @@ import {
   isSharedSection,
   partitionSectionsBySharing,
   preserveSharedSections,
+  MAX_COMMENT_TOMBSTONES,
 } from '../utils/sharedTaskSync';
 import { isCompletedForCurrentOccurrence, areAllChildrenCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import {
@@ -990,11 +991,20 @@ export function SchedulerProvider({ children }) {
   }, [liveSharedTasks]);
 
   const restoreLiveSharedTasks = useCallback(() => {
-    // Runs after the history primitive has applied its snapshot. Cheap and a
-    // no-op when the user has no shared projects at all.
+    // Cheap and a no-op when the user has no shared projects at all.
+    //
+    // Uses overwritePresent's UPDATER form, not `stateRef.current`: this runs in
+    // the same tick as the undoHistory()/redoHistory() call above, whose result
+    // hasn't been rendered yet, so `stateRef` (refreshed in an effect) still
+    // holds the PRE-undo tasks. Reading it here wrote those straight back and
+    // cancelled the undo — the history pointer moved but the visible state
+    // didn't. The updater receives the post-undo snapshot React has already
+    // queued, which is the array we actually want to re-graft shared tasks onto.
     if (liveSharedTasksRef.current.length === 0) return;
-    const restored = preserveSharedTasks(stateRef.current.tasks, liveSharedTasksRef.current);
-    overwritePresent({ tasks: restored, blocks: stateRef.current.blocks });
+    overwritePresent((current) => ({
+      tasks: preserveSharedTasks(current.tasks, liveSharedTasksRef.current),
+      blocks: current.blocks,
+    }));
   }, [overwritePresent]);
 
   const undo = useCallback(() => {
@@ -1622,9 +1632,22 @@ export function SchedulerProvider({ children }) {
       }
       // See deleteTask's cleanup above for why this is skipped signed-out.
       if (comment?.attachment && user) deleteCommentAttachment(comment.attachment.path);
-      const newTasks = tasks.map((t) =>
-        t.id === taskId ? { ...t, comments: (t.comments || []).filter((c) => c.id !== commentId) } : t
-      );
+      const newTasks = tasks.map((t) => {
+        if (t.id !== taskId) return t;
+        const next = { ...t, comments: (t.comments || []).filter((c) => c.id !== commentId) };
+        // On a shared task, removing the comment from the array isn't enough: the
+        // thread is merged rather than overwritten (see sharedTaskSync's
+        // mergeComments), and a plain absence is indistinguishable from "this
+        // client hasn't received it yet" — so the deleted comment would come
+        // straight back on the next snapshot. Record a tombstone instead.
+        // Personal tasks have a single writer and need no such marker.
+        if (t.sharedProjectId) {
+          next.deletedCommentIds = [...new Set([...(t.deletedCommentIds || []), commentId])].slice(
+            -MAX_COMMENT_TOMBSTONES
+          );
+        }
+        return next;
+      });
       commit({ tasks: newTasks, blocks }, 'Deleted comment');
     },
     [tasks, blocks, commit, user, sharedProjects, setNotification]

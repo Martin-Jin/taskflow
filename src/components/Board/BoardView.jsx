@@ -310,6 +310,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     e.preventDefault();
     setDragOverColumnId(undefined);
     setDragTaskId(null);
+    if (isSectionsReadOnly) return; // Defense in depth — cards aren't draggable for viewers in the first place.
     // A column-reorder drag passes over column bodies on its way to its drop
     // target; ignore it here so it can't also be treated as a card drop.
     // Checks the dataTransfer type rather than only `dragColumnId`, so the
@@ -376,10 +377,12 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
         // framer-motion normally swallows onDragStart/onDragEnd (they're its
         // own gesture props) — it only forwards them to the DOM when
         // `draggable` is set, which is exactly the desktop case below, so
-        // native HTML5 DnD keeps working. Mobile passes neither.
-        draggable={!isMobile}
-        onDragStart={isMobile ? undefined : (e) => handleCardDragStart(e, task)}
-        onDragEnd={isMobile ? undefined : () => setDragTaskId(null)}
+        // native HTML5 DnD keeps working. Mobile passes neither. A viewer
+        // can't move a card between sections either (same rule as the
+        // section-edit controls), so drag is off for them too.
+        draggable={!isMobile && !isSectionsReadOnly}
+        onDragStart={isMobile || isSectionsReadOnly ? undefined : (e) => handleCardDragStart(e, task)}
+        onDragEnd={isMobile || isSectionsReadOnly ? undefined : () => setDragTaskId(null)}
         onClick={() => setEditingTaskId(task.id)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -391,8 +394,10 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
         <button
           className="board-card-check"
           title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+          disabled={isSectionsReadOnly}
           onClick={(e) => {
             e.stopPropagation();
+            if (isSectionsReadOnly) return; // Defense in depth — button is already disabled for viewers.
             requestComplete(task.id);
           }}
         >

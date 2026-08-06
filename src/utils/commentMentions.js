@@ -106,7 +106,14 @@ export function filterMentionCandidates(query, candidates) {
 export function insertMention(text, span, candidate, caret) {
   const before = text.slice(0, span.start);
   const after = text.slice(caret);
-  const token = `@[${candidate.displayName}](${candidate.uid})`;
+  // displayName is attacker-controlled (Firestore rules cap its length but not
+  // its characters) and the token format is purely positional — `]`/`)` closes
+  // a segment early and `[`/`(` opens a bogus one, letting a crafted name splice
+  // in a fake "](some-other-uid)" and attribute the mention to the wrong person.
+  // Strip those 4 characters rather than escaping them, so existing stored
+  // tokens and MENTION_TOKEN_RE/parseCommentBody/extractMentionUids don't change.
+  const safeName = candidate.displayName.replace(/[[\]()]/g, '');
+  const token = `@[${safeName}](${candidate.uid})`;
   const needsTrailingSpace = !/^\s/.test(after);
   const insertion = `${token}${needsTrailingSpace ? ' ' : ''}`;
   return { text: `${before}${insertion}${after}`, caret: before.length + insertion.length };

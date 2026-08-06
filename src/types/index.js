@@ -210,6 +210,13 @@
  *                                              rather than updateTask directly, since a comment can carry a file
  *                                              that needs a matching Storage upload/delete alongside the Firestore
  *                                              write. App-local only — has no Todoist equivalent.
+ * @property {string[]} [deletedCommentIds]  - Tombstones for comments deleted from a SHARED task's thread. The
+ *                                              thread is MERGED across collaborators rather than overwritten (see
+ *                                              utils/sharedTaskSync.js's mergeComments), and in a merge a missing
+ *                                              comment is indistinguishable from one this client hasn't received
+ *                                              yet — so without a tombstone a deleted comment would reappear on
+ *                                              the next sync. Set only on shared tasks; personal tasks have a
+ *                                              single writer and just drop the comment from `comments`.
  */
 
 /**

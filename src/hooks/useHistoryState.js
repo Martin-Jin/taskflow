@@ -55,6 +55,42 @@ export function commitReducer(h, newTasksAndBlocksOrUpdater, actionLabelOrFn) {
 }
 
 /**
+ * Pure reducer behind `overwritePresent()` — extracted for the same reason as
+ * `commitReducer` above, and tested alongside it.
+ *
+ * Replaces `present`'s snapshots WITHOUT touching past/future, so the result
+ * can't be undone and doesn't consume a redo slot: this is for state that
+ * arrived from elsewhere (a cloud-sync listener, a migration) rather than from
+ * a user action in this tab.
+ *
+ * Accepts an updater `(current) => ({tasks, blocks})` for exactly the reason
+ * commitReducer does: a caller running in the SAME TICK as a preceding
+ * undo/redo/commit can't read that call's result from a ref, because refs are
+ * refreshed by an effect only after React commits. SchedulerContext's
+ * restoreLiveSharedTasks is that caller — it runs synchronously right after
+ * undoHistory(), and reading a stale pre-undo snapshot there wrote the pre-undo
+ * tasks straight back into `present`, silently cancelling the undo it was meant
+ * to run after (the history pointer moved but the visible state didn't).
+ */
+export function overwritePresentReducer(h, newTasksAndBlocksOrUpdater) {
+  const current = { tasks: h.present.tasksSnapshot, blocks: h.present.blocksSnapshot };
+  const next =
+    typeof newTasksAndBlocksOrUpdater === 'function'
+      ? newTasksAndBlocksOrUpdater(current)
+      : newTasksAndBlocksOrUpdater;
+  return {
+    ...h,
+    present: {
+      ...h.present,
+      id: `sync_${Date.now()}`,
+      timestamp: Date.now(),
+      tasksSnapshot: next.tasks,
+      blocksSnapshot: next.blocks,
+    },
+  };
+}
+
+/**
  * @param {{tasks: import('../types').Task[], blocks: import('../types').ScheduledBlock[]}} initialState
  */
 export function useHistoryState(initialState) {
@@ -90,22 +126,10 @@ export function useHistoryState(initialState) {
   }, []);
 
 
-  // Applies an incoming snapshot (e.g. from a live cloud-sync listener)
-  // WITHOUT pushing a history entry — unlike commit(), this doesn't touch
-  // past/future at all, so it can't be undone and doesn't consume a redo
-  // slot. Used for state that arrived from elsewhere rather than from a
-  // user action taken in this tab.
-  const overwritePresent = useCallback((newTasksAndBlocks) => {
-    setHistory((h) => ({
-      ...h,
-      present: {
-        ...h.present,
-        id: `sync_${Date.now()}`,
-        timestamp: Date.now(),
-        tasksSnapshot: newTasksAndBlocks.tasks,
-        blocksSnapshot: newTasksAndBlocks.blocks,
-      },
-    }));
+  // See overwritePresentReducer above for what this does and why it takes an
+  // updater form as well as a plain object.
+  const overwritePresent = useCallback((newTasksAndBlocksOrUpdater) => {
+    setHistory((h) => overwritePresentReducer(h, newTasksAndBlocksOrUpdater));
   }, []);
 
   const undo = useCallback(() => {

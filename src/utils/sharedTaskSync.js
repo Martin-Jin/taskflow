@@ -37,10 +37,11 @@
  * and no field-level merge — that's out of scope for v1 per the spec, and
  * per-document Firestore writes give this policy for free.
  *
- * The ONE exception is recurring-task completion state, which is merged rather
- * than overwritten (see utils/recurrenceState.js's mergeRecurringState). LWW is
- * fine for "replace" fields and silently corrupting for accumulators, so the
- * accumulator was made commutative instead. Everything else is replace.
+ * The exceptions are the two ACCUMULATOR fields, which are merged rather than
+ * overwritten: recurring-task completion state (see utils/recurrenceState.js's
+ * mergeRecurringState) and the comment thread (see mergeComments below). LWW is
+ * fine for "replace" fields and silently corrupting for accumulators, so both
+ * accumulators were made commutative instead. Everything else is replace.
  *
  * SECTIONS (Board columns), added after tasks — same policy, one extra note
  * on `order`
@@ -111,6 +112,18 @@ export function partitionTasksBySharing(tasks) {
  * project were ever re-created.
  */
 const LOCAL_ONLY_TASK_FIELDS = ['sharedProjectId'];
+
+/**
+ * Cap on a shared task's comment TOMBSTONES (Task.deletedCommentIds — see
+ * mergeComments), for the same "the whole document is rewritten on every push"
+ * reason as SchedulerContext's MAX_COMMENTS_PER_TASK. Tombstones are tiny (one
+ * id each) but, unlike comments, are never user-deletable, so a thread churned
+ * over years would grow them without limit. Trimming the oldest is safe where
+ * trimming a comment wouldn't be: dropping a tombstone can only resurrect its
+ * comment if a peer still holds a copy that old AND hasn't synced since, which
+ * past this many deletions isn't a real scenario.
+ */
+export const MAX_COMMENT_TOMBSTONES = 500;
 
 /**
  * Strip a task down to what actually gets stored in
@@ -318,10 +331,72 @@ export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pendin
 }
 
 /**
+ * Merge two versions of one task's comment thread into their convergent join —
+ * the SECOND accumulator exception to this module's last-write-wins policy
+ * (recurring completion state is the first; see mergeRecurringState).
+ *
+ * WHY THIS IS NEEDED. `comments` is appended to, not replaced: addComment
+ * computes `[...task.comments, newComment]` from whatever the client currently
+ * holds, and the push writes the WHOLE task document with `set` (no merge — see
+ * writeSharedTasks). So two collaborators commenting inside one debounce window
+ * each push a thread built on a snapshot that predates the other's comment, and
+ * the second write silently destroys the first person's comment. Plain LWW is
+ * exactly as corrupting here as it would be for completedOccurrences.
+ *
+ * WHY DELETIONS NEED TOMBSTONES. A naive union can't express deletion: the side
+ * that deleted a comment is indistinguishable from a side that simply hasn't
+ * received it yet, so the union would resurrect every deleted comment on the
+ * next sync. `deletedCommentIds` records the ids instead, and a tombstone always
+ * beats a body — delete wins over concurrent re-add, which is the safe direction
+ * (a resurrected comment someone deliberately removed is worse than a lost
+ * re-add, and comment ids are never reused).
+ *
+ * The result is commutative, associative and idempotent, like mergeRecurringState:
+ * union the bodies by id, union the tombstones, subtract, then order by
+ * `createdAt` (id as tie-break) so every client renders the same thread in the
+ * same order regardless of which write landed first.
+ *
+ * Tombstones are capped (MAX_COMMENT_TOMBSTONES) so a thread churned over years
+ * can't grow them without limit. The cap is applied here as well as at delete
+ * time because a merge unions two lists and could otherwise exceed it. Sorting
+ * before trimming keeps the survivors identical on every client — trimming an
+ * unsorted union would let two peers keep DIFFERENT subsets and never converge.
+ *
+ * @param {{comments?: import('../types').Comment[], deletedCommentIds?: string[]}} a
+ * @param {{comments?: import('../types').Comment[], deletedCommentIds?: string[]}} b
+ * @returns {{comments: import('../types').Comment[], deletedCommentIds: string[]}}
+ */
+export function mergeComments(a, b) {
+  const tombstones = new Set();
+  for (const id of a?.deletedCommentIds || []) if (typeof id === 'string' && id) tombstones.add(id);
+  for (const id of b?.deletedCommentIds || []) if (typeof id === 'string' && id) tombstones.add(id);
+  const keptTombstones = [...tombstones].sort().slice(-MAX_COMMENT_TOMBSTONES);
+  const keptTombstoneSet = new Set(keptTombstones);
+
+  // Union by id. On the same id, keep either copy — a comment body is immutable
+  // once posted (there's no edit affordance), so the two sides agree by
+  // construction and picking one keeps the merge idempotent.
+  const byId = new Map();
+  for (const comment of [...(a?.comments || []), ...(b?.comments || [])]) {
+    if (!comment?.id || keptTombstoneSet.has(comment.id)) continue;
+    if (!byId.has(comment.id)) byId.set(comment.id, comment);
+  }
+
+  const comments = [...byId.values()].sort((x, y) => {
+    const ax = x.createdAt || '';
+    const ay = y.createdAt || '';
+    if (ax !== ay) return ax < ay ? -1 : 1;
+    return (x.id || '') < (y.id || '') ? -1 : 1;
+  });
+  return { comments, deletedCommentIds: keptTombstones };
+}
+
+/**
  * Combine a local and remote version of one task. Last-write-wins (the remote
- * document is taken wholesale) EXCEPT for recurring completion state, which is
- * merged so a completion recorded on either side survives — see this module's
- * conflict-policy note and recurrenceState.mergeRecurringState.
+ * document is taken wholesale) EXCEPT for recurring completion state and the
+ * comment thread, both of which are merged so an entry recorded on either side
+ * survives — see this module's conflict-policy note,
+ * recurrenceState.mergeRecurringState and mergeComments above.
  *
  * The union/max merge only fixes the SOURCE-OF-TRUTH fields
  * (completedOccurrences/skippedThrough); dueDate/completedDates/
@@ -341,9 +416,13 @@ export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pendin
  */
 export function mergeSharedTask(local, remote, todayIso = toISODate(new Date())) {
   if (!local) return remote;
-  if (!remote?.isRecurring && !local.isRecurring) return remote;
+  // Comments merge for EVERY shared task, recurring or not — the accumulator
+  // problem has nothing to do with recurrence, so this runs before the
+  // recurring-only early return below.
+  const withComments = { ...remote, ...mergeComments(local, remote) };
+  if (!remote?.isRecurring && !local.isRecurring) return withComments;
   const merged = mergeRecurringState(local, remote);
-  const combined = { ...remote, ...merged };
+  const combined = { ...withComments, ...merged };
   return { ...combined, ...deriveRecurringFields(combined, todayIso) };
 }
 

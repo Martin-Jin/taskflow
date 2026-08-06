@@ -231,6 +231,20 @@ export default function TaskListPanel({
   const editingTask = editingTaskId ? tasks.find((t) => t.id === editingTaskId) || null : null;
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
+  // Per-project id -> "current user is a viewer on this shared project" map,
+  // so a row can be gated by *its own* task's project rather than only the
+  // page's currently-selected one — "All Tasks" mixes rows from several
+  // projects (some viewer-only, some not) into one list, unlike Board which
+  // always shows exactly one project at a time (see isSectionsReadOnly there).
+  const viewerOnlyProjectIds = useMemo(() => {
+    const ids = new Set();
+    for (const p of projects) {
+      if (p.sharedProjectId && computeEffectiveRole(sharedProjects[p.sharedProjectId], user?.uid) === 'viewer') {
+        ids.add(p.id);
+      }
+    }
+    return ids;
+  }, [projects, sharedProjects, user?.uid]);
   // Direct children (parentId chain) per task id — the basis for the
   // recursive nested rows below (renderTaskRow reads this at every depth).
   const childrenByParentId = useMemo(() => {
@@ -412,6 +426,7 @@ export default function TaskListPanel({
         onOpen={setEditingTaskId}
         onComplete={requestComplete}
         onUncomplete={handleUncomplete}
+        isReadOnlyViewer={!!task.projectId && viewerOnlyProjectIds.has(task.projectId)}
       />
     );
   }
@@ -668,6 +683,7 @@ const TaskRow = React.memo(function TaskRow({
   onOpen,
   onComplete,
   onUncomplete,
+  isReadOnlyViewer,
 }) {
   return (
     <motion.div
@@ -682,10 +698,19 @@ const TaskRow = React.memo(function TaskRow({
         className={`task-checkbox ${task.priority} ${isCheckedForDisplay ? 'checked' : ''}`}
         onClick={(e) => {
           e.stopPropagation();
+          if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
           if (!isCheckedForDisplay) onComplete(task.id);
         }}
-        disabled={isCheckedForDisplay}
-        title={isCheckedForDisplay ? 'Completed' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+        disabled={isCheckedForDisplay || isReadOnlyViewer}
+        title={
+          isReadOnlyViewer
+            ? "Viewers can't complete tasks"
+            : isCheckedForDisplay
+              ? 'Completed'
+              : task.isRecurring
+                ? 'Complete (advances to next occurrence)'
+                : 'Mark complete'
+        }
         aria-label={isCheckedForDisplay ? `${task.title} completed` : `Mark ${task.title} complete`}
       >
         {isCheckedForDisplay && <Check size={12} aria-hidden="true" />}

@@ -15,10 +15,16 @@
  *   - `isLinkExpired`       (private helper)
  *   - `evaluateLink`        (private helper) — returns 'ok'|'link_disabled'|'link_expired'|'invalid_token'
  *   - `resolveTokenRole`    (exported) — the public "does this token grant a role" check
+ *   - `strongerRole`        (private helper)
+ *   - `effectiveJoinRole`   (exported) — the role-precedence half of
+ *                            `computeEffectiveRole`: an existing collaborator's
+ *                            stored role is a FLOOR, and the owner never joins
+ *                            their own project. See its own comment for why this
+ *                            must be decided server-side.
  *
- * Everything else in the source file (computeEffectiveRole, planCollaboratorJoin,
- * ownership transfer, generateShareToken, etc.) is NOT needed server-side by
- * the routes in shareLinkRoutes.js and is deliberately not duplicated here —
+ * Everything else in the source file (the full computeEffectiveRole,
+ * planCollaboratorJoin, ownership transfer, generateShareToken, etc.) is NOT
+ * needed server-side by the routes in shareLinkRoutes.js and is deliberately not duplicated here —
  * `generateShareToken` in particular is reimplemented locally below using
  * Workers' own `crypto.getRandomValues` (same algorithm, so tokens from either
  * codepath are indistinguishable), rather than imported, since the source
@@ -134,6 +140,48 @@ export function resolveTokenRole(links, token, now = Date.now()) {
   if (editResult !== 'invalid_token') return { role: null, reason: editResult };
   if (viewResult !== 'invalid_token') return { role: null, reason: viewResult };
   return { role: null, reason: 'invalid_token' };
+}
+
+const ROLE_RANK = { viewer: 1, editor: 2, owner: 3 };
+
+/**
+ * Same as sharedProjectAccess.js's private `strongerRole`.
+ */
+function strongerRole(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
+}
+
+/**
+ * Apply the STORED-ROLE-IS-A-FLOOR rule to a role a token just granted — the
+ * server-side half of sharedProjectAccess.js's `computeEffectiveRole`
+ * precedence (owner beats collaborator beats token), ported here per this
+ * file's hand-sync contract.
+ *
+ * WHY THIS HAS TO RUN SERVER-SIDE. The join route used to return the token's
+ * role verbatim, and the client wrote it straight into `collaborators` — so an
+ * editor who re-opened an old VIEW link was silently demoted to viewer, and the
+ * project OWNER clicking their own link got written into their own collaborators
+ * map. Neither firestore.rules' `joiningWithToken` (which only checks the
+ * written role equals the token's role) nor the client could prevent it: rules
+ * can't express "not weaker than what's already stored" cheaply, and the joiner
+ * cannot even READ the project document before they're a member, so they have
+ * no way to know their existing role. The Worker already reads the project doc
+ * here with a service account, so this is the one place that knows both facts.
+ *
+ * @param {{ownerId?: string, collaborators?: Record<string, {role?: string}>}|null} project
+ * @param {string} uid
+ * @param {'editor'|'viewer'} tokenRole - the role the presented token grants
+ * @returns {{role: 'editor'|'viewer'|null, isOwner: boolean}} `role` is null only when the caller is the owner
+ */
+export function effectiveJoinRole(project, uid, tokenRole) {
+  if (uid && project?.ownerId && uid === project.ownerId) {
+    return { role: null, isOwner: true };
+  }
+  const stored = project?.collaborators?.[uid]?.role;
+  const normalized = stored === 'editor' || stored === 'viewer' ? stored : null;
+  return { role: strongerRole(normalized, tokenRole), isOwner: false };
 }
 
 /**

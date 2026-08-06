@@ -282,13 +282,14 @@ actual cause:
 
 ## Share links (Collaborative Projects)
 
-Three routes back the app's project sharing (`src/shareLinkRoutes.js`):
+Four routes back the app's project sharing (`src/shareLinkRoutes.js`):
 
 | Route | Who | What |
 |---|---|---|
 | `POST /share/links` | owner | Read the project's current view/edit link state |
 | `POST /share/links/set` | owner | Create / rotate / revoke / enable / delete one link, optionally with an expiry |
 | `POST /share/resolve` | anyone (incl. anonymous) | Redeem a token: validates it and returns a Firebase custom token that authorizes the join |
+| `POST /share/migrate-guest` | a guest migrating to a real account | Verifies both the old (guest) and new (real-account) Firebase ID tokens, refuses if the old identity already has a linked provider, and moves the guest's `collaborators` entry to the new uid for each given project |
 
 **Why these can't be plain client Firestore calls.** Share tokens live in
 `sharedProjects/{id}/private/links`, which `firestore.rules` locks with

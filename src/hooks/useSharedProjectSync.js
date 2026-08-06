@@ -144,6 +144,33 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
     [setNotification]
   );
 
+  /**
+   * Same as reportError, but for a rejected WRITE rather than a broken
+   * subscription — and here permission-denied must NOT be silent.
+   *
+   * On a subscription, permission-denied means "you no longer have access", which
+   * is benign. On a write it means the opposite: the change was applied locally
+   * (every mutation commits optimistically) and the server refused it, so the
+   * user is looking at an edit that is about to silently vanish on the next
+   * snapshot. That's the confusing half of the viewer-permissions bug — the UI
+   * now disables these controls for viewers, so reaching this is either a stale
+   * role or a genuine bug, and both are worth saying out loud.
+   */
+  const reportWriteRejected = useCallback(
+    (err, projectId) => {
+      if (err?.code === 'permission-denied') {
+        console.warn('[useSharedProjectSync] Write rejected', projectId, err);
+        setNotification?.({
+          type: 'error',
+          message: "You don't have permission to change that — your edit wasn't saved.",
+        });
+        return;
+      }
+      reportError(err, projectId);
+    },
+    [reportError, setNotification]
+  );
+
   // ---- Subscriptions, one set per joined project ---------------------------
   useEffect(() => {
     if (!user || !projectIdsKey) {
@@ -325,7 +352,7 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
               syncedFingerprintsRef.current.delete(task.id);
             }
             for (const id of plan.deletes) pendingRef.current.delete(id);
-            reportError(err, projectId);
+            reportWriteRejected(err, projectId);
           });
         }
       }
@@ -358,12 +385,12 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
               sectionSyncedFingerprintsRef.current.delete(section.id);
             }
             for (const id of sectionPlan.deletes) sectionPendingRef.current.delete(id);
-            reportError(err, projectId);
+            reportWriteRejected(err, projectId);
           });
         }
       }
     }
-  }, [user, stateRef, sectionsRef, reportError]);
+  }, [user, stateRef, sectionsRef, reportError, reportWriteRejected]);
 
   // Schedules (or reschedules) the debounced push. Called on every task-array
   // change, same as useCloudSync's schedulePush — clearing/resetting the timer
