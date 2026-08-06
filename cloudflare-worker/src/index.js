@@ -29,11 +29,22 @@
  */
 
 import { handleExchangeCode, handleRefreshToken, handleDisconnect } from './googleCalendarAuthRoutes.js';
+import { handleGetLinks, handleSetLink, handleResolveLink } from './shareLinkRoutes.js';
 
 const CALENDAR_ROUTES = {
   '/calendar/exchange-code': handleExchangeCode,
   '/calendar/refresh-token': handleRefreshToken,
   '/calendar/disconnect': handleDisconnect,
+};
+
+// Collaborative Projects, Phase 2 (see shareLinkRoutes.js) — kept as its own
+// map rather than folded into CALENDAR_ROUTES since it's a distinct feature
+// with its own header comment/reasoning; the dispatch below just checks both
+// maps by pathname the same way.
+const SHARE_ROUTES = {
+  '/share/links': handleGetLinks,
+  '/share/links/set': handleSetLink,
+  '/share/resolve': handleResolveLink,
 };
 
 const MAX_TEXT_CHARS = 4000;
@@ -535,17 +546,20 @@ export default {
     if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed — POST only.' }, 405, headers);
 
     // Google Calendar persistent-auth routes (see googleCalendarAuthRoutes.js)
-    // — dispatched by path ahead of the AI quick-add logic below, which has
-    // no path of its own and handles every other POST.
+    // and share-link routes (see shareLinkRoutes.js) — both dispatched by
+    // path ahead of the AI quick-add logic below, which has no path of its
+    // own and handles every other POST.
     const { pathname } = new URL(request.url);
-    const calendarHandler = CALENDAR_ROUTES[pathname];
-    if (calendarHandler) {
+    const routedHandler = CALENDAR_ROUTES[pathname] || SHARE_ROUTES[pathname];
+    if (routedHandler) {
       try {
-        return await calendarHandler(request, env, headers);
+        return await routedHandler(request, env, headers);
       } catch (err) {
         // Without this, an uncaught error here returns a bare Cloudflare
         // error page with no CORS headers — the browser reports that as an
         // opaque "CORS request did not succeed" rather than the real cause.
+        // Never log the request body here (a share-link route's body can
+        // carry a raw token) — only the error object/message.
         console.error(`${pathname} threw`, err);
         return jsonResponse({ error: `Internal error: ${err?.message || String(err)}` }, 500, headers);
       }

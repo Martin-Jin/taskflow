@@ -988,6 +988,74 @@ select:focus-visible,
   }
 }
 
+/* Visually hidden but still readable by screen readers — used by
+   SharedProjectBadge's compact variant so an icon-only badge still carries a
+   plain-English text alternative (see its own accessibility note). Standard
+   "clip" technique rather than display:none, which VoiceOver/NVDA skip. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ----------------------------------------------------------------------
+   SharedProjectBadge (src/components/Common/SharedProjectBadge.jsx) — the
+   three-state sharing indicator (personal/shared-by-me/shared-with-me).
+   Personal renders nothing (see the component), so these only ever apply to
+   the two shared states. Reuses .presence-avatars/.presence-avatar for its
+   'detailed' variant's collaborator stack rather than duplicating that CSS.
+   ---------------------------------------------------------------------- */
+.shared-project-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.shared-project-badge-by-me {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+}
+
+.shared-project-badge-with-me {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.shared-project-badge-detailed {
+  gap: 6px;
+  padding: 3px 9px;
+}
+
+.shared-project-badge-detailed .presence-avatars {
+  margin-left: 2px;
+}
+
+.shared-project-badge-detailed .presence-avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+
+/* Compact variant used in dense lists (sidebar rows, ManageProjectsModal,
+   search dropdown) shows the icon (+ collaborator count for shared-by-me)
+   only — the text alternative is screen-reader-only there, not visible, to
+   keep rows from growing. The detailed variant (List view header) shows both. */
+.shared-project-badge:not(.shared-project-badge-detailed) .shared-project-badge-text {
+  font-size: 10px;
+}
+
 /* ----------------------------------------------------------------------
    DashboardCustomizeMenu (src/components/Dashboard/DashboardCustomizeMenu.jsx)
    — reuses .project-actions-dropdown's popover shell for a checkbox list.
@@ -2155,4 +2223,272 @@ input[type='checkbox']:checked::after {
   .action-toast {
     max-width: none;
   }
+}
+
+/* ----------------------------------------------------------------------
+   ShareProjectModal (src/components/Modals/ShareProjectModal.jsx) —
+   share-link management + collaborator list (Phase 2, Collaborative
+   Projects). Wider than the default .modal since a share URL and the
+   collaborator row (avatar + name + role select + two icon buttons) both
+   need more horizontal room than a typical form modal.
+   ---------------------------------------------------------------------- */
+.share-project-modal {
+  width: 560px;
+}
+
+.share-modal-section {
+  margin-top: var(--space-4);
+}
+
+.share-modal-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.share-modal-error {
+  color: var(--color-danger);
+  font-size: 12.5px;
+  margin: 8px 0 0;
+}
+
+.share-modal-readonly-note {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+}
+
+.share-link-row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-link-row + .share-link-row {
+  margin-top: 10px;
+}
+
+.share-link-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.share-link-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.share-link-status {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.share-link-status.is-active {
+  color: var(--color-success, #2e7d32);
+  background: color-mix(in srgb, var(--color-success, #2e7d32) 15%, transparent);
+}
+
+.share-link-status.is-inactive {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-surface-hover);
+}
+
+/* Long URLs must never blow out the modal's width — the input shrinks and
+   ellipsizes rather than forcing horizontal scroll, while the full value
+   stays selectable/copyable via the input's own value and the Copy button. */
+.share-link-url-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.share-link-url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.share-link-expiry-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.share-link-expiry-row label {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.share-link-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.share-link-actions .btn {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.share-collaborator-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-collaborator-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.share-collaborator-row:last-child {
+  border-bottom: none;
+}
+
+.share-collaborator-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-collaborator-anon {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+.share-collaborator-row select {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 639px) {
+  .share-project-modal {
+    width: 100%;
+  }
+
+  .share-collaborator-row {
+    flex-wrap: wrap;
+  }
+
+  .share-collaborator-name {
+    flex-basis: 100%;
+  }
+}
+/* ---------------------------------------------------------------------------
+   Join-by-share-link modal (Collaborative Projects, Phase 2)
+   Deliberately narrow and centered: every state it shows is a single short
+   message plus at most one action, so the usual modal chrome would overpower
+   it. See JoinProjectModal.jsx.
+   --------------------------------------------------------------------------- */
+/* JoinProjectModal's overlay needs to sit ABOVE the guided tour's full-page
+   overlay (z-index: 1000, tutorial.css), not just other modals' usual 160.
+   A join is a deliberate action a visitor arrived with intent to complete,
+   and the tour is a default nicety — App.jsx also skips auto-launching the
+   tour on a join-carrying page load, but this covers every OTHER way the
+   tour can be open at the same time (a returning visitor replaying it from
+   Settings) without relying on that one call site remembering to check.
+   A dedicated class rather than `:has()`, which isn't supported on every
+   browser this app needs to run in. Matches .floating-notifications'
+   existing precedent for "above the tour". */
+.join-modal-overlay {
+  z-index: 1100;
+}
+
+.join-modal {
+  max-width: 420px;
+  width: min(420px, calc(100vw - 32px));
+}
+
+.join-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px 24px 24px;
+}
+
+.join-modal-centered {
+  align-items: center;
+  text-align: center;
+}
+
+.join-modal-icon {
+  color: var(--color-accent);
+}
+
+.join-modal-icon-error {
+  color: var(--color-danger, #ef4444);
+}
+
+.join-modal-icon-success {
+  color: var(--color-success, #22c55e);
+}
+
+.join-modal-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.join-modal-sub {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.join-modal-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+}
+
+.join-modal-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* The name prompt is the one left-aligned state (it's a form, not a message),
+   and its button should fill the width on the narrow screens most share links
+   get opened on. */
+.join-modal-body:not(.join-modal-centered) .join-modal-actions .btn {
+  width: 100%;
 }

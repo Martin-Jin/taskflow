@@ -10,6 +10,7 @@ import {
   planCollaboratorJoin,
   planOwnershipTransfer,
   isSharedProject,
+  getProjectShareState,
   generateShareToken,
 } from '../../src/utils/sharedProjectAccess';
 
@@ -571,5 +572,102 @@ describe('isSharedProject', () => {
   it('is false for null/undefined input', () => {
     expect(isSharedProject(null)).toBe(false);
     expect(isSharedProject(undefined)).toBe(false);
+  });
+});
+
+describe('getProjectShareState', () => {
+  const project = { id: 'p1', name: 'Team', sharedProjectId: 'sp1' };
+
+  it('is "personal" for a project with no sharedProjectId, regardless of other args', () => {
+    const personalProject = { id: 'p1', name: 'Solo' };
+    expect(getProjectShareState(personalProject, { ownerId: 'owner-1' }, 'owner-1')).toEqual({ state: 'personal' });
+    expect(getProjectShareState(personalProject, null, null)).toEqual({ state: 'personal' });
+  });
+
+  it('is "personal" when signed out (no uid), even if the project is shared and the doc is loaded', () => {
+    const sharedProject = { ownerId: 'owner-1', collaborators: {} };
+    expect(getProjectShareState(project, sharedProject, null)).toEqual({ state: 'personal' });
+    expect(getProjectShareState(project, sharedProject, undefined)).toEqual({ state: 'personal' });
+  });
+
+  it('is "personal" when shared but the sharedProjects doc has not loaded yet (onSnapshot pending)', () => {
+    expect(getProjectShareState(project, undefined, 'owner-1')).toEqual({ state: 'personal' });
+    expect(getProjectShareState(project, null, 'owner-1')).toEqual({ state: 'personal' });
+  });
+
+  it('is "personal" for a stale sharedProjectId with no matching doc (same as not-yet-loaded from the caller\'s perspective)', () => {
+    expect(getProjectShareState(project, null, 'owner-1')).toEqual({ state: 'personal' });
+  });
+
+  it('is "personal" if the loaded doc is malformed (missing ownerId)', () => {
+    expect(getProjectShareState(project, { collaborators: {} }, 'owner-1')).toEqual({ state: 'personal' });
+  });
+
+  it('is "shared-by-me" for the owner, with a collaborator count and list', () => {
+    const sharedProject = {
+      ownerId: 'owner-1',
+      collaborators: {
+        'user-a': { role: SHARE_ROLES.EDITOR, displayName: 'A', photoURL: 'https://x/a.png' },
+        'user-b': { role: SHARE_ROLES.VIEWER, displayName: 'B', photoURL: null },
+      },
+    };
+    const result = getProjectShareState(project, sharedProject, 'owner-1');
+    expect(result.state).toBe('shared-by-me');
+    expect(result.collaboratorCount).toBe(2);
+    expect(result.collaborators).toEqual(
+      expect.arrayContaining([
+        { uid: 'user-a', displayName: 'A', photoURL: 'https://x/a.png', role: SHARE_ROLES.EDITOR },
+        { uid: 'user-b', displayName: 'B', photoURL: null, role: SHARE_ROLES.VIEWER },
+      ])
+    );
+  });
+
+  it('is "shared-by-me" with an empty collaborator list when the owner has shared but nobody has joined yet', () => {
+    const sharedProject = { ownerId: 'owner-1', collaborators: {} };
+    const result = getProjectShareState(project, sharedProject, 'owner-1');
+    expect(result).toEqual({ state: 'shared-by-me', collaboratorCount: 0, collaborators: [] });
+  });
+
+  it('is "shared-with-me" for a non-owner collaborator, surfacing the owner id and their own role', () => {
+    const sharedProject = {
+      ownerId: 'owner-1',
+      collaborators: { 'user-a': { role: SHARE_ROLES.EDITOR, displayName: 'A', photoURL: null } },
+    };
+    expect(getProjectShareState(project, sharedProject, 'user-a')).toEqual({
+      state: 'shared-with-me',
+      ownerId: 'owner-1',
+      role: SHARE_ROLES.EDITOR,
+    });
+  });
+
+  it('"shared-with-me" defaults an anonymous collaborator with a garbage role to viewer', () => {
+    const sharedProject = {
+      ownerId: 'owner-1',
+      collaborators: { 'anon-1': { role: 'superadmin', displayName: 'Anonymous', photoURL: null, isAnonymous: true } },
+    };
+    expect(getProjectShareState(project, sharedProject, 'anon-1')).toEqual({
+      state: 'shared-with-me',
+      ownerId: 'owner-1',
+      role: SHARE_ROLES.VIEWER,
+    });
+  });
+
+  it('"shared-with-me" for a uid with no collaborators entry at all (e.g. accessed via link, not yet in the map) defaults to viewer', () => {
+    const sharedProject = { ownerId: 'owner-1', collaborators: {} };
+    expect(getProjectShareState(project, sharedProject, 'stranger')).toEqual({
+      state: 'shared-with-me',
+      ownerId: 'owner-1',
+      role: SHARE_ROLES.VIEWER,
+    });
+  });
+
+  it('does not throw for a malformed collaborators field', () => {
+    const sharedProject = { ownerId: 'owner-1', collaborators: 'not-an-object' };
+    expect(() => getProjectShareState(project, sharedProject, 'owner-1')).not.toThrow();
+    expect(getProjectShareState(project, sharedProject, 'owner-1')).toEqual({
+      state: 'shared-by-me',
+      collaboratorCount: 0,
+      collaborators: [],
+    });
   });
 });

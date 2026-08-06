@@ -343,7 +343,36 @@ export function useCloudSync({
   setEvents,
   googleConnected,
 }) {
-  const { user } = useAuth();
+  // ANONYMOUS VISITORS ARE DELIBERATELY NOT A SYNC ACCOUNT.
+  //
+  // Collaborative Projects (Phase 2) signs a share-link visitor in via Firebase
+  // Anonymous Auth so the security rules have a stable uid to authorize their
+  // writes against (see firestore.rules' sharedProjects block). That makes
+  // `useAuth().user` non-null for someone who never signed in — and every gate
+  // in this hook was written as a bare `if (!user)`, which such a visitor
+  // passes. Left alone, opening a share link would:
+  //
+  //   - start pushing that browser's local tasks up to `users/{anonUid}`,
+  //     creating a junk document per visitor out of data they never chose to
+  //     sync (and, on a shared/public machine, exposing it to whoever clicks
+  //     the link next in that same browser profile);
+  //   - pull/merge any such document back on the next visit, mixing a stranger's
+  //     leftovers into the local workspace;
+  //   - run automatic daily cloud BACKUPS for an identity that vanishes the
+  //     moment storage is cleared.
+  //
+  // None of that is what an anonymous joiner asked for: their session exists to
+  // participate in ONE shared project, whose data lives in `sharedProjects/{id}`
+  // and syncs through useSharedProjectSync (which correctly wants the anonymous
+  // user and is unaffected by this). Personal cross-device sync is a
+  // real-account feature — an anonymous uid has no second device to sync to.
+  //
+  // Nulling `user` here, at the single point it enters this hook, rather than
+  // auditing ~15 downstream `if (!user)` gates: they all then behave exactly as
+  // they do for a signed-out visitor, which is precisely the intended behavior
+  // and can't be reintroduced by a future edit adding a new ungated call site.
+  const { user: authUser } = useAuth();
+  const user = authUser?.isAnonymous ? null : authUser;
   // Defaults to true (rather than requiring an opt-in toggle) so a signed-in
   // user keeps getting the always-on sync this app has always had — nothing
   // in Settings currently surfaces toggleCloudSync as an explicit on/off
@@ -825,21 +854,36 @@ export function useCloudSync({
   // ---- Cloud backup operations ---------------------------------------------
   const createCloudBackup = useCallback(async () => {
     if (!user) return;
+    // ONLY the backup write itself decides success/failure. The prune and
+    // list-refresh below are follow-ups: they run after the user's data is
+    // already safely stored, so a failure in either must not be reported as
+    // "Failed to create cloud backup" — that tells the user their data ISN'T
+    // backed up when it demonstrably is, which is the most alarming way to be
+    // wrong about a backup. (This is not hypothetical: the pool listers use a
+    // `where('automatic', ...) + orderBy('createdAt')` composite query, so a
+    // missing Firestore index made every successful backup report failure.)
     try {
       const payload = buildBackupPayload({ ...stateRef.current, theme, events });
       await createBackup(user.uid, payload);
-      setNotification({ type: 'success', message: 'Cloud backup created.' });
+    } catch (err) {
+      console.error('[useCloudSync] Cloud backup failed', err);
+      setNotification({ type: 'error', message: 'Failed to create cloud backup.' });
+      return;
+    }
+    setNotification({ type: 'success', message: 'Cloud backup created.' });
+
+    try {
       // Prune manual backups beyond their retention count right away, rather
       // than waiting for the next daily automatic-backup check — a user
       // backing up repeatedly in one session shouldn't have to wait a day to
       // get pruned back down to MANUAL_BACKUP_RETENTION_COUNT.
       await pruneBackupPool(listManualBackups, MANUAL_BACKUP_RETENTION_COUNT, false, 'manual');
-      // Refresh the backup list
-      const backups = await listBackups(user.uid);
-      setCloudBackups(backups);
+      setCloudBackups(await listBackups(user.uid));
     } catch (err) {
-      console.error(err);
-      setNotification({ type: 'error', message: 'Failed to create cloud backup.' });
+      // Retention drifting above its cap, or a stale "view backups" list, are
+      // both cosmetic next to a backup that succeeded — warn and move on
+      // rather than alarming the user about something that isn't lost.
+      console.warn('[useCloudSync] Backup saved, but pruning/refreshing the list failed', err);
     }
   }, [user, stateRef, theme, events, setNotification, pruneBackupPool]);
 

@@ -292,8 +292,47 @@ service cloud.firestore {
           && (!('photoURL' in joinEntry())
               || joinEntry().photoURL == null
               || (joinEntry().photoURL is string && joinEntry().photoURL.size() <= 500))
-          && joinEntry().isAnonymous ==
-               (request.auth.token.firebase.sign_in_provider == 'anonymous');
+          && joinEntry().isAnonymous == joinerIsAnonymous();
+      }
+
+      // Whether the JOINER is an ephemeral anonymous identity.
+      //
+      // This deliberately does NOT read `sign_in_provider`, and that is not an
+      // oversight — reading it here was a real bug. A join can only happen in
+      // a session created by `signInWithCustomToken` (that is how the
+      // `joinToken` claim below arrives at all), and EVERY custom-token
+      // session reports `sign_in_provider == 'custom'`, whatever the account
+      // underneath actually is. So the old check
+      //
+      //     isAnonymous == (sign_in_provider == 'anonymous')
+      //
+      // was false for literally every joiner, including genuinely anonymous
+      // ones — it recorded every anonymous visitor as a real account, quietly
+      // defeating `recipientIsRealAccount()` and allowing a project to be
+      // transferred to an identity that vanishes when that browser's storage
+      // is cleared, leaving it permanently unowned.
+      //
+      // Instead the join endpoint reads the visitor's real provider from their
+      // ORIGINAL id token — the last moment it is still visible — and mints it
+      // as a `wasAnonymous` claim alongside `joinToken` (see
+      // cloudflare-worker/src/googleAuth.js's verifyFirebaseIdTokenWithProvider).
+      // Both claims come from the same server-signed token, so this is exactly
+      // as trustworthy as the token check itself: a client cannot forge either
+      // without forging the whole custom token, which requires the service
+      // account's private key.
+      //
+      // The `in` guard is load-bearing and NOT redundant with the `== true`:
+      // reading an absent property off `request.auth.token` is an ERROR in
+      // rules, not a false — it aborts evaluation and denies the write rather
+      // than falling through. Checking presence first means an older minted
+      // token still in flight during a Worker deploy (one with no
+      // `wasAnonymous` claim) degrades to "treat as a real account" instead of
+      // breaking every join outright. Verified by the emulator suite, which
+      // caught exactly this: the naive `== true` alone failed the
+      // no-claim case with "Property wasAnonymous is undefined on object".
+      function joinerIsAnonymous() {
+        return 'wasAnonymous' in request.auth.token
+          && request.auth.token.wasAnonymous == true;
       }
 
       function joiningWithToken(linkKey, collabRole) {
@@ -426,6 +465,30 @@ service cloud.firestore {
       match /private/{document=**} {
         allow read, write: if false;
       }
+    }
+
+    // Reverse index from a share-link TOKEN to the project it belongs to
+    // (`shareTokens/{token} -> {projectId, linkType}`), written/read only by
+    // the Cloudflare Worker's service-account calls (cloudflare-worker/src/
+    // shareLinkRoutes.js) — never by any client SDK, same pattern as
+    // `googleCalendarAuth` and `private/links` above. A visitor who clicks a
+    // share link has only the token, not the project id, and cannot query
+    // Firestore for "which project has this token" (no client can read
+    // `private/links` at all, and there is no cross-document query that
+    // could answer this even if they could) — this index is the server-side
+    // shortcut from token to project id.
+    //
+    // Is a doc keyed BY the secret token itself safe? Yes: nobody can `list`
+    // this collection (not granted, same as `sharedProjects`), so a doc here
+    // is only reachable by already knowing its exact ID — which IS the
+    // token. Knowing this collection exists gets an attacker nothing without
+    // already holding a valid token string, so this index doesn't create any
+    // new way to guess, enumerate, or leak a token; it only lets someone who
+    // already has one resolve it faster. `allow read, write: if false` means
+    // even that direct lookup is unavailable to a client — only the Worker's
+    // IAM-authorized service-account REST calls can touch it.
+    match /shareTokens/{token} {
+      allow read, write: if false;
     }
 
     // Display names chosen by anonymous link visitors. A visitor owns exactly

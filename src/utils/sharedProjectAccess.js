@@ -445,6 +445,87 @@ export function isSharedProject(project) {
 }
 
 /**
+ * The three mutually-exclusive sharing states a project can be in, as far as
+ * ANY project-listing surface (sidebar, List header, ManageProjectsModal,
+ * search dropdown, etc.) needs to render — see this module's `isSharedProject`
+ * and the `Project` typedef in `src/types/index.js` for the full writeup of
+ * why this is a 3-way discriminant and not a boolean `isShared` flag: a
+ * boolean can't tell "you own this and shared it" apart from "someone else
+ * shared it with you", which is exactly the direction users need to see.
+ * @typedef {'personal'|'shared-by-me'|'shared-with-me'} ProjectShareState
+ */
+
+/**
+ * Decide which of the three sharing states a project is in, and return just
+ * enough detail for a badge/list row to render itself without re-deriving
+ * the same fields — this is the one place every surface should call rather
+ * than re-comparing `ownerId`/`uid` inline (see this file's `isSharedProject`
+ * for the same reasoning applied to a simpler yes/no question).
+ *
+ * Pure and side-effect-free, like the rest of this module. Safe to call with
+ * an ordinary CLIENT-read `sharedProject` (unlike `resolveTokenRole`/
+ * `computeEffectiveRole`'s `links`-bearing callers) — this only ever reads
+ * `ownerId`/`collaborators`, both of which ARE present on the client-readable
+ * `sharedProjects/{id}` document (see its typedef's "DELIBERATELY DOES NOT
+ * HAVE a `links` FIELD" note — everything else on that doc is fine to read).
+ *
+ * Edge cases, all treated as "no crash, no false badge":
+ * - No uid (signed out): a shared project can't resolve a role for nobody,
+ *   so this degrades to `'personal'` — there is no meaningful "shared with
+ *   you" without an identity to check membership against, and showing
+ *   'shared-by-me' would be actively wrong (we don't know that either).
+ * - `project` isn't shared at all (`isSharedProject` false): always
+ *   `'personal'`, regardless of whether a `sharedProject`/`uid` was passed.
+ * - Shared, but the live `sharedProjects` doc hasn't loaded yet (`onSnapshot`
+ *   hasn't delivered its first snapshot) or a stale `sharedProjectId` points
+ *   at nothing (deleted, or never existed): `sharedProject` is
+ *   null/undefined here, so this returns `'personal'` rather than guessing a
+ *   direction — a badge that can't say WHO owns it or what role you have is
+ *   worse than temporarily no badge, and the real state reappears the
+ *   instant the snapshot arrives.
+ * - Anonymous collaborator (`isAnonymous: true` on their own entry): resolves
+ *   exactly like any other collaborator — `isAnonymous` only matters to
+ *   `planOwnershipTransfer`, not to which of the three states applies here.
+ * @param {{sharedProjectId?: string}} project - The app-local Project (src/types/index.js).
+ * @param {{ownerId?: string, collaborators?: Record<string, {role?: string, displayName?: string, photoURL?: string|null}>}|null|undefined} sharedProject
+ *   The live `sharedProjects/{id}` doc for `project.sharedProjectId` (e.g. `sharedProjects[project.sharedProjectId]`
+ *   from `useScheduler()`), or null/undefined if not yet loaded / not found.
+ * @param {string|null|undefined} uid - The current user's Firebase uid, or null/undefined if signed out.
+ * @returns {
+ *   {state: 'personal'}
+ *   | {state: 'shared-by-me', collaboratorCount: number, collaborators: Array<{uid: string, displayName: string, photoURL: string|null, role: string}>}
+ *   | {state: 'shared-with-me', ownerId: string, role: 'editor'|'viewer'}
+ * }
+ */
+export function getProjectShareState(project, sharedProject, uid) {
+  if (!isSharedProject(project) || !sharedProject || typeof sharedProject !== 'object') {
+    return { state: 'personal' };
+  }
+
+  const ownerId = sharedProject.ownerId;
+  if (!uid || !ownerId) {
+    return { state: 'personal' };
+  }
+
+  const collaboratorsMap =
+    sharedProject.collaborators && typeof sharedProject.collaborators === 'object' ? sharedProject.collaborators : {};
+
+  if (uid === ownerId) {
+    const collaborators = Object.entries(collaboratorsMap).map(([collabUid, entry]) => ({
+      uid: collabUid,
+      displayName: entry?.displayName || 'Anonymous',
+      photoURL: entry?.photoURL ?? null,
+      role: entry?.role,
+    }));
+    return { state: 'shared-by-me', collaboratorCount: collaborators.length, collaborators };
+  }
+
+  const myEntry = collaboratorsMap[uid];
+  const role = myEntry?.role === SHARE_ROLES.EDITOR || myEntry?.role === SHARE_ROLES.VIEWER ? myEntry.role : SHARE_ROLES.VIEWER;
+  return { state: 'shared-with-me', ownerId, role };
+}
+
+/**
  * Generate an unguessable share-link token: 22 URL-safe base64 characters
  * from 16 cryptographically random bytes (128 bits of entropy) — long enough
  * that brute-forcing a link is infeasible, short enough to fit cleanly in a

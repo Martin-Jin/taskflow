@@ -18,13 +18,26 @@
  * The multi-writer merge behaviour itself is covered by unit tests
  * (tests/unit/sharedTaskSync.test.js), deliberately: the spec calls for the
  * conflict/race decisions to be tested as pure functions rather than found by
- * clicking, since a concurrency bug found by clicking is found late. Phase 2
- * adds the join flow, at which point a two-browser-context test becomes
- * possible and belongs here.
+ * clicking, since a concurrency bug found by clicking is found late.
+ *
+ * PHASE 2 (share links) — WHY A REAL TWO-BROWSER JOIN TEST STILL DOESN'T
+ * BELONG HERE. Generating a link, and completing a join, both require a live
+ * Cloudflare Worker call (token resolution, custom-token minting) and a real
+ * Firestore project — neither exists in this suite's headless, localStorage-
+ * only environment (see the file header above). That gap is covered instead
+ * by: the Worker's own logic being unit-testable in isolation
+ * (shareLinkLogic.js mirrors sharedProjectAccess.js's pure functions), the
+ * firestore.rules emulator suite (`npm run test:rules`) for the actual
+ * authorization decisions, and tests/unit/joinFlow.test.js for the sequencing
+ * (already-a-member short-circuit, upgrade-not-downgrade, the anonymous name
+ * prompt/cache). What's left, and IS covered below: the parts of the join
+ * landing that run regardless of whether the token turns out to be valid —
+ * URL handling and not crashing for a signed-out visitor — plus the Share
+ * dialog's own reachability, extending the Phase 1 pattern above.
  */
 
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors } from './helpers.js';
+import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors, BASE_URL } from './helpers.js';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
@@ -127,6 +140,64 @@ test.describe('Personal projects are untouched', () => {
     // Mock data's Work project — if the sharing wiring broke ordinary
     // rendering, this is where it would show up.
     await expect(page.getByText('Finish Q3 investor deck')).toBeVisible();
+    expectNoErrors(errors);
+  });
+});
+
+test.describe('Share link landing (?join=) — reachable-without-Firebase slice', () => {
+  test('a bogus token resolves to a failure state, not a crash or a stuck spinner', async ({ page }) => {
+    // This token can't resolve to anything real, but the flow must still run
+    // to completion: sign in anonymously, attempt to reach the Worker, and
+    // land on SOME rendered failure — never an unhandled rejection or an
+    // infinite busy state. Deliberately not asserting WHICH failure message,
+    // or that the console stays clean: whether this environment's Firebase
+    // project allows an anonymous sign-in from this origin determines whether
+    // the outcome is "invalid_token" (fully resolved, token unknown) or an
+    // auth/network error (couldn't even sign in) — both are equally valid,
+    // tested outcomes (see joinFlow.test.js/useJoinFlow's catch block, which
+    // deliberately logs this class of failure, same as every other caught-
+    // and-surfaced error in this app). What must hold regardless of which
+    // branch this environment takes is: something renders, and it's
+    // dismissable — so this test does NOT use trackConsoleErrors/
+    // expectNoErrors, unlike its siblings.
+    await page.goto(`${BASE_URL}/?join=e2e-test-invalid-token-000000`);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 10000 });
+    // Busy states ("Opening…"/"Joining…") must resolve into an actionable one
+    // with a "Continue to TaskFlow" button — not linger forever.
+    await expect(page.getByRole('button', { name: /continue to taskflow/i })).toBeVisible({ timeout: 15000 });
+
+    // The escape hatch must actually work: dismissing lands back on a normal,
+    // usable app rather than leaving the visitor stuck mid-flow. This is also
+    // the regression check for the guided tour's overlay (z-index: 1000)
+    // intercepting this click — JoinProjectModal's overlay must render above
+    // it (see .join-modal-overlay in global.css).
+    await page.getByRole('button', { name: /continue to taskflow/i }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('the token is stripped from the URL immediately, before resolution finishes', async ({ page }) => {
+    // A share token is a secret; it must not linger in the address bar or
+    // survive a reload regardless of whether the join succeeds — see
+    // useJoinFlow's header for why this happens before the network call, not
+    // after.
+    await page.goto(`${BASE_URL}/?join=e2e-test-strip-me-000000`);
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10000 });
+
+    await expect
+      .poll(() => new URL(page.url()).searchParams.has('join'), { timeout: 3000 })
+      .toBe(false);
+  });
+
+  test('a page load with no join param renders nothing from the join flow', async ({ page }) => {
+    // The overwhelmingly common case — confirms the modal truly costs nothing
+    // when there's no token, rather than e.g. flashing briefly.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+
+    await expect(page.getByRole('dialog', { name: /join|shared project/i })).toHaveCount(0);
     expectNoErrors(errors);
   });
 });

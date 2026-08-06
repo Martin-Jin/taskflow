@@ -37,12 +37,16 @@ import InstallAppBanner from './components/Common/InstallAppBanner';
 import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
+import JoinProjectModal from './components/Modals/JoinProjectModal';
+import ShareProjectModal from './components/Modals/ShareProjectModal';
 import TaskDetailModal from './components/Modals/TaskDetailModal';
 import SchedulingConflictsModal from './components/Modals/SchedulingConflictsModal';
 import CommandPalette from './components/CommandPalette';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useJoinFlow } from './hooks/useJoinFlow';
+import { readJoinToken } from './utils/joinFlow';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
 import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
@@ -100,6 +104,11 @@ function AppShell() {
   const [showTour, setShowTour] = useState(false);
   const [hasSeenTutorial, setHasSeenTutorial] = usePersistedState('tutorial-seen', false);
   const [showManageProjects, setShowManageProjects] = useState(false);
+  // Which project's share dialog is open, by local project id (null = closed).
+  // Held here rather than in each list component because three separate
+  // surfaces (sidebar, List header, ManageProjectsModal) can open it and only
+  // one should ever be on screen.
+  const [sharingProjectId, setSharingProjectId] = useState(null);
   const [showChangelog, setShowChangelog] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = usePersistedState('lastSeenChangelogVersion', null);
   const [manageProjectsAutoAdd, setManageProjectsAutoAdd] = useState(false);
@@ -155,6 +164,29 @@ function AppShell() {
     setTab('tasks');
   }
 
+  // "Share project" on a project that isn't shared yet does both halves of
+  // the job: makes it collaborative, then opens the share dialog on it. Those
+  // used to be separate steps, which left the user looking at a success toast
+  // with no link and no obvious way to get one. An already-shared project
+  // skips straight to the dialog (the menu labels it "Manage sharing").
+  async function handleShareProject(projectId) {
+    const project = projects.find((p) => p.id === projectId);
+    if (project?.sharedProjectId) {
+      setSharingProjectId(projectId);
+      return;
+    }
+    const result = await shareProject(projectId);
+    if (result?.ok) setSharingProjectId(projectId);
+  }
+
+  // Share-link landing: if this page load carried a `?join=<token>`, resolve
+  // it and file the project into this user's own list, then jump straight to
+  // it — the point of the flow is that a visitor never has to keep the link
+  // around. The token is stripped from the URL before anything else happens
+  // (see useJoinFlow's header). Returns IDLE and renders nothing for the
+  // overwhelmingly common case of an ordinary page load with no token.
+  const joinFlow = useJoinFlow(selectProject);
+
   // BoardView can't render the "All Tasks" pseudo-project (no single
   // project's Sections to build columns from), so the moment it mounts (or
   // its project gets deleted out from under it) while All Tasks is active,
@@ -176,8 +208,18 @@ function AppShell() {
   // Auto-launch the guided tour for a brand-new visitor, once. Anyone who's
   // already seen it (or dismissed it) only gets it again via the Help icon
   // or Settings' "Replay tour" button (see openTour below).
+  //
+  // Suppressed when this load carries a share-link token: a first-time
+  // visitor arriving via someone's link is here with a specific intent (join
+  // that project), and the tour's full-page overlay (z-index 1000, well
+  // above every ordinary modal) would sit on top of JoinProjectModal and
+  // block it outright — found by an E2E test where "Continue to TaskFlow"
+  // was unclickable underneath the tour overlay on a fresh browser profile.
+  // `readJoinToken` reads the RAW query string, not useJoinFlow's state
+  // (which clears the moment the token is stripped) — this only needs to
+  // know whether the page loaded WITH one.
   useEffect(() => {
-    if (!hasSeenTutorial) setShowTour(true);
+    if (!hasSeenTutorial && !readJoinToken()) setShowTour(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -334,7 +376,7 @@ function AppShell() {
           onOpenManageProjects={openManageProjects}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
-          onShareProject={shareProject}
+          onShareProject={handleShareProject}
           onDeleteProject={handleDeleteProject}
           footer={
             <>
@@ -369,6 +411,7 @@ function AppShell() {
             <CalendarPage
               dayJumpRequest={calendarDayRequest}
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
+              onShareProject={handleShareProject}
             />
           )}
           {tab === 'tasks' && (
@@ -383,6 +426,7 @@ function AppShell() {
               openAIQuickAddSignal={aiQuickAddSignal}
               onOpenSettings={() => setTab('settings')}
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
+              onShareProject={handleShareProject}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
@@ -432,7 +476,7 @@ function AppShell() {
           onAddProject={addProject}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
-          onShareProject={shareProject}
+          onShareProject={handleShareProject}
           onDeleteProject={handleDeleteProject}
           autoShowAdd={manageProjectsAutoAdd}
           onClose={() => setShowManageProjects(false)}
@@ -442,6 +486,22 @@ function AppShell() {
         <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onViewChange={setTaskView} onFinish={closeTour} />
       )}
       {showChangelog && <ChangelogModal onClose={closeChangelog} />}
+      {sharingProjectId && projects.some((p) => p.id === sharingProjectId) && (
+        <ShareProjectModal
+          project={projects.find((p) => p.id === sharingProjectId)}
+          onClose={() => setSharingProjectId(null)}
+        />
+      )}
+      {/* Renders nothing unless this page load came from a share link — see
+          useJoinFlow, which owns the whole lifecycle and reports IDLE
+          otherwise. */}
+      <JoinProjectModal
+        status={joinFlow.status}
+        projectName={joinFlow.projectName}
+        error={joinFlow.error}
+        onSubmitName={joinFlow.submitName}
+        onDismiss={joinFlow.dismiss}
+      />
       {showCommandPalette && (
         <CommandPalette
           tabs={TABS}

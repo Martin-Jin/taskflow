@@ -389,13 +389,31 @@ the constraints are deliberate and worth understanding before touching them:
   a collaborator (a project can't be pushed onto a stranger), anonymous users
   can never become owners, and the outgoing owner is retained as an editor.
   The anonymous check works via an `isAnonymous` flag stamped onto each
-  collaborator entry at join time from the joiner's own verified
-  `sign_in_provider` claim — rules can only inspect the *requester's* provider,
-  never a third party's, so the fact has to be recorded when they join to be
-  checkable when someone later tries to hand them the project. Transferring to
-  an anonymous identity would leave the project effectively unowned once that
-  visitor cleared their storage: nobody able to delete it, rotate its links, or
-  manage its collaborators.
+  collaborator entry at join time — rules can only inspect the *requester's*
+  identity, never a third party's, so the fact has to be recorded when they
+  join to be checkable when someone later tries to hand them the project.
+  Transferring to an anonymous identity would leave the project effectively
+  unowned once that visitor cleared their storage: nobody able to delete it,
+  rotate its links, or manage its collaborators.
+
+  **That flag comes from a `wasAnonymous` custom claim, NOT from
+  `sign_in_provider` — and that distinction is load-bearing.** A join can only
+  happen inside a `signInWithCustomToken` session (that's how the `joinToken`
+  claim arrives at all), and *every* custom-token session reports
+  `sign_in_provider == 'custom'` regardless of the account underneath. Pinning
+  `isAnonymous` to `sign_in_provider == 'anonymous'` therefore evaluated false
+  for every joiner including genuinely anonymous ones, silently recording them
+  all as real accounts and defeating this very check. The join endpoint instead
+  reads the visitor's real provider from their *original, pre-join* ID token —
+  the last moment it's still visible — and mints it forward as `wasAnonymous`
+  alongside `joinToken`. Both claims come from the same server-signed token, so
+  neither is client-forgeable. A caller who already holds a custom-token session
+  carries their previous claim forward, so a second join can't launder an
+  anonymous identity into a real-looking one. Note also that reading an absent
+  claim off `request.auth.token` *errors* rather than evaluating false, so the
+  rule checks presence first (`'wasAnonymous' in request.auth.token`) and treats
+  a missing claim as "real account" — otherwise a token minted before this
+  existed would deny the join outright.
 - **Every write is shape- and size-validated**, which is less incidental than
   it sounds. `diff().affectedKeys()` reports only that a *top-level* field
   changed, never what's inside it — so without an explicit per-entry check, a
