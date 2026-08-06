@@ -22,6 +22,8 @@ import {
   subscribeUserData,
   createBackup,
   listBackups,
+  listAutomaticBackups,
+  listManualBackups,
   getBackup,
   deleteBackup,
 } from '../services/firestoreSync';
@@ -34,11 +36,17 @@ const PUSH_DEBOUNCE_MS = 1500;
 // ---- Automatic cloud backups ------------------------------------------------
 // Once per day while signed in with cloud sync active, a backup is taken
 // automatically (tagged `automatic: true`, see firestoreSync.createBackup) and
-// old automatic ones beyond AUTO_BACKUP_RETENTION_COUNT are pruned — manual
-// "Back up now" backups are never touched by this, regardless of age (see
-// planAutoBackupPrune below).
+// old automatic ones beyond AUTO_BACKUP_RETENTION_COUNT are pruned. Manual
+// "Back up now" backups have their own, independent retention pool
+// (MANUAL_BACKUP_RETENTION_COUNT below) — the two counts don't share a
+// budget, so up to 14 of each can coexist. See planAutoBackupPrune below.
 const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AUTO_BACKUP_RETENTION_COUNT = 14;
+// Manual backups ("Back up now") are pruned down to this many most-recent
+// ones too — independent from AUTO_BACKUP_RETENTION_COUNT above, not a
+// shared pool. Same value, but a separate constant since there's no reason
+// the two need to move together.
+const MANUAL_BACKUP_RETENTION_COUNT = 14;
 // How often a long-lived open tab re-checks whether a day has elapsed since
 // the last automatic backup, without needing a reload — mirrors
 // useGoogleCalendarSync's periodic-poll pattern (a plain setInterval with an
@@ -47,17 +55,25 @@ const AUTO_BACKUP_RETENTION_COUNT = 14;
 const AUTO_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
- * Pure retention decision for automatic cloud backups: given the full list of
- * backups (as returned by firestoreSync.listBackups — `{ id, automatic,
- * createdAt }`) and how many automatic ones to keep, returns the ids of
- * automatic backups beyond that count (oldest-first among the excess),
- * ready to delete. Manual backups (`automatic: false`) are never included in
- * the input filtering here, so they're never candidates for deletion no
- * matter how many exist or how old they are.
+ * Pure retention decision, shared by both backup pools — automatic and
+ * manual each have their own independent retention count (see the constants
+ * above) but the same "keep the N most recent, prune the rest oldest-first"
+ * logic applies to both, so this one function serves both call sites in
+ * pruneBackupPool below rather than duplicating it.
+ *
+ * `wantAutomatic` (default true, preserving this function's original
+ * automatic-only behavior for existing callers) selects which pool to prune
+ * from `backups` — filtering explicitly on this rather than inferring it
+ * from the list's contents means a mixed list (e.g. from listBackups) is
+ * still handled correctly: only entries matching `wantAutomatic` are ever
+ * candidates, so a manual backup mixed into an automatic-heavy list (or vice
+ * versa) is never swept up as the wrong pool. Returns the ids of matching
+ * backups beyond `retentionCount` (oldest-first among the excess), ready to
+ * delete.
  */
-export function planAutoBackupPrune(backups, retentionCount = AUTO_BACKUP_RETENTION_COUNT) {
-  const automaticBackups = backups.filter((b) => b.automatic);
-  const sorted = [...automaticBackups].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+export function planAutoBackupPrune(backups, retentionCount = AUTO_BACKUP_RETENTION_COUNT, wantAutomatic = true) {
+  const pool = backups.filter((b) => Boolean(b.automatic) === wantAutomatic);
+  const sorted = [...pool].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   return sorted.slice(retentionCount).map((b) => b.id);
 }
 
@@ -775,6 +791,37 @@ export function useCloudSync({
     }
   }, [applyBackupPayload, setNotification]);
 
+  // Shared prune step for both backup pools (automatic and manual each have
+  // their own independent retention count — see the constants above). Fetches
+  // via `lister` (listAutomaticBackups/listManualBackups, NOT listBackups) so
+  // enough backups of the other kind can't push old ones of this kind outside
+  // listBackups's "most recent 40 overall" window and make them permanently
+  // un-prunable — see those functions' doc comments. `isAutomatic` tells
+  // planAutoBackupPrune which pool `lister`'s results belong to (both listers
+  // already return single-pool lists, but this keeps the filter explicit
+  // rather than assumed). Deletes anything planAutoBackupPrune flags as
+  // beyond `retentionCount`, then trims them out of the locally-held
+  // `cloudBackups` list so the UI doesn't need a full refetch to reflect it.
+  // Errors are swallowed (warn + continue) since pruning is always a
+  // best-effort follow-up to a backup that already succeeded, never
+  // something the caller is waiting on.
+  const pruneBackupPool = useCallback(
+    async (lister, retentionCount, isAutomatic, label) => {
+      const backups = await lister(user.uid);
+      const idsToDelete = planAutoBackupPrune(backups, retentionCount, isAutomatic);
+      if (idsToDelete.length === 0) return;
+      await Promise.all(
+        idsToDelete.map((id) =>
+          deleteBackup(user.uid, id).catch((err) => {
+            console.warn(`[useCloudSync] Failed to prune old ${label} backup`, id, err);
+          })
+        )
+      );
+      setCloudBackups((prev) => prev.filter((b) => !idsToDelete.includes(b.id)));
+    },
+    [user]
+  );
+
   // ---- Cloud backup operations ---------------------------------------------
   const createCloudBackup = useCallback(async () => {
     if (!user) return;
@@ -782,6 +829,11 @@ export function useCloudSync({
       const payload = buildBackupPayload({ ...stateRef.current, theme, events });
       await createBackup(user.uid, payload);
       setNotification({ type: 'success', message: 'Cloud backup created.' });
+      // Prune manual backups beyond their retention count right away, rather
+      // than waiting for the next daily automatic-backup check — a user
+      // backing up repeatedly in one session shouldn't have to wait a day to
+      // get pruned back down to MANUAL_BACKUP_RETENTION_COUNT.
+      await pruneBackupPool(listManualBackups, MANUAL_BACKUP_RETENTION_COUNT, false, 'manual');
       // Refresh the backup list
       const backups = await listBackups(user.uid);
       setCloudBackups(backups);
@@ -789,7 +841,7 @@ export function useCloudSync({
       console.error(err);
       setNotification({ type: 'error', message: 'Failed to create cloud backup.' });
     }
-  }, [user, stateRef, theme, events, setNotification]);
+  }, [user, stateRef, theme, events, setNotification, pruneBackupPool]);
 
   // ---- Automatic daily cloud backup + retention -----------------------------
   // Runs at most once per AUTO_BACKUP_INTERVAL_MS. Unlike createCloudBackup
@@ -798,6 +850,10 @@ export function useCloudSync({
   // it's a background action the user never explicitly triggered, so a
   // disruptive error toast would be more annoying than useful. It doesn't
   // return anything or throw for the same reason: nothing is waiting on it.
+  // Also takes this opportunity to prune manual backups beyond their own
+  // retention count (see MANUAL_BACKUP_RETENTION_COUNT) — a daily catch-all
+  // on top of the prune createCloudBackup already does right after each new
+  // manual backup, in case backups were deleted/created outside that flow.
   const runAutomaticBackupIfDue = useCallback(async () => {
     if (!user || !cloudSynced) return;
     if (autoBackupInFlightRef.current) return;
@@ -814,27 +870,20 @@ export function useCloudSync({
       lastAutoBackupAtRef.current = now;
       setLastAutoBackupAt(now);
 
-      // Prune old automatic backups beyond the retention count. Manual
-      // backups are never candidates — see planAutoBackupPrune.
-      const backups = await listBackups(user.uid);
-      setCloudBackups(backups);
-      const idsToDelete = planAutoBackupPrune(backups, AUTO_BACKUP_RETENTION_COUNT);
-      if (idsToDelete.length > 0) {
-        await Promise.all(
-          idsToDelete.map((id) =>
-            deleteBackup(user.uid, id).catch((err) => {
-              console.warn('[useCloudSync] Failed to prune old automatic backup', id, err);
-            })
-          )
-        );
-        setCloudBackups((prev) => prev.filter((b) => !idsToDelete.includes(b.id)));
-      }
+      // Prune both pools — independent retention counts, see the constants
+      // above. Manual backups are never candidates in the automatic prune
+      // (and vice versa) since each is fetched from its own filtered query.
+      await pruneBackupPool(listAutomaticBackups, AUTO_BACKUP_RETENTION_COUNT, true, 'automatic');
+      await pruneBackupPool(listManualBackups, MANUAL_BACKUP_RETENTION_COUNT, false, 'manual');
+      // Refresh the displayed backup list (separate from pruning above) so
+      // the just-created automatic backup shows up in the "view backups" UI.
+      setCloudBackups(await listBackups(user.uid));
     } catch (err) {
       console.warn('[useCloudSync] Automatic backup failed', err);
     } finally {
       autoBackupInFlightRef.current = false;
     }
-  }, [user, cloudSynced, stateRef, theme, events, setLastAutoBackupAt]);
+  }, [user, cloudSynced, stateRef, theme, events, setLastAutoBackupAt, pruneBackupPool]);
 
   // Checks once on mount (covers "app just opened, a day or more has passed")
   // and hourly after that (covers a long-lived tab crossing the day boundary

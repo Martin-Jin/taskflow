@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '2.1.3',
+    date: '2026-08-06',
+    title: 'Fixed a few sources of unbounded storage growth',
+    changes: [
+      'Task comment threads are now capped at 200 comments per task — posting past the cap is blocked with a clear message until you delete an older comment to make room, rather than letting a thread grow forever.',
+      'Fixed comment file attachments not being cleaned up from cloud storage when a completed task aged out of the automatic 30-day cleanup, leaving orphaned files behind.',
+      'Fixed automatic daily cloud backups occasionally failing to prune old ones once enough manual backups had piled up, which could let more than the intended 14 automatic backups accumulate.',
+      'Backups you take manually with "Back up now" are now also capped at the 14 most recent, pruned right after each new one (previously they were kept forever) — this is a separate cap from automatic backups\' own 14, so up to 14 of each can exist side by side.',
+    ],
+  },
+  {
     version: '2.1.2',
     date: '2026-08-06',
     title: 'Fixed recurring tasks not scheduling when moved off their usual repeat days',

@@ -87,6 +87,16 @@ const SchedulerContext = createContext(null);
 // than growing the stack unbounded.
 const MAX_ACTION_TOASTS = 3;
 
+// Cap on comments per task. `tasks` (and therefore every task's comment
+// array) lives inside the single `users/{uid}` Firestore doc that gets
+// rewritten whole on every debounced sync push, so an unbounded comment
+// thread would inflate every future sync write forever. 200 is a generous
+// round number for a personal-scale app's task discussion — reached, the add
+// is rejected with a clear error rather than silently trimming/evicting old
+// comments (which would orphan their attachments and destroy user content
+// without going through the explicit per-comment delete path).
+export const MAX_COMMENTS_PER_TASK = 200;
+
 function getDefaultNotificationSettings() {
   return {
     inAppEnabled: true,
@@ -782,8 +792,19 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const isStaleCompleted = (t) => t.isCompleted && t.completedAt && new Date(t.completedAt).getTime() < cutoffMs;
-    const staleIds = new Set(stateRef.current.tasks.filter(isStaleCompleted).map((t) => t.id));
-    if (staleIds.size === 0) return;
+    const staleTasks = stateRef.current.tasks.filter(isStaleCompleted);
+    if (staleTasks.length === 0) return;
+    const staleIds = new Set(staleTasks.map((t) => t.id));
+    // Mirrors deleteTask's cascade above — otherwise every comment attachment
+    // on a swept task is orphaned in Storage with nothing left to ever clean
+    // it up, since this sweep is the only path that removes these tasks.
+    if (user) {
+      staleTasks
+        .flatMap((t) => t.comments || [])
+        .forEach((c) => {
+          if (c.attachment) deleteCommentAttachment(c.attachment.path);
+        });
+    }
     const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
     const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
     commit({ tasks: newTasks, blocks: newBlocks }, `Removed ${staleIds.size} completed task(s) older than 30 days`);
@@ -1270,6 +1291,10 @@ export function SchedulerProvider({ children }) {
    */
   const addComment = useCallback(
     async (taskId, { text, file } = {}) => {
+      const task = stateRef.current.tasks.find((t) => t.id === taskId);
+      if ((task?.comments?.length || 0) >= MAX_COMMENTS_PER_TASK) {
+        throw new Error(`This task has reached the ${MAX_COMMENTS_PER_TASK}-comment limit — delete an old comment to add a new one.`);
+      }
       let attachment = null;
       if (file) {
         if (!user) throw new Error('Sign in to attach files to a comment.');

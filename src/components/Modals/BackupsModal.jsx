@@ -5,11 +5,15 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 
 /**
  * Lists the signed-in user's recent cloud backups (newest first, capped
- * server-side to ~20 — see firestoreSync.listBackups) with Restore/Delete
- * per row. Picking WHICH snapshot to restore needs a list, so this is a
- * small modal rather than a bare confirm(); restoring/deleting a specific
- * row still confirms via window.confirm, matching the rest of the app's
- * destructive-action convention.
+ * server-side to the 40 most recent overall — see firestoreSync.listBackups)
+ * with Restore/Delete per row. Automatic and manual backups are each capped
+ * at their own 14 most recent, independently (see useCloudSync's
+ * pruneBackupPool/runAutomaticBackupIfDue/createCloudBackup); this list is
+ * display-only and doesn't drive that pruning decision. Picking WHICH
+ * snapshot to restore needs a list, so this is a small modal rather than a
+ * bare confirm(); restoring/deleting a specific row still confirms via
+ * window.confirm, matching the rest of the app's destructive-action
+ * convention.
  */
 export default function BackupsModal({ backups, isBusy, onRestore, onDelete, onClose }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);

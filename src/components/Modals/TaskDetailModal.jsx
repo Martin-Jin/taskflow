@@ -96,7 +96,7 @@ import {
   ExternalLink,
   ChevronRight,
 } from 'lucide-react';
-import { useScheduler } from '../../context/SchedulerContext';
+import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useTimers, getLiveRemaining, getDefaultDurationSeconds, formatTimerDuration } from '../../context/TimerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
@@ -316,6 +316,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [commentError, setCommentError] = useState('');
   const [lightboxAttachment, setLightboxAttachment] = useState(null);
   const commentFileInputRef = useRef(null);
+  const atCommentCap = (task.comments?.length || 0) >= MAX_COMMENTS_PER_TASK;
 
   // Revoke the previous object URL whenever the pending attachment changes
   // (new file picked, removed, or comment posted) so picking several image
@@ -367,6 +368,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   async function handlePostComment() {
     const text = commentText.trim();
     if (!text && !commentFile) return;
+    if (atCommentCap) {
+      setCommentError(`This task has reached the ${MAX_COMMENTS_PER_TASK}-comment limit — delete an old comment to add a new one.`);
+      return;
+    }
     setIsPostingComment(true);
     setCommentError('');
     try {
@@ -1908,7 +1913,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               </div>
 
               <div className="form-row comments-section">
-                <label>Comments{task.comments?.length ? ` (${task.comments.length})` : ''}</label>
+                <label>
+                  Comments{task.comments?.length ? ` (${task.comments.length}/${MAX_COMMENTS_PER_TASK})` : ''}
+                </label>
                 <div className="comment-list">
                   {(task.comments || []).map((c) => (
                     <div key={c.id} className="comment-row">
@@ -1957,10 +1964,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   ))}
                 </div>
 
-                {commentError && (
+                {(commentError || atCommentCap) && (
                   <p className="form-warning">
                     <Ban size={13} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden="true" />
-                    <span>{commentError}</span>
+                    <span>
+                      {commentError ||
+                        `Comment limit reached (${MAX_COMMENTS_PER_TASK}) — delete an old comment to add a new one.`}
+                    </span>
                   </p>
                 )}
 
@@ -1990,8 +2000,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       }
                     }}
                     onPaste={handleCommentPaste}
-                    placeholder="Comment"
-                    disabled={isPostingComment}
+                    placeholder={atCommentCap ? 'Comment limit reached' : 'Comment'}
+                    disabled={isPostingComment || atCommentCap}
                   />
                   <input
                     ref={commentFileInputRef}
@@ -2007,7 +2017,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
                     }
                     title={user ? 'Attach a file' : 'Sign in to attach files'}
-                    disabled={isPostingComment}
+                    disabled={isPostingComment || atCommentCap}
                   >
                     <Paperclip size={15} />
                   </button>
@@ -2015,7 +2025,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     type="button"
                     className="btn btn-icon comment-send-btn"
                     onClick={handlePostComment}
-                    disabled={isPostingComment || (!commentText.trim() && !commentFile)}
+                    disabled={isPostingComment || atCommentCap || (!commentText.trim() && !commentFile)}
                     aria-label={isPostingComment ? 'Posting comment…' : 'Post comment'}
                   >
                     {isPostingComment ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
