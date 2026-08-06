@@ -137,6 +137,34 @@ export function resolveTokenRole(links, token, now = Date.now()) {
 }
 
 /**
+ * Firestore document IDs and share tokens, as this codebase actually
+ * generates them: `generateShareToken` below emits URL-safe base64 (22 chars),
+ * and Firestore's own auto-IDs are 20 alphanumerics. The cap is generous
+ * headroom, well under Firestore's own 1500-byte ID limit.
+ */
+const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * True if `value` is safe to interpolate into a Firestore REST document path.
+ *
+ * This is a PATH-TRAVERSAL guard, not a cosmetic format check. These IDs are
+ * pasted straight into a REST URL, and the URL parser resolves `..` segments
+ * before the request is ever sent — so an unvalidated `"../../users/victim"`
+ * escapes the `documents/` prefix entirely and reads an arbitrary document.
+ * The Worker reads with a service account, which bypasses firestore.rules
+ * completely, so nothing downstream would catch it.
+ *
+ * Applies to IDs read back out of Firestore too, not just request bodies: a
+ * stored `projectId` is only as trustworthy as whatever wrote it, and treating
+ * "came from our own database" as "safe" is how this class of bug survives.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function isSafeFirestoreId(value) {
+  return typeof value === 'string' && SAFE_ID_RE.test(value);
+}
+
+/**
  * Generate an unguessable share-link token — same algorithm as
  * sharedProjectAccess.js's `generateShareToken` (22 URL-safe base64
  * characters from 16 cryptographically random bytes), reimplemented here

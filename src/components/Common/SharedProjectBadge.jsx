@@ -27,20 +27,10 @@
 import React from 'react';
 import { Users, UserCircle2 } from 'lucide-react';
 import { getProjectShareState } from '../../utils/sharedProjectAccess';
+import { initialsOf, isSafePhotoURL } from '../../utils/avatarDisplay';
 
 /** Beyond this, remaining collaborator avatars collapse into a "+N" chip — same threshold as PresenceAvatars. */
 const MAX_VISIBLE_AVATARS = 3;
-
-function isSafePhotoURL(url) {
-  return typeof url === 'string' && /^https?:\/\//i.test(url);
-}
-
-function initialsOf(name) {
-  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 /**
  * @param {object} props

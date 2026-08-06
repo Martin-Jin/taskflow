@@ -82,20 +82,34 @@
 
 import { verifyFirebaseIdToken, verifyFirebaseIdTokenWithProvider, AuthError } from './googleAuth.js';
 import { getDoc, setDoc, deleteDoc } from './firestoreClient.js';
-import { resolveTokenRole, generateShareToken } from './shareLinkLogic.js';
+import { resolveTokenRole, generateShareToken, isSafeFirestoreId } from './shareLinkLogic.js';
 import { mintFirebaseCustomToken } from './firebaseCustomToken.js';
 
 const LINK_TYPES = new Set(['view', 'edit']);
 const SET_ACTIONS = new Set(['create', 'rotate', 'revoke', 'enable', 'delete']);
 
+// Every path builder re-checks its own input rather than trusting the caller
+// to have validated. These strings are interpolated into Firestore REST URLs
+// where `..` resolves before the request is sent, and the Worker reads with a
+// service account that bypasses firestore.rules — so a miss here reads an
+// arbitrary document. Throwing (rather than returning a bad path) means a
+// future call site that forgets to validate fails loudly instead of silently
+// traversing; the route handlers below still validate up front so real
+// requests get a 400 rather than a 500.
+function assertSafeId(value, label) {
+  if (!isSafeFirestoreId(value)) {
+    throw new Error(`Unsafe ${label} rejected before Firestore path use.`);
+  }
+  return value;
+}
 function projectDocPath(projectId) {
-  return `sharedProjects/${projectId}`;
+  return `sharedProjects/${assertSafeId(projectId, 'projectId')}`;
 }
 function linksDocPath(projectId) {
-  return `sharedProjects/${projectId}/private/links`;
+  return `sharedProjects/${assertSafeId(projectId, 'projectId')}/private/links`;
 }
 function tokenIndexPath(token) {
-  return `shareTokens/${token}`;
+  return `shareTokens/${assertSafeId(token, 'token')}`;
 }
 
 function jsonResponse(obj, status, headers) {
@@ -161,8 +175,8 @@ async function requireOwnedProject(env, projectId, uid, headers) {
  */
 export async function handleGetLinks(request, env, headers) {
   const body = await parseJsonBody(request);
-  if (!body || typeof body.projectId !== 'string' || !body.projectId) {
-    return jsonResponse({ error: 'Missing `projectId`.' }, 400, headers);
+  if (!body || !isSafeFirestoreId(body.projectId)) {
+    return jsonResponse({ error: 'Missing/invalid `projectId`.' }, 400, headers);
   }
 
   const { uid, response } = await requireUid(body.idToken, env, headers);
@@ -196,8 +210,7 @@ export async function handleSetLink(request, env, headers) {
   const body = await parseJsonBody(request);
   if (
     !body ||
-    typeof body.projectId !== 'string' ||
-    !body.projectId ||
+    !isSafeFirestoreId(body.projectId) ||
     !LINK_TYPES.has(body.linkType) ||
     !SET_ACTIONS.has(body.action)
   ) {
@@ -353,6 +366,13 @@ export async function handleResolveLink(request, env, headers) {
   if (!body || typeof body.token !== 'string' || !body.token) {
     return jsonResponse({ error: 'Missing `token`.' }, 400, headers);
   }
+  // A malformed token is answered with the SAME generic `invalid_token` as a
+  // token that simply doesn't exist. Distinguishing them would hand an
+  // attacker a response oracle for probing what the path validator accepts —
+  // the uniform failure shape is what keeps this route non-informative.
+  if (!isSafeFirestoreId(body.token)) {
+    return jsonResponse({ ok: false, reason: 'invalid_token' }, 200, headers);
+  }
 
   // Unlike the owner-only routes above, this one needs the caller's real
   // sign-in provider, not just their uid — see verifyFirebaseIdTokenWithProvider
@@ -368,7 +388,11 @@ export async function handleResolveLink(request, env, headers) {
   const { uid, isAnonymous } = caller;
 
   const indexEntry = await getDoc(env, tokenIndexPath(body.token));
-  if (!indexEntry || typeof indexEntry.projectId !== 'string') {
+  // The stored projectId is validated as strictly as a client-supplied one:
+  // it's about to be interpolated into a service-account Firestore path, and
+  // "it came from our own database" is an assumption about every past and
+  // future writer, not a property this route can verify.
+  if (!indexEntry || !isSafeFirestoreId(indexEntry.projectId)) {
     // Never log body.token — see this file's header / README constraints.
     return jsonResponse({ ok: false, reason: 'invalid_token' }, 200, headers);
   }

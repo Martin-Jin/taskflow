@@ -53,6 +53,10 @@ import {
 /** How often to refresh this user's presence heartbeat. Comfortably inside PRESENCE_STALE_MS so a live viewer never flickers out. */
 const PRESENCE_HEARTBEAT_MS = 30 * 1000;
 
+/** Mirrors useCloudSync's PUSH_DEBOUNCE_MS — same rationale: collapse a burst of
+ * edits into one write instead of one per change. */
+const PUSH_DEBOUNCE_MS = 1500;
+
 /**
  * @param {object} params
  * @param {import('../types').Task[]} params.tasks - the full local task array
@@ -189,12 +193,37 @@ export function useSharedProjectSync({ tasks, stateRef, applyRemote, sharedProje
     };
   }, [projectIdsKey, user, stateRef, reportError]);
 
-  // ---- Push local edits ----------------------------------------------------
-  // Runs on every task-array change. Cheap when nothing changed: the diff is a
-  // fingerprint comparison per shared task and writes nothing.
+  // ---- Push local edits (debounced) -----------------------------------------
+  // Mirrors useCloudSync's schedulePush/runPushNow shape: a timer collapses a
+  // burst of edits into one write per project instead of one per change.
+  //
+  // The diff (planSharedTaskWrites) and the "mark in flight" bookkeeping both
+  // run at FIRE time, from runPushNow, reading stateRef.current.tasks rather
+  // than the `tasks` this effect closed over when it was scheduled. This is
+  // the same choice useCloudSync's runPushNow makes (it reads stateRef.current,
+  // not a captured value) and matters here for the same reason: several edits
+  // can land inside one debounce window, and only diffing/stamping against the
+  // LATEST tasks array at fire time keeps the race guard correct — marking a
+  // stale mid-window fingerprint as "in flight" would let a snapshot for an
+  // even-newer local edit be wrongly accepted as confirming it.
+  //
+  // pendingDeletesRef is read at fire time too, so a delete queued anywhere
+  // inside the debounce window is still included in the write that fires.
+  const pushTimerRef = useRef(null);
+
+  // projectIdsKey is read via a ref (not a useCallback dependency) so that
+  // runPushNow's identity stays stable across project list changes — see
+  // the note above the scheduling effect for why that matters.
+  const projectIdsKeyRef = useRef(projectIdsKey);
   useEffect(() => {
+    projectIdsKeyRef.current = projectIdsKey;
+  }, [projectIdsKey]);
+
+  const runPushNow = useCallback(() => {
+    pushTimerRef.current = null;
     if (!user) return;
-    const ids = projectIdsKey ? projectIdsKey.split(',').filter(Boolean) : [];
+    const ids = projectIdsKeyRef.current ? projectIdsKeyRef.current.split(',').filter(Boolean) : [];
+    const currentTasks = stateRef.current.tasks;
 
     for (const projectId of ids) {
       // Until the first snapshot lands we don't know what's stored, and a diff
@@ -203,7 +232,7 @@ export function useSharedProjectSync({ tasks, stateRef, applyRemote, sharedProje
 
       const deletedIds = [...pendingDeletesRef.current];
       const plan = planSharedTaskWrites({
-        tasks,
+        tasks: currentTasks,
         projectId,
         syncedFingerprints: syncedFingerprintsRef.current,
         deletedIds,
@@ -233,7 +262,51 @@ export function useSharedProjectSync({ tasks, stateRef, applyRemote, sharedProje
         reportError(err, projectId);
       });
     }
-  }, [tasks, projectIdsKey, user, reportError]);
+  }, [user, stateRef, reportError]);
+
+  // Schedules (or reschedules) the debounced push. Called on every task-array
+  // change, same as useCloudSync's schedulePush — clearing/resetting the timer
+  // happens inside this stable callback rather than in the triggering effect's
+  // cleanup, so a change to some OTHER dependency (e.g. joining a new shared
+  // project) can't accidentally cancel a pending push for an unrelated edit.
+  const schedulePush = useCallback(() => {
+    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    pushTimerRef.current = setTimeout(runPushNow, PUSH_DEBOUNCE_MS);
+  }, [runPushNow]);
+
+  useEffect(() => {
+    if (!user) return;
+    schedulePush();
+  }, [tasks, user, schedulePush]);
+
+  // Flush a pending debounced push immediately when the tab is about to go
+  // away, and on unmount — same three-events approach as useCloudSync, so a
+  // trailing edit made just before a tab switch/close isn't silently dropped
+  // by the debounce timer never getting to fire.
+  useEffect(() => {
+    if (!user) return undefined;
+    const flush = () => {
+      if (pushTimerRef.current) {
+        clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+        runPushNow();
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      // Also flush on unmount itself (e.g. signing out), not just on
+      // tab-hide/close, so a trailing edit isn't dropped there either.
+      flush();
+    };
+  }, [user, runPushNow]);
 
   // ---- Presence heartbeat --------------------------------------------------
   useEffect(() => {

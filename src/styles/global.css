@@ -923,13 +923,6 @@ select:focus-visible,
   color: var(--color-danger);
 }
 
-/* A non-interactive status line ("Shared project") rather than an action, so
-   it deliberately has no hover state — see ProjectActionsMenu.jsx. */
-.project-actions-item-static {
-  color: var(--color-text-secondary);
-  cursor: default;
-}
-
 /* ----------------------------------------------------------------------
    PresenceAvatars (src/components/Common/PresenceAvatars.jsx) — who else is
    viewing a shared project. Overlapping circles, newest layered under the
@@ -2319,6 +2312,15 @@ input[type='checkbox']:checked::after {
   min-width: 0;
   font-size: 12px;
   text-overflow: ellipsis;
+}
+
+/* Bumped to 16px only on touch devices: below that, iOS Safari zooms the
+   page in on focus (even for a readOnly input like this one) — see the same
+   fix applied to .calendar-filter-search-input for the precedent. */
+@media (pointer: coarse) {
+  .share-link-url-input {
+    font-size: 16px;
+  }
 }
 
 .share-link-expiry-row {

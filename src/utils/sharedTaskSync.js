@@ -44,7 +44,8 @@
  * ============================================================================
  */
 
-import { mergeRecurringState } from './recurrenceState';
+import { mergeRecurringState, deriveRecurringFields } from './recurrenceState';
+import { toISODate } from './dateUtils';
 
 /** True if `task` belongs to a shared project rather than this user's own store. */
 export function isSharedTask(task) {
@@ -181,10 +182,11 @@ export function planSharedTaskWrites({ tasks, projectId, syncedFingerprints, del
  * @param {object[]} params.remoteTasks - documents from this project's tasks subcollection
  * @param {string} params.projectId
  * @param {Map<string, string|null>} params.pending - taskId -> fingerprint we wrote (null = we wrote a delete)
+ * @param {string} [params.todayIso] - ISO date for re-deriving recurring fields on merge; defaults to the real current date (see mergeSharedTask)
  * @returns {{tasks: import('../types').Task[], confirmedIds: string[], removedIds: string[]}}
  *   `confirmedIds` can be dropped from `pending`; `removedIds` are tasks gone remotely (callers prune their blocks).
  */
-export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pending }) {
+export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pending, todayIso }) {
   const localById = new Map((localTasks || []).filter((t) => t?.sharedProjectId === projectId).map((t) => [t.id, t]));
   const remoteById = new Map((remoteTasks || []).map((d) => [d.id, deserializeSharedTask(d, projectId)]));
 
@@ -210,7 +212,7 @@ export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pendin
       confirmedIds.push(id);
     }
 
-    resolved.set(id, mergeSharedTask(local, remoteTask));
+    resolved.set(id, mergeSharedTask(local, remoteTask, todayIso));
   }
 
   // Local tasks the server doesn't have.
@@ -256,12 +258,29 @@ export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pendin
  * document is taken wholesale) EXCEPT for recurring completion state, which is
  * merged so a completion recorded on either side survives — see this module's
  * conflict-policy note and recurrenceState.mergeRecurringState.
+ *
+ * The union/max merge only fixes the SOURCE-OF-TRUTH fields
+ * (completedOccurrences/skippedThrough); dueDate/completedDates/
+ * completionHistory are DERIVED from those and must be recomputed afterward,
+ * or they'd keep whatever stale value the remote document happened to carry
+ * (e.g. a dueDate that's already in the merged completedOccurrences set —
+ * see recurrenceState.deriveRecurringFields). `todayIso` defaults to the real
+ * current date rather than being required, since this runs inside a snapshot
+ * listener with no natural caller-supplied "today" — tests can still pass one
+ * explicitly for determinism.
+ *
+ * Deriving over `{ ...remote, ...merged }` (rather than local) deliberately
+ * keeps `remote.dueDate` as the `storedDueDate` deriveRecurringFields checks
+ * against its mixed-version-device guard: a pre-migration client can still
+ * legitimately push dueDate ahead of what the merged occurrence set implies,
+ * and that must keep winning here too.
  */
-export function mergeSharedTask(local, remote) {
+export function mergeSharedTask(local, remote, todayIso = toISODate(new Date())) {
   if (!local) return remote;
   if (!remote?.isRecurring && !local.isRecurring) return remote;
   const merged = mergeRecurringState(local, remote);
-  return { ...remote, ...merged };
+  const combined = { ...remote, ...merged };
+  return { ...combined, ...deriveRecurringFields(combined, todayIso) };
 }
 
 /**
