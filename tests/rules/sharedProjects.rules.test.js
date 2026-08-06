@@ -350,6 +350,27 @@ describe('reads/writes by role', () => {
     }));
   });
 
+  // REGRESSION: `projectFieldsAllowed`'s hasOnly describes the WHOLE document,
+  // not just the changed keys, so a field missing from that list denies every
+  // editor write to any project carrying it — not just writes that touch it.
+  // When the denormalized owner name/photo were added, omitting them there
+  // would have broken all editor renames on real projects while every existing
+  // test still passed, because this file's fixture predates those fields.
+  it('editor can still rename a project that carries the denormalized owner fields', async () => {
+    await seedProject(PROJECT_ID, baseProjectData({
+      ownerDisplayName: 'Owner Person',
+      ownerPhotoURL: 'https://example.com/avatar.png',
+    }));
+    const db = asUser(EDITOR);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), { name: 'Renamed by editor' }));
+  });
+
+  it('editor cannot set an over-long owner display name or photo URL', async () => {
+    const db = asUser(EDITOR);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), { ownerDisplayName: 'a'.repeat(201) }));
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), { ownerPhotoURL: 'a'.repeat(2001) }));
+  });
+
   it('editor cannot set an empty or over-long name', async () => {
     const db = asUser(EDITOR);
     await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), { name: '' }));
@@ -863,6 +884,26 @@ describe('ownership transfer', () => {
         [OWNER]: collaboratorEntry('editor', 'Owner'),
       },
       updatedAt: new Date().toISOString(),
+    }));
+  });
+
+  // A transfer must also re-stamp the denormalized owner name/photo, or the
+  // project keeps advertising the OUTGOING owner (see resolveOwnerProfile in
+  // sharedProjectAccess.js). That makes them affected keys on the transfer
+  // write, so the allowlist has to admit them — this pins that, since the
+  // narrower ['ownerId','collaborators'] allowlist passes every other test
+  // in this describe block while silently breaking real transfers.
+  it('a transfer may also re-stamp the denormalized owner name/photo', async () => {
+    const db = asUser(OWNER);
+    const data = baseProjectData();
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      ownerId: EDITOR,
+      collaborators: {
+        ...data.collaborators,
+        [OWNER]: collaboratorEntry('editor', 'Owner'),
+      },
+      ownerDisplayName: 'Editor Person',
+      ownerPhotoURL: null,
     }));
   });
 

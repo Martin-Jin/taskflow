@@ -1408,6 +1408,21 @@
   overflow-wrap: break-word;
 }
 
+/* Shared-task comment author name (Collaborative Projects, Phase 3) — absent
+   for personal-task comments, which have no author fields to render. */
+.comment-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* An @-mention rendered inside comment text, visibly distinct from the
+   surrounding body — see utils/commentMentions.js's parseCommentBody. */
+.comment-mention {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
 .comment-meta {
   font-size: 11px;
   color: var(--color-text-secondary);
@@ -1497,6 +1512,51 @@
   height: 20px;
   border-radius: 3px;
   object-fit: cover;
+}
+
+/* Positioning context for the @-mention dropdown (Collaborative Projects,
+   Phase 3) — anchored above the input bar rather than at the caret's exact
+   pixel position, unlike SmartTitleInput's MentionDropdown/backdrop-overlay
+   setup: the comment composer is a single-line input near the bottom of the
+   modal, so a caret-precise popup isn't worth duplicating that heavier
+   measuring machinery for. */
+.comment-input-bar-wrapper {
+  position: relative;
+}
+
+/* Shown in place of the composer for viewer-role collaborators (Phase 3 fix)
+   — a deliberate permission state, not an error, so it's styled muted/neutral
+   rather than reusing .form-warning's danger-colored treatment. */
+.comment-viewonly-note {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+}
+
+.comment-viewonly-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.comment-mention-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-width: min(280px, 100%);
+  margin-bottom: 4px;
+}
+
+.comment-mention-dropdown .account-avatar {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
 }
 
 .comment-input-bar {

@@ -40,9 +40,10 @@ const MAX_VISIBLE_AVATARS = 3;
  * @param {string|null|undefined} props.uid - The current user's Firebase uid (from `useAuth().user?.uid`).
  * @param {'compact'|'detailed'} [props.variant] - Defaults to 'compact'.
  * @param {string} [props.ownerDisplayName] - Only used by 'shared-with-me' in the 'detailed' variant — the
- *   owner's display name to show alongside your role. Callers that don't have it (owner uids aren't
- *   resolvable client-side beyond what the shared project doc itself carries) may omit it; the badge
- *   falls back to a generic "Shared with you" without a name.
+ *   owner's display name to show alongside your role. Callers should source this from the denormalized
+ *   `sharedProject.ownerDisplayName` (see sharedProjectAccess.js's `resolveOwnerProfile`, which also
+ *   falls back to live presence then a generic label) rather than leaving it unresolved; a caller that
+ *   omits it entirely just gets the generic "Shared with you" fallback below.
  */
 export default function SharedProjectBadge({ project, sharedProject, uid, variant = 'compact', ownerDisplayName }) {
   const result = getProjectShareState(project, sharedProject, uid);

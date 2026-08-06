@@ -187,11 +187,14 @@ service cloud.firestore {
           && recipientIsRealAccount()
           // Outgoing owner is retained as an editor, not dropped.
           && incoming().collaborators[request.auth.uid].role == 'editor'
-          // A transfer touches ownership and membership and nothing else. The
-          // share tokens aren't on this document at all (private/links), so a
+          // A transfer touches ownership, membership, and the denormalized
+          // owner-profile fields (ownerDisplayName/ownerPhotoURL — see
+          // sharedProjectService.js's createSharedProject/
+          // transferSharedProjectOwnership) and nothing else. The share
+          // tokens aren't on this document at all (private/links), so a
           // transfer can't disturb them.
           && request.resource.data.diff(existing()).affectedKeys()
-               .hasOnly(['ownerId', 'collaborators']);
+               .hasOnly(['ownerId', 'collaborators', 'ownerDisplayName', 'ownerPhotoURL']);
       }
 
       // --- Editor writes -----------------------------------------------
@@ -204,13 +207,25 @@ service cloud.firestore {
       // of. Unconstrained, an editor could append arbitrary junk (a 500KB blob
       // was confirmed in review) to a document every member downloads on every
       // read — a storage/bandwidth cost borne by everyone, including the owner.
+      // `ownerDisplayName`/`ownerPhotoURL` are in this list only so an editor's
+      // ordinary write isn't rejected for carrying fields the document legitimately
+      // has — `hasOnly` describes the whole document, not just what changed, so
+      // omitting them here would deny EVERY editor write to a project that has
+      // them. Editors can't meaningfully abuse them: `accessFieldsUnchanged()`
+      // leaves them writable, but they're display-only strings, size-capped
+      // below, and an editor who garbles them can already rename the project.
       function projectFieldsAllowed() {
-        return incoming().keys().hasOnly(['ownerId', 'name', 'color', 'collaborators', 'createdAt', 'updatedAt'])
+        return incoming().keys().hasOnly(['ownerId', 'name', 'color', 'collaborators', 'createdAt', 'updatedAt', 'ownerDisplayName', 'ownerPhotoURL'])
           && incoming().name is string
           && incoming().name.size() > 0
           && incoming().name.size() <= 200
           && (!('color' in incoming())
-              || (incoming().color is string && incoming().color.size() <= 40));
+              || (incoming().color is string && incoming().color.size() <= 40))
+          && (!('ownerDisplayName' in incoming())
+              || (incoming().ownerDisplayName is string && incoming().ownerDisplayName.size() <= 200))
+          && (!('ownerPhotoURL' in incoming())
+              || incoming().ownerPhotoURL == null
+              || (incoming().ownerPhotoURL is string && incoming().ownerPhotoURL.size() <= 2000));
       }
       function accessFieldsUnchanged() {
         return incoming().ownerId == existing().ownerId
@@ -411,6 +426,20 @@ service cloud.firestore {
         // nobody can post under someone else's name, and existing comments
         // can only be deleted by their author or the project owner (no
         // editing others' messages).
+        //
+        // ABANDONED DESIGN — Phase 3 did NOT build this subcollection. Actual
+        // comments are stored embedded in the task document's own `comments`
+        // array field instead, so they fall under the `tasks/{taskId}` rule
+        // above (`parentOwner() || parentEditor()` — no viewer carve-out).
+        // That means a viewer's comment write is denied at the whole-task
+        // level, not granted here as this block's own comment claims — the
+        // client renders the comment composer read-only for viewers instead
+        // (see TaskDetailModal.jsx) rather than loosening this task rule,
+        // since a per-field "only the comments array changed" exception
+        // isn't cheaply expressible in rules and widening the whole-task
+        // write would let a viewer edit title/dates/completion too. This
+        // match block is kept only as a leftover of the earlier subcollection
+        // design; it grants nothing to comments in practice.
         match /comments/{commentId} {
           allow read: if parentOwner() || parentCollaborator();
           allow create: if (parentOwner() || parentCollaborator())

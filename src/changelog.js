@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '2.5.0',
+    date: '2026-08-06',
+    title: 'Comment threads on shared tasks now show who said what',
+    changes: [
+      "Comments on a shared project's tasks now show each person's name and photo, instead of showing your own avatar on every comment in the thread.",
+      'Type "@" in a comment to mention a collaborator by name — it inserts a stable reference that keeps pointing at the right person even if they change their display name later.',
+      'Only the person who wrote a comment (or the project owner) can delete it. Comments on your own personal, non-shared tasks work exactly as before.',
+      'View-only collaborators see a note that commenting needs edit access, rather than a comment box that would never post.',
+      "The project owner's name and photo now show in the collaborator list and @-mention suggestions even when the owner isn't currently online.",
+    ],
+  },
+  {
     version: '2.4.2',
     date: '2026-08-06',
     title: 'Fixes for shared projects',

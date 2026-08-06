@@ -324,10 +324,10 @@ See `src/types/index.js` for full JSDoc typedefs.
 
 | Type | Purpose |
 |---|---|
-| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, capped at 2 levels deep — see "Sub-tasks and containers"), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed; capped at `MAX_COMMENTS_PER_TASK` (200) per task — see `SchedulerContext.addComment` — since `comments` lives inside the single per-user Firestore doc rewritten on every sync push). |
+| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, capped at 2 levels deep — see "Sub-tasks and containers"), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed; capped at `MAX_COMMENTS_PER_TASK` (200) per task — see `SchedulerContext.addComment`/`deleteComment`). Always the embedded `Task.comments` array, even for a shared task's task — there is no separate comments subcollection (see "Shared projects" below). On a shared task's comment only, `authorUid`/`authorDisplayName`/`authorPhotoURL`/`mentions` are additionally populated (denormalized at post time) so the thread can attribute and @-mention collaborators — see `utils/commentMentions.js`. |
 | `Section` | A Todoist Section — Board view column |
 | `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar. Optional `ownerId`/`sharedProjectId` mark it as a collaborative project (see "Shared projects" below); a personal project has neither |
-| `SharedProject` | A project shared with other users, living in its own top-level `sharedProjects/{projectId}` Firestore doc rather than inside `users/{uid}` — holds `ownerId` and a `collaborators` map. Deliberately does NOT hold the view/edit share links/tokens — see "Shared projects" below |
+| `SharedProject` | A project shared with other users, living in its own top-level `sharedProjects/{projectId}` Firestore doc rather than inside `users/{uid}` — holds `ownerId`, a `collaborators` map, and denormalized `ownerDisplayName`/`ownerPhotoURL` (set at creation and kept current across an ownership transfer, so the owner's name/photo is readable even while they're offline — see `utils/sharedProjectAccess.js`'s `resolveOwnerProfile`). Deliberately does NOT hold the view/edit share links/tokens — see "Shared projects" below |
 | `Collaborator` | One entry in `SharedProject.collaborators`: role (`viewer`/`editor`), display name, photo, joined-at. The owner is deliberately NOT in this map — they're identified by `ownerId` |
 | `ScheduledBlock` | A concrete dated/timed slice of a `Task` on the calendar |
 | `FixedRoutine` | Recurring non-negotiable time (sleep, meals, commute) |
@@ -341,10 +341,21 @@ See `src/types/index.js` for full JSDoc typedefs.
 Personal projects live entirely inside the owner's `users/{uid}` doc, as they
 always have. Sharing is **opt-in per project**: only a project explicitly
 turned into a shared one moves into its own top-level
-`sharedProjects/{projectId}` doc (with its `tasks`/`sections`/`comments` as
+`sharedProjects/{projectId}` doc (with its `tasks`/`sections` as
 subcollections), and gains `ownerId` + `sharedProjectId` on the local
 `Project` record so app code knows which store to read/write. Nothing is
-migrated retroactively.
+migrated retroactively. Comments are NOT a separate subcollection despite an
+earlier draft of `firestore.rules` having one (that block is still present in
+the rules file but explicitly commented as abandoned/unused) — they're just
+the existing embedded `Task.comments` array, so they sync for free through
+the same per-task diff as every other task field (see
+`utils/sharedTaskSync.js`). One consequence: a comment write is really a
+write to the whole task document, so `firestore.rules`' `tasks/{taskId}`
+rule (`parentOwner() || parentEditor()`, no viewer carve-out) applies to it
+too — a viewer-role collaborator cannot post or delete a comment. Rather than
+widening that rule (which would let a viewer edit every other task field,
+not just comments), `TaskDetailModal` renders the comment thread read-only
+for viewers.
 
 Access rules (`firestore.rules`) — the app's first cross-user data path, so
 the constraints are deliberate and worth understanding before touching them:

@@ -126,6 +126,14 @@ import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
 import { getEffectiveEstimatedHours, findNearestAncestorDueDate, getAllDescendants } from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';
+import {
+  findActiveMentionSpan,
+  getMentionCandidates,
+  filterMentionCandidates,
+  insertMention,
+  parseCommentBody,
+} from '../../utils/commentMentions';
+import { computeEffectiveRole, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
 
 // Default estimated hours for a quick-added sub-task — matches
 // AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
@@ -205,6 +213,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     addComment,
     deleteComment,
     setNotification,
+    sharedProjects,
+    viewersByProject,
   } = useScheduler();
 
   // Which task this modal instance currently displays. Starts as the task it
@@ -316,7 +326,103 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [commentError, setCommentError] = useState('');
   const [lightboxAttachment, setLightboxAttachment] = useState(null);
   const commentFileInputRef = useRef(null);
+  const commentInputRef = useRef(null);
   const atCommentCap = (task.comments?.length || 0) >= MAX_COMMENTS_PER_TASK;
+
+  // @-mention autocomplete (Collaborative Projects, Phase 3) — shared tasks
+  // only, see the "isShared"-gated candidate list below. `mentionSpan` is
+  // the in-progress "@query" the caret currently sits at the end of (see
+  // utils/commentMentions.js's findActiveMentionSpan), null when the caret
+  // isn't inside one.
+  const isSharedTask = !!task.sharedProjectId;
+  const sharedProject = isSharedTask ? sharedProjects?.[task.sharedProjectId] : null;
+  const [mentionSpan, setMentionSpan] = useState(null);
+  const [mentionHighlight, setMentionHighlight] = useState(0);
+
+  // The owner has no entry in `collaborators` (see SharedProject typedef) —
+  // resolveOwnerProfile prefers the denormalized ownerDisplayName/
+  // ownerPhotoURL on the project doc (durable, works while the owner's
+  // offline), falling back to live presence and then a generic label for a
+  // project doc that predates that field.
+  const ownerProfile = sharedProject
+    ? resolveOwnerProfile(sharedProject, viewersByProject?.[task.sharedProjectId], sharedProject.ownerId)
+    : null;
+
+  // Viewer-role collaborators see a read-only comment thread (Phase 3 fix):
+  // comments are stored EMBEDDED in the task document's `comments` array, not
+  // in the abandoned `comments` subcollection firestore.rules still has a
+  // block for (see its stale comment there for the full story) — so a
+  // comment write is really a write to the whole task, and `tasks/{taskId}`'s
+  // rule only allows `parentOwner() || parentEditor()`. Widening that rule to
+  // include viewers would let them edit every other field on the task too
+  // (title, dates, completion), not just append a comment, since rules can't
+  // cheaply express "only the comments array changed" — so instead the UI
+  // hides/disables the composer for viewers rather than showing a write that
+  // would just fail against Firestore.
+  const myRole = isSharedTask ? computeEffectiveRole(sharedProject, user?.uid) : null;
+  const isReadOnlyViewer = isSharedTask && myRole === 'viewer';
+  const mentionCandidates = useMemo(() => {
+    if (!sharedProject) return [];
+    return getMentionCandidates({
+      ownerId: sharedProject.ownerId,
+      collaborators: sharedProject.collaborators,
+      currentUid: user?.uid,
+      ownerDisplayName: ownerProfile?.displayName,
+      ownerPhotoURL: ownerProfile?.photoURL,
+    });
+  }, [sharedProject, user?.uid, ownerProfile]);
+  const mentionMatches = mentionSpan ? filterMentionCandidates(mentionSpan.query, mentionCandidates) : [];
+  const mentionDropdownOpen = isSharedTask && !!mentionSpan && mentionMatches.length > 0;
+
+  /** Re-derive the active "@query" span from the input's current caret position. */
+  function refreshMentionSpan(nextText) {
+    if (!isSharedTask) return;
+    const el = commentInputRef.current;
+    const caret = el ? el.selectionStart : null;
+    const span = caret == null ? null : findActiveMentionSpan(nextText, caret);
+    setMentionSpan(span);
+    setMentionHighlight(0);
+  }
+
+  function selectMention(candidate) {
+    const el = commentInputRef.current;
+    const caret = el ? el.selectionStart : commentText.length;
+    if (!mentionSpan) return;
+    const { text: nextText, caret: nextCaret } = insertMention(commentText, mentionSpan, candidate, caret);
+    setCommentText(nextText);
+    setMentionSpan(null);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  /** Returns true if it handled the key (caller should preventDefault). */
+  function handleCommentInputKeyDown(e) {
+    if (mentionDropdownOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionHighlight((i) => Math.min(i + 1, mentionMatches.length - 1));
+        return true;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionHighlight((i) => Math.max(i - 1, 0));
+        return true;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionSpan(null);
+        return true;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        selectMention(mentionMatches[mentionHighlight]);
+        return true;
+      }
+    }
+    return false;
+  }
 
   // Revoke the previous object URL whenever the pending attachment changes
   // (new file picked, removed, or comment posted) so picking several image
@@ -366,6 +472,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   }
 
   async function handlePostComment() {
+    if (isReadOnlyViewer) return; // Defense in depth — UI already hides the composer for viewers.
     const text = commentText.trim();
     if (!text && !commentFile) return;
     if (atCommentCap) {
@@ -377,6 +484,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     try {
       await addComment(task.id, { text, file: commentFile });
       setCommentText('');
+      setMentionSpan(null);
       handleRemoveCommentFile();
     } catch (err) {
       setCommentError(err.message || 'Failed to post comment.');
@@ -1917,51 +2025,80 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   Comments{task.comments?.length ? ` (${task.comments.length}/${MAX_COMMENTS_PER_TASK})` : ''}
                 </label>
                 <div className="comment-list">
-                  {(task.comments || []).map((c) => (
-                    <div key={c.id} className="comment-row">
-                      {user?.photoURL ? (
-                        <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="account-avatar" />
-                      ) : (
-                        <span className="account-avatar account-avatar-fallback">
-                          {(user?.displayName || user?.email || '?')[0].toUpperCase()}
-                        </span>
-                      )}
-                      <div className="comment-body">
-                        {c.text && <p className="comment-text">{c.text}</p>}
-                        {c.attachment &&
-                          (c.attachment.type.startsWith('image/') ? (
-                            <button
-                              type="button"
-                              className="comment-attachment-thumb"
-                              onClick={() => setLightboxAttachment(c.attachment)}
-                            >
-                              <img src={c.attachment.url} alt={c.attachment.name} />
-                            </button>
-                          ) : (
-                            <a
-                              href={c.attachment.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="comment-attachment-file"
-                            >
-                              <FileIcon size={14} />
-                              <span className="comment-attachment-file-name">{c.attachment.name}</span>
-                              <span className="comment-attachment-file-size">{formatFileSize(c.attachment.size)}</span>
-                            </a>
-                          ))}
-                        <span className="comment-meta">{formatDisplayDateTime(c.createdAt)}</span>
+                  {(task.comments || []).map((c) => {
+                    // Personal-task comments have no author fields (see
+                    // Comment typedef) — every comment there was posted by
+                    // the current user, so this falls back to `user` for
+                    // avatar/name exactly like it always has. A shared
+                    // task's comment renders ITS OWN stored author instead
+                    // (Phase 3) — this used to hardcode the CURRENT user for
+                    // every row, which was wrong as soon as anyone else
+                    // posted.
+                    const authorName = c.authorDisplayName || user?.displayName || user?.email || '?';
+                    const authorPhotoURL = c.authorUid ? c.authorPhotoURL : user?.photoURL;
+                    return (
+                      <div key={c.id} className="comment-row">
+                        {authorPhotoURL ? (
+                          <img src={authorPhotoURL} alt="" referrerPolicy="no-referrer" className="account-avatar" />
+                        ) : (
+                          <span className="account-avatar account-avatar-fallback">{authorName[0].toUpperCase()}</span>
+                        )}
+                        <div className="comment-body">
+                          {isSharedTask && c.authorDisplayName && (
+                            <span className="comment-author">{c.authorDisplayName}</span>
+                          )}
+                          {c.text && (
+                            <p className="comment-text">
+                              {parseCommentBody(c.text).map((seg, i) =>
+                                seg.type === 'mention' ? (
+                                  <span key={i} className="comment-mention">
+                                    @{seg.displayName}
+                                  </span>
+                                ) : (
+                                  <React.Fragment key={i}>{seg.value}</React.Fragment>
+                                )
+                              )}
+                            </p>
+                          )}
+                          {c.attachment &&
+                            (c.attachment.type.startsWith('image/') ? (
+                              <button
+                                type="button"
+                                className="comment-attachment-thumb"
+                                onClick={() => setLightboxAttachment(c.attachment)}
+                              >
+                                <img src={c.attachment.url} alt={c.attachment.name} />
+                              </button>
+                            ) : (
+                              <a
+                                href={c.attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="comment-attachment-file"
+                              >
+                                <FileIcon size={14} />
+                                <span className="comment-attachment-file-name">{c.attachment.name}</span>
+                                <span className="comment-attachment-file-size">{formatFileSize(c.attachment.size)}</span>
+                              </a>
+                            ))}
+                          <span className="comment-meta">{formatDisplayDateTime(c.createdAt)}</span>
+                        </div>
+                        {/* Deleting a comment is also a task write (embedded array) — same
+                            rules gap as posting, so hidden for read-only viewers too. */}
+                        {!isReadOnlyViewer && (
+                          <button
+                            type="button"
+                            className="btn btn-icon comment-remove"
+                            onClick={() => deleteComment(task.id, c.id)}
+                            style={{ color: 'var(--color-danger)' }}
+                            aria-label="Delete comment"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        className="btn btn-icon comment-remove"
-                        onClick={() => deleteComment(task.id, c.id)}
-                        style={{ color: 'var(--color-danger)' }}
-                        aria-label="Delete comment"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {(commentError || atCommentCap) && (
@@ -1988,49 +2125,94 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   </div>
                 )}
 
-                <div className="comment-input-bar">
-                  <input
-                    type="text"
-                    value={commentText}
-                    onChange={(e) => setCommentText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handlePostComment();
+                {isReadOnlyViewer ? (
+                  <p className="comment-viewonly-note">
+                    <Lock size={13} aria-hidden="true" />
+                    <span>Commenting needs edit access on this project — ask the owner for editor access to reply.</span>
+                  </p>
+                ) : (
+                <div className="comment-input-bar-wrapper">
+                  {mentionDropdownOpen && (
+                    <ul className="mention-dropdown comment-mention-dropdown" role="listbox">
+                      {mentionMatches.map((candidate, i) => (
+                        <li key={candidate.uid} role="presentation">
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={i === mentionHighlight}
+                            className={`mention-dropdown-option ${i === mentionHighlight ? 'highlighted' : ''}`}
+                            onMouseEnter={() => setMentionHighlight(i)}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectMention(candidate);
+                            }}
+                          >
+                            {candidate.photoURL ? (
+                              <img src={candidate.photoURL} alt="" referrerPolicy="no-referrer" className="account-avatar" />
+                            ) : (
+                              <span className="account-avatar account-avatar-fallback">
+                                {candidate.displayName[0].toUpperCase()}
+                              </span>
+                            )}
+                            {candidate.displayName}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="comment-input-bar">
+                    <input
+                      ref={commentInputRef}
+                      type="text"
+                      value={commentText}
+                      onChange={(e) => {
+                        setCommentText(e.target.value);
+                        refreshMentionSpan(e.target.value);
+                      }}
+                      onKeyDown={(e) => {
+                        if (handleCommentInputKeyDown(e)) return;
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handlePostComment();
+                        }
+                      }}
+                      onKeyUp={() => refreshMentionSpan(commentText)}
+                      onClick={() => refreshMentionSpan(commentText)}
+                      onBlur={() => setMentionSpan(null)}
+                      onPaste={handleCommentPaste}
+                      placeholder={atCommentCap ? 'Comment limit reached' : isSharedTask ? 'Comment (type @ to mention)' : 'Comment'}
+                      disabled={isPostingComment || atCommentCap}
+                    />
+                    <input
+                      ref={commentFileInputRef}
+                      type="file"
+                      accept={ATTACHMENT_ACCEPT}
+                      style={{ display: 'none' }}
+                      onChange={handleCommentFileSelect}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-icon comment-attach-btn"
+                      onClick={() =>
+                        user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
                       }
-                    }}
-                    onPaste={handleCommentPaste}
-                    placeholder={atCommentCap ? 'Comment limit reached' : 'Comment'}
-                    disabled={isPostingComment || atCommentCap}
-                  />
-                  <input
-                    ref={commentFileInputRef}
-                    type="file"
-                    accept={ATTACHMENT_ACCEPT}
-                    style={{ display: 'none' }}
-                    onChange={handleCommentFileSelect}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-icon comment-attach-btn"
-                    onClick={() =>
-                      user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
-                    }
-                    title={user ? 'Attach a file' : 'Sign in to attach files'}
-                    disabled={isPostingComment || atCommentCap}
-                  >
-                    <Paperclip size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-icon comment-send-btn"
-                    onClick={handlePostComment}
-                    disabled={isPostingComment || atCommentCap || (!commentText.trim() && !commentFile)}
-                    aria-label={isPostingComment ? 'Posting comment…' : 'Post comment'}
-                  >
-                    {isPostingComment ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
-                  </button>
+                      title={user ? 'Attach a file' : 'Sign in to attach files'}
+                      disabled={isPostingComment || atCommentCap}
+                    >
+                      <Paperclip size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-icon comment-send-btn"
+                      onClick={handlePostComment}
+                      disabled={isPostingComment || atCommentCap || (!commentText.trim() && !commentFile)}
+                      aria-label={isPostingComment ? 'Posting comment…' : 'Post comment'}
+                    >
+                      {isPostingComment ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
+                    </button>
+                  </div>
                 </div>
+                )}
               </div>
             </div>
 

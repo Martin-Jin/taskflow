@@ -15,5 +15,54 @@ service firebase.storage {
         && request.auth.uid == userId
         && request.resource.size <= 10 * 1024 * 1024;
     }
+
+    // Shared-project comment attachments (see attachmentService.js's
+    // buildAttachmentPath). These belong to the PROJECT, not to whichever
+    // collaborator happened to upload them — so membership, not uid
+    // ownership, is what decides access here.
+    //
+    // Storage rules CAN read Firestore via firestore.get(), so this enforces
+    // real membership rather than settling for "any signed-in user". That
+    // matters most for delete: without it, any signed-in account — including
+    // the anonymous ones this feature hands out to every share-link visitor
+    // — could destroy another project's attachments, and the app's own
+    // cleanup path swallows delete errors (see deleteCommentAttachment), so
+    // it would fail silently. Mirrors firestore.rules' own membership model:
+    // the owner is identified by `ownerId` and is NOT a key in
+    // `collaborators`, so both have to be checked separately.
+    //
+    // Costs a Firestore document read per evaluation, billed against the
+    // project's Firestore quota. The limit is two documents per evaluation;
+    // this uses one, so a future condition may add at most one more.
+    //
+    // Writes are restricted to editors and the owner, matching the Firestore
+    // rule for the task document the attachment's comment is embedded in — a
+    // viewer can't post a comment at all, so they must not be able to upload
+    // the file that would accompany one. Deletes stay open to any member
+    // because the owner must be able to clean up a departed collaborator's
+    // files, which is the whole reason these moved off per-uid paths.
+    match /sharedProjects/{sharedProjectId}/attachments/{taskId}/{fileName} {
+      function project() {
+        return firestore.get(/databases/(default)/documents/sharedProjects/$(sharedProjectId)).data;
+      }
+      function isOwner() {
+        return project().ownerId == request.auth.uid;
+      }
+      function isMember() {
+        return isOwner() || request.auth.uid in project().collaborators;
+      }
+      function isEditor() {
+        return isOwner()
+          || (request.auth.uid in project().collaborators
+              && project().collaborators[request.auth.uid].role == 'editor');
+      }
+
+      allow read, delete: if request.auth != null && isMember();
+      // Same 10MB cap and same MAX_ATTACHMENT_BYTES sync requirement as the
+      // personal-attachment rule above.
+      allow create, update: if request.auth != null
+        && isEditor()
+        && request.resource.size <= 10 * 1024 * 1024;
+    }
   }
 }

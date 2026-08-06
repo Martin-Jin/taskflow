@@ -48,6 +48,7 @@ import { useTheme } from './ThemeContext';
 import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { playAddSound, playDeleteSound } from '../services/soundService';
 import { uploadCommentAttachment, deleteCommentAttachment } from '../services/attachmentService';
+import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import {
@@ -1436,6 +1437,15 @@ export function SchedulerProvider({ children }) {
    * uid-scoped); text-only comments work whether signed in or not, same as
    * every other local-first field.
    *
+   * AUTHOR ATTRIBUTION (Collaborative Projects, Phase 3): only stamped when
+   * the task belongs to a shared project (`sharedProjectId`) — a personal
+   * task has exactly one possible author, so authorUid/authorDisplayName/
+   * authorPhotoURL stay absent there (see Comment typedef). Denormalized at
+   * post time from the collaborator entry (or, for the owner, from `user`
+   * itself), so a later display-name change doesn't rewrite history.
+   * `mentions` is likewise only populated for a shared task's comment — see
+   * utils/commentMentions.js's extractMentionUids.
+   *
    * Applies onto stateRef.current.tasks (the LATEST state), not the `tasks`
    * closed over at call time — an upload can take a while, and any
    * edit/delete that lands while it's in flight would otherwise be silently
@@ -1451,7 +1461,7 @@ export function SchedulerProvider({ children }) {
       let attachment = null;
       if (file) {
         if (!user) throw new Error('Sign in to attach files to a comment.');
-        attachment = await uploadCommentAttachment(user.uid, taskId, file);
+        attachment = await uploadCommentAttachment(user.uid, taskId, file, task?.sharedProjectId);
       }
       const newComment = {
         id: `comment_${Date.now()}`,
@@ -1459,23 +1469,64 @@ export function SchedulerProvider({ children }) {
         attachment,
         createdAt: new Date().toISOString(),
       };
+      if (task?.sharedProjectId && user) {
+        const sharedProject = sharedProjects[task.sharedProjectId];
+        const isOwner = sharedProject?.ownerId === user.uid;
+        const collaborator = sharedProject?.collaborators?.[user.uid];
+        newComment.authorUid = user.uid;
+        newComment.authorDisplayName = isOwner
+          ? user.displayName || user.email || 'Someone'
+          : collaborator?.displayName || user.displayName || 'Someone';
+        newComment.authorPhotoURL = isOwner ? user.photoURL || null : collaborator?.photoURL ?? user.photoURL ?? null;
+        // Validated against real membership, not just parsed out of the text:
+        // the mention token is typable by hand, so an unchecked list could name
+        // any uid at all. `currentUid` is deliberately omitted here (unlike the
+        // autocomplete's candidate list, which hides you from your own
+        // suggestions) so a self-mention still records rather than being
+        // dropped as bogus.
+        const mentions = extractValidMentionUids(
+          text || '',
+          getMentionCandidates({
+            ownerId: sharedProject?.ownerId,
+            collaborators: sharedProject?.collaborators,
+          })
+        );
+        if (mentions.length) newComment.mentions = mentions;
+      }
       const newTasks = stateRef.current.tasks.map((t) =>
         t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment] } : t
       );
       commit({ tasks: newTasks, blocks: stateRef.current.blocks }, 'Added comment');
     },
-    [commit, user]
+    [commit, user, sharedProjects]
   );
 
   /**
    * Remove a comment and, if it carried one, its attachment. The Storage
    * delete is best-effort (see deleteCommentAttachment) so a transient
    * failure there never blocks removing the comment itself.
+   *
+   * On a shared task, a comment may now be authored by someone else — only
+   * the comment's own author or the project owner may delete it (mirrors
+   * firestore.rules' abandoned-but-intent-setting comments subcollection
+   * rule: "author or owner, no editing/deleting others' messages"). Personal
+   * tasks are unaffected: every comment there is implicitly "authored" by
+   * the one possible user, so this check is a no-op for them.
    */
   const deleteComment = useCallback(
     (taskId, commentId) => {
       const task = tasks.find((t) => t.id === taskId);
       const comment = task?.comments?.find((c) => c.id === commentId);
+      if (!comment) return;
+      if (task?.sharedProjectId && comment.authorUid) {
+        const sharedProject = sharedProjects[task.sharedProjectId];
+        const isOwner = sharedProject?.ownerId === user?.uid;
+        const isAuthor = comment.authorUid === user?.uid;
+        if (!isOwner && !isAuthor) {
+          setNotification?.({ type: 'error', message: 'Only the comment author or project owner can delete this comment.' });
+          return;
+        }
+      }
       // See deleteTask's cleanup above for why this is skipped signed-out.
       if (comment?.attachment && user) deleteCommentAttachment(comment.attachment.path);
       const newTasks = tasks.map((t) =>
@@ -1483,7 +1534,7 @@ export function SchedulerProvider({ children }) {
       );
       commit({ tasks: newTasks, blocks }, 'Deleted comment');
     },
-    [tasks, blocks, commit, user]
+    [tasks, blocks, commit, user, sharedProjects, setNotification]
   );
 
   const toggleTaskLock = useCallback(
@@ -2136,7 +2187,12 @@ export function SchedulerProvider({ children }) {
       // that model was built before this.
       const sharedProjectId = generateLocalId('shared');
       try {
-        await createSharedProject(sharedProjectId, { ownerId: user.uid, name: project.name });
+        await createSharedProject(sharedProjectId, {
+          ownerId: user.uid,
+          name: project.name,
+          ownerDisplayName: user.displayName,
+          ownerPhotoURL: user.photoURL,
+        });
         // Move this project's tasks into the shared store, then tag them
         // locally so every consumer (Board, list, search) keeps rendering them
         // while the sync engine takes over their persistence.

@@ -12,6 +12,7 @@ import {
   isSharedProject,
   getProjectShareState,
   generateShareToken,
+  resolveOwnerProfile,
 } from '../../src/utils/sharedProjectAccess';
 
 function projectWithLinks({
@@ -668,6 +669,46 @@ describe('getProjectShareState', () => {
       state: 'shared-by-me',
       collaboratorCount: 0,
       collaborators: [],
+    });
+  });
+});
+
+describe('resolveOwnerProfile', () => {
+  it('prefers the denormalized ownerDisplayName/ownerPhotoURL on the project doc', () => {
+    const sharedProject = { ownerId: 'owner-1', ownerDisplayName: 'Alice', ownerPhotoURL: 'https://x/alice.png' };
+    expect(resolveOwnerProfile(sharedProject, [{ uid: 'owner-1', displayName: 'Stale Name', photoURL: null }], 'owner-1')).toEqual({
+      displayName: 'Alice',
+      photoURL: 'https://x/alice.png',
+    });
+  });
+
+  it('treats a denormalized name with no photo as photoURL: null, not undefined', () => {
+    const sharedProject = { ownerId: 'owner-1', ownerDisplayName: 'Alice' };
+    expect(resolveOwnerProfile(sharedProject, null, 'owner-1')).toEqual({ displayName: 'Alice', photoURL: null });
+  });
+
+  it('falls back to live presence when the doc has no denormalized owner profile (pre-existing doc)', () => {
+    const sharedProject = { ownerId: 'owner-1' };
+    const viewers = [{ uid: 'owner-1', displayName: 'Bob', photoURL: 'https://x/bob.png' }];
+    expect(resolveOwnerProfile(sharedProject, viewers, 'owner-1')).toEqual({
+      displayName: 'Bob',
+      photoURL: 'https://x/bob.png',
+    });
+  });
+
+  it('falls back to a generic label when neither the doc nor presence has the owner', () => {
+    expect(resolveOwnerProfile({ ownerId: 'owner-1' }, [], 'owner-1')).toEqual({
+      displayName: 'Project owner',
+      photoURL: null,
+    });
+    expect(resolveOwnerProfile(null, null, 'owner-1')).toEqual({ displayName: 'Project owner', photoURL: null });
+  });
+
+  it('ignores a viewer entry that is not the owner', () => {
+    const viewers = [{ uid: 'someone-else', displayName: 'Not The Owner', photoURL: null }];
+    expect(resolveOwnerProfile({ ownerId: 'owner-1' }, viewers, 'owner-1')).toEqual({
+      displayName: 'Project owner',
+      photoURL: null,
     });
   });
 });
