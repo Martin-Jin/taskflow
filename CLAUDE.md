@@ -4,16 +4,6 @@ React + Vite + Firebase task manager. `npm run build` is the per-change correctn
 check (catches type/import/build errors); a Vitest unit suite and a Playwright E2E
 suite exist too, but running them isn't required on every commit — see Testing.
 
-## Temporary model/effort cap (remove when user lifts it)
-
-**Until further notice: only Sonnet at medium effort, for the main session and
-every agent/subagent. Never use any agent or subagent above this (no high/xhigh/
-max effort, no Opus), for any task regardless of how hard it seems.** This
-overrides the per-tier guidance below — `hard-problem-solver` is temporarily
-capped at medium effort (its file has been annotated accordingly) instead of its
-normal high effort. Lower-cost tiers (e.g. `finder`'s Haiku/low) are unaffected,
-since they're below the cap, not above it.
-
 ## Model usage (token efficiency)
 
 Default to **Sonnet** for the main session. Scale up or down based on what the change
