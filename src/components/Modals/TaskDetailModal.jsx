@@ -1244,6 +1244,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   }
 
   function handleAddSubtask() {
+    if (isReadOnlyViewer) return; // Defense in depth — UI already hides the composer for viewers.
     const trimmed = newSubtaskTitle.trim();
     if (!trimmed || atMaxSubtaskDepth) return;
     // A sub-task is just a top-level task with `parentId` set — created via
@@ -1977,7 +1978,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       </button>
                     </div>
                   ))}
-                  {atMaxSubtaskDepth ? (
+                  {isReadOnlyViewer ? (
+                    <p className="comment-viewonly-note">
+                      <Lock size={13} aria-hidden="true" />
+                      <span>Adding sub-tasks needs edit access on this project — ask the owner for editor access.</span>
+                    </p>
+                  ) : atMaxSubtaskDepth ? (
                     <p className="form-hint">
                       Sub-tasks are capped at 2 levels deep — this task is already a sub-task of a sub-task, so it can't have its own.
                     </p>

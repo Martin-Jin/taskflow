@@ -209,6 +209,25 @@ export function planSharedTaskWrites({ tasks, projectId, syncedFingerprints, del
  * last-write-wins resumes. This is per-task, so one in-flight edit never blocks
  * unrelated collaborators' changes from landing.
  *
+ * A SECOND, NARROWER RACE — a task created but not yet pushed: `addTask`
+ * tags a new task's `sharedProjectId` synchronously (so it's already a local
+ * "shared task" the instant it's created), but the actual write to Firestore
+ * is debounced (see useSharedProjectSync's PUSH_DEBOUNCE_MS) and only marks it
+ * in `pending` when that debounced push actually fires. Any remote snapshot
+ * arriving inside that window — triggered by presence, a section write, or a
+ * collaborator's unrelated edit — used to see a task with no `pending` entry
+ * and no matching remote document and conclude it must have been deleted
+ * remotely, dropping it locally the instant it synced. `knownRemoteIds` is how
+ * this is told apart from a REAL remote delete: it's every id this client has
+ * ever confirmed exists in Firestore for this project (the caller's running
+ * syncedFingerprints map). A local task absent from both `remoteTasks` and
+ * `knownRemoteIds` has simply never been seen by the server yet — exactly the
+ * ambiguous "absence" this module's header warns deletes must never be
+ * inferred from — so it's kept, the same as a `pending` entry would keep it.
+ * Once the server confirms it (present in a snapshot, or added to
+ * `knownRemoteIds` by the caller), a later real removal is no longer ambiguous
+ * and still deletes it as before.
+ *
  * Recurring completion state is MERGED rather than replaced, per this module's
  * conflict-policy note — see recurrenceState.mergeRecurringState.
  *
@@ -217,13 +236,15 @@ export function planSharedTaskWrites({ tasks, projectId, syncedFingerprints, del
  * @param {object[]} params.remoteTasks - documents from this project's tasks subcollection
  * @param {string} params.projectId
  * @param {Map<string, string|null>} params.pending - taskId -> fingerprint we wrote (null = we wrote a delete)
+ * @param {Iterable<string>} [params.knownRemoteIds] - ids ever confirmed to exist server-side for this project (e.g. the caller's syncedFingerprints keys) — absence from here means "never pushed", not "deleted"
  * @param {string} [params.todayIso] - ISO date for re-deriving recurring fields on merge; defaults to the real current date (see mergeSharedTask)
  * @returns {{tasks: import('../types').Task[], confirmedIds: string[], removedIds: string[]}}
  *   `confirmedIds` can be dropped from `pending`; `removedIds` are tasks gone remotely (callers prune their blocks).
  */
-export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pending, todayIso }) {
+export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pending, knownRemoteIds, todayIso }) {
   const localById = new Map((localTasks || []).filter((t) => t?.sharedProjectId === projectId).map((t) => [t.id, t]));
   const remoteById = new Map((remoteTasks || []).map((d) => [d.id, deserializeSharedTask(d, projectId)]));
+  const knownRemoteIdSet = knownRemoteIds ? new Set(knownRemoteIds) : null;
 
   const confirmedIds = [];
   const removedIds = [];
@@ -261,6 +282,14 @@ export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pendin
     }
     if (pending?.has(id) && pending.get(id) === null) {
       confirmedIds.push(id); // our delete landed
+    }
+    if (!pending?.has(id) && knownRemoteIdSet && !knownRemoteIdSet.has(id)) {
+      // Never confirmed to exist server-side and not (yet) marked pending —
+      // this is a task created locally whose debounced push hasn't fired
+      // yet, not one the server ever had and lost. Absence alone is never
+      // evidence of a delete (see this function's doc comment) — keep it.
+      resolved.set(id, local);
+      continue;
     }
     removedIds.push(id);
   }
@@ -429,20 +458,25 @@ export function planSharedSectionWrites({ sections, projectId, syncedFingerprint
 /**
  * Decide how a remote section snapshot should be applied on top of local
  * state — the section equivalent of planRemoteTaskApply, including the same
- * in-flight-write race guard. Unlike tasks there is no recurring-completion
- * merge exception: a section is always taken wholesale from remote once its
- * pending write (if any) is confirmed (see this file's header for why plain
- * LWW is fine for sections).
+ * in-flight-write race guard AND the same "created but not yet pushed" guard
+ * (see planRemoteTaskApply's doc comment — `addSection` tags `sharedProjectId`
+ * synchronously the same way `addTask` does, so the identical debounce-window
+ * hole applies here via `knownRemoteIds`). Unlike tasks there is no
+ * recurring-completion merge exception: a section is always taken wholesale
+ * from remote once its pending write (if any) is confirmed (see this file's
+ * header for why plain LWW is fine for sections).
  * @param {object} params
  * @param {import('../types').Section[]} params.localSections
  * @param {object[]} params.remoteSections
  * @param {string} params.projectId
  * @param {Map<string, string|null>} params.pending
+ * @param {Iterable<string>} [params.knownRemoteIds] - ids ever confirmed to exist server-side for this project — see planRemoteTaskApply
  * @returns {{sections: import('../types').Section[], confirmedIds: string[], removedIds: string[]}}
  */
-export function planRemoteSectionApply({ localSections, remoteSections, projectId, pending }) {
+export function planRemoteSectionApply({ localSections, remoteSections, projectId, pending, knownRemoteIds }) {
   const localById = new Map((localSections || []).filter((s) => s?.sharedProjectId === projectId).map((s) => [s.id, s]));
   const remoteById = new Map((remoteSections || []).map((d) => [d.id, deserializeSharedSection(d, projectId)]));
+  const knownRemoteIdSet = knownRemoteIds ? new Set(knownRemoteIds) : null;
 
   const confirmedIds = [];
   const removedIds = [];
@@ -474,6 +508,13 @@ export function planRemoteSectionApply({ localSections, remoteSections, projectI
     }
     if (pending?.has(id) && pending.get(id) === null) {
       confirmedIds.push(id); // our delete landed
+    }
+    if (!pending?.has(id) && knownRemoteIdSet && !knownRemoteIdSet.has(id)) {
+      // Created locally, debounced push hasn't fired yet — never confirmed
+      // to exist server-side, so absence isn't evidence of a delete. See
+      // planRemoteTaskApply's identical guard.
+      resolved.set(id, local);
+      continue;
     }
     removedIds.push(id);
   }

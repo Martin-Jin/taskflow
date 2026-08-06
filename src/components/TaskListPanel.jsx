@@ -67,6 +67,7 @@ import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
+import { computeEffectiveRole } from '../utils/sharedProjectAccess';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
@@ -263,6 +264,16 @@ export default function TaskListPanel({
     [uncompleteTask, playUncomplete]
   );
   const activeProject = activeProjectId === ALL_TASKS_PROJECT_ID ? null : projects.find((p) => p.id === activeProjectId);
+
+  // A viewer-role collaborator can browse a shared project's List view but
+  // not add tasks to it — same precedent as BoardView's isSectionsReadOnly.
+  // "All Tasks" never counts as viewer-only: the FAB there opens AddTaskModal
+  // with no pre-selected project (Inbox), which is never itself a shared
+  // project, so there's nothing to gate at this level (AddTaskModal's own
+  // dropdown still excludes any viewer-only project the user might pick there).
+  const isActiveProjectViewerOnly =
+    !!activeProject?.sharedProjectId &&
+    computeEffectiveRole(sharedProjects[activeProject.sharedProjectId], user?.uid) === 'viewer';
 
   // If activeProjectId points at a project that no longer exists (e.g.
   // deleted from another tab, or via Todoist sync), fall back to "All
@@ -563,6 +574,7 @@ export default function TaskListPanel({
           onAddTask={() => setShowAddModal(true)}
           onAIQuickAdd={() => setShowAIQuickAdd(true)}
           onOpenSearch={isMobile ? onOpenSearch : undefined}
+          addTaskDisabled={isActiveProjectViewerOnly}
         />
       )}
 

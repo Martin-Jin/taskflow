@@ -284,6 +284,47 @@ describe('planRemoteTaskApply — the in-flight write race guard', () => {
     });
     expect(tasks.map((t) => t.id)).toEqual(['new']);
   });
+
+  it('REGRESSION: keeps a just-created local task with no `pending` entry yet — addTask tags sharedProjectId synchronously, but the debounced push (and thus `pending`) has not run yet, so a snapshot landing in that window must not treat "not pending, not remote, not yet known-remote" as deleted', () => {
+    const justCreated = sharedTask({ id: 'brand-new' });
+    const { tasks, removedIds } = planRemoteTaskApply({
+      localTasks: [justCreated],
+      remoteTasks: [], // server hasn't seen it yet, and there's no pending entry for it either
+      projectId: PROJECT,
+      pending: new Map(), // debounce window: nothing marked in-flight yet
+      knownRemoteIds: [], // never confirmed to exist server-side — exactly the ambiguous case
+    });
+    expect(tasks.map((t) => t.id)).toEqual(['brand-new']);
+    expect(removedIds).toEqual([]);
+  });
+
+  it('still removes a task genuinely deleted by a collaborator, once it was previously known to exist server-side', () => {
+    // Guards against a fix that's too permissive: a task the server used to
+    // have (present in knownRemoteIds) but no longer does must still disappear,
+    // even with no pending entry for it.
+    const local = sharedTask({ id: 'was-here' });
+    const { tasks, removedIds } = planRemoteTaskApply({
+      localTasks: [local],
+      remoteTasks: [],
+      projectId: PROJECT,
+      pending: new Map(),
+      knownRemoteIds: ['was-here'],
+    });
+    expect(tasks).toEqual([]);
+    expect(removedIds).toEqual(['was-here']);
+  });
+
+  it('without knownRemoteIds supplied at all (old callers), falls back to the pre-existing behaviour of removing an unpending local task', () => {
+    const local = sharedTask({ id: 'legacy' });
+    const { tasks, removedIds } = planRemoteTaskApply({
+      localTasks: [local],
+      remoteTasks: [],
+      projectId: PROJECT,
+      pending: new Map(),
+    });
+    expect(tasks).toEqual([]);
+    expect(removedIds).toEqual(['legacy']);
+  });
 });
 
 describe('mergeSharedTask — last-write-wins, except for recurring completions', () => {

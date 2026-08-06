@@ -221,9 +221,13 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const selectedProject = sortedProjects.find((p) => p.id === selectedProjectId);
 
   // A viewer on a shared project may look at the board but not touch its
-  // sections — same precedent as TaskDetailModal's read-only comment
-  // composer for a viewer. Rules already refuse the write server-side; this
-  // just keeps the UI from showing controls that would silently fail.
+  // sections OR add tasks to it — same precedent as TaskDetailModal's
+  // read-only comment composer for a viewer. Rules already refuse the write
+  // server-side; this just keeps the UI from showing controls that would
+  // silently fail. Also gates the per-column/flat-list "Add task" buttons
+  // below (isSectionsReadOnly's name predates that use, but the underlying
+  // check — "is the current user a viewer on this shared project" — applies
+  // to both).
   const isSectionsReadOnly =
     !!selectedProject?.sharedProjectId &&
     computeEffectiveRole(sharedProjects[selectedProject.sharedProjectId], user?.uid) === 'viewer';
@@ -459,6 +463,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
         onAddTask={() => setAddingToSectionId('')}
         onAIQuickAdd={() => setShowAIQuickAdd(true)}
         onOpenSearch={onOpenSearch}
+        addTaskDisabled={isSectionsReadOnly}
       />
 
       {!selectedProject ? (
@@ -596,10 +601,12 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                 {col.tasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
               </div>
 
-              <button className="board-add-task" onClick={() => setAddingToSectionId(col.id ?? '')}>
-                <Plus size={13} />
-                Add task
-              </button>
+              {!isSectionsReadOnly && (
+                <button className="board-add-task" onClick={() => setAddingToSectionId(col.id ?? '')}>
+                  <Plus size={13} />
+                  Add task
+                </button>
+              )}
             </div>
           ))}
 
