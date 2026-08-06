@@ -13,8 +13,10 @@
  *    query — clicking one opens that task directly (via `onSelectTask`)
  *    rather than filling the search box, since the intent is to jump to it.
  *  - While the last word being typed is non-empty, it also lists matching
- *    Projects and Labels/tags (this part predates and is independent of the
- *    Tasks suggestions above). Clicking a project navigates to it (via
+ *    Projects (ranked/typo-tolerant via nameSearch.js's rankByNameSearch,
+ *    the same matcher used everywhere else project names are searched) and
+ *    Labels/tags (this part predates and is independent of the Tasks
+ *    suggestions above). Clicking a project navigates to it (via
  *    `onSelectProject`) and clears the query. Clicking a tag commits the
  *    word being typed into an "@tag" token instead of navigating.
  *  - A leading "#" (bare, or with text after it — e.g. "#pro") narrows the
@@ -33,9 +35,11 @@
  * mobile toolbar row.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, Folder, Tag, CheckSquare } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
+import { rankByNameSearch } from '../../utils/nameSearch';
 
 export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask }) {
   const { searchQuery, setSearchQuery, projects, labels, tasks } = useScheduler();
@@ -82,7 +86,7 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
 
   const matchingProjects =
     activeWordIsProject || (activeWordText && !activeWordIsTag)
-      ? projects.filter((p) => !activeWordText || p.name.toLowerCase().includes(activeWordText)).slice(0, 5)
+      ? rankByNameSearch(activeWordText, projects.map((p) => ({ ...p, label: p.name }))).slice(0, 5)
       : [];
   const matchingLabels =
     activeWordText && !activeWordIsProject
@@ -128,6 +132,27 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
     onSelectTask?.(task.id);
   }
 
+  // Flattened, in-display-order list of the dropdown's rows (Tasks group,
+  // then its "Show completed" pseudo-row, then Projects, then Labels) so the
+  // shared keyboard-nav hook can drive one highlighted index across all of
+  // them, same as CommandPalette's grouped-but-flat list. The input itself
+  // stays bound directly to the raw `searchQuery` string throughout — Arrow/
+  // Enter only move/activate the highlighted row, never touch the text.
+  const flatItems = useMemo(() => {
+    const items = matchingTasks.map((t) => ({ key: `task-${t.id}`, run: () => selectTask(t) }));
+    if (hasHiddenCompletedMatches) items.push({ key: 'show-completed', run: () => setShowCompleted(true) });
+    items.push(...matchingProjects.map((p) => ({ key: `project-${p.id}`, run: () => goToProject(p) })));
+    items.push(...matchingLabels.map((l) => ({ key: `label-${l.id}`, run: () => applyTag(l.name) })));
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchingTasks, hasHiddenCompletedMatches, matchingProjects, matchingLabels]);
+
+  const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
+    itemCount: showDropdown ? flatItems.length : 0,
+    onSelect: (index) => flatItems[index]?.run(),
+    resetKey: searchQuery,
+  });
+
   return (
     <div className="search-bar" ref={rootRef}>
       {appliedTagTokens.length > 0 && (
@@ -149,9 +174,14 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
         <input
           type="text"
           className="search-bar-input"
+          role="combobox"
+          aria-expanded={showDropdown}
+          aria-controls="search-bar-listbox"
+          aria-activedescendant={showDropdown && flatItems[activeIndex] ? `search-bar-option-${flatItems[activeIndex].key}` : undefined}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onFocus={() => setIsFocused(true)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
         />
         {searchQuery && (
@@ -162,27 +192,42 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
       </div>
 
       {showDropdown && (
-        <div className="search-bar-dropdown">
+        <div className="search-bar-dropdown" id="search-bar-listbox" role="listbox" ref={listRef}>
           {(matchingTasks.length > 0 || hasHiddenCompletedMatches) && (
             <div className="search-bar-dropdown-group">
               <div className="search-bar-dropdown-label">Tasks</div>
-              {matchingTasks.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className="search-bar-dropdown-item"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => selectTask(t)}
-                >
-                  <CheckSquare size={13} />
-                  <span className="search-bar-dropdown-item-label">{t.title}</span>
-                </button>
-              ))}
+              {matchingTasks.map((t) => {
+                const index = flatItems.findIndex((it) => it.key === `task-${t.id}`);
+                return (
+                  <button
+                    key={t.id}
+                    id={`search-bar-option-task-${t.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    data-active={index === activeIndex}
+                    className={`search-bar-dropdown-item ${index === activeIndex ? 'active' : ''}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => selectTask(t)}
+                  >
+                    <CheckSquare size={13} />
+                    <span className="search-bar-dropdown-item-label">{t.title}</span>
+                  </button>
+                );
+              })}
               {hasHiddenCompletedMatches && (
                 <button
+                  id="search-bar-option-show-completed"
                   type="button"
-                  className="search-bar-dropdown-item search-bar-dropdown-show-completed"
+                  role="option"
+                  aria-selected={flatItems[activeIndex]?.key === 'show-completed'}
+                  data-active={flatItems[activeIndex]?.key === 'show-completed'}
+                  className={`search-bar-dropdown-item search-bar-dropdown-show-completed ${
+                    flatItems[activeIndex]?.key === 'show-completed' ? 'active' : ''
+                  }`}
                   onMouseDown={(e) => e.preventDefault()}
+                  onMouseEnter={() => setActiveIndex(flatItems.findIndex((it) => it.key === 'show-completed'))}
                   onClick={() => setShowCompleted(true)}
                 >
                   <CheckSquare size={13} />
@@ -194,34 +239,50 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
           {matchingProjects.length > 0 && (
             <div className="search-bar-dropdown-group">
               <div className="search-bar-dropdown-label">Projects</div>
-              {matchingProjects.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="search-bar-dropdown-item"
-                  onClick={() => goToProject(p)}
-                >
-                  <Folder size={13} />
-                  {p.name}
-                </button>
-              ))}
+              {matchingProjects.map((p) => {
+                const index = flatItems.findIndex((it) => it.key === `project-${p.id}`);
+                return (
+                  <button
+                    key={p.id}
+                    id={`search-bar-option-project-${p.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    data-active={index === activeIndex}
+                    className={`search-bar-dropdown-item ${index === activeIndex ? 'active' : ''}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => goToProject(p)}
+                  >
+                    <Folder size={13} />
+                    {p.name}
+                  </button>
+                );
+              })}
             </div>
           )}
           {matchingLabels.length > 0 && (
             <div className="search-bar-dropdown-group">
               <div className="search-bar-dropdown-label">Tags</div>
-              {matchingLabels.map((l) => (
-                <button
-                  key={l.id}
-                  type="button"
-                  className="search-bar-dropdown-item"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => applyTag(l.name)}
-                >
-                  <Tag size={13} style={{ color: l.color }} />
-                  {l.name}
-                </button>
-              ))}
+              {matchingLabels.map((l) => {
+                const index = flatItems.findIndex((it) => it.key === `label-${l.id}`);
+                return (
+                  <button
+                    key={l.id}
+                    id={`search-bar-option-label-${l.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    data-active={index === activeIndex}
+                    className={`search-bar-dropdown-item ${index === activeIndex ? 'active' : ''}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => applyTag(l.name)}
+                  >
+                    <Tag size={13} style={{ color: l.color }} />
+                    {l.name}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

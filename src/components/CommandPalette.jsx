@@ -6,23 +6,40 @@
  * has, e.g. runRebalance/toggleTheme) — and lets arrow keys + Enter drive
  * the flattened result list without leaving the keyboard.
  *
+ * Views/Projects/Actions all rank via nameSearch.js's shared rankByNameSearch
+ * (the same typo-tolerant matcher used everywhere else names are searched).
+ * Tasks keeps its own local `fuzzyScore`/`fuzzyFilterTasks` below — task
+ * titles are long free text, not short names, and that scorer's streak-
+ * weighted subsequence ranking suits them better than the shared matcher
+ * would (see `fuzzyScore`'s doc comment for why).
+ *
  * Tasks only search once a query is typed (an unfiltered dump of every task
  * isn't a useful "recent/quick" list the way Views/Projects/Actions are),
  * capped at 8 results so a large task list doesn't turn this into a second
  * full task browser.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { X, Search, Folder, CheckSquare2, Zap } from 'lucide-react';
 import { useAnimatedUnmount } from '../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL } from '../utils/projectConstants';
+import { rankByNameSearch } from '../utils/nameSearch';
 
 /**
- * Small local fuzzy-match scorer (no new dependency for a "jump to
- * anything" list this size) — an exact substring match always outranks a
- * scattered one, and among substring matches, an earlier/tighter one wins.
- * Non-matching subsequences return -Infinity so callers can filter them out.
+ * Small local fuzzy-match scorer, kept only for the Tasks group — task
+ * titles are long, multi-word free text, and this scorer's streak-weighted
+ * subsequence scoring (a tighter/denser subsequence match ranks above a
+ * scattered one) is tuned for that; nameSearch.js's rankByNameSearch is
+ * tuned instead for short names (projects/views/actions) with per-word
+ * typo-tolerant fuzzy matching, which doesn't rank long titles as well and
+ * would degrade Tasks results. Views/Projects/Actions all use the shared
+ * matcher below instead, so this is intentionally the one place two
+ * matchers coexist — see this file's `groups` for how each group picks.
+ * An exact substring match always outranks a scattered one, and among
+ * substring matches, an earlier/tighter one wins. Non-matching subsequences
+ * return -Infinity so callers can filter them out.
  */
 function fuzzyScore(text, query) {
   const t = text.toLowerCase();
@@ -42,7 +59,7 @@ function fuzzyScore(text, query) {
   return score;
 }
 
-function fuzzyFilter(items, query, toText) {
+function fuzzyFilterTasks(items, query, toText) {
   if (!query) return items;
   return items
     .map((item) => ({ item, score: fuzzyScore(toText(item), query) }))
@@ -78,26 +95,22 @@ export default function CommandPalette({
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const [query, setQuery] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
-  const listRef = useRef(null);
 
   const groups = useMemo(() => {
     const q = query.trim();
 
-    const viewItems = fuzzyFilter(
-      tabs.filter((t) => t.id !== activeTab),
+    const viewItems = rankByNameSearch(
       q,
-      (t) => t.label
+      tabs.filter((t) => t.id !== activeTab).map((t) => ({ ...t, label: t.label }))
     ).map((t) => ({ key: `view-${t.id}`, label: t.label, icon: t.icon, run: () => onSelectTab(t.id) }));
 
-    const projectItems = fuzzyFilter(
-      [{ id: ALL_TASKS_PROJECT_ID, name: ALL_TASKS_PROJECT_LABEL }, ...projects],
+    const projectItems = rankByNameSearch(
       q,
-      (p) => p.name
+      [{ id: ALL_TASKS_PROJECT_ID, name: ALL_TASKS_PROJECT_LABEL }, ...projects].map((p) => ({ ...p, label: p.name }))
     ).map((p) => ({ key: `project-${p.id}`, label: p.name, icon: Folder, run: () => onSelectProject(p.id) }));
 
     const taskItems = q
-      ? fuzzyFilter(
+      ? fuzzyFilterTasks(
           tasks.filter((t) => !t.isCompleted),
           q,
           (t) => t.title
@@ -106,7 +119,7 @@ export default function CommandPalette({
           .map((t) => ({ key: `task-${t.id}`, label: t.title, icon: CheckSquare2, run: () => onOpenTask(t.id) }))
       : [];
 
-    const actionItems = fuzzyFilter(actions, q, (a) => a.label).map((a) => ({
+    const actionItems = rankByNameSearch(q, actions.map((a) => ({ ...a, label: a.label }))).map((a) => ({
       key: `action-${a.id}`,
       label: a.label,
       icon: a.icon || Zap,
@@ -123,38 +136,19 @@ export default function CommandPalette({
 
   const flatItems = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
-
-  useEffect(() => {
-    if (activeIndex >= flatItems.length) setActiveIndex(0);
-  }, [flatItems.length, activeIndex]);
-
-  useEffect(() => {
-    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [activeIndex]);
-
   function runItem(item) {
     if (!item) return;
     item.run();
     requestClose();
   }
 
-  function handleKeyDown(e) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setActiveIndex((i) => (flatItems.length ? (i + 1) % flatItems.length : 0));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActiveIndex((i) => (flatItems.length ? (i - 1 + flatItems.length) % flatItems.length : 0));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      runItem(flatItems[activeIndex]);
-    }
-    // Escape isn't handled here — useModalA11y's capture-phase listener
-    // already closes the topmost modal, same as every other modal.
-  }
+  const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
+    itemCount: flatItems.length,
+    onSelect: (index) => runItem(flatItems[index]),
+    resetKey: query,
+  });
+  // Escape isn't handled here — useModalA11y's capture-phase listener
+  // already closes the topmost modal, same as every other modal.
 
   return (
     <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
@@ -172,6 +166,10 @@ export default function CommandPalette({
           <input
             autoFocus
             type="text"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-listbox"
+            aria-activedescendant={flatItems[activeIndex] ? `command-palette-item-${activeIndex}` : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -190,7 +188,7 @@ export default function CommandPalette({
         {flatItems.length === 0 ? (
           <div className="now-empty">Nothing matches "{query}".</div>
         ) : (
-          <div className="command-palette-list" ref={listRef}>
+          <div className="command-palette-list" ref={listRef} id="command-palette-listbox" role="listbox">
             {groups.map((group) => (
               <div key={group.label} className="search-bar-dropdown-group">
                 <div className="search-bar-dropdown-label">{group.label}</div>
@@ -200,7 +198,10 @@ export default function CommandPalette({
                   return (
                     <button
                       key={item.key}
+                      id={`command-palette-item-${index}`}
                       type="button"
+                      role="option"
+                      aria-selected={index === activeIndex}
                       data-active={index === activeIndex}
                       className={`search-bar-dropdown-item command-palette-item ${index === activeIndex ? 'active' : ''}`}
                       onMouseEnter={() => setActiveIndex(index)}

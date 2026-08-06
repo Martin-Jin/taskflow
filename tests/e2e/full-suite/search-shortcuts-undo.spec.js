@@ -92,7 +92,9 @@ test('command palette (Ctrl+K) opens, navigates to a view, and closes', async ({
   await page.waitForTimeout(300);
   // Scoped to the palette itself — "Calendar" also matches the sidebar's own
   // nav tab button underneath, which strict mode would otherwise trip on.
-  await palette.getByRole('button', { name: 'Calendar' }).click();
+  // Results are role="option" (combobox listbox rows), not "button" — see
+  // CommandPalette's aria wiring.
+  await palette.getByRole('option', { name: 'Calendar' }).click();
   await page.waitForTimeout(300);
 
   await expect(palette).not.toBeVisible();
@@ -111,7 +113,9 @@ test('command palette can jump straight to a matching task', async ({ page }) =>
   await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible();
   await page.getByLabel('Command palette search').fill('Refactor auth');
   await page.waitForTimeout(300);
-  await page.getByRole('button', { name: 'Refactor auth module' }).click();
+  // Results are role="option" (combobox listbox rows), not "button" — see
+  // CommandPalette's aria wiring.
+  await page.getByRole('option', { name: 'Refactor auth module' }).click();
   await page.waitForTimeout(300);
 
   // Opening a task from the palette shows its detail modal.
@@ -139,7 +143,7 @@ test('command palette can launch "Quick Add with AI" when configured', async ({ 
 
   await page.getByLabel('Command palette search').fill('Quick Add with AI');
   await page.waitForTimeout(300);
-  const action = palette.getByRole('button', { name: 'Quick Add with AI' });
+  const action = palette.getByRole('option', { name: 'Quick Add with AI' });
   // Same entry-point gating as the mini-FAB (isAIQuickAddConfigured — see
   // AddTaskFabGroup.jsx/App.jsx's paletteActions): the action is only listed
   // at all when VITE_AI_QUICKADD_WORKER_URL is configured, so skip gracefully
@@ -170,7 +174,7 @@ test('command palette "Add task" does not reopen when revisiting the Tasks tab',
   await expect(palette).toBeVisible();
   await page.getByLabel('Command palette search').fill('Add task');
   await page.waitForTimeout(300);
-  await palette.getByRole('button', { name: 'Add task', exact: true }).click();
+  await palette.getByRole('option', { name: 'Add task', exact: true }).click();
   await page.waitForTimeout(300);
 
   await expect(page.getByPlaceholder('Task name')).toBeVisible();

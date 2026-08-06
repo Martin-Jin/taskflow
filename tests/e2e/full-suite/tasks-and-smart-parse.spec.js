@@ -280,9 +280,11 @@ test.describe('Reopening a completed task', () => {
     const searchInput = page.getByPlaceholder(/search tasks/i);
     await searchInput.fill(title);
     await page.waitForTimeout(300);
-    await page.getByRole('button', { name: 'Show completed tasks' }).click();
+    // The search dropdown is a combobox listbox, so its rows are role="option"
+    // (not "button") — see SearchBar's aria wiring.
+    await page.getByRole('option', { name: 'Show completed tasks' }).click();
     await page.waitForTimeout(200);
-    await page.getByRole('button', { name: title, exact: false }).first().click();
+    await page.getByRole('option', { name: title, exact: false }).first().click();
     await page.waitForTimeout(300);
 
     // Reschedule its due date to today — this should reopen the task, not

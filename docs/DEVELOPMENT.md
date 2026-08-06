@@ -463,6 +463,7 @@ src/
 │   ├── useAnimatedUnmount.js      # Plays a CSS exit transition before unmount
 │   ├── useAutosizeTextarea.js     # Grows a textarea to fit its content, no scrollbar
 │   ├── useComboboxMultiSelect.js  # Shared open/close/query state for DependencyPicker + LabelPicker
+│   ├── useListKeyboardNav.js      # Shared Arrow/Enter highlighted-row navigation + scroll-into-view for ranked-results dropdowns (CommandPalette, Sidebar/ManageProjectsModal/CalendarFilterMenu/SearchBar project search) — a separate hook from useComboboxMultiSelect (see that file's own doc comment on why), composed alongside it where a caller needs both (CalendarFilterMenu's FilterGroup)
 │   ├── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
 │   └── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 ├── migrations/
@@ -488,6 +489,8 @@ src/
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
 │   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
 │   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
+│   ├── nameSearch.js         # Single shared typo-tolerant/relevance-ranked name matcher (rankByNameSearch/scoreNameMatch) — the one source of truth for searching projects (and reused for Views/Actions) in Sidebar, ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette, and CalendarFilterMenu; don't add another ad-hoc `.includes()` matcher for names elsewhere
+│   ├── calendarFilter.js     # Calendar show-mode/project/tag filter predicates (CalendarFilterMenu's logic) — project search itself now lives in nameSearch.js
 │   └── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
 ├── types/
 │   └── index.js               # JSDoc typedefs for the whole domain model

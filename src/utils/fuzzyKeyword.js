@@ -26,7 +26,7 @@ const MIN_CANDIDATE_LENGTH = 4;
  * most common typo shapes and plain Levenshtein would otherwise price it at
  * 2, pushing it past this module's small distance thresholds.
  */
-function editDistance(a, b) {
+export function editDistance(a, b) {
   const m = a.length;
   const n = b.length;
   if (m === 0) return n;

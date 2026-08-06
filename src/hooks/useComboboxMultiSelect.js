@@ -10,6 +10,14 @@
  * through this hook would need the caller's filtered-row count before the
  * hook itself could exist, which is circular. Sharing just the state here
  * still removes the bulk of the duplication between the two pickers.
+ *
+ * Not to be confused with useListKeyboardNav.js, a separate hook covering a
+ * different shape of the same problem: single-select "pick exactly one and
+ * the interaction ends" comboboxes (CommandPalette, Sidebar/
+ * ManageProjectsModal project search) rather than this hook's multi-select
+ * "Enter toggles a row without closing the list" one. CalendarFilterMenu's
+ * FilterGroup is the one caller that needs both — this hook's query/open
+ * state plus useListKeyboardNav's Arrow/Enter handling on top of it.
  */
 
 import { useEffect, useRef, useState } from 'react';

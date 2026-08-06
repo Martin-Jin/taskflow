@@ -213,3 +213,9 @@ describe('filterCalendarItems — orphaned/task-less block', () => {
     expect(filteredBlocks.map((b) => b.id)).toEqual(['b_orphan']);
   });
 });
+
+// The Projects-search-box ranker (formerly scoreProjectMatch/rankProjectsBySearch,
+// defined in this file) moved to src/utils/nameSearch.js as scoreNameMatch/
+// rankByNameSearch once other project-search call sites (Sidebar,
+// ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette)
+// adopted it too — see tests/unit/nameSearch.test.js for its coverage.

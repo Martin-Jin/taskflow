@@ -368,7 +368,6 @@
  * project shortcuts.
  * @property {string} id
  * @property {string} name
- * @property {string} [color]
  * @property {number} [order]
  * @property {boolean} [isPinned]      - Shown at the top of the sidebar's project list.
  * @property {string} [lastVisitedAt]  - ISO timestamp, updated whenever this project becomes the active one.

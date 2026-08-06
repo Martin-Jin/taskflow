@@ -1291,11 +1291,68 @@
   padding-bottom: 9px;
 }
 
+/* Color dot shown per item in the Tags group only (see FilterGroup's
+   `showSwatch` prop) — Projects have no color concept and render no swatch. */
 .calendar-filter-swatch {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* Type-to-filter box above the Projects group's item list (see FilterGroup's
+   `searchable` prop) — sticky so it stays pinned to the top of the scrolling
+   .calendar-filter-group-body while the (possibly long) item list scrolls
+   underneath it, rather than scrolling away with the list. */
+.calendar-filter-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 2px;
+  background: var(--color-bg-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-filter-search-icon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+/* input[type='text'] (global.css) carries the same specificity as a plain
+   class + attribute selector — matching it here (rather than just
+   .calendar-filter-search-input) so this actually overrides its font-size. */
+input[type='text'].calendar-filter-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 4px 0;
+  color: var(--color-text-primary);
+  /* >=16px keeps iOS Safari from zooming the page in on focus — every other
+     text input in the app is 13px (fine on desktop, but this one needs to
+     stay usable on a phone since the whole menu can render as a mobile
+     centered popover, see useMenuPosition). */
+  font-size: 16px;
+}
+
+input[type='text'].calendar-filter-search-input:focus {
+  outline: none;
+}
+
+.calendar-filter-no-match {
+  padding: 10px 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.dashboard-customize-item.is-highlighted {
+  background: var(--color-bg-surface-hover);
 }
 
 /* ----------------------------------------------------------------------

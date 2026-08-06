@@ -678,6 +678,16 @@ select:focus-visible,
   background: var(--color-accent-soft);
 }
 
+/* Keyboard-highlighted row while arrowing through search results — same
+   accent-soft treatment as .command-palette-item.active, distinct from the
+   plain hover background so it stays visible even while the mouse sits
+   elsewhere. Only ever applied while actively searching (see Sidebar's
+   isSearching guard), so it never lingers stuck-looking on a touch device
+   that has no real hover/keyboard-focus concept. */
+.sidebar-project-row-wrap.is-kbd-active {
+  background: var(--color-accent-soft);
+}
+
 .sidebar-project-row-wrap .sidebar-project-row {
   flex: 1;
   min-width: 0;
@@ -1441,6 +1451,15 @@ input.search-bar-input {
 
 .search-bar-dropdown-item:hover {
   background: var(--color-bg-surface-hover);
+}
+
+/* Keyboard-highlighted row — same accent-soft treatment as
+   .command-palette-item.active (which reuses this same base class), so
+   Arrow-key navigation reads consistently across every dropdown built on
+   .search-bar-dropdown-item. */
+.search-bar-dropdown-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
 }
 
 .search-bar-dropdown-item-label {

@@ -25,9 +25,9 @@ const today = () => toISODate(new Date());
  */
 export function getMockProjects() {
   return [
-    { id: 'work', name: 'Work', color: 'blue', order: 1, isDefault: true },
-    { id: 'writing', name: 'Writing', color: 'green', order: 2, isDefault: true },
-    { id: 'personal', name: 'Personal', color: 'grape', order: 3, isDefault: true },
+    { id: 'work', name: 'Work', order: 1, isDefault: true },
+    { id: 'writing', name: 'Writing', order: 2, isDefault: true },
+    { id: 'personal', name: 'Personal', order: 3, isDefault: true },
   ];
 }
 
