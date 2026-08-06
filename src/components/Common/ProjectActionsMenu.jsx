@@ -18,7 +18,7 @@ import { useMenuPosition } from '../../hooks/useMenuPosition';
 // The Rename/Pin/Delete buttons themselves, split out so ViewFilterMenu can
 // fold them into its own combined mobile popover (see that file's
 // `projectActions` prop) without duplicating this markup.
-export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, runAndClose }) {
+export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, onManageSharing, runAndClose }) {
   return (
     <>
       <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onRename)}>
@@ -27,15 +27,23 @@ export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin,
       </button>
       {/* Optional so the call sites that don't offer sharing (e.g. the List
           view's project header) keep working unchanged. Once a project IS
-          shared this becomes a non-interactive status line rather than
-          disappearing — "shared" is exactly the state a user most needs to be
-          certain about, so it shouldn't be invisible. */}
+          shared, this opens ShareProjectModal (link/collaborator management)
+          if the caller passed `onManageSharing` — otherwise it falls back to
+          the older non-interactive status line, so call sites that haven't
+          wired the modal up yet keep working unchanged. */}
       {onShare &&
         (isShared ? (
-          <div className="project-actions-item project-actions-item-static" role="presentation">
-            <Users size={13} />
-            Shared project
-          </div>
+          onManageSharing ? (
+            <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onManageSharing)}>
+              <Users size={13} />
+              Manage sharing
+            </button>
+          ) : (
+            <div className="project-actions-item project-actions-item-static" role="presentation">
+              <Users size={13} />
+              Shared project
+            </div>
+          )
         ) : (
           <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onShare)}>
             <Users size={13} />
@@ -59,7 +67,7 @@ export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin,
   );
 }
 
-export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, ariaLabel = 'Project actions' }) {
+export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, onManageSharing, ariaLabel = 'Project actions' }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -131,6 +139,7 @@ export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTog
                 onTogglePin={onTogglePin}
                 onDelete={onDelete}
                 onShare={onShare}
+                onManageSharing={onManageSharing}
                 runAndClose={runAndClose}
               />
             </div>

@@ -17,7 +17,16 @@ const ThemeContext = createContext(null);
 
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = usePersistedState('theme', 'dark');
-  const { user } = useAuth();
+  // Anonymous share-link visitors (Collaborative Projects, Phase 2) are not a
+  // sync account — same reasoning, and the same one-line interception, as
+  // useCloudSync.js's own `authUser?.isAnonymous` guard; see the long comment
+  // there. Theme is the one piece of synced state living outside
+  // SchedulerContext (noted in CLAUDE.md), so it needs the guard separately or
+  // an anonymous visitor's `users/{anonUid}` doc gets created just to hold a
+  // theme they never chose to sync. Their theme still persists locally via
+  // usePersistedState, exactly as it does for a signed-out visitor.
+  const { user: authUser } = useAuth();
+  const user = authUser?.isAnonymous ? null : authUser;
 
   // Guards the push effect below against racing the initial pull-on-sign-in
   // — without it, a device reloading with a stale local theme pushes that

@@ -161,18 +161,34 @@ function unauth() {
   return testEnv.unauthenticatedContext().firestore();
 }
 
-// The presented join token arrives as a custom auth claim
-// (request.auth.token.joinToken), never as a document field — see
-// firestore.rules' presentedTokenMatches()/the header comment on why.
-function asUserWithToken(uid, token) {
-  return asUser(uid, { joinToken: token });
+// A JOINING context, modelled on what actually reaches the rules at join time.
+//
+// A join can only happen in a session created by `signInWithCustomToken` —
+// that is the only way the `joinToken` claim exists at all — so the provider
+// is ALWAYS 'custom' here, never 'google.com'/'anonymous'. That is precisely
+// why `joinEntryWellFormed()` cannot read `sign_in_provider` to decide whether
+// the joiner is anonymous (it would read 'custom' for everyone) and instead
+// trusts the `wasAnonymous` claim the join endpoint mints from the visitor's
+// original, pre-join token. These fixtures must keep modelling that, or they
+// will silently stop testing the real shape of a join.
+function asJoiner(uid, token, wasAnonymous) {
+  return testEnv
+    .authenticatedContext(uid, {
+      firebase: { sign_in_provider: 'custom' },
+      joinToken: token,
+      ...(wasAnonymous !== undefined ? { wasAnonymous } : {}),
+    })
+    .firestore();
 }
 
-// Same as asUserWithToken, but for an anonymous joiner — the sign_in_provider
-// claim must say 'anonymous' so joinEntryWellFormed()'s isAnonymous pin lines
-// up with what the joiner is actually allowed to claim about themselves.
+/** A real (Google-backed) account joining via a link. */
+function asUserWithToken(uid, token) {
+  return asJoiner(uid, token, false);
+}
+
+/** An anonymous visitor joining via a link. */
 function asAnonWithToken(uid, token) {
-  return asAnon(uid, { joinToken: token });
+  return asJoiner(uid, token, true);
 }
 
 describe('non-discoverability (core requirement)', () => {
@@ -690,6 +706,35 @@ describe('join-by-token', () => {
     }));
   });
 
+  // REGRESSION: this is the exact bug the `wasAnonymous` claim exists to fix.
+  // A join always happens in a custom-token session, so the rules once read
+  // `sign_in_provider == 'anonymous'` and got 'custom' for EVERY joiner —
+  // meaning an anonymous visitor could record themselves as a real account,
+  // and later be handed ownership of a project their storage-clear would
+  // orphan. If someone reverts joinerIsAnonymous() to read sign_in_provider,
+  // the two tests below start failing while the four above still pass.
+  it('an anonymous joiner cannot pass themselves off as a real account (the sign_in_provider trap)', async () => {
+    // Provider says 'custom' (as it always does at join time) but the minted
+    // claim says anonymous — the entry must match the CLAIM, not the provider.
+    const db = asJoiner('anon-joiner-3', VIEW_TOKEN, true);
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      collaborators: {
+        'anon-joiner-3': collaboratorEntry('viewer', 'Sneaky', false),
+      },
+    }));
+  });
+
+  it('a joiner whose token carries no wasAnonymous claim is treated as a real account', async () => {
+    // An older token still in flight during a Worker deploy: the absent claim
+    // must read as "not anonymous" rather than erroring the whole join.
+    const db = asJoiner('legacy-joiner', VIEW_TOKEN, undefined);
+    await assertSucceeds(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      collaborators: {
+        'legacy-joiner': collaboratorEntry('viewer', 'Legacy', false),
+      },
+    }));
+  });
+
   it('an anonymous joiner lying with isAnonymous: false fails', async () => {
     const db = asAnonWithToken('anon-joiner-2', VIEW_TOKEN);
     await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
@@ -800,6 +845,24 @@ describe('ownership transfer', () => {
         ...data.collaborators,
         [OWNER]: collaboratorEntry('editor', 'Owner'),
       },
+    }));
+  });
+
+  // REGRESSION: the client's transfer write originally also stamped an
+  // `updatedAt`, as every other write in sharedProjectService.js does. That
+  // makes a THIRD affected key, which `hasOnly(['ownerId','collaborators'])`
+  // rejects — so every ownership transfer failed. Pinning it here so the
+  // stamp can't be "helpfully" added back.
+  it('a transfer that also stamps updatedAt fails (only ownerId + collaborators may change)', async () => {
+    const db = asUser(OWNER);
+    const data = baseProjectData();
+    await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID), {
+      ownerId: EDITOR,
+      collaborators: {
+        ...data.collaborators,
+        [OWNER]: collaboratorEntry('editor', 'Owner'),
+      },
+      updatedAt: new Date().toISOString(),
     }));
   });
 

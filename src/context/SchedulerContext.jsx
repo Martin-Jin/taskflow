@@ -69,7 +69,7 @@ import {
 } from '../utils/recurrenceState';
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
-import { createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks } from '../services/sharedProjectService';
+import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks } from '../services/sharedProjectService';
 import { isSharedTask, partitionTasksBySharing, preserveSharedTasks } from '../utils/sharedTaskSync';
 import { isCompletedForCurrentOccurrence, areAllChildrenCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import {
@@ -2140,29 +2140,126 @@ export function SchedulerProvider({ children }) {
         // Move this project's tasks into the shared store, then tag them
         // locally so every consumer (Board, list, search) keeps rendering them
         // while the sync engine takes over their persistence.
+        //
+        // THE UPLOAD MUST FULLY SUCCEED BEFORE ANYTHING IS TAGGED. Tagging a
+        // task with `sharedProjectId` is what stops it being written to
+        // localStorage (Firestore becomes its only store — see
+        // utils/sharedTaskSync.js's header), so tagging tasks whose upload
+        // failed strands them: gone from local persistence, absent remotely,
+        // and dropped from the array entirely by the first snapshot that
+        // arrives (planRemoteTaskApply treats a tagged local task the server
+        // doesn't have as remotely deleted). The `await` below is therefore
+        // load-bearing, and every step after it has to be synchronous.
         const movingTasks = stateRef.current.tasks.filter((t) => t.projectId === projectId);
         await writeSharedTasks(sharedProjectId, { creates: movingTasks });
+
+        // Read state ONCE, after the last await, and derive every write from
+        // that single snapshot. Re-reading stateRef between the steps below
+        // would let a task added during the upload be tagged without ever
+        // having been uploaded — the exact stranding case described above.
+        const current = stateRef.current;
+        const uploadedIds = new Set(movingTasks.map((t) => t.id));
 
         setProjects((prev) =>
           prev.map((p) => (p.id === projectId ? { ...p, ownerId: user.uid, sharedProjectId } : p))
         );
-        setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
         // overwritePresent, not commit: this is a storage-location change, not
         // a user action to sit in the undo stack — and undoing it could not
         // un-create the Firestore document anyway.
         overwritePresent({
-          tasks: stateRef.current.tasks.map((t) => (t.projectId === projectId ? { ...t, sharedProjectId } : t)),
-          blocks: stateRef.current.blocks,
+          // Only tasks actually confirmed uploaded are tagged. A task created
+          // in this project while the upload was in flight stays personal for
+          // now and is picked up by the ordinary write-diff once the
+          // subscription is live, rather than being tagged into a store it
+          // was never written to.
+          tasks: current.tasks.map((t) =>
+            t.projectId === projectId && uploadedIds.has(t.id) ? { ...t, sharedProjectId } : t
+          ),
+          blocks: current.blocks,
         });
+        // Subscribing LAST, once the tasks are both uploaded and tagged, so
+        // the first snapshot can never arrive while the two sides disagree.
+        setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
         setNotification({ type: 'success', message: `"${project.name}" is now a shared project.` });
         return { ok: true, id: sharedProjectId };
       } catch (err) {
+        // Nothing has been tagged at this point (see above), so the project is
+        // still fully intact locally — the shared document may exist but is
+        // empty and unreferenced, which is inert.
         console.error('[SchedulerContext] Failed to share project', err);
-        setNotification({ type: 'error', message: "Couldn't share that project. Please try again." });
+        setNotification({ type: 'error', message: "Couldn't share that project. Your tasks are safe — please try again." });
         return { ok: false };
       }
     },
     [user, projects, stateRef, overwritePresent, setNotification]
+  );
+
+  /**
+   * Finish joining a shared project after the server has validated the link
+   * token and signed this user in with a `joinToken`-bearing session (see
+   * services/shareLinkService.js's resolveShareToken, which does both).
+   *
+   * Two writes, in this order:
+   *   1. Add this user to the project's `collaborators` map in Firestore. This
+   *      is what actually grants access — until it lands, the rules still deny
+   *      every read of the project's tasks. It is authorized by the `joinToken`
+   *      auth claim, which is short-lived, so it must happen promptly after
+   *      resolution rather than being deferred behind any UI.
+   *   2. File the project into this user's own local list, so it's reachable
+   *      from the sidebar like any other project. The whole point of the spec's
+   *      "joined projects appear locally" requirement is that nobody has to
+   *      keep the original link around to get back in.
+   *
+   * The local project row is created with the SAME id as the shared document,
+   * so `sharedProjectId === id`. That's deliberate: tasks arriving from the
+   * sync engine carry `projectId` values written by the owner's client, and
+   * they have to match a project this user actually has, or every joined task
+   * would render as belonging to nothing.
+   *
+   * Idempotent: re-running it for a project already in the list updates the
+   * existing row rather than adding a duplicate, so re-clicking a link (the
+   * common case — people re-open the chat message rather than find the
+   * project) is harmless.
+   */
+  const joinSharedProject = useCallback(
+    async ({ sharedProjectId, projectName, role, displayName }) => {
+      if (!user) return { ok: false, reason: 'not_signed_in' };
+      try {
+        await addSelfAsCollaborator(sharedProjectId, user.uid, {
+          role,
+          displayName: displayName || user.displayName || 'Someone',
+          photoURL: user.photoURL || null,
+          isAnonymous: !!user.isAnonymous,
+        });
+
+        setProjects((prev) => {
+          const existing = prev.find((p) => p.id === sharedProjectId);
+          if (existing) {
+            return prev.map((p) =>
+              p.id === sharedProjectId ? { ...p, name: projectName || p.name, sharedProjectId } : p
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: sharedProjectId,
+              name: projectName || 'Shared project',
+              order: prev.length + 1,
+              sharedProjectId,
+              lastVisitedAt: new Date().toISOString(),
+            },
+          ];
+        });
+        // Subscribing last, once membership exists — subscribing first would
+        // just produce a permission-denied burst until the write landed.
+        setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
+        return { ok: true, projectId: sharedProjectId };
+      } catch (err) {
+        console.error('[SchedulerContext] Failed to join shared project', err);
+        return { ok: false, reason: 'write_failed' };
+      }
+    },
+    [user]
   );
 
   const togglePinProject = useCallback((projectId) => {
@@ -2910,6 +3007,7 @@ export function SchedulerProvider({ children }) {
       sharedProjects,
       viewersByProject,
       shareProject,
+      joinSharedProject,
       touchProjectVisited,
       addSection,
       renameSection,
@@ -3000,6 +3098,7 @@ export function SchedulerProvider({ children }) {
       sharedProjects,
       viewersByProject,
       shareProject,
+      joinSharedProject,
       touchProjectVisited,
       addSection,
       renameSection,

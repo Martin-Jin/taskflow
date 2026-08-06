@@ -54,9 +54,11 @@ import AddTaskFabGroup from './Common/AddTaskFabGroup';
 import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import PresenceAvatars from './Common/PresenceAvatars';
+import SharedProjectBadge from './Common/SharedProjectBadge';
 import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
 import AccountButton from './Nav/AccountButton';
+import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -115,10 +117,12 @@ export default function TaskListPanel({
   openAIQuickAddSignal,
   onOpenSettings,
   onOpenSearch,
+  onShareProject,
 }) {
-  const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, shareProject, viewersByProject } = useScheduler();
+  const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
+  const { user } = useAuth();
   const isMobile = useIsMobile();
   const motionEnabled = useMotionEnabled();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -412,7 +416,8 @@ export default function TaskListPanel({
       onRename: startRenameProject,
       onTogglePin: () => togglePinProject(activeProject.id),
       onDelete: handleDeleteProject,
-      onShare: () => shareProject(activeProject.id),
+      onShare: () => onShareProject(activeProject.id),
+      onManageSharing: () => onShareProject(activeProject.id),
     }
     : undefined;
 
@@ -466,6 +471,21 @@ export default function TaskListPanel({
                 <MarqueeText text={activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL} />
               </h2>
             )}
+            {/* Which of the three sharing states this project is in. Unlike
+                the manage-projects button below, this is shown on mobile too:
+                it's STATUS, not an action, and "who else can see this" is
+                exactly the thing a user needs to be certain of on whatever
+                device they're on — hiding it on mobile would make the
+                privacy-relevant state the one thing that disappears on the
+                smaller screen. Renders nothing for a personal project. */}
+            {activeProject && (
+              <SharedProjectBadge
+                project={activeProject}
+                sharedProject={sharedProjects[activeProject.sharedProjectId]}
+                uid={user?.uid}
+                variant="detailed"
+              />
+            )}
             {/* Desktop-only: on mobile there's no room for this alongside the
                 title plus the view/filter + "⋯" triggers, so it folds into
                 ViewFilterMenu's combined popover instead (see the
@@ -514,7 +534,8 @@ export default function TaskListPanel({
                 onRename={startRenameProject}
                 onTogglePin={() => togglePinProject(activeProject.id)}
                 onDelete={handleDeleteProject}
-                onShare={() => shareProject(activeProject.id)}
+                onShare={() => onShareProject(activeProject.id)}
+                onManageSharing={() => onShareProject(activeProject.id)}
               />
             )}
           </div>

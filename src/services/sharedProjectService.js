@@ -33,16 +33,26 @@
  * client may read (`sharedProjects/{id}/private/links`), so generating,
  * rotating, revoking or even viewing a link has to go through the server-side
  * join endpoint in Phase 2. See firestore.rules' header comment.
+ *
+ * COLLABORATOR MANAGEMENT (role change / remove / ownership transfer, Phase 2):
+ * these ARE direct Firestore writes rather than Worker calls, unlike share
+ * links — see shareLinkService.js's header for why links can't be. They
+ * touch no secret, and firestore.rules already authorizes the owner for them
+ * (`isOwner() && ownerFieldsUnchanged()`, and `isTransferringOwnership()` for
+ * the transfer), so routing them through the Worker would add a hop and a
+ * second place to get authorization wrong, for nothing.
  * ============================================================================
  */
 
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   onSnapshot,
   serverTimestamp,
   setDoc,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -186,6 +196,40 @@ export async function clearPresence(projectId, uid) {
 }
 
 /**
+ * Write the joining user's OWN entry into a project's `collaborators` map —
+ * the write that actually admits them, and the only one in this file
+ * authorized by a link token rather than by existing membership.
+ *
+ * Uses a dotted field path (`collaborators.<uid>`) rather than writing the
+ * whole map, for two reasons that both matter:
+ *   - The joiner cannot read the project document yet (rules deny reads to
+ *     non-members), so they have no way to construct a complete map to write
+ *     back — and doing so would clobber every other collaborator.
+ *   - firestore.rules' `joiningWithToken` requires that the write touch ONLY
+ *     this uid's key inside `collaborators`, which is exactly what a dotted
+ *     path expresses. Rules correctly attribute a dotted write to its
+ *     top-level key, so the `hasOnly` guards still hold.
+ *
+ * `isAnonymous` is validated against the caller's minted `wasAnonymous` claim
+ * by the rules, so passing a value that doesn't match the visitor's real
+ * identity fails the write outright rather than being silently accepted.
+ * @param {string} projectId
+ * @param {string} uid
+ * @param {{role: 'viewer'|'editor', displayName: string, photoURL?: string|null, isAnonymous?: boolean}} entry
+ */
+export async function addSelfAsCollaborator(projectId, uid, { role, displayName, photoURL, isAnonymous }) {
+  await updateDoc(projectRef(projectId), {
+    [`collaborators.${uid}`]: {
+      role,
+      displayName,
+      photoURL: photoURL || null,
+      joinedAt: new Date().toISOString(),
+      isAnonymous: !!isAnonymous,
+    },
+  });
+}
+
+/**
  * Live-subscribe to who's viewing a project. Staleness is decided by
  * computeActiveViewers, not here — there's no reliable "goodbye" event on the
  * web, so a closed tab simply stops heartbeating and ages out.
@@ -197,4 +241,66 @@ export function subscribePresence(projectId, onPresence, onError) {
     (snap) => onPresence(snap.docs.map((d) => ({ uid: d.id, ...d.data() }))),
     (err) => onError?.(err)
   );
+}
+
+/**
+ * Owner-only: change an existing collaborator's role between viewer/editor.
+ * Same dotted-field-path approach as `addSelfAsCollaborator` (touches only
+ * this one uid's entry, leaving every other collaborator's entry — and the
+ * access-control fields `ownerId`/the rest of the map — untouched), but
+ * authorized the other way around: rules admit this via `isOwner() &&
+ * ownerFieldsUnchanged()` rather than a join token.
+ * @param {string} projectId
+ * @param {string} uid - The collaborator whose role is changing.
+ * @param {'viewer'|'editor'} role
+ */
+export async function changeCollaboratorRole(projectId, uid, role) {
+  await updateDoc(projectRef(projectId), {
+    [`collaborators.${uid}.role`]: role,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Owner-only: remove a collaborator entirely, revoking their access. A plain
+ * `updateDoc` can't delete a nested key by simply omitting it (omission means
+ * "leave unchanged", same reason a merge write can't express removal — see
+ * `planOwnershipTransfer`'s doc comment), so this uses Firestore's
+ * `deleteField()` sentinel at the dotted path instead, which deletes exactly
+ * that one collaborator's entry without touching anyone else's or requiring
+ * a read of the current map first.
+ * @param {string} projectId
+ * @param {string} uid - The collaborator to remove.
+ */
+export async function removeCollaborator(projectId, uid) {
+  await updateDoc(projectRef(projectId), {
+    [`collaborators.${uid}`]: deleteField(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Owner-only: apply an already-decided ownership transfer (see
+ * `planOwnershipTransfer` in utils/sharedProjectAccess.js — call that FIRST
+ * and only reach this function if it returned `allowed: true`). Writes
+ * `ownerId` and the COMPLETE `collaborators` map as a whole-field update, not
+ * a merge — `planOwnershipTransfer`'s own doc comment explains why a merge
+ * can't express the outgoing recipient-entry removal it computes.
+ * @param {string} projectId
+ * @param {string} newOwnerId
+ * @param {Record<string, {role: string}>} collaborators - The complete post-transfer map,
+ *   from `planOwnershipTransfer`'s `collaborators` field.
+ */
+export async function transferSharedProjectOwnership(projectId, newOwnerId, collaborators) {
+  // Exactly two fields, and deliberately NO `updatedAt` — unlike every other
+  // write in this file. firestore.rules' `isTransferringOwnership` requires
+  // `affectedKeys().hasOnly(['ownerId', 'collaborators'])`, so stamping a
+  // timestamp here makes it a third affected key and the rules reject the
+  // whole transfer. The constraint is intentional on the rules' side (a
+  // transfer must touch ownership and membership and nothing else), so this
+  // matches it rather than loosening the rule.
+  await updateDoc(projectRef(projectId), {
+    ownerId: newOwnerId,
+    collaborators,
+  });
 }

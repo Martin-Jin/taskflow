@@ -69,26 +69,63 @@ function documentUrl(env, path) {
 }
 
 // Firestore REST documents use a typed-value wire format ({stringValue: ...}
-// etc.) rather than plain JSON — only the field types this module's callers
-// actually need (string/number/boolean) are handled.
+// etc.) rather than plain JSON. Originally only string/number/boolean/null
+// were needed (the calendar-auth routes above are all flat docs); the
+// share-link routes (shareLinkRoutes.js) added nested maps
+// (`private/links: {view: {...}, edit: {...}}`) and a real Firestore
+// TIMESTAMP (`expiresAt` — firestore.rules' `linkUsable` compares it against
+// `request.time` and has no ISO-8601 parser, so it MUST be a timestampValue,
+// never a string). Both conversions are written generically/recursively so
+// they handle arbitrary nesting, not just the one level share-links happens
+// to use.
+//
+// Wire shapes added:
+//   - mapValue:       { mapValue: { fields: { <key>: <TypedValue>, ... } } }
+//   - timestampValue: { timestampValue: '<RFC3339 string>' }, e.g.
+//     '2026-08-06T12:00:00.000Z' — Firestore accepts and returns RFC3339,
+//     which is exactly what `new Date(millis).toISOString()` produces.
+//
+// A plain JS object is always encoded as a mapValue (never re-checked for
+// "is this actually meant to be a map" — every caller in this module already
+// only ever passes objects that are meant to round-trip as nested maps).
+// `Date` instances are encoded as timestampValue so callers can pass a JS
+// Date directly instead of pre-converting to a string.
+function toFirestoreValue(value) {
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'number') return { integerValue: String(Math.trunc(value)) };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (value === null || value === undefined) return { nullValue: null };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (typeof value === 'object') return { mapValue: { fields: toFirestoreFields(value) } };
+  throw new Error(`toFirestoreValue: unsupported value type for ${JSON.stringify(value)}`);
+}
+
 function toFirestoreFields(obj) {
   const fields = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (typeof value === 'string') fields[key] = { stringValue: value };
-    else if (typeof value === 'number') fields[key] = { integerValue: String(Math.trunc(value)) };
-    else if (typeof value === 'boolean') fields[key] = { booleanValue: value };
-    else if (value === null || value === undefined) fields[key] = { nullValue: null };
+    fields[key] = toFirestoreValue(value);
   }
   return fields;
+}
+
+function fromFirestoreValue(value) {
+  if ('stringValue' in value) return value.stringValue;
+  if ('integerValue' in value) return Number(value.integerValue);
+  if ('doubleValue' in value) return value.doubleValue;
+  if ('booleanValue' in value) return value.booleanValue;
+  if ('nullValue' in value) return null;
+  // Kept as an ISO string rather than parsed to a Date/millis here — callers
+  // that need millis (e.g. shareLinkLogic.js's ported expiry check) convert
+  // explicitly, same as the rest of this app's date handling elsewhere.
+  if ('timestampValue' in value) return value.timestampValue;
+  if ('mapValue' in value) return fromFirestoreFields(value.mapValue.fields);
+  return undefined;
 }
 
 function fromFirestoreFields(fields) {
   const obj = {};
   for (const [key, value] of Object.entries(fields || {})) {
-    if ('stringValue' in value) obj[key] = value.stringValue;
-    else if ('integerValue' in value) obj[key] = Number(value.integerValue);
-    else if ('booleanValue' in value) obj[key] = value.booleanValue;
-    else if ('nullValue' in value) obj[key] = null;
+    obj[key] = fromFirestoreValue(value);
   }
   return obj;
 }

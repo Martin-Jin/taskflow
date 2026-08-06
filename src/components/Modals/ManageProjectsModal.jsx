@@ -15,6 +15,9 @@ import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
+import SharedProjectBadge from '../Common/SharedProjectBadge';
+import { useScheduler } from '../../context/SchedulerContext';
+import { useAuth } from '../../context/AuthContext';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
 import { rankByNameSearch } from '../../utils/nameSearch';
 
@@ -30,6 +33,12 @@ export default function ManageProjectsModal({
   autoShowAdd = false,
   onClose,
 }) {
+  // Read from context rather than adding props: `projects` is passed in (this
+  // modal is also driven with a filtered list), but the shared-project docs
+  // and current uid are the same for every caller, so threading them through
+  // would be noise — same approach as Sidebar's own badge wiring.
+  const { sharedProjects } = useScheduler();
+  const { user } = useAuth();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const [query, setQuery] = useState('');
@@ -192,6 +201,7 @@ export default function ManageProjectsModal({
                 <button className="nav-item sidebar-project-row" onClick={() => pickProject(p.id)}>
                   {p.isPinned && <Pin size={12} className="sidebar-project-pin-icon" aria-hidden="true" />}
                   <span className="sidebar-project-name">{p.name}</span>
+                  <SharedProjectBadge project={p} sharedProject={sharedProjects[p.sharedProjectId]} uid={user?.uid} />
                 </button>
               )}
               {renamingId !== p.id && (

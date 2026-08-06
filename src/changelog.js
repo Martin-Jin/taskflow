@@ -21,6 +21,20 @@
 
 export const CHANGELOG = [
   {
+    version: '2.4.0',
+    date: '2026-08-06',
+    title: 'Invite people to a shared project by link',
+    changes: [
+      'Shared projects can now be shared with other people, not just across your own devices. "Share project" opens a dialog with two separate links: a view-only link for people who should just follow along, and an edit link for people who should be able to change things.',
+      'Anyone can open a link and join — no account needed. They\'re asked once for a display name, and the project lands in their own project list, so nobody has to keep the link or dig it out of a chat later.',
+      'You stay in control of a link after sending it: rotate it to invalidate the old URL, switch it off and back on, delete it outright, or give it an expiry date.',
+      'The share dialog lists everyone who has joined. You can switch someone between viewer and editor, remove them, or hand the whole project over to another collaborator.',
+      'Projects now show which way they\'re shared — nothing for your private ones, "shared by you" with who\'s in it for ones you own, and "shared with you" with the owner\'s name and your role for ones you joined. Knowing the direction matters more than just knowing it\'s shared.',
+      'Fixed: turning a project into a shared project could empty it of tasks in some cases.',
+      'Fixed: "Back up now" reported a failure even when the backup had actually saved.',
+    ],
+  },
+  {
     version: '2.3.0',
     date: '2026-08-06',
     title: 'Shared projects, syncing live across your devices',

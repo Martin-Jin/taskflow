@@ -20,7 +20,10 @@
 import React, { useState } from 'react';
 import { FolderKanban, Search, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
+import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
+import { useScheduler } from '../../context/SchedulerContext';
+import { useAuth } from '../../context/AuthContext';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
 import { rankByNameSearch } from '../../utils/nameSearch';
 
@@ -38,6 +41,8 @@ export default function Sidebar({
   onDeleteProject,
   footer,
 }) {
+  const { sharedProjects } = useScheduler();
+  const { user } = useAuth();
   const [projectQuery, setProjectQuery] = useState('');
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
@@ -184,6 +189,7 @@ export default function Sidebar({
                 >
                   {p.isPinned && <Pin size={12} className="sidebar-project-pin-icon" aria-hidden="true" />}
                   <span className="sidebar-project-name">{p.name}</span>
+                  <SharedProjectBadge project={p} sharedProject={sharedProjects[p.sharedProjectId]} uid={user?.uid} />
                 </button>
               )}
               {renamingId !== p.id && (

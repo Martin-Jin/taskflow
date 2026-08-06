@@ -107,14 +107,24 @@ there):
      a different product with its own JSON-based rules editor, listed
      separately in the sidebar) → paste in the contents of
      [`firestore.rules`](firestore.rules) → **Publish**.
-5. Project settings (gear icon) → scroll to "Your apps" → add a Web app →
+5. Deploy the Firestore **indexes**: `firebase deploy --only firestore:indexes`.
+   Cloud backups need a composite index to enforce their retention limits —
+   without it, every "Back up now" reports a failure even though the backup
+   itself saved fine.
+6. Project settings (gear icon) → scroll to "Your apps" → add a Web app →
    copy the `firebaseConfig` object it gives you into `src/firebase.js`,
    replacing the values already there.
-6. Sign-in itself uses Google Identity Services (GIS) rather than Firebase's
+7. Sign-in itself uses Google Identity Services (GIS) rather than Firebase's
    own popup/redirect (see `AuthContext.jsx` for why), so it needs the same
    `VITE_GOOGLE_CLIENT_ID` OAuth Client ID used for [Google
    Calendar](#google-calendar) below — set that up too (steps 1-5 there),
    even if you don't care about Calendar sync itself.
+8. **Only if you want shared projects** (see [Sharing a project](#sharing-a-project)):
+   **Build → Authentication → Sign-in method → Anonymous** → enable it. This
+   is what lets someone open a share link and participate without making an
+   account — the rules need *some* stable identity to authorize their writes
+   against. Leave it off and everything else still works; share links just
+   won't be usable by signed-out visitors.
 
 The `firebaseConfig` values (API key, project id, etc.) are not secrets —
 they identify the project, they don't authorize access to it — so it's
@@ -168,6 +178,53 @@ user-initiated, one-directional action rather than an automatic background
 sync), so backups do capture your events as a point-in-time safety net —
 restoring an old backup will bring back whatever events it had, which may
 since have changed or been deleted in Google Calendar.
+
+### Sharing a project
+
+A project can be turned into a **shared project** that other people work in
+with you, live. Open a project's "⋯" menu → **Share project**. From the share
+dialog you can generate two independent links:
+
+- a **view link** — recipients can read the project but not change anything;
+- an **edit link** — recipients can add, edit, and complete tasks.
+
+Each link can be **rotated** (issues a new URL and kills the old one),
+**revoked** (turned off but kept, so you can re-enable it), **deleted**
+outright, or given an **expiry date**. The same dialog lists everyone who has
+joined, lets you change someone between viewer and editor, remove them, or
+hand ownership of the project to another collaborator.
+
+**Anyone opening a link joins without needing an account** — they're asked
+once for a display name so their changes are attributable, and the project is
+filed into their own project list so they never need the link again. Signing
+in with Google instead gets you the same project across your own devices.
+(Guest participation requires Anonymous sign-in to be enabled on the Firebase
+project — step 8 of [Account & cross-device sync](#account--cross-device-sync).)
+
+Every project row shows which of three states it's in: nothing at all for a
+private project, **shared by you** (with who's in it) for one you own and have
+shared, and **shared with you** (with the owner's name and your role) for one
+you joined. The direction matters — "other people can see this" is worth being
+certain about.
+
+A few deliberate limits worth knowing:
+
+- **Only tasks sync.** Board columns (sections) and per-task comments are still
+  local to each person for now.
+- **Scheduled time blocks are never shared.** Dragging a shared task onto your
+  calendar schedules it for *you* only, and shared tasks are left out of the
+  automatic scheduler, since capacity is a per-person thing.
+- **If two people edit the same task at once, the last write wins** — there's no
+  field-by-field merge. Editing different tasks never conflicts. The one
+  exception is recurring-task completion, which merges properly rather than
+  overwriting.
+- Sharing requires a real account; a guest can join a shared project but can't
+  create one.
+
+Share links need the Cloudflare Worker deployed (see
+[`cloudflare-worker/README.md`](cloudflare-worker/README.md)) — the link tokens
+are secrets that no browser is ever allowed to read, so generating and
+redeeming them happens server-side.
 
 ## Connecting real data
 

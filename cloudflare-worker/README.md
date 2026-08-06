@@ -280,6 +280,52 @@ actual cause:
     Worker (only the GitHub Pages *frontend* build is git-triggered, via
     `.github/workflows/deploy.yml`).
 
+## Share links (Collaborative Projects)
+
+Three routes back the app's project sharing (`src/shareLinkRoutes.js`):
+
+| Route | Who | What |
+|---|---|---|
+| `POST /share/links` | owner | Read the project's current view/edit link state |
+| `POST /share/links/set` | owner | Create / rotate / revoke / enable / delete one link, optionally with an expiry |
+| `POST /share/resolve` | anyone (incl. anonymous) | Redeem a token: validates it and returns a Firebase custom token that authorizes the join |
+
+**Why these can't be plain client Firestore calls.** Share tokens live in
+`sharedProjects/{id}/private/links`, which `firestore.rules` locks with
+`allow read, write: if false` for *every* client — including the project's own
+owner. Firestore's read granularity is a whole document, so a token on any
+document a collaborator can read is a token they can steal and re-present to
+upgrade their own role (this was a real bug — see `firestore.rules`' header).
+So even "show me my own link" is a privileged server read.
+
+These routes reuse the **same service account** as the Calendar routes above,
+plus **one extra IAM role**. Firebase only accepts a self-signed custom token
+if the signing service account can impersonate itself:
+
+```bash
+# Grant the service account the Token Creator role ON ITSELF.
+# Substitute your own service account email and project id.
+gcloud iam service-accounts add-iam-policy-binding \
+  YOUR_SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com \
+  --member="serviceAccount:YOUR_SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project=YOUR_PROJECT
+```
+
+Without it, joining a link fails with an "invalid signature"/permission error
+even though the minted JWT is otherwise well-formed.
+
+Also required, on the Firebase side:
+
+- **Anonymous sign-in enabled** (Authentication → Sign-in method → Anonymous),
+  so visitors without an account can join. See the main README's Firebase setup.
+- **`firestore.rules` deployed**, including the `shareTokens` block — that's the
+  token→project reverse index these routes maintain, locked to `if false` so no
+  client can read it.
+
+No new secrets or vars beyond the Calendar ones, and no separate deployment:
+this is the same Worker, dispatched by path.
+
 ## Notes on the abuse guard
 
 The AI quick-add routes hold no secrets, so there's nothing here for an
