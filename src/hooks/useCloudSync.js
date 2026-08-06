@@ -189,6 +189,46 @@ export function hasLocalEditRaced(baselineActionId, currentActionId) {
 }
 
 /**
+ * Pure decision for the live listener: should THIS incoming snapshot be
+ * dropped entirely rather than merged into local state?
+ *
+ * This exists because of a real bug (project deletes/shares reverting and
+ * needing a second attempt to "stick"): `subscribeUserData` uses
+ * `includeMetadataChanges: true`, so a device's OWN push delivers a second
+ * snapshot once the server acknowledges it, in addition to the usual
+ * "another device changed something" case — both look identical here. The
+ * fingerprint-equality echo check right before this runs (`fingerprint ===
+ * remoteFingerprint` in the caller) only catches that echo when local state
+ * hasn't moved on since the push was sent. If the user made ANOTHER edit
+ * (e.g. deleting a project) while that earlier push was still in flight,
+ * local state no longer matches the pushed snapshot by the time its ack
+ * arrives — so the equality check misses it, and without this guard the
+ * stale, pre-edit snapshot gets applied on top of the newer edit, reverting
+ * it. The edit only "sticks" on a second attempt because by then the ack has
+ * already settled.
+ *
+ * A snapshot is stale exactly when its fingerprint matches what THIS device
+ * last pushed (`lastPushedFingerprint`) — i.e. it's provably an echo of a
+ * write we already know about, not new information — while local state has
+ * since diverged from what was pushed (a real local edit landed in the
+ * meantime, which the caller's own fingerprint-equality check already
+ * establishes by the time this runs). Nothing is lost by dropping it: the
+ * newer local edit hasn't been pushed yet, so it'll reach Firestore on its
+ * own via the normal debounced push.
+ *
+ * Deliberately independent of `isFirstSnapshot`/subscribe-time baselines —
+ * an own-write echo can arrive as the first snapshot after (re)subscribe or
+ * any later one; the ack is a property of THIS write, not of when the
+ * listener happened to attach. Combined with `hasLocalEditRaced` at the
+ * call site (which still matters for a genuinely different, newer snapshot
+ * arriving concurrently with an in-flight local edit — see
+ * `localEditLandedFirst` for the initial-pull-shaped case).
+ */
+export function isStaleOwnEcho(remoteFingerprint, lastPushedFingerprint) {
+  return lastPushedFingerprint != null && remoteFingerprint === lastPushedFingerprint;
+}
+
+/**
  * Computes the optimistic-stamp/rollback fingerprint values schedulePush
  * needs, without performing the async Firestore write or mutating any ref.
  * Returns { shouldPush: false } when the fingerprint hasn't changed since the
@@ -206,25 +246,35 @@ export function computePushStampPlan(currentState, lastPushedFingerprint) {
 /**
  * Pure merge-decision for applyRemoteData: given remote data, the current
  * local state (used as per-field fallback via pickValid), and whether the
- * race guard fired for tasks/blocks, returns a plan describing what to
- * apply. A key is present in the returned plan only when that field should
- * be set (mirrors the `'field' in remoteData` checks below) — the hook
- * still performs the actual setState calls/side effects, this just computes
- * what they should be.
+ * race guard fired, returns a plan describing what to apply. A key is
+ * present in the returned plan only when that field should be set (mirrors
+ * the `'field' in remoteData` checks below) — the hook still performs the
+ * actual setState calls/side effects, this just computes what they should be.
  *
- * `skipTasksBlocks` (see the initial-pull/live-listener effects) means a
- * genuinely newer local commit landed while remoteData was in flight —
- * applying its tasks/blocks would silently discard that newer edit, so the
- * plan omits `tasksBlocks` and reports `stampFingerprint: false` so the next
- * schedulePush still sees a real change and pushes the newer local edit
- * instead of assuming it's already synced. Every OTHER field still applies
- * normally — they're plain setState with no undo-stack/history concept, so
- * there's no equivalent "this local value is newer" signal to check them against.
+ * `skipAll` (see the initial-pull/live-listener effects) means remoteData is
+ * known to be stale relative to a local edit — either a genuinely newer
+ * local commit landed while it was in flight, or (live listener only) it's
+ * a delayed echo of this device's own earlier push that a newer local edit
+ * has since superseded (see isStaleOwnEcho). Applying ANY field from it
+ * would silently discard that newer edit — and unlike tasks/blocks (which at
+ * least have an undo-stack action id to check), every other field here is
+ * plain setState with no "is this local value newer" signal at all, so there
+ * is no safe subset to apply. The plan is therefore empty and
+ * `stampFingerprint` is false, so the next schedulePush still sees a real
+ * change and pushes the newer local edit instead of assuming it's already
+ * synced.
+ *
+ * (Prior to fixing a project-delete/share revert bug, this only gated
+ * `tasks`/`blocks` — every other field applied unconditionally even when the
+ * race guard had already fired, which is exactly what let a raced remote
+ * snapshot stomp a just-deleted/just-shared project back into existence.)
  */
-export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = false } = {}) {
+export function planRemoteDataMerge(remoteData, localState, { skipAll = false } = {}) {
+  if (skipAll) return { stampFingerprint: false };
+
   const plan = {};
 
-  if (!skipTasksBlocks && ('tasks' in remoteData || 'blocks' in remoteData)) {
+  if ('tasks' in remoteData || 'blocks' in remoteData) {
     plan.tasksBlocks = {
       tasks: pickValid('tasks', remoteData.tasks, localState.tasks),
       blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
@@ -260,11 +310,10 @@ export function planRemoteDataMerge(remoteData, localState, { skipTasksBlocks = 
     plan.sharedProjectIds = pickValid('sharedProjectIds', remoteData.sharedProjectIds, localState.sharedProjectIds);
   }
 
-  // Only stamp "already synced" when tasks/blocks were actually applied
-  // as-is — when skipTasksBlocks is true, local tasks/blocks now differ from
-  // remoteData's (the newer local edit was kept), so stamping remoteData's
-  // fingerprint would claim a state we never actually applied.
-  plan.stampFingerprint = !skipTasksBlocks;
+  // Reaching here means skipAll was false, so remoteData was applied as-is —
+  // safe to stamp "already synced" (the skipAll===true case returns early
+  // above with stampFingerprint: false, before any field is applied).
+  plan.stampFingerprint = true;
 
   return plan;
 }
@@ -508,15 +557,14 @@ export function useCloudSync({
   // shouldn't consume a redo slot. A field missing from `remoteData` (an
   // older/partial doc) leaves that field untouched rather than wiping it.
   //
-  // `skipTasksBlocks` (set by the initial-pull/live-listener effects below,
-  // see their own comments) means a genuinely newer local commit landed
-  // while this remoteData was in flight — applying its tasks/blocks here
-  // would silently discard that newer edit with a stale one, so this skips
-  // just that part. Every OTHER field still applies normally: they're
-  // plain setState with no undo-stack/history concept, so there's no
-  // equivalent "this local value is newer" signal to check them against.
-  const applyRemoteData = useCallback((remoteData, { skipTasksBlocks = false } = {}) => {
-    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipTasksBlocks });
+  // `skipAll` (set by the initial-pull/live-listener effects below, see
+  // their own comments and planRemoteDataMerge's doc comment) means
+  // remoteData is known to be stale relative to a local edit — nothing in it
+  // is applied, since none of these fields carry a per-field "is this newer"
+  // signal to fall back on the way tasks/blocks at least have an action id
+  // for.
+  const applyRemoteData = useCallback((remoteData, { skipAll = false } = {}) => {
+    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll });
     if (plan.tasksBlocks) overwritePresent(plan.tasksBlocks);
     if ('sections' in plan) setSections(plan.sections);
     if ('projects' in plan) setProjects(plan.projects);
@@ -633,24 +681,31 @@ export function useCloudSync({
     if (!user || !cloudSynced) return undefined;
 
     // Baseline local action as of the moment this listener (re)subscribes —
-    // only its FIRST delivered snapshot can race a local edit made in the
-    // real-world gap between mount (localStorage-seeded UI renders
-    // immediately) and that first delivery, mirroring the initial-pull
-    // effect below. Once a first snapshot has landed the app is past that
-    // startup window, so every later snapshot is trusted normally — that's
-    // the accepted steady-state model this file already uses elsewhere
-    // (the fingerprint-based echo check just below).
+    // used below for the FIRST delivered snapshot only, mirroring the
+    // initial-pull effect: that's the one snapshot that can race a local
+    // edit made in the real-world gap between mount (localStorage-seeded UI
+    // renders immediately) and the first delivery.
     const actionIdAtSubscribe = currentActionIdRef.current;
     let receivedFirstSnapshot = false;
     const unsubscribe = subscribeUserData(user.uid, (remoteData) => {
       if (!remoteData) return;
       const fingerprint = computeFingerprint(stateRef.current);
       const remoteFingerprint = computeFingerprint(remoteData);
-      if (fingerprint === remoteFingerprint) return; // echo of our own push
+      if (fingerprint === remoteFingerprint) return; // echo of our own push, local state unchanged since
       const isFirstSnapshot = !receivedFirstSnapshot;
       receivedFirstSnapshot = true;
+      // Two independent ways this snapshot can be stale, checked on EVERY
+      // delivery (not just the first):
+      //   - It's a delayed server ack of THIS device's own earlier push, and
+      //     a local edit landed after that push was sent but before the ack
+      //     arrived — see isStaleOwnEcho's doc comment for why the plain
+      //     fingerprint-equality check above misses this case.
+      //   - (First snapshot only, mirroring the initial-pull effect) a local
+      //     commit landed in the gap between subscribing and the first
+      //     snapshot actually arriving.
+      const isStaleEcho = isStaleOwnEcho(remoteFingerprint, lastPushedFingerprintRef.current);
       const localEditLandedFirst = isFirstSnapshot && hasLocalEditRaced(actionIdAtSubscribe, currentActionIdRef.current);
-      applyRemoteData(remoteData, { skipTasksBlocks: localEditLandedFirst });
+      applyRemoteData(remoteData, { skipAll: isStaleEcho || localEditLandedFirst });
     });
     unsubscribeRef.current = unsubscribe;
     return () => unsubscribe();
@@ -663,13 +718,14 @@ export function useCloudSync({
 
     let cancelled = false;
     // Baseline local action as of the moment this pull starts — if a
-    // genuinely new local commit lands (e.g. the user edits a task) before
-    // this Firestore round-trip resolves, the fetched snapshot is stale
-    // relative to that edit. Applying its tasks/blocks via overwritePresent
-    // would silently discard the newer local edit, so that part is skipped
-    // in that case (see applyRemoteData's skipTasksBlocks) — the debounced
-    // push effect already fires on any state change, so the newer local
-    // edit still reaches Firestore on its own; nothing is lost either way.
+    // genuinely new local commit lands (e.g. the user edits a task, deletes
+    // or shares a project) before this Firestore round-trip resolves, the
+    // fetched snapshot is stale relative to that edit. Applying ANY of it
+    // via overwritePresent/setState would silently discard the newer local
+    // edit, so the whole plan is skipped in that case (see applyRemoteData's
+    // skipAll) — the debounced push effect already fires on any state
+    // change, so the newer local edit still reaches Firestore on its own;
+    // nothing is lost either way.
     const actionIdAtStart = currentActionIdRef.current;
     (async () => {
       setIsPullingCloud(true);
@@ -677,7 +733,7 @@ export function useCloudSync({
         const remoteData = await pullUserData(user.uid);
         if (!cancelled && remoteData) {
           const localEditLandedDuringPull = hasLocalEditRaced(actionIdAtStart, currentActionIdRef.current);
-          applyRemoteData(remoteData, { skipTasksBlocks: localEditLandedDuringPull });
+          applyRemoteData(remoteData, { skipAll: localEditLandedDuringPull });
         }
       } catch (err) {
         console.warn('[useCloudSync] Initial pull failed', err);

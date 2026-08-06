@@ -14,9 +14,15 @@
  *   - `hasLocalEditRaced(baselineActionId, currentActionId)` — the race
  *     guard shared by the live-listener (`localEditLandedFirst`) and
  *     initial-pull (`localEditLandedDuringPull`) effects.
- *   - `planRemoteDataMerge(remoteData, localState, { skipTasksBlocks })` —
- *     applyRemoteData's merge decision (which fields to apply, whether to
- *     stamp lastPushedFingerprintRef).
+ *   - `isStaleOwnEcho(remoteFingerprint, lastPushedFingerprint)` — the live
+ *     listener's own-write-echo detector, checked on EVERY snapshot (not
+ *     just the first) to catch a delayed server ack of this device's own
+ *     earlier push arriving after a newer local edit already moved state on
+ *     — see its doc comment for the project-delete/share revert bug this
+ *     was extracted to fix.
+ *   - `planRemoteDataMerge(remoteData, localState, { skipAll })` —
+ *     applyRemoteData's merge decision (whether to apply every field or
+ *     drop the whole snapshot, and whether to stamp lastPushedFingerprintRef).
  *   - `computePushStampPlan(currentState, lastPushedFingerprint)` —
  *     schedulePush's optimistic-stamp/rollback fingerprint sequencing.
  *   - `hasNewCompletion(prevTasks, nextTasks)` — whether an edit just marked a
@@ -43,6 +49,7 @@ import { isValidFieldValue, isValidBackupPayload, BACKUP_FIELDS } from '../../sr
 import {
   computeFingerprint,
   hasLocalEditRaced,
+  isStaleOwnEcho,
   planRemoteDataMerge,
   computePushStampPlan,
   planAutoBackupPrune,
@@ -249,6 +256,25 @@ describe('hasLocalEditRaced', () => {
   });
 });
 
+describe('isStaleOwnEcho', () => {
+  it('flags a snapshot whose fingerprint matches the last thing this device pushed', () => {
+    // This is the shape that arrives when the server acknowledges OUR OWN
+    // earlier push after local state has since moved on (e.g. the user
+    // deleted or shared a project while that push was still in flight) — see
+    // isStaleOwnEcho's doc comment for the full sequence.
+    expect(isStaleOwnEcho('fp-A', 'fp-A')).toBe(true);
+  });
+
+  it('does not flag a snapshot that differs from the last push (a genuinely different/newer remote write)', () => {
+    expect(isStaleOwnEcho('fp-B', 'fp-A')).toBe(false);
+  });
+
+  it('does not flag anything before this device has ever pushed (lastPushedFingerprint is null)', () => {
+    expect(isStaleOwnEcho('fp-A', null)).toBe(false);
+    expect(isStaleOwnEcho('fp-A', undefined)).toBe(false);
+  });
+});
+
 describe('planRemoteDataMerge', () => {
   const localState = {
     tasks: [{ id: 'local-1' }],
@@ -288,7 +314,7 @@ describe('planRemoteDataMerge', () => {
   };
 
   it('non-race path: applies every field including tasks/blocks, and stamps the fingerprint', () => {
-    const plan = planRemoteDataMerge(remoteData, localState, { skipTasksBlocks: false });
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
     expect(plan.tasksBlocks).toEqual({ tasks: remoteData.tasks, blocks: remoteData.blocks });
     expect(plan.sections).toBe(remoteData.sections);
     expect(plan.projects).toBe(remoteData.projects);
@@ -304,7 +330,7 @@ describe('planRemoteDataMerge', () => {
   });
 
   it("notificationSettings always keeps this device's own timezone, even applied normally", () => {
-    const plan = planRemoteDataMerge(remoteData, localState, { skipTasksBlocks: false });
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
     expect(plan.notificationSettings.remindersEnabled).toBe(false); // remote value wins
     // getBrowserTimeZone() in a node/vitest environment resolves to the host's
     // real IANA zone (not 'Local/Zone' or 'Remote/Zone') — the point of this
@@ -313,20 +339,33 @@ describe('planRemoteDataMerge', () => {
     expect(plan.notificationSettings.timezone).not.toBe('Local/Zone');
   });
 
-  it('skipTasksBlocks path: leaves tasks/blocks unset, applies every other field, and leaves the fingerprint unstamped', () => {
-    const plan = planRemoteDataMerge(remoteData, localState, { skipTasksBlocks: true });
+  it('skipAll path: applies NOTHING (not even projects/sections/etc.) and leaves the fingerprint unstamped', () => {
+    // Regression test for the project-delete/share revert bug: skipAll used
+    // to only gate tasks/blocks (as skipTasksBlocks), leaving every other
+    // field — including `projects`, `sections`, `sharedProjectIds` — applied
+    // unconditionally even when the race guard had already fired. That let a
+    // stale remote snapshot silently resurrect a project the user had just
+    // deleted, or revert one they'd just shared, because setProjects/
+    // setSections/setSharedProjectIds have no undo-stack action id to check
+    // "is this local value newer" against the way tasks/blocks do.
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: true });
     expect(plan.tasksBlocks).toBeUndefined();
     expect('tasks' in plan).toBe(false);
     expect('blocks' in plan).toBe(false);
-    // Every other field still applies normally.
-    expect(plan.sections).toBe(remoteData.sections);
-    expect(plan.projects).toBe(remoteData.projects);
-    expect(plan.labels).toBe(remoteData.labels);
-    expect(plan.routines).toBe(remoteData.routines);
-    expect(plan.rules).toBe(remoteData.rules);
-    expect(plan.soundEnabled).toBe(true);
-    expect(plan.notes).toBe(remoteData.notes);
-    expect(plan.shortcutBindings).toBe(remoteData.shortcutBindings);
+    // Every other field must ALSO be left out of the plan — none of them are
+    // safe to apply once the snapshot is known to be stale.
+    expect('sections' in plan).toBe(false);
+    expect('projects' in plan).toBe(false);
+    expect('labels' in plan).toBe(false);
+    expect('routines' in plan).toBe(false);
+    expect('rules' in plan).toBe(false);
+    expect('soundEnabled' in plan).toBe(false);
+    expect('soundVolume' in plan).toBe(false);
+    expect('animationsEnabled' in plan).toBe(false);
+    expect('notificationSettings' in plan).toBe(false);
+    expect('notes' in plan).toBe(false);
+    expect('shortcutBindings' in plan).toBe(false);
+    expect('sharedProjectIds' in plan).toBe(false);
     // Deliberately left unstamped so the next schedulePush still pushes the
     // newer local edit instead of assuming this state is already synced.
     expect(plan.stampFingerprint).toBe(false);
@@ -341,19 +380,19 @@ describe('planRemoteDataMerge', () => {
     // reconciles against, NOT to point-in-time backups, which DO include
     // events now (a one-directional, user-initiated restore is a different
     // risk profile — see backupService.test.js).
-    const plan = planRemoteDataMerge(remoteData, localState, { skipTasksBlocks: false });
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
     expect('events' in plan).toBe(false);
   });
 
   it('a malformed remote field falls back to the local value instead of being applied as-is', () => {
     const tamperedRemote = { ...remoteData, sections: 'not-an-array' };
-    const plan = planRemoteDataMerge(tamperedRemote, localState, { skipTasksBlocks: false });
+    const plan = planRemoteDataMerge(tamperedRemote, localState, { skipAll: false });
     expect(plan.sections).toBe(localState.sections);
   });
 
   it('a field missing from remoteData is left out of the plan entirely (older/partial doc leaves it untouched)', () => {
     const { labels, ...partialRemote } = remoteData;
-    const plan = planRemoteDataMerge(partialRemote, localState, { skipTasksBlocks: false });
+    const plan = planRemoteDataMerge(partialRemote, localState, { skipAll: false });
     expect('labels' in plan).toBe(false);
   });
 
@@ -363,7 +402,7 @@ describe('planRemoteDataMerge', () => {
       ...rest,
       pinnedLinks: { folders: [], links: [{ id: 'l1', label: 'Example', url: 'https://example.com', createdAt: 1 }] },
     };
-    const plan = planRemoteDataMerge(legacyRemote, localState, { skipTasksBlocks: false });
+    const plan = planRemoteDataMerge(legacyRemote, localState, { skipAll: false });
     expect(plan.notes).toBeDefined();
     expect(plan.notes.notes.some((n) => n.body === 'https://example.com')).toBe(true);
   });
