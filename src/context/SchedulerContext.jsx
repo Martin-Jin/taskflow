@@ -51,13 +51,26 @@ import { uploadCommentAttachment, deleteCommentAttachment } from '../services/at
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import {
-  computeCompletionHistoryUpdate,
-  computeNextDueDate,
-  computeRecurringDescendantUpdate,
   computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
   deriveRecurrenceRule,
 } from '../utils/recurrence';
+// The convergent recurring-task model (see utils/recurrenceState.js). Every
+// recurring completion goes through applyRecurringCompletion rather than
+// advancing dueDate/completedDates/completionHistory in place, so the same
+// occurrence completed twice — by a double-click, or by two collaborators —
+// is a no-op instead of skipping an occurrence.
+import {
+  applyRecurringCompletion,
+  computeRecurringDescendantState,
+  ensureRecurrenceAnchor,
+  planOccurrenceUncompletion,
+  planSeriesReanchor,
+} from '../utils/recurrenceState';
+import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
+import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
+import { createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks } from '../services/sharedProjectService';
+import { isSharedTask, partitionTasksBySharing, preserveSharedTasks } from '../utils/sharedTaskSync';
 import { isCompletedForCurrentOccurrence, areAllChildrenCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import {
   fetchTasks as fetchTodoistTasks,
@@ -86,6 +99,20 @@ const SchedulerContext = createContext(null);
 // `actionToasts` below) — a burst of quick actions drops the oldest rather
 // than growing the stack unbounded.
 const MAX_ACTION_TOASTS = 3;
+
+// How long after completing a recurring task the same task ignores another
+// completion. Recurring tasks are the only ones where a repeat click does
+// something rather than nothing: each click completes the NEXT occurrence, so
+// rapid-fire clicking walks the series into the future a day at a time. That's
+// indistinguishable, to the data model, from deliberately clearing a backlog —
+// the occurrences really are different — so it can't be prevented by the
+// idempotence in utils/recurrenceState.js and needs a UI-level guard instead.
+//
+// Deliberately short: long enough to absorb a double-click or a stuck mouse,
+// short enough that deliberately clearing several overdue occurrences in a row
+// still works at any normal clicking pace. Kept out of the data model entirely
+// so it can't affect the convergence properties that model guarantees.
+const RECURRING_COMPLETE_COOLDOWN_MS = 1000;
 
 // Cap on comments per task. `tasks` (and therefore every task's comment
 // array) lives inside the single `users/{uid}` Firestore doc that gets
@@ -180,7 +207,12 @@ function buildNewTaskObject(taskInput, id) {
     source: 'manual',
     ...sanitizedInput,
   };
-  return { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
+  const withRule = { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
+  // A task created as recurring needs its series anchor from the outset, or it
+  // would reach the derive path un-anchored and never advance — see
+  // utils/recurrenceState.js. No-op for the (overwhelmingly common)
+  // non-recurring case.
+  return { ...withRule, ...ensureRecurrenceAnchor(withRule) };
 }
 
 /**
@@ -367,6 +399,25 @@ function getDescendantIds(taskId, tasks) {
  * `visited` guards the same hand-edited-backup parentId-cycle case every
  * other parentId walk in this file guards against.
  */
+/**
+ * Whether this client may compact `task`'s completed-occurrence history.
+ *
+ * Compaction is the one non-commutative operation in the recurring-task model
+ * (it removes entries and increments an archive), so it's only safe where
+ * there is exactly ONE writer — see utils/recurrenceState.js's
+ * planOccurrenceCompaction. A personal task satisfies that by definition: it
+ * lives in this user's own store and nobody else can write it. A SHARED task
+ * does not, so it's excluded here and compacted by its owner instead, which is
+ * the only identity guaranteed to be singular for it.
+ *
+ * Deliberately a conservative test — anything not provably single-writer
+ * simply doesn't compact, which costs a little storage rather than risking a
+ * double-counted month in someone's stats.
+ */
+function canCompact(task) {
+  return !task?.sharedProjectId;
+}
+
 function applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso) {
   let current = newTasks;
   let cursor = current.find((t) => t.id === taskId);
@@ -380,28 +431,11 @@ function applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso) {
     if (isCompletedForCurrentOccurrence(parent, todayIso)) break; // already done — nothing to cascade, and avoids re-advancing a recurring parent past what it already advanced to
 
     if (parent.isRecurring && parent.dueDate) {
-      const baseDate = parent.dueDate < todayIso ? todayIso : parent.dueDate;
-      const nextDueDate = computeNextDueDate(baseDate, parent.recurrenceString);
-      const { completedDates, completionHistory } = computeCompletionHistoryUpdate(
-        parent.dueDate,
-        parent.completedDates,
-        parent.completionHistory,
-        todayIso
-      );
-      current = current.map((t) =>
-        t.id === parentId
-          ? {
-            ...t,
-            dueDate: nextDueDate,
-            remainingHours: t.estimatedHours,
-            isCompleted: false,
-            completedAt: nowIso,
-            completedDates,
-            completionHistory,
-            updatedAt: nowIso,
-          }
-          : t
-      );
+      // Same roll-forward every other recurring completion uses — see
+      // utils/recurrenceState.js's applyRecurringCompletion, which records the
+      // occurrence into the commutative set and re-derives dueDate from it.
+      const rolled = applyRecurringCompletion(parent, parent.dueDate, todayIso, { compact: canCompact(parent) });
+      current = current.map((t) => (t.id === parentId ? { ...t, ...rolled, completedAt: nowIso, updatedAt: nowIso } : t));
     } else {
       current = current.map((t) =>
         t.id === parentId ? { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0, updatedAt: nowIso } : t
@@ -434,7 +468,7 @@ export function SchedulerProvider({ children }) {
   // (see the effect) — `blocks` (calendar placements) have no Todoist
   // equivalent and are NEVER overwritten by that effect; the persisted
   // copy is always the source of truth for them.
-  const { state, commit, undo, redo, canUndo, canRedo, currentActionLabel, currentActionId, overwritePresent} = useHistoryState({
+  const { state, commit, undo: undoHistory, redo: redoHistory, canUndo, canRedo, currentActionLabel, currentActionId, overwritePresent} = useHistoryState({
     tasks: loadPersisted('tasks', null) ?? getMockTasks(),
     blocks: loadPersisted('blocks', null) ?? [],
   });
@@ -583,6 +617,15 @@ export function SchedulerProvider({ children }) {
     false
   );
 
+  // Guards the one-time migrateRecurrenceState backfill below — see
+  // src/migrations/migrateRecurrenceState.js (recurring tasks gained a
+  // commutative completedOccurrences/skippedThrough source of truth, with
+  // dueDate/completedDates/completionHistory derived from it).
+  const [recurrenceStateMigrationDone, setRecurrenceStateMigrationDone] = usePersistedState(
+    'recurrenceStateMigrationDone',
+    false
+  );
+
   // Guards the one-time migrateStaleRecurringRemainingHours backfill below —
   // see src/migrations/migrateStaleRecurringRemainingHours.js (a recurring
   // task that became recurring while already isCompleted/remainingHours: 0
@@ -661,6 +704,11 @@ export function SchedulerProvider({ children }) {
   // closing over `tasks`/`blocks` directly would replay a stale snapshot
   // and silently clobber whatever changed in the meantime. This ref always
   // holds the latest committed state for those continuations to read.
+  // Last completion time per recurring task id, backing the cooldown above.
+  // A ref, not state: it must never trigger a re-render, and it's read/written
+  // inside completeTask's own callback where a state value would be stale.
+  const recentRecurringCompletionsRef = useRef(new Map());
+
   const stateRef = useRef(state);
   useEffect(() => {
     stateRef.current = state;
@@ -702,7 +750,13 @@ export function SchedulerProvider({ children }) {
   // setters in several places), so they're persisted via a plain effect
   // instead of the usePersistedState wrapper.
   useEffect(() => {
-    savePersisted('tasks', tasks);
+    // Shared-project tasks are deliberately NOT persisted locally: Firestore is
+    // their source of truth (the inverse of everything else here — see
+    // services/sharedProjectService.js). Keeping a local copy would mean two
+    // stores reconciling the same multi-writer data, and a stale one could
+    // resurrect a task a collaborator deleted. They reload from their
+    // subscription instead.
+    savePersisted('tasks', partitionTasksBySharing(tasks).personalTasks);
   }, [tasks]);
 
   useEffect(() => {
@@ -767,6 +821,24 @@ export function SchedulerProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ONE-TIME MIGRATION — see src/migrations/migrateRecurrenceState.js. Runs
+  // after the recurrence-consistency migration above so parent/sub-task
+  // recurrence is already settled before each series gets its anchor. Uses
+  // overwritePresent rather than commit: adopting the new model is a
+  // representation change with no user-visible effect (every derived value
+  // comes out identical — that's asserted in its unit tests), so it has no
+  // business appearing in the undo stack or popping an action toast. Safe to
+  // delete this effect once the flag above is true for all users.
+  useEffect(() => {
+    if (recurrenceStateMigrationDone) return;
+    const migrated = migrateRecurrenceState(stateRef.current.tasks);
+    if (migrated !== stateRef.current.tasks) {
+      overwritePresent({ tasks: migrated, blocks: stateRef.current.blocks });
+    }
+    setRecurrenceStateMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ONE-TIME MIGRATION — see src/migrations/migrateStaleRecurringRemainingHours.js.
   // Runs after the two migrations above (so it sees final isRecurring state)
   // and only commits a history entry when this device actually has a
@@ -792,7 +864,11 @@ export function SchedulerProvider({ children }) {
   useEffect(() => {
     const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const isStaleCompleted = (t) => t.isCompleted && t.completedAt && new Date(t.completedAt).getTime() < cutoffMs;
-    const staleTasks = stateRef.current.tasks.filter(isStaleCompleted);
+    // Shared tasks are exempt: this sweep is personal housekeeping running on
+    // whichever device happens to load first, so applying it to a shared
+    // project would delete other people's tasks out from under them, on one
+    // user's local clock and retention preference.
+    const staleTasks = stateRef.current.tasks.filter((t) => isStaleCompleted(t) && !isSharedTask(t));
     if (staleTasks.length === 0) return;
     const staleIds = new Set(staleTasks.map((t) => t.id));
     // Mirrors deleteTask's cascade above — otherwise every comment attachment
@@ -851,6 +927,57 @@ export function SchedulerProvider({ children }) {
     onEventsChanged: triggerDueDateRebalance,
   });
 
+  // ---- Shared project live sync (Collaborative Projects, Phase 1) ----------
+  // Deliberately a separate, smaller hook from useCloudSync below: that one
+  // treats localStorage as truth and converges one person's devices, while
+  // this one treats Firestore as truth with many concurrent writers. See
+  // hooks/useSharedProjectSync.js for why the two paths stay separate.
+  const {
+    sharedProjects,
+    viewersByProject,
+    liveSharedTasks,
+    noteSharedTaskDeleted,
+  } = useSharedProjectSync({
+    tasks,
+    stateRef,
+    // Remote changes are applied WITHOUT a history entry — they came from
+    // someone else, so they must not be undoable by this user (and must not
+    // consume a redo slot), exactly like the cloud-sync listener's own writes.
+    applyRemote: overwritePresent,
+    sharedProjectIds,
+    user,
+    setNotification,
+  });
+
+  // Undo/redo must never restore a history snapshot's copy of a SHARED task.
+  // HistoryEntry snapshots the entire task array (see types/index.js), so a
+  // plain restore would revert collaborators' concurrent edits to tasks this
+  // user never touched, and resurrect ones they deleted. Wrapping the raw
+  // primitives keeps every consumer — the toolbar buttons, keyboard shortcuts,
+  // the action toasts — calling `undo`/`redo` exactly as before.
+  const liveSharedTasksRef = useRef(liveSharedTasks);
+  useEffect(() => {
+    liveSharedTasksRef.current = liveSharedTasks;
+  }, [liveSharedTasks]);
+
+  const restoreLiveSharedTasks = useCallback(() => {
+    // Runs after the history primitive has applied its snapshot. Cheap and a
+    // no-op when the user has no shared projects at all.
+    if (liveSharedTasksRef.current.length === 0) return;
+    const restored = preserveSharedTasks(stateRef.current.tasks, liveSharedTasksRef.current);
+    overwritePresent({ tasks: restored, blocks: stateRef.current.blocks });
+  }, [overwritePresent]);
+
+  const undo = useCallback(() => {
+    undoHistory();
+    restoreLiveSharedTasks();
+  }, [undoHistory, restoreLiveSharedTasks]);
+
+  const redo = useCallback(() => {
+    redoHistory();
+    restoreLiveSharedTasks();
+  }, [redoHistory, restoreLiveSharedTasks]);
+
   // ---- Cloud sync (Firestore) ------------------------------------------------
   // Pull/push/listener/fingerprint/backup/restore logic all lives in this
   // hook now — see its own doc comment (src/hooks/useCloudSync.js).
@@ -863,7 +990,12 @@ export function SchedulerProvider({ children }) {
   // backupService.js's BACKUP_FIELDS doc comment for why.
   const cloudSyncState = useMemo(
     () => ({
-      tasks,
+      // Personal tasks only. A shared project's content isn't solely this
+      // user's to push, and round-tripping it through the users/{uid} document
+      // would put a second, independently-reconciled store behind data that
+      // already has concurrent writers — the same failure mode that keeps
+      // `events` out of live sync (see backupService.js's BACKUP_FIELDS notes).
+      tasks: partitionTasksBySharing(tasks).personalTasks,
       blocks,
       sections,
       projects,
@@ -1177,7 +1309,20 @@ export function SchedulerProvider({ children }) {
             // recurrenceRule is a derived cache of recurrenceString (see
             // utils/recurrence.js) — recompute it whenever a caller touches
             // recurrenceString so the two can never drift apart.
-            return 'recurrenceString' in updates ? { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) } : merged;
+            if ('recurrenceString' in updates) {
+              merged = { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
+            }
+            // Manually moving a recurring task's due date RE-ANCHORS its
+            // series rather than advancing it: the user picked a date, so that
+            // date must be what they get. Without this the old anchor (plus
+            // any skip watermark) would immediately derive the due date back
+            // off the one they chose. See planSeriesReanchor.
+            if (merged.isRecurring && 'dueDate' in updates && merged.dueDate && merged.dueDate !== t.dueDate) {
+              merged = { ...merged, ...planSeriesReanchor(merged, merged.dueDate) };
+            }
+            // Covers a task that just BECAME recurring (or gained its first
+            // due date) — it needs an anchor before anything can derive from it.
+            return { ...merged, ...ensureRecurrenceAnchor(merged) };
           });
           // A recurring parent's sub-tasks (and vice versa) must stay
           // recurrence-consistent — see computeRecurrenceSyncUpdates. Only
@@ -1216,6 +1361,14 @@ export function SchedulerProvider({ children }) {
   const deleteTask = useCallback(
     (taskId) => {
       const idsToDelete = new Set([taskId, ...getDescendantIds(taskId, tasks)]);
+      // Tell the shared-project sync engine these deletions were DELIBERATE.
+      // It never infers a delete from a task simply being absent, because an
+      // undo, a backup restore or a cloud pull all replace the task array
+      // wholesale — inferring from any of those would destroy a collaborator's
+      // data. This is the one place that knows the difference.
+      tasks
+        .filter((t) => idsToDelete.has(t.id) && isSharedTask(t))
+        .forEach((t) => noteSharedTaskDeleted(t.id));
       // Scrub every deleted id (parent + descendants) out of every other
       // task's dependsOn — otherwise a dependent task references a task
       // that no longer exists and, since areDependenciesMet() treats a
@@ -1271,7 +1424,7 @@ export function SchedulerProvider({ children }) {
       );
       if (soundEnabled) playDeleteSound(soundVolume);
     },
-    [tasks, blocks, commit, user, soundEnabled, soundVolume, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted]
+    [tasks, blocks, commit, user, soundEnabled, soundVolume, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted, noteSharedTaskDeleted]
   );
 
   /**
@@ -1368,7 +1521,7 @@ export function SchedulerProvider({ children }) {
    * recurrenceString/dueDate down onto every sub-task), its dueDate advances
    * to the next occurrence too; otherwise it's left untouched (no recurrence
    * reason to clear a plain sub-task deadline) — see
-   * utils/recurrence.js's computeRecurringDescendantUpdate for the exact
+   * utils/recurrenceState.js's computeRecurringDescendantState for the exact
    * per-descendant decision and why. For a non-recurring parent, every
    * descendant is marked completed right alongside it.
    *
@@ -1449,6 +1602,18 @@ export function SchedulerProvider({ children }) {
         return false;
       }
 
+      // See RECURRING_COMPLETE_COOLDOWN_MS. Returns true rather than false:
+      // from the caller's point of view the completion it asked for did happen
+      // (a moment ago), so the UI should behave exactly as it does on success
+      // — closing the detail modal, resetting the timer — rather than treating
+      // this as a refusal the way the dependency guard above does.
+      if (existing.isRecurring) {
+        const lastCompletedAtMs = recentRecurringCompletionsRef.current.get(taskId);
+        const nowMs = Date.now();
+        if (lastCompletedAtMs != null && nowMs - lastCompletedAtMs < RECURRING_COMPLETE_COOLDOWN_MS) return true;
+        recentRecurringCompletionsRef.current.set(taskId, nowMs);
+      }
+
       const descendantIds = new Set(getDescendantIds(taskId, tasks));
 
       if (existing.isRecurring && existing.dueDate) {
@@ -1456,8 +1621,10 @@ export function SchedulerProvider({ children }) {
         // task is completed late, so finishing an overdue daily task today
         // makes it due tomorrow instead of 1 day after the missed due date.
         const todayIso = toISODate(new Date());
+        // Kept for the block filter below, which still reasons in terms of
+        // "the occurrence actually being closed out" — completing late closes
+        // out today's occurrence, not the stale overdue one.
         const baseDate = existing.dueDate < todayIso ? todayIso : existing.dueDate;
-        const nextDueDate = computeNextDueDate(baseDate, existing.recurrenceString);
         const nowIso = new Date().toISOString();
 
         // Record this occurrence's completion against the actual occurrence
@@ -1475,17 +1642,14 @@ export function SchedulerProvider({ children }) {
           ? Object.fromEntries(Object.entries(existing.overrides).filter(([key]) => key !== occurrenceDate))
           : existing.overrides;
 
-        // Trim anything older than 7 days out of the raw `completedDates` list
-        // into the monthly `completionHistory` aggregate instead of dropping
-        // it outright — see types/index.js's Task typedef, and
-        // computeCompletionHistoryUpdate (shared with the descendant-cascade
-        // branch below so the two can't diverge on this bookkeeping).
-        const { completedDates: keptDates, completionHistory: nextHistory } = computeCompletionHistoryUpdate(
-          occurrenceDate,
-          existing.completedDates,
-          existing.completionHistory,
-          todayIso
-        );
+        // The whole roll-forward — record the occurrence, advance the derived
+        // due date, refresh the completedDates/completionHistory views — in one
+        // call, shared with the descendant cascade and the upward cascade so
+        // none of the three can diverge on this bookkeeping. See
+        // utils/recurrenceState.js for why completion is a set union rather
+        // than an in-place advance.
+        const rolled = applyRecurringCompletion(existing, occurrenceDate, todayIso, { compact: canCompact(existing) });
+        const nextDueDate = rolled.dueDate;
 
         // Function form (see addTask's comment above) so two completions
         // landing in the same tick (double-click, or a recurring task's
@@ -1497,29 +1661,14 @@ export function SchedulerProvider({ children }) {
         commit((current) => {
           const newTasks = current.tasks.map((t) => {
             if (t.id === taskId) {
-              return {
-                ...t,
-                dueDate: nextDueDate,
-                remainingHours: t.estimatedHours,
-                isCompleted: false,
-                completedAt: nowIso,
-                completedDates: keptDates,
-                completionHistory: nextHistory,
-                overrides: nextOverrides,
-                updatedAt: nowIso,
-              };
+              return { ...t, ...rolled, overrides: nextOverrides, completedAt: nowIso, updatedAt: nowIso };
             }
             if (descendantIds.has(t.id)) {
-              const update = computeRecurringDescendantUpdate(t, todayIso);
-              return {
-                ...t,
-                isCompleted: update.isCompleted,
-                ...(update.dueDate !== undefined ? { dueDate: update.dueDate } : {}),
-                ...(update.remainingHours !== undefined ? { remainingHours: update.remainingHours } : {}),
-                ...(update.completedDates !== undefined ? { completedDates: update.completedDates } : {}),
-                ...(update.completionHistory !== undefined ? { completionHistory: update.completionHistory } : {}),
-                updatedAt: nowIso,
-              };
+              // null means "not independently recurring — leave it entirely
+              // alone", which is why this spreads nothing rather than writing
+              // undefined over the descendant's own fields.
+              const update = computeRecurringDescendantState(t, todayIso);
+              return update ? { ...t, ...update, updatedAt: nowIso } : t;
             }
             return t;
           });
@@ -1610,7 +1759,7 @@ export function SchedulerProvider({ children }) {
    * completeTask never sets true for a recurring task in the first place).
    * So restoring one has to undo exactly what completing it just did: drop
    * today's date back out of `completedDates` (reversing
-   * computeCompletionHistoryUpdate) rather than only touching isCompleted,
+   * utils/recurrenceState.js's model) rather than only touching isCompleted,
    * which would otherwise leave the task showing checked forever with no way
    * to un-check it. This deliberately does NOT try to roll dueDate back to
    * its pre-completion value — recurrence advancement and calendar
@@ -1635,11 +1784,17 @@ export function SchedulerProvider({ children }) {
       const todayIso = toISODate(new Date());
       const target = tasks.find((t) => t.id === taskId);
       if (!target) return;
+      // Deliberately re-opening a task clears its completion cooldown, so
+      // un-checking and immediately re-checking isn't swallowed as a repeat.
+      recentRecurringCompletionsRef.current.delete(taskId);
 
       let newTasks;
       if (target.isRecurring) {
+        // Remove today's occurrence from the SOURCE set — completedDates is a
+        // derived view now (see utils/recurrenceState.js), so filtering it
+        // directly would be silently undone by the next recompute.
         newTasks = tasks.map((t) =>
-          t.id === taskId ? { ...t, completedDates: (t.completedDates || []).filter((d) => d !== todayIso) } : t
+          t.id === taskId ? { ...t, ...planOccurrenceUncompletion(t, todayIso, todayIso) } : t
         );
       } else {
         newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: false, completedAt: null } : t));
@@ -1659,7 +1814,7 @@ export function SchedulerProvider({ children }) {
         newTasks = newTasks.map((t) =>
           t.id === parentId
             ? parent.isRecurring
-              ? { ...t, completedDates: (t.completedDates || []).filter((d) => d !== todayIso) }
+              ? { ...t, ...planOccurrenceUncompletion(t, todayIso, todayIso) }
               : { ...t, isCompleted: false, completedAt: null }
             : t
         );
@@ -1885,26 +2040,129 @@ export function SchedulerProvider({ children }) {
       const trimmed = name.trim();
       if (!trimmed) return;
       setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, name: trimmed } : p)));
+      // A shared project's name lives on its Firestore document too, so a
+      // rename has to reach collaborators — otherwise they keep seeing whatever
+      // it was called when they joined. Fire-and-forget: the local rename has
+      // already applied, and rules reject it for non-editors anyway.
+      const shared = projects.find((p) => p.id === projectId)?.sharedProjectId;
+      if (shared) {
+        updateSharedProject(shared, { name: trimmed }).catch((err) =>
+          console.error('[SchedulerContext] Failed to rename shared project', err)
+        );
+      }
     },
-    []
+    [projects]
   );
 
   const deleteProject = useCallback(
     (projectId) => {
+      const project = projects.find((p) => p.id === projectId);
+      const sharedId = project?.sharedProjectId;
+
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
       setSections((prev) => prev.filter((s) => s.projectId !== projectId));
-      // Function form — see addTask's comment above.
+
+      if (sharedId) {
+        // Drop the membership pointer either way, so the project stops
+        // re-listing on this user's other devices.
+        setSharedProjectIds((prev) => prev.filter((id) => id !== sharedId));
+        // Only the OWNER deletes the shared document itself. For everyone else
+        // "delete" means leave — a collaborator removing it from their own list
+        // must not destroy a project they don't own (and rules would refuse
+        // anyway). Without this the document was orphaned in Firestore with
+        // nobody left listing it.
+        if (project?.ownerId && user?.uid === project.ownerId) {
+          deleteSharedProject(sharedId).catch((err) =>
+            console.error('[SchedulerContext] Failed to delete shared project', err)
+          );
+        }
+      }
+
+      // Function form — see addTask's comment above. A shared project's tasks
+      // are dropped outright rather than being unparented into All Tasks:
+      // they live in Firestore, not this user's store, so keeping local copies
+      // would strand tasks nobody is syncing any more.
       commit(
         (current) => ({
-          tasks: current.tasks.map((t) =>
-            t.projectId === projectId ? { ...t, projectId: null, sectionId: null, sectionName: null } : t
-          ),
-          blocks: current.blocks,
+          tasks: sharedId
+            ? current.tasks.filter((t) => t.sharedProjectId !== sharedId)
+            : current.tasks.map((t) =>
+              t.projectId === projectId ? { ...t, projectId: null, sectionId: null, sectionName: null } : t
+            ),
+          blocks: sharedId ? current.blocks.filter((b) => !current.tasks.some((t) => t.id === b.taskId && t.sharedProjectId === sharedId)) : current.blocks,
         }),
         `Deleted project`
       );
     },
-    [commit]
+    [commit, projects, user]
+  );
+
+  /**
+   * Turn an existing personal project into a collaborative one (Collaborative
+   * Projects, Phase 1). Creates the `sharedProjects/{id}` document, moves the
+   * project's tasks into it, and records the membership pointer so the project
+   * re-lists on this user's other devices.
+   *
+   * Sharing is opt-in per project and never retroactive — everything else stays
+   * exactly where it is, in this user's own `users/{uid}` document.
+   *
+   * This does NOT generate a share link. Link tokens live in a document no
+   * client may read (`sharedProjects/{id}/private/links`), so generating,
+   * rotating, revoking or even VIEWING a link all require the server-side join
+   * endpoint that Phase 2 adds. Until then this makes a project collaborative
+   * and syncs it live across the owner's own devices, which is what Phase 1
+   * needs to be testable on its own.
+   *
+   * Requires a real signed-in account: `firestore.rules` refuses to let an
+   * anonymous user create a shared project, since an ephemeral identity would
+   * leave it permanently unowned.
+   */
+  const shareProject = useCallback(
+    async (projectId) => {
+      if (!user) {
+        setNotification({ type: 'warning', message: 'Sign in to share a project.' });
+        return { ok: false };
+      }
+      if (user.isAnonymous) {
+        setNotification({ type: 'warning', message: 'Sharing needs a full account, not a guest session.' });
+        return { ok: false };
+      }
+      const project = projects.find((p) => p.id === projectId);
+      if (!project) return { ok: false };
+      if (project.sharedProjectId) return { ok: true, id: project.sharedProjectId };
+
+      // Recurring tasks are safe to share: their completion state merges rather
+      // than overwrites (see utils/recurrenceState.js), which is exactly why
+      // that model was built before this.
+      const sharedProjectId = generateLocalId('shared');
+      try {
+        await createSharedProject(sharedProjectId, { ownerId: user.uid, name: project.name });
+        // Move this project's tasks into the shared store, then tag them
+        // locally so every consumer (Board, list, search) keeps rendering them
+        // while the sync engine takes over their persistence.
+        const movingTasks = stateRef.current.tasks.filter((t) => t.projectId === projectId);
+        await writeSharedTasks(sharedProjectId, { creates: movingTasks });
+
+        setProjects((prev) =>
+          prev.map((p) => (p.id === projectId ? { ...p, ownerId: user.uid, sharedProjectId } : p))
+        );
+        setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
+        // overwritePresent, not commit: this is a storage-location change, not
+        // a user action to sit in the undo stack — and undoing it could not
+        // un-create the Firestore document anyway.
+        overwritePresent({
+          tasks: stateRef.current.tasks.map((t) => (t.projectId === projectId ? { ...t, sharedProjectId } : t)),
+          blocks: stateRef.current.blocks,
+        });
+        setNotification({ type: 'success', message: `"${project.name}" is now a shared project.` });
+        return { ok: true, id: sharedProjectId };
+      } catch (err) {
+        console.error('[SchedulerContext] Failed to share project', err);
+        setNotification({ type: 'error', message: "Couldn't share that project. Please try again." });
+        return { ok: false };
+      }
+    },
+    [user, projects, stateRef, overwritePresent, setNotification]
   );
 
   const togglePinProject = useCallback((projectId) => {
@@ -2646,6 +2904,12 @@ export function SchedulerProvider({ children }) {
       renameProject,
       deleteProject,
       togglePinProject,
+      // Collaborative Projects (Phase 1): the shared project documents this
+      // user belongs to, who else is currently viewing each, and the action
+      // that turns a personal project into a shared one.
+      sharedProjects,
+      viewersByProject,
+      shareProject,
       touchProjectVisited,
       addSection,
       renameSection,
@@ -2733,6 +2997,9 @@ export function SchedulerProvider({ children }) {
       renameProject,
       deleteProject,
       togglePinProject,
+      sharedProjects,
+      viewersByProject,
+      shareProject,
       touchProjectVisited,
       addSection,
       renameSection,

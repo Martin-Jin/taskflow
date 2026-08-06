@@ -414,6 +414,17 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       !t.isCompleted &&
       t.remainingHours > 0 &&
       !parentIds.has(t.id) &&
+      // Shared-project tasks never enter the auto-scheduler. This engine
+      // computes against ONE person's routines, work hours and calendar, so a
+      // task several people share has no single owner's capacity to consume —
+      // whichever collaborator's device happened to run a rebalance would
+      // place it against their availability and push the result to everyone.
+      // Reconciling capacity across collaborators is explicitly out of scope
+      // (see TODO.md), so this is made an explicit exclusion rather than
+      // silently half-supported. Shared tasks can still be scheduled MANUALLY
+      // by dragging them onto a calendar, which produces a block in that one
+      // user's own local, unshared blocks array.
+      !t.sharedProjectId &&
       !!resolveDueDate(t, taskById)
   );
   const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));

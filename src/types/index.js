@@ -64,16 +64,45 @@
  *                                              specific weekday) it actually repeats on, instead of only its single
  *                                              current `dueDate`. Null/undefined for non-recurring tasks (or a
  *                                              recurring task whose `recurrenceString` doesn't parse).
- * @property {string[]} [completedDates]     - ISO dates (YYYY-MM-DD) this recurring task's occurrence was completed
- *                                              on, most recent first, trimmed to the last 7 days (older entries roll
- *                                              into `completionHistory` instead of being dropped — see
- *                                              SchedulerContext.completeTask). Only meaningful for `isRecurring`
- *                                              tasks; undefined for everything else.
- * @property {Record<string, number>} [completionHistory] - Monthly aggregate of completions once trimmed out of
- *                                              `completedDates`, keyed by `"YYYY-MM"` (e.g. `{"2026-07": 23}`), so a
- *                                              trend/streak view can show history arbitrarily far back without
- *                                              keeping every raw date forever. Only meaningful for `isRecurring`
- *                                              tasks; undefined for everything else.
+ * @property {string[]} [completedDates]     - DERIVED VIEW, not source of truth — see `completedOccurrences` below
+ *                                              and utils/recurrenceState.js. ISO dates (YYYY-MM-DD) this recurring
+ *                                              task's occurrence was completed on, most recent first, covering the
+ *                                              last 7 days (older ones appear in `completionHistory` instead). Shape
+ *                                              and meaning are unchanged from when this was written directly, so
+ *                                              every reader (missedTasks.js, BoardView, TaskDetailModal,
+ *                                              StatsDashboard) is unaffected — only the writer changed. Only
+ *                                              meaningful for `isRecurring` tasks; undefined for everything else.
+ * @property {Record<string, number>} [completionHistory] - DERIVED VIEW (see `completedDates` above). Monthly
+ *                                              aggregate of completions older than that 7-day window, keyed by
+ *                                              `"YYYY-MM"` (e.g. `{"2026-07": 23}`), so a trend/streak view can show
+ *                                              history arbitrarily far back. Computed as `completionHistoryArchive`
+ *                                              plus a rollup of `completedOccurrences`, rather than incremented in
+ *                                              place — an increment is exactly what can't survive two writers.
+ * @property {string} [recurrenceAnchor]     - SOURCE OF TRUTH. ISO date of the series' defining first occurrence,
+ *                                              which every derived due date is computed forward from. Set when a
+ *                                              task becomes recurring, and re-set (not advanced) when the user
+ *                                              manually picks a new due date — see utils/recurrenceState.js's
+ *                                              planSeriesReanchor. Absent on a recurring task only if it has no
+ *                                              due date yet, in which case there's no series to anchor.
+ * @property {string[]} [completedOccurrences] - SOURCE OF TRUTH for which occurrences are done. A SET, merged
+ *                                              between clients by UNION (see mergeRecurringState) rather than
+ *                                              last-write-wins, because a completion recorded from a stale snapshot
+ *                                              would otherwise replace the whole array and erase someone else's.
+ *                                              Union is commutative and idempotent, so concurrent completions
+ *                                              converge and completing the same occurrence twice does nothing —
+ *                                              which also fixes single-user double-click double-advance.
+ *                                              `dueDate` is derived from this, not stored independently.
+ * @property {string|null} [skippedThrough]  - SOURCE OF TRUTH. ISO date through which occurrences are closed out
+ *                                              but were NOT completed, merged between clients by MAX. Exists to
+ *                                              preserve the long-standing behaviour that completing a task 30 days
+ *                                              overdue jumps to the next occurrence after today rather than
+ *                                              building a 30-day backlog — those skipped occurrences must not count
+ *                                              as completions or streaks/stats would be inflated.
+ * @property {Record<string, number>} [completionHistoryArchive] - Frozen baseline of `completionHistory` captured at
+ *                                              migration time, plus anything compacted since. Holds counts whose raw
+ *                                              dates no longer exist, so it can't be recomputed — keeping it is what
+ *                                              stops adopting this model from destroying long-term history. See
+ *                                              migrations/migrateRecurrenceState.js.
  * @property {Object<string,{date?: string, deleted?: boolean}>} [overrides] - Per-occurrence override map keyed by
  *                                              the occurrence's ORIGINAL (recurrence-rule-generated) ISO date, even
  *                                              if that occurrence was later moved — mirrors CalendarEvent.overrides
