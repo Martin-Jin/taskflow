@@ -209,8 +209,9 @@ certain about.
 
 A few deliberate limits worth knowing:
 
-- **Only tasks sync.** Board columns (sections) and per-task comments are still
-  local to each person for now.
+- **Tasks, Board columns (sections), and per-task comments all sync live.**
+  A viewer-role collaborator can look at a shared project's board but can't
+  add, rename, or delete its columns.
 - **Scheduled time blocks are never shared.** Dragging a shared task onto your
   calendar schedules it for *you* only, and shared tasks are left out of the
   automatic scheduler, since capacity is a per-person thing.

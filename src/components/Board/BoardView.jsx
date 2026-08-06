@@ -75,6 +75,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink, GripVertical } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useAuth } from '../../context/AuthContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMotionEnabled } from '../../hooks/useMotionEnabled';
@@ -91,6 +92,7 @@ import { priorityColor } from '../../utils/priorityColor';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 import { getEffectiveRemainingHours, isCompletedForCurrentOccurrence } from '../../utils/taskHierarchy';
 import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../../utils/boardColumnOrder';
+import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
 
 // Card reorder/removal motion — see CARD MOTION above. Mirrors
 // TaskListPanel's row timings (the CSS --duration-base/--ease-standard
@@ -125,7 +127,9 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     renameSection,
     deleteSection,
     updateTask,
+    sharedProjects,
   } = useScheduler();
+  const { user } = useAuth();
   const { requestComplete } = useCompleteTask();
   // Recurring subtasks never set isCompleted true (see completeTask) —
   // "done for now" is tracked per-occurrence via completedDates instead, so
@@ -216,6 +220,14 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const selectedProjectId = projectId;
   const selectedProject = sortedProjects.find((p) => p.id === selectedProjectId);
 
+  // A viewer on a shared project may look at the board but not touch its
+  // sections — same precedent as TaskDetailModal's read-only comment
+  // composer for a viewer. Rules already refuse the write server-side; this
+  // just keeps the UI from showing controls that would silently fail.
+  const isSectionsReadOnly =
+    !!selectedProject?.sharedProjectId &&
+    computeEffectiveRole(sharedProjects[selectedProject.sharedProjectId], user?.uid) === 'viewer';
+
   // Natural (synced) order, then the user's local drag arrangement layered on
   // top — see utils/boardColumnOrder.js.
   const projectSections = useMemo(
@@ -251,13 +263,13 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const flatTasks = columns[0]?.tasks ?? [];
 
   function startEditingColumn(col) {
-    if (col.isNoSection) return; // "No Section" is a synthetic bucket, not a real editable Section
+    if (col.isNoSection || isSectionsReadOnly) return; // "No Section" is a synthetic bucket, not a real editable Section
     setEditingColumnId(col.id);
     setEditingColumnTitle(col.name);
   }
 
   function commitColumnEdit() {
-    if (editingColumnId && editingColumnTitle.trim()) {
+    if (editingColumnId && editingColumnTitle.trim() && !isSectionsReadOnly) {
       renameSection(editingColumnId, editingColumnTitle);
     }
     setEditingColumnId(null);
@@ -265,7 +277,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   }
 
   function handleDeleteColumn(col) {
-    if (col.isNoSection) return;
+    if (col.isNoSection || isSectionsReadOnly) return;
     if (col.tasks.length > 0 && !window.confirm(`Delete "${col.name}"? Its ${col.tasks.length} task(s) will move to No Section.`)) {
       return;
     }
@@ -273,7 +285,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   }
 
   function handleAddSection() {
-    if (!newSectionName.trim() || !selectedProjectId) return;
+    if (!newSectionName.trim() || !selectedProjectId || isSectionsReadOnly) return;
     addSection(selectedProjectId, newSectionName);
     setNewSectionName('');
     setAddingSection(false);
@@ -460,6 +472,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
               rather than all animating in through framer. */}
           <AnimatePresence initial={false}>{flatTasks.map((task) => renderCard(task))}</AnimatePresence>
           {flatTasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
+          {!isSectionsReadOnly && (
           <div className="board-flat-list-footer">
             {addingSection ? (
               <div className="board-add-column-form">
@@ -501,6 +514,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
               </button>
             )}
           </div>
+          )}
         </div>
       ) : (
         <div className="board-columns">
@@ -550,12 +564,12 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                 ) : (
                   <span
                     className="board-column-title"
-                    title={col.isNoSection ? undefined : 'Click to rename'}
-                    role={col.isNoSection ? undefined : 'button'}
-                    tabIndex={col.isNoSection ? undefined : 0}
+                    title={col.isNoSection || isSectionsReadOnly ? undefined : 'Click to rename'}
+                    role={col.isNoSection || isSectionsReadOnly ? undefined : 'button'}
+                    tabIndex={col.isNoSection || isSectionsReadOnly ? undefined : 0}
                     onClick={() => startEditingColumn(col)}
                     onKeyDown={(e) => {
-                      if (!col.isNoSection && (e.key === 'Enter' || e.key === ' ')) {
+                      if (!col.isNoSection && !isSectionsReadOnly && (e.key === 'Enter' || e.key === ' ')) {
                         e.preventDefault();
                         startEditingColumn(col);
                       }
@@ -565,7 +579,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                   </span>
                 )}
                 <span className="board-column-count">{col.tasks.length}</span>
-                {!col.isNoSection && (
+                {!col.isNoSection && !isSectionsReadOnly && (
                   <button className="board-column-delete" title="Delete section" onClick={() => handleDeleteColumn(col)}>
                     <X size={13} />
                   </button>
@@ -589,6 +603,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
             </div>
           ))}
 
+          {!isSectionsReadOnly && (
           <div className="board-add-column">
             {addingSection ? (
               <div className="board-add-column-form">
@@ -630,6 +645,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
               </button>
             )}
           </div>
+          )}
         </div>
       )}
 

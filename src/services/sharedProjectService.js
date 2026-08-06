@@ -56,7 +56,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { serializeSharedTask } from '../utils/sharedTaskSync';
+import { serializeSharedTask, serializeSharedSection } from '../utils/sharedTaskSync';
 import { stripUndefined } from './firestoreSync';
 
 /** Firestore caps a batch at 500 operations; chunk anything larger. */
@@ -65,6 +65,8 @@ const MAX_BATCH_OPS = 500;
 const projectRef = (projectId) => doc(db, 'sharedProjects', projectId);
 const tasksRef = (projectId) => collection(db, 'sharedProjects', projectId, 'tasks');
 const taskRef = (projectId, taskId) => doc(db, 'sharedProjects', projectId, 'tasks', taskId);
+const sectionsRef = (projectId) => collection(db, 'sharedProjects', projectId, 'sections');
+const sectionRef = (projectId, sectionId) => doc(db, 'sharedProjects', projectId, 'sections', sectionId);
 const presenceRef = (projectId, uid) => doc(db, 'sharedProjects', projectId, 'presence', uid);
 
 /**
@@ -178,6 +180,44 @@ export async function writeSharedTasks(projectId, { creates = [], updates = [], 
     for (const op of ops.slice(i, i + MAX_BATCH_OPS)) {
       if (op.type === 'delete') batch.delete(taskRef(projectId, op.id));
       else batch.set(taskRef(projectId, op.id), stripUndefined(op.data));
+    }
+    await batch.commit();
+  }
+}
+
+/**
+ * Live-subscribe to a project's sections (Board columns) — same shape and same
+ * pending-write skip as subscribeSharedTasks, for the same reason.
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeSharedSections(projectId, onSections, onError) {
+  return onSnapshot(
+    sectionsRef(projectId),
+    { includeMetadataChanges: true },
+    (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
+      onSections(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    },
+    (err) => onError?.(err)
+  );
+}
+
+/**
+ * Apply a planned set of section writes (see planSharedSectionWrites) as
+ * batched per-document operations — same shape as writeSharedTasks.
+ */
+export async function writeSharedSections(projectId, { creates = [], updates = [], deletes = [] }) {
+  const ops = [
+    ...[...creates, ...updates].map((section) => ({ type: 'set', id: section.id, data: serializeSharedSection(section) })),
+    ...deletes.map((id) => ({ type: 'delete', id })),
+  ];
+  if (ops.length === 0) return;
+
+  for (let i = 0; i < ops.length; i += MAX_BATCH_OPS) {
+    const batch = writeBatch(db);
+    for (const op of ops.slice(i, i + MAX_BATCH_OPS)) {
+      if (op.type === 'delete') batch.delete(sectionRef(projectId, op.id));
+      else batch.set(sectionRef(projectId, op.id), stripUndefined(op.data));
     }
     await batch.commit();
   }
