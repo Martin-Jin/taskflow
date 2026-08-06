@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '2.6.1',
+    date: '2026-08-06',
+    title: 'Fix edits undoing themselves, and tasks not reaching collaborators',
+    changes: [
+      'Fixed: deleting a project could bring it straight back, and sharing a project could do nothing, until you did it a second time. An edit made while an earlier change was still saving could be overwritten by that earlier save landing late. This affected all your data, not just shared projects.',
+      "Fixed: a task added to a project you'd already shared never reached your collaborators — it stayed on your own device. Tasks added from anywhere (quick add, the task form, AI plans, imports) now sync properly.",
+    ],
+  },
+  {
     version: '2.6.0',
     date: '2026-08-06',
     title: 'Share links now work, and Board columns sync live',

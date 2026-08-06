@@ -1281,7 +1281,18 @@ export function SchedulerProvider({ children }) {
    */
   const addTask = useCallback(
     (taskInput) => {
-      const newTask = buildNewTaskObject(taskInput, generateLocalId('task'));
+      const built = buildNewTaskObject(taskInput, generateLocalId('task'));
+      // Tag a task created inside a shared project so the write-diff picks it
+      // up — without this it stays local forever and a collaborator never
+      // sees it, which is exactly what happened before this lookup existed.
+      // Mirrors addSection; see its comment for why the project's own `id`
+      // and its `sharedProjectId` are separate for an owner who shared it.
+      // Every creation path (quick-add, modal, AI plans, imports) funnels
+      // through here, so this one lookup covers all of them.
+      const owningProject = built.projectId ? projects.find((p) => p.id === built.projectId) : null;
+      const newTask = owningProject?.sharedProjectId
+        ? { ...built, sharedProjectId: owningProject.sharedProjectId }
+        : built;
       // Function form (see useHistoryState's commit doc comment) so several
       // addTask calls in the same synchronous tick — e.g. the AI Assistant
       // applying a multi-task plan — each build on the previous call's
@@ -1309,7 +1320,7 @@ export function SchedulerProvider({ children }) {
       if (newTask.dueDate && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
       return newTask;
     },
-    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled]
+    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects]
   );
 
   /**
