@@ -47,7 +47,31 @@ const FAILURE_COPY = {
   },
 };
 
+// This component is mounted unconditionally at the App root (see its own
+// doc comment) so it's ready the instant a share link resolves — but that
+// means useModalA11y must NOT run until there's actually a dialog on
+// screen. useModalA11y pushes onto the app-wide open-modal stack for as
+// long as its owning component stays mounted, so calling it here
+// unconditionally would leave a permanent phantom entry on that stack for
+// every session that never carries a join token (i.e. almost all of them),
+// silently breaking Escape-to-close for every other modal for the rest of
+// the session. Same split as CompleteTaskConfirmModal: bail out to null
+// before any hook with a stack side effect runs, and do the real work in an
+// inner component that only mounts while `status` is non-IDLE.
 export default function JoinProjectModal({ status, projectName, error, onSubmitName, onDismiss }) {
+  if (status === JOIN_STATUS.IDLE) return null;
+  return (
+    <JoinProjectModalInner
+      status={status}
+      projectName={projectName}
+      error={error}
+      onSubmitName={onSubmitName}
+      onDismiss={onDismiss}
+    />
+  );
+}
+
+function JoinProjectModalInner({ status, projectName, error, onSubmitName, onDismiss }) {
   const [name, setName] = useState('');
   const isBusy = BUSY_STATUSES.has(status);
   // Escape must not close the modal mid-join (see the header), so the a11y
@@ -61,8 +85,6 @@ export default function JoinProjectModal({ status, projectName, error, onSubmitN
     const timer = setTimeout(onDismiss, 1600);
     return () => clearTimeout(timer);
   }, [status, onDismiss]);
-
-  if (status === JOIN_STATUS.IDLE) return null;
 
   const failure = FAILURE_COPY[status];
 

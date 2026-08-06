@@ -70,7 +70,15 @@ export function useModalA11y(onClose) {
     document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true);
-      openModalStack.splice(openModalStack.indexOf(entry), 1);
+      // Guard indexOf === -1: Array.prototype.splice treats a negative index
+      // as "count back from the end," so splice(-1, 1) on ANY non-empty stack
+      // would silently remove the topmost entry — someone else's, not this
+      // one — instead of safely no-op'ing when this entry is already gone
+      // (e.g. a double cleanup, or a bug elsewhere in this file letting the
+      // stack fall out of sync with reality). Cheap and correct regardless
+      // of cause, so always check before splicing.
+      const index = openModalStack.indexOf(entry);
+      if (index !== -1) openModalStack.splice(index, 1);
       previouslyFocused?.focus?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

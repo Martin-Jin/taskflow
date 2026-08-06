@@ -49,12 +49,14 @@ import { useJoinFlow } from './hooks/useJoinFlow';
 import { readJoinToken } from './utils/joinFlow';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
+import ProjectsPage from './components/Projects/ProjectsPage';
 import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
 import { CURRENT_VERSION } from './changelog';
 import {
   LayoutDashboard,
   CalendarDays,
   CheckSquare,
+  FolderKanban,
   TrendingUp,
   Settings,
   Search,
@@ -63,19 +65,21 @@ import {
 import { isAIQuickAddConfigured, getStoredApiKey } from './services/aiQuickAddService';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
-// within the Tasks page (see TaskListPanel's List/Board/Gantt switch), so
-// five tabs is the full set — small enough that BottomTabBar shows all of
-// them directly with no "More" overflow needed.
+// within the Tasks page (see TaskListPanel's List/Board/Gantt switch). Six
+// tabs is the full set — BottomTabBar's items are flex:1 (see nav.css), so
+// they still all show directly in one row on mobile with no "More" overflow
+// needed.
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+  { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'stats', label: 'Stats', icon: TrendingUp },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 function AppShell() {
-  const { authError, clearAuthError } = useAuth();
+  const { user, authError, clearAuthError } = useAuth();
   const [tab, setTab] = useState('dashboard');
   // Device-local UI state (which project/view is selected) — not user data,
   // so deliberately left out of BACKUP_FIELDS.
@@ -148,6 +152,7 @@ function AppShell() {
     shareProject,
     deleteProject,
     touchProjectVisited,
+    sharedProjects,
     tasks,
     runRebalance,
     schedulingConflicts,
@@ -427,6 +432,15 @@ function AppShell() {
               onOpenSettings={() => setTab('settings')}
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
               onShareProject={handleShareProject}
+            />
+          )}
+          {tab === 'projects' && (
+            <ProjectsPage
+              projects={projects}
+              tasks={tasks}
+              sharedProjects={sharedProjects}
+              uid={user?.uid}
+              onSelectProject={selectProject}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}

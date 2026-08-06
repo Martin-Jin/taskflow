@@ -3,12 +3,14 @@
  * Sidebar
  * ============================================================================
  * Desktop-only nav rail: the Workspace tab switch (Dashboard/Calendar/Tasks/
- * Stats/Settings) plus a Todoist-style "Projects" group underneath — a
- * search box, the "All Tasks" pseudo-project pinned at the top, then real
- * projects sorted pinned-first/most-recently-visited (sortProjectsForSidebar),
- * each with a "⋯" menu (Rename/Pin/Delete via ProjectActionsMenu), and a
- * "Manage projects" button at the bottom that opens ManageProjectsModal
- * (which also has its own "Add project" form).
+ * Projects/Stats/Settings) plus a lean "Projects" group underneath — the
+ * "All Tasks" pseudo-project pinned at the top, then a capped list of the
+ * most recently visited real projects (RECENT_PROJECT_LIMIT, by
+ * `lastVisitedAt`), each with a "⋯" menu (Rename/Pin/Delete via
+ * ProjectActionsMenu), a "See all projects" link to the dedicated Projects
+ * tab, and a "Manage projects" button that opens ManageProjectsModal (which
+ * also has its own "Add project" form). Full project search/browsing now
+ * lives on the Projects page itself rather than duplicated here.
  *
  * Extracted out of App.jsx once the Projects group made the inline JSX too
  * large to keep readable there. Only rendered on desktop — mobile has no
@@ -18,14 +20,14 @@
  */
 
 import React, { useState } from 'react';
-import { FolderKanban, Search, Pin } from 'lucide-react';
+import { FolderKanban, ArrowRight, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
-import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
-import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
-import { rankByNameSearch } from '../../utils/nameSearch';
+import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL } from '../../utils/projectConstants';
+
+const RECENT_PROJECT_LIMIT = 5;
 
 export default function Sidebar({
   tabs,
@@ -43,42 +45,18 @@ export default function Sidebar({
 }) {
   const { sharedProjects } = useScheduler();
   const { user } = useAuth();
-  const [projectQuery, setProjectQuery] = useState('');
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
-  const sortedProjects = sortProjectsForSidebar(projects);
-  // No query: keep today's exact pinned/recency order. With a query: rank by
-  // match quality (typo-tolerant), but break ties between equally-good
-  // matches using that same pinned/recency order rather than an arbitrary
-  // one — rankByNameSearch's tie-break preserves relative input order, and
-  // sortedProjects is already in pinned/recency order, so passing it in
-  // (rather than raw `projects`) gets that for free.
-  const visibleProjects = projectQuery.trim()
-    ? rankByNameSearch(projectQuery, sortedProjects.map((p) => ({ ...p, label: p.name })))
-    : sortedProjects;
-  // Keyboard nav (highlighted row + Arrow/Enter) only makes sense once a
-  // query has actually narrowed the list — the unfiltered pinned/recency
-  // order isn't a "ranked results" list to arrow through.
-  const isSearching = projectQuery.trim().length > 0;
-
-  const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
-    itemCount: isSearching ? visibleProjects.length : 0,
-    onSelect: (index) => {
-      const project = visibleProjects[index];
-      if (project) onSelectProject(project.id);
-    },
-    resetKey: projectQuery,
-  });
-
-  function handleSearchKeyDown(e) {
-    if (e.key === 'Escape' && projectQuery) {
-      e.stopPropagation();
-      setProjectQuery('');
-      return;
-    }
-    handleKeyDown(e);
-  }
+  // Purely recency-based (not pinned-first like the old full list) — this is
+  // now a "what was I just working on" strip, not a directory to browse, so
+  // pinning as a concept belongs to the full Projects page/ManageProjectsModal
+  // instead. Projects never visited yet (no lastVisitedAt) are excluded rather
+  // than padding out the list.
+  const recentProjects = [...projects]
+    .filter((p) => p.lastVisitedAt)
+    .sort((a, b) => new Date(b.lastVisitedAt).getTime() - new Date(a.lastVisitedAt).getTime())
+    .slice(0, RECENT_PROJECT_LIMIT);
 
   function startRename(project) {
     setRenamingId(project.id);
@@ -123,24 +101,6 @@ export default function Sidebar({
       <div className="nav-group sidebar-projects-group">
         <div className="nav-group-label">Projects</div>
 
-        <div className="sidebar-project-search">
-          <Search size={13} className="sidebar-project-search-icon" />
-          <input
-            type="text"
-            role="combobox"
-            aria-expanded={isSearching}
-            aria-controls="sidebar-project-listbox"
-            aria-activedescendant={
-              isSearching && visibleProjects[activeIndex] ? `sidebar-project-option-${visibleProjects[activeIndex].id}` : undefined
-            }
-            value={projectQuery}
-            onChange={(e) => setProjectQuery(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="Search projects…"
-            aria-label="Search projects"
-          />
-        </div>
-
         <button
           className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
           onClick={() => onSelectProject(ALL_TASKS_PROJECT_ID)}
@@ -149,19 +109,9 @@ export default function Sidebar({
           <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
         </button>
 
-        <div className="sidebar-project-list" id="sidebar-project-listbox" role={isSearching ? 'listbox' : undefined} ref={listRef}>
-          {visibleProjects.map((p, index) => (
-            <div
-              key={p.id}
-              id={isSearching ? `sidebar-project-option-${p.id}` : undefined}
-              role={isSearching ? 'option' : undefined}
-              aria-selected={isSearching ? index === activeIndex : undefined}
-              data-active={isSearching && index === activeIndex}
-              className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''} ${
-                isSearching && index === activeIndex ? 'is-kbd-active' : ''
-              }`}
-              onMouseEnter={() => isSearching && setActiveIndex(index)}
-            >
+        <div className="sidebar-project-list">
+          {recentProjects.map((p) => (
+            <div key={p.id} className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''}`}>
               {renamingId === p.id ? (
                 <input
                   autoFocus
@@ -205,8 +155,16 @@ export default function Sidebar({
               )}
             </div>
           ))}
-          {visibleProjects.length === 0 && <div className="sidebar-project-empty">No projects match.</div>}
+          {recentProjects.length === 0 && <div className="sidebar-project-empty">No recently visited projects yet.</div>}
         </div>
+
+        <button
+          className="nav-item sidebar-see-all-projects-btn"
+          onClick={() => onSelectTab('projects')}
+        >
+          See all projects
+          <ArrowRight size={13} />
+        </button>
 
         <button
           className="nav-item sidebar-add-project-btn"
