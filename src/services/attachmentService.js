@@ -3,10 +3,19 @@
  * ATTACHMENT SERVICE
  * ============================================================================
  * Uploads/deletes files attached to task comments, stored in Firebase
- * Storage under `users/{uid}/attachments/{taskId}/...` — mirrors the
- * uid-scoped ownership model already used for Firestore (see firestore.rules
- * and storage.rules). Called from SchedulerContext's addComment/deleteComment
- * so every write to task.comments and the underlying file happens together.
+ * Storage. Two path shapes, chosen by `buildAttachmentPath` based on whether
+ * the task belongs to a shared project:
+ *   - Personal task: `users/{uid}/attachments/{taskId}/...` — mirrors the
+ *     uid-scoped ownership model already used for Firestore (see
+ *     firestore.rules and storage.rules).
+ *   - Shared-project task: `sharedProjects/{sharedProjectId}/attachments/
+ *     {taskId}/...` — uploading under the uploader's own uid would put the
+ *     file outside the project owner's control (owner can't delete it, and
+ *     it vanishes if the uploader is removed or deletes their account), so
+ *     shared-task attachments live under the project instead. See
+ *     storage.rules for what that path can and cannot enforce.
+ * Called from SchedulerContext's addComment/deleteComment so every write to
+ * task.comments and the underlying file happens together.
  * ============================================================================
  */
 
@@ -74,12 +83,36 @@ function withTimeout(promise, ms, message) {
 }
 
 /**
+ * Pure path-builder, kept separate from the upload call so it's unit
+ * testable without touching Firebase. `sharedProjectId` should be the
+ * uploading task's own `task.sharedProjectId` (undefined/null for a
+ * personal task) — NOT re-derived here, since this module has no access to
+ * the tasks/sharedProjects state to look it up itself.
+ * @param {string} uid
+ * @param {string} taskId
+ * @param {string} fileName
+ * @param {string|null|undefined} sharedProjectId
+ * @returns {string}
+ */
+export function buildAttachmentPath(uid, taskId, fileName, sharedProjectId) {
+  const base = sharedProjectId
+    ? `sharedProjects/${sharedProjectId}/attachments/${taskId}`
+    : `users/${uid}/attachments/${taskId}`;
+  return `${base}/${Date.now()}_${fileName}`;
+}
+
+/**
  * Uploads a comment's attachment and returns the metadata persisted on the
  * Comment object. `path` is kept (not just `url`) so deleteCommentAttachment
  * can address the exact Storage object later without re-deriving it.
+ * @param {string} uid
+ * @param {string} taskId
+ * @param {File} file
+ * @param {string|null|undefined} sharedProjectId - The task's `sharedProjectId`, if it belongs to a
+ *   shared project; omit/null for a personal task's attachment.
  */
-export async function uploadCommentAttachment(uid, taskId, file) {
-  const path = `users/${uid}/attachments/${taskId}/${Date.now()}_${file.name}`;
+export async function uploadCommentAttachment(uid, taskId, file, sharedProjectId) {
+  const path = buildAttachmentPath(uid, taskId, file.name, sharedProjectId);
   const storageRef = ref(storage, path);
   const timeoutMessage = 'Upload timed out — check your connection and try again.';
   await withTimeout(uploadBytes(storageRef, file, { contentType: file.type || undefined }), UPLOAD_TIMEOUT_MS, timeoutMessage);

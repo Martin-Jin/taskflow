@@ -526,6 +526,41 @@ export function getProjectShareState(project, sharedProject, uid) {
 }
 
 /**
+ * Resolve the best available display name/photo for a shared project's
+ * OWNER, in priority order:
+ *   1. The denormalized `ownerDisplayName`/`ownerPhotoURL` on the
+ *      `sharedProjects/{id}` doc itself (written at create time by
+ *      `createSharedProject`, and kept current across an ownership transfer
+ *      by `transferSharedProjectOwnership` — see both in
+ *      sharedProjectService.js). Durable: available whether or not the owner
+ *      is currently online.
+ *   2. Live presence (`viewersByProject`/`activeViewers`-shaped list) — only
+ *      populated while the owner has the project open, kept as a fallback
+ *      for shared-project docs that predate this field (no migration; an old
+ *      doc simply lacks it and this falls through).
+ *   3. A generic label, so callers never render nothing.
+ *
+ * Pure — takes plain data, no Firebase/React imports — so every surface that
+ * shows "shared by <name>" (SharedProjectBadge, the comment @-mention list)
+ * agrees on one fallback chain instead of three slightly different ones.
+ * @param {{ownerDisplayName?: string, ownerPhotoURL?: string|null}|null|undefined} sharedProject
+ * @param {Array<{uid: string, displayName?: string, photoURL?: string|null}>|null|undefined} viewers -
+ *   The live presence list for this project (e.g. `viewersByProject[projectId]`), if available.
+ * @param {string|undefined} ownerId - Needed to pick the owner out of `viewers`.
+ * @returns {{displayName: string, photoURL: string|null}}
+ */
+export function resolveOwnerProfile(sharedProject, viewers, ownerId) {
+  if (sharedProject?.ownerDisplayName) {
+    return { displayName: sharedProject.ownerDisplayName, photoURL: sharedProject.ownerPhotoURL ?? null };
+  }
+  const ownerViewer = Array.isArray(viewers) ? viewers.find((v) => v.uid === ownerId) : null;
+  if (ownerViewer?.displayName) {
+    return { displayName: ownerViewer.displayName, photoURL: ownerViewer.photoURL ?? null };
+  }
+  return { displayName: 'Project owner', photoURL: null };
+}
+
+/**
  * Generate an unguessable share-link token: 22 URL-safe base64 characters
  * from 16 cryptographically random bytes (128 bits of entropy) — long enough
  * that brute-forcing a link is infeasible, short enough to fit cleanly in a

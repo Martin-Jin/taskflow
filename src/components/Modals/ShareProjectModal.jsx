@@ -253,7 +253,7 @@ export default function ShareProjectModal({ project, onClose }) {
     }
   }
 
-  async function handleTransfer(collabUid, displayName) {
+  async function handleTransfer(collabUid, displayName, photoURL) {
     const plan = planOwnershipTransfer({ sharedProject, actingUid: user?.uid, recipientUid: collabUid });
     if (!plan.allowed) {
       setActionError(transferRejectionMessage(plan.reason));
@@ -269,7 +269,14 @@ export default function ShareProjectModal({ project, onClose }) {
     setCollabBusy(collabUid);
     setActionError('');
     try {
-      await transferSharedProjectOwnership(sharedProjectId, plan.newOwnerId, plan.collaborators);
+      // The denormalized ownerDisplayName/ownerPhotoURL (see sharedProjectService.js's
+      // createSharedProject) must move with ownership, or every reader of them
+      // (SharedProjectBadge, the comment mention list) keeps showing the OLD
+      // owner's name/photo after a transfer.
+      await transferSharedProjectOwnership(sharedProjectId, plan.newOwnerId, plan.collaborators, {
+        displayName,
+        photoURL,
+      });
     } catch {
       setActionError("Couldn't transfer ownership. Try again.");
     } finally {
@@ -376,7 +383,7 @@ export default function ShareProjectModal({ project, onClose }) {
                           disabled={busy || isAnonymous}
                           title={isAnonymous ? undefined : 'Make owner'}
                           aria-label={`Make ${c.displayName} the owner`}
-                          onClick={() => handleTransfer(c.uid, c.displayName)}
+                          onClick={() => handleTransfer(c.uid, c.displayName, c.photoURL)}
                         >
                           <Crown size={14} />
                         </button>

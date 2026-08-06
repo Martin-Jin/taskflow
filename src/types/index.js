@@ -319,6 +319,18 @@
  * @property {string} ownerId                          - The creating user's Firebase uid. Always the strongest
  *                                                        role (OWNER) regardless of any collaborators entry —
  *                                                        see computeEffectiveRole.
+ * @property {string} [ownerDisplayName]                 - Denormalized copy of the owner's display name at the
+ *                                                        time of creation (or their most recent ownership
+ *                                                        transfer) — see sharedProjectService.js's
+ *                                                        createSharedProject/transferSharedProjectOwnership.
+ *                                                        Lets any surface show "shared by <name>" without the
+ *                                                        owner needing to be currently online (unlike a
+ *                                                        `collaborators` entry's displayName, which only exists
+ *                                                        for non-owners). Absent on a doc created before this
+ *                                                        field existed — see utils/sharedProjectAccess.js's
+ *                                                        resolveOwnerProfile for the read-side fallback chain
+ *                                                        (this field, then live presence, then a generic label).
+ * @property {string|null} [ownerPhotoURL]               - Same denormalization, for the owner's avatar.
  * @property {string} name
  * @property {string} [color]
  * @property {string} createdAt                         - ISO datetime.

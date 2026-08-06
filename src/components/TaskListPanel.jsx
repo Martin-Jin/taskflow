@@ -483,6 +483,7 @@ export default function TaskListPanel({
                 sharedProject={sharedProjects[activeProject.sharedProjectId]}
                 uid={user?.uid}
                 variant="detailed"
+                ownerDisplayName={sharedProjects[activeProject.sharedProjectId]?.ownerDisplayName}
               />
             )}
             {/* Desktop-only: on mobile there's no room for this alongside the

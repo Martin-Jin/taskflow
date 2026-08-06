@@ -72,15 +72,26 @@ const presenceRef = (projectId, uid) => doc(db, 'sharedProjects', projectId, 'pr
  * time. `collaborators` MUST start empty — firestore.rules enforces it, so that
  * the map can only ever grow through a verified join, which the entire access
  * model rests on.
+ *
+ * `ownerDisplayName`/`ownerPhotoURL` are denormalized onto this doc at create
+ * time (same pattern as `collaborators[uid].displayName`/`photoURL`) so any
+ * surface that needs to show "shared by <name>" has something to read even
+ * when the owner isn't currently online to be picked up from live presence —
+ * see SharedProjectBadge's `ownerDisplayName` prop and TaskDetailModal's
+ * mention list. Optional: a doc created before this field existed simply
+ * omits it, and every reader of it falls back gracefully (presence, then a
+ * generic label) — no migration needed.
  * @returns {Promise<void>}
  */
-export async function createSharedProject(projectId, { ownerId, name }) {
+export async function createSharedProject(projectId, { ownerId, name, ownerDisplayName, ownerPhotoURL }) {
   await setDoc(
     projectRef(projectId),
     stripUndefined({
       ownerId,
       name,
       collaborators: {},
+      ownerDisplayName: ownerDisplayName || undefined,
+      ownerPhotoURL: ownerPhotoURL || undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
@@ -286,21 +297,40 @@ export async function removeCollaborator(projectId, uid) {
  * `ownerId` and the COMPLETE `collaborators` map as a whole-field update, not
  * a merge — `planOwnershipTransfer`'s own doc comment explains why a merge
  * can't express the outgoing recipient-entry removal it computes.
+ *
+ * Also moves the denormalized `ownerDisplayName`/`ownerPhotoURL` (see
+ * `createSharedProject`) to the new owner — otherwise they go stale and every
+ * reader of them (SharedProjectBadge, the comment mention list) keeps
+ * showing the OLD owner after a transfer. This widens the set of fields a
+ * transfer touches, so firestore.rules' `isTransferringOwnership` hasOnly
+ * list had to grow to match (see its comment) — a deliberate, minimal rules
+ * change, not a loosening of who may transfer.
  * @param {string} projectId
  * @param {string} newOwnerId
  * @param {Record<string, {role: string}>} collaborators - The complete post-transfer map,
  *   from `planOwnershipTransfer`'s `collaborators` field.
+ * @param {{displayName?: string, photoURL?: string|null}} [newOwnerProfile] - The recipient's
+ *   display name/photo to denormalize onto the doc as the new `ownerDisplayName`/`ownerPhotoURL`.
  */
-export async function transferSharedProjectOwnership(projectId, newOwnerId, collaborators) {
-  // Exactly two fields, and deliberately NO `updatedAt` — unlike every other
-  // write in this file. firestore.rules' `isTransferringOwnership` requires
-  // `affectedKeys().hasOnly(['ownerId', 'collaborators'])`, so stamping a
-  // timestamp here makes it a third affected key and the rules reject the
-  // whole transfer. The constraint is intentional on the rules' side (a
-  // transfer must touch ownership and membership and nothing else), so this
-  // matches it rather than loosening the rule.
+export async function transferSharedProjectOwnership(projectId, newOwnerId, collaborators, newOwnerProfile = {}) {
+  // Deliberately NO `updatedAt` — unlike every other write in this file.
+  // firestore.rules' `isTransferringOwnership` requires
+  // `affectedKeys().hasOnly([...])` to an EXACT list, so stamping a
+  // timestamp here would add an extra affected key and the rules would
+  // reject the whole transfer. The constraint is intentional on the rules'
+  // side (a transfer must touch ownership/membership/the owner-profile
+  // denormalization and nothing else), so this matches it rather than
+  // loosening the rule.
+  //
+  // ownerDisplayName/ownerPhotoURL are always written (not passed through
+  // stripUndefined's "omit means leave unchanged" behavior) — an `updateDoc`
+  // omission would silently leave the OLD owner's stale name/photo in place,
+  // exactly the bug this transfer is supposed to fix. `photoURL` genuinely
+  // may be null (no avatar), which is a real value here, not an omission.
   await updateDoc(projectRef(projectId), {
     ownerId: newOwnerId,
     collaborators,
+    ownerDisplayName: newOwnerProfile.displayName || 'Anonymous',
+    ownerPhotoURL: newOwnerProfile.photoURL || null,
   });
 }

@@ -81,6 +81,23 @@ describe('serialization', () => {
     expect(sharedTaskFingerprint(sharedTask())).toBe(sharedTaskFingerprint({ ...sharedTask(), sharedProjectId: 'other' }));
     expect(sharedTaskFingerprint(sharedTask())).not.toBe(sharedTaskFingerprint(sharedTask({ title: 'Changed' })));
   });
+
+  it('treats a new/edited comment (including author fields, Phase 3) as a real edit — comments sync for free as just another task field, not a dedicated code path', () => {
+    const withoutComment = sharedTask();
+    const comment = {
+      id: 'c1',
+      text: 'hi',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      authorUid: 'u1',
+      authorDisplayName: 'Alice',
+      authorPhotoURL: null,
+      mentions: ['u2'],
+    };
+    const withComment = sharedTask({ comments: [comment] });
+    expect(sharedTaskFingerprint(withoutComment)).not.toBe(sharedTaskFingerprint(withComment));
+    // Round-trips through serialize/deserialize untouched, same as any other field.
+    expect(deserializeSharedTask(serializeSharedTask(withComment), PROJECT)).toEqual(withComment);
+  });
 });
 
 describe('planSharedTaskWrites', () => {
