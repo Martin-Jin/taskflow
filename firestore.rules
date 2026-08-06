@@ -156,6 +156,26 @@ service cloud.firestore {
           && !('links' in incoming());
       }
 
+      // --- Guest identity migration (deliberately NOT a rules path) ----
+      // When an anonymous share-link guest signs in with a Google account
+      // that already exists, `linkWithCredential` (which upgrades the
+      // anonymous account IN PLACE, same uid, needing no migration at all)
+      // is impossible, and the client ends up with a brand-new uid — see
+      // AuthContext.jsx's handleGoogleCredential. Moving that guest's
+      // `collaborators` entry to the new uid needs a write that swaps ANOTHER
+      // uid's entry for the caller's own, which no branch of `allow update`
+      // above grants (isRenamingSelf/joiningWithToken only ever touch the
+      // caller's own key; the owner branch is scoped to the owner). Rules
+      // have no way to verify the caller also controls that OTHER uid — that
+      // needs a second, independently-verified id token, which a rules match
+      // block cannot evaluate. This is handled by
+      // cloudflare-worker/src/shareLinkRoutes.js's handleMigrateGuest instead
+      // (POST /share/migrate-guest), which verifies both identities server-side
+      // and writes via the service account that already bypasses these rules
+      // for every other privileged operation in this file. See that route's
+      // own header comment for the full reasoning and failure-mode analysis.
+
+
       // --- Ownership transfer ------------------------------------------
       // Owner-only, and deliberately narrow: the recipient must ALREADY be a
       // collaborator on this project, so a project can never be pushed onto
@@ -374,6 +394,32 @@ service cloud.firestore {
           && request.auth.token.joinToken == links()[linkKey].token;
       }
 
+      // --- Self-rename (a collaborator changing their OWN display name) ----
+      // Neither the owner branch nor the editor branch above admits this: the
+      // owner branch is gated to the owner's own uid, and the editor branch's
+      // `accessFieldsUnchanged()` requires `collaborators` to be byte-identical
+      // to what's stored, so even an editor renaming themselves would be
+      // denied by it. A viewer has no branch at all. This is the narrow carve-
+      // out: a collaborator (viewer OR editor, but not the owner — the owner's
+      // name isn't stored in `collaborators` at all, see `ownerDisplayName`)
+      // may touch ONLY their own entry's `displayName`, and only that one key
+      // of it — not their `role` (privilege escalation), not their
+      // `isAnonymous` flag (would defeat `recipientIsRealAccount()` on a later
+      // ownership transfer), not `joinedAt`/`photoURL`.
+      function isRenamingSelf() {
+        return isCollaborator()
+          // Touches `collaborators` and nothing else on the document.
+          && request.resource.data.diff(existing()).affectedKeys().hasOnly(['collaborators'])
+          // Within `collaborators`, only the caller's own key changes.
+          && incoming().collaborators.diff(existing().collaborators).affectedKeys().hasOnly([request.auth.uid])
+          // Within that one entry, only `displayName` changes — role/photoURL/
+          // joinedAt/isAnonymous are all pinned to their existing values.
+          && incoming().collaborators[request.auth.uid].diff(existing().collaborators[request.auth.uid]).affectedKeys().hasOnly(['displayName'])
+          && incoming().collaborators[request.auth.uid].displayName is string
+          && incoming().collaborators[request.auth.uid].displayName.size() > 0
+          && incoming().collaborators[request.auth.uid].displayName.size() <= 120;
+      }
+
       allow update: if
         // Owner: full control, but ownership itself only moves via the
         // dedicated transfer path below.
@@ -382,6 +428,8 @@ service cloud.firestore {
         || isTransferringOwnership()
         // Editor: content only, never the access-control fields.
         || (isEditor() && accessFieldsUnchanged())
+        // Any collaborator (viewer or editor) renaming only their own entry.
+        || isRenamingSelf()
         // Self-join at a link's role, token verified against the stored token.
         || (joiningWithToken('edit', 'editor') && presentedTokenMatches('edit'))
         || (joiningWithToken('view', 'viewer') && presentedTokenMatches('view'));

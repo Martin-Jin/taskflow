@@ -12,6 +12,7 @@
 import { useState } from 'react';
 import { LogIn } from 'lucide-react';
 import { useAuth, promptGoogleSignIn } from '../../context/AuthContext';
+import { useScheduler } from '../../context/SchedulerContext';
 import { isRunningStandalone } from '../../utils/installPrompt';
 import BrowserSignInPromptModal from '../Modals/BrowserSignInPromptModal';
 
@@ -20,6 +21,15 @@ import BrowserSignInPromptModal from '../Modals/BrowserSignInPromptModal';
  */
 export default function GoogleSignInButton({ compact = false }) {
   const { handleGoogleCredential } = useAuth();
+  // `sharedProjectIds` (not `sharedProjects`, which only holds projects whose
+  // first Firestore snapshot has already arrived) is the list of every
+  // project this browser is a member of — read here so a guest's identity
+  // migration (see AuthContext.jsx's handleGoogleCredential) knows which
+  // projects to attempt migrating if linking their account turns out to be
+  // impossible. AuthContext itself sits ABOVE SchedulerContext in the
+  // provider tree and has no access to this state, hence passing it down
+  // from here rather than having AuthContext read it directly.
+  const { sharedProjectIds } = useScheduler();
   const standalone = isRunningStandalone();
   const [showBrowserPrompt, setShowBrowserPrompt] = useState(false);
 
@@ -28,7 +38,7 @@ export default function GoogleSignInButton({ compact = false }) {
       setShowBrowserPrompt(true);
       return;
     }
-    promptGoogleSignIn(handleGoogleCredential).catch((err) =>
+    promptGoogleSignIn((idToken) => handleGoogleCredential(idToken, { projectIds: sharedProjectIds })).catch((err) =>
       console.error('[GoogleSignInButton] Failed to prompt', err)
     );
   }

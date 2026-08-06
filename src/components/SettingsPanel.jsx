@@ -24,6 +24,8 @@ import {
   Search,
   Share,
   RefreshCw,
+  User as UserIcon,
+  Pencil,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
@@ -41,6 +43,7 @@ import {
   isRunningStandalone,
 } from '../utils/installPrompt';
 import GoogleSignInButton from './Common/GoogleSignInButton';
+import { isGuestUser, findOwnGuestName } from '../utils/sharedProjectAccess';
 import RoutineTimeline from './Settings/RoutineTimeline';
 import BackupsModal from './Modals/BackupsModal';
 import LabelsModal from './Modals/LabelsModal';
@@ -137,7 +140,44 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     setAnimationsEnabled,
     notificationSettings,
     setNotificationSettings,
+    sharedProjects,
+    renameAnonymousSelf,
+    setNotification,
   } = useScheduler();
+
+  // A guest (share-link visitor, no durable account — see isGuestUser's
+  // header for why this isn't user.isAnonymous) can rename themselves here;
+  // a signed-in Google account's name comes from Google and isn't editable.
+  const isGuest = !authLoading && isGuestUser(user);
+  const [isEditingGuestName, setIsEditingGuestName] = useState(false);
+  const [guestNameDraft, setGuestNameDraft] = useState('');
+  const [isSavingGuestName, setIsSavingGuestName] = useState(false);
+  const guestName = isGuest ? findOwnGuestName(user.uid, sharedProjects) : null;
+
+  function startEditingGuestName() {
+    setGuestNameDraft(guestName || '');
+    setIsEditingGuestName(true);
+  }
+
+  async function submitGuestName(e) {
+    e.preventDefault();
+    const trimmed = guestNameDraft.trim();
+    if (!trimmed || trimmed === guestName) {
+      setIsEditingGuestName(false);
+      return;
+    }
+    setIsSavingGuestName(true);
+    try {
+      const result = await renameAnonymousSelf(trimmed);
+      if (result.ok) {
+        setIsEditingGuestName(false);
+      } else {
+        setNotification({ type: 'error', message: "Couldn't update your name. Please try again." });
+      }
+    } finally {
+      setIsSavingGuestName(false);
+    }
+  }
 
   // Updates a notificationSettings field, requesting browser Notification
   // permission right here if a toggle is being turned ON — this is a direct
@@ -284,7 +324,92 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           Sign in to sync your tasks, boards, and settings across every device you use TaskFlow on. Also optional —
           without signing in, TaskFlow stays exactly as it works today: saved only to this browser.
         </p>
-        {!authLoading && user ? (
+        {!authLoading && user && isGuest ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  background: 'var(--color-accent-solid-bg)',
+                  color: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <UserIcon size={16} />
+              </span>
+              <div style={{ minWidth: 0 }}>
+                {isEditingGuestName ? (
+                  <form onSubmit={submitGuestName} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      className="input"
+                      value={guestNameDraft}
+                      onChange={(e) => setGuestNameDraft(e.target.value)}
+                      maxLength={120}
+                      autoFocus
+                      style={{ fontSize: 13, padding: '5px 8px', width: 160 }}
+                    />
+                    <button type="submit" className="btn" disabled={isSavingGuestName || !guestNameDraft.trim()} style={{ padding: '5px 10px', fontSize: 12 }}>
+                      {isSavingGuestName ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setIsEditingGuestName(false)}
+                      disabled={isSavingGuestName}
+                      style={{ padding: '5px 10px', fontSize: 12 }}
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>{guestName || 'Guest'}</div>
+                    <button
+                      className="btn"
+                      onClick={startEditingGuestName}
+                      title="Change your name"
+                      aria-label="Change your name"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', fontSize: 11.5 }}
+                    >
+                      <Pencil size={11} /> Rename
+                    </button>
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>Guest — no account</div>
+              </div>
+            </div>
+            <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 12 }}>
+              You joined a shared project as a guest, so this data lives only on this device — there's no cloud sync
+              or backup for a guest session. Sign in with Google below to get cross-device sync and automatic
+              backups, and to keep your data safe if this browser's storage is ever cleared.
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <GoogleSignInButton />
+              <button
+                className="btn"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)' }}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Leave this guest session? You'll lose access to any shared project you joined as a guest, and any data saved only on this device."
+                    )
+                  ) {
+                    logout();
+                  }
+                }}
+              >
+                <LogOut size={14} />
+                Leave guest session
+              </button>
+            </div>
+          </>
+        ) : !authLoading && user ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
               {user.photoURL ? (
@@ -313,7 +438,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                 </span>
               )}
               <div>
-                <div style={{ fontSize: 13.5, fontWeight: 600 }}>{user.displayName || 'Signed in'}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>{user.displayName || 'Account'}</div>
                 {user.email && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{user.email}</div>}
               </div>
             </div>
@@ -1088,7 +1213,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           />
         </div>
 
-        {user && (
+        {user && !isGuest && (
           <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--color-border)' }}>
             <h4
               style={{

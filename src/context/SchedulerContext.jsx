@@ -70,7 +70,9 @@ import {
 } from '../utils/recurrenceState';
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
-import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections } from '../services/sharedProjectService';
+import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
+import { planSelfRename, isGuestUser } from '../utils/sharedProjectAccess';
+import { renameCachedJoinNames } from '../utils/joinFlow';
 import {
   isSharedTask,
   partitionTasksBySharing,
@@ -2422,6 +2424,47 @@ export function SchedulerProvider({ children }) {
     [user]
   );
 
+  /**
+   * Let an anonymous share-link visitor rename themselves from Settings (see
+   * SettingsPanel's account section) — they're only ever asked for a name
+   * once, at join time, and previously had no way to change it. Real
+   * (Google-signed-in) accounts don't use this: their name comes from their
+   * Google account, not from anything TaskFlow stores.
+   *
+   * Touches every shared project this browser's anonymous identity has
+   * joined (planSelfRename, pure), not just the current one — an anonymous
+   * visitor may have joined several boards and a rename should be visible
+   * consistently everywhere, matching what addSelfAsCollaborator already
+   * denormalizes per-project. Also refreshes this uid's presence doc in each
+   * project (so the avatar strip picks up the new name immediately rather
+   * than waiting for the next 30s heartbeat) and the localStorage join-name
+   * cache (so a future join-link revisit doesn't re-prompt with the stale
+   * name). Does NOT touch past comments' authorDisplayName — that
+   * denormalization is deliberately frozen at post time (see
+   * types/index.js's Comment typedef).
+   */
+  const renameAnonymousSelf = useCallback(
+    async (displayName) => {
+      if (!isGuestUser(user)) return { ok: false, reason: 'not_anonymous' };
+      const trimmed = (displayName || '').trim();
+      if (!trimmed) return { ok: false, reason: 'empty_name' };
+
+      const projectIds = planSelfRename(user.uid, trimmed, sharedProjects);
+      try {
+        await Promise.all([
+          ...projectIds.map((projectId) => renameSelfAsCollaborator(projectId, user.uid, trimmed)),
+          ...projectIds.map((projectId) => writePresence(projectId, user.uid, { displayName: trimmed, photoURL: user.photoURL || null })),
+        ]);
+        renameCachedJoinNames(trimmed);
+        return { ok: true };
+      } catch (err) {
+        console.error('[SchedulerContext] Failed to rename anonymous self', err);
+        return { ok: false, reason: 'write_failed' };
+      }
+    },
+    [user, sharedProjects]
+  );
+
   const togglePinProject = useCallback((projectId) => {
     setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, isPinned: !p.isPinned } : p)));
   }, []);
@@ -3197,6 +3240,7 @@ export function SchedulerProvider({ children }) {
       viewersByProject,
       shareProject,
       joinSharedProject,
+      renameAnonymousSelf,
       touchProjectVisited,
       addSection,
       renameSection,
@@ -3288,6 +3332,7 @@ export function SchedulerProvider({ children }) {
       viewersByProject,
       shareProject,
       joinSharedProject,
+      renameAnonymousSelf,
       touchProjectVisited,
       addSection,
       renameSection,

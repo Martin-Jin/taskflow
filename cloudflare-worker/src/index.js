@@ -29,7 +29,7 @@
  */
 
 import { handleExchangeCode, handleRefreshToken, handleDisconnect } from './googleCalendarAuthRoutes.js';
-import { handleGetLinks, handleSetLink, handleResolveLink } from './shareLinkRoutes.js';
+import { handleGetLinks, handleSetLink, handleResolveLink, handleMigrateGuest } from './shareLinkRoutes.js';
 
 const CALENDAR_ROUTES = {
   '/calendar/exchange-code': handleExchangeCode,
@@ -45,6 +45,7 @@ const SHARE_ROUTES = {
   '/share/links': handleGetLinks,
   '/share/links/set': handleSetLink,
   '/share/resolve': handleResolveLink,
+  '/share/migrate-guest': handleMigrateGuest,
 };
 
 const MAX_TEXT_CHARS = 4000;

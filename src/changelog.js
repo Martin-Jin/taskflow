@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '2.7.0',
+    date: '2026-08-06',
+    title: 'Guests can rename themselves, and keep their projects when signing in',
+    changes: [
+      "If you joined a shared project via a link without an account, you can now change the name you picked, from Settings — it updates everywhere your collaborators see you. Comments you already posted keep the name you wrote them under.",
+      'Fixed: signing in with Google after joining as a guest used to lose you access to the projects you\'d joined. Your membership now carries over to your account.',
+      "TaskFlow no longer describes a guest session as \"signed in\", and no longer offers cloud sync or backups there — neither works without a real account, and the old wording implied your data was being kept when it only lived in that browser.",
+    ],
+  },
+  {
     version: '2.6.1',
     date: '2026-08-06',
     title: 'Fix edits undoing themselves, and tasks not reaching collaborators',

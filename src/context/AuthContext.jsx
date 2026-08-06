@@ -41,11 +41,19 @@
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  linkWithCredential,
+  signInWithCredential,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
 import { auth } from '../firebase';
 import { clearAllPersisted } from '../utils/persistence';
 import { loadScript } from '../utils/loadScript';
 import { isRunningStandalone } from '../utils/installPrompt';
+import { isGuestUser } from '../utils/sharedProjectAccess';
+import { migrateGuestIdentity } from '../services/shareLinkService';
 
 const AuthContext = createContext(null);
 
@@ -103,10 +111,91 @@ export function AuthProvider({ children }) {
     return unsubscribe;
   }, []);
 
-  async function handleGoogleCredential(idToken) {
+  /**
+   * @param {string} idToken - The Google ID token from GIS's One Tap prompt.
+   * @param {{projectIds?: string[]}} [guestMigration] - Only meaningful when
+   *   the CURRENT user is a share-link guest (see isGuestUser) — the ids of
+   *   shared projects to attempt migrating to the new account if linking
+   *   turns out to be impossible (see below). The caller (GoogleSignInButton)
+   *   supplies this because AuthContext sits ABOVE SchedulerContext in the
+   *   provider tree and has no access to `sharedProjects` itself. Omitted (or
+   *   empty) for a guest with nothing to migrate, or for a non-guest sign-in,
+   *   where it's simply unused.
+   */
+  async function handleGoogleCredential(idToken, guestMigration) {
     setAuthError(null);
+    const credential = GoogleAuthProvider.credential(idToken);
+    const currentUser = auth.currentUser;
+
+    // GUESTS: upgrade the anonymous account IN PLACE via linkWithCredential
+    // rather than signInWithCredential, which would REPLACE the session with
+    // a brand-new uid — orphaning this guest's `collaborators` entry on every
+    // shared project they've joined (see this file's header comment for the
+    // full bug). `isGuestUser`, not `user.isAnonymous`: a guest who has
+    // already joined a project via a link is re-authenticated via
+    // signInWithCustomToken and reports isAnonymous === false despite having
+    // no durable account — see that function's own doc comment for why.
+    //
+    // linkWithCredential keeps the uid unchanged, so every `collaborators`
+    // entry, comment authorship, and presence doc referencing it stays valid
+    // with ZERO migration required — this is overwhelmingly the common and
+    // best-case outcome, and the only path taken for a guest with no shared
+    // projects at all (nothing to migrate either way).
+    if (isGuestUser(currentUser)) {
+      try {
+        await linkWithCredential(currentUser, credential);
+        return;
+      } catch (err) {
+        if (err?.code !== 'auth/credential-already-in-use') {
+          console.error('[AuthContext] Linking guest account failed', err);
+          setAuthError(err?.message || String(err));
+          return;
+        }
+        // Fall through to the migration fallback below — this Google account
+        // already exists as a distinct Firebase user, so it cannot be linked
+        // onto the current anonymous uid.
+      }
+
+      // FALLBACK: the Google account already exists. Capture everything
+      // needed to migrate BEFORE signing in — the old session (and the
+      // ability to read its own id token) is gone the instant the credential
+      // swap below completes.
+      const oldIdToken = await currentUser.getIdToken().catch(() => null);
+      const projectIds = Array.isArray(guestMigration?.projectIds) ? guestMigration.projectIds : [];
+
+      try {
+        await signInWithCredential(auth, credential);
+      } catch (err) {
+        console.error('[AuthContext] Sign-in failed', err);
+        setAuthError(err?.message || String(err));
+        return;
+      }
+
+      if (!oldIdToken || projectIds.length === 0) return; // Nothing to migrate (or couldn't capture the old token — the new sign-in still succeeded).
+
+      try {
+        const newIdToken = await auth.currentUser.getIdToken();
+        const result = await migrateGuestIdentity(oldIdToken, newIdToken, projectIds);
+        if (result.failed?.length) {
+          console.error('[AuthContext] Some shared projects failed to migrate', result.failed);
+          setAuthError(
+            "Signed in, but some of your shared projects couldn't be transferred to this account. Try reopening their share links."
+          );
+        }
+      } catch (err) {
+        // The sign-in itself already succeeded — a failed migration leaves
+        // the OLD guest entries in place (see handleMigrateGuest's ordering
+        // guarantee) rather than losing access outright, so this is
+        // surfaced as a clear, specific error rather than a silent failure.
+        console.error('[AuthContext] Guest project migration failed', err);
+        setAuthError("Signed in, but couldn't transfer your shared projects to this account. Try reopening their share links.");
+      }
+      return;
+    }
+
+    // NON-GUEST: ordinary sign-in (or re-sign-in), completely unaffected by
+    // any of the above.
     try {
-      const credential = GoogleAuthProvider.credential(idToken);
       await signInWithCredential(auth, credential);
     } catch (err) {
       console.error('[AuthContext] Sign-in failed', err);

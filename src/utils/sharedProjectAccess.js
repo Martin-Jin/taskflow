@@ -445,6 +445,58 @@ export function isSharedProject(project) {
 }
 
 /**
+ * Whether a Firebase Auth `User` is a guest — a share-link visitor with no
+ * durable account, as opposed to someone signed in with a real (Google)
+ * account.
+ *
+ * DELIBERATELY NOT `user.isAnonymous`: that flag is only reliable for a
+ * PLAIN anonymous session. The moment a visitor completes a share-link join,
+ * their session is re-authenticated via `signInWithCustomToken` (see
+ * shareLinkService.js's `resolveShareToken`), and Firebase reports
+ * `isAnonymous === false` for that session regardless of whether the
+ * underlying account is genuinely anonymous — the same trap
+ * `firestore.rules`' `joinerIsAnonymous` comment documents server-side. Any
+ * UI that renders after a join has completed (which is effectively
+ * everywhere except the join flow itself) would misjudge a guest as a real
+ * account if it read `isAnonymous` directly.
+ *
+ * `providerData` doesn't have that problem: it reflects the underlying
+ * account's LINKED sign-in providers, not the current session's mechanism,
+ * so it survives the custom-token swap. A real account always has at least
+ * one entry (`google.com`, the only provider this app supports); a guest,
+ * having never linked one, always has zero — whether mid-anonymous-session
+ * or freshly re-authenticated via a join's custom token.
+ * @param {{isAnonymous?: boolean, providerData?: Array}|null} user
+ * @returns {boolean}
+ */
+export function isGuestUser(user) {
+  if (!user) return false;
+  if (Array.isArray(user.providerData) && user.providerData.length > 0) return false;
+  return true;
+}
+
+/**
+ * A guest's own chosen display name, read off whichever joined shared
+ * project has an entry for them — there is nowhere else client-side to read
+ * it from: Firebase never sets `displayName` on an anonymous user record (see
+ * `isGuestUser`'s header), so the name they picked at join time only exists
+ * denormalized onto `collaborators[uid].displayName` on each project they've
+ * joined (see `addSelfAsCollaborator`). Used by AccountButton/SettingsPanel
+ * to show a guest something better than a blank/generic label.
+ * @param {string} uid
+ * @param {Record<string, {collaborators?: Record<string, {displayName?: string}>}>} sharedProjects
+ * @returns {string|null}
+ */
+export function findOwnGuestName(uid, sharedProjects) {
+  if (!uid || !sharedProjects) return null;
+  for (const project of Object.values(sharedProjects)) {
+    const name = project?.collaborators?.[uid]?.displayName;
+    if (typeof name === 'string' && name.trim()) return name.trim();
+  }
+  return null;
+}
+
+/**
  * The three mutually-exclusive sharing states a project can be in, as far as
  * ANY project-listing surface (sidebar, List header, ManageProjectsModal,
  * search dropdown, etc.) needs to render — see this module's `isSharedProject`
@@ -558,6 +610,77 @@ export function resolveOwnerProfile(sharedProject, viewers, ownerId) {
     return { displayName: ownerViewer.displayName, photoURL: ownerViewer.photoURL ?? null };
   }
   return { displayName: 'Project owner', photoURL: null };
+}
+
+/**
+ * Plan which shared projects need a self-rename write, given a user renaming
+ * themselves from Settings (see SettingsPanel's account section). Pure so the
+ * "which of my several memberships actually need touching" logic is testable
+ * without Firestore — the caller (SchedulerContext) just fires off a write
+ * per returned project id.
+ *
+ * Only returns projects where the caller is a MEMBER with an entry whose
+ * `displayName` genuinely differs from the new one — skips the owner's own
+ * projects (the owner's name isn't stored in `collaborators` at all, it comes
+ * from their Google account and is denormalized separately as
+ * `ownerDisplayName`) and skips a project where the stored name already
+ * matches (no-op write avoided).
+ * @param {string} uid
+ * @param {string} displayName - The new name, already trimmed/validated by the caller.
+ * @param {Record<string, {ownerId?: string, collaborators?: Record<string, {displayName?: string}>}>} sharedProjects - Keyed by project id, e.g. SchedulerContext's `sharedProjects`.
+ * @returns {string[]} project ids that need a rename write
+ */
+export function planSelfRename(uid, displayName, sharedProjects) {
+  if (!uid || !displayName || !sharedProjects) return [];
+  const projectIds = [];
+  for (const [projectId, project] of Object.entries(sharedProjects)) {
+    const entry = project?.collaborators?.[uid];
+    if (!entry) continue; // Not a member here (or it's the owner, who has no entry).
+    if (entry.displayName === displayName) continue; // Already up to date.
+    projectIds.push(projectId);
+  }
+  return projectIds;
+}
+
+/**
+ * Plan which shared-project memberships need to move from an old (guest)
+ * uid to a new (just-signed-in Google) uid, for the `credential-already-in-use`
+ * fallback in AuthContext.jsx's handleGoogleCredential — see that file's
+ * header comment for the full scenario. MUST be called BEFORE the credential
+ * swap (against the guest's still-live session), since the old uid's
+ * membership becomes unreadable to the client the instant the session is
+ * replaced — this is a pure snapshot of "what needs migrating", not something
+ * that can be recomputed after the fact.
+ *
+ * A guest is only ever a viewer or editor, never an owner (rules refuse an
+ * anonymous `ownerId`), so every entry returned here is a `collaborators`
+ * migration — never an ownership transfer. Skips a project where the old uid
+ * has no entry (nothing to migrate there) and, defensively, one where the old
+ * uid IS the project's owner (should never happen per the above, but this
+ * function must never plan a write that would hand ownership to a fresh
+ * account by accident).
+ * @param {string} oldUid - The guest's uid, read while their session is still live.
+ * @param {Record<string, {ownerId?: string, collaborators?: Record<string, {role?: string, displayName?: string, photoURL?: string|null}>}>} sharedProjects
+ *   Keyed by project id, e.g. SchedulerContext's `sharedProjects`.
+ * @returns {Array<{projectId: string, role: string, displayName: string, photoURL: string|null}>}
+ */
+export function planGuestMigration(oldUid, sharedProjects) {
+  if (!oldUid || !sharedProjects || typeof sharedProjects !== 'object') return [];
+  const migrations = [];
+  for (const [projectId, project] of Object.entries(sharedProjects)) {
+    if (!project || typeof project !== 'object') continue;
+    if (project.ownerId === oldUid) continue; // Defensive — a guest should never be an owner.
+    const entry = project.collaborators?.[oldUid];
+    const role = entry?.role === SHARE_ROLES.EDITOR || entry?.role === SHARE_ROLES.VIEWER ? entry.role : null;
+    if (!role) continue; // Not a member of this project under the old uid.
+    migrations.push({
+      projectId,
+      role,
+      displayName: entry.displayName || 'Anonymous',
+      photoURL: entry.photoURL ?? null,
+    });
+  }
+  return migrations;
 }
 
 /**

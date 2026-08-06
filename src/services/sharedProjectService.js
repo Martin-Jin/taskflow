@@ -295,6 +295,24 @@ export function subscribePresence(projectId, onPresence, onError) {
 }
 
 /**
+ * Any collaborator (viewer or editor, anonymous or real): rename your OWN
+ * entry's `displayName`. Deliberately NOT stamping `updatedAt` here, unlike
+ * every owner/editor write in this file — firestore.rules' `isRenamingSelf()`
+ * requires this write's affected top-level keys to be EXACTLY `['collaborators']`
+ * (a non-owner, non-editor collaborator has no rules-granted path to touch
+ * anything else on the document), so adding `updatedAt` would make the whole
+ * rename rejected, the same reason `transferSharedProjectOwnership` skips it.
+ * @param {string} projectId
+ * @param {string} uid - Must be the caller's own uid; rules enforce this.
+ * @param {string} displayName
+ */
+export async function renameSelfAsCollaborator(projectId, uid, displayName) {
+  await updateDoc(projectRef(projectId), {
+    [`collaborators.${uid}.displayName`]: displayName,
+  });
+}
+
+/**
  * Owner-only: change an existing collaborator's role between viewer/editor.
  * Same dotted-field-path approach as `addSelfAsCollaborator` (touches only
  * this one uid's entry, leaving every other collaborator's entry — and the
