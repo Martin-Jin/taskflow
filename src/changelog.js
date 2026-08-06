@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '2.2.1',
+    date: '2026-08-06',
+    title: 'Small Tasks page and Calendar filter tweaks',
+    changes: [
+      '"See / manage all projects" moved out of the project-picker dropdown into its own button next to the project name on the Tasks page (folded into the existing "⋯" menu on mobile, where there\'s no room for a separate button).',
+      'The Calendar filter menu\'s project search box now matches the size of the rest of the menu\'s text instead of looking oversized, while still avoiding iOS Safari\'s zoom-on-focus on touch devices.',
+    ],
+  },
+  {
     version: '2.2.0',
     date: '2026-08-06',
     title: 'Project search is typo-tolerant and relevance-ranked everywhere',

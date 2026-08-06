@@ -349,9 +349,13 @@ test.describe('Calendar filter menu — Projects search', () => {
 
     const searchInput = page.locator('.calendar-filter-search-input');
     await expect(searchInput).toBeVisible();
-    // >=16px avoids iOS Safari's zoom-on-focus for text inputs.
+    // Font-size here matches the surrounding menu rows (13px, see
+    // calendar.css) on a mouse/trackpad viewport like this one — it only
+    // grows to >=16px (avoiding iOS Safari's zoom-on-focus) under a genuine
+    // `(pointer: coarse)` touch device, which a plain viewport resize
+    // doesn't emulate. That behavior is covered below instead.
     const fontSize = await searchInput.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    expect(fontSize).toBeGreaterThanOrEqual(16);
+    expect(fontSize).toBe(13);
 
     await searchInput.fill(alphaName);
     await page.waitForTimeout(150);
@@ -368,5 +372,38 @@ test.describe('Calendar filter menu — Projects search', () => {
     await closeAnyModal(page);
 
     expectNoErrors(errors);
+  });
+
+  test('search input grows to 16px on an actual touch device to avoid iOS zoom-on-focus', async ({ browser }) => {
+    // A plain viewport resize (see the test above) doesn't make the browser
+    // match `(pointer: coarse)` — only a real touch-capable context does, so
+    // this uses its own context with `hasTouch: true` instead of the shared
+    // `page` fixture, matching an actual phone rather than just a phone-sized
+    // desktop window.
+    // Starts at desktop width, same as the other Projects-search tests —
+    // "Manage projects" is reached via the desktop Sidebar (mobile has none)
+    // — then resizes to a touch-emulated phone viewport afterward.
+    const context = await browser.newContext({ hasTouch: true });
+    const page = await context.newPage();
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    // The search box only renders once project count exceeds SEARCH_
+    // THRESHOLD (see seedExtraProjects' own comment) — this fresh context
+    // starts with only mock data's 3 seeded projects, so extras are needed
+    // here too, same as the other Projects-search tests above.
+    await seedExtraProjects(page, Date.now());
+    await page.setViewportSize({ width: 390, height: 844 });
+    await gotoTab(page, 'Calendar');
+    await openFilterMenu(page);
+    await page.getByRole('button', { name: /^Projects/ }).click();
+    await page.waitForTimeout(150);
+
+    const searchInput = page.locator('.calendar-filter-search-input');
+    await expect(searchInput).toBeVisible();
+    const fontSize = await searchInput.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(fontSize).toBeGreaterThanOrEqual(16);
+
+    expectNoErrors(errors);
+    await context.close();
   });
 });

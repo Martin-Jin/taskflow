@@ -17,16 +17,24 @@
  * button. TaskListPanel only passes this on mobile (see useIsMobile), where
  * there isn't room for a title plus two separate menu triggers — desktop
  * keeps rendering ViewFilterMenu and ProjectActionsMenu as two triggers.
+ *
+ * `onOpenManageProjects` (optional) adds a "See / manage all projects" item
+ * to that same Project group — also mobile-only (desktop instead gets its
+ * own inline icon button next to the project title, see TaskListPanel).
+ * Unlike `projectActions`, it isn't gated on there being an active project
+ * (it renders even on "All Tasks"), since managing the project list isn't
+ * specific to any one project — so it can appear alongside or without a
+ * `projectActions` group.
  */
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Check, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, Check, MoreHorizontal, FolderKanban } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { TASK_STATUS_FILTERS } from '../../utils/projectConstants';
 import { ProjectActionsItems } from './ProjectActionsMenu';
 
-export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter, onChangeFilter, projectActions }) {
+export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter, onChangeFilter, projectActions, onOpenManageProjects }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -51,6 +59,11 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
   });
 
   const currentViewLabel = viewOptions.find((v) => v.key === view)?.label || view;
+  // Either kind of "Project" group item switches the trigger to the compact
+  // "⋯" icon style — `onOpenManageProjects` alone (e.g. mobile + "All Tasks",
+  // which has no rename/pin/delete to offer) still needs it, not just
+  // `projectActions`.
+  const hasProjectGroup = !!(projectActions || onOpenManageProjects);
 
   function runAndClose(fn) {
     fn();
@@ -62,17 +75,17 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
       <button
         type="button"
         ref={buttonRef}
-        className={projectActions ? 'btn btn-icon menu-trigger project-actions-trigger' : 'btn menu-trigger view-filter-trigger'}
+        className={hasProjectGroup ? 'btn btn-icon menu-trigger project-actions-trigger' : 'btn menu-trigger view-filter-trigger'}
         data-tour="tasks-view-switch"
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        aria-label={projectActions ? 'View, filter, and project actions' : 'Change view or filter'}
+        aria-label={hasProjectGroup ? 'View, filter, and project actions' : 'Change view or filter'}
         onClick={(e) => {
           e.stopPropagation();
           setIsOpen((v) => !v);
         }}
       >
-        {projectActions ? (
+        {hasProjectGroup ? (
           <MoreHorizontal size={14} />
         ) : (
           <>
@@ -128,16 +141,29 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
                 </button>
               ))}
 
-              {projectActions && (
+              {hasProjectGroup && (
                 <>
                   <p className="dashboard-customize-heading">Project</p>
-                  <ProjectActionsItems
-                    isPinned={projectActions.isPinned}
-                    onRename={projectActions.onRename}
-                    onTogglePin={projectActions.onTogglePin}
-                    onDelete={projectActions.onDelete}
-                    runAndClose={runAndClose}
-                  />
+                  {projectActions && (
+                    <ProjectActionsItems
+                      isPinned={projectActions.isPinned}
+                      onRename={projectActions.onRename}
+                      onTogglePin={projectActions.onTogglePin}
+                      onDelete={projectActions.onDelete}
+                      runAndClose={runAndClose}
+                    />
+                  )}
+                  {onOpenManageProjects && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="project-actions-item"
+                      onClick={() => runAndClose(onOpenManageProjects)}
+                    >
+                      <FolderKanban size={13} />
+                      See / manage all projects
+                    </button>
+                  )}
                 </>
               )}
             </div>

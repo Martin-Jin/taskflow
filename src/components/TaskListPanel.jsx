@@ -217,11 +217,6 @@ export default function TaskListPanel({
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [isRenamingProject, setIsRenamingProject] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
-  // Managing projects now lives in the sidebar's "Manage projects" button
-  // (desktop) / this SelectMenu footer action (mobile, which has no sidebar).
-  const footerActions = onOpenManageProjects
-    ? [{ icon: FolderKanban, label: 'See / manage all projects', onClick: onOpenManageProjects }]
-    : undefined;
 
   // Today's ISO date, used both for the Overdue/Today/Upcoming grouping below
   // and (via isCompletedForCurrentOccurrence) each row's "done for today"
@@ -433,7 +428,6 @@ export default function TaskListPanel({
               options={projectSelectOptions}
               onChange={onChangeActiveProject}
               ariaLabel="Switch project"
-              footerActions={footerActions}
               marquee
             />
             {isRenamingProject ? (
@@ -469,6 +463,23 @@ export default function TaskListPanel({
                 <MarqueeText text={activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL} />
               </h2>
             )}
+            {/* Desktop-only: on mobile there's no room for this alongside the
+                title plus the view/filter + "⋯" triggers, so it folds into
+                ViewFilterMenu's combined popover instead (see the
+                `onOpenManageProjects` prop passed below). Shown regardless of
+                which project is active (including "All Tasks") since
+                managing the project list isn't specific to any one project. */}
+            {!isMobile && onOpenManageProjects && (
+              <button
+                type="button"
+                className="btn btn-icon"
+                onClick={onOpenManageProjects}
+                aria-label="See / manage all projects"
+                title="See / manage all projects"
+              >
+                <FolderKanban size={14} />
+              </button>
+            )}
           </div>
 
           <div className="taskpage-view-switch-row">
@@ -479,6 +490,7 @@ export default function TaskListPanel({
               filter={filter}
               onChangeFilter={setFilter}
               projectActions={isMobile ? projectActionsProps : undefined}
+              onOpenManageProjects={isMobile ? onOpenManageProjects : undefined}
             />
             {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
                 doubles as this page's one-tap way to reach account/settings —

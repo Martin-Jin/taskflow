@@ -974,33 +974,6 @@
   background: transparent;
 }
 
-.select-menu-footer-wrap {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--color-border);
-}
-
-.select-menu-footer-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  text-align: left;
-  padding: 7px 9px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.select-menu-footer-item:hover {
-  background: var(--color-bg-surface-hover);
-  color: var(--color-text-primary);
-}
-
 /* ----------------------------------------------------------------------
    MentionDropdown — the live "@"/"#" popup shown while typing in
    SmartTitleInput. Same portaled-to-body treatment as .select-menu-dropdown

@@ -1332,11 +1332,19 @@ input[type='text'].calendar-filter-search-input {
   background: none;
   padding: 4px 0;
   color: var(--color-text-primary);
-  /* >=16px keeps iOS Safari from zooming the page in on focus — every other
-     text input in the app is 13px (fine on desktop, but this one needs to
-     stay usable on a phone since the whole menu can render as a mobile
-     centered popover, see useMenuPosition). */
-  font-size: 16px;
+  /* Matches the surrounding menu rows (.dashboard-customize-item is 13px) so
+     "Search projects…" doesn't read as noticeably larger than "All
+     projects"/"Assignments" etc. below it. Bumped back to 16px only on
+     touch devices (see the (pointer: coarse) override below) — that's the
+     one case this size actually matters functionally, since <16px makes
+     iOS Safari zoom the page in on focus. */
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  input[type='text'].calendar-filter-search-input {
+    font-size: 16px;
+  }
 }
 
 input[type='text'].calendar-filter-search-input:focus {

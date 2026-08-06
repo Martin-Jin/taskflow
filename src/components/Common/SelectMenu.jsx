@@ -28,7 +28,7 @@ import { ChevronDown } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import MarqueeText from './MarqueeText';
 
-export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, footerActions, marquee = false }) {
+export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, marquee = false }) {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(() => Math.max(0, options.findIndex((o) => o.value === value)));
   const rootRef = useRef(null);
@@ -62,12 +62,6 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
     onChange(optionValue);
     setIsOpen(false);
     buttonRef.current?.focus();
-  }
-
-  function runFooterAction(action) {
-    setIsOpen(false);
-    buttonRef.current?.focus();
-    action.onClick();
   }
 
   function handleKeyDown(e) {
@@ -145,22 +139,6 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
                   </button>
                 </li>
               ))}
-              {footerActions && footerActions.length > 0 && (
-                <li role="presentation" className="select-menu-footer-wrap">
-                  {footerActions.map((action) => (
-                    <button
-                      key={action.label}
-                      type="button"
-                      className="select-menu-footer-item"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => runFooterAction(action)}
-                    >
-                      {action.icon && <action.icon size={13} />}
-                      {action.label}
-                    </button>
-                  ))}
-                </li>
-              )}
             </ul>
           </>,
           document.body
