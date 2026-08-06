@@ -31,7 +31,7 @@
  * ============================================================================
  */
 
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 /** One-time fetch of the user's synced data — see subscribeUserData below for live, ongoing updates. 
@@ -143,6 +143,72 @@ export async function listBackups(uid) {
     createdAt: d.data().createdAt ?? null,
     exportedAt: d.data().exportedAt ?? null,
     automatic: d.data().automatic ?? false,
+  }));
+}
+
+// Sanity ceiling for listAutomaticBackups below, not a real-world limit —
+// automatic backups are already self-limiting to ~AUTO_BACKUP_RETENTION_COUNT
+// (14, see useCloudSync's runAutomaticBackupIfDue) in steady state, so this
+// only guards against a bug elsewhere (e.g. pruning silently failing for a
+// long time) causing an unbounded query.
+const MAX_AUTOMATIC_BACKUPS_QUERIED = 200;
+
+/**
+ * Lists ALL automatic backups (up to the sanity ceiling above), newest
+ * first — unlike listBackups, this is NOT capped to a small "most recent
+ * overall" window, because that cap can hide old automatic backups behind
+ * enough manual ones to push them out of it, making them permanently
+ * un-prunable (see runAutomaticBackupIfDue, which uses this instead of
+ * listBackups specifically to avoid that blind spot). Manual backups are
+ * excluded by the query itself, not just filtered client-side.
+ */
+export async function listAutomaticBackups(uid) {
+  const q = query(
+    collection(db, 'users', uid, 'backups'),
+    where('automatic', '==', true),
+    orderBy('createdAt', 'desc'),
+    limit(MAX_AUTOMATIC_BACKUPS_QUERIED)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({
+    id: d.id,
+    createdAt: d.data().createdAt ?? null,
+    exportedAt: d.data().exportedAt ?? null,
+    automatic: true,
+  }));
+}
+
+// Sanity ceiling for listManualBackups below — same reasoning as
+// MAX_AUTOMATIC_BACKUPS_QUERIED above, just for the manual pool (also capped
+// at its own retention count in steady state, see MANUAL_BACKUP_RETENTION_
+// COUNT in useCloudSync.js).
+const MAX_MANUAL_BACKUPS_QUERIED = 200;
+
+/**
+ * Mirrors listAutomaticBackups, but for manual ("Back up now") backups —
+ * needed for the same reason: manual backups now have their own retention
+ * cap (independent from automatic backups' cap), and pruning that cap must
+ * not be blind-sided by listBackups's "most recent 40 overall" window either.
+ * `createBackup` always writes `automatic` (defaulting to false), so
+ * `where('automatic', '==', false)` correctly matches every manual backup
+ * ever created through this app — the only docs this query could miss are
+ * ones from before the `automatic` field existed at all (Firestore's `==`
+ * doesn't match a missing field), which is an acceptable, vanishingly rare
+ * edge case for backups this old.
+ */
+export async function listManualBackups(uid) {
+  const q = query(
+    collection(db, 'users', uid, 'backups'),
+    where('automatic', '==', false),
+    orderBy('createdAt', 'desc'),
+    limit(MAX_MANUAL_BACKUPS_QUERIED)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({
+    id: d.id,
+    createdAt: d.data().createdAt ?? null,
+    exportedAt: d.data().exportedAt ?? null,
+    automatic: false,
   }));
 }
 

@@ -324,7 +324,7 @@ See `src/types/index.js` for full JSDoc typedefs.
 
 | Type | Purpose |
 |---|---|
-| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, capped at 2 levels deep — see "Sub-tasks and containers"), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed). |
+| `Task` | Hours, priority, due date, lock/complete state, optional section, optional `parentId` (sub-task of another Task, capped at 2 levels deep — see "Sub-tasks and containers"), optional `dependsOn` and `isPassive`, optional `comments` (text + optional file attachment, Firebase Storage-backed; capped at `MAX_COMMENTS_PER_TASK` (200) per task — see `SchedulerContext.addComment` — since `comments` lives inside the single per-user Firestore doc rewritten on every sync push). |
 | `Section` | A Todoist Section — Board view column |
 | `Project` | A Todoist Project, or a local-only one created from the sidebar's "+" — the top-level grouping switched between from the sidebar, List/Board's project header, or the search bar. Optional `ownerId`/`sharedProjectId` mark it as a collaborative project (see "Shared projects" below); a personal project has neither |
 | `SharedProject` | A project shared with other users, living in its own top-level `sharedProjects/{projectId}` Firestore doc rather than inside `users/{uid}` — holds `ownerId` and a `collaborators` map. Deliberately does NOT hold the view/edit share links/tokens — see "Shared projects" below |

@@ -397,7 +397,7 @@ describe('planAutoBackupPrune', () => {
     expect(planAutoBackupPrune(backups, 3)).toEqual(['a4', 'a5']);
   });
 
-  it('never includes a manual backup as a deletion candidate, no matter how old or how many automatic backups exist', () => {
+  it('when given a mixed list, only prunes backups matching the automatic flag it filters on — a manual backup mixed into an automatic-heavy list is never swept up as if it were automatic', () => {
     const backups = [
       backup('manual-old', { automatic: false, createdAt: 0 }),
       ...Array.from({ length: 20 }, (_, i) => backup(`auto-${i}`, { createdAt: 20 - i })),
@@ -405,6 +405,33 @@ describe('planAutoBackupPrune', () => {
     const toDelete = planAutoBackupPrune(backups, 14);
     expect(toDelete).not.toContain('manual-old');
     expect(toDelete).toHaveLength(6); // 20 automatic - 14 retained
+  });
+
+  // planAutoBackupPrune takes a third `wantAutomatic` argument (default
+  // true) so it can also prune the MANUAL pool — its own independent
+  // retention count (MANUAL_BACKUP_RETENTION_COUNT, separate from automatic
+  // backups' AUTO_BACKUP_RETENTION_COUNT — see useCloudSync's
+  // runAutomaticBackupIfDue/pruneBackupPool) — by passing `false` and a
+  // manual-only (or mixed) list.
+  it('prunes manual backups beyond the retention count when wantAutomatic is false, oldest first', () => {
+    const backups = [
+      backup('m1', { automatic: false, createdAt: 5 }),
+      backup('m2', { automatic: false, createdAt: 4 }),
+      backup('m3', { automatic: false, createdAt: 3 }),
+      backup('m4', { automatic: false, createdAt: 2 }),
+      backup('m5', { automatic: false, createdAt: 1 }),
+    ];
+    expect(planAutoBackupPrune(backups, 3, false)).toEqual(['m4', 'm5']);
+  });
+
+  it('with wantAutomatic false, a mixed list never treats an automatic backup as a manual deletion candidate', () => {
+    const backups = [
+      backup('auto-old', { automatic: true, createdAt: 0 }),
+      ...Array.from({ length: 20 }, (_, i) => backup(`manual-${i}`, { automatic: false, createdAt: 20 - i })),
+    ];
+    const toDelete = planAutoBackupPrune(backups, 14, false);
+    expect(toDelete).not.toContain('auto-old');
+    expect(toDelete).toHaveLength(6); // 20 manual - 14 retained
   });
 
   it('handles a Firestore Timestamp-shaped createdAt (an object with toMillis())', () => {

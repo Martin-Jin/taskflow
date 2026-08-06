@@ -226,22 +226,52 @@ the live-sync path (`computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData`
 `SchedulerContext`'s `cloudSyncState`) without a strong reason and updating this note
 plus the README's own Backups section.
 
-**Automatic daily cloud backups:** in addition to the manual "Back up now"
-button, `useCloudSync.js` (`runAutomaticBackupIfDue`) creates a Firestore
-backup automatically once per day while a user is signed in with cloud sync
-active — checked once on mount and hourly thereafter (`AUTO_BACKUP_CHECK_
-INTERVAL_MS`), gated by a persisted `lastAutoBackupAt` timestamp so a reload
-doesn't cause an extra one. Each backup doc is tagged `automatic: true`/
-`false` (`firestoreSync.createBackup`'s new option) so retention can tell
-them apart: after each automatic backup, `planAutoBackupPrune` (a pure,
-unit-tested function) decides which automatic backups beyond the 14 most
-recent (`AUTO_BACKUP_RETENTION_COUNT`) to delete. **Manual backups are never
-pruned by this — they're excluded from the candidate list entirely**, so a
-user's deliberate checkpoints survive regardless of age or how many
-automatic ones accumulate. This is separate from and doesn't affect the
-manual "Back up now" flow, which is unchanged. `MAX_LISTED_BACKUPS` in
-`firestoreSync.js` was raised (20 → 40) so the "view backups" list still
-shows manual backups once 14+ automatic ones exist alongside them.
+**Automatic daily cloud backups, and independent retention for both pools:**
+in addition to the manual "Back up now" button, `useCloudSync.js`
+(`runAutomaticBackupIfDue`) creates a Firestore backup automatically once
+per day while a user is signed in with cloud sync active — checked once on
+mount and hourly thereafter (`AUTO_BACKUP_CHECK_INTERVAL_MS`), gated by a
+persisted `lastAutoBackupAt` timestamp so a reload doesn't cause an extra
+one. Each backup doc is tagged `automatic: true`/`false`
+(`firestoreSync.createBackup`'s option, defaulting to `false` for a manual
+backup) so retention can tell them apart.
+
+**Both automatic and manual backups are pruned, but against two independent
+retention counts — not one shared pool:** automatic backups are capped at
+the 14 most recent (`AUTO_BACKUP_RETENTION_COUNT`), and manual "Back up now"
+backups are separately capped at their own 14 most recent
+(`MANUAL_BACKUP_RETENTION_COUNT`) — up to 14 of each can coexist, for up to
+28 total. This is a deliberate reversal of this project's earlier
+design (manual backups used to never be pruned); the constants are separate
+so the two counts don't have to move together if that changes again.
+`planAutoBackupPrune` (a pure, unit-tested function, despite its name still
+matching its original automatic-only purpose) takes a `wantAutomatic`
+argument so the same "keep the N most recent, delete the rest oldest-first"
+logic can decide either pool's deletions — `useCloudSync.js`'s
+`pruneBackupPool` wraps it into one shared prune step used by both pools.
+Manual-pool pruning runs in two places: right after `createCloudBackup`
+creates a new manual backup (so repeated manual backups in one session get
+pruned back down immediately, not after a day's wait), and again inside
+`runAutomaticBackupIfDue`'s daily/hourly check as a catch-all. `MAX_LISTED_
+BACKUPS` in `firestoreSync.js` was raised (20 → 40) so the "view backups"
+list still shows a healthy mix of both kinds.
+
+Either prune step must NOT source its candidate list from `listBackups` (the
+"most recent 40 overall" query backing the display list) — enough backups
+of one kind can push an old backup of the other kind outside that shared
+40-doc window, and once it's outside the window `planAutoBackupPrune` never
+even sees it, so it becomes permanently un-prunable and that pool's cap
+silently breaks. `firestoreSync.listAutomaticBackups(uid)` and its sibling
+`listManualBackups(uid)` exist specifically to avoid this: each is a
+separate query filtered by `where('automatic', '==', true/false)` (not
+client-side filtering) with no "most recent N overall" cap — only a
+generous sanity ceiling (200 each) against a bug elsewhere causing runaway
+growth, since each pool is already self-limiting to ~14 in steady state.
+`pruneBackupPool` uses whichever lister matches the pool being pruned, and
+`runAutomaticBackupIfDue` separately re-fetches via `listBackups` afterward
+to refresh the "view backups" display list — pruning correctness and what's
+shown in the UI are two different concerns and must keep using the right
+query for each.
 
 ## Testing
 

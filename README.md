@@ -139,12 +139,13 @@ rollback point even if a bad sync or an accidental bulk-delete already
 propagated to the live doc. **View backups** in Settings lists your recent
 snapshots (newest first, tagged "Automatic" or "Manual") to restore or delete.
 
-The automatic backups keep a rolling 2-week window: only the 14 most recent
-automatic snapshots are kept, and older ones are pruned right after each new
-one is created. Anything you create yourself via "Back up now" is tagged
-separately and is **never** pruned by this rotation, no matter how old it
-gets or how many automatic backups accumulate — you're the only one who
-deletes a manual backup.
+Both automatic and "Back up now" snapshots keep a rolling 2-week window
+each, but as two **independent** pools of 14, not one shared pool: the 14
+most recent automatic snapshots are kept (older ones pruned right after each
+new one is created), and separately, the 14 most recent manual snapshots are
+kept too (older ones pruned right after you create a new one, or on the
+next daily automatic-backup check). So up to 14 automatic + 14 manual can
+exist side by side.
 
 Restoring — from a file or from a cloud snapshot — replaces your current
 tasks, boards, and settings on this device, and asks for confirmation
@@ -446,13 +447,15 @@ cached copy.
     a task recurring automatically makes its parent (or sub-tasks) recurring
     too, since they represent the steps toward the same repeating goal — no
     need to set it on both sides yourself.
-    Every task also has a Todoist-style **comment thread** — post text,
-    a file (image, PDF, or common office doc, 10MB max), or both; image
-    attachments show as a clickable thumbnail (opens full-size), other
-    files as a name/size chip linking to the file. Attachments upload to
-    Firebase Storage (requires being signed in — see [Account &
-    cross-device sync](#account--cross-device-sync)) and sync/back up
-    alongside the rest of the task, same as every other field.
+    Every task also has a Todoist-style **comment thread** (up to 200
+    comments per task) — post text, a file (image, PDF, or common office
+    doc, 10MB max), or both; image attachments show as a clickable
+    thumbnail (opens full-size), other files as a name/size chip linking
+    to the file. Attachments upload to Firebase Storage (requires being
+    signed in — see [Account & cross-device sync](#account--cross-device-sync))
+    and sync/back up alongside the rest of the task, same as every other
+    field. Once a task hits the 200-comment cap, posting is blocked with a
+    clear message until you delete an older comment to make room.
   - **Board** — Todoist-style Kanban board, one column per Section plus a
     leading "No Section" column (or a flat list if the project has no
     Sections yet). Rename/delete columns, add sections, drag cards between

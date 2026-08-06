@@ -1104,8 +1104,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             </h4>
             <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 10 }}>
               TaskFlow automatically takes a cloud backup once a day while you're signed in, keeping the last 14 —
-              older automatic ones are pruned to make room. Anything you back up manually with "Back up now" is kept
-              forever and never pruned by this.
+              older automatic ones are pruned to make room. Backups you take manually with "Back up now" are kept
+              separately, also capped at the last 14.
               {lastAutoBackupAt && <> Last automatic backup: {new Date(lastAutoBackupAt).toLocaleString()}.</>}
             </p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
