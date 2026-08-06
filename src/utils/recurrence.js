@@ -611,19 +611,23 @@ export function expandTaskOccurrences(task, rangeStartIso, rangeEndIso) {
  *     new due date are left alone: those are genuinely earlier occurrences
  *     that stay closed out.
  *
- * A third case: if the new due date falls OFF the recurrence pattern (e.g.
- * moving a single occurrence of a "every week on Mon/Wed/Fri" task onto a
- * Thursday), re-anchoring the whole series onto that date would be wrong —
- * `generateTaskOccurrences` filters every future date by the same pattern,
- * so an off-pattern DTSTART just makes the series generate nothing near it
- * (see this repo's rebalanceEngine.js expandRecurringTasks: this is what
- * silently drops the occurrence from the scheduler and zeroes its remaining
- * hours). Instead, the move is recorded as a one-occurrence `overrides`
- * entry (see types/index.js's Task.overrides, same convention as
+ * A third case, specific to a WEEKLY rule pinned to particular weekdays (e.g.
+ * "every week on Mon/Wed/Fri"): if the new due date falls OFF that weekday
+ * set (e.g. onto a Thursday), re-anchoring the whole series onto that date
+ * would be wrong — `generateTaskOccurrences` filters every future date by the
+ * same weekday set, so an off-pattern DTSTART just makes the series generate
+ * nothing near it (see this repo's rebalanceEngine.js expandRecurringTasks:
+ * this is what silently drops the occurrence from the scheduler and zeroes
+ * its remaining hours). Instead, the move is recorded as a one-occurrence
+ * `overrides` entry (see types/index.js's Task.overrides, same convention as
  * CalendarEvent.overrides) keyed by the task's current `dueDate` — the
  * pattern's own anchor/most-recent occurrence stays untouched, so the rest
  * of the series keeps landing on Mon/Wed/Fri while this one occurrence shows
  * up on Thursday instead (see utils/recurrence.js's expandTaskOccurrences).
+ * day/month/year rules (and a plain weekly rule with no specific `days`) have
+ * no weekday set to fall off of — every manually-picked date is legitimate
+ * there, so this case doesn't apply and updateTask's planSeriesReanchor
+ * (SchedulerContext.jsx) re-anchors the series onto it instead.
  *
  * @param {object} task - the task's CURRENT (pre-update) fields
  * @param {object} updates - the partial update being applied
@@ -640,8 +644,23 @@ export function computeRecurringRescheduleUpdate(task, updates) {
   }
   if (nextDueDate && nextDueDate !== task.dueDate) {
     const rule = task.recurrenceRule || deriveRecurrenceRule(task.recurrenceString);
+    // "Off-pattern" only means something for a weekly rule pinned to specific
+    // weekdays (e.g. Mon/Wed/Fri) — there, a manual move onto a day outside
+    // that set is a genuine single-occurrence exception, since re-anchoring
+    // would change which weekdays the whole series lands on. day/month/year
+    // rules (and a plain weekly rule with no `days`) have no weekday filter
+    // of their own to violate: EVERY new date is "off" the old anchor-relative
+    // schedule by construction, so treating that as an exception here would
+    // revert any manual due-date edit back to the old date instead of letting
+    // updateTask's planSeriesReanchor (SchedulerContext.jsx) re-anchor the
+    // series onto the date the user actually picked.
     const isOffPattern =
-      rule && task.dueDate && generateTaskOccurrences(task, nextDueDate, nextDueDate).length === 0;
+      rule &&
+      rule.unit === 'week' &&
+      rule.days &&
+      rule.days.length > 0 &&
+      task.dueDate &&
+      generateTaskOccurrences(task, nextDueDate, nextDueDate).length === 0;
     if (isOffPattern) {
       // Keep the series anchored where it was; record this single move as
       // an override instead, and leave completedDates alone (nothing about
