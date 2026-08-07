@@ -10,6 +10,8 @@
  * ============================================================================
  */
 
+import { toISODate } from '../utils/dateUtils';
+
 // ---- Retention Durations (in days) ----------------------------------------
 // These are the authoritative retention periods used throughout the app.
 // Keep all time-based cleanup windows here for easy adjustment.
@@ -48,7 +50,7 @@ export const BACKUP_CHECK_INTERVAL_MS = 24 * MS_PER_HOUR;
 /** Presence heartbeat: every 30 seconds (keeps avatar fresh within PRESENCE_STALE_MS). */
 export const PRESENCE_HEARTBEAT_MS = 30 * MS_PER_SECOND;
 
-/** Presence staleness threshold: 90 seconds without heartbeat. Checked every PRESENCE_HEARTBEAT_MS / 2. */
+/** Presence staleness threshold: 90 seconds without heartbeat. Checked every PRESENCE_STALE_MS / 2. */
 export const PRESENCE_STALE_MS = 90 * MS_PER_SECOND;
 
 /** Cloud sync debounce: batch changes into one write. */
@@ -78,13 +80,7 @@ export function computeCutoffMs(retentionDays, nowMs = Date.now()) {
  * @returns {string} Cutoff date as ISO string (YYYY-MM-DD) in local time
  */
 export function computeCutoffIso(retentionDays, nowMs = Date.now()) {
-  const cutoffDate = new Date(nowMs - retentionDays * MS_PER_DAY);
-  // toISODate would be ideal but not exported from dateUtils; compute it here.
-  // Use local date, not UTC (toISOString converts to UTC).
-  const year = cutoffDate.getFullYear();
-  const month = String(cutoffDate.getMonth() + 1).padStart(2, '0');
-  const day = String(cutoffDate.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return toISODate(new Date(nowMs - retentionDays * MS_PER_DAY));
 }
 
 /**
