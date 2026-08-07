@@ -107,6 +107,28 @@ function isAuthError(err) {
 }
 
 /**
+ * True only for a CONFIRMED "needs reconnect" failure — the Worker's
+ * `/calendar/refresh-token` route returning 404 (`not_connected`) or 409
+ * (`revoked`), which `refreshAccessTokenFromWorker` above marks by setting
+ * `err.needsReconnect = true`. Any other failure from that same call site
+ * (a plain network/DNS hiccup, `getFirebaseIdToken()` throwing because
+ * `auth.currentUser` isn't ready yet, a Worker 5xx, etc.) is transient and
+ * must NOT be treated as proof the user is actually disconnected — see
+ * useGoogleCalendarSync.js's initial silent re-auth effect, the one place
+ * this distinction previously wasn't made (any thrown error flipped
+ * `googleConnected` to false immediately, which is what caused Calendar to
+ * wrongly show "disconnected" after a cold browser start whenever the very
+ * first silent refresh attempt hit one of these transient failures).
+ * Extracted as its own pure function so this decision can be unit tested
+ * without mocking the Worker's HTTP responses.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function shouldTreatAsReconnectNeeded(err) {
+  return err?.needsReconnect === true;
+}
+
+/**
  * Drop both the in-memory and cached access token, forcing the next
  * `requestAccessToken` call to actually talk to GIS again instead of
  * re-serving a token Google has already rejected — otherwise a

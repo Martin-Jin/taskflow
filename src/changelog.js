@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.1',
+    date: '2026-08-07',
+    title: 'Fixed Google Calendar sometimes showing disconnected after fully closing and reopening the browser',
+    changes: [
+      "Google Calendar could wrongly show as disconnected after fully closing and reopening the browser (not just refreshing the page), because a single flaky first reconnect attempt on a cold start was treated the same as a real disconnect. It now retries once before giving up, and only shows disconnected when Google actually confirms the connection is gone.",
+    ],
+  },
+  {
     version: '3.3.0',
     date: '2026-08-07',
     title: "Using TaskFlow without signing in now remembers your name as a guest",
