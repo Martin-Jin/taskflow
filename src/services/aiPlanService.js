@@ -68,6 +68,7 @@ function isValidISODate(value) {
 // validation — field name -> validator returning an error string, or null if valid.
 const FIELD_FORMAT_VALIDATORS = {
   dueDate: (v) => (isValidISODate(v) ? null : `dueDate "${v}" is not a valid ISO date (YYYY-MM-DD).`),
+  earliestDate: (v) => (isValidISODate(v) ? null : `earliestDate "${v}" is not a valid ISO date (YYYY-MM-DD).`),
   date: (v) => (isValidISODate(v) ? null : `date "${v}" is not a valid ISO date (YYYY-MM-DD).`),
   fixedTime: (v) => (TIME_RE.test(v) ? null : `fixedTime "${v}" is not a valid 24-hour time (HH:MM).`),
   startTime: (v) => (TIME_RE.test(v) ? null : `startTime "${v}" is not a valid 24-hour time (HH:MM).`),
@@ -412,6 +413,7 @@ function describeTaskPlacement(op, nameFor) {
     bits.push(op.dependsOn.length ? `depends on: ${op.dependsOn.map((id) => nameFor('task', id)).join(', ')}` : 'depends on: none');
   }
   if (op.dueDate !== undefined) bits.push(`due: ${op.dueDate || 'none'}`);
+  if (op.earliestDate !== undefined) bits.push(`not before: ${op.earliestDate || 'none'}`);
   return bits.length ? ` (${bits.join('; ')})` : '';
 }
 
@@ -428,7 +430,7 @@ const DEFAULT_ESTIMATED_HOURS = 5 / 60;
 // field" (see the update_task/update_event tool descriptions in
 // cloudflare-worker/src/index.js) — normalized to `null` to match this app's
 // own null-means-unset convention, rather than leaving a stray empty string.
-const NULLABLE_ON_EMPTY = new Set(['projectId', 'sectionId', 'parentId', 'dueDate', 'fixedTime', 'recurrenceString']);
+const NULLABLE_ON_EMPTY = new Set(['projectId', 'sectionId', 'parentId', 'dueDate', 'earliestDate', 'fixedTime', 'recurrenceString']);
 
 /** Replaces every new:<n> reference in `op`'s fields with its resolved real id, via `idMap`. Throws if a referenced local id was never resolved (should not happen given a correct applyOrder). */
 function resolveRefs(op, idMap) {
