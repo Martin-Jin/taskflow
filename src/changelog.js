@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.14',
+    date: '2026-08-07',
+    title: 'AI Assistant better recognizes "lock this to a day" requests',
+    changes: [
+      'Asking the AI Assistant to lock a task to a specific day (e.g. "lock this to the 10th", "don\'t start before Monday") is now recognized directly, instead of sometimes being ignored or confused with "must be done on due date".',
+      'The exam/test/lab due-date rule no longer misfires on ordinary tasks that just mention "lab" or "test" in their title or course section (e.g. a lab report) — it now only applies to an actual scheduled exam/test/lab session.',
+    ],
+  },
+  {
     version: '3.0.13',
     date: '2026-08-07',
     title: 'AI Assistant now catches a contradictory "enforce due date" before it reaches the confirm screen',
