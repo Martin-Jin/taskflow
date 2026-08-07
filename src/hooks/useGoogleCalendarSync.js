@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePersistedState } from './usePersistedState';
 import { toISODate, addDays, timeToMinutes, minutesToTime } from '../utils/dateUtils';
+import { RETENTION_DAYS_CALENDAR_EVENTS } from '../services/dataRetention';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
 import {
   fetchEvents as fetchGoogleEvents,
@@ -80,13 +81,11 @@ function getRoutineSyncRange() {
 // beyond the routine 30-day window and that widened range is deliberately
 // never purged just for falling outside the routine window (see
 // eventSyncService's module doc) — but retention still isn't meant to be
-// UNBOUNDED. A non-recurring event older than a year is purged regardless of
-// whether it was once on-demand-fetched, same as this app already treats a
-// year as the outer edge of "recent history" elsewhere (backups, etc.).
-// Rolls forward with real time (recomputed fresh on every call, not pinned
-// to whenever a far-back fetch happened to occur) — see how it's combined
-// with the synced-bounds union in applyPulledEvents below.
-const MAX_RETENTION_DAYS = 365;
+// UNBOUNDED. A non-recurring event older than RETENTION_DAYS_CALENDAR_EVENTS
+// is purged regardless of whether it was once on-demand-fetched. Rolls forward
+// with real time (recomputed fresh on every call, not pinned to whenever a
+// far-back fetch happened to occur) — see how it's combined with the synced-
+// bounds union in applyPulledEvents below.
 
 /**
  * @param {Object} deps
@@ -212,10 +211,10 @@ export function useGoogleCalendarSync({
       // rather than just this call's own (possibly narrower) rangeStartIso
       // — see eventSyncService's module doc for the bug this avoids.
       const expandedBounds = expandSyncedBounds(googleSyncedRangeBoundsRef.current, rangeStartIso, rangeEndIso);
-      // Cap retention at MAX_RETENTION_DAYS regardless of how far back the
-      // synced-bounds union reaches — see MAX_RETENTION_DAYS' and
-      // computeEffectivePurgeBoundary's own doc comments.
-      const purgeBoundaryIso = computeEffectivePurgeBoundary(expandedBounds.startIso, MAX_RETENTION_DAYS);
+      // Cap retention at RETENTION_DAYS_CALENDAR_EVENTS regardless of how far
+      // back the synced-bounds union reaches — see computeEffectivePurgeBoundary's
+      // own doc comment.
+      const purgeBoundaryIso = computeEffectivePurgeBoundary(expandedBounds.startIso, RETENTION_DAYS_CALENDAR_EVENTS);
       eventsChangedRef.current = false;
       setEvents((prev) => {
         const next = didHardReset
@@ -603,15 +602,13 @@ export function useGoogleCalendarSync({
     async (viewStartIso, viewEndIso) => {
       if (!googleConnected) return;
       if (googleFetchInFlightRef.current) return;
-      // Never bother on-demand-fetching further back than the retention
-      // ceiling (MAX_RETENTION_DAYS) — anything from further back than that
-      // would just get purged again on the very next routine poll anyway
-      // (see the purgeBoundaryIso clamp in applyPulledEvents), so fetching it
-      // at all would be pure wasted API calls/bandwidth for data that can't
-      // stick around regardless. Reuses computeEffectivePurgeBoundary for the
-      // same "later of the two" comparison, just with `viewStartIso` in place
+      // Never bother on-demand-fetching further back than the retention ceiling —
+      // anything from further back than that would just get purged again on the
+      // very next routine poll anyway, so fetching it at all would be wasted API
+      // calls/bandwidth for data that can't stick around. Reuses computeEffectivePurgeBoundary
+      // for the same "later of the two" comparison, just with `viewStartIso` in place
       // of a synced-bounds union.
-      const clampedViewStartIso = computeEffectivePurgeBoundary(viewStartIso, MAX_RETENTION_DAYS);
+      const clampedViewStartIso = computeEffectivePurgeBoundary(viewStartIso, RETENTION_DAYS_CALENDAR_EVENTS);
       const needed = computeOnDemandFetchRange(googleSyncedRangeBoundsRef.current, clampedViewStartIso, viewEndIso);
       if (!needed) return; // already fully covered by what's synced so far
       googleFetchInFlightRef.current = true;

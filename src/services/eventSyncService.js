@@ -40,6 +40,7 @@
  */
 
 import { toISODate } from '../utils/dateUtils';
+import { computeEffectivePurgeBoundary as centralized_computeEffectivePurgeBoundary } from './dataRetention';
 
 /**
  * True if a local Google-sourced event should be looked up against this
@@ -393,12 +394,5 @@ export function computeOnDemandFetchRange(bounds, viewStartIso, viewEndIso) {
  * @param {number} [nowMs] - defaults to Date.now(); overridable for testing
  * @returns {string}
  */
-export function computeEffectivePurgeBoundary(syncedBoundsStartIso, maxRetentionDays, nowMs = Date.now()) {
-  // toISODate (not toISOString) — this app's date-only strings are always
-  // LOCAL calendar dates (see dateUtils.js), and toISOString's UTC
-  // conversion would be off by a day for anyone west/east of UTC at the
-  // wrong moment.
-  const retentionFloorIso = toISODate(new Date(nowMs - maxRetentionDays * 86400000));
-  if (!syncedBoundsStartIso) return retentionFloorIso;
-  return syncedBoundsStartIso > retentionFloorIso ? syncedBoundsStartIso : retentionFloorIso;
-}
+// Re-exported from dataRetention.js for backward compatibility. New code should import from dataRetention.js directly.
+export const computeEffectivePurgeBoundary = centralized_computeEffectivePurgeBoundary;

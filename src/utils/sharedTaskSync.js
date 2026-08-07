@@ -677,8 +677,9 @@ export function preserveSharedSections(restoredSections, liveSharedSections) {
   return [...personalSections, ...(liveSharedSections || [])];
 }
 
-/** How long after its last heartbeat a viewer is still considered present. */
-export const PRESENCE_STALE_MS = 90 * 1000;
+// Import from centralized data retention module.
+import { PRESENCE_STALE_MS as CENTRALIZED_PRESENCE_STALE_MS } from '../services/dataRetention';
+export const PRESENCE_STALE_MS = CENTRALIZED_PRESENCE_STALE_MS;
 
 /**
  * Which collaborators count as currently viewing a project. A heartbeat is
