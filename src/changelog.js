@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.1.1',
+    date: '2026-08-07',
+    title: 'Fixed shared-project tasks briefly disappearing after auto-scheduling',
+    changes: [
+      "Running the auto-scheduler/rebalance as a signed-in user no longer temporarily wipes out tasks from your shared projects — they used to vanish until a collaborator's own change synced back.",
+    ],
+  },
+  {
     version: '3.1.0',
     date: '2026-08-07',
     title: 'Sleep is now a protected, non-deletable routine',

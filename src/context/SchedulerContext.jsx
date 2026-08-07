@@ -1180,6 +1180,41 @@ export function SchedulerProvider({ children }) {
     },
     [setSections]
   );
+
+  // Wraps overwritePresent/commit so every caller inside useCloudSync
+  // (applyRemoteData's live listener/pull for the former, applyBackupPayload's
+  // restore for the latter) — both of which replace `tasks` WHOLESALE with a
+  // remote/backup array that knows nothing about shared tasks — re-grafts the
+  // live shared ones back in afterward. Same landmine restoreLiveSharedTasks
+  // above fixes for undo/redo, and setSectionsGuarded fixes for sections;
+  // tasks never got the equivalent, which let a rebalance-triggered personal
+  // cloud-sync echo wholesale-replace `tasks` and drop every shared task
+  // until the next shared-project snapshot happened to arrive.
+  const overwritePresentGuarded = useCallback(
+    (newTasksAndBlocksOrUpdater) => {
+      overwritePresent((current) => {
+        const next =
+          typeof newTasksAndBlocksOrUpdater === 'function'
+            ? newTasksAndBlocksOrUpdater(current)
+            : newTasksAndBlocksOrUpdater;
+        return { tasks: preserveSharedTasks(next.tasks, liveSharedTasksRef.current), blocks: next.blocks };
+      });
+    },
+    [overwritePresent]
+  );
+  const commitGuarded = useCallback(
+    (newTasksAndBlocksOrUpdater, actionLabelOrFn) => {
+      commit((current) => {
+        const next =
+          typeof newTasksAndBlocksOrUpdater === 'function'
+            ? newTasksAndBlocksOrUpdater(current)
+            : newTasksAndBlocksOrUpdater;
+        return { tasks: preserveSharedTasks(next.tasks, liveSharedTasksRef.current), blocks: next.blocks };
+      }, actionLabelOrFn);
+    },
+    [commit]
+  );
+
   const cloudStateRef = useRef(cloudSyncState);
   useEffect(() => {
     cloudStateRef.current = cloudSyncState;
@@ -1200,8 +1235,8 @@ export function SchedulerProvider({ children }) {
     stateRef: cloudStateRef,
     currentActionIdRef,
     setNotification,
-    commit,
-    overwritePresent,
+    commit: commitGuarded,
+    overwritePresent: overwritePresentGuarded,
     setSections: setSectionsGuarded,
     setProjects,
     setLabels,
