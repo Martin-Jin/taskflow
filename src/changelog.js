@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '3.2.0',
+    date: '2026-08-07',
+    title: '"Enforce due date" now applies to sub-tasks automatically',
+    changes: [
+      'If a task must be done on its due date, every one of its sub-tasks now inherits that same requirement automatically — the same way repeating tasks already keep their sub-tasks in sync.',
+      'A sub-task whose "must be done on due date" setting is inherited this way shows a note explaining where it came from, and its checkbox is locked to match the parent.',
+      'The "Apply to all sub-tasks" button no longer copies this setting manually — it now stays in sync on its own, just like repeat settings already did.',
+    ],
+  },
+  {
     version: '3.1.1',
     date: '2026-08-07',
     title: 'Fixed shared-project tasks briefly disappearing after auto-scheduling',

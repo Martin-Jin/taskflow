@@ -172,12 +172,19 @@
  *                                              === windowEnd === dueDate), overriding bufferDays and earliestDate
  *                                              (the more restrictive setting wins) — see allocator.js's
  *                                              getTaskWindow. Only meaningful when `dueDate` is set; ignored
- *                                              otherwise. Falsy/absent means no override (the normal case). Does NOT
- *                                              propagate to sub-tasks borrowing this task's `dueDate` as their
- *                                              ancestor deadline — a container's due date is always a soft
- *                                              "must finish all steps by this day" deadline for its undated
- *                                              sub-tasks (see allocator.js's resolveDueDate/getTaskWindow), never a
- *                                              hard "every step happens on this exact day" constraint.
+ *                                              otherwise. Falsy/absent means no override (the normal case).
+ *                                              Propagates downward onto every descendant sub-task, the same way
+ *                                              `isRecurring` propagates between parent and sub-tasks — see
+ *                                              computeEnforceDueDateSyncUpdates, wired into SchedulerContext's
+ *                                              addTask/updateTask. Unlike recurrence (which also falls back to a
+ *                                              recurring descendant), this only ever flows downward: an ancestor
+ *                                              with `enforceDueDate` + its own `dueDate` forces `enforceDueDate:
+ *                                              true` onto every descendant, copying its `dueDate` too for any
+ *                                              descendant that doesn't already have one of its own (a descendant's
+ *                                              existing `dueDate` is never overwritten). A descendant's own
+ *                                              `enforceDueDate` never bubbles back up to its parent — a sub-task
+ *                                              needing to be done on an exact day says nothing about whether the
+ *                                              parent container itself must finish that same day.
  * @property {string|null} [fixedTime]       - "HH:MM" 24hr local time. When set, this task's block(s) must start at
  *                                              exactly this time on whatever day the allocator schedules them —
  *                                              overriding the normal first-fit placement within a day (the task is

@@ -1182,6 +1182,25 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const dueDateError = ancestorDueDate && dueDate && dueDate > ancestorDueDate
     ? `Can't be later than "${tasks.find((t) => t.id === task.parentId)?.title || 'parent task'}"'s due date (${formatDisplayDate(ancestorDueDate)}).`
     : '';
+  // Is this task's enforceDueDate being forced on by an ancestor (see
+  // computeEnforceDueDateSyncUpdates)? If so, the checkbox below is disabled
+  // rather than letting the user uncheck it only to have it silently snap
+  // back true on the next sync. Walks the parentId chain the same way
+  // findNearestAncestorDueDate does above, just checking a different
+  // condition per ancestor.
+  const enforcingAncestor = useMemo(() => {
+    if (!task.parentId) return null;
+    const visited = new Set([task.id]);
+    let current = task;
+    while (current.parentId) {
+      const parent = tasksById.get(current.parentId);
+      if (!parent || visited.has(parent.id)) return null;
+      if (parent.enforceDueDate && parent.dueDate) return parent;
+      visited.add(parent.id);
+      current = parent;
+    }
+    return null;
+  }, [task, tasksById]);
   // Recurring tasks are scheduled off their due date advancing each
   // occurrence (see completeTask/computeNextDueDate) — a recurring task with
   // no due date has nothing to advance from, so clearing it here would leave
@@ -1438,11 +1457,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
    * in commitChanges' dueDateError above) — applying the container's own due
    * date can never violate that, since the container IS that ancestor.
    *
-   * Recurrence is deliberately NOT included here anymore: parent/sub-task
-   * recurrence now stays consistent automatically (see
+   * Recurrence and enforceDueDate are deliberately NOT included here anymore:
+   * parent/sub-task recurrence now stays consistent automatically (see
    * computeRecurrenceSyncUpdates, wired into SchedulerContext's
-   * addTask/updateTask) the moment either side's recurrence changes, so a
-   * manual copy step would be redundant.
+   * addTask/updateTask) the moment either side's recurrence changes, and
+   * enforceDueDate does the same (see computeEnforceDueDateSyncUpdates) the
+   * moment an ancestor's enforcement or due date changes — so a manual copy
+   * step for either would be redundant.
    */
   function handleApplyToAllSubtasks() {
     const descendants = getAllDescendants(task.id, tasks);
@@ -1450,7 +1471,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     const sharedUpdates = {
       priority,
       dueDate: dueDate || null,
-      enforceDueDate: enforceDueDate && !!dueDate,
       projectId: projectId || null,
       sectionId: sectionId || null,
       labelIds,
@@ -1683,17 +1703,22 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
                       <li role="none">
                         <DetailField icon={CalendarCheck} label="Enforce due date">
-                          <label className="form-checkbox-row" style={{ cursor: dueDate ? 'pointer' : 'not-allowed' }}>
+                          <label
+                            className="form-checkbox-row"
+                            style={{ cursor: dueDate && !enforcingAncestor ? 'pointer' : 'not-allowed' }}
+                          >
                             <input
                               type="checkbox"
                               checked={enforceDueDate && !!dueDate}
-                              disabled={!dueDate}
+                              disabled={!dueDate || !!enforcingAncestor}
                               onChange={(e) => setEnforceDueDate(e.target.checked)}
                             />
                             Must be done on due date
                           </label>
                           <p className="form-hint">
-                            {dueDate
+                            {enforcingAncestor
+                              ? `Inherited from "${enforcingAncestor.title}" — that task must be done on its due date, so this sub-task is too.`
+                              : dueDate
                               ? "Task won't be scheduled earlier — all remaining work is forced onto the due date."
                               : 'Set a due date first to enable this.'}
                           </p>

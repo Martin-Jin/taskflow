@@ -56,6 +56,7 @@ import { deriveRemainingHoursOnEstimateChange } from '../utils/taskFieldDerivati
 import {
   computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
+  computeEnforceDueDateSyncUpdates,
   deriveRecurrenceRule,
 } from '../utils/recurrence';
 // The convergent recurring-task model (see utils/recurrenceState.js). Every
@@ -1451,11 +1452,20 @@ export function SchedulerProvider({ children }) {
         // recurrence-consistent — see computeRecurrenceSyncUpdates. A new
         // recurring sub-task can make its (non-recurring) parent recurring
         // too, or a new sub-task under a recurring parent picks up that
-        // recurrence automatically.
-        const syncUpdates = computeRecurrenceSyncUpdates(nextTasks);
-        const syncedTasks = syncUpdates.size === 0
+        // recurrence automatically. Likewise an enforcing ancestor's
+        // `enforceDueDate` must cascade onto a newly-added descendant — see
+        // computeEnforceDueDateSyncUpdates. Both maps are merged per task id
+        // (rather than one overwriting the other) since a single new task can
+        // need updates from both in the same commit.
+        const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+        const enforceDueDateSyncUpdates = computeEnforceDueDateSyncUpdates(nextTasks);
+        const syncedTasks = recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
           ? nextTasks
-          : nextTasks.map((t) => (syncUpdates.has(t.id) ? { ...t, ...syncUpdates.get(t.id) } : t));
+          : nextTasks.map((t) => ({
+              ...t,
+              ...recurrenceSyncUpdates.get(t.id),
+              ...enforceDueDateSyncUpdates.get(t.id),
+            }));
         return { tasks: syncedTasks, blocks: current.blocks };
       }, `Added task "${newTask.title}"`);
       if (soundEnabled) playAddSound(soundVolume);
@@ -1558,11 +1568,19 @@ export function SchedulerProvider({ children }) {
           // recurrence-consistent — see computeRecurrenceSyncUpdates. Only
           // relevant when this update touched recurrence itself, but running
           // it unconditionally is cheap and keeps this branch simple; it's a
-          // no-op whenever the edited task's recurrence didn't change.
-          const syncUpdates = computeRecurrenceSyncUpdates(nextTasks);
-          const syncedTasks = syncUpdates.size === 0
+          // no-op whenever the edited task's recurrence didn't change. Same
+          // reasoning for computeEnforceDueDateSyncUpdates and
+          // `enforceDueDate` below — both maps are merged per task id since a
+          // single edit can trigger updates from both at once.
+          const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+          const enforceDueDateSyncUpdates = computeEnforceDueDateSyncUpdates(nextTasks);
+          const syncedTasks = recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
             ? nextTasks
-            : nextTasks.map((t) => (syncUpdates.has(t.id) ? { ...t, ...syncUpdates.get(t.id) } : t));
+            : nextTasks.map((t) => ({
+                ...t,
+                ...recurrenceSyncUpdates.get(t.id),
+                ...enforceDueDateSyncUpdates.get(t.id),
+              }));
           return { tasks: syncedTasks, blocks: current.blocks };
         },
         `Updated task`

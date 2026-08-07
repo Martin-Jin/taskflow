@@ -857,3 +857,65 @@ export function computeRecurrenceSyncUpdates(tasks) {
   }
   return updates;
 }
+
+/**
+ * Same kind of parent/descendant sync walk as computeRecurrenceSyncUpdates
+ * above, but for `enforceDueDate` — and deliberately one-directional, unlike
+ * recurrence's two-way (ancestor-then-descendant-fallback) search. Recurrence
+ * falls back to a recurring descendant because a sub-task recurring implies
+ * the whole goal is ongoing; that reasoning doesn't apply here — a sub-task
+ * needing to be done on one exact day says nothing about whether the parent
+ * container itself must finish that same day. So `enforceDueDate` only ever
+ * flows downward: if any ancestor (nearest first) has `enforceDueDate: true`
+ * AND its own `dueDate` set, every descendant inherits `enforceDueDate: true`
+ * too (an ancestor with `enforceDueDate` but no `dueDate` propagates nothing,
+ * since the flag is meaningless without a date to enforce).
+ *
+ * `dueDate` rides along the same way it does for recurrence: a descendant
+ * with no `dueDate` of its own also picks up the enforcing ancestor's
+ * `dueDate` directly (no rule-based snapping needed here, since there's no
+ * recurrence cadence to reconcile against — just copy the value). A
+ * descendant that already has its own `dueDate` keeps it untouched; only
+ * `enforceDueDate` is forced true on it.
+ *
+ * Already-enforcing descendants are left alone (skip, same as
+ * `if (task.isRecurring) continue` above) — ancestor enforcement always
+ * forces true, so there's no "disagreement" case to reconcile.
+ *
+ * @param {import('../types').Task[]} tasks
+ * @returns {Map<string, {enforceDueDate: boolean, dueDate?: string}>}
+ *   keyed by task id — only entries that actually need to change are included.
+ */
+export function computeEnforceDueDateSyncUpdates(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+
+  /** Walk a task's ancestor chain (parent, grandparent, ...) as an array, nearest first. Guards against a corrupted-backup parentId cycle. */
+  function getAncestors(task) {
+    const ancestors = [];
+    const visited = new Set([task.id]);
+    let current = task;
+    while (current.parentId) {
+      const parent = byId.get(current.parentId);
+      if (!parent || visited.has(parent.id)) break;
+      ancestors.push(parent);
+      visited.add(parent.id);
+      current = parent;
+    }
+    return ancestors;
+  }
+
+  const updates = new Map();
+  for (const task of tasks) {
+    if (task.enforceDueDate) continue; // already enforcing — nothing to propagate onto it
+
+    const enforcingAncestor = getAncestors(task).find((t) => t.enforceDueDate && t.dueDate);
+    if (!enforcingAncestor) continue;
+
+    const update = { enforceDueDate: true };
+    if (!task.dueDate) {
+      update.dueDate = enforcingAncestor.dueDate;
+    }
+    updates.set(task.id, update);
+  }
+  return updates;
+}
