@@ -1690,7 +1690,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           <label className="form-checkbox-row" style={{ cursor: dueDate ? 'pointer' : 'not-allowed' }}>
                             <input
                               type="checkbox"
-                              checked={enforceDueDate}
+                              checked={enforceDueDate && !!dueDate}
                               disabled={!dueDate}
                               onChange={(e) => setEnforceDueDate(e.target.checked)}
                             />

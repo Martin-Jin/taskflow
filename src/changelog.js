@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.12',
+    date: '2026-08-07',
+    title: 'Fixed the "Enforce due date" checkbox briefly showing checked and disabled at once',
+    changes: [
+      'The "Must be done on due date" checkbox in a task\'s details no longer shows checked while also disabled with a "Set a due date first" hint — it now stays unchecked until a due date is actually set.',
+    ],
+  },
+  {
     version: '3.0.11',
     date: '2026-08-07',
     title: 'Fixed a rescheduled recurring task showing its old due date in the Tasks list',
