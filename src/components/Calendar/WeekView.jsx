@@ -137,7 +137,7 @@ export default function WeekView({
   // array once per visible day, and pre-compute each day's cluster/lane
   // layout with useMemo — this is otherwise redone on every render,
   // including every dragover event that fires continuously while dragging.
-  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days), [blocks, events, days]);
+  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days, taskById), [blocks, events, days, taskById]);
 
   // Empty-filter overlay: only worth showing when a filter is actually
   // active AND it hid something that would otherwise be visible in THIS
