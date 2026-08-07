@@ -52,6 +52,7 @@ import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowe
 import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
+import { deriveRemainingHoursOnEstimateChange } from '../utils/taskFieldDerivations';
 import {
   computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
@@ -177,6 +178,24 @@ function sanitizeTaskFields(fields, fallback) {
   if ('estimatedHours' in sanitized) {
     const hours = Number(sanitized.estimatedHours);
     sanitized.estimatedHours = Number.isFinite(hours) && hours > 0 ? hours : fallback.estimatedHours;
+    // Shift remainingHours by however much the estimate changed, so work
+    // already done stays reflected — see deriveRemainingHoursOnEstimateChange.
+    // Only for an existing task (fallback carries remainingHours/estimatedHours
+    // only when sanitizing an update, not a brand new task) whose estimate
+    // actually changed, and only when the caller didn't already explicitly
+    // set remainingHours itself in this same update (that's an intentional
+    // override, e.g. completing/uncompleting work, and must win).
+    if (
+      'remainingHours' in fallback &&
+      sanitized.estimatedHours !== fallback.estimatedHours &&
+      !('remainingHours' in sanitized)
+    ) {
+      sanitized.remainingHours = deriveRemainingHoursOnEstimateChange(
+        fallback.remainingHours,
+        fallback.estimatedHours,
+        sanitized.estimatedHours
+      );
+    }
   }
   if ('dependsOn' in sanitized) {
     sanitized.dependsOn = Array.isArray(sanitized.dependsOn)

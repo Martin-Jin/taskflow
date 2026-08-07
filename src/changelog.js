@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.15',
+    date: '2026-08-07',
+    title: 'Fixed remaining time not updating when a duration change came from the AI Assistant',
+    changes: [
+      'A task\'s "time left" now stays correct after the AI Assistant changes its estimated duration, instead of keeping the old value until you also edited it manually.',
+    ],
+  },
+  {
     version: '3.0.14',
     date: '2026-08-07',
     title: 'AI Assistant better recognizes "lock this to a day" requests',
