@@ -52,7 +52,7 @@ import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowe
 import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { deriveRemainingHoursOnEstimateChange } from '../utils/taskFieldDerivations';
+import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate } from '../utils/taskFieldDerivations';
 import {
   computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
@@ -1504,12 +1504,12 @@ export function SchedulerProvider({ children }) {
    */
   const updateTask = useCallback(
     (taskId, updates) => {
-      // Did this task's due date actually move, and does it currently have
-      // any scheduled block? If so, its existing block(s) are now stale —
-      // queue a rebalance below. Read from the current `tasks`/`blocks`
-      // closure (fine here since, unlike the commit() function-form calls
-      // elsewhere in this file, we're not chaining off another mutation in
-      // the same tick).
+      // Does this edit touch a field the scheduler cares about, in a way that
+      // makes the task's existing block stale or newly eligible for
+      // placement? See needsRescheduleOnTaskUpdate. Read from the current
+      // `tasks`/`blocks` closure (fine here since, unlike the commit()
+      // function-form calls elsewhere in this file, we're not chaining off
+      // another mutation in the same tick).
       const prevTask = tasks.find((t) => t.id === taskId);
       if (prevTask?.sharedProjectId) {
         const role = computeEffectiveRole(sharedProjects[prevTask.sharedProjectId], user?.uid);
@@ -1517,13 +1517,8 @@ export function SchedulerProvider({ children }) {
           throw new Error('Editing this task needs edit access on this project — ask the owner for editor access.');
         }
       }
-      const dueDateChanged = prevTask && 'dueDate' in updates && updates.dueDate !== prevTask.dueDate;
-      // A duration change is just as disruptive to already-placed blocks as a
-      // due-date move: the existing block(s) reflect the OLD estimatedHours,
-      // so they're stale (too short/too long) the moment this changes — queue
-      // the same rebalance due-date changes use.
-      const durationChanged = prevTask && 'estimatedHours' in updates && updates.estimatedHours !== prevTask.estimatedHours;
-      const hasScheduledBlock = (dueDateChanged || durationChanged) && blocks.some((b) => b.taskId === taskId && !b.isLocked);
+      const hasUnlockedScheduledBlock = blocks.some((b) => b.taskId === taskId && !b.isLocked);
+      const needsRebalance = needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock);
 
       // Function form — see addTask's comment just above.
       commit(
@@ -1596,7 +1591,7 @@ export function SchedulerProvider({ children }) {
       // Gated on the user's auto-reschedule toggle (Settings → Scheduling
       // rules) — undefined (persisted before this setting existed) defaults
       // to on, same as addTask's check above.
-      if (hasScheduledBlock && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
+      if (needsRebalance && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
     },
     [commit, tasks, blocks, queueDueDateRebalance, rules.autoRescheduleEnabled, sharedProjects, user]
   );
