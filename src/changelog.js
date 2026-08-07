@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.2',
+    date: '2026-08-07',
+    title: 'Fixed a false "no permission" error on the first attempt to delete a shared project',
+    changes: [
+      'Deleting a shared project you own sometimes showed a misleading "you don\'t have permission" error on the first try, even though the delete had actually gone through — a second attempt always "worked" because there was nothing left to delete. It now completes cleanly on the first try.',
+    ],
+  },
+  {
     version: '3.3.1',
     date: '2026-08-07',
     title: 'Fixed Google Calendar sometimes showing disconnected after fully closing and reopening the browser',
