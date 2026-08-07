@@ -183,8 +183,14 @@ export default function ShareProjectModal({ project, onClose }) {
 
   const sharedProjectId = project?.sharedProjectId;
   const sharedProject = sharedProjectId ? sharedProjects[sharedProjectId] : null;
+
+  // For owners, we can determine ownership from project.ownerId alone, without
+  // waiting for the shared-project subscription's first snapshot. This fixes a
+  // race where the modal opens before the subscription delivers data, leaving
+  // the user looking at "Setting up sharing…" indefinitely. Non-owners need the
+  // subscription data to read collaborators/role info (getProjectShareState handles that).
+  const isOwner = project?.ownerId === user?.uid;
   const shareState = getProjectShareState(project, sharedProject, user?.uid);
-  const isOwner = shareState.state === 'shared-by-me';
 
   const [links, setLinks] = useState(null); // {view, edit} once loaded
   const [loadError, setLoadError] = useState('');
@@ -347,11 +353,13 @@ export default function ShareProjectModal({ project, onClose }) {
 
             <section className="share-modal-section">
               <h4>Collaborators</h4>
-              {shareState.collaborators.length === 0 ? (
+              {!sharedProject ? (
+                <div className="now-empty">Loading collaborators…</div>
+              ) : (shareState.collaborators?.length ?? 0) === 0 ? (
                 <div className="now-empty">No collaborators yet — share a link above to invite people.</div>
               ) : (
                 <ul className="share-collaborator-list">
-                  {shareState.collaborators.map((c) => {
+                  {shareState.collaborators?.map((c) => {
                     const entry = sharedProject?.collaborators?.[c.uid];
                     const isAnonymous = !!entry?.isAnonymous;
                     const busy = collabBusy === c.uid;
@@ -399,7 +407,7 @@ export default function ShareProjectModal({ project, onClose }) {
                         </button>
                       </li>
                     );
-                  })}
+                  }) ?? []}
                 </ul>
               )}
             </section>
