@@ -74,7 +74,7 @@ import {
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
-import { planSelfRename, isGuestUser, computeEffectiveRole } from '../utils/sharedProjectAccess';
+import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
 import { setGuestDisplayName } from '../utils/guestIdentity';
 import {
   isSharedTask,
@@ -2427,15 +2427,15 @@ export function SchedulerProvider({ children }) {
         // anyway). Without this the document was orphaned in Firestore with
         // nobody left listing it.
         //
-        // Reads the LIVE sharedProjects[sharedId].ownerId, not the local
-        // Project row's own ownerId field — that local field is write-once
-        // (set only at share time, see shareProject) and is never updated by
-        // transferSharedProjectOwnership, so it goes stale forever the moment
-        // ownership changes hands. Every other ownership-sensitive check in
-        // this file (computeEffectiveRole's callers, comment-permission
-        // checks) already reads the live sharedProjects state for the same
-        // reason.
-        if (sharedProjects[sharedId]?.ownerId && user?.uid === sharedProjects[sharedId].ownerId) {
+        // See isLikelySharedProjectOwner's doc comment: prefers the LIVE
+        // sharedProjects[sharedId].ownerId, falling back to the local
+        // project's own (write-once, possibly stale) ownerId field only when
+        // the live doc hasn't loaded yet — otherwise deleting shortly after a
+        // fresh page load (before useSharedProjectSync's subscription
+        // delivers its first snapshot) silently skipped deleteSharedProject
+        // entirely, orphaning the document in Firestore even though the
+        // local row was already gone and the delete looked like it worked.
+        if (isLikelySharedProjectOwner(sharedProjects[sharedId], project, user?.uid)) {
           deleteSharedProject(sharedId).catch((err) =>
             console.error('[SchedulerContext] Failed to delete shared project', err)
           );
