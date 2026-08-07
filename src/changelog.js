@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.17',
+    date: '2026-08-07',
+    title: 'Fixed a stale shared project lingering in your sidebar after losing access to it',
+    changes: [
+      "If a shared project's owner removes you as a collaborator, or deletes the project entirely, it now disappears from your project list right away instead of sticking around as a dead, unusable entry.",
+    ],
+  },
+  {
     version: '3.0.16',
     date: '2026-08-07',
     title: 'Fixed Board view subtask counts briefly undercounting for recurring subtasks',
