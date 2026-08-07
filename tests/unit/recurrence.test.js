@@ -5,6 +5,7 @@ import {
   computeFirstMatchingDueDate,
   computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
+  computeEnforceDueDateSyncUpdates,
   generateTaskOccurrences,
   expandTaskOccurrences,
   findRecurrencePhrase,
@@ -672,6 +673,77 @@ describe('computeRecurrenceSyncUpdates', () => {
       expect(updates.get('s1').remainingHours).toBeUndefined();
       expect(updates.get('s1').isCompleted).toBeUndefined();
     });
+  });
+});
+
+describe('computeEnforceDueDateSyncUpdates', () => {
+  it('returns an empty map when no ancestor enforces its due date', () => {
+    const tasks = [{ id: 'p1' }, { id: 's1', parentId: 'p1' }];
+    expect(computeEnforceDueDateSyncUpdates(tasks).size).toBe(0);
+  });
+
+  it('propagates enforceDueDate and copies the ancestor dueDate onto an undated sub-task', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.size).toBe(1);
+    expect(updates.get('s1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10' });
+  });
+
+  it('does not propagate when the enforcing ancestor has no dueDate of its own', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: null },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('forces enforceDueDate on a sub-task with its own dueDate, without overwriting that date', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1', dueDate: '2026-08-05' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.get('s1')).toEqual({ enforceDueDate: true });
+  });
+
+  it('propagates through a non-enforcing intermediate parent down to a grandchild', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+      { id: 'gs1', parentId: 's1' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.get('gs1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10' });
+  });
+
+  it('leaves an already-enforcing descendant untouched', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1', enforceDueDate: true, dueDate: '2026-08-05' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.has('s1')).toBe(false);
+  });
+
+  it('does not propagate upward from an enforcing descendant onto its parent', () => {
+    const tasks = [
+      { id: 'p1' },
+      { id: 's1', parentId: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('guards against a corrupted parentId cycle instead of looping forever', () => {
+    const tasks = [
+      { id: 'a', parentId: 'b', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 'b', parentId: 'a' },
+    ];
+    expect(() => computeEnforceDueDateSyncUpdates(tasks)).not.toThrow();
   });
 });
 
