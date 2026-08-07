@@ -66,6 +66,7 @@ import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay } from '../utils/taskHierarchy';
+import { resolveCurrentOccurrenceDueDate } from '../utils/recurrence';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 import { computeEffectiveRole } from '../utils/sharedProjectAccess';
 
@@ -354,6 +355,13 @@ export default function TaskListPanel({
   // as a flat list. Overdue is its own bucket (dueDate strictly before
   // today) rather than being silently lumped into "Upcoming" — it's
   // surfaced first since it's the most urgent thing in the list.
+  //
+  // Uses resolveCurrentOccurrenceDueDate rather than the raw task.dueDate —
+  // a recurring task's dueDate is the series' fixed pattern anchor and stays
+  // put even when a single occurrence is moved off-pattern (see that
+  // function's own doc comment), so grouping on the raw field would leave a
+  // rescheduled occurrence sitting in its old Overdue/Today/Upcoming bucket
+  // instead of the one it was actually moved to.
   const showGroups = filter === 'active' || filter === 'all';
   const taskGroups = useMemo(() => {
     if (!showGroups) return null;
@@ -362,9 +370,10 @@ export default function TaskListPanel({
     const upcoming = [];
     const undated = [];
     for (const task of visibleTasks) {
-      if (!task.dueDate) undated.push(task);
-      else if (task.dueDate < today) overdue.push(task);
-      else if (task.dueDate === today) todayTasks.push(task);
+      const dueDate = resolveCurrentOccurrenceDueDate(task);
+      if (!dueDate) undated.push(task);
+      else if (dueDate < today) overdue.push(task);
+      else if (dueDate === today) todayTasks.push(task);
       else upcoming.push(task);
     }
     return [
@@ -420,6 +429,10 @@ export default function TaskListPanel({
         // sub-task would render unchecked here even though its occurrence is
         // closed out. See taskHierarchy.js's isCheckedForListDisplay.
         isCheckedForDisplay={isCheckedForListDisplay(task, today)}
+        // The CURRENT occurrence's due date, not task.dueDate directly — see
+        // resolveCurrentOccurrenceDueDate's doc comment on the taskGroups
+        // memo above.
+        displayDueDate={resolveCurrentOccurrenceDueDate(task)}
         effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours}
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
@@ -670,6 +683,7 @@ const TaskRow = React.memo(function TaskRow({
   labelById,
   dependenciesMet,
   isCheckedForDisplay,
+  displayDueDate,
   effectiveRemainingHours,
   effectiveEstimatedHours,
   onToggleCollapse,
@@ -755,7 +769,7 @@ const TaskRow = React.memo(function TaskRow({
             {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
                 frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
             {formatHours(effectiveRemainingHours)} remaining of {formatHours(effectiveEstimatedHours)}
-            {task.dueDate ? ` · due ${formatDisplayDate(task.dueDate)}` : ' · no due date'}
+            {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ' · no due date'}
             {task.sectionName ? ` · ${task.sectionName}` : ''}
           </span>
           {!isCheckedForDisplay && !dependenciesMet && (
