@@ -33,6 +33,7 @@ import {
   computeFetchTimeRange,
   isInstanceAlreadyGoneError,
   instanceMatchesOccurrence,
+  shouldTreatAsReconnectNeeded,
 } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
@@ -102,6 +103,38 @@ describe('isInstanceAlreadyGoneError', () => {
   it('does not treat other errors as already deleted', () => {
     expect(isInstanceAlreadyGoneError({ status: 403 })).toBe(false);
     expect(isInstanceAlreadyGoneError(new Error('network error'))).toBe(false);
+  });
+});
+
+describe('shouldTreatAsReconnectNeeded', () => {
+  // Regression test: the initial silent re-auth effect in
+  // useGoogleCalendarSync.js used to disconnect on ANY thrown error from the
+  // token refresh step, including transient failures unrelated to a genuine
+  // "not connected"/"revoked" state (e.g. a cold-browser-start network
+  // hiccup) — this is the extracted decision that now gates that behavior.
+  it('treats a confirmed needsReconnect error (Worker 404/409) as reconnect-needed', () => {
+    const err = new Error('Google Calendar not yet connected.');
+    err.needsReconnect = true;
+    expect(shouldTreatAsReconnectNeeded(err)).toBe(true);
+  });
+
+  it('does not treat a plain Error (e.g. getFirebaseIdToken throwing) as reconnect-needed', () => {
+    expect(shouldTreatAsReconnectNeeded(new Error('Not signed in to Taskflow'))).toBe(false);
+  });
+
+  it('does not treat a network failure (TypeError from a failed fetch) as reconnect-needed', () => {
+    expect(shouldTreatAsReconnectNeeded(new TypeError('Failed to fetch'))).toBe(false);
+  });
+
+  it('does not treat a Worker error without needsReconnect set (e.g. 500) as reconnect-needed', () => {
+    const err = new Error('Calendar auth worker refresh failed (HTTP 500).');
+    err.needsReconnect = false;
+    expect(shouldTreatAsReconnectNeeded(err)).toBe(false);
+  });
+
+  it('handles null/undefined gracefully', () => {
+    expect(shouldTreatAsReconnectNeeded(null)).toBe(false);
+    expect(shouldTreatAsReconnectNeeded(undefined)).toBe(false);
   });
 });
 

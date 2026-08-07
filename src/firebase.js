@@ -16,7 +16,7 @@
  */
 
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -33,5 +33,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
+// Asserted explicitly (rather than relying on the SDK's implicit default) so
+// a signed-in session survives a full browser close/reopen, not just a page
+// refresh — the underlying default already matches this, but making it
+// explicit documents the requirement in code.
+setPersistence(auth, browserLocalPersistence);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
