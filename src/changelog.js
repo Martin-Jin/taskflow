@@ -31,9 +31,9 @@ export const CHANGELOG = [
   {
     version: '3.0.8',
     date: '2026-08-07',
-    title: 'Completed tasks no longer linger on the Calendar',
+    title: 'Completing a task early now clears its future calendar slot',
     changes: [
-      "A completed one-off task's crossed-out block now only shows up on the Calendar on the day it was actually completed — it no longer stays stuck on its original scheduled day for days afterward. Completing a task that was scheduled for a future day now removes it from the calendar entirely, since it was never actually worked on.",
+      "Marking a task done before its scheduled day arrives now removes that future block from the Calendar, since the work was never actually done on that day. Completed tasks otherwise keep showing on their scheduled day as before, as a record of what you finished and when.",
     ],
   },
   {
