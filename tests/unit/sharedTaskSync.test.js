@@ -11,6 +11,7 @@ import {
   mergeComments,
   preserveSharedTasks,
   computeActiveViewers,
+  isBenignSelfDeleteWriteRejection,
   PRESENCE_STALE_MS,
 } from '../../src/utils/sharedTaskSync';
 import { deriveRecurrenceRule } from '../../src/utils/recurrence';
@@ -644,5 +645,43 @@ describe('computeActiveViewers', () => {
 
   it('tolerates an empty/absent list', () => {
     expect(computeActiveViewers(undefined, now)).toEqual([]);
+  });
+});
+
+// Regression coverage for the "owner delete a shared project -> misleading
+// 'you don't have permission' toast on the first attempt" bug: an in-flight
+// task/section push racing deleteSharedProject's deleteDoc can be rejected by
+// firestore.rules even though the delete itself succeeded. See
+// isBenignSelfDeleteWriteRejection's doc comment for the full race.
+describe('isBenignSelfDeleteWriteRejection', () => {
+  const PROJECT_ID = 'proj_deleted';
+
+  it('swallows a permission-denied write for a project this client just deleted (Set)', () => {
+    const deleting = new Set([PROJECT_ID]);
+    expect(isBenignSelfDeleteWriteRejection({ code: 'permission-denied' }, PROJECT_ID, deleting)).toBe(true);
+  });
+
+  it('swallows a permission-denied write for a project this client just deleted (array)', () => {
+    expect(isBenignSelfDeleteWriteRejection({ code: 'permission-denied' }, PROJECT_ID, [PROJECT_ID])).toBe(true);
+  });
+
+  it('does NOT swallow a permission-denied write for a project not being deleted — a real lost-access/viewer-permission bug must still surface', () => {
+    const deleting = new Set(['some-other-project']);
+    expect(isBenignSelfDeleteWriteRejection({ code: 'permission-denied' }, PROJECT_ID, deleting)).toBe(false);
+  });
+
+  it('does NOT swallow a non-permission-denied error even for a project being deleted', () => {
+    const deleting = new Set([PROJECT_ID]);
+    expect(isBenignSelfDeleteWriteRejection({ code: 'unavailable' }, PROJECT_ID, deleting)).toBe(false);
+  });
+
+  it('tolerates a missing/empty deletingProjectIds', () => {
+    expect(isBenignSelfDeleteWriteRejection({ code: 'permission-denied' }, PROJECT_ID, undefined)).toBe(false);
+    expect(isBenignSelfDeleteWriteRejection({ code: 'permission-denied' }, PROJECT_ID, new Set())).toBe(false);
+  });
+
+  it('tolerates a missing projectId or error', () => {
+    expect(isBenignSelfDeleteWriteRejection({ code: 'permission-denied' }, undefined, new Set([PROJECT_ID]))).toBe(false);
+    expect(isBenignSelfDeleteWriteRejection(undefined, PROJECT_ID, new Set([PROJECT_ID]))).toBe(false);
   });
 });

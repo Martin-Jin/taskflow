@@ -45,6 +45,7 @@ import {
 } from '../services/sharedProjectService';
 import {
   computeActiveViewers,
+  isBenignSelfDeleteWriteRejection,
   isSharedTask,
   partitionTasksBySharing,
   partitionSectionsBySharing,
@@ -141,6 +142,30 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
     sectionPendingDeletesRef.current.add(sectionId);
   }, []);
 
+  // Ids of shared projects THIS client just deleted (the owner's own
+  // deleteProject, see SchedulerContext) or left. `deleteSharedProject`'s
+  // deleteDoc and any already-in-flight task/section write for the same
+  // project (a debounced runPushNow batch dispatched moments earlier, still
+  // awaiting its network round-trip when the delete button was clicked) race
+  // with no ordering between them — firestore.rules' parentOwner()/
+  // parentEditor() re-`get()` the parent doc on every task/section write, so
+  // if the delete happens to land first server-side, that in-flight write is
+  // rejected with permission-denied even though it was issued by the owner
+  // with full rights at the time it was sent. Without this set, that rejection
+  // looked identical to a genuine lost-access write (see reportWriteRejected
+  // below) and surfaced a misleading "you don't have permission" toast for an
+  // action that actually succeeded (the project WAS deleted) — the local
+  // Project row was already gone by then too, so the very next click just
+  // deleted-nothing-locally-but-retried-the-remote-delete and "worked",
+  // which is what made the first attempt look like a failed-then-repeated
+  // delete rather than a spuriously-reported one. Entries never need pruning:
+  // the set only ever grows by a handful of short-lived project ids across a
+  // session and is trivial in size.
+  const deletingProjectIdsRef = useRef(new Set());
+  const noteSharedProjectDeleted = useCallback((projectId) => {
+    deletingProjectIdsRef.current.add(projectId);
+  }, []);
+
   const reportError = useCallback(
     (err, projectId) => {
       // Losing access (removed by the owner, project deleted) surfaces here as
@@ -155,7 +180,9 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
 
   /**
    * Same as reportError, but for a rejected WRITE rather than a broken
-   * subscription — and here permission-denied must NOT be silent.
+   * subscription — and here permission-denied must NOT be silent, UNLESS this
+   * client itself just deleted (or left) the project the write targeted — see
+   * deletingProjectIdsRef above.
    *
    * On a subscription, permission-denied means "you no longer have access", which
    * is benign. On a write it means the opposite: the change was applied locally
@@ -163,10 +190,14 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
    * user is looking at an edit that is about to silently vanish on the next
    * snapshot. That's the confusing half of the viewer-permissions bug — the UI
    * now disables these controls for viewers, so reaching this is either a stale
-   * role or a genuine bug, and both are worth saying out loud.
+   * role or a genuine bug, and both are worth saying out loud. A self-deletion
+   * race is a third, benign case that looks identical at the error-code level:
+   * the edit really is being dropped, but there's nothing to warn about since
+   * the whole project (local row included) is already gone.
    */
   const reportWriteRejected = useCallback(
     (err, projectId) => {
+      if (isBenignSelfDeleteWriteRejection(err, projectId, deletingProjectIdsRef.current)) return;
       if (err?.code === 'permission-denied') {
         console.warn('[useSharedProjectSync] Write rejected', projectId, err);
         setNotification?.({
@@ -558,6 +589,8 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
     noteSharedTaskDeleted,
     /** Tell the sync engine a section deletion was deliberate. */
     noteSharedSectionDeleted,
+    /** Tell the sync engine a whole shared project delete/leave was deliberate — see deletingProjectIdsRef. */
+    noteSharedProjectDeleted,
     /** Whether a given task belongs to a shared project. */
     isSharedTask,
   };

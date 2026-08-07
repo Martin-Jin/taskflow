@@ -414,6 +414,25 @@ describe('reads/writes by role', () => {
       const db = asUser(VIEWER);
       await assertSucceeds(getDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1')));
     });
+
+    // Documents the server-side mechanism behind the "owner deletes a shared
+    // project -> misleading 'you don't have permission' toast on the first
+    // attempt" bug (see src/utils/sharedTaskSync.js's
+    // isBenignSelfDeleteWriteRejection and useSharedProjectSync's
+    // deletingProjectIdsRef for the client-side fix). parentOwner()/
+    // parentEditor() re-`get()` the parent sharedProjects/{id} doc on every
+    // task/section write — once that parent doc is gone, even the FORMER
+    // owner (who had full rights moments earlier) is rejected. This is
+    // correct, intentional rules behavior on its own (a deleted project's
+    // subcollections must not remain writable); the bug was purely that the
+    // client surfaced this expected rejection as if it were a real
+    // lost-access error when it was actually caused by this client's own
+    // delete racing its own in-flight write.
+    it('a task write is rejected once the parent project doc is deleted, even for the former owner', async () => {
+      const db = asUser(OWNER);
+      await assertSucceeds(deleteDoc(doc(db, 'sharedProjects', PROJECT_ID)));
+      await assertFails(updateDoc(doc(db, 'sharedProjects', PROJECT_ID, 'tasks', 'task-1'), { title: 'Edited after delete' }));
+    });
   });
 
   describe('comments', () => {

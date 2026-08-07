@@ -1016,6 +1016,7 @@ export function SchedulerProvider({ children }) {
     liveSharedSections,
     noteSharedTaskDeleted,
     noteSharedSectionDeleted,
+    noteSharedProjectDeleted,
     lostProjectIds,
   } = useSharedProjectSync({
     tasks,
@@ -2404,6 +2405,19 @@ export function SchedulerProvider({ children }) {
       setSections((prev) => prev.filter((s) => s.projectId !== projectId));
 
       if (sharedId) {
+        // Tell the sync engine BEFORE the delete goes out: an edit made just
+        // before clicking delete may still have a debounced task/section push
+        // in flight (writeSharedTasks/writeSharedSections, dispatched but
+        // awaiting its network round-trip) with no ordering guarantee against
+        // deleteSharedProject's own deleteDoc below — firestore.rules'
+        // parentOwner()/parentEditor() re-`get()` the parent doc on every such
+        // write, so if the delete happens to land first server-side, that
+        // write comes back permission-denied even though it was issued with
+        // full rights at send time. Without this, the rejection looked
+        // identical to a real lost-access error and surfaced a misleading
+        // "you don't have permission" toast for a delete that actually
+        // succeeded — see noteSharedProjectDeleted's doc comment.
+        noteSharedProjectDeleted(sharedId);
         // Drop the membership pointer either way, so the project stops
         // re-listing on this user's other devices.
         setSharedProjectIds((prev) => prev.filter((id) => id !== sharedId));
@@ -2444,7 +2458,7 @@ export function SchedulerProvider({ children }) {
         `Deleted project`
       );
     },
-    [commit, projects, user, sharedProjects]
+    [commit, projects, user, sharedProjects, noteSharedProjectDeleted]
   );
 
   /**

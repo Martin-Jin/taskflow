@@ -721,3 +721,39 @@ function toMillis(value) {
   if (typeof value.seconds === 'number') return value.seconds * 1000;
   return null;
 }
+
+/**
+ * Should a rejected task/section WRITE be reported to the user as a genuine
+ * permission problem, or silently swallowed as an artifact of this client
+ * having just deleted (or left) the project itself?
+ *
+ * THE RACE: deleteProject's deleteSharedProject() call and an
+ * already-in-flight debounced task/section push (writeSharedTasks/
+ * writeSharedSections, dispatched moments earlier by runPushNow and still
+ * awaiting its network round-trip when delete was clicked) race with no
+ * ordering guarantee between them. firestore.rules' parentOwner()/
+ * parentEditor() re-`get()` the parent sharedProjects/{id} doc on every task/
+ * section write — so if the project-delete happens to land first server-side,
+ * that in-flight write comes back permission-denied even though it was
+ * issued with full rights at send time and the delete itself succeeded.
+ * Without this check, that rejection is indistinguishable from a REAL loss of
+ * access (a role downgrade, being removed as a collaborator) and surfaced a
+ * misleading "you don't have permission" toast for an action that actually
+ * worked — see useSharedProjectSync's deletingProjectIdsRef for where
+ * `deletingProjectIds` is populated (synchronously, by deleteProject, before
+ * the delete goes out).
+ *
+ * Only `permission-denied` is ever benign this way; every other error code
+ * still needs reporting regardless of `deletingProjectIds`.
+ *
+ * @param {{code?: string}} err
+ * @param {string} projectId
+ * @param {Set<string>|string[]} deletingProjectIds - projects this client has deliberately deleted/left
+ * @returns {boolean} true if this rejection should be swallowed rather than shown to the user
+ */
+export function isBenignSelfDeleteWriteRejection(err, projectId, deletingProjectIds) {
+  if (err?.code !== 'permission-denied') return false;
+  if (!projectId) return false;
+  if (deletingProjectIds instanceof Set) return deletingProjectIds.has(projectId);
+  return Array.isArray(deletingProjectIds) && deletingProjectIds.includes(projectId);
+}
