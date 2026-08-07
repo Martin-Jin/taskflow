@@ -516,7 +516,13 @@ service cloud.firestore {
       // UI actually renders.
       match /presence/{presenceUid} {
         allow read: if parentOwner() || parentCollaborator();
-        allow write: if (parentOwner() || parentCollaborator())
+        // `create`/`update` only: `request.resource` is null on a `delete`, so
+        // dereferencing `request.resource.data` here (as a combined `allow
+        // write` used to) throws during evaluation and Firestore treats an
+        // erroring rule as a denial — which silently broke clearPresence()'s
+        // best-effort cleanup on unmount/tab-close. Delete gets its own rule
+        // below with no `request.resource` in sight.
+        allow create, update: if (parentOwner() || parentCollaborator())
           && request.auth.uid == presenceUid
           && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'lastSeenAt'])
           && (!('displayName' in request.resource.data)
@@ -526,6 +532,10 @@ service cloud.firestore {
               || request.resource.data.photoURL == null
               || (request.resource.data.photoURL is string
                   && request.resource.data.photoURL.size() <= 500));
+        // Clearing your OWN presence doc (tab close best-effort, or aging out
+        // deliberately) needs only ownership — nothing left to shape-validate.
+        allow delete: if (parentOwner() || parentCollaborator())
+          && request.auth.uid == presenceUid;
       }
 
       // Share-link secrets: `private/links` holds the view/edit tokens plus
