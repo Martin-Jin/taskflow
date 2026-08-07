@@ -90,7 +90,7 @@ import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
-import { getEffectiveRemainingHours, isCompletedForCurrentOccurrence } from '../../utils/taskHierarchy';
+import { getEffectiveRemainingHours, isCheckedForListDisplay } from '../../utils/taskHierarchy';
 import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../../utils/boardColumnOrder';
 import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
 
@@ -133,8 +133,9 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const { requestComplete } = useCompleteTask();
   // Recurring subtasks never set isCompleted true (see completeTask) —
   // "done for now" is tracked per-occurrence via completedDates instead, so
-  // the card's subtask tally below needs isCompletedForCurrentOccurrence
-  // rather than raw isCompleted (see taskHierarchy.js).
+  // the card's subtask tally below needs isCheckedForListDisplay rather than
+  // raw isCompleted (see taskHierarchy.js) — it also guards against a stale
+  // completedDates window once dueDate has rolled forward past today.
   const today = toISODate(new Date());
   // Track only the id — deriving the task object live from `tasks` (below)
   // ensures edits made in the modal (e.g. removing a subtask) show up
@@ -358,7 +359,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   function renderCard(task) {
     const children = childrenByParentId.get(task.id) || [];
     const subtaskTotal = children.length;
-    const subtaskDone = children.filter((c) => isCompletedForCurrentOccurrence(c, today)).length;
+    const subtaskDone = children.filter((c) => isCheckedForListDisplay(c, today)).length;
     // Same fix as TaskListPanel's renderTaskRow: the Repeat/Wind icons render
     // inline before the title (13px + 4px margin-right = 17px each), pushing
     // the title's text right of the card's left edge — match that on the

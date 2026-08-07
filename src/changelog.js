@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.16',
+    date: '2026-08-07',
+    title: 'Fixed Board view subtask counts briefly undercounting for recurring subtasks',
+    changes: [
+      'A card\'s "x/y subtasks done" tally on Board view no longer briefly undercounts a recurring subtask for a few days after it rolls forward to its next occurrence.',
+    ],
+  },
+  {
     version: '3.0.15',
     date: '2026-08-07',
     title: 'Fixed remaining time not updating when a duration change came from the AI Assistant',
