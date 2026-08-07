@@ -1327,14 +1327,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     const finalLabelIds = [...new Set([...labelIds, ...(pendingLabelNames.length ? getOrCreateLabelIds(pendingLabelNames) : [])])];
 
     const nextEstimatedHours = Number(estimatedHours) || task.estimatedHours;
-    // Shift remainingHours by however much the estimate changed, rather than
-    // just clamping down — otherwise raising the estimate on an
-    // already-fully-scheduled task (remainingHours: 0) would never add any
-    // new hours for the scheduler to place.
-    const nextRemainingHours = Math.min(
-      nextEstimatedHours,
-      Math.max(0, task.remainingHours + (nextEstimatedHours - task.estimatedHours))
-    );
 
     const nextTitle = buildFinalTitle(title, link ? linkLabel(link) : task.title);
 
@@ -1352,10 +1344,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       // A container task's estimatedHours/remainingHours are a computed
       // rollup of its children (see isContainer/effectiveEstimatedHours
       // above), not a directly-editable value — the Estimated time field is
-      // disabled for one below, but skip persisting these here too as a
+      // disabled for one below, but skip persisting this here too as a
       // second guard against ever writing a stale independent number onto
       // it (e.g. via a smart-parsed duration phrase in the title).
-      ...(isContainer ? {} : { estimatedHours: nextEstimatedHours, remainingHours: nextRemainingHours }),
+      // remainingHours itself is left for SchedulerContext's updateTask to
+      // derive from the estimatedHours delta (see
+      // deriveRemainingHoursOnEstimateChange) — every caller gets correct
+      // shifting behavior for free rather than replicating the formula here.
+      ...(isContainer ? {} : { estimatedHours: nextEstimatedHours }),
       priority,
       dueDate: nextDueDate,
       isRecurring: nextIsRecurring,
