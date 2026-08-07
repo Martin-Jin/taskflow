@@ -175,6 +175,23 @@ export function resolvePlan(operations, context) {
 
     errors.push(...validateFieldFormats(operation));
 
+    // Cross-field: enforceDueDate is meaningless without a dueDate, and would
+    // otherwise be silently zeroed back to false on the next autosave (see
+    // TaskDetailModal.jsx's own comment on this same sanitization) — catching
+    // it here surfaces a clear error instead of an approvable-looking plan
+    // that quietly does nothing.
+    if ((operation.op === 'create_task' || operation.op === 'update_task') && operation.enforceDueDate === true) {
+      const effectiveDueDate =
+        operation.dueDate !== undefined
+          ? operation.dueDate
+          : operation.op === 'update_task'
+            ? realIds.task.get(operation.taskId)?.dueDate
+            : undefined;
+      if (!effectiveDueDate) {
+        errors.push('enforceDueDate is true but there is no dueDate — set a dueDate first.');
+      }
+    }
+
     return {
       index,
       operation,

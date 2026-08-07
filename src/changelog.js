@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.13',
+    date: '2026-08-07',
+    title: 'AI Assistant now catches a contradictory "enforce due date" before it reaches the confirm screen',
+    changes: [
+      'An AI-proposed task change that would turn on "must be done on due date" without an actual due date is now flagged as an error on the confirm screen instead of silently going through and doing nothing.',
+    ],
+  },
+  {
     version: '3.0.12',
     date: '2026-08-07',
     title: 'Fixed the "Enforce due date" checkbox briefly showing checked and disabled at once',
