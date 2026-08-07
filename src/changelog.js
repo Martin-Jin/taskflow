@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.0',
+    date: '2026-08-07',
+    title: 'Right now / Next card is now clickable',
+    changes: [
+      'Clicking the "Right now" or "Next" item on the Dashboard now opens that task\'s or event\'s detail popup, matching how the Today\'s agenda list already worked.',
+    ],
+  },
+  {
     version: '2.9.0',
     date: '2026-08-07',
     title: 'AI Assistant now fills in duration and priority automatically',

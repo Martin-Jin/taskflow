@@ -206,6 +206,19 @@
   white-space: nowrap;
 }
 
+.now-block.is-openable,
+.next-block.is-openable {
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.now-block.is-openable:hover,
+.now-block.is-openable:focus-visible,
+.next-block.is-openable:hover,
+.next-block.is-openable:focus-visible {
+  background: var(--color-bg-surface-hover);
+}
+
 .now-progress-track {
   height: 6px;
   border-radius: 999px;

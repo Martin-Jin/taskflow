@@ -93,6 +93,36 @@ test('now/next card renders with seeded task/event data', async ({ page }) => {
   expectNoErrors(errors);
 });
 
+test('now/next card: clicking the current or next item opens its detail modal', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const card = page.locator('.now-next-card');
+  await card.waitFor({ state: 'visible' });
+
+  // "Right now" item, if present, should open a detail modal on click.
+  const currentBlock = card.locator('.now-block');
+  if (await currentBlock.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await currentBlock.click();
+    await page.waitForTimeout(300);
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+  }
+
+  // "Next" item, if present, should also open a detail modal on click.
+  const nextBlock = card.locator('.next-block');
+  if (await nextBlock.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await nextBlock.click();
+    await page.waitForTimeout(300);
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+  }
+
+  expectNoErrors(errors);
+});
+
 test('progress rings render for today and this week', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   const row = page.locator('.progress-ring-row');
