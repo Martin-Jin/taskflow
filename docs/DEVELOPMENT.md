@@ -653,7 +653,8 @@ src/
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
 │   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal, ShortcutsModal (Settings → Keyboard shortcuts), ShareProjectModal (owner link/collaborator management, Phase 2), JoinProjectModal (`?join=<token>` landing, Phase 2)
-│   ├── Nav/                   # Sidebar — desktop/tablet nav + project list (pin/rename/delete via ProjectActionsMenu); BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
+│   ├── Nav/                   # Sidebar — desktop/tablet nav + a capped recent-projects strip (pin/rename/delete via ProjectActionsMenu) with a link into Projects/; BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
+│   ├── Projects/               # ProjectsPage — directory/launcher tab: fuzzy project search, Recent/Shared/My-projects columns, size/duration/creation-date sort (stats/sort logic in utils/projectStats.js)
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
 │   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
@@ -707,6 +708,7 @@ src/
 │   ├── nameSearch.js         # Single shared typo-tolerant/relevance-ranked name matcher (rankByNameSearch/scoreNameMatch) — the one source of truth for searching projects (and reused for Views/Actions) in Sidebar, ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette, and CalendarFilterMenu; don't add another ad-hoc `.includes()` matcher for names elsewhere
 │   ├── calendarFilter.js     # Calendar show-mode/project/tag filter predicates (CalendarFilterMenu's logic) — project search itself now lives in nameSearch.js
 │   ├── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
+│   ├── projectStats.js       # Read-only per-project stats/sort for the Projects page: task count, top-level-only effective-hours total (avoids double-counting a parent's rolled-up subtask hours), sortProjectsBy(size|duration|created)
 │   ├── sharedTaskSync.js     # Pure decision logic for shared-task Firestore sync: which fields merge vs. last-write-wins, presence staleness, in-flight write race guards (Phase 1)
 │   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0)
 │   ├── commentMentions.js    # Parses/renders `@[Name](uid)` mentions in a shared task's comment thread (Phase 3)
