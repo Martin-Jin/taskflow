@@ -18,22 +18,23 @@ import { toISODate } from './dateUtils';
 export const SHORT_BLOCK_MAX_MIN = 15;
 
 /**
- * Should `block` (a completed, non-recurring task's block) still render on
- * `day`? The Calendar's strikethrough styling is a same-day "what did I
- * finish today" receipt, not a historical record — so a completed one-off
- * task's block is only shown on the day it was actually completed, never on
- * its original scheduled day (if different) and never anywhere else.
- * Completing a task scheduled for a future day thus makes its block vanish
- * from the calendar entirely, rather than moving to today: it was never
- * actually worked on today. Recurring tasks are excluded from this check
- * entirely (they're never marked `completed` on finishing an occurrence —
+ * Should `block` (on a given calendar `day`) still render? Completed tasks
+ * are meant to stay visible on their originally-scheduled day indefinitely —
+ * the Calendar doubles as a completion history, not just a forward-looking
+ * plan — so completion alone never hides a block. The one case that DOES
+ * hide a block: a task completed BEFORE the day it was scheduled for (i.e.
+ * finished early/in advance) never actually happened on that future day, so
+ * that block disappears rather than sitting there as a misleading "still to
+ * do" (or falsely-completed) slot once the day is reached. A block on or
+ * before the task's completion date is unaffected. Recurring tasks are
+ * excluded entirely (never marked `completed` on finishing an occurrence —
  * see `Task.isRecurring`), so callers should only apply this to non-recurring
  * completed tasks; everything else always renders.
  */
 export function isCompletedOnDay(task, day) {
   if (!task || task.isRecurring || !task.isCompleted) return true;
-  if (!task.completedAt) return false;
-  return toISODate(new Date(task.completedAt)) === day;
+  if (!task.completedAt) return true;
+  return day <= toISODate(new Date(task.completedAt));
 }
 
 /**
@@ -49,11 +50,11 @@ export function isCompletedOnDay(task, day) {
  * only reads back the dates it cares about via the returned maps.
  *
  * `taskById` (optional, `{ [id]: Task }` — same shape both callers already
- * keep for their own lookups) drives the completed-task display filter above
- * (see isCompletedOnDay) — a block whose task can't be found is left in
- * as-is (matches how the rest of the calendar already tolerates a dangling
- * taskId), and callers that don't pass it (existing behavior) skip the
- * filter entirely.
+ * keep for their own lookups) drives the completed-early-hides-future-block
+ * filter above (see isCompletedOnDay) — a block whose task can't be found is
+ * left in as-is (matches how the rest of the calendar already tolerates a
+ * dangling taskId), and callers that don't pass it (existing behavior) skip
+ * the filter entirely.
  *
  * @param {ScheduledBlock[]} blocks
  * @param {CalendarEvent[]} events

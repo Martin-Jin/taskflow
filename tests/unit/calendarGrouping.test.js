@@ -21,28 +21,28 @@ describe('isCompletedOnDay', () => {
     return new Date(y, m - 1, d, 15, 30, 0).toISOString();
   }
 
-  it('shows a completed one-off task only on its completion date', () => {
+  it('shows a completed one-off task on its completion date', () => {
     const task = { isCompleted: true, completedAt: completedAtOn('2026-08-07') };
     expect(isCompletedOnDay(task, '2026-08-07')).toBe(true);
   });
 
-  it('hides a completed one-off task on any day other than its completion date, including its original scheduled day', () => {
+  it('keeps showing a completed one-off task on its original scheduled day after completion, as history', () => {
     const task = { isCompleted: true, completedAt: completedAtOn('2026-08-07') };
-    expect(isCompletedOnDay(task, '2026-08-03')).toBe(false); // its original scheduled day
-    expect(isCompletedOnDay(task, '2026-08-08')).toBe(false);
+    expect(isCompletedOnDay(task, '2026-08-03')).toBe(true); // scheduled/completed before "today"
+    expect(isCompletedOnDay(task, '2026-08-07')).toBe(true); // the completion day itself
   });
 
-  it('hides a task completed in advance of its scheduled day entirely (never shows under today)', () => {
-    // Scheduled for a future day, but marked done today — should not render
-    // on the future day OR on today.
+  it('hides a task completed in advance of its scheduled day (future block disappears)', () => {
+    // Scheduled for a future day, but marked done today — the future block
+    // never actually happened, so it should not render.
     const task = { isCompleted: true, completedAt: completedAtOn('2026-08-07') };
     expect(isCompletedOnDay(task, '2026-08-10')).toBe(false); // its future scheduled day
     expect(isCompletedOnDay(task, '2026-08-07')).toBe(true); // today, the actual completion date
   });
 
-  it('hides a completed task with no completedAt on every day (defensive default)', () => {
+  it('treats a completed task with no completedAt as visible everywhere (defensive default)', () => {
     const task = { isCompleted: true, completedAt: null };
-    expect(isCompletedOnDay(task, '2026-08-07')).toBe(false);
+    expect(isCompletedOnDay(task, '2026-08-07')).toBe(true);
   });
 
   it('treats a missing task as visible (matches existing dangling-taskId tolerance elsewhere)', () => {
@@ -60,11 +60,18 @@ describe('groupItemsByDay completed-task filtering', () => {
     expect(blocksByDay.get('2026-08-06')).toHaveLength(1);
   });
 
-  it('drops a completed one-off task block from its original day when completed on a different day', () => {
+  it('keeps a completed one-off task block on its originally-scheduled (past) day', () => {
     const taskById = { t1: { id: 't1', isCompleted: true, completedAt: new Date(2026, 7, 7, 12, 0, 0).toISOString() } };
     const blocks = [{ id: 'b1', date: '2026-08-06', taskId: 't1' }];
     const { blocksByDay } = groupItemsByDay(blocks, [], days, taskById);
-    expect(blocksByDay.has('2026-08-06')).toBe(false);
+    expect(blocksByDay.get('2026-08-06')).toHaveLength(1);
+  });
+
+  it('drops a block on a future day for a task completed early', () => {
+    const taskById = { t1: { id: 't1', isCompleted: true, completedAt: new Date(2026, 7, 6, 12, 0, 0).toISOString() } };
+    const blocks = [{ id: 'b1', date: '2026-08-08', taskId: 't1' }];
+    const { blocksByDay } = groupItemsByDay(blocks, [], days, taskById);
+    expect(blocksByDay.has('2026-08-08')).toBe(false);
   });
 
   it('keeps a block whose task is incomplete', () => {
