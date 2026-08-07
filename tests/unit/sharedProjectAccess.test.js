@@ -10,6 +10,7 @@ import {
   planCollaboratorJoin,
   planOwnershipTransfer,
   isSharedProject,
+  isLikelySharedProjectOwner,
   getProjectShareState,
   generateShareToken,
   resolveOwnerProfile,
@@ -577,6 +578,39 @@ describe('isSharedProject', () => {
   it('is false for null/undefined input', () => {
     expect(isSharedProject(null)).toBe(false);
     expect(isSharedProject(undefined)).toBe(false);
+  });
+});
+
+describe('isLikelySharedProjectOwner', () => {
+  it('trusts the live sharedProject.ownerId when it has loaded', () => {
+    expect(isLikelySharedProjectOwner({ ownerId: 'owner-1' }, { ownerId: 'owner-1' }, 'owner-1')).toBe(true);
+    expect(isLikelySharedProjectOwner({ ownerId: 'owner-1' }, { ownerId: 'owner-1' }, 'someone-else')).toBe(false);
+  });
+
+  it('prefers the live value over a stale local ownerId after an ownership transfer', () => {
+    // Local row still says the original owner (write-once, never updated by
+    // transferSharedProjectOwnership); live doc says the new owner.
+    const stalelyLocalProject = { ownerId: 'old-owner' };
+    expect(isLikelySharedProjectOwner({ ownerId: 'new-owner' }, stalelyLocalProject, 'new-owner')).toBe(true);
+    expect(isLikelySharedProjectOwner({ ownerId: 'new-owner' }, stalelyLocalProject, 'old-owner')).toBe(false);
+  });
+
+  it('falls back to the local ownerId when the live doc has not loaded yet', () => {
+    // sharedProjects[id] is undefined right after a fresh page load, before
+    // useSharedProjectSync's subscription delivers its first snapshot.
+    expect(isLikelySharedProjectOwner(undefined, { ownerId: 'owner-1' }, 'owner-1')).toBe(true);
+    expect(isLikelySharedProjectOwner(null, { ownerId: 'owner-1' }, 'owner-1')).toBe(true);
+  });
+
+  it('is false for a non-owner (collaborator leaving) whether or not the live doc has loaded', () => {
+    // joinSharedProject never stamps ownerId onto a collaborator's local row.
+    const collaboratorLocalProject = { sharedProjectId: 'sp1' };
+    expect(isLikelySharedProjectOwner({ ownerId: 'owner-1' }, collaboratorLocalProject, 'collaborator-1')).toBe(false);
+    expect(isLikelySharedProjectOwner(undefined, collaboratorLocalProject, 'collaborator-1')).toBe(false);
+  });
+
+  it('is false with no signed-in uid', () => {
+    expect(isLikelySharedProjectOwner({ ownerId: 'owner-1' }, { ownerId: 'owner-1' }, undefined)).toBe(false);
   });
 });
 

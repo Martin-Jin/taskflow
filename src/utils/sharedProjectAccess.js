@@ -447,6 +447,42 @@ export function isSharedProject(project) {
 }
 
 /**
+ * Whether `uid` should be treated as the OWNER of a shared project for the
+ * purpose of deciding whether to delete its `sharedProjects/{id}` document
+ * (as opposed to just leaving it) — see SchedulerContext's `deleteProject`.
+ *
+ * Prefers the LIVE `sharedProject.ownerId` (from useSharedProjectSync's
+ * subscription) over the local Project row's own `ownerId` field, since only
+ * the live value is updated by `transferSharedProjectOwnership` — the local
+ * field is write-once, stamped only at share time (see `shareProject`) and
+ * never touched again, so it goes stale forever the moment ownership changes
+ * hands.
+ *
+ * Falls back to the local field ONLY when the live doc hasn't loaded yet
+ * (`sharedProject` still undefined/null — e.g. right after a fresh page
+ * load, before the subscription's first snapshot has arrived). Without this
+ * fallback, deleting a shared project in that window silently skipped the
+ * server-side deleteDoc entirely: the local Project row is removed
+ * unconditionally either way, so the delete LOOKS like it fully worked, but
+ * the `sharedProjects/{id}` document (and its tasks/sections) is orphaned in
+ * Firestore with nobody left to delete it.
+ *
+ * Safe even if the fallback is ever wrong: it can only affect whether this
+ * CLIENT attempts the delete, never whether it succeeds — firestore.rules'
+ * `allow delete: if isOwner()` is the actual authority and would reject a
+ * non-owner's attempt regardless of what this function returns.
+ * @param {{ownerId?: string}|null|undefined} sharedProject - live doc data, or undefined if not loaded yet
+ * @param {{ownerId?: string}|null|undefined} localProject - this user's local Project row for it
+ * @param {string|undefined} uid
+ * @returns {boolean}
+ */
+export function isLikelySharedProjectOwner(sharedProject, localProject, uid) {
+  if (!uid) return false;
+  if (sharedProject) return sharedProject.ownerId === uid;
+  return localProject?.ownerId === uid;
+}
+
+/**
  * Whether a Firebase Auth `User` is a guest — a share-link visitor with no
  * durable account, as opposed to someone signed in with a real (Google)
  * account.

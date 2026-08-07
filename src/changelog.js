@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.5',
+    date: '2026-08-07',
+    title: 'Fixed deleting a shared project sometimes leaving it behind on the server',
+    changes: [
+      "Deleting a shared project you own could look like it fully worked (it disappeared from your list) while quietly failing to delete it on the server — most likely right after a fresh page load. A second delete attempt on the same project would then look necessary, since the leftover server copy could resurface. Deleting now reliably removes the server copy too.",
+    ],
+  },
+  {
     version: '3.3.4',
     date: '2026-08-07',
     title: 'Fixed stale and incorrect presence avatars in shared projects',
