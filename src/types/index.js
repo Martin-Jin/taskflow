@@ -474,6 +474,10 @@
  * @property {string} endTime                - "HH:MM"
  * @property {number[]} daysOfWeek            - 0(Sun)-6(Sat) which days this routine applies to.
  * @property {boolean} isActive
+ * @property {boolean} [isProtected]          - If true, this routine is mandatory and can't be deleted by the
+ *                                              user (e.g. the seeded Sleep routines) — start/end time, days, and
+ *                                              the isActive pause/resume toggle can still be changed freely, only
+ *                                              deletion is blocked. Absent/undefined counts as false.
  */
 
 /**

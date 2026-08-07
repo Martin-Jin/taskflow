@@ -4,7 +4,9 @@
  *   - Drag on empty space -> creates a new routine spanning the drag.
  *   - Drag a block's body -> moves it (start/end shift together).
  *   - Drag a block's top/bottom edge -> resizes that end only.
- *   - Click the trash icon -> removes the routine.
+ *   - Click the trash icon -> removes the routine (hidden for a protected
+ *     routine, e.g. Sleep — it can still be dragged/resized/paused, just
+ *     not deleted, see FixedRoutine.isProtected).
  *   - Click the label -> rename inline; click the dot -> toggle active.
  * Mirrors the interaction model of Calendar/WeekView (mousedown+drag to
  * block out time, edge-drag to resize) so the gesture feels familiar.
@@ -228,16 +230,18 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove })
                     {r.startTime}–{r.endTime}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="routine-block-remove"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => onRemove(r.id)}
-                  aria-label={`Delete ${r.label}`}
-                  title="Delete routine"
-                >
-                  <X size={13} />
-                </button>
+                {!r.isProtected && (
+                  <button
+                    type="button"
+                    className="routine-block-remove"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => onRemove(r.id)}
+                    aria-label={`Delete ${r.label}`}
+                    title="Delete routine"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </div>
               {showTime && (
                 <div className="routine-block-time">

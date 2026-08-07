@@ -482,8 +482,8 @@ export function getDefaultRoutines() {
   const weekdays = [1, 2, 3, 4, 5];
   const allDays = [0, 1, 2, 3, 4, 5, 6];
   return [
-    { id: 'rt_sleep', label: 'Sleep', startTime: '23:00', endTime: '23:59', daysOfWeek: allDays, isActive: true },
-    { id: 'rt_sleep_am', label: 'Sleep (overnight)', startTime: '00:00', endTime: '07:00', daysOfWeek: allDays, isActive: true },
+    { id: 'rt_sleep', label: 'Sleep', startTime: '23:00', endTime: '23:59', daysOfWeek: allDays, isActive: true, isProtected: true },
+    { id: 'rt_sleep_am', label: 'Sleep (overnight)', startTime: '00:00', endTime: '07:00', daysOfWeek: allDays, isActive: true, isProtected: true },
     { id: 'rt_hygiene_am', label: 'Morning routine', startTime: '07:00', endTime: '08:00', daysOfWeek: allDays, isActive: true },
     { id: 'rt_commute_am', label: 'Commute (AM)', startTime: '08:00', endTime: '08:30', daysOfWeek: weekdays, isActive: true },
     { id: 'rt_lunch', label: 'Lunch', startTime: '12:30', endTime: '13:15', daysOfWeek: allDays, isActive: true },

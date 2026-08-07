@@ -233,6 +233,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   }
 
   function removeRoutine(id) {
+    const routine = routines.find((r) => r.id === id);
+    if (routine?.isProtected) {
+      setNotification({ type: 'error', message: `"${routine.label}" is a protected routine and can't be deleted.` });
+      return;
+    }
     setRoutines((prev) => prev.filter((r) => r.id !== id));
   }
 
