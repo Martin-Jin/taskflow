@@ -51,7 +51,7 @@ export default function MonthView({
   const days = useMemo(() => dateRange(gridStart, 42), [gridStart]);
   const currentMonth = monthStart.slice(0, 7); // "YYYY-MM"
 
-  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days), [blocks, events, days]);
+  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days, taskById), [blocks, events, days, taskById]);
 
   // Same empty-filter-overlay logic as WeekView — see its own comment for
   // why the check is scoped to whether THIS visible range had anything

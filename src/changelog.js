@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.8',
+    date: '2026-08-07',
+    title: 'Completed tasks no longer linger on the Calendar',
+    changes: [
+      "A completed one-off task's crossed-out block now only shows up on the Calendar on the day it was actually completed — it no longer stays stuck on its original scheduled day for days afterward. Completing a task that was scheduled for a future day now removes it from the calendar entirely, since it was never actually worked on.",
+    ],
+  },
+  {
     version: '3.0.7',
     date: '2026-08-07',
     title: 'Fixed a recurring task showing as completed in Upcoming',
