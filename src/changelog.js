@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.2.1',
+    date: '2026-08-07',
+    title: 'Editing more task settings now reschedules the task',
+    changes: [
+      "Changing a scheduled task's \"Lock to a day\" date, hard-deadline toggle, dependencies, priority, unattended flag, fixed time, or repeat pattern now reschedules it automatically, instead of only affecting future scheduling runs.",
+      'Unlocking a previously locked task now schedules it right away instead of waiting for the next manual re-balance.',
+    ],
+  },
+  {
     version: '3.2.0',
     date: '2026-08-07',
     title: '"Enforce due date" now applies to sub-tasks automatically',
