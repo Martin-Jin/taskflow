@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.4',
+    date: '2026-08-07',
+    title: 'Fixed stale and incorrect presence avatars in shared projects',
+    changes: [
+      'Closing a tab could leave your avatar showing as "still viewing" a shared project for far longer than it should — presence now clears reliably when a tab closes, not just after it eventually ages out.',
+      'If a guest renamed themselves, other viewers kept seeing their old name (or generic initials) in the presence avatars instead of the new one — the avatar now always reflects your current chosen name.',
+    ],
+  },
+  {
     version: '3.3.3',
     date: '2026-08-07',
     title: 'Fixed a personal task\'s Project dropdown letting you pick a shared project by mistake',

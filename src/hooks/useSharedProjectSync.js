@@ -57,6 +57,7 @@ import {
   sharedSectionFingerprint,
   PRESENCE_STALE_MS,
 } from '../utils/sharedTaskSync';
+import { isGuestUser, findOwnGuestName } from '../utils/sharedProjectAccess';
 
 /** How often to refresh this user's presence heartbeat. Comfortably inside PRESENCE_STALE_MS so a live viewer never flickers out. */
 const PRESENCE_HEARTBEAT_MS = 30 * 1000;
@@ -87,6 +88,17 @@ const PUSH_DEBOUNCE_MS = 1500;
 export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, applyRemote, applyRemoteSections, sharedProjectIds, projectsRef, user, setNotification }) {
   const [sharedProjects, setSharedProjects] = useState({});
   const [presenceByProject, setPresenceByProject] = useState({});
+  // Read fresh from inside the heartbeat's setInterval closure (see the
+  // presence heartbeat effect below) rather than closing over `sharedProjects`
+  // directly — the heartbeat effect intentionally does NOT restart every time
+  // `sharedProjects` updates (its deps are just [projectIdsKey, user]), so a
+  // plain closure would freeze the guest-name fallback at whatever it was
+  // when the effect last (re)started and broadcast that stale value for up to
+  // the next membership change.
+  const sharedProjectsRef = useRef(sharedProjects);
+  useEffect(() => {
+    sharedProjectsRef.current = sharedProjects;
+  }, [sharedProjects]);
   // Ids of projects this user was a confirmed member of (their doc loaded at
   // least once) that then disappeared — deleted by the owner, or this user's
   // own collaborator entry was removed. Surfaced so SchedulerContext can prune
@@ -521,10 +533,24 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
     if (!user || !projectIdsKey) return undefined;
     const ids = projectIdsKey.split(',').filter(Boolean);
 
+    // Same "what name do I show for myself" resolution AccountButton/
+    // SettingsPanel already use (isGuestUser + findOwnGuestName, falling back
+    // to Firebase Auth's own displayName/email) — reused rather than
+    // duplicated so a guest's local rename (setGuestDisplayName, via
+    // renameAnonymousSelf) is reflected here too. Previously this only ever
+    // read user.displayName/user.email, which a guest/anonymous session never
+    // has, so the heartbeat always broadcast the 'Someone' fallback regardless
+    // of any name the guest had chosen.
+    const resolveMyDisplayName = () => {
+      if (!isGuestUser(user)) return user.displayName || user.email || 'Someone';
+      return findOwnGuestName(user.uid, sharedProjectsRef.current) || 'Someone';
+    };
+
     const beat = () => {
+      const displayName = resolveMyDisplayName();
       for (const projectId of ids) {
         writePresence(projectId, user.uid, {
-          displayName: user.displayName || user.email || 'Someone',
+          displayName,
           photoURL: user.photoURL || null,
         }).catch(() => {
           // Presence is decorative — a failed heartbeat just means this user's
@@ -535,11 +561,23 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
 
     beat();
     const timer = setInterval(beat, PRESENCE_HEARTBEAT_MS);
+
+    // Best-effort cleanup on unmount AND on tab-close/hide. A plain unmount
+    // handler alone never fires for a closed tab (the React tree doesn't
+    // unmount), so a closed tab used to rely entirely on the 90s staleness
+    // fallback even though clearPresence's deleteDoc, if it ran, would
+    // remove the doc immediately — same beforeunload/pagehide pattern as the
+    // task/section push-flush effect above.
+    const clearAll = () => {
+      for (const projectId of ids) clearPresence(projectId, user.uid).catch(() => {});
+    };
+    window.addEventListener('pagehide', clearAll);
+    window.addEventListener('beforeunload', clearAll);
     return () => {
       clearInterval(timer);
-      // Best-effort: tidy up rather than waiting to age out. A closed tab won't
-      // get here at all, which is exactly why staleness is time-based.
-      for (const projectId of ids) clearPresence(projectId, user.uid).catch(() => {});
+      window.removeEventListener('pagehide', clearAll);
+      window.removeEventListener('beforeunload', clearAll);
+      clearAll();
     };
   }, [projectIdsKey, user]);
 
