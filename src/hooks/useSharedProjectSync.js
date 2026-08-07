@@ -86,6 +86,12 @@ const PUSH_DEBOUNCE_MS = 1500;
 export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, applyRemote, applyRemoteSections, sharedProjectIds, projectsRef, user, setNotification }) {
   const [sharedProjects, setSharedProjects] = useState({});
   const [presenceByProject, setPresenceByProject] = useState({});
+  // Ids of projects this user was a confirmed member of (their doc loaded at
+  // least once) that then disappeared — deleted by the owner, or this user's
+  // own collaborator entry was removed. Surfaced so SchedulerContext can prune
+  // the now-dead local Project row/sharedProjectIds pointer; see the doc
+  // subscription's onData/onError below for where this actually gets set.
+  const [lostProjectIds, setLostProjectIds] = useState([]);
 
   // taskId -> fingerprint last known STORED in Firestore. Drives the write
   // diff: anything whose fingerprint differs is a genuine local edit.
@@ -175,30 +181,60 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
   );
 
   // ---- Subscriptions, one set per joined project ---------------------------
+  // Ids whose shared-project doc has been confirmedly seen at least once
+  // (loaded successfully) — a null/permission-denied AFTER that point means
+  // real loss of access; BEFORE it, it just means the first snapshot hasn't
+  // arrived yet and must not be mistaken for loss (e.g. right after joining).
+  const confirmedProjectDocRef = useRef(new Set());
+
   useEffect(() => {
     if (!user || !projectIdsKey) {
       setSharedProjects({});
       setPresenceByProject({});
       loadedProjectsRef.current = new Set();
+      confirmedProjectDocRef.current = new Set();
+      setLostProjectIds([]);
       return undefined;
     }
 
     const ids = projectIdsKey.split(',').filter(Boolean);
     const unsubscribers = [];
+    // Dropped from the membership list this render (e.g. the local Project
+    // row was already cleaned up) shouldn't linger in lostProjectIds forever.
+    setLostProjectIds((prev) => prev.filter((id) => ids.includes(id)));
 
     for (const projectId of ids) {
       unsubscribers.push(
         subscribeSharedProject(
           projectId,
-          (project) =>
+          (project) => {
+            if (project) {
+              confirmedProjectDocRef.current.add(projectId);
+            } else if (confirmedProjectDocRef.current.has(projectId)) {
+              // Was there, now isn't: the owner deleted it. Real loss, not a
+              // pre-first-snapshot false positive.
+              setLostProjectIds((prev) => (prev.includes(projectId) ? prev : [...prev, projectId]));
+            }
             setSharedProjects((prev) => {
               if (!project) {
                 const { [projectId]: _removed, ...rest } = prev;
                 return rest;
               }
               return { ...prev, [projectId]: project };
-            }),
-          (err) => reportError(err, projectId)
+            });
+          },
+          (err) => {
+            if (err?.code === 'permission-denied' && confirmedProjectDocRef.current.has(projectId)) {
+              // Was readable before, now denied: this user's own access (not
+              // just the doc) was revoked — e.g. removeCollaborator.
+              setLostProjectIds((prev) => (prev.includes(projectId) ? prev : [...prev, projectId]));
+              setSharedProjects((prev) => {
+                const { [projectId]: _removed, ...rest } = prev;
+                return rest;
+              });
+            }
+            reportError(err, projectId);
+          }
         )
       );
 
@@ -510,6 +546,8 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
   return {
     /** Shared project documents this user is a member of, keyed by id. */
     sharedProjects,
+    /** Ids that were confirmed accessible and then lost access to (deleted, or this user was removed) — see the doc comment above lostProjectIds' useState. */
+    lostProjectIds,
     /** Active viewers per project (excluding this user). */
     viewersByProject,
     /** Current shared tasks, for preserveSharedTasks at undo/restore points. */

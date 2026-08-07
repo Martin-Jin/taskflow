@@ -992,6 +992,7 @@ export function SchedulerProvider({ children }) {
     liveSharedSections,
     noteSharedTaskDeleted,
     noteSharedSectionDeleted,
+    lostProjectIds,
   } = useSharedProjectSync({
     tasks,
     sections,
@@ -1007,6 +1008,38 @@ export function SchedulerProvider({ children }) {
     user,
     setNotification,
   });
+
+  // A shared project this user had access to was deleted by its owner, or
+  // this user was removed as a collaborator — either way, Firestore has
+  // already dropped them; without this, the local Project row (and its
+  // sharedProjectIds pointer) never gets cleaned up and lingers dead in the
+  // sidebar forever (see TODO's "removing a collaborator leaves a stale
+  // shared project" / "deleting a shared project leaves a stale copy" bugs).
+  // Mirrors deleteProject's own shared-project branch, just triggered by
+  // remote loss-of-access instead of a local click — there's nothing left to
+  // write back to Firestore here, only local cleanup.
+  useEffect(() => {
+    if (!lostProjectIds?.length) return;
+    const lost = new Set(lostProjectIds);
+    const affectedProjectIds = new Set(
+      projects.filter((p) => lost.has(p.sharedProjectId)).map((p) => p.id)
+    );
+    if (!affectedProjectIds.size) return;
+
+    setProjects((prev) => prev.filter((p) => !lost.has(p.sharedProjectId)));
+    setSections((prev) => prev.filter((s) => !affectedProjectIds.has(s.projectId)));
+    setSharedProjectIds((prev) => prev.filter((id) => !lost.has(id)));
+    commit(
+      (current) => ({
+        tasks: current.tasks.filter((t) => !lost.has(t.sharedProjectId)),
+        blocks: current.blocks.filter(
+          (b) => !current.tasks.some((t) => t.id === b.taskId && lost.has(t.sharedProjectId))
+        ),
+      }),
+      `Removed access to a shared project`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lostProjectIds]);
 
   // Undo/redo must never restore a history snapshot's copy of a SHARED task.
   // HistoryEntry snapshots the entire task array (see types/index.js), so a
