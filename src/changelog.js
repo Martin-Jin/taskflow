@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.3',
+    date: '2026-08-07',
+    title: 'Fixed a personal task\'s Project dropdown letting you pick a shared project by mistake',
+    changes: [
+      'A task\'s Project dropdown could list shared projects alongside your own, but picking one didn\'t actually move the task into that shared project — it just left the task in a broken, half-updated state. Shared projects no longer appear as an option there for a personal task.',
+    ],
+  },
+  {
     version: '3.3.2',
     date: '2026-08-07',
     title: 'Fixed a false "no permission" error on the first attempt to delete a shared project',

@@ -141,7 +141,7 @@ import {
   insertMention,
   parseCommentBody,
 } from '../../utils/commentMentions';
-import { computeEffectiveRole, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
+import { computeEffectiveRole, isSharedProject, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
 
 // Default estimated hours for a quick-added sub-task — matches
 // AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
@@ -2302,7 +2302,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               <DetailField icon={Folder} label="Project">
                 <select value={projectId} onChange={(e) => handleProjectChange(e.target.value)} disabled={isReadOnlyViewer}>
                   <option value="">No project</option>
-                  {projects.map((p) => (
+                  {projects.filter((p) => !isSharedProject(p) || p.id === task.projectId).map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
