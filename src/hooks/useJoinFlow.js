@@ -17,8 +17,9 @@
  * A share token is a secret, and the URL bar is the single most exposed place
  * in the browser: shoulder-surfed, screenshotted, pasted into chats, copied
  * into bug reports, and leaked to third parties via `Referer`. Stripping it
- * also stops a reload from re-running the join. The token is kept in a ref for
- * the duration of the flow, so removing it from the URL costs nothing.
+ * also stops a reload from re-running the join. It's only needed transiently
+ * within this effect's own closure (resolveShareToken, below), so removing it
+ * from the URL costs nothing.
  *
  * WHY IT RUNS ONCE, GUARDED BY A REF
  * ----------------------------------
@@ -36,15 +37,8 @@ import { auth } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useScheduler } from '../context/SchedulerContext';
 import { resolveShareToken, isShareLinkConfigured } from '../services/shareLinkService';
-import {
-  JOIN_STATUS,
-  joinStatusForReason,
-  loadCachedJoinName,
-  planJoinStep,
-  readJoinToken,
-  saveCachedJoinName,
-  urlWithoutJoinParam,
-} from '../utils/joinFlow';
+import { JOIN_STATUS, joinStatusForReason, planJoinStep, readJoinToken, urlWithoutJoinParam } from '../utils/joinFlow';
+import { resolveGuestDisplayName, setGuestDisplayName, setGuestUid } from '../utils/guestIdentity';
 
 /**
  * @param {(projectId: string) => void} onJoined - Called with the local project id once the join completes, so the app can navigate to it.
@@ -65,7 +59,6 @@ export function useJoinFlow(onJoined) {
   const [error, setError] = useState(null);
 
   const startedRef = useRef(false);
-  const tokenRef = useRef(null);
   // The resolved payload, held between "needs a name" and the user supplying
   // one — the custom-token session is already active by then, so the pending
   // work is only the membership write.
@@ -82,7 +75,7 @@ export function useJoinFlow(onJoined) {
       if (!resolution) return;
       setStatus(JOIN_STATUS.JOINING);
 
-      if (tokenRef.current && displayName) saveCachedJoinName(tokenRef.current, displayName);
+      if (displayName) setGuestDisplayName(displayName);
 
       const result = await joinSharedProject({
         sharedProjectId: resolution.projectId,
@@ -115,7 +108,6 @@ export function useJoinFlow(onJoined) {
     if (!token) return;
 
     startedRef.current = true;
-    tokenRef.current = token;
     // Strip first, ask questions later — see the header comment.
     window.history.replaceState(null, '', urlWithoutJoinParam());
 
@@ -131,7 +123,20 @@ export function useJoinFlow(onJoined) {
         // A visitor with no account at all still needs SOME identity before
         // the rules will let them join — that's what Anonymous Auth is for
         // here. Invisible to the user; they're only ever asked for a name.
+        // This is still the ONLY place that mints a guest's Firebase uid
+        // (see AuthContext.jsx's header comment: it's deliberately lazy, not
+        // proactive on every load) — unchanged from before the unified
+        // guest-identity feature. What's new is recording the resulting uid
+        // into guestIdentity.js's local record right away, so it's available
+        // to resolveGuestDisplayName below and to any other guest UI without
+        // needing this hook's own state. Safe to record regardless of
+        // whether this session is brand new or already existed (e.g. a
+        // second share link opened in the same browser — Firebase restores
+        // the same anonymous session across reloads on its own, and the
+        // custom-token swap in resolveShareToken below preserves this exact
+        // uid for an anonymous visitor, see its own comment).
         if (!auth.currentUser) await signInAnonymously(auth);
+        setGuestUid(auth.currentUser.uid);
 
         const resolution = await resolveShareToken(token);
         if (!resolution.ok) {
@@ -172,7 +177,7 @@ export function useJoinFlow(onJoined) {
         const step = planJoinStep({
           resolution,
           user: auth.currentUser,
-          cachedName: loadCachedJoinName(token),
+          existingGuestName: resolveGuestDisplayName(auth.currentUser?.uid),
           sharedProject: null,
         });
 

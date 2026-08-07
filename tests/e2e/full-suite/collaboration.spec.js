@@ -116,6 +116,14 @@ test.describe('Sharing a project — reachability', () => {
 
 test.describe('Sharing a project — signed out', () => {
   test('asks the user to sign in rather than failing silently or crashing', async ({ page }) => {
+    // A plain signed-out visitor who has never joined a share (so no
+    // Firebase session exists at all — see AuthContext.jsx's lazy guest
+    // sign-in) still hits shareProject's plain `!user` branch, same as
+    // before guest-identity-by-default: that feature made every signed-out
+    // visitor a GUEST conceptually, but deliberately stopped short of
+    // minting an Anonymous Auth session on every load (see that file's
+    // header for why — it broke offline use and this exact assertion in an
+    // environment where Firebase's authorized-domains list blocks the host).
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
     await gotoTab(page, 'Tasks');

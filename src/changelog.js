@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.0',
+    date: '2026-08-07',
+    title: "Using TaskFlow without signing in now remembers your name as a guest",
+    changes: [
+      "Every signed-out visitor is now a guest with one consistent identity, whether you just opened TaskFlow directly or joined it through a shared project's link — not two separate things.",
+      "Fixed: a guest's chosen name used to live only on the shared projects they'd joined, so it was lost if they were ever removed from all of them (or asked for again if they joined a second link in the same browser). Your name is now remembered on this device independent of any project, and editable anytime from Settings.",
+    ],
+  },
+  {
     version: '3.2.1',
     date: '2026-08-07',
     title: 'Editing more task settings now reschedules the task',

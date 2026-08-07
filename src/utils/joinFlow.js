@@ -25,21 +25,20 @@
  * Stripping is `replaceState`, not `pushState`, so the token isn't left
  * sitting one Back-button press away in session history either.
  *
- * WHY THE DISPLAY NAME IS CACHED PER TOKEN, NOT GLOBALLY
- * -----------------------------------------------------
+ * THE DISPLAY NAME IS ONE GLOBAL GUEST IDENTITY, NOT PER-TOKEN
+ * -----------------------------------------------------------
  * An anonymous visitor is prompted once for a display name (Phase 0/2 spec).
- * That name is cached against the specific link they used rather than as one
- * global "your name", because one browser can hold several unrelated
- * anonymous memberships — a name chosen for a work board is not necessarily
- * the name to reuse on an unrelated one, and silently reusing it across
- * projects would disclose to project B what someone called themselves in
- * project A. Per CLAUDE.md's backup rules this is deliberately device-local
- * and NOT in BACKUP_FIELDS: an anonymous identity is tied to one browser's
- * Firebase Anonymous Auth uid and cannot meaningfully be restored elsewhere.
+ * Previously that name was cached per share token (one browser could hold
+ * several unrelated anonymous memberships, each with its own cached name).
+ * That's superseded now by `guestIdentity.js`'s single local guest record:
+ * every signed-out visitor is the SAME guest identity regardless of how many
+ * projects/links they've touched (see that module's header for the full
+ * reasoning), so `planJoinStep` below checks the one unified name instead of
+ * a per-token cache.
  * ============================================================================
  */
 
-import { loadPersisted, savePersisted } from './persistence';
+import { resolveGuestDisplayName } from './guestIdentity';
 
 /** The query parameter a share link carries. */
 export const JOIN_PARAM = 'join';
@@ -152,7 +151,7 @@ export function buildShareUrl(token, origin, pathname) {
  *    membership is a floor (see `computeEffectiveRole`'s upgrade/downgrade
  *    rule), so "already a member at a role at least this strong" short-
  *    circuits to just opening the project.
- * 2. A NAME IS ONLY ASKED OF ANONYMOUS VISITORS WHO DON'T HAVE ONE CACHED.
+ * 2. A NAME IS ONLY ASKED OF ANONYMOUS VISITORS WHO DON'T ALREADY HAVE ONE.
  *    A signed-in user already has a real displayName; prompting them for
  *    another would be noise, and would let them present a name that doesn't
  *    match the identity their edits are attributed to.
@@ -160,11 +159,12 @@ export function buildShareUrl(token, origin, pathname) {
  * @param {object} params
  * @param {{role?: string, projectId?: string}|null} params.resolution - The resolve endpoint's success payload.
  * @param {{uid?: string, isAnonymous?: boolean, displayName?: string}|null} params.user - Current Firebase user, if any.
- * @param {string|null} [params.cachedName] - Previously cached anonymous name for this token.
+ * @param {string|null} [params.existingGuestName] - This browser's already-chosen guest name, if any
+ *   (see `guestIdentity.js`'s `resolveGuestDisplayName` — the caller resolves this, this function stays pure).
  * @param {{ownerId?: string, collaborators?: Record<string, {role?: string}>}|null} [params.sharedProject] - The project doc, if already known.
  * @returns {{action: 'prompt_name'|'write_membership'|'open_project', displayName?: string}}
  */
-export function planJoinStep({ resolution, user, cachedName, sharedProject }) {
+export function planJoinStep({ resolution, user, existingGuestName, sharedProject }) {
   const uid = user?.uid;
 
   // Rule 1 — already in (or the owner of) this project.
@@ -182,7 +182,7 @@ export function planJoinStep({ resolution, user, cachedName, sharedProject }) {
   // Rule 2 — anonymous visitors need a name before they can be written into
   // `collaborators` (the rules require a non-empty displayName on the entry).
   if (user?.isAnonymous) {
-    const name = (cachedName || '').trim();
+    const name = (existingGuestName || '').trim();
     if (!name) return { action: 'prompt_name' };
     return { action: 'write_membership', displayName: name };
   }
@@ -216,78 +216,3 @@ export function joinStatusForReason(reason) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Device-local cache of an anonymous visitor's chosen display name.
-// The only impure functions in this module (see the header).
-// ---------------------------------------------------------------------------
-
-/**
- * Keyed by token so unrelated memberships don't share a name — see the header
- * comment. One flat object under a single persistence key rather than a key
- * per token, so it's inspectable and clearable as a unit.
- */
-const ANON_NAMES_KEY = 'anonJoinNames';
-
-/**
- * Both helpers below take an optional `storage` pair, defaulting to the real
- * persistence layer. That's not speculative indirection: the unit suite runs
- * in Vitest's `node` environment (vitest.config.js), where there is no
- * `window.localStorage` at all, and these two functions are the only reason
- * this module would otherwise need jsdom pulled in as a dependency. Injecting
- * the two calls keeps the tests honest about behaviour (they exercise the
- * real merge/trim logic against a plain object) without the whole suite
- * paying for a DOM.
- * @typedef {{load: (key: string, fallback: *) => *, save: (key: string, value: *) => void}} JoinNameStorage
- */
-const defaultStorage = { load: loadPersisted, save: savePersisted };
-
-/**
- * The cached display name this browser used for `token`, or null.
- * @param {string} token
- * @param {JoinNameStorage} [storage]
- */
-export function loadCachedJoinName(token, storage = defaultStorage) {
-  if (!token) return null;
-  const all = storage.load(ANON_NAMES_KEY, null);
-  if (!all || typeof all !== 'object') return null;
-  const name = all[token];
-  return typeof name === 'string' && name.trim() ? name.trim() : null;
-}
-
-/**
- * Remember `displayName` for `token` so a return visit skips the prompt.
- * @param {string} token
- * @param {string} displayName
- * @param {JoinNameStorage} [storage]
- */
-export function saveCachedJoinName(token, displayName, storage = defaultStorage) {
-  if (!token || typeof displayName !== 'string' || !displayName.trim()) return;
-  const all = storage.load(ANON_NAMES_KEY, null);
-  const next = all && typeof all === 'object' ? { ...all } : {};
-  next[token] = displayName.trim();
-  storage.save(ANON_NAMES_KEY, next);
-}
-
-/**
- * Overwrite every cached name in this browser with `displayName` — called
- * when an anonymous visitor renames themselves from Settings (see
- * SettingsPanel's account section). There is only ONE anonymous identity per
- * browser (one Firebase Anonymous Auth uid), so every token this browser ever
- * cached a name against belongs to that same visitor; a rename should apply
- * to all of them, not just the most recent. Tokens themselves are secrets
- * that are stripped from the URL immediately after use (see this module's
- * header) and never retained anywhere after joining, so rewriting by token is
- * not an option — this rewrites every VALUE under the existing keys instead,
- * without needing to know what those keys are.
- * @param {string} displayName
- * @param {JoinNameStorage} [storage]
- */
-export function renameCachedJoinNames(displayName, storage = defaultStorage) {
-  if (typeof displayName !== 'string' || !displayName.trim()) return;
-  const all = storage.load(ANON_NAMES_KEY, null);
-  if (!all || typeof all !== 'object') return;
-  const trimmed = displayName.trim();
-  const next = {};
-  for (const token of Object.keys(all)) next[token] = trimmed;
-  storage.save(ANON_NAMES_KEY, next);
-}

@@ -141,18 +141,23 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     notificationSettings,
     setNotificationSettings,
     sharedProjects,
+    sharedProjectIds,
     renameAnonymousSelf,
     setNotification,
   } = useScheduler();
 
-  // A guest (share-link visitor, no durable account — see isGuestUser's
-  // header for why this isn't user.isAnonymous) can rename themselves here;
-  // a signed-in Google account's name comes from Google and isn't editable.
-  const isGuest = !authLoading && isGuestUser(user);
+  // Every signed-out visitor is a guest who can rename themselves here,
+  // whether or not a Firebase Anonymous Auth session exists yet — one is
+  // only minted lazily (see AuthContext.jsx's header comment), so `user` can
+  // be null (no session at all) as well as an anonymous user (isGuestUser
+  // true); both are "not a real account" and get the same guest UI. A
+  // signed-in Google account's name comes from Google and isn't editable.
+  const isRealAccount = !authLoading && !!user && !isGuestUser(user);
+  const isGuest = !authLoading && !isRealAccount;
   const [isEditingGuestName, setIsEditingGuestName] = useState(false);
   const [guestNameDraft, setGuestNameDraft] = useState('');
   const [isSavingGuestName, setIsSavingGuestName] = useState(false);
-  const guestName = isGuest ? findOwnGuestName(user.uid, sharedProjects) : null;
+  const guestName = isGuest ? findOwnGuestName(user?.uid, sharedProjects) : null;
 
   function startEditingGuestName() {
     setGuestNameDraft(guestName || '');
@@ -329,7 +334,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           Sign in to sync your tasks, boards, and settings across every device you use TaskFlow on. Also optional —
           without signing in, TaskFlow stays exactly as it works today: saved only to this browser.
         </p>
-        {!authLoading && user && isGuest ? (
+        {isGuest ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
               <span
@@ -390,9 +395,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               </div>
             </div>
             <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 12 }}>
-              You joined a shared project as a guest, so this data lives only on this device — there's no cloud sync
-              or backup for a guest session. Sign in with Google below to get cross-device sync and automatic
-              backups, and to keep your data safe if this browser's storage is ever cleared.
+              {sharedProjectIds.length > 0
+                ? "You joined a shared project as a guest, so this data lives only on this device — there's no cloud sync or backup for a guest session."
+                : "You're using TaskFlow without an account, so this data lives only on this device — there's no cloud sync or backup for a guest session."}{' '}
+              Sign in with Google below to get cross-device sync and automatic backups, and to keep your data safe if
+              this browser's storage is ever cleared.
             </p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
               <GoogleSignInButton />
@@ -400,11 +407,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                 className="btn"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)' }}
                 onClick={() => {
-                  if (
-                    window.confirm(
-                      "Leave this guest session? You'll lose access to any shared project you joined as a guest, and any data saved only on this device."
-                    )
-                  ) {
+                  const confirmMessage =
+                    sharedProjectIds.length > 0
+                      ? "Leave this guest session? You'll lose access to any shared project you joined as a guest, and any data saved only on this device."
+                      : "Leave this guest session? You'll lose any data saved only on this device.";
+                  if (window.confirm(confirmMessage)) {
                     logout();
                   }
                 }}
@@ -414,7 +421,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               </button>
             </div>
           </>
-        ) : !authLoading && user ? (
+        ) : isRealAccount ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
               {user.photoURL ? (

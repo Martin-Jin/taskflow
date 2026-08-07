@@ -802,6 +802,56 @@ consequences for persistence:
   removed from. See the doc comment above `FIELD_TYPES` in
   `src/services/backupService.js` for the full rationale.
 
+### Guest identity
+
+Every signed-out visitor is a **guest** by default, whether they just opened
+the app directly or arrived via a project share link — one unified identity
+either way, not two unrelated mechanisms. `src/utils/guestIdentity.js` holds
+the durable piece of that identity: a single `localStorage` record,
+`{uid, displayName}`, that both paths read/write.
+
+- **Firebase Anonymous Auth is minted LAZILY, not on every page load.** An
+  earlier version of this design called `signInAnonymously` proactively the
+  moment no session was observed, so every guest would have a uid
+  immediately. Live testing found two problems with that: it's a real
+  network call on every single load (this app has always worked fully
+  offline off `localStorage`, and a guest identity must stay additive on top
+  of that, not a new hard dependency on reaching Firebase before the UI
+  settles), and in any environment whose Firebase Auth authorized-domains
+  list doesn't include the current host (true of this repo's own local dev/
+  E2E setup on `localhost:5183`), the call fails with a console-logged error
+  on every load. So a uid is only minted the moment something actually needs
+  one: opening a share link (`useJoinFlow.js`'s `signInAnonymously` call,
+  unchanged from before this feature) or renaming from Settings while
+  already a member of at least one shared project (`renameAnonymousSelf` in
+  `SchedulerContext.jsx` — a rename with no shared projects touches nothing
+  remote, so it needs no uid at all). Until one exists, `user` is `null` and
+  `guestIdentity.js`'s record simply has `uid: null` — the display name is
+  still fully readable/writable with no Firebase session in the picture.
+- **`AccountButton`/`SettingsPanel` treat "no real signed-in account" (missing
+  `user` OR an anonymous one) as the one guest state**, not `isGuestUser(user)`
+  alone (which requires `user` to be truthy) — this is what makes the guest UI
+  show up correctly for a guest who has no Firebase session yet.
+- **This fixes a real bug**: a guest's chosen name used to live ONLY
+  denormalized onto `collaborators[uid].displayName` on each shared project
+  they'd joined — removing them from every such project (or a fresh browser
+  joining a second link) lost the name entirely. `guestIdentity.js`'s
+  `resolveGuestDisplayName` now checks the local record first and only falls
+  back to scanning `collaborators` for a guest who predates this record
+  (opportunistically backfilling a hit it finds there).
+- **Local guest data was never at risk of forking or being lost across this
+  transition** — `tasks`/`sections`/etc. persist under plain, non-uid-scoped
+  `localStorage` keys (see above), so a guest who starts using the app
+  locally and later opens a share link keeps the exact same local data
+  regardless of whether/when a uid gets minted.
+- **Deliberately NOT in `BACKUP_FIELDS`** — same reasoning as the per-token
+  name cache this record superseded (`anonJoinNames`, now removed): a guest's
+  Firebase Anonymous Auth uid IS the device's identity, with nothing
+  meaningful to restore it as on another device. Once a guest signs in with a
+  real Google account (`linkWithCredential`, upgrading their uid in place —
+  see `AuthContext.jsx`), the guest record simply stops being read for that
+  uid; there's nothing to migrate out of it.
+
 ## Contributing / working in this codebase
 
 **Data flows one way, through one place.** `SchedulerContext.jsx` holds all
