@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.11',
+    date: '2026-08-07',
+    title: 'Fixed a rescheduled recurring task showing its old due date in the Tasks list',
+    changes: [
+      "Moving a recurring task's occurrence onto a different day now correctly updates its due date and Overdue/Today/Upcoming section in the Tasks list, instead of leaving it showing the old date.",
+    ],
+  },
+  {
     version: '3.0.10',
     date: '2026-08-07',
     title: 'Completing a task early now reschedules the rest of your plan',
