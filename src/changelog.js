@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.10',
+    date: '2026-08-07',
+    title: 'Completing a task early now reschedules the rest of your plan',
+    changes: [
+      "Marking a task done well before its scheduled day now re-plans the whole schedule to fill the capacity that frees up, not just the rest of today.",
+      "Fixed deleting a shared project after transferring its ownership sometimes failing with a permission error.",
+    ],
+  },
+  {
     version: '3.0.9',
     date: '2026-08-07',
     title: 'Fixed the "Share project" dialog briefly showing the wrong state',
