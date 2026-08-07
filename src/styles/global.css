@@ -718,6 +718,13 @@ select:focus-visible,
   justify-content: flex-end;
 }
 
+/* Plain text+icon button (reuses .nav-item's ghost look — no fill/border)
+   rather than a filled/bordered .btn, since it sits above the centered hero
+   and shouldn't compete visually with it. */
+.projects-page-manage-btn {
+  font-size: 13px;
+}
+
 .projects-page-hero {
   display: flex;
   flex-direction: column;

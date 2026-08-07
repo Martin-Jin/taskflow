@@ -59,6 +59,7 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   const projectName = `E2E Project ${Date.now()}`;
   const renamedProjectName = `${projectName} Renamed`;
 
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog).toBeVisible();
@@ -98,6 +99,7 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
 
   // Delete the project — its task(s) should move to "All Tasks" per the
   // confirm-dialog copy in ManageProjectsModal ("Its tasks will move to All Tasks").
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog2 = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog2).toBeVisible();
@@ -126,6 +128,7 @@ test('Manage Projects modal search is typo-tolerant (same ranker as the Sidebar 
   const runId = Date.now();
   const projectName = `E2eTypoSearch${runId}`;
 
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog).toBeVisible();
@@ -160,6 +163,7 @@ test('Sidebar project search is typo-tolerant and keeps pinned/recency order for
   const runId = Date.now();
   const projectName = `E2eSidebarTypo${runId}`;
 
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -187,6 +191,7 @@ test('Sidebar project search: Arrow keys move the highlighted row and Enter sele
   const runId = Date.now();
   const projectName = `E2eSidebarKbd${runId}`;
 
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -236,6 +241,7 @@ test('Manage Projects modal search: Arrow keys move the highlighted row and Ente
   const runId = Date.now();
   const projectName = `E2eManageKbd${runId}`;
 
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -269,6 +275,7 @@ test('Manage Projects modal search: Arrow keys move the highlighted row and Ente
   // — useModalA11y's capture-phase Escape handler always wins over this
   // input's own bubble-phase handler, same as this modal's existing
   // rename-input Escape (see ManageProjectsModal's own comment on this).
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog3 = page.getByRole('dialog', { name: 'Manage projects' });
   const searchInput2 = dialog3.getByPlaceholder('Search projects…');
@@ -286,12 +293,13 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
   const runId = Date.now();
   const projectName = `E2eManageMobile${runId}`;
 
-  // Create the project at default (desktop) viewport first — "Manage
-  // projects" is reachable from the Sidebar there; the mobile viewport
-  // switch below then reaches the same modal via the Tasks page's combined
-  // view/filter/project "⋯" menu instead (mobile has no Sidebar, and folds
-  // "See / manage all projects" into that popover rather than the desktop's
-  // inline button next to the project title — see ViewFilterMenu).
+  // Create the project at default (desktop) viewport first, via the Projects
+  // page's "Manage projects" button; the mobile viewport switch below then
+  // reaches the same modal via the Tasks page's combined view/filter/project
+  // "⋯" menu instead (mobile has no Sidebar, and folds "See / manage all
+  // projects" into that popover rather than the desktop's inline button next
+  // to the project title — see ViewFilterMenu).
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -354,6 +362,7 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   const projectName = `E2E Active Filter Project ${Date.now()}`;
 
   // Create a throwaway project and select it as the active Tasks view.
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const manageDialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(manageDialog).toBeVisible();
@@ -373,6 +382,7 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   await expect(page.getByRole('button', { name: 'Switch project' })).toContainText(projectName);
 
   // Delete it via Manage Projects while it's still the active view.
+  await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const manageDialog2 = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(manageDialog2).toBeVisible();

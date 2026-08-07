@@ -261,9 +261,10 @@ test.describe('Calendar filter menu — Projects search', () => {
   // smart-parse's "@tag" shorthand can create on the fly, see this file's
   // own tag test), a "#Project" mention only ever resolves against EXISTING
   // projects — so these have to be created for real via the "Manage
-  // projects" modal's own "Add project" form.
+  // projects" modal's own "Add project" form (reached from the Projects tab).
   async function seedExtraProjects(page, runId) {
     const names = [`E2eSearchAlpha${runId}`, `E2eSearchBeta${runId}`];
+    await gotoTab(page, 'Projects');
     await page.getByRole('button', { name: 'Manage projects', exact: true }).click();
     await page.waitForTimeout(300);
     for (const name of names) {
@@ -332,10 +333,10 @@ test.describe('Calendar filter menu — Projects search', () => {
   });
 
   test('search works at a mobile viewport', async ({ page }) => {
-    // Seed the extra projects at desktop width first — "Manage projects" is
-    // reached via the desktop Sidebar (mobile has no sidebar, see its own
-    // doc comment); the projects persist in localStorage once created, so
-    // switching to a phone viewport afterwards still sees them.
+    // Seed the extra projects at desktop width first — simplest to reuse the
+    // desktop-width seeding helper unconditionally; the projects persist in
+    // localStorage once created, so switching to a phone viewport afterwards
+    // still sees them.
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
     const runId = Date.now();
@@ -380,9 +381,8 @@ test.describe('Calendar filter menu — Projects search', () => {
     // this uses its own context with `hasTouch: true` instead of the shared
     // `page` fixture, matching an actual phone rather than just a phone-sized
     // desktop window.
-    // Starts at desktop width, same as the other Projects-search tests —
-    // "Manage projects" is reached via the desktop Sidebar (mobile has none)
-    // — then resizes to a touch-emulated phone viewport afterward.
+    // Starts at desktop width, same as the other Projects-search tests, then
+    // resizes to a touch-emulated phone viewport afterward.
     const context = await browser.newContext({ hasTouch: true });
     const page = await context.newPage();
     const errors = trackConsoleErrors(page);

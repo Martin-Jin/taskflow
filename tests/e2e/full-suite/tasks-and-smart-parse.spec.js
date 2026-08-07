@@ -688,6 +688,7 @@ test.describe('Smart parse', () => {
     // "Work Trip", not the shorter "Work" with "Trip" left dangling in the title.
     const projectA = `Work Trip ${RUN_ID}`;
     const projectB = `Work Notes ${RUN_ID}`;
+    await gotoTab(page, 'Projects');
     await page.getByRole('button', { name: 'Manage projects' }).click();
     const projectsDialog = page.getByRole('dialog', { name: 'Manage projects' });
     await expect(projectsDialog).toBeVisible();

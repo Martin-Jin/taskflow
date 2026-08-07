@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.6',
+    date: '2026-08-07',
+    title: 'One home for "Manage projects"',
+    changes: [
+      'Removed the sidebar\'s "Manage projects" button — the Projects page\'s "⋯" menu (which only ever offered this one action) is now a plain "Manage projects" button instead, so there\'s a single, clearer place to reach it.',
+    ],
+  },
+  {
     version: '3.0.5',
     date: '2026-08-07',
     title: 'Fixed a stale due date after moving a recurring task off its usual days',
