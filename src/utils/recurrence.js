@@ -472,6 +472,42 @@ export function computeFirstMatchingDueDate(anchorDate, recurrenceString) {
 }
 
 /**
+ * The date a recurring task's CURRENT occurrence should actually be shown as
+ * due on, honoring a single-occurrence `overrides` move (see
+ * computeRecurringRescheduleUpdate's off-pattern branch and Task.overrides in
+ * types/index.js).
+ *
+ * `task.dueDate` deliberately stays pinned to the series' own pattern anchor
+ * when an occurrence is moved off-pattern (e.g. "every Mon/Wed/Fri" moved
+ * this week onto a Thursday) — re-anchoring the whole series onto an
+ * off-pattern date would change which weekdays every FUTURE occurrence lands
+ * on, which is not what a one-off move means. But that split leaves every
+ * plain `task.dueDate` reader (TaskDetailModal's due-date field, its
+ * "Scheduled" block list) displaying the stale pre-move date, even though the
+ * scheduler itself (expandTaskOccurrences/rebalanceEngine) already places the
+ * occurrence's block on the moved-to date. This is the one place both need to
+ * agree: the override's `date`, when present and not `deleted`, IS the
+ * occurrence's real due date for display purposes; `task.dueDate` remains
+ * unchanged as the series anchor underneath it.
+ *
+ * A no-op (returns `task.dueDate` unchanged) for a non-recurring task, one
+ * with no override recorded against its current due date, or one whose
+ * override is a `deleted` entry (shouldn't happen for the task's OWN current
+ * occurrence — deleting the very occurrence a task is currently sitting on
+ * would leave it with no due date at all — but falls back safely rather than
+ * surfacing a dropped date if it ever does).
+ *
+ * @param {import('../types').Task} task
+ * @returns {string|null} ISO date, or null if the task has no due date at all.
+ */
+export function resolveCurrentOccurrenceDueDate(task) {
+  if (!task?.isRecurring || !task.dueDate || !task.overrides) return task?.dueDate ?? null;
+  const override = task.overrides[task.dueDate];
+  if (!override || override.deleted) return task.dueDate;
+  return override.date || task.dueDate;
+}
+
+/**
  * Every occurrence date of a recurring task within [rangeStartIso,
  * rangeEndIso] (inclusive), anchored at the task's own `dueDate` (the first/
  * defining occurrence — see Task.recurrenceRule). Used by rebalanceEngine.js

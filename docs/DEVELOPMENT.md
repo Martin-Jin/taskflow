@@ -282,6 +282,16 @@ Completing the moved occurrence (`completeTask`) advances `dueDate` from the
 untouched pattern anchor as normal and prunes that occurrence's now-closed-
 out override entry.
 
+Because `dueDate` deliberately stays on the pattern anchor for an off-pattern
+move, every plain `task.dueDate` reader needs to resolve the override to show
+the occurrence's real date — `utils/recurrence.js`'s
+`resolveCurrentOccurrenceDueDate(task)` does this (returns the override's
+`date` when one exists for the task's current `dueDate` and isn't `deleted`,
+else `dueDate` unchanged). `TaskDetailModal` uses it to seed/sync its due-date
+field and to pick which date's blocks its "Scheduled" list shows, so both
+agree with where the scheduler actually placed the occurrence instead of
+displaying the stale pre-move anchor.
+
 **A task newly becoming recurring starts a fresh occurrence, not a resumed
 one:** `computeRecurrenceSyncUpdates` (parent/sub-task recurrence sync, see
 above) resets `remainingHours` to `estimatedHours` and clears `isCompleted`

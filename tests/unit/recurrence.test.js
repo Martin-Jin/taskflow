@@ -9,6 +9,7 @@ import {
   expandTaskOccurrences,
   findRecurrencePhrase,
   buildRecurrenceString,
+  resolveCurrentOccurrenceDueDate,
   MAX_RECURRENCE_COUNT,
 } from '../../src/utils/recurrence';
 import { isBlockTaskCompleted } from '../../src/utils/missedTasks';
@@ -271,6 +272,70 @@ describe('computeRecurringRescheduleUpdate', () => {
         completedDates: [],
       });
     });
+  });
+});
+
+describe('resolveCurrentOccurrenceDueDate', () => {
+  // Regression coverage for the bug where a "Repeats every week on Sun, Mon,
+  // Wed, Fri" task's due date, manually moved to an off-pattern day (e.g.
+  // Thursday), never appeared to "stick": computeRecurringRescheduleUpdate's
+  // off-pattern branch (see above) deliberately leaves `task.dueDate` pinned
+  // to the series' pattern anchor and stashes the real move in `overrides`
+  // instead — correct for the scheduler (expandTaskOccurrences already
+  // consults `overrides`), but every plain `task.dueDate` reader (the task
+  // detail modal's due-date field and its "Scheduled" block list) kept
+  // showing the stale pre-move date since nothing else consulted the
+  // override. This resolver is that missing piece.
+  const mwfTask = {
+    isRecurring: true,
+    dueDate: '2026-08-05', // Wednesday — the pattern anchor
+    recurrenceRule: { unit: 'week', count: 1, days: [0, 1, 3, 5] }, // Sun/Mon/Wed/Fri
+  };
+
+  it('returns the plain dueDate when there is no override for it', () => {
+    expect(resolveCurrentOccurrenceDueDate(mwfTask)).toBe('2026-08-05');
+  });
+
+  it('returns the moved-to date when the current occurrence has an active override', () => {
+    const moved = { ...mwfTask, overrides: { '2026-08-05': { date: '2026-08-06' } } };
+    expect(resolveCurrentOccurrenceDueDate(moved)).toBe('2026-08-06');
+  });
+
+  it('ignores an override keyed by a DIFFERENT (past or future) occurrence date', () => {
+    const otherOverride = { ...mwfTask, overrides: { '2026-07-29': { date: '2026-07-30' } } };
+    expect(resolveCurrentOccurrenceDueDate(otherOverride)).toBe('2026-08-05');
+  });
+
+  it('falls back to dueDate for a deleted override rather than surfacing a dropped occurrence', () => {
+    const deleted = { ...mwfTask, overrides: { '2026-08-05': { deleted: true } } };
+    expect(resolveCurrentOccurrenceDueDate(deleted)).toBe('2026-08-05');
+  });
+
+  it('is a no-op for a non-recurring task', () => {
+    expect(resolveCurrentOccurrenceDueDate({ isRecurring: false, dueDate: '2026-08-05' })).toBe('2026-08-05');
+  });
+
+  it('returns null for a task with no due date at all', () => {
+    expect(resolveCurrentOccurrenceDueDate({ isRecurring: true, dueDate: null })).toBeNull();
+    expect(resolveCurrentOccurrenceDueDate(null)).toBeNull();
+  });
+
+  it('is unaffected by a task with no overrides map at all', () => {
+    expect(resolveCurrentOccurrenceDueDate({ isRecurring: true, dueDate: '2026-08-05' })).toBe('2026-08-05');
+  });
+
+  // The end-to-end sequence the bug report described: override the due date
+  // off-pattern, then complete that occurrence — the completion should
+  // consume the override (SchedulerContext.completeTask drops the overrides
+  // entry keyed by the closed-out occurrenceDate) and roll forward to the
+  // next PATTERN occurrence, since a one-off move doesn't change the series.
+  it('reflects the override up until the occurrence is completed, then the series resumes its own pattern', () => {
+    const movedThenAdvanced = {
+      ...mwfTask,
+      overrides: {}, // completeTask deletes the entry for the closed-out occurrenceDate
+      dueDate: '2026-08-07', // advanced to the next Sun/Mon/Wed/Fri occurrence (Friday)
+    };
+    expect(resolveCurrentOccurrenceDueDate(movedThenAdvanced)).toBe('2026-08-07');
   });
 });
 

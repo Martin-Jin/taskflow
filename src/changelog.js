@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.5',
+    date: '2026-08-07',
+    title: 'Fixed a stale due date after moving a recurring task off its usual days',
+    changes: [
+      "Moving a recurring task's due date onto a day outside its usual repeat pattern (e.g. moving a \"Sun/Mon/Wed/Fri\" task to a Thursday) now shows the new date immediately in the task detail popup and its \"Scheduled\" time, instead of appearing to snap back to the old date.",
+    ],
+  },
+  {
     version: '3.0.4',
     date: '2026-08-07',
     title: 'Projects page polish: search, manage-projects menu, and cleanup',
