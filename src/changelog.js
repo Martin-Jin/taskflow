@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.1',
+    date: '2026-08-07',
+    title: 'Fixed the mobile Calendar view menu',
+    changes: [
+      "Fixed the Calendar page's mobile view-switcher menu (the hamburger icon) sometimes rendering misaligned or needing multiple taps to open or close.",
+    ],
+  },
+  {
     version: '3.0.0',
     date: '2026-08-07',
     title: 'Right now / Next card is now clickable',

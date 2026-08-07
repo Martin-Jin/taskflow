@@ -197,10 +197,13 @@
   background: var(--color-bg-surface-hover);
 }
 
+/* Positioned via useMenuPosition (src/hooks/useMenuPosition.js) — portaled
+   to document.body and given an inline `position: fixed` + left/top when
+   anchored, or the `.menu-popover-centered` class (see global.css) when the
+   anchored spot wouldn't fit the viewport (always the case on mobile, via
+   forceCentered). z-index has to clear .modal-overlay's (160) now that this
+   renders at the document.body level rather than in-flow inside the toolbar. */
 .calendar-view-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
   z-index: 200;
   min-width: 130px;
   background: var(--color-bg-surface-raised);
@@ -301,16 +304,6 @@
   .calendar-filter-trigger {
     width: auto;
     margin-left: auto;
-  }
-
-  /* On mobile the hamburger trigger leads the bar (near the left edge, see
-     CalendarPage.jsx), the opposite of desktop where it trails the title —
-     so its dropdown opens right-aligned-to-trigger there but would run off
-     the left edge of a phone screen with that same anchoring. Override to
-     open from the trigger's left edge instead. */
-  .calendar-view-menu {
-    left: 0;
-    right: auto;
   }
 
   .calendar-toolbar-actions {

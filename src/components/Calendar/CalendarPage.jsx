@@ -71,7 +71,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   // action: Re-balance schedule + New event.
   const [fabExpanded, setFabExpanded] = useState(false);
   const dateTitleBtnRef = useRef(null);
-  const viewMenuWrapRef = useRef(null);
+  const viewMenuTriggerRef = useRef(null);
   const fabGroupRef = useRef(null);
   const fabTriggerRef = useRef(null);
   const {
@@ -139,14 +139,30 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
     }),
   });
 
-  useEffect(() => {
-    if (!showViewMenu) return;
-    function onDocMouseDown(e) {
-      if (viewMenuWrapRef.current && !viewMenuWrapRef.current.contains(e.target)) setShowViewMenu(false);
-    }
-    document.addEventListener('mousedown', onDocMouseDown);
-    return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [showViewMenu]);
+  // Positions the hamburger view-switcher menu — anchored under the trigger
+  // on desktop, forced into useMenuPosition's centered-with-backdrop mode on
+  // mobile, same treatment as the date-picker dropdown above (see its
+  // comment for why: a corner-anchored menu rarely has room on a phone
+  // screen). This also replaces the old shared-ref outside-click effect,
+  // which was buggy on mobile: CalendarPage renders TWO DOM copies of the
+  // trigger/menu (mobile vs. desktop, swapped via isMobile), so a single ref
+  // shared between them could point at a stale node right as isMobile's
+  // async matchMedia listener updated, making the very tap that opened the
+  // menu register as "outside" and immediately re-close it.
+  const {
+    menuRef: viewMenuRef,
+    mode: viewMenuMode,
+    style: viewMenuStyle,
+  } = useMenuPosition({
+    isOpen: showViewMenu,
+    anchorRef: viewMenuTriggerRef,
+    onClose: () => setShowViewMenu(false),
+    forceCentered: isMobile,
+    computeAnchored: (anchorRect, menuRect) => ({
+      left: anchorRect.right - menuRect.width,
+      top: anchorRect.bottom + 6,
+    }),
+  });
 
   useEffect(() => {
     if (!fabExpanded) return undefined;
@@ -447,8 +463,9 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               complexity — it's simplest as an explicit mobile-only duplicate
               of the trigger placed first in the DOM). */}
           {isMobile && (
-            <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
+            <div className="calendar-view-menu-wrap">
               <button
+                ref={viewMenuTriggerRef}
                 className="btn btn-icon calendar-view-menu-trigger"
                 onClick={() => setShowViewMenu((v) => !v)}
                 aria-label="Change view"
@@ -457,22 +474,31 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               >
                 <Menu size={16} />
               </button>
-              {showViewMenu && (
-                <div className="calendar-view-menu">
-                  {VIEWS.map((v) => (
-                    <button
-                      key={v.key}
-                      className={view === v.key ? 'active' : ''}
-                      onClick={() => {
-                        setView(v.key);
-                        setShowViewMenu(false);
-                      }}
+              {showViewMenu &&
+                createPortal(
+                  <>
+                    {viewMenuMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowViewMenu(false)} />}
+                    <div
+                      ref={viewMenuRef}
+                      className={`calendar-view-menu ${viewMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
+                      style={viewMenuMode === 'anchored' ? viewMenuStyle : undefined}
                     >
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+                      {VIEWS.map((v) => (
+                        <button
+                          key={v.key}
+                          className={view === v.key ? 'active' : ''}
+                          onClick={() => {
+                            setView(v.key);
+                            setShowViewMenu(false);
+                          }}
+                        >
+                          {v.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>,
+                  document.body
+                )}
             </div>
           )}
           <div className="calendar-title-wrap">
@@ -508,8 +534,9 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               )}
           </div>
           {!isMobile && (
-            <div className="calendar-view-menu-wrap" ref={viewMenuWrapRef}>
+            <div className="calendar-view-menu-wrap">
               <button
+                ref={viewMenuTriggerRef}
                 className="btn btn-icon calendar-view-menu-trigger"
                 onClick={() => setShowViewMenu((v) => !v)}
                 aria-label="Change view"
@@ -518,22 +545,31 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
               >
                 <Menu size={16} />
               </button>
-              {showViewMenu && (
-                <div className="calendar-view-menu">
-                  {VIEWS.map((v) => (
-                    <button
-                      key={v.key}
-                      className={view === v.key ? 'active' : ''}
-                      onClick={() => {
-                        setView(v.key);
-                        setShowViewMenu(false);
-                      }}
+              {showViewMenu &&
+                createPortal(
+                  <>
+                    {viewMenuMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowViewMenu(false)} />}
+                    <div
+                      ref={viewMenuRef}
+                      className={`calendar-view-menu ${viewMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
+                      style={viewMenuMode === 'anchored' ? viewMenuStyle : undefined}
                     >
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+                      {VIEWS.map((v) => (
+                        <button
+                          key={v.key}
+                          className={view === v.key ? 'active' : ''}
+                          onClick={() => {
+                            setView(v.key);
+                            setShowViewMenu(false);
+                          }}
+                        >
+                          {v.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>,
+                  document.body
+                )}
             </div>
           )}
           {/* Only worth showing once the user has actually navigated away from
