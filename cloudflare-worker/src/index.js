@@ -138,13 +138,13 @@ const TASK_CONTENT_FIELDS = [
   {
     name: 'estimatedHours',
     type: 'number',
-    description: 'Estimated hours to complete the task (e.g. "30 min" -> 0.5, "2 hours" -> 2). Only if a duration was stated or clearly implied.',
+    description: 'Estimated hours to complete the task (e.g. "30 min" -> 0.5, "2 hours" -> 2). Use the stated/implied duration if given, otherwise assume a reasonable value for the task described — do not omit this.',
   },
   {
     name: 'priority',
     type: 'string',
     enum: ['low', 'medium', 'high', 'urgent'],
-    description: 'Only set if urgency/importance was explicitly stated (e.g. "urgent", "low priority").',
+    description: 'Use the stated/implied urgency if given (e.g. "urgent", "low priority"), otherwise assume "medium" — do not omit this.',
   },
   {
     name: 'dueDate',
@@ -155,7 +155,13 @@ const TASK_CONTENT_FIELDS = [
     name: 'enforceDueDate',
     type: 'boolean',
     description:
-      'True only if the task must be done ON its due date specifically (not just by it) — e.g. "must be done on the 5th", "has to happen exactly on Friday". Only meaningful when dueDate is also set; ignored otherwise.',
+      'True if the task must be done ON its due date specifically (not just by it) — e.g. "must be done on the 5th", "has to happen exactly on Friday", or an exam/test/lab (which can only happen on its scheduled day). Only meaningful when dueDate is also set; ignored otherwise.',
+  },
+  {
+    name: 'earliestDate',
+    type: 'string',
+    description:
+      'ISO date (YYYY-MM-DD) before which the task cannot be worked on/scheduled at all — set this ONLY when the request or context clearly states the task genuinely is not available/doable until a specific day (e.g. "assignment unlocks on the 10th", "can\'t start until the materials arrive Monday", a course page saying a task opens on a given date). Do not set this just because a task has a due date or a preferred day to work on it — it is for a hard "not usable/available before this day" constraint, not scheduling preference.',
   },
   { name: 'isRecurring', type: 'boolean', description: 'True only if the task explicitly repeats (e.g. "every day", "weekly").' },
   {
@@ -166,7 +172,7 @@ const TASK_CONTENT_FIELDS = [
   {
     name: 'fixedTime',
     type: 'string',
-    description: '"HH:MM" 24-hour time, only if a specific time of day was mentioned for doing the task itself (not a due date/deadline).',
+    description: '"HH:MM" 24-hour time for doing the task itself (not a due date/deadline) — use the stated time if given; for an exam/test/lab with no stated time, assume "09:00" as a reasonable default start.',
   },
   {
     name: 'projectId',
@@ -355,6 +361,9 @@ function buildSystemPrompt(contextMarkdown) {
     'Call as many tools as the request genuinely needs — a single request may reasonably produce many operations (e.g. "plan out this project" creating a parent task, several subtasks with dependencies, and moving them into a project/section).',
     'Only call a tool when the user\'s request actually implies that action — do not reorganize or touch anything the user did not ask about.',
     'Tasks vs events — this app has a scheduler that decides WHEN task work actually happens (via dueDate/fixedTime/priority/estimatedHours on create_task/update_task); it is not this tool\'s job to plan or block out working time. Default to create_task for anything the user describes needing to be done, even if it has a deadline or a preferred day. Only use create_event/update_event when the request is unmistakably about a fixed real-world occurrence that must happen at that exact time regardless of workload (an appointment, meeting, flight, class, etc.) or explicitly asks to add/schedule a calendar event — never as a way to "schedule" or "block time for" a task.',
+    'Always set estimatedHours and priority on every create_task/update_task, making a reasonable assumption when the user did not state one explicitly — do not leave them unset just because the request was vague. Base the assumption on the task\'s title/notes and typical real-world effort (e.g. "essay" implies a few hours, "read chapter 3" implies under an hour), and default priority to "medium" unless something about the task implies otherwise.',
+    'Exams, tests, and labs specifically can only be done on the day they are scheduled — set dueDate to that day AND enforceDueDate to true (not just dueDate alone). If no specific time was stated, assume a fixedTime/estimatedHours block of 9am–12pm (fixedTime "09:00", estimatedHours 3) as a reasonable default for these; use the stated time/duration instead when one is given.',
+    'If the request or context clearly states a task is not available/doable until a specific day — e.g. an assignment that "unlocks"/"opens"/"is released" on a given date, or something blocked on materials/access arriving — set earliestDate to that day so the scheduler does not place work on it any earlier. Do not set earliestDate merely because a task has a due date or a preferred day to start; it is only for a genuine "cannot be worked on before this day" constraint.',
     '',
     contextMarkdown,
   ].join('\n');

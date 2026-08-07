@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '2.9.0',
+    date: '2026-08-07',
+    title: 'AI Assistant now fills in duration and priority automatically',
+    changes: [
+      "The AI Assistant now always sets a duration and priority when creating or updating tasks, making a reasonable assumption when you don't state one instead of leaving it blank.",
+      "Exams, tests, and labs are now assumed to happen only on their due date (not just by it), with a 9am–12pm time block by default when you don't specify one.",
+      "The AI Assistant can now set a task's \"not before\" date when your request or context makes clear it genuinely can't be started yet (e.g. an assignment that unlocks on a specific day), so the scheduler won't plan work on it earlier than that.",
+    ],
+  },
+  {
     version: '2.8.0',
     date: '2026-08-07',
     title: 'A dedicated Projects page',
