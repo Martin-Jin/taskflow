@@ -30,36 +30,17 @@ import {
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { savePersisted } from '../utils/persistence.js';
-
-const PUSH_DEBOUNCE_MS = 1500;
-
-// ---- Automatic cloud backups ------------------------------------------------
-// Once per day while signed in with cloud sync active, a backup is taken
-// automatically (tagged `automatic: true`, see firestoreSync.createBackup) and
-// old automatic ones beyond AUTO_BACKUP_RETENTION_COUNT are pruned. Manual
-// "Back up now" backups have their own, independent retention pool
-// (MANUAL_BACKUP_RETENTION_COUNT below) — the two counts don't share a
-// budget, so up to 14 of each can coexist. See planAutoBackupPrune below.
-const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const AUTO_BACKUP_RETENTION_COUNT = 14;
-// Manual backups ("Back up now") are pruned down to this many most-recent
-// ones too — independent from AUTO_BACKUP_RETENTION_COUNT above, not a
-// shared pool. Same value, but a separate constant since there's no reason
-// the two need to move together.
-const MANUAL_BACKUP_RETENTION_COUNT = 14;
-// How often a long-lived open tab re-checks whether a day has elapsed since
-// the last automatic backup, without needing a reload — mirrors
-// useGoogleCalendarSync's periodic-poll pattern (a plain setInterval with an
-// in-flight guard ref), just on a much coarser cadence since this only needs
-// to catch a day boundary, not near-realtime freshness.
-const AUTO_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+import {
+  CLOUD_SYNC_DEBOUNCE_MS,
+  BACKUP_CHECK_INTERVAL_MS,
+  BACKUP_RETENTION_COUNT_AUTOMATIC,
+  BACKUP_RETENTION_COUNT_MANUAL,
+} from '../services/dataRetention';
 
 /**
  * Pure retention decision, shared by both backup pools — automatic and
- * manual each have their own independent retention count (see the constants
- * above) but the same "keep the N most recent, prune the rest oldest-first"
- * logic applies to both, so this one function serves both call sites in
- * pruneBackupPool below rather than duplicating it.
+ * manual each have their own independent retention count but the same
+ * "keep the N most recent, prune the rest oldest-first" logic applies to both.
  *
  * `wantAutomatic` (default true, preserving this function's original
  * automatic-only behavior for existing callers) selects which pool to prune
@@ -71,7 +52,7 @@ const AUTO_BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
  * backups beyond `retentionCount` (oldest-first among the excess), ready to
  * delete.
  */
-export function planAutoBackupPrune(backups, retentionCount = AUTO_BACKUP_RETENTION_COUNT, wantAutomatic = true) {
+export function planAutoBackupPrune(backups, retentionCount = BACKUP_RETENTION_COUNT_AUTOMATIC, wantAutomatic = true) {
   const pool = backups.filter((b) => Boolean(b.automatic) === wantAutomatic);
   const sorted = [...pool].sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   return sorted.slice(retentionCount).map((b) => b.id);
@@ -578,14 +559,14 @@ export function useCloudSync({
         runPushNow();
         return;
       }
-      pushTimerRef.current = setTimeout(runPushNow, PUSH_DEBOUNCE_MS);
+      pushTimerRef.current = setTimeout(runPushNow, CLOUD_SYNC_DEBOUNCE_MS);
     },
     [runPushNow]
   );
 
   // Flush a pending debounced push immediately when the tab is about to go
   // away (backgrounded or closed) instead of waiting out the full
-  // PUSH_DEBOUNCE_MS. Without this, an edit made and then quickly followed by
+  // CLOUD_SYNC_DEBOUNCE_MS. Without this, an edit made and then quickly followed by
   // switching tabs/closing the browser can lose the write entirely — the
   // debounce timer never fires. Completions no longer depend on this path at
   // all (schedulePush pushes them immediately, see hasNewCompletion), which
@@ -1017,8 +998,8 @@ export function useCloudSync({
       // Prune manual backups beyond their retention count right away, rather
       // than waiting for the next daily automatic-backup check — a user
       // backing up repeatedly in one session shouldn't have to wait a day to
-      // get pruned back down to MANUAL_BACKUP_RETENTION_COUNT.
-      await pruneBackupPool(listManualBackups, MANUAL_BACKUP_RETENTION_COUNT, false, 'manual');
+      // get pruned back down to the retention limit.
+      await pruneBackupPool(listManualBackups, BACKUP_RETENTION_COUNT_MANUAL, false, 'manual');
       setCloudBackups(await listBackups(user.uid));
     } catch (err) {
       // Retention drifting above its cap, or a stale "view backups" list, are
@@ -1029,21 +1010,19 @@ export function useCloudSync({
   }, [user, stateRef, theme, events, setNotification, pruneBackupPool]);
 
   // ---- Automatic daily cloud backup + retention -----------------------------
-  // Runs at most once per AUTO_BACKUP_INTERVAL_MS. Unlike createCloudBackup
-  // above (a user-initiated action they're actively waiting on, so it SHOULD
-  // surface errors), a failure here just warns to the console and moves on —
-  // it's a background action the user never explicitly triggered, so a
-  // disruptive error toast would be more annoying than useful. It doesn't
-  // return anything or throw for the same reason: nothing is waiting on it.
-  // Also takes this opportunity to prune manual backups beyond their own
-  // retention count (see MANUAL_BACKUP_RETENTION_COUNT) — a daily catch-all
-  // on top of the prune createCloudBackup already does right after each new
-  // manual backup, in case backups were deleted/created outside that flow.
+  // Runs at most once per day. Unlike createCloudBackup above (a user-initiated
+  // action they're actively waiting on, so it SHOULD surface errors), a failure
+  // here just warns to the console and moves on — it's a background action the
+  // user never explicitly triggered, so a disruptive error toast would be more
+  // annoying than useful. It doesn't return anything or throw for the same
+  // reason: nothing is waiting on it. Also takes this opportunity to prune
+  // manual backups beyond their retention count — a daily catch-all on top of
+  // the prune createCloudBackup already does right after each new manual backup.
   const runAutomaticBackupIfDue = useCallback(async () => {
     if (!user || !cloudSynced) return;
     if (autoBackupInFlightRef.current) return;
     const now = Date.now();
-    if (lastAutoBackupAtRef.current && now - lastAutoBackupAtRef.current < AUTO_BACKUP_INTERVAL_MS) return;
+    if (lastAutoBackupAtRef.current && now - lastAutoBackupAtRef.current < BACKUP_CHECK_INTERVAL_MS) return;
     autoBackupInFlightRef.current = true;
     try {
       const payload = buildBackupPayload({ ...stateRef.current, theme, events });
@@ -1055,11 +1034,11 @@ export function useCloudSync({
       lastAutoBackupAtRef.current = now;
       setLastAutoBackupAt(now);
 
-      // Prune both pools — independent retention counts, see the constants
-      // above. Manual backups are never candidates in the automatic prune
-      // (and vice versa) since each is fetched from its own filtered query.
-      await pruneBackupPool(listAutomaticBackups, AUTO_BACKUP_RETENTION_COUNT, true, 'automatic');
-      await pruneBackupPool(listManualBackups, MANUAL_BACKUP_RETENTION_COUNT, false, 'manual');
+      // Prune both pools — independent retention counts. Manual backups are
+      // never candidates in the automatic prune (and vice versa) since each is
+      // fetched from its own filtered query.
+      await pruneBackupPool(listAutomaticBackups, BACKUP_RETENTION_COUNT_AUTOMATIC, true, 'automatic');
+      await pruneBackupPool(listManualBackups, BACKUP_RETENTION_COUNT_MANUAL, false, 'manual');
       // Refresh the displayed backup list (separate from pruning above) so
       // the just-created automatic backup shows up in the "view backups" UI.
       setCloudBackups(await listBackups(user.uid));
@@ -1077,7 +1056,7 @@ export function useCloudSync({
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
     runAutomaticBackupIfDue();
-    const handle = setInterval(runAutomaticBackupIfDue, AUTO_BACKUP_CHECK_INTERVAL_MS);
+    const handle = setInterval(runAutomaticBackupIfDue, BACKUP_CHECK_INTERVAL_MS);
     return () => clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, cloudSynced]);

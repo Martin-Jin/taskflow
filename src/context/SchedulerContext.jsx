@@ -74,6 +74,7 @@ import {
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
+import { RETENTION_DAYS_COMPLETED_TASKS, computeCutoffMs } from '../services/dataRetention';
 import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
 import { setGuestDisplayName } from '../utils/guestIdentity';
 import {
@@ -925,12 +926,11 @@ export function SchedulerProvider({ children }) {
 
   // ---- Completed task retention sweep --------------------------------------
   // Runs once on mount. Completed (non-recurring — recurring tasks never set
-  // isCompleted, see completeTask) tasks older than 30 days are dropped along
-  // with their blocks, same task-id-based filtering as backupService.js's
-  // excludeCompletedTasks. A once-per-load check is enough for this
-  // personal-scale app — no need for a running interval on top of it.
+  // isCompleted, see completeTask) tasks older than RETENTION_DAYS_COMPLETED_TASKS
+  // are dropped along with their blocks. A once-per-load check is enough for
+  // this personal-scale app — no need for a running interval on top of it.
   useEffect(() => {
-    const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const cutoffMs = computeCutoffMs(RETENTION_DAYS_COMPLETED_TASKS);
     const isStaleCompleted = (t) => t.isCompleted && t.completedAt && new Date(t.completedAt).getTime() < cutoffMs;
     // Shared tasks are exempt: this sweep is personal housekeeping running on
     // whichever device happens to load first, so applying it to a shared
@@ -951,7 +951,7 @@ export function SchedulerProvider({ children }) {
     }
     const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
     const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
-    commit({ tasks: newTasks, blocks: newBlocks }, `Removed ${staleIds.size} completed task(s) older than 30 days`);
+    commit({ tasks: newTasks, blocks: newBlocks }, `Removed ${staleIds.size} completed task(s) older than ${RETENTION_DAYS_COMPLETED_TASKS} days`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

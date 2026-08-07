@@ -58,13 +58,7 @@ import {
   PRESENCE_STALE_MS,
 } from '../utils/sharedTaskSync';
 import { isGuestUser, findOwnGuestName } from '../utils/sharedProjectAccess';
-
-/** How often to refresh this user's presence heartbeat. Comfortably inside PRESENCE_STALE_MS so a live viewer never flickers out. */
-const PRESENCE_HEARTBEAT_MS = 30 * 1000;
-
-/** Mirrors useCloudSync's PUSH_DEBOUNCE_MS — same rationale: collapse a burst of
- * edits into one write instead of one per change. */
-const PUSH_DEBOUNCE_MS = 1500;
+import { PRESENCE_HEARTBEAT_MS, SHARED_PROJECT_SYNC_DEBOUNCE_MS } from '../services/dataRetention';
 
 /**
  * @param {object} params
@@ -491,7 +485,7 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
   // project) can't accidentally cancel a pending push for an unrelated edit.
   const schedulePush = useCallback(() => {
     if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    pushTimerRef.current = setTimeout(runPushNow, PUSH_DEBOUNCE_MS);
+    pushTimerRef.current = setTimeout(runPushNow, SHARED_PROJECT_SYNC_DEBOUNCE_MS);
   }, [runPushNow]);
 
   useEffect(() => {
@@ -560,7 +554,7 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
     };
 
     beat();
-    const timer = setInterval(beat, PRESENCE_HEARTBEAT_MS);
+    const timer = setInterval(beat, PRESENCE_HEARTBEAT_MS); // polls every PRESENCE_HEARTBEAT_MS and re-timestamps current user
 
     // Best-effort cleanup on unmount AND on tab-close/hide. A plain unmount
     // handler alone never fires for a closed tab (the React tree doesn't

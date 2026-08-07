@@ -802,6 +802,35 @@ consequences for persistence:
   removed from. See the doc comment above `FIELD_TYPES` in
   `src/services/backupService.js` for the full rationale.
 
+### Data retention policies
+
+Time-based cleanup is centralized in `src/services/dataRetention.js` to keep
+all retention durations in one place and use consistent utility functions. When
+adding new cleanup code, import the retention constant from this module instead
+of inlining time math.
+
+**Current policies:**
+
+| Data | Retention | Cleanup Location |
+|------|-----------|------------------|
+| Personal completed tasks | 30 days | `SchedulerContext.jsx` on mount |
+| Google Calendar events | 365 days | `eventSyncService.js` during pulls |
+| Automatic cloud backups | 14 most recent | `useCloudSync.js` hourly/daily |
+| Manual cloud backups | 14 most recent | `useCloudSync.js` per-backup + daily |
+| Shared project presence | 90 seconds stale | Client-side (no delete); add TTL policy in Console |
+| Shared project tasks | No auto-cleanup | Owner/editor must delete; shared tasks are co-owned |
+| Anonymous user profiles | Not yet limited | Add TTL policy in Console (30 days) |
+| Expired share links | Not yet cleaned | Add Worker cron job |
+
+**Utilities available:**
+
+- `computeCutoffMs(days)` — timestamp cutoff for a retention period
+- `computeCutoffIso(days)` — ISO date cutoff (local time, not UTC)
+- `isStale(timestamp, days)` — boolean check for stale data
+- `computeEffectivePurgeBoundary(syncedBounds, maxDays)` — cap retention when synced data extends further back
+
+See the module's own doc comments for full signatures and usage examples.
+
 ### Guest identity
 
 Every signed-out visitor is a **guest** by default, whether they just opened
