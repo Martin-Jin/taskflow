@@ -88,8 +88,15 @@ export const GUIDED_TOUR_STEPS = [
     tab: 'tasks',
     selector: '[data-tour="add-project"]',
     placement: 'right',
-    title: 'Projects',
-    body: 'Create as many projects as you like from the sidebar to separate work, personal life, or any other area — pin your favorites, rename or delete any of them, and switch between them from here, the project picker, or the search bar. Each project\'s "⋯" menu also lets you share it via a link, so others can view or edit it with you.',
+    title: 'Creating projects',
+    body: 'Create as many projects as you like from the sidebar to separate work, personal life, or any other area — pin your favorites, rename or delete any of them, and switch between them from here, the Projects page, the project picker, or the search bar. Each project\'s "⋯" menu also lets you share it via a link, so others can view or edit it with you.',
+  },
+  {
+    tab: 'projects',
+    selector: '[data-tour="nav-projects"]',
+    placement: 'right',
+    title: 'Projects page',
+    body: 'A directory of everything: search for any project, or browse Recent, Shared, and My Projects — sortable by size, duration, or when you created them.',
   },
   {
     tab: 'stats',

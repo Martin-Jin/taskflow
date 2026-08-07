@@ -432,7 +432,7 @@ README for either.
 ## Using the app
 
 On phone-width screens (<640px) the sidebar is replaced by a fixed bottom
-tab bar (Dashboard / Calendar / Tasks / Stats / Settings). Tablet widths
+tab bar (Dashboard / Calendar / Tasks / Projects / Stats / Settings). Tablet widths
 keep the full sidebar. Every view is fully usable at any width — nothing is
 hidden, only reorganized.
 
@@ -497,10 +497,15 @@ cached copy.
   schedule** re-runs the engine while preserving locked blocks.
 - **Tasks** — one page, three views via its own List/Board/Gantt switch, all
   scoped to one project at a time (or "All Tasks"). Switch projects from the
-  sidebar, the project picker shown above List/Board, or the search bar;
-  pin, rename, or delete a project from its "⋯" menu (sidebar row or the
-  page header) — pinned projects sort first, unpinned ones by most recently
-  visited.
+  sidebar, the Projects page, the project picker shown above List/Board, or
+  the search bar; pin, rename, or delete a project from its "⋯" menu (sidebar
+  row or the page header) — pinned projects sort first, unpinned ones by most
+  recently visited.
+- **Projects** — a directory of every project: a fuzzy search box, and
+  Recent / Shared / My Projects columns (the last sortable by size, total
+  estimated hours, or creation date). The sidebar itself only shows your 5
+  most recently visited projects plus a link into this page, so it stays
+  short even with a large project list.
   - **List** — searchable/filterable; add/edit/complete/delete/lock tasks
     (adding requires a due date); open a task to edit every field, manage
     subtasks, set dependencies, mark it as able to run unattended, or force
