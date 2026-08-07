@@ -21,6 +21,33 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.4',
+    date: '2026-08-07',
+    title: 'Projects page polish: search, manage-projects menu, and cleanup',
+    changes: [
+      'Searching on the Projects page now narrows the Recent/Shared/My projects columns to matching projects too, not just the quick-jump dropdown.',
+      'Project hours are now rounded to the nearest whole hour on the Projects page, instead of showing long decimals.',
+      'Moved the "manage all projects" shortcut into the "⋯" menu (on both the Projects page and the Tasks page) instead of a separate icon button.',
+      'The "Add"/"Cancel" buttons when adding a new project are no longer stretched full-width.',
+    ],
+  },
+  {
+    version: '3.0.3',
+    date: '2026-08-07',
+    title: 'Fixed: tasks and Board columns added to a shared project never reached collaborators',
+    changes: [
+      "A task or Board column created in a shared project now actually appears for everyone you've shared it with — previously it stayed visible only to whoever created it, even though it had synced correctly behind the scenes.",
+    ],
+  },
+  {
+    version: '3.0.2',
+    date: '2026-08-07',
+    title: 'AI Assistant edits on shared projects respect viewer permissions',
+    changes: [
+      "The AI Assistant can no longer edit or delete tasks in a shared project you can only view — it now refuses immediately with a clear message, instead of appearing to apply the change and then silently reverting it a moment later.",
+    ],
+  },
+  {
     version: '3.0.1',
     date: '2026-08-07',
     title: 'Fixed the mobile Calendar view menu',

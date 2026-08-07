@@ -110,8 +110,25 @@ export function partitionTasksBySharing(tasks) {
  * own array — storing it in the document would be redundant (the document's
  * path already says which project it's in) and would resurrect a stale id if a
  * project were ever re-created.
+ *
+ * `projectId` is local-only too, for a subtler reason: it's the LOCAL Project
+ * row id a shared task's owner happened to have BEFORE sharing (set once, at
+ * `addTask`/`shareProject` time, and never touched again on the owner's side).
+ * Every other collaborator has their OWN local Project row for this same
+ * shared project — created by `joinSharedProject` with an id that equals
+ * `sharedProjectId`, which is NOT the owner's original id — so if the owner's
+ * `projectId` value were synced verbatim, every reader whose local project
+ * list doesn't happen to use that exact id (i.e. every joiner) would find
+ * `filterTasksByProject`/Board/Gantt/project-stats — everything that matches
+ * `task.projectId === activeProjectId` — silently returning nothing for this
+ * task, even though the sync itself delivered it correctly. This was a real,
+ * shipped bug: an owner's newly created shared task appeared for the owner
+ * and never for a viewer/editor, with the sync engine itself blameless.
+ * `deserializeSharedTask`/`deserializeSharedSection` re-derive the CORRECT
+ * per-reader `projectId` from `localProjectId` (this reader's own Project row
+ * for the shared project) instead of trusting whatever the document carries.
  */
-const LOCAL_ONLY_TASK_FIELDS = ['sharedProjectId'];
+const LOCAL_ONLY_TASK_FIELDS = ['sharedProjectId', 'projectId'];
 
 /**
  * Cap on a shared task's comment TOMBSTONES (Task.deletedCommentIds — see
@@ -143,9 +160,26 @@ export function serializeSharedTask(task) {
   return out;
 }
 
-/** Rebuild the app-local task shape from a stored document, re-tagging it with the project it came from. */
-export function deserializeSharedTask(doc, projectId) {
-  return { ...doc, sharedProjectId: projectId };
+/**
+ * Rebuild the app-local task shape from a stored document, re-tagging it with
+ * the project it came from.
+ *
+ * @param {object} doc - the raw Firestore document (never trust its own
+ *   `projectId` field — see LOCAL_ONLY_TASK_FIELDS's comment on why that's
+ *   the OWNER's local id, meaningless to every other reader).
+ * @param {string} projectId - the shared project's id (`sharedProjectId`).
+ * @param {string} [localProjectId] - THIS reader's own local Project row id
+ *   for that shared project (e.g. `projects.find(p => p.sharedProjectId ===
+ *   projectId)?.id`). Stamped onto the rebuilt task as `projectId` so every
+ *   consumer that matches tasks to a project by plain `projectId` equality
+ *   (filterTasksByProject, Board, Gantt, project stats) keeps working for
+ *   this reader without needing to special-case shared projects. Falls back
+ *   to the document's own `projectId` if the caller can't resolve one yet
+ *   (e.g. a snapshot arriving in the brief window before the local project
+ *   row exists) rather than dropping the field entirely.
+ */
+export function deserializeSharedTask(doc, projectId, localProjectId) {
+  return { ...doc, projectId: localProjectId ?? doc?.projectId, sharedProjectId: projectId };
 }
 
 /**
@@ -251,12 +285,15 @@ export function planSharedTaskWrites({ tasks, projectId, syncedFingerprints, del
  * @param {Map<string, string|null>} params.pending - taskId -> fingerprint we wrote (null = we wrote a delete)
  * @param {Iterable<string>} [params.knownRemoteIds] - ids ever confirmed to exist server-side for this project (e.g. the caller's syncedFingerprints keys) — absence from here means "never pushed", not "deleted"
  * @param {string} [params.todayIso] - ISO date for re-deriving recurring fields on merge; defaults to the real current date (see mergeSharedTask)
+ * @param {string} [params.localProjectId] - THIS reader's own local Project row id for this
+ *   shared project — see deserializeSharedTask's doc comment for why the document's own
+ *   `projectId` can never be trusted directly (it's the OWNER's local id, not this reader's).
  * @returns {{tasks: import('../types').Task[], confirmedIds: string[], removedIds: string[]}}
  *   `confirmedIds` can be dropped from `pending`; `removedIds` are tasks gone remotely (callers prune their blocks).
  */
-export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pending, knownRemoteIds, todayIso }) {
+export function planRemoteTaskApply({ localTasks, remoteTasks, projectId, pending, knownRemoteIds, todayIso, localProjectId }) {
   const localById = new Map((localTasks || []).filter((t) => t?.sharedProjectId === projectId).map((t) => [t.id, t]));
-  const remoteById = new Map((remoteTasks || []).map((d) => [d.id, deserializeSharedTask(d, projectId)]));
+  const remoteById = new Map((remoteTasks || []).map((d) => [d.id, deserializeSharedTask(d, projectId, localProjectId)]));
   const knownRemoteIdSet = knownRemoteIds ? new Set(knownRemoteIds) : null;
 
   const confirmedIds = [];
@@ -473,8 +510,8 @@ export function partitionSectionsBySharing(sections) {
   return { personalSections, sharedSections };
 }
 
-/** Local-only field — see LOCAL_ONLY_TASK_FIELDS above for the same reasoning applied to sections. */
-const LOCAL_ONLY_SECTION_FIELDS = ['sharedProjectId'];
+/** Local-only fields — see LOCAL_ONLY_TASK_FIELDS above for the same reasoning applied to sections (`projectId` is the owner's own local Project row id, meaningless to any other collaborator). */
+const LOCAL_ONLY_SECTION_FIELDS = ['sharedProjectId', 'projectId'];
 
 /** Strip a section down to what's actually stored in `sharedProjects/{projectId}/sections/{sectionId}` — see serializeSharedTask. */
 export function serializeSharedSection(section) {
@@ -487,9 +524,14 @@ export function serializeSharedSection(section) {
   return out;
 }
 
-/** Rebuild the app-local section shape from a stored document, re-tagging it with the project it came from. */
-export function deserializeSharedSection(doc, projectId) {
-  return { ...doc, sharedProjectId: projectId };
+/**
+ * Rebuild the app-local section shape from a stored document, re-tagging it
+ * with the project it came from — see deserializeSharedTask for why
+ * `localProjectId` (this reader's own local Project row id), not the
+ * document's own `projectId`, is what gets stamped on.
+ */
+export function deserializeSharedSection(doc, projectId, localProjectId) {
+  return { ...doc, projectId: localProjectId ?? doc?.projectId, sharedProjectId: projectId };
 }
 
 /** Stable comparison of a section's synced content — see sharedTaskFingerprint. */
@@ -550,11 +592,12 @@ export function planSharedSectionWrites({ sections, projectId, syncedFingerprint
  * @param {string} params.projectId
  * @param {Map<string, string|null>} params.pending
  * @param {Iterable<string>} [params.knownRemoteIds] - ids ever confirmed to exist server-side for this project — see planRemoteTaskApply
+ * @param {string} [params.localProjectId] - this reader's own local Project row id — see deserializeSharedSection
  * @returns {{sections: import('../types').Section[], confirmedIds: string[], removedIds: string[]}}
  */
-export function planRemoteSectionApply({ localSections, remoteSections, projectId, pending, knownRemoteIds }) {
+export function planRemoteSectionApply({ localSections, remoteSections, projectId, pending, knownRemoteIds, localProjectId }) {
   const localById = new Map((localSections || []).filter((s) => s?.sharedProjectId === projectId).map((s) => [s.id, s]));
-  const remoteById = new Map((remoteSections || []).map((d) => [d.id, deserializeSharedSection(d, projectId)]));
+  const remoteById = new Map((remoteSections || []).map((d) => [d.id, deserializeSharedSection(d, projectId, localProjectId)]));
   const knownRemoteIdSet = knownRemoteIds ? new Set(knownRemoteIds) : null;
 
   const confirmedIds = [];
