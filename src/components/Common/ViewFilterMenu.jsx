@@ -19,8 +19,8 @@
  * keeps rendering ViewFilterMenu and ProjectActionsMenu as two triggers.
  *
  * `onOpenManageProjects` (optional) adds a "See / manage all projects" item
- * to that same Project group — also mobile-only (desktop instead gets its
- * own inline icon button next to the project title, see TaskListPanel).
+ * to that same Project group — mobile-only (desktop instead gets the same
+ * item folded into ProjectActionsMenu's own dropdown, see TaskListPanel).
  * Unlike `projectActions`, it isn't gated on there being an active project
  * (it renders even on "All Tasks"), since managing the project list isn't
  * specific to any one project — so it can appear alongside or without a

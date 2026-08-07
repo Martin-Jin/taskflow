@@ -19,6 +19,7 @@ import { rankByNameSearch } from '../../utils/nameSearch';
 import { getProjectShareState } from '../../utils/sharedProjectAccess';
 import { getProjectTaskCount, getProjectTotalHours, sortProjectsBy, PROJECT_SORT_KEYS } from '../../utils/projectStats';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
+import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 
 /** Tasteful, non-gimmicky rotating subtitles, split by time of day (same three-way split as DashboardPage's greetingForHour). One is picked once per mount below — never re-randomized on re-render. */
 const GREETINGS_BY_PERIOD = {
@@ -49,7 +50,7 @@ const SORT_LABELS = { size: 'Size', duration: 'Duration', created: 'Creation dat
 
 function ProjectRow({ project, tasks, sharedProjects, uid, onSelectProject }) {
   const taskCount = getProjectTaskCount(project.id, tasks);
-  const hours = getProjectTotalHours(project.id, tasks);
+  const hours = Math.round(getProjectTotalHours(project.id, tasks));
   return (
     <button type="button" className="projects-page-row" onClick={() => onSelectProject(project.id)}>
       <Folder size={14} className="projects-page-row-icon" aria-hidden="true" />
@@ -182,7 +183,7 @@ function ProjectSortMenu({ sortKey, ascending, onChange }) {
   );
 }
 
-export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onSelectProject }) {
+export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onSelectProject, onOpenManageProjects }) {
   // Picked once per mount, not re-randomized on re-render/re-typing.
   const [greeting] = useState(() => {
     const pool = GREETINGS_BY_PERIOD[periodForHour(new Date().getHours())];
@@ -193,11 +194,23 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
   const [sortKey, setSortKey] = useState('size');
   const [ascending, setAscending] = useState(false);
 
+  // Drives the floating quick-jump dropdown (ranked across all projects,
+  // independent of which column a match happens to live in).
   const searchResults = useMemo(
     () => rankByNameSearch(query, projects.map((p) => ({ ...p, label: p.name }))),
     [query, projects]
   );
   const isSearching = query.trim().length > 0;
+
+  // Filters a column's project list down to search matches (ranked by the
+  // same fuzzy matcher used elsewhere in the app), leaving the list untouched
+  // when there's no active query. Coexists with the dropdown above — the
+  // dropdown is a fast keyboard-driven jump-to-project, this narrows the
+  // columns themselves so browsing while searching also works.
+  function filterBySearch(list) {
+    if (!isSearching) return list;
+    return rankByNameSearch(query, list.map((p) => ({ ...p, label: p.name })));
+  }
 
   function selectAndClear(projectId) {
     onSelectProject(projectId);
@@ -242,8 +255,23 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
   // which is also why it's the one column the sort menu applies to.
   const myProjects = useMemo(() => sortProjectsBy(projects, tasks, sortKey, { ascending }), [projects, tasks, sortKey, ascending]);
 
+  const visibleRecentProjects = useMemo(() => filterBySearch(recentProjects), [recentProjects, query, isSearching]);
+  const visibleSharedProjects = useMemo(() => filterBySearch(sharedProjectsList), [sharedProjectsList, query, isSearching]);
+  const visibleMyProjects = useMemo(() => filterBySearch(myProjects), [myProjects, query, isSearching]);
+
   return (
     <div className="projects-page">
+      {/* Sits above the centered hero rather than inside it, so it can
+          align to the far right regardless of the hero's own centered text.
+          Reuses ProjectActionsMenu with only onOpenManageProjects set (same
+          project-less pattern as TaskListPanel's "All Tasks" trigger) since
+          this page isn't scoped to one project — no Rename/Pin/Delete/Share
+          to offer here. */}
+      {onOpenManageProjects && (
+        <div className="projects-page-toolbar">
+          <ProjectActionsMenu ariaLabel="Manage projects" onOpenManageProjects={onOpenManageProjects} />
+        </div>
+      )}
       <div className="projects-page-hero">
         <h1>Projects</h1>
         <p>{greeting}</p>
@@ -295,30 +323,30 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
       <div className="projects-page-columns">
         <ProjectColumn
           title="Recent"
-          projects={recentProjects}
+          projects={visibleRecentProjects}
           tasks={tasks}
           sharedProjects={sharedProjects}
           uid={uid}
           onSelectProject={onSelectProject}
-          emptyLabel="No recently visited projects yet."
+          emptyLabel={isSearching ? 'No matches.' : 'No recently visited projects yet.'}
         />
         <ProjectColumn
           title="Shared"
-          projects={sharedProjectsList}
+          projects={visibleSharedProjects}
           tasks={tasks}
           sharedProjects={sharedProjects}
           uid={uid}
           onSelectProject={onSelectProject}
-          emptyLabel="No shared projects yet."
+          emptyLabel={isSearching ? 'No matches.' : 'No shared projects yet.'}
         />
         <ProjectColumn
           title="My projects"
-          projects={myProjects}
+          projects={visibleMyProjects}
           tasks={tasks}
           sharedProjects={sharedProjects}
           uid={uid}
           onSelectProject={onSelectProject}
-          emptyLabel="No projects yet."
+          emptyLabel={isSearching ? 'No matches.' : 'No projects yet.'}
           headerExtra={<ProjectSortMenu sortKey={sortKey} ascending={ascending} onChange={(k, a) => { setSortKey(k); setAscending(a); }} />}
         />
       </div>

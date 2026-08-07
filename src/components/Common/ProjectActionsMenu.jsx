@@ -12,19 +12,24 @@
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreHorizontal, Pencil, Pin, PinOff, Trash2, Users } from 'lucide-react';
+import { FolderKanban, MoreHorizontal, Pencil, Pin, PinOff, Trash2, Users } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 
-// The Rename/Pin/Delete buttons themselves, split out so ViewFilterMenu can
-// fold them into its own combined mobile popover (see that file's
-// `projectActions` prop) without duplicating this markup.
-export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, runAndClose }) {
+// The Rename/Pin/Delete/manage-projects buttons themselves, split out so
+// ViewFilterMenu can fold them into its own combined mobile popover (see
+// that file's `projectActions` prop) without duplicating this markup.
+// Rename/Pin/Delete are gated on their handlers being present (like `onShare`
+// already was) so this same list can be reused for a project-less trigger
+// (e.g. ProjectsPage's "⋯" menu) that only offers `onOpenManageProjects`.
+export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, onOpenManageProjects, runAndClose }) {
   return (
     <>
-      <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onRename)}>
-        <Pencil size={13} />
-        Rename
-      </button>
+      {onRename && (
+        <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onRename)}>
+          <Pencil size={13} />
+          Rename
+        </button>
+      )}
       {/* Optional so the call sites that don't offer sharing (e.g. the List
           view's project header) keep working unchanged. `onShare` alone
           covers both "not shared yet" and "already shared" — the handler it
@@ -38,24 +43,42 @@ export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin,
           {isShared ? 'Manage sharing' : 'Share project'}
         </button>
       )}
-      <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onTogglePin)}>
-        {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
-        {isPinned ? 'Unpin' : 'Pin'}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="project-actions-item project-actions-item-danger"
-        onClick={() => runAndClose(onDelete)}
-      >
-        <Trash2 size={13} />
-        Delete
-      </button>
+      {onTogglePin && (
+        <button type="button" role="menuitem" className="project-actions-item" onClick={() => runAndClose(onTogglePin)}>
+          {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+          {isPinned ? 'Unpin' : 'Pin'}
+        </button>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          role="menuitem"
+          className="project-actions-item project-actions-item-danger"
+          onClick={() => runAndClose(onDelete)}
+        >
+          <Trash2 size={13} />
+          Delete
+        </button>
+      )}
+      {/* Not project-specific (managing the project list isn't scoped to one
+          project), so this has no isPinned/isShared-style gate of its own —
+          just presence of the handler, same as the others above. */}
+      {onOpenManageProjects && (
+        <button
+          type="button"
+          role="menuitem"
+          className="project-actions-item"
+          onClick={() => runAndClose(onOpenManageProjects)}
+        >
+          <FolderKanban size={13} />
+          See / manage all projects
+        </button>
+      )}
     </>
   );
 }
 
-export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, ariaLabel = 'Project actions' }) {
+export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, onOpenManageProjects, ariaLabel = 'Project actions' }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -127,6 +150,7 @@ export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTog
                 onTogglePin={onTogglePin}
                 onDelete={onDelete}
                 onShare={onShare}
+                onOpenManageProjects={onOpenManageProjects}
                 runAndClose={runAndClose}
               />
             </div>

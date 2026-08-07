@@ -441,6 +441,7 @@ function AppShell() {
               sharedProjects={sharedProjects}
               uid={user?.uid}
               onSelectProject={selectProject}
+              onOpenManageProjects={openManageProjects}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}

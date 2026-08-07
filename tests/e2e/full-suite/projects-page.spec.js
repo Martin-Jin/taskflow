@@ -1,8 +1,8 @@
 // Full-suite — the Projects directory page (tab id 'projects'): navigation
 // into it (sidebar nav item, mobile bottom tab bar, Sidebar's "See all
-// projects" link), its fuzzy project search with keyboard nav, the "My
-// projects" sort menu, and clicking a row to jump to Tasks with that project
-// active. See helpers.js for shared setup.
+// projects" link), its fuzzy project search (filters the three columns
+// in place), the "My projects" sort menu, and clicking a row to jump to
+// Tasks with that project active. See helpers.js for shared setup.
 //
 // Seeded data assumed from src/services/mockData.js: three projects — Work
 // (order 1, 9 tasks incl. subtasks, ~21.25 top-level effective hours),

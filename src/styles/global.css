@@ -713,6 +713,11 @@ select:focus-visible,
   margin: 0 auto;
 }
 
+.projects-page-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .projects-page-hero {
   display: flex;
   flex-direction: column;
@@ -972,12 +977,8 @@ select:focus-visible,
 
 .sidebar-add-project-actions {
   display: flex;
+  justify-content: flex-start;
   gap: 6px;
-}
-
-.sidebar-add-project-actions .btn {
-  flex: 1;
-  justify-content: center;
 }
 
 /* ----------------------------------------------------------------------

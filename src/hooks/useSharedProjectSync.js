@@ -77,10 +77,13 @@ const PUSH_DEBOUNCE_MS = 1500;
  *   SchedulerContext, unlike tasks/blocks' useHistoryState), so they need their own setter rather than sharing
  *   `overwritePresent`'s tasks/blocks-shaped signature.
  * @param {string[]} params.sharedProjectIds - projects this user is a member of
+ * @param {React.MutableRefObject<import('../types').Project[]>} params.projectsRef - latest Project rows, for
+ *   resolving THIS reader's own local Project row id for a shared project (see deserializeSharedTask's doc
+ *   comment) — a ref, not a plain value, since it's read from inside long-lived onSnapshot callbacks.
  * @param {object|null} params.user - the signed-in Firebase user, or null
  * @param {(n: object) => void} params.setNotification
  */
-export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, applyRemote, applyRemoteSections, sharedProjectIds, user, setNotification }) {
+export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, applyRemote, applyRemoteSections, sharedProjectIds, projectsRef, user, setNotification }) {
   const [sharedProjects, setSharedProjects] = useState({});
   const [presenceByProject, setPresenceByProject] = useState({});
 
@@ -203,6 +206,12 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
         subscribeSharedTasks(
           projectId,
           (remoteTasks) => {
+            // This reader's OWN local Project row for this shared project —
+            // never the document's own `projectId` (that's the owner's local
+            // id, meaningless here). See deserializeSharedTask's doc comment;
+            // this is the fix for shared tasks silently not appearing for
+            // anyone but the owner.
+            const localProjectId = projectsRef.current?.find((p) => p.sharedProjectId === projectId)?.id;
             const { tasks: nextTasks, confirmedIds, removedIds } = planRemoteTaskApply({
               localTasks: stateRef.current.tasks,
               remoteTasks,
@@ -213,6 +222,7 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
               // remotely" (drop) for a task with no pending entry. See
               // planRemoteTaskApply's doc comment.
               knownRemoteIds: syncedFingerprintsRef.current.keys(),
+              localProjectId,
             });
 
             for (const id of confirmedIds) {
@@ -247,12 +257,15 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
         subscribeSharedSections(
           projectId,
           (remoteSections) => {
+            // Same reasoning as the tasks subscription above.
+            const localProjectId = projectsRef.current?.find((p) => p.sharedProjectId === projectId)?.id;
             const { sections: nextSections, confirmedIds, removedIds } = planRemoteSectionApply({
               localSections: sectionsRef.current,
               remoteSections,
               projectId,
               pending: sectionPendingRef.current,
               knownRemoteIds: sectionSyncedFingerprintsRef.current.keys(),
+              localProjectId,
             });
 
             for (const id of confirmedIds) {
@@ -285,7 +298,7 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
     return () => {
       unsubscribers.forEach((unsub) => unsub());
     };
-  }, [projectIdsKey, user, stateRef, sectionsRef, reportError]);
+  }, [projectIdsKey, user, stateRef, sectionsRef, projectsRef, reportError]);
 
   // ---- Push local edits (debounced) -----------------------------------------
   // Mirrors useCloudSync's schedulePush/runPushNow shape: a timer collapses a

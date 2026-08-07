@@ -101,6 +101,60 @@ describe('serialization', () => {
   });
 });
 
+// REGRESSION: a task the owner created in a shared project appeared for the
+// owner and NEVER for a collaborator (viewer or editor), even though the
+// underlying sync delivered the document correctly. Root cause: `projectId`
+// is the OWNER's own local Project row id (set once, before/at share time,
+// and never touched again) — every collaborator has a DIFFERENT local
+// Project row id for the same shared project (a joiner's is set to
+// `sharedProjectId` at join time; the owner's is whatever it always was), so
+// syncing the owner's `projectId` verbatim made every `task.projectId ===
+// activeProjectId` check (filterTasksByProject — used by List/Board/Gantt/
+// project stats) fail for everyone but the owner. See LOCAL_ONLY_TASK_FIELDS.
+describe('projectId is per-reader, never trusted from the document (the "viewer never sees new tasks" bug)', () => {
+  it('strips projectId from what gets written — it is meaningless to any other collaborator', () => {
+    const task = sharedTask({ projectId: 'owner-local-project-id' });
+    expect(serializeSharedTask(task)).not.toHaveProperty('projectId');
+  });
+
+  it('does not let a differing local projectId register as a real edit (fingerprint ignores it)', () => {
+    const a = sharedTask({ projectId: 'owner-local-project-id' });
+    const b = sharedTask({ projectId: 'viewer-local-project-id' });
+    expect(sharedTaskFingerprint(a)).toBe(sharedTaskFingerprint(b));
+  });
+
+  it('deserializeSharedTask stamps the READER-supplied localProjectId, not the document one', () => {
+    const doc = serializeSharedTask(sharedTask({ projectId: 'owner-local-project-id' }));
+    const forViewer = deserializeSharedTask(doc, PROJECT, 'viewer-local-project-id');
+    expect(forViewer.projectId).toBe('viewer-local-project-id');
+  });
+
+  it('falls back to the document projectId when no localProjectId is resolvable yet', () => {
+    const doc = serializeSharedTask(sharedTask({ projectId: 'owner-local-project-id' }));
+    // A stale field from before this fix shipped, or a snapshot arriving
+    // before this reader's own Project row exists — either way, don't throw
+    // the field away outright.
+    expect(deserializeSharedTask(doc, PROJECT).projectId).toBeUndefined();
+  });
+
+  it('planRemoteTaskApply resolves a fresh viewer session (no local tasks yet) to their OWN local project id', () => {
+    const remote = [{ ...serializeSharedTask(sharedTask({ id: 'owner-task', projectId: 'owner-local-project-id' })) }];
+    const { tasks } = planRemoteTaskApply({
+      localTasks: [],
+      remoteTasks: remote,
+      projectId: PROJECT,
+      pending: new Map(),
+      knownRemoteIds: [],
+      localProjectId: 'viewer-local-project-id',
+    });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].projectId).toBe('viewer-local-project-id');
+    // The exact bug: this is what List/Board/Gantt's filterTasksByProject
+    // compares against — it must equal the VIEWER's own activeProjectId.
+    expect(tasks[0].projectId).not.toBe('owner-local-project-id');
+  });
+});
+
 describe('planSharedTaskWrites', () => {
   it('creates tasks not yet known to be stored', () => {
     const plan = planSharedTaskWrites({ tasks: [sharedTask()], projectId: PROJECT, syncedFingerprints: new Map() });

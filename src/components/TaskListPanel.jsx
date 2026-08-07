@@ -40,7 +40,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Repeat, Wind, Ban, Check, ExternalLink, FolderKanban, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks } from 'lucide-react';
+import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useSound } from '../context/SoundContext';
@@ -497,7 +497,8 @@ export default function TaskListPanel({
               </h2>
             )}
             {/* Which of the three sharing states this project is in. Unlike
-                the manage-projects button below, this is shown on mobile too:
+                the manage-projects action (folded into ProjectActionsMenu/
+                ViewFilterMenu, not shown inline), this is shown on mobile too:
                 it's STATUS, not an action, and "who else can see this" is
                 exactly the thing a user needs to be certain of on whatever
                 device they're on — hiding it on mobile would make the
@@ -511,23 +512,6 @@ export default function TaskListPanel({
                 variant="detailed"
                 ownerDisplayName={sharedProjects[activeProject.sharedProjectId]?.ownerDisplayName}
               />
-            )}
-            {/* Desktop-only: on mobile there's no room for this alongside the
-                title plus the view/filter + "⋯" triggers, so it folds into
-                ViewFilterMenu's combined popover instead (see the
-                `onOpenManageProjects` prop passed below). Shown regardless of
-                which project is active (including "All Tasks") since
-                managing the project list isn't specific to any one project. */}
-            {!isMobile && onOpenManageProjects && (
-              <button
-                type="button"
-                className="btn btn-icon"
-                onClick={onOpenManageProjects}
-                aria-label="See / manage all projects"
-                title="See / manage all projects"
-              >
-                <FolderKanban size={14} />
-              </button>
             )}
           </div>
 
@@ -561,7 +545,16 @@ export default function TaskListPanel({
                 onTogglePin={() => togglePinProject(activeProject.id)}
                 onDelete={handleDeleteProject}
                 onShare={() => onShareProject(activeProject.id)}
+                onOpenManageProjects={onOpenManageProjects}
               />
+            )}
+            {/* "All Tasks" has no activeProject, so the menu above never
+                renders — but manage-projects isn't project-specific, so it
+                still needs a trigger here. Reuses the same component with
+                only onOpenManageProjects set (Rename/Pin/Delete/Share all
+                gate on their own handler being present, see ProjectActionsItems). */}
+            {!isMobile && !activeProject && onOpenManageProjects && (
+              <ProjectActionsMenu ariaLabel="Manage projects" onOpenManageProjects={onOpenManageProjects} />
             )}
           </div>
         </div>

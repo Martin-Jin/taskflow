@@ -957,6 +957,15 @@ export function SchedulerProvider({ children }) {
   // treats localStorage as truth and converges one person's devices, while
   // this one treats Firestore as truth with many concurrent writers. See
   // hooks/useSharedProjectSync.js for why the two paths stay separate.
+  // projectsRef: read from inside the hook's long-lived onSnapshot callbacks
+  // to resolve THIS user's own local Project row id for a shared project
+  // (deserializeSharedTask/-Section's `localProjectId` — see their doc
+  // comments for why the synced document's own `projectId` can never be
+  // trusted for this).
+  const projectsRef = useRef(projects);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
   const {
     sharedProjects,
     viewersByProject,
@@ -969,6 +978,7 @@ export function SchedulerProvider({ children }) {
     sections,
     stateRef,
     sectionsRef,
+    projectsRef,
     // Remote changes are applied WITHOUT a history entry — they came from
     // someone else, so they must not be undoable by this user (and must not
     // consume a redo slot), exactly like the cloud-sync listener's own writes.
@@ -1360,6 +1370,17 @@ export function SchedulerProvider({ children }) {
    * task list, board, and any open TaskDetailModal that derives its `task`
    * prop from `tasks` rather than holding a stale local copy) re-renders
    * with the new data immediately — no need to close/reopen anything.
+   *
+   * VIEWER REFUSAL (defense in depth): same rationale as addTask's own
+   * comment above — TaskDetailModal already hides/disables every edit
+   * control for a viewer-role collaborator (see its `isReadOnlyViewer`), but
+   * a path that skips that per-field UI gating entirely (the AI Assistant
+   * applying an `update_task` op straight to this mutator) would otherwise
+   * sail through here, silently mutate local state, and only fail once the
+   * sync layer's write hits Firestore rules moments later — a confusing
+   * "looks applied, then reverts" experience rather than an immediate,
+   * clear refusal. Firestore rules remain the actual security boundary
+   * either way; this only makes the failure immediate and the message clear.
    */
   const updateTask = useCallback(
     (taskId, updates) => {
@@ -1370,6 +1391,12 @@ export function SchedulerProvider({ children }) {
       // elsewhere in this file, we're not chaining off another mutation in
       // the same tick).
       const prevTask = tasks.find((t) => t.id === taskId);
+      if (prevTask?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[prevTask.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Editing this task needs edit access on this project — ask the owner for editor access.');
+        }
+      }
       const dueDateChanged = prevTask && 'dueDate' in updates && updates.dueDate !== prevTask.dueDate;
       // A duration change is just as disruptive to already-placed blocks as a
       // due-date move: the existing block(s) reflect the OLD estimatedHours,
@@ -1443,16 +1470,26 @@ export function SchedulerProvider({ children }) {
       // to on, same as addTask's check above.
       if (hasScheduledBlock && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
     },
-    [commit, tasks, blocks, queueDueDateRebalance, rules.autoRescheduleEnabled]
+    [commit, tasks, blocks, queueDueDateRebalance, rules.autoRescheduleEnabled, sharedProjects, user]
   );
 
   /**
    * Delete a task, cascading to its whole subtree — a task with children
    * (parentId pointing at it) would otherwise leave those children orphaned,
    * pointing at a parentId that no longer exists.
+   *
+   * VIEWER REFUSAL (defense in depth): same rationale as updateTask's own
+   * comment just above.
    */
   const deleteTask = useCallback(
     (taskId) => {
+      const targetTask = tasks.find((t) => t.id === taskId);
+      if (targetTask?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[targetTask.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Deleting this task needs edit access on this project — ask the owner for editor access.');
+        }
+      }
       const idsToDelete = new Set([taskId, ...getDescendantIds(taskId, tasks)]);
       // Tell the shared-project sync engine these deletions were DELIBERATE.
       // It never infers a delete from a task simply being absent, because an
@@ -1517,7 +1554,7 @@ export function SchedulerProvider({ children }) {
       );
       if (soundEnabled) playDeleteSound(soundVolume);
     },
-    [tasks, blocks, commit, user, soundEnabled, soundVolume, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted, noteSharedTaskDeleted]
+    [tasks, blocks, commit, user, soundEnabled, soundVolume, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted, noteSharedTaskDeleted, sharedProjects]
   );
 
   /**

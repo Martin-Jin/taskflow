@@ -61,9 +61,16 @@ describe('serialization', () => {
     expect(serialized).not.toHaveProperty('note');
   });
 
-  it('round-trips back into the app-local shape', () => {
+  it('round-trips back into the app-local shape, given the reader\'s own local projectId', () => {
+    // `projectId` is local-only (see LOCAL_ONLY_SECTION_FIELDS) — a real
+    // reader always supplies its own local Project row id explicitly rather
+    // than trusting whatever the document happened to carry.
     const section = sharedSection();
-    expect(deserializeSharedSection(serializeSharedSection(section), PROJECT)).toEqual(section);
+    expect(deserializeSharedSection(serializeSharedSection(section), PROJECT, section.projectId)).toEqual(section);
+  });
+
+  it('strips the local-only projectId too — it is the OWNER\'s local Project row id, meaningless to any other collaborator', () => {
+    expect(serializeSharedSection(sharedSection())).not.toHaveProperty('projectId');
   });
 
   it('fingerprints ignore key order, so a rebuilt object is not seen as an edit', () => {
@@ -75,6 +82,41 @@ describe('serialization', () => {
   it('fingerprints ignore the local-only pointer but catch real edits', () => {
     expect(sharedSectionFingerprint(sharedSection())).toBe(sharedSectionFingerprint({ ...sharedSection(), sharedProjectId: 'other' }));
     expect(sharedSectionFingerprint(sharedSection())).not.toBe(sharedSectionFingerprint(sharedSection({ name: 'Changed' })));
+  });
+
+  it('fingerprints ignore a differing local projectId too — the same section synced to two collaborators must not write-loop', () => {
+    const a = sharedSection({ projectId: 'owner-local-project-id' });
+    const b = sharedSection({ projectId: 'viewer-local-project-id' });
+    expect(sharedSectionFingerprint(a)).toBe(sharedSectionFingerprint(b));
+  });
+});
+
+// REGRESSION: see the identical task-side comment in sharedTaskSync.test.js.
+// A Board column (Section) the owner created in a shared project never
+// appeared for a viewer/editor for the same reason a task didn't: `projectId`
+// is the owner's own local Project row id, synced verbatim, which only ever
+// matches the OWNER's own `activeProjectId` — never a joiner's (whose local
+// Project row id is `sharedProjectId`, a different value).
+describe('projectId is per-reader, never trusted from the document (the "viewer never sees new sections" bug)', () => {
+  it('deserializeSharedSection stamps the READER-supplied localProjectId, not the document one', () => {
+    const doc = serializeSharedSection(sharedSection({ projectId: 'owner-local-project-id' }));
+    const forViewer = deserializeSharedSection(doc, PROJECT, 'viewer-local-project-id');
+    expect(forViewer.projectId).toBe('viewer-local-project-id');
+  });
+
+  it('planRemoteSectionApply resolves a fresh viewer session (no local sections yet) to their OWN local project id', () => {
+    const remote = [serializeSharedSection(sharedSection({ id: 'owner-section', projectId: 'owner-local-project-id' }))];
+    const { sections } = planRemoteSectionApply({
+      localSections: [],
+      remoteSections: remote,
+      projectId: PROJECT,
+      pending: new Map(),
+      knownRemoteIds: [],
+      localProjectId: 'viewer-local-project-id',
+    });
+    expect(sections).toHaveLength(1);
+    expect(sections[0].projectId).toBe('viewer-local-project-id');
+    expect(sections[0].projectId).not.toBe('owner-local-project-id');
   });
 });
 
