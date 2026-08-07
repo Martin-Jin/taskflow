@@ -104,7 +104,15 @@ import { useSound } from '../../context/SoundContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
 import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, formatTime12h, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { parseRecurrenceRule, findRecurrencePhrase, RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
+import {
+  parseRecurrenceRule,
+  findRecurrencePhrase,
+  RECURRENCE_UNITS,
+  buildRecurrenceString,
+  WEEKDAY_LABELS,
+  MAX_RECURRENCE_COUNT,
+  resolveCurrentOccurrenceDueDate,
+} from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
@@ -238,7 +246,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [notes, setNotes] = useState(() => stripNotesLinks(task.notes || ''));
   const [estimatedHours, setEstimatedHours] = useState(task.estimatedHours);
   const [priority, setPriority] = useState(task.priority || 'medium');
-  const [dueDate, setDueDate] = useState(task.dueDate || '');
+  const [dueDate, setDueDate] = useState(resolveCurrentOccurrenceDueDate(task) || '');
   const [isRecurring, setIsRecurring] = useState(!!task.isRecurring);
   const initialRule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
   const [recurrenceCount, setRecurrenceCount] = useState(initialRule.count);
@@ -562,7 +570,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       notes: stripNotesLinks(task.notes || ''),
       estimatedHours: task.estimatedHours,
       priority: task.priority || 'medium',
-      dueDate: task.dueDate || '',
+      dueDate: resolveCurrentOccurrenceDueDate(task) || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: initialRule.count,
       recurrenceUnit: initialRule.unit,
@@ -605,7 +613,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setIsNotesFocused(false);
     setEstimatedHours(task.estimatedHours);
     setPriority(task.priority || 'medium');
-    setDueDate(task.dueDate || '');
+    setDueDate(resolveCurrentOccurrenceDueDate(task) || '');
     setIsRecurring(!!task.isRecurring);
     const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
     setRecurrenceCount(rule.count);
@@ -631,7 +639,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       notes: stripNotesLinks(task.notes || ''),
       estimatedHours: task.estimatedHours,
       priority: task.priority || 'medium',
-      dueDate: task.dueDate || '',
+      dueDate: resolveCurrentOccurrenceDueDate(task) || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: rule.count,
       recurrenceUnit: rule.unit,
@@ -666,7 +674,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     const taskValues = {
       estimatedHours: task.estimatedHours,
       priority: task.priority || 'medium',
-      dueDate: task.dueDate || '',
+      dueDate: resolveCurrentOccurrenceDueDate(task) || '',
       isRecurring: !!task.isRecurring,
       recurrenceCount: rule.count,
       recurrenceUnit: rule.unit,
@@ -774,15 +782,24 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // split across multiple days, so this can have more than one entry. For a
   // recurring task, every future occurrence gets its own block too (see
   // SchedulerContext.completeTask's recurring branch), so this is narrowed
-  // to just the earliest occurrence's date — the current/next one — instead
-  // of listing every occurrence out to the scheduling horizon.
+  // to just the current occurrence's date instead of listing every occurrence
+  // out to the scheduling horizon. That's normally the earliest block's date
+  // (`sorted[0]`), EXCEPT when the current occurrence was moved off-pattern
+  // (see resolveCurrentOccurrenceDueDate) — its block is placed on the
+  // moved-to date, which can sort after an older, not-yet-rebalanced block
+  // for a prior occurrence still sitting in `blocks`. Preferring the resolved
+  // due date (falling back to the earliest block, e.g. before any rebalance
+  // has run yet) keeps this in agreement with the due-date field above rather
+  // than trusting sort order alone.
   const taskScheduledBlocks = useMemo(() => {
     const sorted = blocks
       .filter((b) => b.taskId === task.id)
       .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
     if (!task.isRecurring || sorted.length === 0) return sorted;
-    return sorted.filter((b) => b.date === sorted[0].date);
-  }, [blocks, task.id, task.isRecurring]);
+    const currentOccurrenceDate = resolveCurrentOccurrenceDueDate(task);
+    const targetDate = sorted.some((b) => b.date === currentOccurrenceDate) ? currentOccurrenceDate : sorted[0].date;
+    return sorted.filter((b) => b.date === targetDate);
+  }, [blocks, task.id, task.isRecurring, task.dueDate, task.overrides]);
 
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);
@@ -836,14 +853,15 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       },
       dueDate: {
         isUntouched: () =>
-          dueDate === (task.dueDate || '') || (lastSmartDueDateRef.current !== null && dueDate === lastSmartDueDateRef.current),
+          dueDate === (resolveCurrentOccurrenceDueDate(task) || '') ||
+          (lastSmartDueDateRef.current !== null && dueDate === lastSmartDueDateRef.current),
         apply: (match) => {
           lastSmartDueDateRef.current = match.iso;
           setDueDate(match.iso);
         },
         revert: () => {
           lastSmartDueDateRef.current = null;
-          setDueDate(task.dueDate || '');
+          setDueDate(resolveCurrentOccurrenceDueDate(task) || '');
         },
       },
       fixedTime: {
