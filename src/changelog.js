@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.7',
+    date: '2026-08-07',
+    title: 'Fixed a recurring task showing as completed in Upcoming',
+    changes: [
+      'A recurring task whose most recent occurrence had already been completed could show up in the "Upcoming" list looking done — struck-through title, filled checkmark — even though its next occurrence hadn\'t happened yet. It now always shows in its normal, not-completed state until that occurrence is actually finished.',
+    ],
+  },
+  {
     version: '3.0.6',
     date: '2026-08-07',
     title: 'One home for "Manage projects"',

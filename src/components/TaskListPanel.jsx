@@ -65,7 +65,7 @@ import { usePersistedState } from '../hooks/usePersistedState';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
+import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay } from '../utils/taskHierarchy';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 import { computeEffectiveRole } from '../utils/sharedProjectAccess';
 
@@ -418,8 +418,8 @@ export default function TaskListPanel({
         // List-view-only "done for today" display state — a recurring task
         // never sets isCompleted, so without this a completed-for-today
         // sub-task would render unchecked here even though its occurrence is
-        // closed out. See taskHierarchy.js's isCompletedForCurrentOccurrence.
-        isCheckedForDisplay={isCompletedForCurrentOccurrence(task, today)}
+        // closed out. See taskHierarchy.js's isCheckedForListDisplay.
+        isCheckedForDisplay={isCheckedForListDisplay(task, today)}
         effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours}
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
