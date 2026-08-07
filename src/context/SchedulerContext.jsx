@@ -1918,6 +1918,16 @@ export function SchedulerProvider({ children }) {
       // out of dependsOn — same cleanup deleteTask does when a dependency
       // disappears, just triggered by it being *done* instead of gone.
       const completedIds = new Set([taskId, ...descendantIds]);
+      // Completing a task that (or one of its descendants) still had an
+      // unlocked block on a FUTURE day means it was finished early — that
+      // slot is now free capacity on a day rebalanceTodayOnly deliberately
+      // never touches (it's scoped to "the rest of today" only, see its own
+      // doc comment). Queue the same full-horizon debounced rebalance
+      // updateTask/addTask use for a due-date change, so that freed future
+      // capacity actually gets reallocated instead of just sitting empty.
+      const freedFutureCapacity = blocks.some(
+        (b) => completedIds.has(b.taskId) && !b.isLocked && b.date > todayIso
+      );
       // Function form — see the recurring branch's comment above.
       commit((current) => {
         const newTasks = current.tasks.map((t) => {
@@ -1944,9 +1954,13 @@ export function SchedulerProvider({ children }) {
         // holding — re-plan the REST of today (only) into it.
         return rebalanceTodayOnly(cascadedTasks, current.blocks);
       }, `Completed task`);
+      // Gated on the user's auto-reschedule toggle (Settings → Scheduling
+      // rules) — undefined (persisted before this setting existed) defaults
+      // to on, same as addTask/updateTask's checks above.
+      if (freedFutureCapacity && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
       return true;
     },
-    [tasks, blocks, commit, setNotification, rebalanceTodayOnly]
+    [tasks, blocks, commit, setNotification, rebalanceTodayOnly, queueDueDateRebalance, rules.autoRescheduleEnabled]
   );
 
   /**
@@ -2275,7 +2289,16 @@ export function SchedulerProvider({ children }) {
         // must not destroy a project they don't own (and rules would refuse
         // anyway). Without this the document was orphaned in Firestore with
         // nobody left listing it.
-        if (project?.ownerId && user?.uid === project.ownerId) {
+        //
+        // Reads the LIVE sharedProjects[sharedId].ownerId, not the local
+        // Project row's own ownerId field — that local field is write-once
+        // (set only at share time, see shareProject) and is never updated by
+        // transferSharedProjectOwnership, so it goes stale forever the moment
+        // ownership changes hands. Every other ownership-sensitive check in
+        // this file (computeEffectiveRole's callers, comment-permission
+        // checks) already reads the live sharedProjects state for the same
+        // reason.
+        if (sharedProjects[sharedId]?.ownerId && user?.uid === sharedProjects[sharedId].ownerId) {
           deleteSharedProject(sharedId).catch((err) =>
             console.error('[SchedulerContext] Failed to delete shared project', err)
           );
@@ -2298,7 +2321,7 @@ export function SchedulerProvider({ children }) {
         `Deleted project`
       );
     },
-    [commit, projects, user]
+    [commit, projects, user, sharedProjects]
   );
 
   /**
