@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.1.0',
+    date: '2026-08-07',
+    title: 'Sleep is now a protected, non-deletable routine',
+    changes: [
+      'The Sleep fixed routine can no longer be accidentally deleted from Settings — you can still drag it to change its hours or pause it, but the delete button is gone for it.',
+      'If your data predates this change and you have no fixed routines at all, a protected Sleep routine is added back automatically; if you already have any routine (Sleep or otherwise), nothing changes.',
+    ],
+  },
+  {
     version: '3.0.17',
     date: '2026-08-07',
     title: 'Fixed a stale shared project lingering in your sidebar after losing access to it',

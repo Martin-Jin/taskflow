@@ -105,6 +105,7 @@ import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEv
 import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
 import { migrateStaleRecurringRemainingHours } from '../migrations/migrateStaleRecurringRemainingHours';
+import { migrateProtectedSleepRoutine } from '../migrations/migrateProtectedSleepRoutine';
 
 const SchedulerContext = createContext(null);
 
@@ -666,6 +667,16 @@ export function SchedulerProvider({ children }) {
     false
   );
 
+  // Guards the one-time migrateProtectedSleepRoutine backfill below — see
+  // src/migrations/migrateProtectedSleepRoutine.js (Sleep routines are now
+  // seeded as isProtected: true; this only backfills one for a pre-existing
+  // user who somehow has zero fixed routines at all, never overriding an
+  // existing routine or a deliberate deletion).
+  const [protectedSleepRoutineMigrationDone, setProtectedSleepRoutineMigrationDone] = usePersistedState(
+    'protectedSleepRoutineMigrationDone',
+    false
+  );
+
   // events: seeded from local storage so a refresh doesn't blank the
   // calendar grid while the silent Google re-auth (below) is in flight, or
   // permanently if Google Calendar isn't configured at all (mock events
@@ -896,6 +907,18 @@ export function SchedulerProvider({ children }) {
       commit({ tasks: repaired, blocks: stateRef.current.blocks }, 'Fixed recurring tasks stuck at 0 remaining hours');
     }
     setStaleRecurringRemainingHoursMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateProtectedSleepRoutine.js.
+  // Only ever backfills when routines is completely empty, so almost every
+  // existing user (who has at least one routine, deleted or not) sees no
+  // change. Safe to delete this effect once the flag above is true for all
+  // users.
+  useEffect(() => {
+    if (protectedSleepRoutineMigrationDone) return;
+    setRoutines((prev) => migrateProtectedSleepRoutine(prev));
+    setProtectedSleepRoutineMigrationDone(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
