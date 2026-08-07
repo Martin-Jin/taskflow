@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.0.9',
+    date: '2026-08-07',
+    title: 'Fixed the "Share project" dialog briefly showing the wrong state',
+    changes: [
+      'The share dialog no longer flashes "This project isn\'t shared" right after actually sharing it — it now shows a loading state instead while the sharing setup finishes.',
+    ],
+  },
+  {
     version: '3.0.8',
     date: '2026-08-07',
     title: 'Completed tasks no longer linger on the Calendar',
