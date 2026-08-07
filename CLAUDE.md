@@ -168,6 +168,46 @@ changelog" for the same rule in the contributor docs.
   new one — and remove that migration code once it's no longer needed (see
   code review checklist below).
 
+### Cross-cutting concerns: sync, presence, and project state
+
+The app has several interconnected systems that are easy to break when making
+unrelated changes. **For ANY change, explicitly check the following:**
+
+- **Cloud sync state (`useCloudSync.js`):** Any change to `SchedulerContext` fields,
+  task properties, or data shapes requires reviewing whether `BACKUP_FIELDS`,
+  `computeFingerprint`, `planRemoteDataMerge`, and `applyRemoteData` need
+  updates. A missing sync path silently loses data on cross-device sync or
+  restore, or worse, causes race conditions where stale snapshots resurrect
+  deleted data. See Backups section for the full logic. Watch for: new field
+  on Task/ScheduledBlock, new top-level collection, new user settings.
+  
+- **Shared project state (`useSharedProjects.js`, presence avatars, permissions):**
+  When changing project deletion, access revocation, or state mutations, verify
+  that local sidebar state mirrors the server's view. Fixes in this area have
+  repeatedly caught: stale project lingering after deletion/kick, wrong presence
+  avatars (out of sync with actual members), orphaned projects (deleted on
+  server but stuck locally), false permission errors on first retry. When
+  touching `removeProject`, `updateProjectMember`, permission checks, or
+  project selection UI, trace the entire flow: deletion/revocation on server
+  → listener fires → local state cleanup → sidebar/dropdown/view state updates.
+  
+- **Project selection and view filters:** The active project filter
+  (`activeProjectId`) appears in multiple places: Project dropdown (navbar),
+  view filters, task list queries. If you change how projects are listed,
+  deleted, or accessed, verify that selecting a now-inaccessible project
+  (e.g. you were kicked from it) gracefully falls back to a valid project
+  rather than breaking the filter or showing a blank task list.
+  
+- **Multi-source sync conflicts (Google Calendar, Todoist, local Firebase):**
+  Calendar events and task syncs have their own merge policies. `events` is
+  deliberately excluded from live cross-device sync (only in point-in-time
+  backups) to avoid stale snapshots resurrecting deleted events. Todoist sync
+  has its own conflict resolution. If you add a new synced field or change how
+  existing ones are merged, audit the merge logic in the relevant sync service
+  (`eventSyncService.js`, `todoistSync.js`, `useCloudSync.js`) to ensure
+  deletions and edits in one app don't cause silent resurrections or
+  contradictions in another.
+
 ### Backups
 
 Backups (local file export/import, and cloud snapshots in Firestore at
@@ -262,6 +302,38 @@ growth, since each pool is already self-limiting to ~14 in steady state.
 to refresh the "view backups" display list — pruning correctness and what's
 shown in the UI are two different concerns and must keep using the right
 query for each.
+
+### Firebase data retention and cleanup policies
+
+**Any new data stored to Firestore (in users/{uid}/* or any other path) must
+have a documented retention policy.** The app already enforces retention in
+several places; follow the same patterns:
+
+- **Backups:** pruned via `pruneBackupPool` based on `AUTO_BACKUP_RETENTION_COUNT`
+  and `MANUAL_BACKUP_RETENTION_COUNT`. Separate retained pools prevent one kind
+  from pushing the other outside a shared list query's window.
+  
+- **Google Calendar sync metadata:** `eventSyncService.js`'s `isTooOldToRetain`
+  actively purges non-recurring events outside the sync window (`ROUTINE_SYNC_
+  WINDOW_DAYS`), enforced via an explicit purge boundary that tracks the union
+  of all synced ranges (not just the current call's range) to survive on-demand
+  fetches. Recurring events' own recurrence rule outlives their DTSTART, so they
+  stay. Deleted event IDs are suppressed for `RECENTLY_DELETED_TTL_MS` to prevent
+  resurrections from slow API propagation.
+  
+- **Todoist sync:** follows Google Calendar's pattern — pulled items win; local
+  sync metadata ages out.
+
+When you add new persisted state to Firestore:
+1. Choose a retention strategy (count-based like backups, time-based like
+   calendar, or unlimited if it's already bounded elsewhere like user tasks).
+2. Document the strategy in a comment where the data is created.
+3. Implement the cleanup: a periodic prune function (called from `useCloudSync.js`'s
+   auto-backup pass, or inline during the sync that created it), or an active
+   check during reads (like `isTooOldToRetain` at sync time).
+4. Test that old data is actually purged, not just left behind — stale data
+   silently leaking to production is one class of bug that's hard to fix
+   retroactively.
 
 ## Testing
 
@@ -385,6 +457,21 @@ specifically so it could be unit tested.
 - UI changes are responsive and usable on mobile (see Development practices).
 - Any new persisted state has been added to `BACKUP_FIELDS` and
   `restoreFromBackup`, or deliberately left out as device-local (see Backups).
+- **Sync-critical checks (see "Cross-cutting concerns" above):**
+  - If change touches `SchedulerContext` fields or task data shape: verify
+    `BACKUP_FIELDS`, `computeFingerprint`, `planRemoteDataMerge`, and
+    `applyRemoteData` all know about the new/changed field.
+  - If change touches project deletion, access revocation, or project state:
+    verify full flow from server deletion/kick → listener → local cleanup →
+    sidebar/dropdown/view state. Watch for: stale projects lingering, orphaned
+    remote projects, false permission errors, broken filters when project is
+    no-longer-accessible.
+  - If change adds or alters synced fields (Google Calendar, Todoist, or
+    cross-device): audit the merge policy to ensure deletions don't cause
+    silent resurrections or contradictions across apps.
+  - If change adds new Firestore storage (users/{uid}/* or elsewhere): verify
+    a retention policy is documented and implemented. See "Firebase data
+    retention and cleanup policies" in Development practices.
 - `npm run build` passes, and `npm run test:unit` passes and has been updated
   to cover whatever the change added or altered in the areas listed under
   Unit test suite.

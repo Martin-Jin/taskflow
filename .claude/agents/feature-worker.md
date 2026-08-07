@@ -24,10 +24,31 @@ Working agreement (see the project's CLAUDE.md for the full version):
 - Synced data sources (e.g. calendar, Todoist sync) don't need to be
   wired in everywhere — only where explicitly asked.
 
-If, while working, you discover the task is actually a tricky
-concurrency/sync bug, recurrence-parsing problem, or a refactor that
-touches many files, say so explicitly in your report rather than pushing
-through — that class of work should go to a higher-effort pass instead.
+## Critical sync and state checks (see CLAUDE.md "Cross-cutting concerns")
 
-Report back concisely: what changed, which files, and the `npm run build`
-result.
+FOR ANY CHANGE, explicitly check:
+- **Cloud sync paths:** If you touch SchedulerContext fields, task properties,
+  or data shapes, verify BACKUP_FIELDS, computeFingerprint, planRemoteDataMerge,
+  and applyRemoteData know about the change (else data silently lost on
+  cross-device sync or restore).
+- **Shared projects:** If you change project deletion, access revocation, or
+  project state mutation, verify the full server→listener→local-cleanup→UI
+  flow works. Watch for: stale projects lingering after deletion/kick, orphaned
+  projects, false permission errors, broken filters when a project becomes
+  inaccessible.
+- **Multi-source sync conflicts:** If you add/alter synced fields (Google
+  Calendar, Todoist, or cross-device), audit merge logic to prevent stale
+  snapshots from silently resurrecting deleted data.
+- **Firebase retention:** If you add new Firestore storage (users/{uid}/* or
+  elsewhere), implement and document a retention policy. See backups
+  (AUTO_BACKUP_RETENTION_COUNT), calendar sync (isTooOldToRetain), and
+  RECENTLY_DELETED_TTL_MS for patterns — don't let data accumulate forever.
+
+If you discover this is actually a tricky concurrency/sync bug, shared-project
+state issue, Firebase retention gap, or cross-cutting refactor, say so explicitly
+in your report rather than pushing through — that class of work should go to
+hard-problem-solver instead.
+
+Report back concisely: what changed, which files, `npm run build` result, and
+any sync-related checks you performed (or note if the change doesn't touch
+sync-critical areas).

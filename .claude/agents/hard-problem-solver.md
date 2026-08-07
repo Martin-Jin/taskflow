@@ -35,6 +35,10 @@ time.
 Typical cases you're called for:
 - Concurrency or sync bugs, especially Firebase sync conflicts (races,
   stale writes, listener/update ordering issues).
+- Shared project state bugs (stale local state after deletion/kick, orphaned
+  projects, false permission errors, presence/avatar sync issues).
+- Cloud sync data loss or race conditions (missing fields in backups,
+  stale snapshots resurrecting deleted data across devices).
 - Recurrence-parsing logic (recurring task rules, date math edge cases).
 - Cross-cutting refactors that touch many files and need a coherent plan
   before editing starts.

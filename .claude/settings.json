@@ -19,7 +19,9 @@
       "Skill(update-config:*)",
       "Skill(claude-api)",
       "Skill(claude-api:*)",
-      "WebFetch(domain:developers.google.com)"
+      "WebFetch(domain:developers.google.com)",
+      "PowerShell(npm run build 2>&1)",
+      "PowerShell(npm run test:unit 2>&1)"
     ]
   }
 }
