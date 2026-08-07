@@ -110,6 +110,27 @@ export function isCompletedForCurrentOccurrence(task, todayIso) {
 }
 
 /**
+ * Should `task` render as checked/struck-through in a list-style view (e.g.
+ * TaskListPanel's Overdue/Today/Upcoming rows)? Not the same question as
+ * isCompletedForCurrentOccurrence: that helper answers "was TODAY's date
+ * recorded as done", which is only meaningful for the occurrence a recurring
+ * task is CURRENTLY sitting on. Completing an occurrence advances `dueDate`
+ * to the next, not-yet-completed one (see recurrenceState.js), while today's
+ * date stays in the rolling `completedDates` window for days afterward — so
+ * a recurring task already rolled forward into the future (shown in
+ * "Upcoming") would otherwise still read as checked off of that stale
+ * window, even though its actual current occurrence hasn't happened yet.
+ * Gating on `dueDate <= todayIso` for a recurring task fixes that: only a
+ * recurring task whose occurrence is due today (or overdue) can be "done for
+ * now" in this sense. A non-recurring task has no such window to be misled
+ * by, so it keeps behaving exactly as isCompletedForCurrentOccurrence alone.
+ */
+export function isCheckedForListDisplay(task, todayIso) {
+  if (!task.isRecurring) return isCompletedForCurrentOccurrence(task, todayIso);
+  return !!task.dueDate && task.dueDate <= todayIso && isCompletedForCurrentOccurrence(task, todayIso);
+}
+
+/**
  * True if `taskId` has at least one direct sub-task and every one of them is
  * "done for now" (see isCompletedForCurrentOccurrence) — the rollup that
  * drives auto-completing a parent once its whole checklist is done for the

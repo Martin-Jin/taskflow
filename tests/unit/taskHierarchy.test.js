@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isCompletedForCurrentOccurrence,
   areAllChildrenCompletedForCurrentOccurrence,
+  isCheckedForListDisplay,
 } from '../../src/utils/taskHierarchy';
 
 const TODAY = '2026-08-06';
@@ -32,6 +33,43 @@ describe('isCompletedForCurrentOccurrence', () => {
     // purely off completedDates for a recurring task, not isCompleted.
     const task = { isRecurring: true, isCompleted: true, completedDates: [] };
     expect(isCompletedForCurrentOccurrence(task, TODAY)).toBe(false);
+  });
+});
+
+describe('isCheckedForListDisplay', () => {
+  it('matches isCompletedForCurrentOccurrence for a non-recurring task', () => {
+    expect(isCheckedForListDisplay({ isCompleted: true }, TODAY)).toBe(true);
+    expect(isCheckedForListDisplay({ isCompleted: false }, TODAY)).toBe(false);
+  });
+
+  it('is checked for a recurring task whose occurrence is due today and completed', () => {
+    const task = { isRecurring: true, dueDate: TODAY, completedDates: [TODAY] };
+    expect(isCheckedForListDisplay(task, TODAY)).toBe(true);
+  });
+
+  it('is checked for a recurring task whose occurrence is overdue but was completed today', () => {
+    // e.g. a daily task completed late — its dueDate stays at the missed
+    // occurrence's date while completedDates records today's completion.
+    const task = { isRecurring: true, dueDate: '2026-08-05', completedDates: [TODAY] };
+    expect(isCheckedForListDisplay(task, TODAY)).toBe(true);
+  });
+
+  it(
+    'is NOT checked for a recurring task whose occurrence already rolled forward into the future, ' +
+      'even though today is still in its completedDates window',
+    () => {
+      // Regression: completing today's occurrence advances dueDate to the next
+      // occurrence (e.g. tomorrow, for a daily task) while today's date stays
+      // in the rolling completedDates window — the task should show up in
+      // "Upcoming" in its normal, not-completed state, not struck through.
+      const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: [TODAY] };
+      expect(isCheckedForListDisplay(task, TODAY)).toBe(false);
+    }
+  );
+
+  it('is not checked for a recurring task with no dueDate at all', () => {
+    const task = { isRecurring: true, completedDates: [TODAY] };
+    expect(isCheckedForListDisplay(task, TODAY)).toBe(false);
   });
 });
 
