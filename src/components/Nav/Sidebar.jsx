@@ -7,10 +7,10 @@
  * "All Tasks" pseudo-project pinned at the top, then a capped list of the
  * most recently visited real projects (RECENT_PROJECT_LIMIT, by
  * `lastVisitedAt`), each with a "⋯" menu (Rename/Pin/Delete via
- * ProjectActionsMenu), a "See all projects" link to the dedicated Projects
- * tab, and a "Manage projects" button that opens ManageProjectsModal (which
- * also has its own "Add project" form). Full project search/browsing now
- * lives on the Projects page itself rather than duplicated here.
+ * ProjectActionsMenu), and a "See all projects" link to the dedicated
+ * Projects tab. Full project search/browsing, and the "Manage projects"
+ * entry point (ManageProjectsModal, which also has its own "Add project"
+ * form), now live on the Projects page itself rather than duplicated here.
  *
  * Extracted out of App.jsx once the Projects group made the inline JSX too
  * large to keep readable there. Only rendered on desktop — mobile has no
@@ -20,7 +20,7 @@
  */
 
 import React, { useState } from 'react';
-import { FolderKanban, ArrowRight, Pin } from 'lucide-react';
+import { ArrowRight, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -36,7 +36,6 @@ export default function Sidebar({
   projects,
   activeProjectId,
   onSelectProject,
-  onOpenManageProjects,
   onRenameProject,
   onTogglePinProject,
   onShareProject,
@@ -164,15 +163,6 @@ export default function Sidebar({
         >
           See all projects
           <ArrowRight size={13} />
-        </button>
-
-        <button
-          className="nav-item sidebar-add-project-btn"
-          data-tour="add-project"
-          onClick={() => onOpenManageProjects()}
-        >
-          <FolderKanban size={14} />
-          Manage projects
         </button>
       </div>
 

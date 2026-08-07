@@ -378,7 +378,6 @@ function AppShell() {
           projects={projects}
           activeProjectId={activeProjectId}
           onSelectProject={selectProject}
-          onOpenManageProjects={openManageProjects}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
           onShareProject={handleShareProject}

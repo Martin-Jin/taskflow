@@ -12,14 +12,13 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Folder, SlidersHorizontal, Check, ChevronDown } from 'lucide-react';
+import { Search, Folder, SlidersHorizontal, Check, ChevronDown, FolderKanban } from 'lucide-react';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { rankByNameSearch } from '../../utils/nameSearch';
 import { getProjectShareState } from '../../utils/sharedProjectAccess';
 import { getProjectTaskCount, getProjectTotalHours, sortProjectsBy, PROJECT_SORT_KEYS } from '../../utils/projectStats';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
-import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 
 /** Tasteful, non-gimmicky rotating subtitles, split by time of day (same three-way split as DashboardPage's greetingForHour). One is picked once per mount below — never re-randomized on re-render. */
 const GREETINGS_BY_PERIOD = {
@@ -261,15 +260,23 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
 
   return (
     <div className="projects-page">
-      {/* Sits above the centered hero rather than inside it, so it can
-          align to the far right regardless of the hero's own centered text.
-          Reuses ProjectActionsMenu with only onOpenManageProjects set (same
-          project-less pattern as TaskListPanel's "All Tasks" trigger) since
-          this page isn't scoped to one project — no Rename/Pin/Delete/Share
-          to offer here. */}
+      {/* Sits above the centered hero rather than inside it, so it can align
+          to the far right regardless of the hero's own centered text. This is
+          now the app's one entry point to ManageProjectsModal (the sidebar's
+          old "Manage projects" button was removed as a redundant duplicate) —
+          a plain text+icon button, not a "⋯" menu, since it's the only
+          project-less action this page offers. */}
       {onOpenManageProjects && (
         <div className="projects-page-toolbar">
-          <ProjectActionsMenu ariaLabel="Manage projects" onOpenManageProjects={onOpenManageProjects} />
+          <button
+            type="button"
+            className="nav-item projects-page-manage-btn"
+            data-tour="manage-projects"
+            onClick={() => onOpenManageProjects()}
+          >
+            <FolderKanban size={14} />
+            Manage projects
+          </button>
         </div>
       )}
       <div className="projects-page-hero">
