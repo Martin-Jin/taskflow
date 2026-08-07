@@ -15,7 +15,6 @@ import { LogOut, Settings as SettingsIcon, UserRound } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useScheduler } from '../../context/SchedulerContext';
 import { isGuestUser, findOwnGuestName } from '../../utils/sharedProjectAccess';
-import GoogleSignInButton from '../Common/GoogleSignInButton';
 
 /**
  * @param {{ compact?: boolean, menuAlign?: 'up'|'down', onOpenAccountSettings?: () => void }} props
@@ -37,18 +36,18 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
 
   if (authLoading) return null;
 
-  if (!user) {
-    return <GoogleSignInButton compact={compact} />;
-  }
-
-  // A guest (share-link visitor with no durable account, see isGuestUser's
-  // header for why this isn't user.isAnonymous) has no displayName on the
-  // Firebase user record at all — their chosen name only exists denormalized
-  // onto a shared project's `collaborators` map, so it's read back from
-  // there rather than off `user`.
-  const isGuest = isGuestUser(user);
-  const guestName = isGuest ? findOwnGuestName(user.uid, sharedProjects) : null;
-  const label = isGuest ? guestName || 'Guest' : user.displayName || user.email || 'Account';
+  // GUEST BY DEFAULT: every signed-out visitor is a guest, whether or not a
+  // Firebase Anonymous Auth session actually exists yet — one is only minted
+  // lazily, the first time something needs a durable uid (opening a share
+  // link, or renaming while already a member of a shared project — see
+  // AuthContext.jsx's header comment on why this is lazy, not proactive).
+  // `user` can therefore be null (no session at all) OR an anonymous Firebase
+  // user (isGuestUser(user) true) for the exact same guest — both render the
+  // same UI here. Only a REAL account (a linked Google provider) is not a
+  // guest.
+  const isRealAccount = !!user && !isGuestUser(user);
+  const guestName = !isRealAccount ? findOwnGuestName(user?.uid, sharedProjects) : null;
+  const label = isRealAccount ? user.displayName || user.email || 'Account' : guestName || 'Guest';
 
   return (
     <div className={`account-widget ${compact ? 'compact' : 'full-width'}`} ref={wrapperRef}>
@@ -60,9 +59,9 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
         aria-haspopup="menu"
         aria-expanded={menuOpen}
       >
-        {user.photoURL ? (
+        {isRealAccount && user.photoURL ? (
           <img src={user.photoURL} alt="" className="account-avatar" referrerPolicy="no-referrer" />
-        ) : isGuest ? (
+        ) : !isRealAccount ? (
           <span className="account-avatar account-avatar-fallback" aria-hidden="true">
             <UserRound size={16} />
           </span>
@@ -75,9 +74,9 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
       {menuOpen && (
         <div className={`account-menu account-menu-${menuAlign}`}>
           <div className="account-menu-header">
-            <div className="account-menu-name">{isGuest ? `${label} (guest)` : user.displayName || 'Account'}</div>
-            {user.email && <div className="account-menu-email">{user.email}</div>}
-            {isGuest && (
+            <div className="account-menu-name">{!isRealAccount ? `${label} (guest)` : user.displayName || 'Account'}</div>
+            {isRealAccount && user.email && <div className="account-menu-email">{user.email}</div>}
+            {!isRealAccount && (
               <div className="account-menu-guest-note">
                 You're browsing as a guest — this data stays on this device only. Sign in with Google to keep it
                 across devices.
@@ -91,7 +90,7 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
               onOpenAccountSettings?.();
             }}
           >
-            <SettingsIcon size={14} /> {isGuest ? 'Guest settings' : 'Account settings'}
+            <SettingsIcon size={14} /> {!isRealAccount ? 'Guest settings' : 'Account settings'}
           </button>
           <button
             className="account-menu-item account-menu-danger"
@@ -100,7 +99,7 @@ export default function AccountButton({ compact = false, menuAlign = 'down', onO
               logout();
             }}
           >
-            <LogOut size={14} /> {isGuest ? 'Leave guest session' : 'Sign out'}
+            <LogOut size={14} /> {!isRealAccount ? 'Leave guest session' : 'Sign out'}
           </button>
         </div>
       )}

@@ -8,19 +8,8 @@
  * doing so needs a second identity and a live Firestore.
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
-import {
-  JOIN_PARAM,
-  JOIN_STATUS,
-  buildShareUrl,
-  joinStatusForReason,
-  loadCachedJoinName,
-  planJoinStep,
-  readJoinToken,
-  renameCachedJoinNames,
-  saveCachedJoinName,
-  urlWithoutJoinParam,
-} from '../../src/utils/joinFlow';
+import { describe, expect, it } from 'vitest';
+import { JOIN_PARAM, JOIN_STATUS, buildShareUrl, joinStatusForReason, planJoinStep, readJoinToken, urlWithoutJoinParam } from '../../src/utils/joinFlow';
 
 describe('readJoinToken', () => {
   it('reads the token from a query string', () => {
@@ -145,21 +134,21 @@ describe('planJoinStep', () => {
     ).toBe('Someone');
   });
 
-  it('prompts an anonymous visitor with no cached name', () => {
+  it('prompts an anonymous visitor with no existing guest name', () => {
     expect(
-      planJoinStep({ resolution: editLink, user: { uid: 'a1', isAnonymous: true }, cachedName: null })
+      planJoinStep({ resolution: editLink, user: { uid: 'a1', isAnonymous: true }, existingGuestName: null })
     ).toEqual({ action: 'prompt_name' });
   });
 
-  it('skips the prompt when a name is cached for this token', () => {
+  it('skips the prompt when this browser already has a guest name', () => {
     expect(
-      planJoinStep({ resolution: editLink, user: { uid: 'a1', isAnonymous: true }, cachedName: 'Zed' })
+      planJoinStep({ resolution: editLink, user: { uid: 'a1', isAnonymous: true }, existingGuestName: 'Zed' })
     ).toEqual({ action: 'write_membership', displayName: 'Zed' });
   });
 
-  it('treats a whitespace-only cached name as absent', () => {
+  it('treats a whitespace-only existing name as absent', () => {
     expect(
-      planJoinStep({ resolution: editLink, user: { uid: 'a1', isAnonymous: true }, cachedName: '   ' }).action
+      planJoinStep({ resolution: editLink, user: { uid: 'a1', isAnonymous: true }, existingGuestName: '   ' }).action
     ).toBe('prompt_name');
   });
 
@@ -168,7 +157,7 @@ describe('planJoinStep', () => {
       planJoinStep({
         resolution: viewLink,
         user: { uid: 'a1', isAnonymous: true },
-        cachedName: null,
+        existingGuestName: null,
         sharedProject: { ownerId: 'u1', collaborators: { a1: { role: 'viewer' } } },
       })
     ).toEqual({ action: 'open_project' });
@@ -189,95 +178,6 @@ describe('joinStatusForReason', () => {
   });
 });
 
-describe('cached anonymous display names', () => {
-  // The unit suite runs in Vitest's `node` environment (vitest.config.js), so
-  // there is no window.localStorage — these two functions take an injectable
-  // storage pair precisely so this module doesn't drag jsdom into the whole
-  // suite. See joinFlow.js's own comment on `defaultStorage`.
-  let store;
-  let storage;
-  beforeEach(() => {
-    store = {};
-    storage = {
-      load: (key, fallback) => (key in store ? store[key] : fallback),
-      save: (key, value) => {
-        store[key] = value;
-      },
-    };
-  });
-
-  it('round-trips a name for a token', () => {
-    saveCachedJoinName('tok1', 'Ada', storage);
-    expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
-  });
-
-  it('keeps names for different tokens separate, so one link cannot disclose the name used on another', () => {
-    saveCachedJoinName('tok1', 'Ada', storage);
-    saveCachedJoinName('tok2', 'Grace', storage);
-    expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
-    expect(loadCachedJoinName('tok2', storage)).toBe('Grace');
-  });
-
-  it('returns null for an unknown token', () => {
-    expect(loadCachedJoinName('nope', storage)).toBeNull();
-  });
-
-  it('trims on both save and load', () => {
-    saveCachedJoinName('tok1', '  Ada  ', storage);
-    expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
-  });
-
-  it('ignores empty/whitespace names rather than caching a blank the rules would reject', () => {
-    saveCachedJoinName('tok1', '   ', storage);
-    expect(loadCachedJoinName('tok1', storage)).toBeNull();
-  });
-
-  it('overwrites the name for a token when it changes', () => {
-    saveCachedJoinName('tok1', 'Ada', storage);
-    saveCachedJoinName('tok1', 'Grace', storage);
-    expect(loadCachedJoinName('tok1', storage)).toBe('Grace');
-  });
-
-  it('returns null for a missing token argument', () => {
-    expect(loadCachedJoinName(null, storage)).toBeNull();
-  });
-
-  it('survives a corrupt stored value instead of throwing', () => {
-    store.anonJoinNames = 'not an object';
-    expect(loadCachedJoinName('tok1', storage)).toBeNull();
-    saveCachedJoinName('tok1', 'Ada', storage);
-    expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
-  });
-
-  describe('renameCachedJoinNames', () => {
-    it('overwrites every cached token with the new name, not just the most recent', () => {
-      saveCachedJoinName('tok1', 'Ada', storage);
-      saveCachedJoinName('tok2', 'Grace', storage);
-      renameCachedJoinNames('New Name', storage);
-      expect(loadCachedJoinName('tok1', storage)).toBe('New Name');
-      expect(loadCachedJoinName('tok2', storage)).toBe('New Name');
-    });
-
-    it('trims the new name', () => {
-      saveCachedJoinName('tok1', 'Ada', storage);
-      renameCachedJoinNames('  New Name  ', storage);
-      expect(loadCachedJoinName('tok1', storage)).toBe('New Name');
-    });
-
-    it('is a no-op when there is nothing cached yet', () => {
-      renameCachedJoinNames('New Name', storage);
-      expect(store.anonJoinNames).toBeUndefined();
-    });
-
-    it('ignores an empty/whitespace name rather than blanking the cache', () => {
-      saveCachedJoinName('tok1', 'Ada', storage);
-      renameCachedJoinNames('   ', storage);
-      expect(loadCachedJoinName('tok1', storage)).toBe('Ada');
-    });
-
-    it('survives a corrupt stored value instead of throwing', () => {
-      store.anonJoinNames = 'not an object';
-      expect(() => renameCachedJoinNames('New Name', storage)).not.toThrow();
-    });
-  });
-});
+// The old per-share-token display-name cache that used to live in this file
+// (and its tests) has been superseded by one unified guest identity — see
+// tests/unit/guestIdentity.test.js and src/utils/guestIdentity.js's header.

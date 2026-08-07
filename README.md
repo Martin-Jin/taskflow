@@ -196,10 +196,13 @@ hand ownership of the project to another collaborator.
 
 **Anyone opening a link joins without needing an account** — they're asked
 once for a display name so their changes are attributable, and the project is
-filed into their own project list so they never need the link again. Signing
-in with Google instead gets you the same project across your own devices.
-(Guest participation requires Anonymous sign-in to be enabled on the Firebase
-project — step 8 of [Account & cross-device sync](#account--cross-device-sync).)
+filed into their own project list so they never need the link again. That name
+is remembered for this browser (rename it anytime from Settings), so joining a
+second share link later — or just using TaskFlow signed out in general — never
+asks again. Signing in with Google instead gets you the same project across
+your own devices. (Guest participation requires Anonymous sign-in to be
+enabled on the Firebase project — step 8 of
+[Account & cross-device sync](#account--cross-device-sync).)
 
 Every project row shows which of three states it's in: nothing at all for a
 private project, **shared by you** (with who's in it) for one you own and have

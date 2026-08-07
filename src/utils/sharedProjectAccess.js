@@ -44,6 +44,8 @@
  * ============================================================================
  */
 
+import { resolveGuestDisplayName } from './guestIdentity';
+
 /** The two roles a share link (or an explicit collaborator entry) can carry. */
 export const SHARE_ROLES = {
   VIEWER: 'viewer',
@@ -476,24 +478,24 @@ export function isGuestUser(user) {
 }
 
 /**
- * A guest's own chosen display name, read off whichever joined shared
- * project has an entry for them — there is nowhere else client-side to read
- * it from: Firebase never sets `displayName` on an anonymous user record (see
- * `isGuestUser`'s header), so the name they picked at join time only exists
- * denormalized onto `collaborators[uid].displayName` on each project they've
- * joined (see `addSelfAsCollaborator`). Used by AccountButton/SettingsPanel
- * to show a guest something better than a blank/generic label.
+ * A guest's own chosen display name. Thin re-export of
+ * `guestIdentity.js`'s `resolveGuestDisplayName` — kept here too since
+ * AccountButton/SettingsPanel already import guest helpers from this module,
+ * and because `isGuestUser` (right above) is the natural place to look for
+ * "how do I read a guest's name" alongside "how do I know this is a guest".
+ *
+ * Reads this browser's persistent local guest record FIRST (survives the
+ * guest being removed from every shared project — see guestIdentity.js's
+ * header for why that local copy exists at all), falling back to scanning
+ * `collaborators[uid].displayName` across `sharedProjects` for a guest whose
+ * name was only ever denormalized onto a project (e.g. one who joined before
+ * this local record existed).
  * @param {string} uid
  * @param {Record<string, {collaborators?: Record<string, {displayName?: string}>}>} sharedProjects
  * @returns {string|null}
  */
 export function findOwnGuestName(uid, sharedProjects) {
-  if (!uid || !sharedProjects) return null;
-  for (const project of Object.values(sharedProjects)) {
-    const name = project?.collaborators?.[uid]?.displayName;
-    if (typeof name === 'string' && name.trim()) return name.trim();
-  }
-  return null;
+  return resolveGuestDisplayName(uid, sharedProjects);
 }
 
 /**

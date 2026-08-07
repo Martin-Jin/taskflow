@@ -75,7 +75,7 @@ import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
 import { planSelfRename, isGuestUser, computeEffectiveRole } from '../utils/sharedProjectAccess';
-import { renameCachedJoinNames } from '../utils/joinFlow';
+import { setGuestDisplayName } from '../utils/guestIdentity';
 import {
   isSharedTask,
   partitionTasksBySharing,
@@ -2661,37 +2661,48 @@ export function SchedulerProvider({ children }) {
   );
 
   /**
-   * Let an anonymous share-link visitor rename themselves from Settings (see
-   * SettingsPanel's account section) — they're only ever asked for a name
-   * once, at join time, and previously had no way to change it. Real
-   * (Google-signed-in) accounts don't use this: their name comes from their
-   * Google account, not from anything TaskFlow stores.
+   * Let a guest (see isGuestUser) rename themselves from Settings — every
+   * signed-out visitor is a guest by default now, not just a share-link
+   * joiner, so this also covers someone who has never touched a shared
+   * project (and, per the lazy-sign-in design in AuthContext.jsx, may not
+   * even have a Firebase session yet — `user` can genuinely be `null` here,
+   * not just anonymous). Real (Google-signed-in) accounts don't use this:
+   * their name comes from their Google account, not from anything TaskFlow
+   * stores.
    *
-   * Touches every shared project this browser's anonymous identity has
-   * joined (planSelfRename, pure), not just the current one — an anonymous
-   * visitor may have joined several boards and a rename should be visible
-   * consistently everywhere, matching what addSelfAsCollaborator already
-   * denormalizes per-project. Also refreshes this uid's presence doc in each
-   * project (so the avatar strip picks up the new name immediately rather
-   * than waiting for the next 30s heartbeat) and the localStorage join-name
-   * cache (so a future join-link revisit doesn't re-prompt with the stale
-   * name). Does NOT touch past comments' authorDisplayName — that
+   * Touches every shared project this browser's guest identity has joined
+   * (planSelfRename, pure) — a guest may have joined several boards and a
+   * rename should be visible consistently everywhere, matching what
+   * addSelfAsCollaborator already denormalizes per-project. Also refreshes
+   * this uid's presence doc in each project (so the avatar strip picks up
+   * the new name immediately rather than waiting for the next 30s
+   * heartbeat). Does NOT touch past comments' authorDisplayName — that
    * denormalization is deliberately frozen at post time (see
-   * types/index.js's Comment typedef).
+   * types/index.js's Comment typedef). A guest with no `user` at all has
+   * nothing in `sharedProjects` either (joining is what creates a session in
+   * the first place), so `projectIds` is simply empty and no remote write is
+   * attempted — this is a purely local rename.
+   *
+   * The local guest-identity record (guestIdentity.js) — the durable copy
+   * that survives this guest being removed from every shared project, and
+   * that a name-less guest with no shared projects relies on entirely — is
+   * only updated once every remote write above has actually succeeded, so a
+   * partial failure never leaves the local record claiming a name that
+   * didn't make it to (say) one of several joined projects.
    */
   const renameAnonymousSelf = useCallback(
     async (displayName) => {
-      if (!isGuestUser(user)) return { ok: false, reason: 'not_anonymous' };
+      if (user && !isGuestUser(user)) return { ok: false, reason: 'not_anonymous' };
       const trimmed = (displayName || '').trim();
       if (!trimmed) return { ok: false, reason: 'empty_name' };
 
-      const projectIds = planSelfRename(user.uid, trimmed, sharedProjects);
+      const projectIds = user ? planSelfRename(user.uid, trimmed, sharedProjects) : [];
       try {
         await Promise.all([
           ...projectIds.map((projectId) => renameSelfAsCollaborator(projectId, user.uid, trimmed)),
           ...projectIds.map((projectId) => writePresence(projectId, user.uid, { displayName: trimmed, photoURL: user.photoURL || null })),
         ]);
-        renameCachedJoinNames(trimmed);
+        setGuestDisplayName(trimmed);
         return { ok: true };
       } catch (err) {
         console.error('[SchedulerContext] Failed to rename anonymous self', err);

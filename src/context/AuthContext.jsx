@@ -54,6 +54,7 @@ import { loadScript } from '../utils/loadScript';
 import { isRunningStandalone } from '../utils/installPrompt';
 import { isGuestUser } from '../utils/sharedProjectAccess';
 import { migrateGuestIdentity } from '../services/shareLinkService';
+import { setGuestUid } from '../utils/guestIdentity';
 
 const AuthContext = createContext(null);
 
@@ -98,6 +99,30 @@ export async function promptGoogleSignIn(onCredential) {
   window.google.accounts.id.prompt();
 }
 
+// GUEST IDENTITY BY DEFAULT: every signed-out visitor is treated as a guest
+// (see isGuestUser/AccountButton/SettingsPanel), but a Firebase Anonymous
+// Auth session is deliberately NOT minted proactively on every load —
+// unlike the earlier version of this change, which called signInAnonymously
+// unconditionally the moment no session was observed. That version was
+// reverted after live testing showed it firing a real network request (and,
+// in any environment whose Firebase Auth authorized-domains list doesn't
+// include the current host — confirmed against this app's own dev/E2E
+// setup — a genuine, console-logged failure) on EVERY single page load,
+// even for a visitor who never touches sharing at all. This app has always
+// worked fully offline off localStorage (see docs/DEVELOPMENT.md); a guest
+// identity must stay additive on top of that, not a new hard dependency on
+// reaching Firebase before the UI can settle.
+//
+// So a Firebase uid is only minted the moment something actually needs one:
+// opening a share link (useJoinFlow.js's own signInAnonymously call, unchanged)
+// or renaming from Settings while already a member of at least one shared
+// project (renameAnonymousSelf in SchedulerContext.jsx — see its own comment).
+// Until then, `user` stays null and the local guestIdentity record simply has
+// `uid: null` — resolveGuestDisplayName/setGuestDisplayName work with no uid
+// at all, so a guest's chosen name is fully available before any Firebase
+// session exists. AccountButton/SettingsPanel show guest UI based on "no real
+// signed-in account" (missing OR anonymous), not on isGuestUser(user) alone,
+// precisely to cover this uid-less state.
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -105,6 +130,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      // Only a guest's uid belongs in the local guest-identity record — a
+      // real Google account's uid must never end up there (see
+      // guestIdentity.js's header on why this record is guest-only).
+      if (isGuestUser(firebaseUser)) setGuestUid(firebaseUser.uid);
       setUser(firebaseUser);
       setAuthLoading(false);
     });
