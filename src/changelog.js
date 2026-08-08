@@ -26,7 +26,7 @@ export const CHANGELOG = [
     title: 'AI Quick Add now breaks down assignment documents',
     changes: [
       'Uploading (or asking to turn into tasks) an assignment brief, syllabus, or project spec now gets split into a parent task plus one sub-task per distinct deliverable (e.g. proposal, draft, final submission), with due dates, ordering, and any links/instructions from the document carried over — instead of one flat task.',
-      'Fixed the Gemini provider ignoring the actual contents of an attached PDF/screenshot and proposing a vague placeholder task instead of reading the document.',
+      'Fixed the Gemini provider ignoring the actual contents of an attached PDF/screenshot and proposing a vague placeholder task instead of reading the document — it could run out of response budget partway through "thinking" about a large attachment and return a truncated, garbage answer without any error being shown.',
     ],
   },
   {
