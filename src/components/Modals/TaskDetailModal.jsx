@@ -555,14 +555,24 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // (rendered right under the description, Todoist-style, instead of a
   // permanent footer) should show at all.
   const initialSnapshotRef = useRef(null);
-  // Latches true the first time isDirty goes true for this task, and only
-  // resets on task switch (see the [task.id] effect below) — unlike isDirty
-  // itself, this doesn't flip back to false the moment the sidebar's
-  // debounced auto-save (commitChanges) resets initialSnapshotRef to match
-  // the just-saved values. Drives the "Apply to all sub-tasks" button so it
-  // stays visible for the rest of this modal session once the user has
-  // edited a shared field, instead of disappearing ~500ms after each edit.
+  // Latches true the first time an *appliable* shared field (the ones
+  // handleApplyToAllSubtasks actually copies: priority, due date, project/
+  // section, labels, passive — see that function's doc comment) goes dirty
+  // for this task, and only resets on task switch (see the [task.id] effect
+  // below) — unlike isDirty itself, this doesn't flip back to false the
+  // moment the sidebar's debounced auto-save (commitChanges) resets
+  // initialSnapshotRef to match the just-saved values. Drives the "Apply to
+  // all sub-tasks" button so it stays visible for the rest of this modal
+  // session once the user has edited a shared field, instead of disappearing
+  // ~500ms after each edit. Deliberately narrower than isDirty/sidebarDirty:
+  // title/notes/estimatedHours/dependsOn/fixedTime/recurrence/enforceDueDate
+  // are dirty-tracked for the Save row but aren't part of what gets applied,
+  // so editing only those must NOT show this button.
   const hasEditedSharedFieldsRef = useRef(false);
+  // Reset the moment any appliable field changes again after a successful
+  // apply, so the button disappears right after a click and only reappears
+  // once there's something new worth (re-)applying.
+  const [justAppliedToAll, setJustAppliedToAll] = useState(false);
   if (!initialSnapshotRef.current) {
     initialSnapshotRef.current = {
       title: task.title,
@@ -633,6 +643,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
     hasEditedSharedFieldsRef.current = false;
+    setJustAppliedToAll(false);
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
@@ -1164,7 +1175,35 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
   const isDirty = mainDirty || sidebarDirty;
-  if (isDirty) hasEditedSharedFieldsRef.current = true;
+  // Subset of sidebarDirty that's actually appliable to sub-tasks (mirrors
+  // handleApplyToAllSubtasks' sharedUpdates) — excludes recurrence/
+  // enforceDueDate/earliestDate/fixedTime*, which are dirty-tracked for the
+  // sidebar auto-save but were deliberately dropped from the apply payload
+  // (recurrence/enforceDueDate now sync automatically; the rest are
+  // per-task-only, see that function's doc comment).
+  const appliableSharedDirty =
+    priority !== initialSnapshotRef.current.priority ||
+    dueDate !== initialSnapshotRef.current.dueDate ||
+    projectId !== initialSnapshotRef.current.projectId ||
+    sectionId !== initialSnapshotRef.current.sectionId ||
+    isPassive !== initialSnapshotRef.current.isPassive ||
+    labelIds.length !== initialSnapshotRef.current.labelIds.length ||
+    labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
+  if (appliableSharedDirty) {
+    hasEditedSharedFieldsRef.current = true;
+  }
+  // Clears justAppliedToAll the moment an appliable field changes again
+  // after a successful apply, so the button reappears only once there's
+  // something new to (re-)apply. Runs as an effect (not inline during
+  // render, like hasEditedSharedFieldsRef.current above) because unlike that
+  // ref mutation, this is a state update — doing it unconditionally in the
+  // render body re-triggers on every render while appliableSharedDirty stays
+  // true (e.g. while typing into a debounced field), which is a React
+  // "Maximum update depth exceeded" render loop.
+  useEffect(() => {
+    if (appliableSharedDirty) setJustAppliedToAll(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliableSharedDirty]);
   // Checking "Fixed time" with no time chosen yet is an incomplete edit —
   // block it from silently autosaving (or from the explicit Save button)
   // until a time is actually picked.
@@ -1446,15 +1485,22 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
    * every descendant sub-task (direct and nested, see getAllDescendants).
    * Only offered when the task actually has sub-tasks (isContainer) AND the
    * user has edited one of these shared fields at some point this modal
-   * session (hasEditedSharedFieldsRef) — see the Save row below, which hides
-   * the button otherwise. isContainer re-hides it the moment the last
-   * sub-task is removed (recomputed from the live `tasks` list each render);
+   * session (hasEditedSharedFieldsRef, driven by appliableSharedDirty above
+   * — deliberately narrower than isDirty/sidebarDirty so e.g. editing just
+   * the title doesn't surface a button that has nothing to apply) AND the
+   * button hasn't just been clicked with nothing new to apply since
+   * (justAppliedToAll) — see the Save row below, which hides the button
+   * otherwise. isContainer re-hides it the moment the last sub-task is
+   * removed (recomputed from the live `tasks` list each render);
    * hasEditedSharedFieldsRef only resets when the modal switches to a
    * different task, NOT on every sidebar auto-save — sidebar fields
    * debounce-save ~500ms after each edit (see the auto-save effect below),
    * which resets initialSnapshotRef/isDirty back to false, but the button
    * should stay available for the rest of the session rather than flash and
-   * disappear right after the edit that triggered it.
+   * disappear right after the edit that triggered it. justAppliedToAll is
+   * the exception: it resets back to false the moment an appliable field
+   * changes again (see appliableSharedDirty above), so the button reappears
+   * only once there's something new to apply.
    *
    * Deliberately excludes title/notes/estimatedHours/dependsOn/fixedTime —
    * those are meant to stay per-task (a shared title would collide, a shared
@@ -1488,6 +1534,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       type: 'success',
       message: `Applied to ${descendants.length} sub-task${descendants.length === 1 ? '' : 's'}.`,
     });
+    setJustAppliedToAll(true);
   }
 
   // Sidebar fields auto-save (debounced) without needing the explicit
@@ -1917,7 +1964,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 </div>
               </div>
 
-              {(mainDirty || (isContainer && hasEditedSharedFieldsRef.current)) && (
+              {(mainDirty || (isContainer && hasEditedSharedFieldsRef.current && !justAppliedToAll)) && (
                 <div className="detail-save-row">
                   {fixedTimeError && <p className="form-error">{fixedTimeError}</p>}
                   {mainDirty && (
@@ -1935,7 +1982,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       </button>
                     </>
                   )}
-                  {isContainer && hasEditedSharedFieldsRef.current && (
+                  {isContainer && hasEditedSharedFieldsRef.current && !justAppliedToAll && (
                     <button
                       type="button"
                       className="btn btn-primary"

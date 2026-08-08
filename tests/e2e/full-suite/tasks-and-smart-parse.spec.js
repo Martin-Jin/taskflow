@@ -162,7 +162,7 @@ test.describe('Sub-tasks', () => {
     expectNoErrors(errors);
   });
 
-  test('"Apply to all sub-tasks" stays hidden until an edit is made, then cascades recurrence', async ({ page }) => {
+  test('"Apply to all sub-tasks" only appears for appliable edits, hides right after a click, and reappears on the next edit', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
     await openAddTask(page);
@@ -181,21 +181,40 @@ test.describe('Sub-tasks', () => {
     const applyAllBtn = page.getByRole('button', { name: /apply to all sub-tasks/i });
     await expect(applyAllBtn).not.toBeVisible();
 
-    // Give the parent a due date, then turn on recurrence.
-    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
-    await dueDateInput.fill('2026-08-20');
-    await page.getByRole('button', { name: /does not repeat/i }).click();
+    // Editing the parent's own title/description is never appliable to
+    // sub-tasks (a shared title would collide) — it must not surface the
+    // button, even though it does dirty the modal's Save/Cancel row.
+    const titleInput = page.locator('.smart-title-input').first();
+    await titleInput.fill(`${title} (edited)`);
+    await page.waitForTimeout(200);
+    await expect(applyAllBtn).not.toBeVisible();
+    await page.getByRole('button', { name: /^cancel$/i }).click();
     await page.waitForTimeout(200);
 
+    // Turning on recurrence alone isn't appliable either — recurrence now
+    // syncs to sub-tasks automatically (computeRecurrenceSyncUpdates), so a
+    // manual copy step would be redundant and shouldn't show the button.
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await dueDateInput.fill('2026-08-20');
+    await page.waitForTimeout(600);
+    await page.getByRole('button', { name: /does not repeat/i }).click();
+    await page.waitForTimeout(200);
+    // The due date edit just above IS appliable, so the button is visible —
+    // confirm recurrence alone didn't need to contribute to that.
+    await expect(applyAllBtn).toBeVisible();
+
+    // An appliable field (priority) surfaces/keeps the button.
+    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
+    await prioritySelect.selectOption('urgent');
+    await page.waitForTimeout(600);
     await expect(applyAllBtn).toBeVisible();
     await expect(applyAllBtn).toHaveClass(/btn-primary/);
-    await applyAllBtn.click();
-    await page.waitForTimeout(600); // let the sidebar's debounced auto-save land
 
-    // The button should stay visible for the rest of this modal session even
-    // after the auto-save resets the dirty snapshot back to "clean" — it
-    // only re-hides when the modal is reopened on a task.
-    await expect(applyAllBtn).toBeVisible();
+    await applyAllBtn.click();
+    await page.waitForTimeout(300);
+
+    // Hides immediately after a successful apply — nothing new to apply yet.
+    await expect(applyAllBtn).not.toBeVisible();
 
     await closeAnyModal(page);
     await page.waitForTimeout(300);
@@ -205,10 +224,15 @@ test.describe('Sub-tasks', () => {
     await closeAnyModal(page);
     await page.waitForTimeout(300);
 
-    // Reopening the parent starts a fresh session — the button hides again
-    // until the next edit.
+    // Reopening the parent starts a fresh session.
     await searchAndOpen(page, title);
     await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).not.toBeVisible();
+
+    // Editing another appliable field brings the button back.
+    const prioritySelect2 = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
+    await prioritySelect2.selectOption('medium');
+    await page.waitForTimeout(600);
+    await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).toBeVisible();
 
     await closeAnyModal(page);
     expectNoErrors(errors);

@@ -21,6 +21,23 @@
 
 export const CHANGELOG = [
   {
+    version: '3.4.1',
+    date: '2026-08-09',
+    title: '"Apply to all sub-tasks" button fixes',
+    changes: [
+      'The "Apply to all sub-tasks" button no longer appears just because you edited the parent task\'s name or description (which was never actually applied to sub-tasks) — it now only shows up when you\'ve changed something that will actually cascade, like priority, due date, project/section, labels, or the passive flag.',
+      'After clicking it, the button now disappears immediately instead of staying enabled with nothing new to apply — it reappears the next time you make another applicable change.',
+    ],
+  },
+  {
+    version: '3.4.0',
+    date: '2026-08-09',
+    title: 'AI Quick Add now accepts multiple screenshots and PDFs',
+    changes: [
+      'You can now attach up to 5 images and/or PDFs to a single AI Quick Add request (previously limited to one screenshot) — drag, paste, or pick multiple files at once, and remove individual attachments before submitting.',
+    ],
+  },
+  {
     version: '3.3.9',
     date: '2026-08-09',
     title: "Fixed sub-task due dates not following a parent's \"enforce due date\" changes",
