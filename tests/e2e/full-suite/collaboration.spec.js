@@ -66,6 +66,10 @@ test.describe('Sharing a project — reachability', () => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
     await gotoTab(page, 'Tasks');
+    // Sidebar's project list is recency-based (see Sidebar.jsx) — a project
+    // only gets an "Actions for X" trigger once it's actually been visited,
+    // same as the other tests below.
+    await switchToProject(page, 'Work');
 
     await page.getByRole('button', { name: /^Actions for / }).first().click();
     await expect(page.getByRole('menuitem', { name: 'Share project' })).toBeVisible();

@@ -16,6 +16,15 @@ async function openFilterMenu(page) {
   await page.waitForTimeout(200);
 }
 
+// Scopes a group-header lookup (e.g. "Projects", "Tags") to the filter
+// dropdown's own role="menu" — needed since the sidebar's top-level
+// "Projects" nav button also matches an unscoped getByRole('button', {
+// name: /^Projects/ }), which used to be unambiguous before that nav item
+// existed.
+function filterMenu(page) {
+  return page.getByRole('menu');
+}
+
 // Mock data's dated tasks aren't scheduled onto the calendar until a
 // rebalance actually runs — on a fresh load that only happens via a
 // debounced background effect, which isn't reliably done by the time a test
@@ -88,7 +97,7 @@ test.describe('Calendar filter menu', () => {
 
     await openFilterMenu(page);
     // Projects group starts collapsed (see CalendarFilterMenu's FilterGroup) — expand it.
-    await page.getByRole('button', { name: /^Projects/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
     // Deselecting "All projects" narrows down to an explicit list; then
     // re-select just "Work" (a project mock data seeds several dated tasks
@@ -108,7 +117,7 @@ test.describe('Calendar filter menu', () => {
     // Reset via the menu's own "All projects" checkbox rather than leaving
     // the filter applied for later tests.
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Projects/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
     await page.getByRole('checkbox', { name: 'All projects' }).check();
     await page.waitForTimeout(300);
@@ -149,7 +158,7 @@ test.describe('Calendar filter menu', () => {
     await ensureBlocksScheduled(page);
 
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Tags/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Tags/ }).click();
     await page.waitForTimeout(150);
     await page.getByRole('checkbox', { name: 'All tags' }).uncheck();
     await page.waitForTimeout(150);
@@ -169,7 +178,7 @@ test.describe('Calendar filter menu', () => {
 
     // Reset the tag filter so it doesn't leak into later tests.
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Tags/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Tags/ }).click();
     await page.waitForTimeout(150);
     await page.getByRole('checkbox', { name: 'All tags' }).check();
     await page.waitForTimeout(300);
@@ -187,7 +196,7 @@ test.describe('Calendar filter menu', () => {
     // Narrow the Projects group down to zero selections — guaranteed to hide
     // every task block regardless of what mock data seeds.
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Projects/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
     await page.getByRole('checkbox', { name: 'All projects' }).uncheck();
     await page.waitForTimeout(150);
@@ -285,7 +294,7 @@ test.describe('Calendar filter menu — Projects search', () => {
 
     await gotoTab(page, 'Calendar');
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Projects/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
 
     const searchInput = page.locator('.calendar-filter-search-input');
@@ -345,7 +354,7 @@ test.describe('Calendar filter menu — Projects search', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await gotoTab(page, 'Calendar');
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Projects/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
 
     const searchInput = page.locator('.calendar-filter-search-input');
@@ -395,7 +404,7 @@ test.describe('Calendar filter menu — Projects search', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await gotoTab(page, 'Calendar');
     await openFilterMenu(page);
-    await page.getByRole('button', { name: /^Projects/ }).click();
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
 
     const searchInput = page.locator('.calendar-filter-search-input');

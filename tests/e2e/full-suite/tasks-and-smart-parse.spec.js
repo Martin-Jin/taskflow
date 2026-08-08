@@ -504,21 +504,28 @@ test.describe('Recurring tasks', () => {
     await clearSearch(page);
     await page.getByPlaceholder(/search tasks/i).fill(title);
     await page.waitForTimeout(300);
+    // Close SearchBar's own live-suggestion dropdown first — left open, it
+    // sits on top of the filtered list below and silently swallows the
+    // click intended for the "Mark complete" button underneath it.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
     const completeBtn = page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) });
     await completeBtn.click();
     await page.waitForTimeout(400);
 
     // Still visible in the default (non-completed) search results — a
-    // recurring task never moves to the Completed filter. Its due date was
-    // today, so it now shows CHECKED for today's occurrence (the "done for
-    // today" list-view display — see taskHierarchy.isCompletedForCurrentOccurrence)
-    // rather than with an active "Mark complete" button; that's distinct
-    // from isCompleted, which stays false underneath (confirmed by the due
-    // date having advanced below, and by TaskDetailModal below not treating
-    // it as permanently done).
+    // recurring task never moves to the Completed filter. Completing a
+    // weekly task immediately rolls its dueDate forward to next Monday
+    // (i.e. past today), so per isCheckedForListDisplay's deliberate design
+    // (see its doc comment and the matching unit test in
+    // taskHierarchy.test.js) it does NOT show checked/struck-through here —
+    // that display is reserved for a task still sitting on an occurrence
+    // due today or earlier. An active "Mark complete" button reappearing is
+    // therefore the correct outcome, now representing the NEXT occurrence,
+    // not a sign the original click did nothing (confirmed below: the due
+    // date has in fact advanced, and isCompleted itself was never set true).
     await expect(page.getByText(title, { exact: false }).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: `${title} completed` })).toBeVisible();
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();
 
     // Due date should have advanced, and the detail modal's own recurrence
     // controls should still treat the task as an ongoing recurring task
@@ -582,17 +589,26 @@ test.describe('Recurring tasks', () => {
     await clearSearch(page);
     await page.getByPlaceholder(/search tasks/i).fill(title);
     await page.waitForTimeout(300);
+    // Close SearchBar's own live-suggestion dropdown first — left open, it
+    // sits on top of the filtered list below and silently swallows the
+    // click intended for the "Mark complete" button underneath it.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
     const childCompleteBtn = page.getByRole('button', { name: new RegExp(`Mark ${childTitle} complete`) });
     await childCompleteBtn.click();
     await page.waitForTimeout(400);
 
-    // The child now shows checked (its "Mark complete" button is gone,
-    // replaced by a disabled/checked state) even though completeTask never
-    // set isCompleted for a recurring task.
-    await expect(page.getByRole('button', { name: new RegExp(`Mark ${childTitle} complete`) })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: `${childTitle} completed` })).toBeVisible();
+    // Completing the child immediately rolls its dueDate forward to
+    // tomorrow (past today), so per isCheckedForListDisplay's deliberate
+    // design (see its doc comment and the matching unit test in
+    // taskHierarchy.test.js — "is NOT checked ... once ... rolled forward
+    // into the future") it does NOT show checked/struck-through here; an
+    // active "Mark complete" button reappearing (now representing the next
+    // occurrence) is the correct outcome, not a sign completeTask did
+    // nothing.
+    await expect(page.getByRole('button', { name: new RegExp(`Mark ${childTitle} complete`) })).toBeVisible();
 
-    // The parent (with an incomplete sibling) must NOT show checked.
+    // The parent (with an incomplete sibling) must NOT show checked either.
     await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();
 
     expectNoErrors(errors);

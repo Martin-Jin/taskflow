@@ -518,7 +518,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                   {datePickerMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowDatePicker(false)} />}
                   <div
                     ref={datePickerRef}
-                    className={datePickerMode === 'centered' ? 'menu-popover-centered' : undefined}
+                    className={`calendar-date-picker-dropdown ${datePickerMode === 'centered' ? 'menu-popover-centered' : ''}`}
                     style={datePickerMode === 'anchored' ? datePickerStyle : undefined}
                   >
                     <CalendarDatePickerDropdown

@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.6',
+    date: '2026-08-08',
+    title: 'Fixed a smart-parsed "@tag" label silently disappearing after saving a task',
+    changes: [
+      'Adding a label to an existing task by typing "@label" into its title (rather than picking one via the Labels field) could get created correctly but then silently drop off the task moments later, without any indication anything went wrong.',
+      "Calendar's date-jump dropdown: picking a different month or day could fail to register the click on some page layouts, with no visible cause — the dropdown now reliably receives every click, even where the calendar grid behind it used to intercept them.",
+    ],
+  },
+  {
     version: '3.3.5',
     date: '2026-08-07',
     title: 'Fixed deleting a shared project sometimes leaving it behind on the server',

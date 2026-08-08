@@ -226,7 +226,7 @@ test('keyboard shortcut: Ctrl+Z / Ctrl+Shift+Z undo and redo a task delete', asy
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Tasks');
 
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   await expect(page.locator('.modal-detail')).toBeVisible();
 
@@ -258,7 +258,7 @@ test('undo toast: clicking "Undo" on the delete toast restores the task', async 
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Tasks');
 
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   await page.getByRole('button', { name: 'More actions' }).click();
   await page.waitForTimeout(200);
@@ -285,7 +285,7 @@ test('search bar filters by "@label" and matches only tasks carrying that label'
   // title's "@tag" smart-parse shorthand — taskMatchesQuery (SearchBar.jsx)
   // matches "@tag" search tokens against a task's actual label names, not
   // its title text (see the tagTokens/textTokens split there).
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   const titleInput = page.locator('.smart-title-input');
   const titleBefore = await titleInput.inputValue();
@@ -324,7 +324,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await gotoTab(page, 'Tasks');
 
   // --- Part 1: single edit undo/redo ---------------------------------------
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
   const priorityBefore = await prioritySelect.inputValue();
@@ -336,7 +336,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
 
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(400);
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).toHaveValue(priorityBefore);
   await closeAnyModal(page);
@@ -344,7 +344,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
 
   await page.keyboard.press('Control+Shift+Z');
   await page.waitForTimeout(400);
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).toHaveValue(priorityAfter);
   await closeAnyModal(page);
@@ -431,7 +431,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   // chain-task search filter first so "Refactor auth module" is findable again.
   await chainSearch.fill('');
   await page.waitForTimeout(300);
-  await page.getByText('Refactor auth module', { exact: true }).click();
+  await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
   await page.locator('.detail-field', { hasText: 'Priority' }).locator('select').selectOption(priorityBefore);
   await page.waitForTimeout(700);

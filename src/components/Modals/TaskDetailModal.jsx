@@ -1391,11 +1391,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       labelIds: finalLabelIds,
     });
 
-    // Sync local title state to the just-persisted, already-stripped value
-    // and clear smart-parse detection state — otherwise re-entering edit
-    // (e.g. via the sidebar auto-save path, which doesn't close the modal)
-    // would keep showing the raw pre-strip text with stale link highlighting.
+    // Sync local title/label state to what was just persisted, and clear
+    // smart-parse detection state. Without the setLabelIds call, a label
+    // resolved from a pending "@tag" (getOrCreateLabelIds, above) exists in
+    // finalLabelIds/the saved task but never makes it into the live
+    // `labelIds` state — so the very next auto-save tick (the sidebar
+    // effect below, or a Cancel) reverts the task back to its pre-save
+    // labelIds and silently drops the just-created label. Title needs the
+    // same sync so re-entering edit (e.g. via the sidebar auto-save path,
+    // which doesn't close the modal) doesn't keep showing the raw pre-strip
+    // text with stale link highlighting.
     setTitle(nextTitle);
+    setLabelIds(finalLabelIds);
     resetSmartState();
 
     initialSnapshotRef.current = {
