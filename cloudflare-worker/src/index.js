@@ -109,7 +109,16 @@ function resolveModel(provider, requestedModel) {
 // leaving room for the actual tool-call response after reasoning.
 const ANTHROPIC_THINKING_BUDGET_TOKENS = 4096;
 const ANTHROPIC_MAX_OUTPUT_TOKENS = 8192; // a full reorganize plan can carry many operations
-const GEMINI_MAX_OUTPUT_TOKENS = 8192;
+// Gemini's thinking tokens are drawn from the SAME maxOutputTokens pool as
+// the final response (unlike Claude, which has separate budgets) — with no
+// explicit cap, a model reasoning over a large attached PDF could exhaust
+// the whole budget thinking and return a truncated/degenerate function call
+// (e.g. a vague placeholder task) instead of a real one. Capping thinking
+// well under the total, and raising the total to leave headroom for a full
+// multi-operation plan after that, avoids silently shipping a truncated
+// response.
+const GEMINI_THINKING_BUDGET_TOKENS = 4096;
+const GEMINI_MAX_OUTPUT_TOKENS = 16384;
 
 // ----------------------------------------------------------------------------
 // Shared field descriptors per operation ("tool"), so the Anthropic (JSON
@@ -533,7 +542,10 @@ async function callGemini({ apiKey, text, attachments, contextMarkdown, model })
     body: JSON.stringify({
       contents: [{ role: 'user', parts }],
       systemInstruction: { parts: [{ text: buildSystemPrompt(contextMarkdown) }] },
-      generationConfig: { maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS },
+      generationConfig: {
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET_TOKENS },
+      },
       tools: [
         {
           functionDeclarations: OPERATIONS.map((op) => ({ name: op.name, description: op.description, parameters: fieldsToGeminiSchema(op.fields) })),
@@ -545,7 +557,19 @@ async function callGemini({ apiKey, text, attachments, contextMarkdown, model })
 
   if (!res.ok) throw new ProviderError(classifyProviderError(res.status, await safeReadError(res), res.headers));
   const data = await res.json();
-  const responseParts = data.candidates?.[0]?.content?.parts || [];
+  const candidate = data.candidates?.[0];
+  // MAX_TOKENS means the model ran out of budget (often while "thinking"
+  // over a large attachment) before finishing its response — the function
+  // call parts present, if any, are a truncated/degenerate fragment (e.g. a
+  // vague placeholder task), not a real answer. Surface this as an explicit
+  // error instead of silently returning it as a valid plan.
+  if (candidate?.finishReason === 'MAX_TOKENS') {
+    throw new ProviderError({
+      kind: 'context_too_large',
+      message: 'The model ran out of response budget before finishing — this can happen with a large attached document. Try a smaller/simpler PDF, split the request up, or switch to a different model.',
+    });
+  }
+  const responseParts = candidate?.content?.parts || [];
   return responseParts.filter((p) => p.functionCall).map((p) => toolCallToOperation(p.functionCall.name, p.functionCall.args || {}));
 }
 
