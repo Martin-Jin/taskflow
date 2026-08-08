@@ -597,6 +597,27 @@ describe('computeRecurrenceSyncUpdates', () => {
     expect(updates.get('s1').dueDate).toBeUndefined();
   });
 
+  // Unlike enforceDueDate (a persistent "the ancestor's date always wins"
+  // constraint — see computeEnforceDueDateSyncUpdates), recurrence syncing
+  // is a deliberate ONE-TIME seed: once a sub-task is recurring, its due
+  // date advances on its own via its own occurrence cadence (completeTask),
+  // so a LATER change to the ancestor's dueDate must NOT keep cascading down
+  // — `if (task.isRecurring) continue` intentionally skips it on every
+  // subsequent run. Confirms that design holds rather than assuming it.
+  it('does not cascade a later ancestor dueDate change onto an already-recurring sub-task (recurrence is a one-time seed, not an ongoing mirror)', () => {
+    let tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-06' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    let updates = computeRecurrenceSyncUpdates(tasks);
+    tasks = tasks.map((t) => ({ ...t, ...updates.get(t.id) }));
+    expect(tasks.find((t) => t.id === 's1').dueDate).toBe('2026-08-06');
+
+    tasks = tasks.map((t) => (t.id === 'p1' ? { ...t, dueDate: '2026-08-13' } : t));
+    updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
   it('snaps the propagated dueDate to the first date actually matching a weekday-specific rule', () => {
     // p1's own dueDate (2026-08-06, a Thursday) doesn't itself fall on Wed/Sun
     // -- the sub-task's synced dueDate must land on a day the rule allows.
@@ -689,7 +710,40 @@ describe('computeEnforceDueDateSyncUpdates', () => {
     ];
     const updates = computeEnforceDueDateSyncUpdates(tasks);
     expect(updates.size).toBe(1);
-    expect(updates.get('s1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10' });
+    expect(updates.get('s1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10', dueDateInherited: true });
+  });
+
+  it('cascades a LATER change to the ancestor dueDate onto a sub-task that inherited it, even though the sub-task is already enforcing', () => {
+    // First sync: s1 inherits p1's dueDate and is marked dueDateInherited.
+    let tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    let updates = computeEnforceDueDateSyncUpdates(tasks);
+    tasks = tasks.map((t) => ({ ...t, ...updates.get(t.id) }));
+    expect(tasks.find((t) => t.id === 's1')).toMatchObject({
+      enforceDueDate: true,
+      dueDate: '2026-08-10',
+      dueDateInherited: true,
+    });
+
+    // Ancestor's dueDate changes — the sub-task is now already enforcing,
+    // but since its date is still marked inherited, it must re-sync to the
+    // new date rather than being skipped as "already enforcing".
+    tasks = tasks.map((t) => (t.id === 'p1' ? { ...t, dueDate: '2026-08-17' } : t));
+    updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.get('s1')).toEqual({ dueDate: '2026-08-17' });
+  });
+
+  it('does not cascade an ancestor dueDate change onto a sub-task whose own dueDate was set explicitly (not inherited)', () => {
+    // Simulates: user directly edited s1's dueDate at some point, which
+    // clears dueDateInherited (see updateTask in SchedulerContext.jsx).
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-17' },
+      { id: 's1', parentId: 'p1', enforceDueDate: true, dueDate: '2026-08-05', dueDateInherited: false },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.has('s1')).toBe(false);
   });
 
   it('does not propagate when the enforcing ancestor has no dueDate of its own', () => {
@@ -717,7 +771,7 @@ describe('computeEnforceDueDateSyncUpdates', () => {
       { id: 'gs1', parentId: 's1' },
     ];
     const updates = computeEnforceDueDateSyncUpdates(tasks);
-    expect(updates.get('gs1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10' });
+    expect(updates.get('gs1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10', dueDateInherited: true });
   });
 
   it('leaves an already-enforcing descendant untouched', () => {

@@ -291,19 +291,25 @@
     white-space: nowrap;
   }
 
-  /* Pushes Today + the refresh icon to the bar's right edge as a single
-     trailing cluster, rather than centered/wrapped onto their own row
-     below (see CalendarPage.jsx for why they live in .calendar-toolbar-left
-     on mobile). Both are given the same margin-left: auto — when both are
-     present only the first (Today) actually needs to push, but auto-margin
-     on a later flex sibling is a no-op once an earlier one has already
-     claimed the free space, so there's no need to conditionally strip it
-     back off for the two-button case. */
+  /* Pushes Today + refresh + filter to the bar's right edge as a single
+     trailing cluster, rather than centered/wrapped onto their own row below
+     (see CalendarPage.jsx for why they live in .calendar-toolbar-left on
+     mobile, wrapped in their own flex container). margin-left: auto lives
+     on this wrapper only — putting it on each child individually instead
+     splits the leftover space between every auto margin present, opening a
+     gap between Today and whatever follows it rather than bunching them
+     together. */
+  .calendar-toolbar-trailing {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+
   .calendar-today-btn-solo,
   .calendar-refresh-btn-mobile,
   .calendar-filter-trigger {
     width: auto;
-    margin-left: auto;
   }
 
   .calendar-toolbar-actions {

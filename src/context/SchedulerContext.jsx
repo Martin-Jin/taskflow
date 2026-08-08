@@ -671,9 +671,10 @@ export function SchedulerProvider({ children }) {
 
   // Guards the one-time migrateProtectedSleepRoutine backfill below — see
   // src/migrations/migrateProtectedSleepRoutine.js (Sleep routines are now
-  // seeded as isProtected: true; this only backfills one for a pre-existing
-  // user who somehow has zero fixed routines at all, never overriding an
-  // existing routine or a deliberate deletion).
+  // seeded as isProtected: true; this backfills one for a pre-existing user
+  // with zero fixed routines at all, and separately marks any existing
+  // routine labeled exactly "Sleep" as protected, without touching a renamed
+  // or deliberately-deleted one).
   const [protectedSleepRoutineMigrationDone, setProtectedSleepRoutineMigrationDone] = usePersistedState(
     'protectedSleepRoutineMigrationDone',
     false
@@ -913,10 +914,10 @@ export function SchedulerProvider({ children }) {
   }, []);
 
   // ONE-TIME MIGRATION — see src/migrations/migrateProtectedSleepRoutine.js.
-  // Only ever backfills when routines is completely empty, so almost every
-  // existing user (who has at least one routine, deleted or not) sees no
-  // change. Safe to delete this effect once the flag above is true for all
-  // users.
+  // Backfills when routines is completely empty, and marks any existing
+  // "Sleep"-labeled routine as protected. A renamed or deleted Sleep routine
+  // sees no change. Safe to delete this effect once the flag above is true
+  // for all users.
   useEffect(() => {
     if (protectedSleepRoutineMigrationDone) return;
     setRoutines((prev) => migrateProtectedSleepRoutine(prev));
@@ -1537,6 +1538,22 @@ export function SchedulerProvider({ children }) {
             // if that ever changes) and the date is actually changing.
             if (t.isCompleted && !('isCompleted' in updates) && 'dueDate' in updates && updates.dueDate !== t.dueDate) {
               merged = { ...merged, isCompleted: false, completedAt: null };
+            }
+            // An explicit dueDate edit means the user now owns this task's
+            // due date directly — even if it was previously copied down from
+            // an enforcing ancestor (see computeEnforceDueDateSyncUpdates).
+            // Clear the inherited flag BEFORE that sync function re-runs
+            // below (against `nextTasks`, which is built from this `merged`
+            // task) so it correctly treats this as "no longer tracking the
+            // ancestor" in the same commit, not just on some future run.
+            // Guarded on the value actually changing (same condition as the
+            // isCompleted re-open check just above) — TaskDetailModal's
+            // commitChanges resubmits `dueDate` on every save regardless of
+            // whether the user touched that field, and that resubmission-of-
+            // the-same-value must not be treated as "the user just claimed
+            // this date as their own".
+            if ('dueDate' in updates && updates.dueDate !== t.dueDate && merged.dueDateInherited) {
+              merged = { ...merged, dueDateInherited: false };
             }
             // Recurring-only due-date guards (never let it end up empty; drop
             // stale completedDates when rescheduling reopens an occurrence

@@ -874,16 +874,30 @@ export function computeRecurrenceSyncUpdates(tasks) {
  * `dueDate` rides along the same way it does for recurrence: a descendant
  * with no `dueDate` of its own also picks up the enforcing ancestor's
  * `dueDate` directly (no rule-based snapping needed here, since there's no
- * recurrence cadence to reconcile against — just copy the value). A
- * descendant that already has its own `dueDate` keeps it untouched; only
- * `enforceDueDate` is forced true on it.
+ * recurrence cadence to reconcile against — just copy the value), and is
+ * marked `dueDateInherited: true` so a LATER change to the ancestor's
+ * `dueDate` can still find and re-cascade onto it. A descendant that already
+ * has its own `dueDate` — including one that was itself inherited earlier —
+ * is handled by whether `dueDateInherited` is currently true on it:
+ *   - `dueDateInherited: true` (or no `dueDate` at all yet): this task's date
+ *     is still "the ancestor's", so it's kept in sync — copy the ancestor's
+ *     current `dueDate` onto it (again) whenever the two differ.
+ *   - `dueDateInherited` falsy with a `dueDate` already set: the user gave
+ *     this task its own deliberate due date (see updateTask in
+ *     SchedulerContext.jsx, which clears the flag the moment `dueDate` is
+ *     edited directly) — never overwritten, only `enforceDueDate` is forced
+ *     true on it, same as before this flag existed.
  *
- * Already-enforcing descendants are left alone (skip, same as
- * `if (task.isRecurring) continue` above) — ancestor enforcement always
- * forces true, so there's no "disagreement" case to reconcile.
+ * Unlike `computeRecurrenceSyncUpdates`'s `if (task.isRecurring) continue`,
+ * an already-enforcing descendant is NOT skipped outright here — it still
+ * needs revisiting on every run so an inherited date can keep tracking the
+ * ancestor's edits. Each task is still only added to the returned Map when
+ * something actually needs to change, so the common "nothing to do" case
+ * stays cheap for callers that run this unconditionally on every commit (see
+ * SchedulerContext.jsx's addTask/updateTask).
  *
  * @param {import('../types').Task[]} tasks
- * @returns {Map<string, {enforceDueDate: boolean, dueDate?: string}>}
+ * @returns {Map<string, {enforceDueDate?: boolean, dueDate?: string, dueDateInherited?: boolean}>}
  *   keyed by task id — only entries that actually need to change are included.
  */
 export function computeEnforceDueDateSyncUpdates(tasks) {
@@ -906,16 +920,24 @@ export function computeEnforceDueDateSyncUpdates(tasks) {
 
   const updates = new Map();
   for (const task of tasks) {
-    if (task.enforceDueDate) continue; // already enforcing — nothing to propagate onto it
-
     const enforcingAncestor = getAncestors(task).find((t) => t.enforceDueDate && t.dueDate);
     if (!enforcingAncestor) continue;
 
-    const update = { enforceDueDate: true };
+    const update = {};
+    if (!task.enforceDueDate) update.enforceDueDate = true;
+
+    // Cascade the ancestor's dueDate when this task has none of its own yet,
+    // or when its current dueDate is still marked as having come from an
+    // ancestor (so a later ancestor edit keeps propagating) — never onto a
+    // deliberately user-set dueDate.
     if (!task.dueDate) {
       update.dueDate = enforcingAncestor.dueDate;
+      update.dueDateInherited = true;
+    } else if (task.dueDateInherited && task.dueDate !== enforcingAncestor.dueDate) {
+      update.dueDate = enforcingAncestor.dueDate;
     }
-    updates.set(task.id, update);
+
+    if (Object.keys(update).length > 0) updates.set(task.id, update);
   }
   return updates;
 }
