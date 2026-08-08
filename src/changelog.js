@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.4.3',
+    date: '2026-08-09',
+    title: 'AI Quick Add now breaks down assignment documents',
+    changes: [
+      'Uploading (or asking to turn into tasks) an assignment brief, syllabus, or project spec now gets split into a parent task plus one sub-task per distinct deliverable (e.g. proposal, draft, final submission), with due dates, ordering, and any links/instructions from the document carried over — instead of one flat task.',
+    ],
+  },
+  {
     version: '3.4.2',
     date: '2026-08-09',
     title: 'Calendar toolbar polish',
