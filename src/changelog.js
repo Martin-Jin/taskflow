@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.4.2',
+    date: '2026-08-09',
+    title: 'Calendar toolbar polish',
+    changes: [
+      'The calendar filter button and the mobile Google Calendar refresh button now read as plain icon controls (no border/fill) instead of boxed buttons, matching the other toolbar icons.',
+    ],
+  },
+  {
     version: '3.4.1',
     date: '2026-08-09',
     title: '"Apply to all sub-tasks" button fixes',
