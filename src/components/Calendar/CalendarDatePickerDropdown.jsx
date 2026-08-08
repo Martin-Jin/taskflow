@@ -48,8 +48,16 @@ export default function CalendarDatePickerDropdown({ value, onSelect }) {
   const days = useMemo(() => dateRange(gridStart, 42), [gridStart]);
   const currentMonthStr = pickerMonth.slice(0, 7);
 
+  // No wrapping div of its own — the caller (CalendarPage) applies the
+  // `.calendar-date-picker-dropdown` class (visual styling + z-index)
+  // directly to its portaled, `position: fixed` wrapper, the same pattern
+  // `.calendar-view-menu` already uses. z-index only takes effect on a
+  // positioned element, so splitting position and z-index across two nested
+  // divs (as this used to) silently drops the z-index — the portal's
+  // wrapper would win the position but lose the stacking order, letting
+  // WeekView content underneath intercept clicks meant for this dropdown.
   return (
-    <div className="calendar-date-picker-dropdown">
+    <>
       <div className="calendar-date-picker-months">
         {monthTabs.map((m) => (
           <button
@@ -83,6 +91,6 @@ export default function CalendarDatePickerDropdown({ value, onSelect }) {
           );
         })}
       </div>
-    </div>
+    </>
   );
 }

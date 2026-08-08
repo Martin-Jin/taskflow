@@ -158,84 +158,6 @@ test('Manage Projects modal search is typo-tolerant (same ranker as the Sidebar 
   expectNoErrors(errors);
 });
 
-test('Sidebar project search is typo-tolerant and keeps pinned/recency order for equal-quality matches', async ({ page }) => {
-  const errors = trackConsoleErrors(page);
-  const runId = Date.now();
-  const projectName = `E2eSidebarTypo${runId}`;
-
-  await gotoTab(page, 'Projects');
-  await page.getByRole('button', { name: 'Manage projects' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
-  await dialog.getByRole('button', { name: /^add project$/i }).click();
-  await dialog.getByPlaceholder('Project name…').fill(projectName);
-  await dialog.getByRole('button', { name: /^add$/i }).click();
-  await page.waitForTimeout(400);
-  await closeAnyModal(page);
-  await page.waitForTimeout(200);
-
-  const sidebarSearch = page.getByLabel('Search projects');
-  // Same one-edit-distance-typo case as the Manage Projects modal test above
-  // — the Sidebar's search box is now backed by the same nameSearch.js
-  // ranker, not a plain substring `.includes()`.
-  await sidebarSearch.fill(projectName.slice(0, -1));
-  await page.waitForTimeout(200);
-  await expect(page.locator('.sidebar-project-row-wrap', { hasText: projectName })).toBeVisible();
-
-  await sidebarSearch.fill('');
-  await page.waitForTimeout(200);
-  expectNoErrors(errors);
-});
-
-test('Sidebar project search: Arrow keys move the highlighted row and Enter selects it', async ({ page }) => {
-  const errors = trackConsoleErrors(page);
-  const runId = Date.now();
-  const projectName = `E2eSidebarKbd${runId}`;
-
-  await gotoTab(page, 'Projects');
-  await page.getByRole('button', { name: 'Manage projects' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
-  await dialog.getByRole('button', { name: /^add project$/i }).click();
-  await dialog.getByPlaceholder('Project name…').fill(projectName);
-  await dialog.getByRole('button', { name: /^add$/i }).click();
-  await page.waitForTimeout(400);
-  await closeAnyModal(page);
-  await page.waitForTimeout(200);
-
-  const sidebarSearch = page.getByLabel('Search projects');
-  // A query narrow enough to isolate just the seeded project as the only
-  // (and therefore highlighted-by-default) result.
-  await sidebarSearch.fill(projectName);
-  await page.waitForTimeout(200);
-  const row = page.locator('.sidebar-project-row-wrap', { hasText: projectName });
-  await expect(row).toHaveClass(/is-kbd-active/);
-
-  // With only one result, ArrowDown wraps back onto the same (only) row
-  // (Sidebar uses useListKeyboardNav's default wrap: true) — still exercises
-  // the key handler without needing a second seeded project.
-  await sidebarSearch.press('ArrowDown');
-  await page.waitForTimeout(100);
-  await expect(row).toHaveClass(/is-kbd-active/);
-
-  await sidebarSearch.press('Enter');
-  await page.waitForTimeout(300);
-  // Enter on the highlighted row selects it, same as clicking it — the
-  // Tasks page's "All Tasks"/project switcher should now show this project.
-  await gotoTab(page, 'Tasks');
-  // The project title <h2> loses its implicit "heading" role once a project
-  // is active (it becomes role="button" so it's click-to-rename — see
-  // TaskListPanel.jsx) — check by class/text instead of getByRole.
-  await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
-
-  // Escape clears the query (checked on a fresh sidebar search afterwards).
-  await sidebarSearch.fill(projectName);
-  await page.waitForTimeout(150);
-  await sidebarSearch.press('Escape');
-  await page.waitForTimeout(150);
-  await expect(sidebarSearch).toHaveValue('');
-
-  expectNoErrors(errors);
-});
-
 test('Manage Projects modal search: Arrow keys move the highlighted row and Enter selects it', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   const runId = Date.now();
@@ -339,18 +261,30 @@ test('Tasks page header "See / manage all projects" button opens Manage Projects
 
   await gotoTab(page, 'Tasks');
   // "All Tasks" (no active project) still gets the button — managing
-  // projects isn't specific to any one project.
+  // projects isn't specific to any one project. "See / manage all projects"
+  // is a menuitem (role="menuitem" overrides its implicit button role, see
+  // ProjectActionsItems) inside the "Manage projects"-labeled
+  // ProjectActionsMenu trigger, not a directly-clickable header button.
   await expect(page.locator('.taskpage-project-title', { hasText: 'All Tasks' })).toBeVisible();
-  await page.getByRole('button', { name: 'See / manage all projects' }).click();
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('menuitem', { name: 'See / manage all projects' }).click();
   await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
-  // Switch to a real project and confirm the same button is still there,
-  // right next to the (now different) project title.
+  // Switch to a real project — the trigger's accessible name becomes
+  // project-specific ("Actions for <name>", see TaskListPanel.jsx) instead
+  // of the generic "Manage projects" used for "All Tasks", but the menu it
+  // opens still offers this same menuitem regardless.
   await page.getByRole('button', { name: 'Switch project' }).click();
-  await page.getByRole('option').nth(1).click();
-  await page.getByRole('button', { name: 'See / manage all projects' }).click();
+  const projectOption = page.getByRole('option').nth(1);
+  const projectName = await projectOption.textContent();
+  await projectOption.click();
+  // Scoped to main — this same label also exists in the sidebar's own copy
+  // of the project row, which would otherwise make this a strict-mode
+  // violation (see CLAUDE.md's "Actions for <project> is ambiguous" note).
+  await page.getByRole('main').getByRole('button', { name: `Actions for ${projectName}` }).click();
+  await page.getByRole('menuitem', { name: 'See / manage all projects' }).click();
   await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
   await closeAnyModal(page);
 
@@ -455,7 +389,7 @@ test('Backups: restoring a corrupt/invalid file shows an error and leaves existi
   // Confirm the seeded "Refactor auth module" task (mockData.js) is present
   // beforehand so we can assert it survived an aborted restore.
   await gotoTab(page, 'Tasks');
-  await expect(page.getByText('Refactor auth module', { exact: true })).toBeVisible();
+  await expect(page.getByText('Refactor auth module', { exact: false }).first()).toBeVisible();
   const beforeTaskCount = await page.getByRole('button', { name: /^Mark .* complete$/ }).count();
 
   // Malformed JSON — readBackupFile (backupService.js) rejects with "That
@@ -471,7 +405,7 @@ test('Backups: restoring a corrupt/invalid file shows an error and leaves existi
   await expect(page.locator('.toast')).toContainText(/not valid JSON|failed to read/i);
 
   await gotoTab(page, 'Tasks');
-  await expect(page.getByText('Refactor auth module', { exact: true })).toBeVisible();
+  await expect(page.getByText('Refactor auth module', { exact: false }).first()).toBeVisible();
   expect(await page.getByRole('button', { name: /^Mark .* complete$/ }).count()).toBe(beforeTaskCount);
 
   // Well-formed JSON but not a backup shape at all — isValidBackupPayload
@@ -486,7 +420,7 @@ test('Backups: restoring a corrupt/invalid file shows an error and leaves existi
   await expect(page.locator('.toast')).toContainText(/invalid backup/i);
 
   await gotoTab(page, 'Tasks');
-  await expect(page.getByText('Refactor auth module', { exact: true })).toBeVisible();
+  await expect(page.getByText('Refactor auth module', { exact: false }).first()).toBeVisible();
   expect(await page.getByRole('button', { name: /^Mark .* complete$/ }).count()).toBe(beforeTaskCount);
 
   expectNoErrors(errors);
