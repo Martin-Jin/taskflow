@@ -516,11 +516,14 @@ async function callAnthropic({ apiKey, text, attachments, contextMarkdown, model
 }
 
 async function callGemini({ apiKey, text, attachments, contextMarkdown, model }) {
+  // Google's docs recommend media/file parts BEFORE the text prompt for best
+  // comprehension — text-first caused the model to skim/ignore attached PDFs
+  // (e.g. an assignment brief) rather than reading their actual content.
   const parts = [];
-  if (text) parts.push({ text });
   for (const attachment of attachments || []) {
     parts.push({ inline_data: { mime_type: attachment.mimeType, data: attachment.data } });
   }
+  if (text) parts.push({ text });
   if (parts.length === 0) parts.push({ text: '(no input provided)' });
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${apiKey}`;
