@@ -12,7 +12,7 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 const SECTIONS = [
   {
     title: 'What it does',
-    body: 'Type a free-form description — or attach/paste a screenshot of an email, text message, or flyer — and the AI proposes a plan of changes: creating tasks/events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving things between projects/sections, even renaming or deleting things. Nothing is applied straight away — you always get a review screen listing every proposed change with a checkbox, so you can uncheck anything you don\'t want before applying.',
+    body: 'Type a free-form description — or attach/paste up to 5 screenshots and/or PDFs (an email, text message, flyer, or document) — and the AI proposes a plan of changes: creating tasks/events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving things between projects/sections, even renaming or deleting things. Nothing is applied straight away — you always get a review screen listing every proposed change with a checkbox, so you can uncheck anything you don\'t want before applying.',
   },
   {
     title: 'Bring your own key',
@@ -24,7 +24,7 @@ const SECTIONS = [
   },
   {
     title: 'How to use it',
-    body: 'Click the sparkle button next to "Add task" (Tasks list or Board view), type or paste your description — or attach/paste a screenshot — pick Claude or Gemini, then click "Plan changes". Review every proposed change on the next screen, uncheck anything you don\'t want, then Apply.',
+    body: 'Click the sparkle button next to "Add task" (Tasks list or Board view), type or paste your description — or attach/paste screenshots or PDFs — pick Claude or Gemini, then click "Plan changes". Review every proposed change on the next screen, uncheck anything you don\'t want, then Apply.',
   },
 ];
 

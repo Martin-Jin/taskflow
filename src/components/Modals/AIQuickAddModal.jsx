@@ -1,5 +1,5 @@
 /**
- * AIQuickAddModal — free-form text and/or a screenshot in, a reviewable plan
+ * AIQuickAddModal — free-form text and/or screenshots/PDFs in, a reviewable plan
  * of workspace changes out (new/updated/deleted tasks, events, projects,
  * sections, labels). Sends the input plus a full snapshot of the current
  * workspace (see services/aiContextService.js's buildAIContext) to the
@@ -21,14 +21,14 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles, X, ImagePlus, Loader2, HelpCircle } from 'lucide-react';
+import { Sparkles, X, ImagePlus, FileText, Loader2, HelpCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { loadPersisted, savePersisted } from '../../utils/persistence';
 import { toISODate } from '../../utils/dateUtils';
-import { requestAIPlan, getStoredApiKey } from '../../services/aiQuickAddService';
+import { requestAIPlan, getStoredApiKey, ALLOWED_ATTACHMENT_TYPES } from '../../services/aiQuickAddService';
 import { buildAIContext, estimateTokens } from '../../services/aiContextService';
 import { resolvePlan } from '../../services/aiPlanService';
 import { MODEL_CATALOG, getDefaultModelId, isValidModelId } from '../../services/aiModels';
@@ -36,7 +36,8 @@ import SelectMenu from '../Common/SelectMenu';
 import AIQuickAddGuideModal from './AIQuickAddGuideModal';
 import AIPlanConfirmModal from './AIPlanConfirmModal';
 
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_ATTACHMENTS = 5;
 const PROVIDER_STORAGE_KEY = 'aiQuickAddProvider';
 const MODEL_STORAGE_KEY = 'aiQuickAddModelByProvider';
 const PROVIDER_LABEL = { anthropic: 'Claude', gemini: 'Gemini' };
@@ -70,8 +71,9 @@ export default function AIQuickAddModal({ onClose }) {
   const [text, setText] = useState('');
   const textareaRef = useRef(null);
   useAutosizeTextarea(textareaRef, text, { maxLines: 4 });
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  // Each entry: { file, previewUrl } — previewUrl is an object URL for
+  // images, null for PDFs (rendered with a file icon + name instead).
+  const [attachments, setAttachments] = useState([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -89,13 +91,14 @@ export default function AIQuickAddModal({ onClose }) {
   );
   const approxTotalTokens = contextTokens + estimateTokens(text);
 
-  // Revoke the previous preview's object URL whenever it changes/unmounts,
-  // same leak-avoidance as TaskDetailModal's comment attachment preview.
+  // Revoke every preview's object URL on unmount, same leak-avoidance as
+  // TaskDetailModal's comment attachment preview.
   useEffect(() => {
     return () => {
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
     };
-  }, [imagePreview]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // One-time correction on open: if the persisted/default provider has no
   // configured API key but the other one does, start on the usable one
@@ -121,57 +124,69 @@ export default function AIQuickAddModal({ onClose }) {
     savePersisted(MODEL_STORAGE_KEY, updated);
   }
 
-  function applyImageFile(file) {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError('Only image files can be attached.');
+  function applyFiles(files) {
+    const list = Array.from(files || []).filter(Boolean);
+    if (list.length === 0) return;
+    if (attachments.length + list.length > MAX_ATTACHMENTS) {
+      setError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
       setErrorKind('');
       return;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setError('Image is too large — please use one under 5MB.');
-      setErrorKind('');
-      return;
+    const accepted = [];
+    for (const file of list) {
+      if (!ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
+        setError('Only images (PNG, JPEG, WEBP, GIF) and PDFs can be attached.');
+        setErrorKind('');
+        return;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setError(`"${file.name}" is too large — please use files under 5MB.`);
+        setErrorKind('');
+        return;
+      }
+      accepted.push({ file, previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null });
     }
     setError('');
     setErrorKind('');
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    setAttachments((prev) => [...prev, ...accepted]);
   }
 
   function handleFileSelect(e) {
-    const file = e.target.files?.[0];
+    const files = e.target.files;
+    applyFiles(files);
     e.target.value = '';
-    applyImageFile(file);
   }
 
   // Lets a screenshot on the clipboard (Ctrl+V / Win+Shift+S) attach
   // directly without saving to disk first — same idea as TaskDetailModal's
   // comment paste handler.
   function handlePaste(e) {
-    const file = Array.from(e.clipboardData?.items || [])
-      .find((item) => item.kind === 'file')
-      ?.getAsFile();
-    if (!file) return;
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (files.length === 0) return;
     e.preventDefault();
-    applyImageFile(file);
+    applyFiles(files);
   }
 
   function handleDrop(e) {
     e.preventDefault();
     setIsDragOver(false);
-    applyImageFile(e.dataTransfer.files?.[0]);
+    applyFiles(e.dataTransfer.files);
   }
 
-  function removeImage() {
-    setImageFile(null);
-    setImagePreview(null);
+  function removeAttachment(index) {
+    setAttachments((prev) => {
+      if (prev[index]?.previewUrl) URL.revokeObjectURL(prev[index].previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
   }
 
   async function handleSubmit() {
     if (isLoading) return;
-    if (!text.trim() && !imageFile) {
-      setError('Type something or attach a screenshot first.');
+    if (!text.trim() && attachments.length === 0) {
+      setError('Type something or attach a screenshot/PDF first.');
       return;
     }
     setIsLoading(true);
@@ -183,7 +198,7 @@ export default function AIQuickAddModal({ onClose }) {
         provider,
         model,
         text: text.trim(),
-        imageFile,
+        attachmentFiles: attachments.map((a) => a.file),
         contextMarkdown: markdown,
       });
       setPlan(resolvePlan(operations, { tasks, projects, sections, labels, events }));
@@ -230,9 +245,9 @@ export default function AIQuickAddModal({ onClose }) {
         </div>
 
         <p className="form-hint" style={{ marginTop: -4, marginBottom: 12 }}>
-          Describe what you want in your own words, or paste/attach a screenshot — add/edit/move tasks and events,
-          break a task into subtasks, set up dependencies, reorganize projects — you'll review every change before
-          anything is applied.
+          Describe what you want in your own words, or paste/attach screenshots or PDFs — add/edit/move tasks and
+          events, break a task into subtasks, set up dependencies, reorganize projects — you'll review every change
+          before anything is applied.
         </p>
 
         <div className="ai-quickadd-provider-row">
@@ -280,14 +295,31 @@ export default function AIQuickAddModal({ onClose }) {
           />
         </div>
 
-        {imagePreview ? (
-          <div className="ai-quickadd-image-preview">
-            <img src={imagePreview} alt="Attached screenshot" />
-            <button type="button" className="btn btn-icon" onClick={removeImage} aria-label="Remove image">
-              <X size={14} />
-            </button>
+        {attachments.length > 0 && (
+          <div className="ai-quickadd-attachment-list">
+            {attachments.map((a, i) => (
+              <div className="ai-quickadd-attachment-item" key={i}>
+                {a.previewUrl ? (
+                  <img src={a.previewUrl} alt={a.file.name} />
+                ) : (
+                  <div className="ai-quickadd-attachment-file">
+                    <FileText size={20} aria-hidden="true" />
+                    <span title={a.file.name}>{a.file.name}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-icon"
+                  onClick={() => removeAttachment(i)}
+                  aria-label={`Remove ${a.file.name}`}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
           </div>
-        ) : (
+        )}
+        {attachments.length < MAX_ATTACHMENTS && (
           <div
             className={`ai-quickadd-dropzone ${isDragOver ? 'is-dragover' : ''}`}
             onClick={() => fileInputRef.current?.click()}
@@ -299,10 +331,17 @@ export default function AIQuickAddModal({ onClose }) {
             onDrop={handleDrop}
           >
             <ImagePlus size={16} aria-hidden="true" />
-            <span>Attach a screenshot, or drag one here / paste from clipboard</span>
+            <span>Attach screenshots or PDFs, or drag them here / paste from clipboard</span>
           </div>
         )}
-        <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+        />
 
         <p className="form-hint" style={{ marginTop: 8, marginBottom: 0 }}>
           ~{approxTotalTokens.toLocaleString()} tokens (approximate)

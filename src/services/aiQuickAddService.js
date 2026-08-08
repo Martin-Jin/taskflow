@@ -3,7 +3,8 @@
  * AI ASSISTANT SERVICE
  * ============================================================================
  * Client-side wrapper around the companion Cloudflare Worker (see
- * cloudflare-worker/) that turns a free-form request/screenshot plus a full
+ * cloudflare-worker/) that turns a free-form request plus optional
+ * screenshots/PDFs and a full
  * workspace snapshot (`contextMarkdown`, see services/aiContextService.js)
  * into a PROPOSED PLAN — see services/aiPlanService.js for how that plan is
  * validated/resolved and services/AIPlanConfirmModal.jsx (via
@@ -27,7 +28,9 @@
 
 import { loadPersisted } from '../utils/persistence';
 
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB, matches the Worker's base64 size cap
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5MB, matches the Worker's per-attachment base64 size cap
+const MAX_ATTACHMENTS = 5; // matches the Worker's MAX_ATTACHMENTS
+export const ALLOWED_ATTACHMENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf']);
 
 // localStorage keys the AI Quick Add Settings section saves to (see SettingsPanel.jsx).
 const AI_KEY_STORAGE = { anthropic: 'aiAnthropicApiKey', gemini: 'aiGeminiApiKey' };
@@ -52,7 +55,7 @@ function fileToBase64(file) {
       const commaIndex = reader.result.indexOf(',');
       resolve(commaIndex >= 0 ? reader.result.slice(commaIndex + 1) : reader.result);
     };
-    reader.onerror = () => reject(new Error('Could not read the selected image.'));
+    reader.onerror = () => reject(new Error(`Could not read "${file.name}".`));
     reader.readAsDataURL(file);
   });
 }
@@ -82,13 +85,13 @@ function messageForFailure(body, status) {
  * @param {{
  *   provider: 'anthropic'|'gemini',
  *   text: string,
- *   imageFile?: File|null,
+ *   attachmentFiles?: File[],
  *   contextMarkdown: string,
  *   model?: string,
  * }} params
  * @returns {Promise<{ operations: Array<Object>, rejected?: string[] }>}
  */
-export async function requestAIPlan({ provider, text, imageFile, contextMarkdown, model }) {
+export async function requestAIPlan({ provider, text, attachmentFiles, contextMarkdown, model }) {
   const workerUrl = import.meta.env.VITE_AI_QUICKADD_WORKER_URL;
   if (!workerUrl) {
     throw new AIRequestError('AI Quick Add is not configured — no worker URL set.', 'not_configured');
@@ -99,20 +102,25 @@ export async function requestAIPlan({ provider, text, imageFile, contextMarkdown
     throw new AIRequestError(`Add your ${PROVIDER_LABEL[provider]} API key in Settings first.`, 'no_api_key');
   }
 
-  let image;
-  if (imageFile) {
-    if (imageFile.size > MAX_IMAGE_BYTES) {
-      throw new AIRequestError('Image is too large — please use one under 5MB.', 'image_too_large');
-    }
-    image = { data: await fileToBase64(imageFile), mimeType: imageFile.type || 'image/png' };
+  const files = attachmentFiles || [];
+  if (files.length > MAX_ATTACHMENTS) {
+    throw new AIRequestError(`Too many attachments — please use ${MAX_ATTACHMENTS} or fewer.`, 'too_many_attachments');
   }
+  for (const file of files) {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      throw new AIRequestError(`"${file.name}" is too large — please use files under 5MB.`, 'image_too_large');
+    }
+  }
+  const attachments = await Promise.all(
+    files.map(async (file) => ({ data: await fileToBase64(file), mimeType: file.type || 'application/octet-stream' }))
+  );
 
   let res;
   try {
     res = await fetch(workerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey, text: text || '', image, contextMarkdown, model }),
+      body: JSON.stringify({ provider, apiKey, text: text || '', attachments, contextMarkdown, model }),
     });
   } catch {
     throw new AIRequestError(
