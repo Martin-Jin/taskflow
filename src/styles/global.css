@@ -866,7 +866,6 @@ select:focus-visible,
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  padding: 4px 8px;
   flex-shrink: 0;
 }
 
@@ -1410,6 +1409,15 @@ select:focus-visible,
 .help-tooltip-trigger:hover {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
+}
+
+/* Same cascade concern as .menu-trigger/.help-tooltip-trigger above —
+   declared after .btn-icon on purpose so this shorter padding actually wins.
+   Without it, .btn-icon's 8px padding makes this button taller than the
+   plain-text column headers next to it, pushing its divider line down and
+   breaking the shared vertical rhythm across the three Projects columns. */
+.projects-page-sort-trigger {
+  padding: 2px 8px;
 }
 
 @media (max-width: 639px) {

@@ -572,42 +572,44 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                 )}
             </div>
           )}
-          {/* Only worth showing once the user has actually navigated away from
-              the current day/week/month — tapping it when it's already
-              showing today would be a no-op. Trails the title/view-menu
-              cluster, pushed to the right edge alongside the refresh icon. */}
-          {isMobile && !isViewingToday && (
-            <button className="btn calendar-today-btn-solo" onClick={goToday}>
-              Today
-            </button>
+          {/* Trailing cluster (Today-solo/refresh/filter, mobile only) is
+              wrapped in its own flex container so a single margin-left: auto
+              on the wrapper pushes the whole group to the right edge as one
+              unit — putting margin-left: auto on each child independently
+              (the previous approach) split the leftover space between every
+              auto margin present, opening a gap between Today and whatever
+              followed it instead of bunching them together. */}
+          {isMobile && (
+            <div className="calendar-toolbar-trailing">
+              {/* Only worth showing once the user has actually navigated away
+                  from the current day/week/month — tapping it when it's
+                  already showing today would be a no-op. */}
+              {!isViewingToday && (
+                <button className="btn calendar-today-btn-solo" onClick={goToday}>
+                  Today
+                </button>
+              )}
+              {/* Only useful once Google Calendar is actually connected —
+                  hidden rather than shown-but-disabled, matching how
+                  Settings' own Google controls are gated on googleConnected.
+                  Shares isSyncing with Settings' "Sync now"/"Push to Google
+                  Calendar" so this button, that button, and any other sync
+                  action all show a consistent busy state if one is already
+                  running. */}
+              {googleConnected && (
+                <button
+                  className="btn btn-icon calendar-refresh-btn-mobile"
+                  onClick={syncNow}
+                  disabled={isSyncing}
+                  aria-label="Refresh Google Calendar events"
+                  title="Refresh Google Calendar events"
+                >
+                  <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
+                </button>
+              )}
+              <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
+            </div>
           )}
-          {/* Mobile only — on desktop this stays in .calendar-toolbar-actions
-              alongside Re-balance. On mobile it's placed here,
-              at the right edge of the bar, pushed there via margin-left: auto
-              (see calendar.css) unless Today-solo is also showing, in which
-              case Today sits just left of it. Only useful once
-              Google Calendar is actually connected — hidden rather than
-              shown-but-disabled, matching how Settings' own Google controls
-              are gated on googleConnected. Shares isSyncing with Settings'
-              "Sync now"/"Push to Google Calendar" so this button, that
-              button, and any other sync action all show a consistent busy
-              state if one is already running. */}
-          {isMobile && googleConnected && (
-            <button
-              className="btn btn-icon calendar-refresh-btn-mobile"
-              onClick={syncNow}
-              disabled={isSyncing}
-              aria-label="Refresh Google Calendar events"
-              title="Refresh Google Calendar events"
-            >
-              <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
-            </button>
-          )}
-          {/* Mobile: filter trigger joins the same trailing cluster as
-              Today/refresh (see calendar.css's margin-left: auto handling
-              for the first of that cluster) — desktop's copy lives in
-              .calendar-toolbar-actions below instead. */}
-          {isMobile && <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />}
         </div>
         <div className="calendar-toolbar-actions">
           {/* Desktop only — on mobile this moves into the FAB speed-dial

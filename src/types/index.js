@@ -180,11 +180,24 @@
  *                                              recurring descendant), this only ever flows downward: an ancestor
  *                                              with `enforceDueDate` + its own `dueDate` forces `enforceDueDate:
  *                                              true` onto every descendant, copying its `dueDate` too for any
- *                                              descendant that doesn't already have one of its own (a descendant's
- *                                              existing `dueDate` is never overwritten). A descendant's own
- *                                              `enforceDueDate` never bubbles back up to its parent — a sub-task
- *                                              needing to be done on an exact day says nothing about whether the
- *                                              parent container itself must finish that same day.
+ *                                              descendant that doesn't already have one of its own (see
+ *                                              `dueDateInherited` below for how a descendant's own `dueDate` is
+ *                                              told apart from one merely copied down from an ancestor). A
+ *                                              descendant's own `enforceDueDate` never bubbles back up to its
+ *                                              parent — a sub-task needing to be done on an exact day says nothing
+ *                                              about whether the parent container itself must finish that same day.
+ * @property {boolean} [dueDateInherited]    - True if this task's `dueDate` was copied down from an enforcing
+ *                                              ancestor by computeEnforceDueDateSyncUpdates, rather than set
+ *                                              directly by the user. Lets that sync function tell "no due date of
+ *                                              its own yet" apart from "user deliberately set (or kept) this due
+ *                                              date" on re-runs, so it knows whether to cascade a LATER change to
+ *                                              the ancestor's `dueDate` onto this task too: true means keep
+ *                                              tracking the ancestor, falsy means leave this task's date alone.
+ *                                              Set to true only by that sync function; cleared by updateTask
+ *                                              (SchedulerContext.jsx) the moment the user explicitly edits this
+ *                                              task's own `dueDate`, at which point it's theirs and is never
+ *                                              overwritten again. Falsy/absent is the normal case for any
+ *                                              non-descendant task, or a descendant with its own due date.
  * @property {string|null} [fixedTime]       - "HH:MM" 24hr local time. When set, this task's block(s) must start at
  *                                              exactly this time on whatever day the allocator schedules them —
  *                                              overriding the normal first-fit placement within a day (the task is

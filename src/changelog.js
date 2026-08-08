@@ -21,6 +21,30 @@
 
 export const CHANGELOG = [
   {
+    version: '3.3.9',
+    date: '2026-08-09',
+    title: "Fixed sub-task due dates not following a parent's \"enforce due date\" changes",
+    changes: [
+      'When a parent task with "enforce due date" enabled had its due date changed, sub-tasks that had inherited that date from the parent no longer updated to match — they now keep following the parent unless you\'ve given a sub-task its own due date directly.',
+    ],
+  },
+  {
+    version: '3.3.8',
+    date: '2026-08-09',
+    title: "Fixed the calendar's mobile Today/filter buttons drifting apart",
+    changes: [
+      'On mobile, the Today button and the filter icon in the calendar toolbar could end up with an inconsistent gap between them depending on whether the refresh icon was also showing — they now stay snugly grouped together at the right edge in every combination.',
+    ],
+  },
+  {
+    version: '3.3.7',
+    date: '2026-08-09',
+    title: 'Existing Sleep routines are now protected from accidental deletion too',
+    changes: [
+      'New accounts already got a "Sleep" routine that could be edited but not deleted, so the scheduler never loses track of when you sleep — but anyone who had already set up their own Sleep routine before that protection existed could still delete it by accident. Any routine labeled exactly "Sleep" is now protected the same way, whenever you already had one.',
+    ],
+  },
+  {
     version: '3.3.6',
     date: '2026-08-08',
     title: 'Fixed a smart-parsed "@tag" label silently disappearing after saving a task',
