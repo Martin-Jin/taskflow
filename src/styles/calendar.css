@@ -28,15 +28,17 @@
   align-items: center;
 }
 
-/* Prev/Today/Next nav and the desktop Google Calendar refresh button read as
-   plain icon/text controls rather than bordered buttons — no visible border
-   or fill, just the icon/text and its hover state, since this cluster sits
-   right next to the date title rather than needing to look like a distinct
-   action (contrast .btn-primary's Re-balance/New event, which do). */
+/* Prev/Today/Next nav and the Google Calendar refresh button (desktop and
+   mobile) read as plain icon/text controls rather than bordered buttons —
+   no visible border or fill, just the icon/text and its hover state, since
+   this cluster sits right next to the date title/other ghost controls
+   rather than needing to look like a distinct action (contrast
+   .btn-primary's Re-balance/New event, which do). */
 .calendar-nav-prev,
 .calendar-nav-next,
 .calendar-today-btn,
-.calendar-refresh-btn {
+.calendar-refresh-btn,
+.calendar-refresh-btn-mobile {
   border-color: transparent;
   background: transparent;
 }
@@ -44,7 +46,8 @@
 .calendar-nav-prev:hover:not(:disabled),
 .calendar-nav-next:hover:not(:disabled),
 .calendar-today-btn:hover:not(:disabled),
-.calendar-refresh-btn:hover:not(:disabled) {
+.calendar-refresh-btn:hover:not(:disabled),
+.calendar-refresh-btn-mobile:hover:not(:disabled) {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
 }
@@ -1217,6 +1220,13 @@
    ---------------------------------------------------------------------- */
 .calendar-filter-trigger {
   position: relative;
+  border-color: transparent;
+  background: transparent;
+}
+
+.calendar-filter-trigger:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
 }
 
 .calendar-filter-trigger.is-active {
