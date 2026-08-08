@@ -2,7 +2,7 @@
  * ============================================================================
  * TASKFLOW AI ASSISTANT — Cloudflare Worker proxy
  * ============================================================================
- * Stateless proxy that turns a free-form request (+ optional screenshot) and
+ * Stateless proxy that turns a free-form request (+ optional screenshots/PDFs) and
  * a full snapshot of the user's workspace (`contextMarkdown`, built by
  * src/services/aiContextService.js's buildAIContext) into a PROPOSED PLAN —
  * a list of create/update/delete operations across tasks, events, projects,
@@ -49,8 +49,10 @@ const SHARE_ROUTES = {
 };
 
 const MAX_TEXT_CHARS = 4000;
-const MAX_IMAGE_BASE64_CHARS = 5 * 1024 * 1024; // ~5MB of base64 text
+const MAX_ATTACHMENT_BASE64_CHARS = 5 * 1024 * 1024; // ~5MB of base64 text, per attachment
+const MAX_ATTACHMENTS = 5;
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const ALLOWED_ATTACHMENT_TYPES = new Set([...ALLOWED_IMAGE_TYPES, 'application/pdf']);
 // Sanity ceiling on contextMarkdown, NOT a feature-level truncation — the
 // design intent (see TODO.md) is to always send the user's full active
 // workspace with no capping. This only guards against a client-side bug
@@ -468,10 +470,16 @@ class ProviderError extends Error {
   }
 }
 
-async function callAnthropic({ apiKey, text, image, contextMarkdown, model }) {
+async function callAnthropic({ apiKey, text, attachments, contextMarkdown, model }) {
   const content = [];
   if (text) content.push({ type: 'text', text });
-  if (image) content.push({ type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } });
+  for (const attachment of attachments || []) {
+    content.push(
+      attachment.mimeType === 'application/pdf'
+        ? { type: 'document', source: { type: 'base64', media_type: attachment.mimeType, data: attachment.data } }
+        : { type: 'image', source: { type: 'base64', media_type: attachment.mimeType, data: attachment.data } }
+    );
+  }
   if (content.length === 0) content.push({ type: 'text', text: '(no input provided)' });
 
   // Manual extended thinking (Haiku 4.5's only thinking mode) is incompatible
@@ -506,10 +514,12 @@ async function callAnthropic({ apiKey, text, image, contextMarkdown, model }) {
   return (data.content || []).filter((block) => block.type === 'tool_use').map((block) => toolCallToOperation(block.name, block.input));
 }
 
-async function callGemini({ apiKey, text, image, contextMarkdown, model }) {
+async function callGemini({ apiKey, text, attachments, contextMarkdown, model }) {
   const parts = [];
   if (text) parts.push({ text });
-  if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
+  for (const attachment of attachments || []) {
+    parts.push({ inline_data: { mime_type: attachment.mimeType, data: attachment.data } });
+  }
   if (parts.length === 0) parts.push({ text: '(no input provided)' });
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${apiKey}`;
@@ -582,7 +592,7 @@ export default {
       return jsonResponse({ error: 'Invalid JSON body.' }, 400, headers);
     }
 
-    const { provider, text, image, contextMarkdown, apiKey, model: requestedModel } = body || {};
+    const { provider, text, attachments, contextMarkdown, apiKey, model: requestedModel } = body || {};
     if (provider !== 'anthropic' && provider !== 'gemini') {
       return jsonResponse({ error: "`provider` must be 'anthropic' or 'gemini'." }, 400, headers);
     }
@@ -597,8 +607,9 @@ export default {
     }
 
     const trimmedText = typeof text === 'string' ? text.trim() : '';
-    if (!trimmedText && !image) {
-      return jsonResponse({ error: 'Provide text and/or an image.' }, 400, headers);
+    const attachmentList = Array.isArray(attachments) ? attachments : [];
+    if (!trimmedText && attachmentList.length === 0) {
+      return jsonResponse({ error: 'Provide text and/or an attachment.' }, 400, headers);
     }
     if (trimmedText.length > MAX_TEXT_CHARS) {
       return jsonResponse({ error: `Text is too long (max ${MAX_TEXT_CHARS} characters).` }, 400, headers);
@@ -609,15 +620,18 @@ export default {
     if (contextMarkdown.length > MAX_CONTEXT_CHARS) {
       return jsonResponse({ error: `Workspace context is unexpectedly large (max ${MAX_CONTEXT_CHARS} characters) — this looks like a bug rather than a real workspace size.` }, 413, headers);
     }
-    if (image) {
-      if (typeof image !== 'object' || typeof image.data !== 'string' || typeof image.mimeType !== 'string') {
-        return jsonResponse({ error: 'Malformed `image` field — expected { data, mimeType }.' }, 400, headers);
+    if (attachmentList.length > MAX_ATTACHMENTS) {
+      return jsonResponse({ error: `Too many attachments (max ${MAX_ATTACHMENTS}).` }, 400, headers);
+    }
+    for (const attachment of attachmentList) {
+      if (typeof attachment !== 'object' || typeof attachment.data !== 'string' || typeof attachment.mimeType !== 'string') {
+        return jsonResponse({ error: 'Malformed `attachments` entry — expected { data, mimeType }.' }, 400, headers);
       }
-      if (!ALLOWED_IMAGE_TYPES.has(image.mimeType)) {
-        return jsonResponse({ error: 'Unsupported image type — use PNG, JPEG, WEBP, or GIF.' }, 400, headers);
+      if (!ALLOWED_ATTACHMENT_TYPES.has(attachment.mimeType)) {
+        return jsonResponse({ error: 'Unsupported attachment type — use PNG, JPEG, WEBP, GIF, or PDF.' }, 400, headers);
       }
-      if (image.data.length > MAX_IMAGE_BASE64_CHARS) {
-        return jsonResponse({ error: 'Image is too large (max ~5MB).' }, 413, headers);
+      if (attachment.data.length > MAX_ATTACHMENT_BASE64_CHARS) {
+        return jsonResponse({ error: 'An attachment is too large (max ~5MB each).' }, 413, headers);
       }
     }
 
@@ -625,8 +639,8 @@ export default {
     try {
       rawResults =
         provider === 'anthropic'
-          ? await callAnthropic({ apiKey: apiKey.trim(), text: trimmedText, image, contextMarkdown, model })
-          : await callGemini({ apiKey: apiKey.trim(), text: trimmedText, image, contextMarkdown, model });
+          ? await callAnthropic({ apiKey: apiKey.trim(), text: trimmedText, attachments: attachmentList, contextMarkdown, model })
+          : await callGemini({ apiKey: apiKey.trim(), text: trimmedText, attachments: attachmentList, contextMarkdown, model });
     } catch (err) {
       if (err instanceof ProviderError) {
         return jsonResponse({ error: err.message, errorKind: err.classification.kind, retryAfterSeconds: err.classification.retryAfterSeconds }, 502, headers);

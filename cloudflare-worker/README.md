@@ -337,8 +337,8 @@ site could point at your Worker and use it as a free CORS-bypassing relay to
 Anthropic/Gemini. There's no rate-limiting store (no KV/Durable Object)
 either — that's deliberately out of scope for a personal-scale app. It only
 rejects obviously-oversized or malformed requests (text over 4000
-characters, images over ~5MB of base64, missing/invalid fields, and now a
-missing `apiKey`).
+characters, more than 5 attachments, each attachment over ~5MB of base64,
+missing/invalid fields, and now a missing `apiKey`).
 
 The `/calendar/*` routes are different: they DO hold real secrets
 (`GOOGLE_CLIENT_SECRET`, the service account's private key) and every

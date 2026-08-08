@@ -381,8 +381,8 @@ to check.
 ## AI Quick Add
 
 The **AI Quick Add** button (a sparkle icon next to "Add task" in Tasks list
-and Board view) lets you type a free-form description — or attach a
-screenshot — and have an AI propose a set of changes across your whole
+and Board view) lets you type a free-form description — or attach up to 5
+screenshots and/or PDFs — and have an AI propose a set of changes across your whole
 workspace, instead of filling in forms field by field or one item at a time.
 It can create tasks and events, break a task into subtasks, set up
 dependencies ("do X after Y"), move tasks between projects/sections, and

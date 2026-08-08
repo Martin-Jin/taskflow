@@ -5,7 +5,8 @@
 //      file header).
 //   2. AI Quick Add (AIQuickAddModal / AIQuickAddGuideModal /
 //      aiQuickAddService.js) — entry point gating, BYOK (bring-your-own-key)
-//      validation, and the guide modal.
+//      validation, the guide modal, and attaching/removing multiple
+//      images/PDFs.
 //   3. AIPlanConfirmModal / SmartParseGuideModal — reachability without
 //      crashing (AIPlanConfirmModal only renders after a real AI Quick Add
 //      call succeeds, so it's noted/skipped rather than exercised against a
@@ -211,6 +212,62 @@ test.describe('AI Quick Add', () => {
     // Close the main modal without submitting — submitting would fire a real
     // network request to the configured worker URL, which this suite
     // deliberately avoids (see class-level comment).
+    await modal.getByRole('button', { name: 'Cancel' }).click();
+    await page.waitForTimeout(200);
+    await expect(modal).toHaveCount(0);
+
+    expectNoErrors(errors);
+  });
+
+  test('supports attaching multiple images and a PDF, and removing one', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await clearStoredAiKeys(page);
+    await gotoTab(page, 'Tasks');
+
+    const mainToggle = page.locator('[data-tour="add-task"]');
+    await mainToggle.click();
+    await page.waitForTimeout(200);
+
+    const aiFab = page.getByRole('button', { name: 'AI Quick Add', exact: true });
+    const aiConfigured = await aiFab.isVisible({ timeout: 1000 }).catch(() => false);
+    test.skip(!aiConfigured, 'AI Quick Add is not configured locally (VITE_AI_QUICKADD_WORKER_URL unset) — entry point is intentionally hidden.');
+
+    await page.evaluate((key) => {
+      window.localStorage.setItem(key, JSON.stringify('e2e-fake-test-key'));
+    }, AI_KEY_LOCALSTORAGE.gemini);
+    await aiFab.click();
+    await page.waitForTimeout(300);
+
+    const modal = page.getByRole('dialog', { name: 'AI Quick Add', exact: true });
+    await expect(modal).toBeVisible();
+
+    // Attach a PNG and a PDF (tiny inline fixtures — content doesn't matter,
+    // only that both accepted mime types render a thumbnail/file chip and
+    // count toward the same attachment list — see MAX_ATTACHMENTS in
+    // AIQuickAddModal.jsx / aiQuickAddService.js / the Worker).
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    );
+    const pdfBytes = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>', 'utf-8');
+
+    const fileInput = modal.locator('input[type="file"]');
+    await fileInput.setInputFiles([
+      { name: 'screenshot.png', mimeType: 'image/png', buffer: pngBytes },
+      { name: 'flyer.pdf', mimeType: 'application/pdf', buffer: pdfBytes },
+    ]);
+    await page.waitForTimeout(200);
+
+    const attachmentItems = modal.locator('.ai-quickadd-attachment-item');
+    await expect(attachmentItems).toHaveCount(2);
+    await expect(modal.locator('.ai-quickadd-attachment-file', { hasText: 'flyer.pdf' })).toBeVisible();
+
+    // Remove the PDF via its own remove button; the image attachment stays.
+    await modal.getByRole('button', { name: 'Remove flyer.pdf' }).click();
+    await page.waitForTimeout(200);
+    await expect(attachmentItems).toHaveCount(1);
+
     await modal.getByRole('button', { name: 'Cancel' }).click();
     await page.waitForTimeout(200);
     await expect(modal).toHaveCount(0);
