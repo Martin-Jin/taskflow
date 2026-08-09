@@ -15,6 +15,7 @@ import {
   planOccurrenceUncompletion,
   planSubtaskOccurrenceCompletion,
   hasRecurrenceState,
+  reanchorRecurringEnforceDueDateUpdates,
 } from '../../src/utils/recurrenceState';
 import { computeNextDueDate, deriveRecurrenceRule } from '../../src/utils/recurrence';
 
@@ -376,6 +377,77 @@ describe('planSeriesReanchor', () => {
     const finalDerived = deriveRecurringFields(reanchored, '2026-08-06');
     expect(finalDerived.dueDate).toBe('2026-08-06');
     expect(finalDerived.completedDates).toEqual([]); // no stale "done" entry survives the reanchor
+  });
+});
+
+describe('reanchorRecurringEnforceDueDateUpdates', () => {
+  it('(a) re-anchors a recurring descendant instead of just overwriting dueDate, clearing a stale skip watermark that now sits on/after the new anchor', () => {
+    // Descendant is recurring, already rolled forward with a completion
+    // (correctly kept — it's before the new anchor, a real closed-out
+    // occurrence) and a skip watermark that sits ON/AFTER the new cascaded
+    // date — an unmodified computeEnforceDueDateSyncUpdates output would
+    // leave the watermark stale, so the very next completion/reschedule
+    // would immediately push the freshly cascaded date forward again.
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-17' },
+      task({
+        id: 's1',
+        parentId: 'p1',
+        dueDateInherited: true,
+        dueDate: '2026-08-10',
+        recurrenceAnchor: '2026-08-01',
+        completedOccurrences: ['2026-08-01'],
+        skippedThrough: '2026-08-20',
+      }),
+    ];
+    const rawUpdates = new Map([['s1', { dueDate: '2026-08-17' }]]);
+    const reanchored = reanchorRecurringEnforceDueDateUpdates(tasks, rawUpdates);
+    expect(reanchored.get('s1')).toEqual({
+      recurrenceAnchor: '2026-08-17',
+      completedOccurrences: ['2026-08-01'], // real closed-out occurrence, before the new anchor — kept
+      skippedThrough: null, // stale watermark (on/after the new anchor) cleared, matching planSeriesReanchor's own rule
+      dueDate: '2026-08-17',
+    });
+    // Sanity: the re-anchored task derives back to the cascaded date, not a
+    // stale value pulled from the old anchor.
+    const merged = { ...tasks[1], ...reanchored.get('s1') };
+    expect(deriveRecurringFields(merged, '2026-08-17').dueDate).toBe('2026-08-17');
+  });
+
+  it('(a) preserves dueDateInherited across the re-anchor', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      task({ id: 's1', parentId: 'p1', dueDate: null }),
+    ];
+    // Simulates the "no dueDate yet" cascade branch, which also sets dueDateInherited: true.
+    const rawUpdates = new Map([['s1', { dueDate: '2026-08-10', dueDateInherited: true }]]);
+    const reanchored = reanchorRecurringEnforceDueDateUpdates(tasks, rawUpdates);
+    expect(reanchored.get('s1')).toMatchObject({ dueDate: '2026-08-10', dueDateInherited: true });
+  });
+
+  it('(b) leaves a non-recurring descendant update untouched (regression guard)', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-17' },
+      { id: 's1', parentId: 'p1', isRecurring: false, dueDateInherited: true, dueDate: '2026-08-10' },
+    ];
+    const rawUpdates = new Map([['s1', { dueDate: '2026-08-17' }]]);
+    const reanchored = reanchorRecurringEnforceDueDateUpdates(tasks, rawUpdates);
+    expect(reanchored.get('s1')).toEqual({ dueDate: '2026-08-17' });
+  });
+
+  it('(c) leaves updates with no dueDate (e.g. just enforceDueDate:true) untouched even for a recurring task', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      task({ id: 's1', parentId: 'p1', dueDate: '2026-08-05' }),
+    ];
+    const rawUpdates = new Map([['s1', { enforceDueDate: true }]]);
+    const reanchored = reanchorRecurringEnforceDueDateUpdates(tasks, rawUpdates);
+    expect(reanchored.get('s1')).toEqual({ enforceDueDate: true });
+  });
+
+  it('returns the same empty map unchanged when there is nothing to re-anchor', () => {
+    const updates = new Map();
+    expect(reanchorRecurringEnforceDueDateUpdates([], updates)).toBe(updates);
   });
 });
 

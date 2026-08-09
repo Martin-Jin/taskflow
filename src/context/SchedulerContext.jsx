@@ -71,6 +71,7 @@ import {
   planOccurrenceUncompletion,
   planSeriesReanchor,
   planSubtaskOccurrenceCompletion,
+  reanchorRecurringEnforceDueDateUpdates,
 } from '../utils/recurrenceState';
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
@@ -1400,7 +1401,10 @@ export function SchedulerProvider({ children }) {
         // (rather than one overwriting the other) since a single new task can
         // need updates from both in the same commit.
         const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
-        const enforceDueDateSyncUpdates = computeEnforceDueDateSyncUpdates(nextTasks);
+        const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+          nextTasks,
+          computeEnforceDueDateSyncUpdates(nextTasks)
+        );
         const syncedTasks = recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
           ? nextTasks
           : nextTasks.map((t) => ({
@@ -1410,6 +1414,7 @@ export function SchedulerProvider({ children }) {
             }));
         return { tasks: syncedTasks, blocks: current.blocks };
       }, `Added task "${newTask.title}"`);
+
       if (soundEnabled) playAddSound(soundVolume);
       // A new task with a due date needs a planning slot — queue the same
       // debounced rebalance updateTask uses for a due-date change, so it
@@ -1526,7 +1531,10 @@ export function SchedulerProvider({ children }) {
           // `enforceDueDate` below — both maps are merged per task id since a
           // single edit can trigger updates from both at once.
           const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
-          const enforceDueDateSyncUpdates = computeEnforceDueDateSyncUpdates(nextTasks);
+          const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+            nextTasks,
+            computeEnforceDueDateSyncUpdates(nextTasks)
+          );
           const syncedTasks = recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
             ? nextTasks
             : nextTasks.map((t) => ({
