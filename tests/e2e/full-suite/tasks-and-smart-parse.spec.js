@@ -622,15 +622,13 @@ test.describe('Recurring tasks', () => {
     await childCompleteBtn.click();
     await page.waitForTimeout(400);
 
-    // Completing the child immediately rolls its dueDate forward to
-    // tomorrow (past today), so per isCheckedForListDisplay's deliberate
-    // design (see its doc comment and the matching unit test in
-    // taskHierarchy.test.js — "is NOT checked ... once ... rolled forward
-    // into the future") it does NOT show checked/struck-through here; an
-    // active "Mark complete" button reappearing (now representing the next
-    // occurrence) is the correct outcome, not a sign completeTask did
-    // nothing.
-    await expect(page.getByRole('button', { name: new RegExp(`Mark ${childTitle} complete`) })).toBeVisible();
+    // A recurring SUB-TASK does NOT roll its own dueDate forward on
+    // individual completion (unlike a top-level recurring task) — it stays
+    // pinned to today's occurrence and shows checked/struck-through until
+    // the whole group (every sibling, or the parent directly) closes out.
+    // See SchedulerContext.completeTask's `existing.parentId` branch and
+    // utils/recurrenceState.js's planSubtaskOccurrenceCompletion.
+    await expect(page.getByRole('button', { name: `${childTitle} completed` })).toBeVisible();
 
     // The parent (with an incomplete sibling) must NOT show checked either.
     await expect(page.getByRole('button', { name: new RegExp(`Mark ${title} complete`) })).toBeVisible();

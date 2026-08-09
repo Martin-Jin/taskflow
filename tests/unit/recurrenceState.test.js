@@ -13,6 +13,7 @@ import {
   computeRecurringDescendantState,
   ensureRecurrenceAnchor,
   planOccurrenceUncompletion,
+  planSubtaskOccurrenceCompletion,
   hasRecurrenceState,
 } from '../../src/utils/recurrenceState';
 import { computeNextDueDate, deriveRecurrenceRule } from '../../src/utils/recurrence';
@@ -356,6 +357,26 @@ describe('planSeriesReanchor', () => {
     const t = task({ recurrenceAnchor: '2026-07-01', skippedThrough: '2026-07-15' });
     expect(planSeriesReanchor(t, '2026-08-04').skippedThrough).toBe('2026-07-15');
   });
+
+  it('(d) dragging a fully-advanced group back onto today does not resurrect stale completed styling', () => {
+    // Parent already rolled forward past today (08-06 completed, now due 08-07),
+    // with completedDates still carrying 08-06 in its trailing window.
+    const rolled = task({
+      completedOccurrences: ['2026-08-06'],
+      dueDate: '2026-08-07',
+    });
+    const rolledDerived = deriveRecurringFields(rolled, '2026-08-06');
+    expect(rolledDerived.completedDates).toEqual(['2026-08-06']);
+
+    // User drags it back onto today (08-06) — updateTask's reschedule path
+    // (SchedulerContext.jsx) re-anchors via planSeriesReanchor rather than
+    // just overwriting dueDate, dropping the on/after-date completion.
+    const reanchored = { ...rolled, ...planSeriesReanchor(rolled, '2026-08-06') };
+    expect(reanchored.completedOccurrences).toEqual([]); // 08-06 completion dropped — it's being reopened, not relabeled
+    const finalDerived = deriveRecurringFields(reanchored, '2026-08-06');
+    expect(finalDerived.dueDate).toBe('2026-08-06');
+    expect(finalDerived.completedDates).toEqual([]); // no stale "done" entry survives the reanchor
+  });
 });
 
 describe('planOccurrenceCompaction', () => {
@@ -483,6 +504,43 @@ describe('applyRecurringCompletion', () => {
     // storage concern, never a behavioural one.
     expect(compacted.completionHistory).toEqual(plain.completionHistory);
     expect(compacted.completedDates).toEqual(plain.completedDates);
+  });
+});
+
+describe('planSubtaskOccurrenceCompletion', () => {
+  it('marks today done (completedDates includes it) but pins dueDate to the current occurrence', () => {
+    const t = task({ dueDate: '2026-08-01' });
+    const plan = planSubtaskOccurrenceCompletion(t, '2026-08-01', '2026-08-01');
+    expect(plan.completedOccurrences).toEqual(['2026-08-01']);
+    expect(plan.completedDates).toEqual(['2026-08-01']);
+    // The core behaviour this exists for: unlike applyRecurringCompletion,
+    // dueDate does NOT advance to the next occurrence.
+    expect(plan.dueDate).toBe('2026-08-01');
+  });
+
+  it('still rolls a backlog through skippedThrough when completed late, without moving dueDate off today', () => {
+    // Completed 5 days late: the backlog closes out (skippedThrough), but the
+    // sub-task itself must not jump to a future occurrence — it stays pinned
+    // on the occurrence date passed in (mirrors completeTask's baseDate=today handling).
+    const t = task({ recurrenceAnchor: '2026-07-01', dueDate: '2026-07-27' });
+    const plan = planSubtaskOccurrenceCompletion(t, '2026-07-27', '2026-08-01');
+    expect(plan.skippedThrough).toBe('2026-08-01');
+    expect(plan.dueDate).toBe('2026-07-27');
+  });
+
+  it('anchors an un-migrated recurring sub-task on the way through, same as applyRecurringCompletion', () => {
+    const legacy = { isRecurring: true, recurrenceString: 'every day', recurrenceRule: deriveRecurrenceRule('every day'), dueDate: '2026-08-01', parentId: 'p1' };
+    const plan = planSubtaskOccurrenceCompletion(legacy, '2026-08-01', '2026-08-01');
+    expect(plan.recurrenceAnchor).toBe('2026-08-01');
+    expect(plan.dueDate).toBe('2026-08-01');
+  });
+
+  it('is idempotent — completing the same occurrence twice changes nothing further', () => {
+    const t = task({ dueDate: '2026-08-01' });
+    const once = { ...t, ...planSubtaskOccurrenceCompletion(t, '2026-08-01', '2026-08-01') };
+    const twice = planSubtaskOccurrenceCompletion(once, '2026-08-01', '2026-08-01');
+    expect(twice.completedOccurrences).toEqual(once.completedOccurrences);
+    expect(twice.dueDate).toBe(once.dueDate);
   });
 });
 

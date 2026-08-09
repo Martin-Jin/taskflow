@@ -70,6 +70,7 @@ import {
   ensureRecurrenceAnchor,
   planOccurrenceUncompletion,
   planSeriesReanchor,
+  planSubtaskOccurrenceCompletion,
 } from '../utils/recurrenceState';
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
@@ -86,7 +87,12 @@ import {
   preserveSharedSections,
   MAX_COMMENT_TOMBSTONES,
 } from '../utils/sharedTaskSync';
-import { isCompletedForCurrentOccurrence, areAllChildrenCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
+import {
+  isCompletedForCurrentOccurrence,
+  areAllChildrenCompletedForCurrentOccurrence,
+  canCompact,
+  applyUpwardCompletionCascade,
+} from '../utils/taskHierarchy';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -412,72 +418,6 @@ function getDescendantIds(taskId, tasks) {
     queue.push(...(childrenByParentId.get(id) || []));
   }
   return descendants;
-}
-
-/**
- * Upward-completion cascade: after `taskId` (recurring or not) just closed
- * out its current occurrence within `newTasks`, walk up its `parentId` chain
- * completing any parent whose ENTIRE set of direct children is now done for
- * the current cycle too (see taskHierarchy's isCompletedForCurrentOccurrence
- * / areAllChildrenCompletedForCurrentOccurrence) — repeating up the chain,
- * since completing a parent can in turn complete a grandparent. A parent
- * that itself has no dueDate/isRecurring info of its own just follows the
- * same recurring/non-recurring completion shape completeTask already uses
- * for a standalone task, so a container parent behaves identically whether
- * a user clicks it directly or every one of its children happens to close
- * out this way.
- *
- * Pure and pre-commit: returns a new tasks array, doesn't call commit itself
- * — completeTask folds this into its own single commit so the whole cascade
- * (leaf + every newly-completed ancestor) lands as one undoable action.
- * `visited` guards the same hand-edited-backup parentId-cycle case every
- * other parentId walk in this file guards against.
- */
-/**
- * Whether this client may compact `task`'s completed-occurrence history.
- *
- * Compaction is the one non-commutative operation in the recurring-task model
- * (it removes entries and increments an archive), so it's only safe where
- * there is exactly ONE writer — see utils/recurrenceState.js's
- * planOccurrenceCompaction. A personal task satisfies that by definition: it
- * lives in this user's own store and nobody else can write it. A SHARED task
- * does not, so it's excluded here and compacted by its owner instead, which is
- * the only identity guaranteed to be singular for it.
- *
- * Deliberately a conservative test — anything not provably single-writer
- * simply doesn't compact, which costs a little storage rather than risking a
- * double-counted month in someone's stats.
- */
-function canCompact(task) {
-  return !task?.sharedProjectId;
-}
-
-function applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso) {
-  let current = newTasks;
-  let cursor = current.find((t) => t.id === taskId);
-  const visited = new Set([taskId]);
-  while (cursor?.parentId && !visited.has(cursor.parentId)) {
-    visited.add(cursor.parentId);
-    const parentId = cursor.parentId;
-    const parent = current.find((t) => t.id === parentId);
-    if (!parent) break;
-    if (!areAllChildrenCompletedForCurrentOccurrence(parentId, current, todayIso)) break;
-    if (isCompletedForCurrentOccurrence(parent, todayIso)) break; // already done — nothing to cascade, and avoids re-advancing a recurring parent past what it already advanced to
-
-    if (parent.isRecurring && parent.dueDate) {
-      // Same roll-forward every other recurring completion uses — see
-      // utils/recurrenceState.js's applyRecurringCompletion, which records the
-      // occurrence into the commutative set and re-derives dueDate from it.
-      const rolled = applyRecurringCompletion(parent, parent.dueDate, todayIso, { compact: canCompact(parent) });
-      current = current.map((t) => (t.id === parentId ? { ...t, ...rolled, completedAt: nowIso, updatedAt: nowIso } : t));
-    } else {
-      current = current.map((t) =>
-        t.id === parentId ? { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0, updatedAt: nowIso } : t
-      );
-    }
-    cursor = current.find((t) => t.id === parentId);
-  }
-  return current;
 }
 
 export function SchedulerProvider({ children }) {
@@ -1987,13 +1927,20 @@ export function SchedulerProvider({ children }) {
           ? Object.fromEntries(Object.entries(existing.overrides).filter(([key]) => key !== occurrenceDate))
           : existing.overrides;
 
-        // The whole roll-forward — record the occurrence, advance the derived
-        // due date, refresh the completedDates/completionHistory views — in one
-        // call, shared with the descendant cascade and the upward cascade so
-        // none of the three can diverge on this bookkeeping. See
-        // utils/recurrenceState.js for why completion is a set union rather
-        // than an in-place advance.
-        const rolled = applyRecurringCompletion(existing, occurrenceDate, todayIso, { compact: canCompact(existing) });
+        // A recurring SUB-TASK (has a parentId) does NOT roll forward on its
+        // own — only the group as a whole (the parent, plus every recurring
+        // descendant together) advances once every sub-task is done for the
+        // cycle, via applyUpwardCompletionCascade's descendant-sync below.
+        // Individually completing one sub-task just marks it checked for
+        // today (planSubtaskOccurrenceCompletion) and pins its dueDate so it
+        // doesn't prematurely jump out of "Today" while siblings are still
+        // outstanding. A top-level recurring task has no such group to wait
+        // for, so it keeps rolling forward immediately on its own completion
+        // — see utils/recurrenceState.js's applyRecurringCompletion.
+        const isSubtask = !!existing.parentId;
+        const rolled = isSubtask
+          ? planSubtaskOccurrenceCompletion(existing, occurrenceDate, todayIso)
+          : applyRecurringCompletion(existing, occurrenceDate, todayIso, { compact: canCompact(existing) });
         const nextDueDate = rolled.dueDate;
 
         // Function form (see addTask's comment above) so two completions
@@ -2008,7 +1955,13 @@ export function SchedulerProvider({ children }) {
             if (t.id === taskId) {
               return { ...t, ...rolled, overrides: nextOverrides, completedAt: nowIso, updatedAt: nowIso };
             }
-            if (descendantIds.has(t.id)) {
+            // A sub-task's OWN descendants (grandchildren of the top-level
+            // parent — nesting is capped at 2 levels, so this is an edge case)
+            // don't roll forward here either, for the same reason `existing`
+            // itself doesn't: the group they belong to hasn't closed out yet.
+            // They'll roll forward alongside `existing` when the cascade below
+            // eventually advances the whole group.
+            if (!isSubtask && descendantIds.has(t.id)) {
               // null means "not independently recurring — leave it entirely
               // alone", which is why this spreads nothing rather than writing
               // undefined over the descendant's own fields.
@@ -2048,7 +2001,7 @@ export function SchedulerProvider({ children }) {
           // See rebalanceTodayOnly's own comment for why this is scoped tightly
           // to today rather than reusing the full-horizon runRebalance.
           return rebalanceTodayOnly(cascadedTasks, newBlocks);
-        }, `Completed recurring task — advanced to ${nextDueDate}`);
+        }, isSubtask ? `Completed recurring sub-task for today` : `Completed recurring task — advanced to ${nextDueDate}`);
         return true;
       }
 
