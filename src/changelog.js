@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.6.0',
+    date: '2026-08-10',
+    title: 'Rescheduling a recurring parent task now moves its recurring sub-tasks with it',
+    changes: [
+      "Manually changing a recurring parent task's due date now shifts each recurring sub-task's displayed due date to match, for that occurrence only — their own recurrence pattern is untouched, and the shift naturally clears itself once a sub-task is next completed and rolls forward on its own schedule.",
+    ],
+  },
+  {
     version: '3.5.5',
     date: '2026-08-10',
     title: 'Fixed a recurring task jumping an extra week when completed after an off-pattern date move',

@@ -536,6 +536,65 @@ export function computeRecurringDescendantState(descendant, todayIso) {
 }
 
 /**
+ * Cascade a recurring PARENT's manual due-date edit onto its recurring
+ * descendants as a TEMPORARY, self-healing move — the multi-descendant
+ * counterpart to resolveCurrentOccurrenceDueDate/computeRecurringRescheduleUpdate's
+ * existing single-occurrence override mechanism, reused here rather than
+ * inventing a new field.
+ *
+ * Deliberately does NOT touch a descendant's `recurrenceAnchor`/
+ * `recurrenceRule`/`dueDate` the way planSeriesReanchor does for the parent
+ * itself: re-anchoring every descendant's whole series just because the
+ * parent's due date moved once would be wrong — the descendant's own
+ * recurrence pattern (which days it repeats on) has nothing to do with the
+ * parent's edit. Instead this writes an `overrides` entry keyed by the
+ * descendant's OWN current `dueDate`, exactly the shape
+ * computeRecurringRescheduleUpdate writes when a user drags one occurrence
+ * off-pattern by hand — so resolveCurrentOccurrenceDueDate picks it up and
+ * displays the parent's new date for this cycle only, everywhere a due date
+ * is shown (TaskListPanel, TaskDetailModal).
+ *
+ * SELF-HEALING, NO CLEANUP NEEDED: the override is keyed by the date it was
+ * written against (the descendant's dueDate AT CASCADE TIME), not by the
+ * parent's date. Once that descendant's occurrence is completed,
+ * applyRecurringCompletion/computeRecurringDescendantState advances its
+ * `dueDate` to the next occurrence on the descendant's OWN pattern —
+ * `overrides[newDueDate]` was never written, so resolveCurrentOccurrenceDueDate
+ * finds nothing and falls back to the descendant's real next date. The stale
+ * entry for the old key is simply never looked up again; it's harmless dead
+ * weight (same as any completed off-pattern override — see
+ * computeRecurringDescendantState's own cleanup of THAT case) rather than
+ * something this function needs to prune.
+ *
+ * Only applies to a descendant that `isRecurring` and has its own `dueDate`
+ * (mirrors computeRecurringDescendantState's guard) — a non-recurring
+ * descendant has no per-occurrence override concept and is left alone
+ * entirely, per this file's "otherwise leave it completely alone" convention.
+ *
+ * Callers MUST exclude any descendant id that the enforceDueDate cascade
+ * (reanchorRecurringEnforceDueDateUpdates) already permanently re-anchored in
+ * the same commit — that path fully replaces the descendant's real dueDate/
+ * anchor with the parent's date, so this mechanism has nothing useful to add
+ * there (see SchedulerContext.jsx's updateTask, which builds the exclusion
+ * set from `enforceDueDateSyncUpdates`'s keys before calling this).
+ *
+ * @param {import('../types').Task} parentTask - the parent AFTER its dueDate edit has been applied
+ * @param {import('../types').Task[]} descendants - e.g. from taskHierarchy.getAllDescendants
+ * @returns {Map<string, {overrides: object}>} keyed by descendant id; empty when nothing qualifies
+ */
+export function computeRecurringDescendantDueDateOverrides(parentTask, descendants) {
+  const updates = new Map();
+  if (!parentTask?.isRecurring || !parentTask.dueDate || !Array.isArray(descendants)) return updates;
+  for (const descendant of descendants) {
+    if (!descendant?.isRecurring || !descendant.dueDate) continue;
+    updates.set(descendant.id, {
+      overrides: { ...descendant.overrides, [descendant.dueDate]: { date: parentTask.dueDate } },
+    });
+  }
+  return updates;
+}
+
+/**
  * Give a recurring task the anchor this model needs, if it doesn't have one.
  * Every path that creates or newly-marks-recurring a task funnels through here
  * (SchedulerContext's addTask/updateTask, the migration, Todoist import), so

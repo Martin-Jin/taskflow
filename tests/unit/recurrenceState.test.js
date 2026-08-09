@@ -11,6 +11,7 @@ import {
   planOccurrenceCompaction,
   applyRecurringCompletion,
   computeRecurringDescendantState,
+  computeRecurringDescendantDueDateOverrides,
   ensureRecurrenceAnchor,
   planOccurrenceUncompletion,
   planSubtaskOccurrenceCompletion,
@@ -453,6 +454,84 @@ describe('reanchorRecurringEnforceDueDateUpdates', () => {
   it('returns the same empty map unchanged when there is nothing to re-anchor', () => {
     const updates = new Map();
     expect(reanchorRecurringEnforceDueDateUpdates([], updates)).toBe(updates);
+  });
+});
+
+describe('computeRecurringDescendantDueDateOverrides', () => {
+  it('(a) writes an overrides entry on a recurring child keyed by the CHILD own current dueDate, dated to the parent new dueDate, leaving anchor/rule untouched', () => {
+    const parent = task({ id: 'p1', dueDate: '2026-08-10', recurrenceAnchor: '2026-08-10' });
+    const child = task({
+      id: 'c1',
+      parentId: 'p1',
+      dueDate: '2026-08-03', // child's own current occurrence — different cadence from the parent
+      recurrenceAnchor: '2026-07-01',
+      recurrenceString: 'every week',
+    });
+    const updates = computeRecurringDescendantDueDateOverrides(parent, [child]);
+    expect(updates.get('c1')).toEqual({
+      overrides: { '2026-08-03': { date: '2026-08-10' } },
+    });
+    // Anchor/rule untouched — this is a temporary display override, not a re-anchor.
+    const merged = { ...child, ...updates.get('c1') };
+    expect(merged.recurrenceAnchor).toBe('2026-07-01');
+    expect(merged.recurrenceString).toBe('every week');
+    expect(merged.dueDate).toBe('2026-08-03'); // real dueDate untouched
+    expect(resolveCurrentOccurrenceDueDate(merged)).toBe('2026-08-10'); // display resolves to the parent's new date
+  });
+
+  it('(b) the override is temporary — it self-heals once the child completes and its dueDate advances', () => {
+    const parent = task({ id: 'p1', dueDate: '2026-08-10', recurrenceAnchor: '2026-08-10' });
+    const child = task({ id: 'c1', parentId: 'p1', dueDate: '2026-08-03', recurrenceAnchor: '2026-08-03' });
+    const overridden = { ...child, ...computeRecurringDescendantDueDateOverrides(parent, [child]).get('c1') };
+    expect(resolveCurrentOccurrenceDueDate(overridden)).toBe('2026-08-10');
+
+    // Complete the child's current occurrence — its own dueDate advances to
+    // its own next pattern date (2026-08-04, daily), NOT the parent's date.
+    const completed = { ...overridden, ...applyRecurringCompletion(overridden, overridden.dueDate, '2026-08-03') };
+    expect(completed.dueDate).toBe('2026-08-04');
+    // The override map still has the OLD key ('2026-08-03'), which no longer
+    // matches the new dueDate, so resolution falls through to the real value —
+    // no cleanup step was needed for this to stop applying.
+    expect(completed.overrides?.['2026-08-03']).toEqual({ date: '2026-08-10' });
+    expect(resolveCurrentOccurrenceDueDate(completed)).toBe('2026-08-04');
+  });
+
+  it('(c) a non-recurring child with its own plain dueDate is left untouched', () => {
+    const parent = task({ id: 'p1', dueDate: '2026-08-10', recurrenceAnchor: '2026-08-10' });
+    const plainChild = { id: 'c1', parentId: 'p1', isRecurring: false, dueDate: '2026-08-05' };
+    const updates = computeRecurringDescendantDueDateOverrides(parent, [plainChild]);
+    expect(updates.has('c1')).toBe(false);
+    expect(updates.size).toBe(0);
+  });
+
+  it('(d) skips a descendant already permanently reanchored by the enforceDueDate cascade in the same commit', () => {
+    // Simulates SchedulerContext.jsx's updateTask: parent has enforceDueDate
+    // AND a manual dueDate edit in the same call. The enforceDueDate cascade
+    // (reanchorRecurringEnforceDueDateUpdates) already fully reanchors the
+    // descendant — the new mechanism must not also write a redundant override.
+    const parent = task({ id: 'p1', dueDate: '2026-08-17', recurrenceAnchor: '2026-08-17', enforceDueDate: true });
+    const child = task({ id: 'c1', parentId: 'p1', dueDate: '2026-08-10', recurrenceAnchor: '2026-08-01', dueDateInherited: true });
+    const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+      [parent, child],
+      new Map([['c1', { dueDate: '2026-08-17', dueDateInherited: true }]])
+    );
+    // The enforceDueDate cascade fully reanchored the child.
+    expect(enforceDueDateSyncUpdates.get('c1')).toMatchObject({ recurrenceAnchor: '2026-08-17', dueDate: '2026-08-17' });
+
+    // Caller filters out ids already touched by that cascade before calling
+    // this function — per the documented "skip already-touched ids" rule.
+    const qualifying = [child].filter((d) => !enforceDueDateSyncUpdates.has(d.id));
+    const overrideUpdates = computeRecurringDescendantDueDateOverrides(parent, qualifying);
+    expect(overrideUpdates.size).toBe(0);
+    expect(overrideUpdates.has('c1')).toBe(false);
+  });
+
+  it('is a no-op when the parent is not recurring, has no dueDate, or has no qualifying descendants', () => {
+    const child = task({ id: 'c1', dueDate: '2026-08-03' });
+    expect(computeRecurringDescendantDueDateOverrides({ isRecurring: false, dueDate: '2026-08-10' }, [child]).size).toBe(0);
+    expect(computeRecurringDescendantDueDateOverrides({ isRecurring: true, dueDate: null }, [child]).size).toBe(0);
+    const parent = task({ id: 'p1', dueDate: '2026-08-10' });
+    expect(computeRecurringDescendantDueDateOverrides(parent, []).size).toBe(0);
   });
 });
 
