@@ -66,6 +66,37 @@
   cursor: pointer;
 }
 
+/* Event/Task segmented toggle atop EventDetailModal's create form — two
+   equal-width tabs, active one highlighted. Flex-based so it naturally
+   shrinks to the modal's own max-width: 92vw on narrow/mobile screens
+   rather than needing its own breakpoint. */
+.segmented-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 12px;
+  background: var(--color-bg-surface-hover);
+  border-radius: var(--radius-md, 8px);
+}
+
+.segmented-toggle-option {
+  flex: 1;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  border-radius: calc(var(--radius-md, 8px) - 3px);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.segmented-toggle-option.is-active {
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
 .form-hint {
   font-size: 11.5px;
   color: var(--color-text-secondary);
