@@ -440,6 +440,47 @@ export function planSeriesReanchor(task, newDueDate) {
 }
 
 /**
+ * recurrence.js's computeEnforceDueDateSyncUpdates cascades an enforcing
+ * ancestor's dueDate onto descendants, but it only knows how to produce a
+ * plain `dueDate`/`dueDateInherited` pair — it has no access to this
+ * module's re-anchoring (recurrence.js is the OLDER module and this one
+ * already imports from it; the reverse import would be circular, see this
+ * file's header comment). So SchedulerContext.jsx's addTask/updateTask call
+ * this afterward, as the layer that can see both function's outputs: for any
+ * update that lands a new `dueDate` on a task that `isRecurring`, replace the
+ * raw dueDate with a full re-anchor (recurrenceAnchor/completedOccurrences/
+ * skippedThrough/dueDate) via planSeriesReanchor — otherwise the next
+ * completion/reschedule on that descendant re-derives dueDate from its
+ * untouched old anchor and silently undoes the cascade. Mirrors the identical
+ * reasoning already applied to a user's own direct due-date edit (see
+ * updateTask's own planSeriesReanchor call). `dueDateInherited` is preserved
+ * as-is since re-anchoring doesn't change whether this date is still "the
+ * ancestor's".
+ *
+ * @param {import('../types').Task[]} tasks - same array computeEnforceDueDateSyncUpdates was run against
+ * @param {Map<string, object>} enforceDueDateSyncUpdates - computeEnforceDueDateSyncUpdates' output
+ * @returns {Map<string, object>} same map, with recurring descendants' dueDate updates re-anchored
+ */
+export function reanchorRecurringEnforceDueDateUpdates(tasks, enforceDueDateSyncUpdates) {
+  if (enforceDueDateSyncUpdates.size === 0) return enforceDueDateSyncUpdates;
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const reanchored = new Map();
+  for (const [taskId, update] of enforceDueDateSyncUpdates) {
+    const task = byId.get(taskId);
+    if (task?.isRecurring && update.dueDate) {
+      const { dueDateInherited } = update;
+      reanchored.set(
+        taskId,
+        { ...planSeriesReanchor(task, update.dueDate), ...(dueDateInherited !== undefined ? { dueDateInherited } : {}) }
+      );
+    } else {
+      reanchored.set(taskId, update);
+    }
+  }
+  return reanchored;
+}
+
+/**
  * How a single descendant (sub-task) should be updated when its RECURRING
  * ancestor is completed and rolls forward — the new-model replacement for
  * recurrence.js's computeRecurringDescendantUpdate, which advanced dueDate

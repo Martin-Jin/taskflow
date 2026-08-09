@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.5.4',
+    date: '2026-08-10',
+    title: 'Fixed a recurring sub-task quietly reverting an enforced due date',
+    changes: [
+      "A recurring sub-task under a parent with \"enforce due date\" turned on could silently drift back to its old schedule after completing or rescheding it — the parent's date change wasn't fully applied to the sub-task's own recurrence, so it would snap back on the next check-off. It now re-anchors properly and stays in sync with the parent.",
+    ],
+  },
+  {
     version: '3.5.3',
     date: '2026-08-10',
     title: 'Finishing a task early no longer leaves a stale block on the calendar',
