@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.5.2',
+    date: '2026-08-09',
+    title: 'Recurring sub-tasks no longer jump out of Today the moment you check them off',
+    changes: [
+      "Completing one recurring sub-task (e.g. a step in a daily routine) now marks it done for today without advancing its own due date — it stays visible and checked off in Today until every sibling is done too. Previously it immediately rolled forward to its next occurrence, making it vanish from Today's list while the rest of the group was still outstanding.",
+      'Once the whole group is done (every sub-task completed, or the parent task completed directly), the parent and every recurring sub-task now advance to the next occurrence together, in lockstep.',
+    ],
+  },
+  {
     version: '3.5.1',
     date: '2026-08-09',
     title: 'A task waiting on a dependency now still gets scheduled',

@@ -25,6 +25,8 @@
  * ============================================================================
  */
 
+import { applyRecurringCompletion, computeRecurringDescendantState } from './recurrenceState';
+
 /** Direct children of `taskId` (one level) — a child that itself has children is not expanded here. */
 export function getDirectChildren(taskId, tasks) {
   return tasks.filter((t) => t.parentId === taskId);
@@ -175,4 +177,105 @@ export function getAllDescendants(taskId, tasks) {
     queue.push(...(childrenByParentId.get(t.id) || []));
   }
   return descendants;
+}
+
+/**
+ * Whether this client may compact `task`'s completed-occurrence history.
+ *
+ * Compaction is the one non-commutative operation in the recurring-task model
+ * (it removes entries and increments an archive), so it's only safe where
+ * there is exactly ONE writer — see utils/recurrenceState.js's
+ * planOccurrenceCompaction. A personal task satisfies that by definition: it
+ * lives in this user's own store and nobody else can write it. A SHARED task
+ * does not, so it's excluded here and compacted by its owner instead, which is
+ * the only identity guaranteed to be singular for it.
+ *
+ * Deliberately a conservative test — anything not provably single-writer
+ * simply doesn't compact, which costs a little storage rather than risking a
+ * double-counted month in someone's stats.
+ */
+export function canCompact(task) {
+  return !task?.sharedProjectId;
+}
+
+/**
+ * Upward-completion cascade: after `taskId` (recurring or not) just closed
+ * out its current occurrence within `newTasks`, walk up its `parentId` chain
+ * completing any parent whose ENTIRE set of direct children is now done for
+ * the current cycle too (see isCompletedForCurrentOccurrence /
+ * areAllChildrenCompletedForCurrentOccurrence above) — repeating up the
+ * chain, since completing a parent can in turn complete a grandparent. A
+ * parent that itself has no dueDate/isRecurring info of its own just follows
+ * the same recurring/non-recurring completion shape completeTask already
+ * uses for a standalone task, so a container parent behaves identically
+ * whether a user clicks it directly or every one of its children happens to
+ * close out this way.
+ *
+ * When the parent being cascaded-into IS recurring, every one of ITS
+ * recurring descendants (siblings of `taskId`, from the parent's point of
+ * view) rolls forward together with it — same computeRecurringDescendantState
+ * helper SchedulerContext.completeTask's own direct-completion path uses for
+ * its descendants, reused here so a group closing out via the cascade and a
+ * group closed out by completing the parent directly can't diverge on this
+ * bookkeeping. This is what lets each recurring sub-task stay pinned on
+ * today's occurrence (see recurrenceState.js's planSubtaskOccurrenceCompletion)
+ * until the group as a whole is done — without this, siblings would keep
+ * showing checked for a NOW-STALE occurrence once the parent (and thus the
+ * cycle) has moved on.
+ *
+ * Extracted out of SchedulerContext.jsx (which pulls in Firebase/hooks and so
+ * can't be imported directly by a Vitest unit test) so this cascade decision
+ * stays independently testable — see tests/unit/taskHierarchy.test.js. Pure
+ * and pre-commit: returns a new tasks array, doesn't call commit itself —
+ * completeTask folds this into its own single commit so the whole cascade
+ * (leaf + every newly-completed ancestor + every rolled-forward sibling)
+ * lands as one undoable action. `visited` guards the same
+ * hand-edited-backup parentId-cycle case every other parentId walk in this
+ * app guards against.
+ *
+ * @param {import('../types').Task[]} newTasks
+ * @param {string} taskId - the task that just closed out its current occurrence
+ * @param {string} todayIso
+ * @param {string} nowIso - ISO timestamp for completedAt/updatedAt stamps
+ * @returns {import('../types').Task[]}
+ */
+export function applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso) {
+  let current = newTasks;
+  let cursor = current.find((t) => t.id === taskId);
+  const visited = new Set([taskId]);
+  while (cursor?.parentId && !visited.has(cursor.parentId)) {
+    visited.add(cursor.parentId);
+    const parentId = cursor.parentId;
+    const parent = current.find((t) => t.id === parentId);
+    if (!parent) break;
+    if (!areAllChildrenCompletedForCurrentOccurrence(parentId, current, todayIso)) break;
+    if (isCompletedForCurrentOccurrence(parent, todayIso)) break; // already done — nothing to cascade, and avoids re-advancing a recurring parent past what it already advanced to
+
+    if (parent.isRecurring && parent.dueDate) {
+      // Same roll-forward every other recurring completion uses — see
+      // utils/recurrenceState.js's applyRecurringCompletion, which records the
+      // occurrence into the commutative set and re-derives dueDate from it.
+      const rolled = applyRecurringCompletion(parent, parent.dueDate, todayIso, { compact: canCompact(parent) });
+      const parentDescendantIds = new Set(getAllDescendants(parentId, current).map((t) => t.id));
+      current = current.map((t) => {
+        if (t.id === parentId) return { ...t, ...rolled, completedAt: nowIso, updatedAt: nowIso };
+        // Roll every recurring descendant forward in lockstep with the parent
+        // — see this function's doc comment above. `taskId` itself is one of
+        // these descendants (it's what triggered this cascade) and gets
+        // rolled forward here too, exactly like completeTask's own direct
+        // descendant-sync does for the task it completes directly.
+        if (parentDescendantIds.has(t.id)) {
+          const update = computeRecurringDescendantState(t, todayIso);
+          return update ? { ...t, ...update, updatedAt: nowIso } : t;
+        }
+        return t;
+      });
+    } else {
+      current = current.map((t) =>
+        t.id === parentId ? { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0, updatedAt: nowIso } : t
+      );
+    }
+    cursor = current.find((t) => t.id === parentId);
+  }
+  return current;
 }

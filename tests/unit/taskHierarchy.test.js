@@ -3,9 +3,28 @@ import {
   isCompletedForCurrentOccurrence,
   areAllChildrenCompletedForCurrentOccurrence,
   isCheckedForListDisplay,
+  applyUpwardCompletionCascade,
 } from '../../src/utils/taskHierarchy';
+import { planSubtaskOccurrenceCompletion } from '../../src/utils/recurrenceState';
+import { deriveRecurrenceRule } from '../../src/utils/recurrence';
 
 const TODAY = '2026-08-06';
+
+/** A daily-recurring task/sub-task, anchored and due today unless overridden. */
+function recurringTask(overrides = {}) {
+  const recurrenceString = overrides.recurrenceString ?? 'every day';
+  return {
+    isRecurring: true,
+    recurrenceString,
+    recurrenceRule: deriveRecurrenceRule(recurrenceString),
+    recurrenceAnchor: TODAY,
+    completedOccurrences: [],
+    skippedThrough: null,
+    dueDate: TODAY,
+    completedDates: [],
+    ...overrides,
+  };
+}
 
 describe('isCompletedForCurrentOccurrence', () => {
   it('reads isCompleted directly for a non-recurring task', () => {
@@ -106,5 +125,98 @@ describe('areAllChildrenCompletedForCurrentOccurrence', () => {
       { id: 'grandchild', parentId: 'child', isCompleted: true },
     ];
     expect(areAllChildrenCompletedForCurrentOccurrence('parent', tasks, TODAY)).toBe(false);
+  });
+});
+
+describe('applyUpwardCompletionCascade', () => {
+  it('(a) completing one recurring sub-task alone does not cascade the parent, and does not advance the sub-task itself', () => {
+    const parent = recurringTask({ id: 'parent' });
+    // c1 is completed for today (simulating completeTask's planSubtaskOccurrenceCompletion
+    // branch); c2 is its still-outstanding sibling.
+    const c1 = { ...recurringTask({ id: 'c1', parentId: 'parent' }), completedDates: [TODAY] };
+    const c2 = recurringTask({ id: 'c2', parentId: 'parent' });
+    const tasks = [parent, c1, c2];
+    const result = applyUpwardCompletionCascade(tasks, 'c1', TODAY, `${TODAY}T12:00:00.000Z`);
+    const resultParent = result.find((t) => t.id === 'parent');
+    const resultC1 = result.find((t) => t.id === 'c1');
+    // Parent untouched — not every child is done yet.
+    expect(resultParent.dueDate).toBe(TODAY);
+    expect(resultParent.completedDates ?? []).not.toContain(TODAY);
+    // c1 itself is untouched by the cascade (it stays pinned — see completeTask).
+    expect(resultC1.dueDate).toBe(TODAY);
+  });
+
+  it('(b) completing the last remaining sub-task cascades: parent AND every recurring sibling advance together', () => {
+    const parent = recurringTask({ id: 'parent' });
+    // Both children already marked done for today (as planSubtaskOccurrenceCompletion
+    // would leave them) — completing c2 (the caller's taskId) is what triggers the cascade.
+    const c1 = { ...recurringTask({ id: 'c1', parentId: 'parent' }), completedDates: [TODAY] };
+    const c2 = { ...recurringTask({ id: 'c2', parentId: 'parent' }), completedDates: [TODAY] };
+    const tasks = [parent, c1, c2];
+    const result = applyUpwardCompletionCascade(tasks, 'c2', TODAY, `${TODAY}T12:00:00.000Z`);
+    const resultParent = result.find((t) => t.id === 'parent');
+    const resultC1 = result.find((t) => t.id === 'c1');
+    const resultC2 = result.find((t) => t.id === 'c2');
+    const nextDay = '2026-08-07';
+    expect(resultParent.dueDate).toBe(nextDay);
+    expect(resultC1.dueDate).toBe(nextDay);
+    expect(resultC2.dueDate).toBe(nextDay);
+  });
+
+  it('(c) a non-recurring parent still auto-completes once every child is done, regardless of recurrence', () => {
+    const tasks = [
+      { id: 'parent' },
+      { id: 'c1', isCompleted: true },
+      { id: 'c2', isCompleted: false },
+    ].map((t, i) => (i === 0 ? t : { ...t, parentId: 'parent' }));
+    // c2 just got completed directly.
+    tasks[2].isCompleted = true;
+    const result = applyUpwardCompletionCascade(tasks, 'c2', TODAY, `${TODAY}T12:00:00.000Z`);
+    expect(result.find((t) => t.id === 'parent').isCompleted).toBe(true);
+  });
+
+  it('stops walking once a parent is already completed for the current occurrence (no double-advance)', () => {
+    const parent = { ...recurringTask({ id: 'parent' }), completedDates: [TODAY] };
+    const c1 = { ...recurringTask({ id: 'c1', parentId: 'parent' }), completedDates: [TODAY] };
+    const result = applyUpwardCompletionCascade([parent, c1], 'c1', TODAY, `${TODAY}T12:00:00.000Z`);
+    // Already-done parent is left exactly as-is — not re-advanced a second time.
+    expect(result.find((t) => t.id === 'parent').dueDate).toBe(TODAY);
+  });
+
+  it('rolls a grandchild forward together with a recurring parent two levels up', () => {
+    const grandparent = recurringTask({ id: 'gp' });
+    const parent = { ...recurringTask({ id: 'p', parentId: 'gp' }), completedDates: [TODAY] };
+    const child = { ...recurringTask({ id: 'c', parentId: 'p' }), completedDates: [TODAY] };
+    const tasks = [grandparent, parent, child];
+    const result = applyUpwardCompletionCascade(tasks, 'p', TODAY, `${TODAY}T12:00:00.000Z`);
+    const nextDay = '2026-08-07';
+    expect(result.find((t) => t.id === 'gp').dueDate).toBe(nextDay);
+    expect(result.find((t) => t.id === 'c').dueDate).toBe(nextDay);
+  });
+
+  it('integrates with planSubtaskOccurrenceCompletion end-to-end: pinned sub-tasks only advance once the group closes out', () => {
+    const parent = recurringTask({ id: 'parent' });
+    const c1 = recurringTask({ id: 'c1', parentId: 'parent' });
+    const c2 = recurringTask({ id: 'c2', parentId: 'parent' });
+
+    // Step 1: complete c1 alone via the real sub-task completion helper.
+    const afterC1 = { ...c1, ...planSubtaskOccurrenceCompletion(c1, TODAY, TODAY) };
+    expect(afterC1.dueDate).toBe(TODAY); // pinned
+    let tasks = [parent, afterC1, c2];
+    tasks = applyUpwardCompletionCascade(tasks, 'c1', TODAY, `${TODAY}T12:00:00.000Z`);
+    // Nothing cascaded yet — c2 isn't done.
+    expect(tasks.find((t) => t.id === 'parent').dueDate).toBe(TODAY);
+    expect(tasks.find((t) => t.id === 'c1').dueDate).toBe(TODAY);
+
+    // Step 2: complete c2, the last remaining sub-task — this closes the group out.
+    const c2Before = tasks.find((t) => t.id === 'c2');
+    const afterC2 = { ...c2Before, ...planSubtaskOccurrenceCompletion(c2Before, TODAY, TODAY) };
+    tasks = tasks.map((t) => (t.id === 'c2' ? afterC2 : t));
+    tasks = applyUpwardCompletionCascade(tasks, 'c2', TODAY, `${TODAY}T12:00:00.000Z`);
+
+    const nextDay = '2026-08-07';
+    expect(tasks.find((t) => t.id === 'parent').dueDate).toBe(nextDay);
+    expect(tasks.find((t) => t.id === 'c1').dueDate).toBe(nextDay);
+    expect(tasks.find((t) => t.id === 'c2').dueDate).toBe(nextDay);
   });
 });

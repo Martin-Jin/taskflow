@@ -549,6 +549,53 @@ export function applyRecurringCompletion(task, occurrenceDate, todayIso, { compa
 }
 
 /**
+ * Mark today's occurrence of a recurring SUB-TASK done WITHOUT advancing its
+ * own `dueDate` — the "checked for today, but stays parked on today's
+ * occurrence" half of the parent/sub-task completion split (see
+ * SchedulerContext.completeTask's `existing.parentId` branch and
+ * applyUpwardCompletionCascade).
+ *
+ * A top-level recurring task rolls forward the instant it's completed
+ * (applyRecurringCompletion). A recurring SUB-TASK must not: TaskListPanel
+ * buckets a task into Overdue/Today/Upcoming off its own dueDate, so
+ * advancing it immediately would make the sub-task vanish from "Today" the
+ * moment it's checked, even though its siblings (and the parent) aren't done
+ * yet for this cycle. Instead the sub-task stays visibly checked in "Today"
+ * (isCheckedForListDisplay reads completedDates, which this DOES update) with
+ * its dueDate pinned to the current occurrence — until the whole group closes
+ * out and applyUpwardCompletionCascade's descendant-sync rolls every recurring
+ * descendant, including this one, forward together (see
+ * computeRecurringDescendantState).
+ *
+ * Reuses planOccurrenceCompletion for the source-of-truth write (so the same
+ * union/rollforward-through-skippedThrough semantics apply — a sub-task
+ * completed while overdue still closes its backlog out to today) and
+ * deriveRecurringFields for completedDates/completionHistory, but discards
+ * the derived `dueDate` in favour of the task's current one.
+ *
+ * @param {import('../types').Task} task
+ * @param {string} occurrenceDate - the occurrence being marked done (normally the task's current dueDate)
+ * @param {string} todayIso
+ * @returns {{completedOccurrences: string[], skippedThrough: string|null, dueDate: string,
+ *   completedDates: string[], completionHistory: Record<string, number>}}
+ */
+export function planSubtaskOccurrenceCompletion(task, occurrenceDate, todayIso) {
+  const anchored = { ...task, ...ensureRecurrenceAnchor(task) };
+  const plan = planOccurrenceCompletion(anchored, occurrenceDate, todayIso);
+  const next = { ...anchored, ...plan };
+  const derived = deriveRecurringFields(next, todayIso);
+  return {
+    recurrenceAnchor: next.recurrenceAnchor,
+    completedOccurrences: next.completedOccurrences,
+    skippedThrough: next.skippedThrough,
+    // Pinned — see doc comment above. Deliberately NOT derived.dueDate.
+    dueDate: anchored.dueDate,
+    completedDates: derived.completedDates,
+    completionHistory: derived.completionHistory,
+  };
+}
+
+/**
  * How much raw completion history to keep before folding it into the monthly
  * archive. A year is well past anything the UI reads date-by-date (the
  * `completedDates` view is a 7-day window, and Stats reads the monthly
