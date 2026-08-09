@@ -25,7 +25,8 @@
  * ============================================================================
  */
 
-import { applyRecurringCompletion, computeRecurringDescendantState } from './recurrenceState';
+import { applyRecurringCompletion, computeRecurringDescendantState, planSeriesReanchor } from './recurrenceState';
+import { resolveCurrentOccurrenceDueDate } from './recurrence';
 
 /** Direct children of `taskId` (one level) — a child that itself has children is not expanded here. */
 export function getDirectChildren(taskId, tasks) {
@@ -252,13 +253,30 @@ export function applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso)
     if (isCompletedForCurrentOccurrence(parent, todayIso)) break; // already done — nothing to cascade, and avoids re-advancing a recurring parent past what it already advanced to
 
     if (parent.isRecurring && parent.dueDate) {
+      // The parent may itself be sitting on an off-pattern override (see
+      // recurrence.js's computeRecurringRescheduleUpdate/
+      // resolveCurrentOccurrenceDueDate) — re-anchor onto the resolved date
+      // first so "next" is computed from where its current occurrence
+      // actually is, not a stale pre-move anchor. Same reasoning as
+      // SchedulerContext.completeTask's own direct-completion handling.
+      const originalParentDueDate = parent.dueDate;
+      const resolvedParentDueDate = resolveCurrentOccurrenceDueDate(parent);
+      const effectiveParent = resolvedParentDueDate && resolvedParentDueDate !== originalParentDueDate
+        ? { ...parent, ...planSeriesReanchor(parent, resolvedParentDueDate) }
+        : parent;
       // Same roll-forward every other recurring completion uses — see
       // utils/recurrenceState.js's applyRecurringCompletion, which records the
       // occurrence into the commutative set and re-derives dueDate from it.
-      const rolled = applyRecurringCompletion(parent, parent.dueDate, todayIso, { compact: canCompact(parent) });
+      const rolled = applyRecurringCompletion(effectiveParent, effectiveParent.dueDate, todayIso, { compact: canCompact(effectiveParent) });
+      // The now-closed-out occurrence's override entry (keyed by the
+      // ORIGINAL pre-move date) is dead once it's rolled forward — drop it,
+      // same cleanup completeTask does for the task it completes directly.
+      const parentOverrides = parent.overrides && originalParentDueDate in parent.overrides
+        ? Object.fromEntries(Object.entries(parent.overrides).filter(([key]) => key !== originalParentDueDate))
+        : parent.overrides;
       const parentDescendantIds = new Set(getAllDescendants(parentId, current).map((t) => t.id));
       current = current.map((t) => {
-        if (t.id === parentId) return { ...t, ...rolled, completedAt: nowIso, updatedAt: nowIso };
+        if (t.id === parentId) return { ...t, ...rolled, overrides: parentOverrides, completedAt: nowIso, updatedAt: nowIso };
         // Roll every recurring descendant forward in lockstep with the parent
         // — see this function's doc comment above. `taskId` itself is one of
         // these descendants (it's what triggered this cascade) and gets

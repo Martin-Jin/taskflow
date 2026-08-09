@@ -17,7 +17,12 @@ import {
   hasRecurrenceState,
   reanchorRecurringEnforceDueDateUpdates,
 } from '../../src/utils/recurrenceState';
-import { computeNextDueDate, deriveRecurrenceRule } from '../../src/utils/recurrence';
+import {
+  computeNextDueDate,
+  deriveRecurrenceRule,
+  computeRecurringRescheduleUpdate,
+  resolveCurrentOccurrenceDueDate,
+} from '../../src/utils/recurrence';
 
 /** Build a migrated recurring task with sensible defaults for these tests. */
 function task(overrides = {}) {
@@ -627,6 +632,62 @@ describe('computeRecurringDescendantState', () => {
   it('returns null for a sub-task that is not independently recurring', () => {
     expect(computeRecurringDescendantState({ isRecurring: false, dueDate: '2026-08-01' }, '2026-08-01')).toBeNull();
     expect(computeRecurringDescendantState({ isRecurring: true, dueDate: null }, '2026-08-01')).toBeNull();
+  });
+});
+
+describe('completing an off-pattern-moved occurrence rolls forward from the moved-to date', () => {
+  // Reproduces the reported bug: "every Tue, Wed" task currently sitting on
+  // Thursday (2026-08-06, itself already off-pattern from a prior edit), user
+  // manually retypes the due date to Monday (2026-08-03, also off-pattern).
+  // computeRecurringRescheduleUpdate keeps dueDate pinned to the old Thursday
+  // anchor and records the move as an override — exactly the state completion
+  // must handle correctly.
+  function offPatternTask() {
+    const base = task({
+      recurrenceString: 'every week on Tue, Wed',
+      recurrenceRule: { unit: 'week', count: 1, days: [2, 3] },
+      recurrenceAnchor: '2026-08-06',
+      dueDate: '2026-08-06',
+    });
+    const update = computeRecurringRescheduleUpdate(base, { dueDate: '2026-08-03' });
+    return { ...base, ...update };
+  }
+
+  it('computeRecurringRescheduleUpdate keeps dueDate pinned and records the override', () => {
+    const t = offPatternTask();
+    expect(t.dueDate).toBe('2026-08-06'); // unchanged — still the old anchor
+    expect(t.overrides['2026-08-06']).toEqual({ date: '2026-08-03' });
+    expect(resolveCurrentOccurrenceDueDate(t)).toBe('2026-08-03'); // display-facing resolution
+  });
+
+  it('re-anchoring onto the resolved date before completing lands on the SAME WEEK Tuesday, not next week', () => {
+    const t = offPatternTask();
+    const resolvedDueDate = resolveCurrentOccurrenceDueDate(t);
+    const effective = { ...t, ...planSeriesReanchor(t, resolvedDueDate) };
+    const rolled = applyRecurringCompletion(effective, effective.dueDate, '2026-08-03');
+    // BUG (before fix): completing straight off the stale Thursday anchor
+    // derives 2026-08-11 (next week's Tuesday). Correct: 2026-08-04, this
+    // week's Tuesday — the first Tue/Wed occurrence after Monday.
+    expect(rolled.dueDate).toBe('2026-08-04');
+    expect(rolled.dueDate).not.toBe('2026-08-11');
+  });
+
+  it('WITHOUT the re-anchor fix, completing off the stale anchor reproduces the bug', () => {
+    const t = offPatternTask();
+    // This is the old, buggy call pattern: complete straight off task.dueDate
+    // (the stale Thursday anchor) without resolving the override first.
+    const rolled = applyRecurringCompletion(t, t.dueDate, '2026-08-03');
+    expect(rolled.dueDate).toBe('2026-08-11'); // next week's Tuesday — the bug
+  });
+
+  it('computeRecurringDescendantState applies the same re-anchor when a descendant itself carries the override', () => {
+    const child = offPatternTask();
+    child.id = 'c1';
+    child.parentId = 'p1';
+    const update = computeRecurringDescendantState(child, '2026-08-03');
+    expect(update.dueDate).toBe('2026-08-04');
+    // The now-resolved occurrence's override entry is cleaned up, not left dangling.
+    expect(update.overrides?.['2026-08-06']).toBeUndefined();
   });
 });
 

@@ -100,7 +100,7 @@
  */
 
 import { addDays, addMonthsClamped, diffDays } from './dateUtils';
-import { parseRecurrenceRule } from './recurrence';
+import { parseRecurrenceRule, resolveCurrentOccurrenceDueDate } from './recurrence';
 import { generateRuleOccurrences } from './recurrenceExpansion';
 
 /**
@@ -511,7 +511,28 @@ export function reanchorRecurringEnforceDueDateUpdates(tasks, enforceDueDateSync
  */
 export function computeRecurringDescendantState(descendant, todayIso) {
   if (!descendant?.isRecurring || !descendant.dueDate) return null;
-  return applyRecurringCompletion(descendant, descendant.dueDate, todayIso);
+  // The descendant may itself be sitting on an off-pattern override (see
+  // recurrence.js's computeRecurringRescheduleUpdate/
+  // resolveCurrentOccurrenceDueDate) — re-anchor onto the resolved date first
+  // so "next" is computed from where the descendant's current occurrence
+  // actually is, not a stale pre-move anchor. Same reasoning as
+  // SchedulerContext.completeTask's own top-level handling of this case.
+  const originalDueDate = descendant.dueDate;
+  const resolvedDueDate = resolveCurrentOccurrenceDueDate(descendant);
+  const effective = resolvedDueDate && resolvedDueDate !== originalDueDate
+    ? { ...descendant, ...planSeriesReanchor(descendant, resolvedDueDate) }
+    : descendant;
+  const rolled = applyRecurringCompletion(effective, effective.dueDate, todayIso);
+  // The now-closed-out occurrence's override entry (keyed by the ORIGINAL
+  // pre-move date, same convention completeTask uses) is dead once it's
+  // rolled forward — drop it so it doesn't linger and resurface later.
+  if (descendant.overrides && originalDueDate in descendant.overrides) {
+    return {
+      ...rolled,
+      overrides: Object.fromEntries(Object.entries(descendant.overrides).filter(([key]) => key !== originalDueDate)),
+    };
+  }
+  return rolled;
 }
 
 /**
