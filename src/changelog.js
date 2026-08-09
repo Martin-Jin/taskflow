@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.6.1',
+    date: '2026-08-10',
+    title: 'Cleaned up the dashboard customize button',
+    changes: [
+      'The "adjust" button for customizing dashboard widgets no longer has a border or background, so it blends in better with the widgets below it.',
+    ],
+  },
+  {
     version: '3.6.0',
     date: '2026-08-10',
     title: 'Rescheduling a recurring parent task now moves its recurring sub-tasks with it',

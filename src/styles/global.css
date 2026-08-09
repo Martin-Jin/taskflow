@@ -1364,6 +1364,14 @@ select:focus-visible,
   padding: 8px;
 }
 
+/* Same "icon reads fine on its own" exception as .btn-x — the dashboard's
+   customize trigger sits in the widget-grid header, not a bordered toolbar,
+   so the filled/bordered .btn look competes with the surrounding cards. */
+.dashboard-customize-trigger {
+  background: transparent;
+  border-color: transparent;
+}
+
 /* A close/remove "X" button reads fine from its icon alone and sits right
    next to whatever it's closing — the border+fill every other .btn now has
    would just add visual noise here, so this is the one deliberate
