@@ -642,6 +642,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setLabelIds(task.labelIds || []);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
+    lastSmartEarliestDateRef.current = null;
     hasEditedSharedFieldsRef.current = false;
     setJustAppliedToAll(false);
     initialSnapshotRef.current = {
@@ -843,6 +844,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const lastSmartPriorityRef = useRef(null);
   const lastSmartUnattendedRef = useRef(null);
   const lastSmartEnforceDueDateRef = useRef(null);
+  const lastSmartEarliestDateRef = useRef(null);
   const lastSmartProjectRef = useRef(null);
   const lastSmartDependencyIdRef = useRef(null);
   const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle, resetSmartState } = useSmartTaskTitle({
@@ -968,6 +970,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         revert: () => {
           lastSmartEnforceDueDateRef.current = null;
           setEnforceDueDate(!!task.enforceDueDate);
+        },
+      },
+      earliestDate: {
+        isUntouched: () =>
+          earliestDate === (task.earliestDate || '') ||
+          (lastSmartEarliestDateRef.current !== null && earliestDate === lastSmartEarliestDateRef.current),
+        apply: (match) => {
+          lastSmartEarliestDateRef.current = match.iso;
+          setEarliestDate(match.iso);
+        },
+        revert: () => {
+          lastSmartEarliestDateRef.current = null;
+          setEarliestDate(task.earliestDate || '');
         },
       },
       dependency: {
@@ -1599,6 +1614,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setLabelIds(snap.labelIds);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
+    lastSmartEarliestDateRef.current = null;
   }
 
   function handleDelete() {

@@ -20,9 +20,10 @@
  * don't need to resolve against anything that already exists, since a new
  * tag is just created on save).
  *
- * Detection runs in sequence — link, due date, recurrence, priority,
- * duration, "can run unattended", "on the day"/enforce due date, dependency,
- * project, then labels — stripping each match out of the working text
+ * Detection runs in sequence — link, "not before <date>"/earliest date, due
+ * date, recurrence, priority, duration, "can run unattended", "on the
+ * day"/enforce due date, dependency, project, then labels — stripping each
+ * match out of the working text
  * before the next detector runs. This keeps the dependency fragment (which
  * captures "everything after the trigger word", up to the next "@"/"#" or
  * the end of the string) free of unrelated phrases typed after it, e.g.
@@ -107,6 +108,34 @@ function findEnforceDueDatePhrase(text) {
   const m = text.match(/\b(?:on (?:the|that) day|hard deadline|strict(?:ly)? due|no earlier)\b/i);
   if (!m) return null;
   return { matchedText: m[0], index: m.index };
+}
+
+/**
+ * "Not before <date>" and similar deliberately-worded phrases for the
+ * `earliestDate` field (the existing "don't schedule before this day"
+ * checkbox/date-picker in TaskDetailModal — see allocator.js's
+ * getTaskWindow for how it's enforced). Trigger set is restricted to
+ * multi-word phrases so incidental use of "before"/"until" elsewhere in a
+ * title (e.g. "Finish before lunch") never matches, and deliberately
+ * distinct from findEnforceDueDatePhrase's "no earlier" trigger (which means
+ * "on the due date, not early" — a different field entirely).
+ *
+ * Bounded the same way findDependencyPhrase captures its fragment: run
+ * findDuePhrase only on the text immediately after the trigger, up to the
+ * next "@"/"#" or the end of the string, so a resolvable date phrase must be
+ * adjacent to the trigger rather than matching some unrelated date typed
+ * elsewhere in the title. No date found after the trigger -> null (never
+ * guess).
+ */
+function findEarliestDatePhrase(text) {
+  const m = text.match(/\b(?:not (?:start(?:ing)? )?before|don'?t start until|can'?t start before|no sooner than)\b/i);
+  if (!m) return null;
+  const afterTrigger = text.slice(m.index + m[0].length);
+  const fragment = afterTrigger.match(/^[^@#]*/)[0];
+  const dateMatch = findDuePhrase(fragment);
+  if (!dateMatch) return null;
+  const matchedText = text.slice(m.index, m.index + m[0].length + dateMatch.index + dateMatch.matchedText.length);
+  return { iso: dateMatch.iso, matchedText, index: m.index };
 }
 
 /**
@@ -280,6 +309,7 @@ function findLabelPhrases(text) {
  *     recurrence?: {rule: {unit: string, count: number}, recurrenceString: string, matchedText: string},
  *     priority?: {level: string, matchedText: string},
  *     enforceDueDate?: {matchedText: string},
+ *     earliestDate?: {iso: string, matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
  *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
  *     labels?: Array<{name: string, matchedText: string}>,
@@ -298,6 +328,15 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (linkMatch) {
     detected.link = linkMatch;
     working = removeMatch(working, linkMatch.matchedText);
+  }
+
+  // Runs before the plain due-date detector below: "not before tomorrow"
+  // would otherwise lose its date half to findDuePhrase matching "tomorrow"
+  // on its own first, leaving nothing for the trigger phrase to bind to.
+  const earliestDateMatch = findEarliestDatePhrase(working);
+  if (earliestDateMatch) {
+    detected.earliestDate = earliestDateMatch;
+    working = removeMatch(working, earliestDateMatch.matchedText);
   }
 
   const dueMatch = findDuePhrase(working);

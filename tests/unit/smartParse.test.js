@@ -93,6 +93,39 @@ describe('parseTaskText', () => {
     expect(result.detected.enforceDueDate).toEqual({ matchedText: 'hard deadline', index: expect.any(Number) });
     expect(result.cleanedTitle).toBe('Backup script');
   });
+
+  it('detects a "not before <date>" earliest-date phrase and strips the full trigger+date span', () => {
+    const result = parseTaskText('Draft proposal not before tomorrow');
+    expect(result.detected.earliestDate).toBeTruthy();
+    expect(result.detected.earliestDate.matchedText).toBe('not before tomorrow');
+    expect(result.cleanedTitle).toBe('Draft proposal');
+  });
+
+  it('detects "don\'t start until <date>" as an earliest-date phrase', () => {
+    const result = parseTaskText("Write report don't start until tomorrow");
+    expect(result.detected.earliestDate).toBeTruthy();
+    expect(result.detected.earliestDate.matchedText).toBe("don't start until tomorrow");
+    expect(result.cleanedTitle).toBe('Write report');
+  });
+
+  it('does not detect an earliest date when the trigger phrase has no parseable date after it', () => {
+    const result = parseTaskText('Draft proposal not before lunch');
+    expect(result.detected.earliestDate).toBeUndefined();
+    expect(result.cleanedTitle).toBe('Draft proposal not before lunch');
+  });
+
+  it('does not mistake incidental "before"/"until" text for the earliest-date trigger', () => {
+    const result = parseTaskText('Finish before lunch');
+    expect(result.detected.earliestDate).toBeUndefined();
+    expect(result.cleanedTitle).toBe('Finish before lunch');
+  });
+
+  it('does not confuse "no earlier" (enforce due date) with "no sooner than <date>" (earliest date)', () => {
+    const result = parseTaskText('Renew passport tomorrow no earlier no sooner than next week');
+    expect(result.detected.enforceDueDate).toEqual({ matchedText: 'no earlier', index: expect.any(Number) });
+    expect(result.detected.earliestDate).toBeTruthy();
+    expect(result.detected.earliestDate.matchedText).toBe('no sooner than next week');
+  });
 });
 
 describe('findLinkPhrases', () => {
