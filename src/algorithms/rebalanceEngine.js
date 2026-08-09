@@ -313,18 +313,35 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   );
   const lockedBlocks = futureBlocks.filter((b) => b.isLocked);
   // A block whose task is already completed (or, for a recurring task, whose
-  // occurrence date is already completed) is a historical record even though
-  // it's dated today/future and unlocked — it must survive rebalance the same
-  // way completeTask itself preserves it (see SchedulerContext.completeTask),
-  // otherwise "Re-balance" wipes a just-completed task's block
-  // off Today's Agenda and the calendar since a completed task is never
-  // re-eligible for allocation and nothing regenerates it.
-  const completedBlocks = futureBlocks.filter(
-    (b) => !b.isLocked && isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
-  );
-  const clearedBlockIds = new Set(
-    [...historicalClearedIds, ...futureBlocks.filter((b) => !b.isLocked && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))).map((b) => b.id)]
-  );
+  // OWN occurrence date is already completed) is a historical record that
+  // must survive rebalance the same way completeTask itself preserves it
+  // (see SchedulerContext.completeTask) — otherwise "Re-balance" wipes a
+  // just-completed task's block off Today's Agenda and the calendar, since a
+  // completed task is never re-eligible for allocation and nothing
+  // regenerates it. But that's only true when the block's date is the one
+  // that was actually completed:
+  //   - Non-recurring: isBlockTaskCompleted just checks task.isCompleted,
+  //     with no date awareness — true for EVERY block of a completed task,
+  //     including a future-dated one left over from finishing early. That
+  //     future slot never happened, so it must be excluded here (fall
+  //     through to cleared) even though isBlockTaskCompleted says "yes" —
+  //     preservation is restricted to today's block only.
+  //   - Recurring: isBlockTaskCompleted checks completedDates for the
+  //     block's OWN date, so a future block only matches when that exact
+  //     future occurrence genuinely already happened (its own date is in
+  //     completedDates) — a real historical record, not a "completed
+  //     early" leftover, so it's preserved regardless of date.
+  const isGenuineCompletedRecord = (b) => {
+    const task = taskByIdForCompletion.get(b.taskId);
+    if (!isBlockTaskCompleted(b, task)) return false;
+    if (task?.isRecurring) return true; // completedDates already matched b's own date
+    return b.date === today; // non-recurring: only today's block is a real record
+  };
+  const completedBlocks = futureBlocks.filter((b) => !b.isLocked && isGenuineCompletedRecord(b));
+  const clearedBlockIds = new Set([
+    ...historicalClearedIds,
+    ...futureBlocks.filter((b) => !b.isLocked && !isGenuineCompletedRecord(b)).map((b) => b.id),
+  ]);
 
   // 2. Recompute remainingHours per task: estimatedHours minus hours already
   //    "spent" in historical (completed/locked only) + locked blocks (i.e.
