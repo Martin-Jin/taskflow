@@ -194,6 +194,14 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     if (value === true) requestNotificationPermission();
   }
 
+  // Email notifications go to ONE fixed recipient address configured in the
+  // notify-worker GitHub Actions secret (see notify-worker/index.js's SENDER
+  // comment) — there's no per-user email lookup. Restricted to this single
+  // account's uid so other users can't turn on a toggle that would silently
+  // email someone else's inbox instead of their own.
+  const EMAIL_NOTIFICATIONS_OWNER_UID = 'f053vFPMR1T95KX9WAZGWt9ioAq1';
+  const canUseEmailNotifications = user?.uid === EMAIL_NOTIFICATIONS_OWNER_UID;
+
   function submitToken(e) {
     e.preventDefault();
     if (!tokenDraft.trim()) return;
@@ -1075,12 +1083,19 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             type="checkbox"
             id="notifEmail"
             checked={notificationSettings.emailEnabled}
+            disabled={!canUseEmailNotifications}
             onChange={(e) => setNotificationSettings({ ...notificationSettings, emailEnabled: e.target.checked })}
           />
-          <label htmlFor="notifEmail" style={{ margin: 0 }}>
+          <label htmlFor="notifEmail" style={{ margin: 0, opacity: canUseEmailNotifications ? 1 : 0.5 }}>
             Email notifications
           </label>
         </div>
+        {!canUseEmailNotifications && (
+          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, marginBottom: 0 }}>
+            Email notifications aren't available for this account — the self-hosted setup only supports
+            sending to a single fixed recipient (see the note above).
+          </p>
+        )}
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 12, marginBottom: 6 }}>
           Notify me when:
         </p>

@@ -49,10 +49,14 @@ Resend's sandbox mode only allows sending from `onboarding@resend.dev` to the
 Resend account's own verified owner email — never an arbitrary address.
 Since TaskFlow is personal/single-user, `index.js` doesn't try to look up a
 per-user email at all; every notification, for any user, goes to one fixed
-address set via the `NOTIFICATION_RECIPIENT` secret below. If this app is
-ever used by more than one person, that requires verifying a domain at
-resend.com/domains and switching `SENDER` in `index.js` to an address on it —
-not needed for personal use.
+address set via the `NOTIFICATION_RECIPIENT` secret below. Because of that,
+`index.js` hard-codes `EMAIL_NOTIFICATIONS_OWNER_UID` and only ever sends for
+that one Firebase Auth uid — the Settings UI hides/disables the toggle for
+every other account, and this is the server-side backstop for it. If this app
+is ever used by more than one person, that requires verifying a domain at
+resend.com/domains, switching `SENDER` in `index.js` to an address on it, and
+looking up each recipient's own email instead of one fixed owner uid — not
+needed for personal use.
 
 ## 1. Get a free Resend API key
 
