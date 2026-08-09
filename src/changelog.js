@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.5.3',
+    date: '2026-08-10',
+    title: 'Finishing a task early no longer leaves a stale block on the calendar',
+    changes: [
+      "Completing a task before a future scheduled block for it comes up now clears that block instead of leaving it sitting on the agenda/calendar styled as completed — that time slot never happened, so it's freed up (and re-balanced into other work) rather than kept around.",
+    ],
+  },
+  {
     version: '3.5.2',
     date: '2026-08-09',
     title: 'Recurring sub-tasks no longer jump out of Today the moment you check them off',

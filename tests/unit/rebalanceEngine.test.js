@@ -280,6 +280,54 @@ describe('rebalance', () => {
     // Scheduled somewhere at/before the parent's deadline, not necessarily ON it.
     expect(block.date <= dueDate).toBe(true);
   });
+
+  // Regression test for the bug where completing a task early left its
+  // still-scheduled FUTURE block sitting on the calendar styled as
+  // "completed" — the work on that future day never actually happened, so
+  // the stale block must be cleared (freeing capacity) rather than preserved
+  // like today's genuinely-completed block is.
+  it("clears (does not preserve) a completed non-recurring task's unlocked block dated STRICTLY AFTER today", () => {
+    const tomorrow = '2026-07-02';
+    const tasks = [
+      { id: 'early', title: 'Finished early', isCompleted: true, estimatedHours: 1, dueDate: tomorrow },
+    ];
+    const existingBlocks = [
+      { id: 'b-early', taskId: 'early', date: tomorrow, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    // The stale future block is gone, not preserved as a "completed" block.
+    expect(result.blocks.some((b) => b.id === 'b-early')).toBe(false);
+    expect(result.stats.blocksCleared).toBe(1);
+    // The task is already completed, so it's not re-eligible for allocation
+    // either — nothing new gets scheduled for it.
+    expect(result.blocks.some((b) => b.taskId === 'early')).toBe(false);
+  });
+
+  it("still preserves a completed recurring occurrence's block dated after today if that exact future date is already in completedDates", () => {
+    // Edge case per isBlockTaskCompleted's recurring branch: it checks the
+    // block's OWN date against completedDates, not "today" — so a future
+    // block whose date genuinely IS in completedDates (an occurrence that
+    // really was completed) should still be preserved regardless of date,
+    // unlike the non-recurring "completed early" case above.
+    const tomorrow = '2026-07-02';
+    const tasks = [
+      {
+        id: 'rec-future',
+        title: 'Recurring, future occurrence already completed',
+        isRecurring: true,
+        isCompleted: false,
+        completedDates: [tomorrow],
+        estimatedHours: 1,
+        dueDate: tomorrow,
+      },
+    ];
+    const existingBlocks = [
+      { id: 'b-rec-future', taskId: 'rec-future', date: tomorrow, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-rec-future')).toBe(true);
+    expect(result.stats.blocksCleared).toBe(0);
+  });
 });
 
 // Coverage for `todayOnly` (used by SchedulerContext.completeTask so
