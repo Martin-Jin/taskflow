@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.5.1',
+    date: '2026-08-09',
+    title: 'A task waiting on a dependency now still gets scheduled',
+    changes: [
+      "A task with an incomplete dependency is no longer left off the calendar entirely — it's now scheduled right alongside its dependency, just placed to start after the dependency's own scheduled time ends. Previously it wouldn't get a slot at all until the dependency was checked off, and showed a \"waiting to be completed first\" warning even when there was plenty of room to plan both.",
+    ],
+  },
+  {
     version: '3.5.0',
     date: '2026-08-09',
     title: 'Schedule an existing task straight from a calendar slot',

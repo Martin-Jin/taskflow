@@ -3,7 +3,8 @@
  * toast (see SchedulerContext's runRebalance), listing every task that
  * couldn't be scheduled along with WHY: a fixed-time clash with a specific
  * event/routine/other task's block, a fixed time that falls outside working
- * hours entirely, an incomplete dependency still blocking it, simply no free
+ * hours entirely, a dependency that itself couldn't be scheduled this round
+ * (leaving nothing to order the dependent's blocks after), simply no free
  * capacity left in its window, or (distinct from all of those — the task's
  * hours WERE fully placed) a fixed-time task that got shifted to a different
  * time-of-day the same day via allocator.js's same-day fallback. Reuses
@@ -46,9 +47,11 @@ function describeReason(reason, task) {
     }
     case 'dependency_blocked': {
       const deps = reason.blockingDependencies || [];
-      if (deps.length === 0) return 'Waiting on another task to be completed first.';
+      if (deps.length === 0) return "Couldn't be scheduled — a task it depends on couldn't be scheduled either.";
       const names = deps.map((d) => `"${d.title}"`).join(', ');
-      return deps.length === 1 ? `Waiting on ${names} to be completed first.` : `Waiting on ${deps.length} tasks to be completed first: ${names}.`;
+      return deps.length === 1
+        ? `Couldn't be scheduled — depends on ${names}, which itself couldn't be fit in.`
+        : `Couldn't be scheduled — depends on ${deps.length} tasks that couldn't be fit in: ${names}.`;
     }
     case 'no_capacity':
     default:

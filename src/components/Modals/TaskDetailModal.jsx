@@ -1999,7 +1999,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 <p className="form-warning">
                   <Ban size={13} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden="true" />
                   <span>
-                    Waiting on: {incompleteDependencies.map((d) => d.title).join(', ')} — won't be auto-scheduled until{' '}
+                    Waiting on: {incompleteDependencies.map((d) => d.title).join(', ')} — will be auto-scheduled to start after{' '}
+                    {incompleteDependencies.length === 1 ? 'it finishes' : 'they finish'}, and can't be completed itself until{' '}
                     {incompleteDependencies.length === 1 ? 'it is' : 'they are'} marked complete.
                   </span>
                 </p>

@@ -122,13 +122,41 @@ describe('rebalance', () => {
     expect(block.startTime).not.toBe('09:00');
   });
 
-  it('reports a dependency_blocked reason (naming the blocking task) for a task whose dependency is incomplete', () => {
+  it('schedules a task with an incomplete dependency (no dependency_blocked warning), ordered after the dependency\'s block', () => {
+    const tomorrow = '2026-07-02';
     const tasks = [
-      { id: 't8', title: 'Blocker task', isCompleted: false, estimatedHours: 8, dueDate: today },
+      { id: 't8', title: 'Blocker task', isCompleted: false, estimatedHours: 2, dueDate: today, enforceDueDate: true },
+      { id: 't9', title: 'Waiting task', isCompleted: false, estimatedHours: 1, dueDate: tomorrow, enforceDueDate: true, dependsOn: ['t8'] },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    // Both tasks got placed -- no warning of any kind for either.
+    expect(result.overflow.find((o) => o.taskId === 't8')).toBeUndefined();
+    expect(result.overflow.find((o) => o.taskId === 't9')).toBeUndefined();
+    expect(result.stats.blockedByDependencies).toBe(0);
+
+    const depBlocks = result.blocks.filter((b) => b.taskId === 't8');
+    const dependentBlocks = result.blocks.filter((b) => b.taskId === 't9');
+    expect(depBlocks.length).toBeGreaterThan(0);
+    expect(dependentBlocks.length).toBeGreaterThan(0);
+    const depLastEnd = depBlocks.reduce((latest, b) => (b.date + b.endTime > latest ? b.date + b.endTime : latest), '');
+    for (const b of dependentBlocks) {
+      expect(b.date + b.startTime >= depLastEnd).toBe(true);
+    }
+  });
+
+  it('reports a dependency_blocked reason for a task whose dependency itself could not be scheduled (capacity overflow)', () => {
+    const tasks = [
+      // t8 alone demands far more hours than a single day's capacity (8h/day) provides within its own window.
+      { id: 't8', title: 'Blocker task', isCompleted: false, estimatedHours: 100, dueDate: today, enforceDueDate: true },
       { id: 't9', title: 'Waiting task', isCompleted: false, estimatedHours: 1, dueDate: today, dependsOn: ['t8'] },
     ];
     const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
-    const blocked = result.overflow.find((o) => o.taskId === 't9');
+    // The dependency itself overflows with a plain no_capacity reason...
+    const depOverflow = result.overflow.find((o) => o.taskId === 't8');
+    expect(depOverflow.reason).toEqual({ type: 'no_capacity' });
+    // ...and the dependent is ADDITIONALLY flagged as structurally blocked by it (on top of whatever its own
+    // allocator overflow reason was), since there's no placed dependency block to order the dependent after.
+    const blocked = result.overflow.find((o) => o.taskId === 't9' && o.reason.type === 'dependency_blocked');
     expect(blocked).toMatchObject({
       reason: { type: 'dependency_blocked', blockingDependencies: [{ id: 't8', title: 'Blocker task' }] },
     });

@@ -1338,7 +1338,7 @@ export function SchedulerProvider({ children }) {
     setLastOverflow(result.overflow);
     const blockedNote =
       result.stats.blockedByDependencies > 0
-        ? ` ${result.stats.blockedByDependencies} task(s) held back pending dependencies.`
+        ? ` ${result.stats.blockedByDependencies} task(s) blocked by a dependency that itself couldn't be scheduled.`
         : '';
     // The toast's own count/message is intentionally based on `overflow`
     // alone (tasks that genuinely couldn't be fully scheduled) — a
