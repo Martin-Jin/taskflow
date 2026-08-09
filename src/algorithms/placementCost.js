@@ -24,8 +24,9 @@
  * Priority is a MULTIPLIER on those two terms, never an independent cost —
  * there is deliberately no separate "this task is unplaced" cost line here;
  * an unplaced/under-placed task already shows up as the worst case of the
- * due-date term (see missing-hours handling below) and as `overflow`/
- * `dependency_blocked` reporting one layer up (rebalanceEngine.js), unchanged.
+ * due-date term (see missing-hours handling below) and as `overflow`
+ * reporting one layer up (rebalanceEngine.js) — including a `dependency_blocked`
+ * entry for a dependent whose own dependency ended up unplaced — unchanged.
  * ============================================================================
  */
 

@@ -22,12 +22,16 @@
  * calendar view's block treatment (see WeekView's `parentTask`), since the
  * title alone wouldn't say which goal it belongs to.
  *
- * DEPENDENCIES: the scheduler (rebalanceEngine) refuses to place any blocks
- * for a task until every task in its `dependsOn` list is complete, so a
- * dependent task's bar naturally starts after its prerequisite's — there's
- * no separate "linking" logic needed here for that part. What DOES need
- * explicit handling is a task that has due date but hasn't been scheduled
- * yet BECAUSE it's blocked — it would otherwise just be silently absent
+ * DEPENDENCIES: the scheduler (rebalanceEngine + localSearch's dependency-
+ * ordering enforcement) places a dependent task's blocks to start no earlier
+ * than the end of its dependencies' last block, so a dependent task's bar
+ * naturally starts after its prerequisite's — there's no separate "linking"
+ * logic needed here for that part, and an incomplete (but schedulable)
+ * dependency no longer prevents the dependent from getting a normal bar.
+ * What DOES still need explicit handling is a task that has a due date but
+ * has zero blocks BECAUSE a dependency of its couldn't be scheduled at all
+ * (see rebalanceEngine.js's `dependency_blocked` — a structural, not merely
+ * "not yet completed", failure) — it would otherwise just be silently absent
  * from the chart (the row is normally skipped when there are zero blocks).
  * Those get a hollow "blocked" row instead so it's clear why they're
  * missing a bar, rather than looking like a bug. Tasks whose dependencies

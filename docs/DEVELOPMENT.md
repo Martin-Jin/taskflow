@@ -158,13 +158,14 @@ worse than the seed's.
 
 Because the greedy allocator has no dependency awareness of its own (it
 places purely by priority/urgency score), a high-priority dependent can
-occasionally land earlier than a lower-priority task it depends on in the
-seed itself. `localSearch.js` repairs any such violation topologically
-before search begins, so this guarantee — every chunk of a dependent task
-starts at or after the last chunk of all its (transitive) dependencies —
-holds unconditionally, not just because `rebalanceEngine.js`'s own
-upstream filter happens to exclude incomplete dependencies from a given
-run.
+easily land earlier than a lower-priority task it depends on in the seed
+itself — an expected, routine case, since `rebalanceEngine.js` hands a
+dependency and its (possibly incomplete) dependent to the allocator
+together rather than excluding the dependent until the dependency is done.
+`localSearch.js` repairs any such violation topologically before search
+begins, so the guarantee — every chunk of a dependent task starts at or
+after the last chunk of all its (transitive) dependencies — is actually
+established here, not merely preserved from an already-valid seed.
 
 ### 4. Rebalancing (`rebalanceEngine.js`)
 
@@ -307,19 +308,28 @@ before the live sync above existed to catch it going forward.
 
 ### Dependencies and passive tasks
 
-A task can list other tasks it `dependsOn`. `rebalanceEngine` excludes a task
-from allocation until every dependency is complete — a blocked task just has
-zero eligible hours. Beyond that gate, a dependency also feeds backward into
-scoring: a blocker's effective urgency rises to match whatever depends on it
-(see "Allocation" above), so a blocker due soon *because* something urgent is
-waiting on it gets scheduled earlier, not just eventually. The Edit modal
-blocks picking a dependency that would create a cycle.
+A task can list other tasks it `dependsOn`. An incomplete dependency does
+**not** exclude the dependent task from scheduling — both are handed to the
+allocator together, and the cost-minimizing refinement pass (`localSearch.js`,
+see above) enforces dependency ordering as a real, jointly-checked constraint
+on the whole transitive chain: every chunk of a dependent task must start at
+or after the last chunk of every task it depends on. If a dependency itself
+comes out of allocation with unplaced hours (e.g. it structurally doesn't fit
+its own window's capacity), there's no placed block left to order the
+dependent against — `rebalanceEngine.js` reports that dependent as
+`dependency_blocked` overflow, distinct from (and much rarer than) an
+ordinary `no_capacity` overflow, since it's the dependency chain — not the
+dependent's own hours — that's the actual problem. Manually marking a task
+complete is a separate, unrelated gate: `SchedulerContext.completeTask`
+still refuses to complete a task while any of its dependencies remain
+incomplete (`dependencyUtils.areDependenciesMet`), independent of whatever
+the scheduler decided to do with its blocks.
 
-The cost-minimizing refinement pass (see above) additionally enforces
-dependency ordering as a real, jointly-checked constraint on the whole
-transitive chain — every chunk of a dependent task must start at or after
-the last chunk of every task it depends on — rather than relying solely on
-the upstream "exclude if incomplete" filter.
+A dependency also feeds backward into scoring: a blocker's effective urgency
+rises to match whatever depends on it (see "Allocation" above), so a blocker
+due soon *because* something urgent is waiting on it gets scheduled earlier,
+not just eventually. The Edit modal blocks picking a dependency that would
+create a cycle.
 
 A task marked **"can run unattended"** (`isPassive` — laundry, something
 baking) gets its own capacity track: it's placed against a fresh copy of

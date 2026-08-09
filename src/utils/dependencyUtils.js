@@ -2,13 +2,27 @@
  * ============================================================================
  * DEPENDENCY HELPERS
  * ============================================================================
- * Shared between the scheduling engine (rebalanceEngine excludes a task from
- * allocation until its dependencies are done) and the task-editing UI (which
- * needs to stop a user from picking a dependency that would create a cycle).
+ * Shared between the task-editing/completion UI (which needs to stop a user
+ * from completing a task early, or picking a dependency that would create a
+ * cycle) and the scheduling engine (localSearch.js, which uses
+ * getTransitiveDependencyIds to enforce "a dependent's blocks must start
+ * after its dependency's last block ends" — see localSearch.js's module doc
+ * comment). NOTE: rebalanceEngine.js's scheduling-eligibility filter does NOT
+ * use `areDependenciesMet` — an incomplete dependency no longer excludes a
+ * task from being scheduled at all, only from starting before its dependency
+ * finishes (see rebalanceEngine.js's `eligibleTasks`).
  * ============================================================================
  */
 
-/** True if every task in `task.dependsOn` is completed (or the list is empty/absent). */
+/**
+ * True if every task in `task.dependsOn` is completed (or the list is
+ * empty/absent). This is a "can the USER complete/start this task right now"
+ * check — used by task-completion guards and UI affordances (see
+ * SchedulerContext.completeTask, TaskListPanel, BoardView, GanttChart,
+ * TaskDetailModal) — NOT by the scheduler's own eligibility filter, which
+ * schedules a task with an incomplete dependency right alongside it and
+ * relies on localSearch.js to order their blocks instead of gating on this.
+ */
 export function areDependenciesMet(task, taskById) {
   const deps = task.dependsOn;
   if (!deps || deps.length === 0) return true;

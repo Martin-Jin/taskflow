@@ -13,13 +13,15 @@
  *   3. Run capacityEngine using locked blocks + calendar events + routines
  *      as busy time (so the allocator never double-books over a locked
  *      block).
- *   4. Run the allocator over the remaining unlocked work — excluding any
- *      task whose `dependsOn` list isn't fully completed yet (see step 4
- *      below for details) — then refine that greedy seed with a time-boxed
- *      cost-minimizing local search (see localSearch.js/placementCost.js)
- *      that tries relocating individual chunks to reduce total fragmentation/
- *      due-date cost, guaranteed never to end up worse than the seed or to
- *      violate a hard constraint along the way.
+ *   4. Run the allocator over the remaining unlocked work — a task with an
+ *      incomplete dependency is scheduled right alongside everything else
+ *      (see step 4 below for details); it's `localSearch.js` that enforces
+ *      "dependent starts after its dependency's last block ends" — then
+ *      refine that greedy seed with a time-boxed cost-minimizing local search
+ *      (see localSearch.js/placementCost.js) that tries relocating individual
+ *      chunks to reduce total fragmentation/due-date cost, guaranteed never to
+ *      end up worse than the seed or to violate a hard constraint along the
+ *      way.
  *   5. Merge locked blocks + newly generated blocks into the final result.
  *
  * This guarantees "recalibrates future days without destroying manually
@@ -58,7 +60,7 @@ import { computeHorizonCapacity } from './capacityEngine';
 import { allocateTasks, resolveDueDate } from './allocator';
 import { runLocalSearch } from './localSearch';
 import { toISODate, dateRange, addDays } from '../utils/dateUtils';
-import { areDependenciesMet } from '../utils/dependencyUtils';
+import { getTransitiveDependencyIds } from '../utils/dependencyUtils';
 import { expandTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
 import { expandEventsForRange } from '../utils/recurrenceExpansion';
 import { isBlockTaskCompleted } from '../utils/missedTasks';
@@ -165,25 +167,38 @@ function stripOccurrenceSuffix(id) {
 }
 
 /**
- * Build one overflow-shaped entry per task excluded from allocation because
- * an incomplete dependency is blocking it (see `schedulable`/`eligibleTasks`
- * in rebalance() above) — these tasks never reach allocateTasks
- * at all, so they'd otherwise vanish from the "couldn't schedule" reporting
- * entirely instead of surfacing WHY. Appended into the same overflow/
- * unfitToday array the allocator itself populates, so the UI has one list to
- * read regardless of which stage excluded the task.
+ * A dependency relationship no longer excludes a task from allocation just
+ * because the dependency isn't marked complete yet (see `eligibleTasks` in
+ * rebalance() below) — both tasks are scheduled normally, and
+ * localSearch.js's repairDependencyOrderViolations/move-validation enforce
+ * "the dependent starts after the dependency's last block ends." But that
+ * ordering enforcement can only order a dependent AGAINST an actual placed
+ * block — if a dependency itself came out of allocateTasks with hours still
+ * unplaced (capacity overflow, not just "not yet completed"), there's no
+ * "end of its last block" to order against, so the dependent structurally
+ * can't be given a valid slot either this round. This builds one
+ * `dependency_blocked` overflow entry per task in that genuinely-unschedulable
+ * situation — found AFTER allocation (`allocatorOverflow`), unlike the old
+ * pre-allocation exclusion this replaced.
  */
-function buildDependencyBlockedEntries(blockedTasks, taskById) {
-  return blockedTasks.map((t) => ({
-    taskId: t.id,
-    unplacedHours: Math.round(t.remainingHours * 100) / 100,
-    reason: {
-      type: 'dependency_blocked',
-      blockingDependencies: (t.dependsOn || [])
-        .filter((depId) => !taskById.get(depId)?.isCompleted)
-        .map((depId) => ({ id: depId, title: taskById.get(depId)?.title || 'a task' })),
-    },
-  }));
+function buildDependencyBlockedEntries(scheduledTasks, allocatorOverflow, taskById) {
+  // allocatorOverflow is already virtual-id-stripped by the caller (see
+  // stripVirtualIds), so its taskIds line up directly with real task ids.
+  const unplacedTaskIds = new Set(allocatorOverflow.map((o) => o.taskId));
+  const entries = [];
+  for (const t of scheduledTasks) {
+    const depIds = [...getTransitiveDependencyIds(t.id, taskById)];
+    const blockingDependencies = depIds
+      .filter((depId) => unplacedTaskIds.has(depId))
+      .map((depId) => ({ id: depId, title: taskById.get(depId)?.title || 'a task' }));
+    if (blockingDependencies.length === 0) continue;
+    entries.push({
+      taskId: t.id,
+      unplacedHours: Math.round(t.remainingHours * 100) / 100,
+      reason: { type: 'dependency_blocked', blockingDependencies },
+    });
+  }
+  return entries;
 }
 
 /**
@@ -230,12 +245,14 @@ function stripVirtualIds(newBlocks, overflow, timeShifted) {
  *   re-plans the rest of TODAY into the slot it just freed, without reaching into future days at all — see
  *   the "TODAY-ONLY SCOPING" note below for exactly what stays untouched.
  * @returns {{ blocks: import('../types').ScheduledBlock[], overflow: Array<{taskId:string,unplacedHours:number,reason:Object}>, timeShifted: Array<{taskId:string,reason:Object}>, stats: Object }}
- *   `overflow` includes both allocator-reported entries (see allocator.js's allocateTasks) and dependency-blocked
- *   tasks that never reached the allocator (`reason.type === 'dependency_blocked'`) — see buildDependencyBlockedEntries.
+ *   `overflow` includes both allocator-reported entries (see allocator.js's allocateTasks) and, layered on top,
+ *   `dependency_blocked` entries for a task whose (transitive) dependency itself ended up with unplaced hours in
+ *   THIS SAME allocator run — see buildDependencyBlockedEntries. Both kinds of task go through allocateTasks;
+ *   `dependency_blocked` is a post-hoc explanation for why a dependent's ordering couldn't be satisfied, not a
+ *   pre-allocation exclusion.
  *   `timeShifted` passes through allocateTasks' own `timeShifted` list unchanged (label-resolved/virtual-id-stripped
  *   the same way as `overflow`) — every fixedTime task whose same-day fallback placed it at an unrequested
- *   time-of-day, regardless of whether its hours were fully placed. Dependency-blocked tasks never reach the
- *   allocator, so they can never appear here.
+ *   time-of-day, regardless of whether its hours were fully placed.
  *
  * TODAY-ONLY SCOPING (`todayOnly: true`): the horizon collapses to exactly 1 day (`today`), and any existing
  * block dated AFTER today is excluded from every partition below and passed straight through into the final
@@ -396,19 +413,22 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   //        (own or borrowed from an ancestor) is a checklist-style item,
   //        not schedulable work — see allocator.js's resolveDueDate.
   //
-  //    A task with unfinished dependencies (task.dependsOn) is also excluded
-  //    entirely — it simply doesn't get a slot until every task it depends
-  //    on is marked complete, which is what "must be completed first"
-  //    ordering means for a scheduler that plans in hours-per-day rather
-  //    than fixed start times. Lookups use the FULL `tasks` list (not just
-  //    the schedulable subset) since a dependency might be locked, undated,
-  //    or otherwise ineligible for allocation while still being relevant to
-  //    check for completion. This same full-list map is also threaded into
-  //    allocateTasks so it can resolve a sub-task's ancestor due date even
-  //    when that ancestor (e.g. a container parent) isn't itself schedulable.
+  //    A task with an incomplete dependency (task.dependsOn) is NOT excluded
+  //    here — a dependency only means "the dependent must start after the
+  //    dependency's own last scheduled block ends," not "unschedulable until
+  //    someone checks the dependency off." Both tasks are handed to
+  //    allocateTasks together; localSearch.js's repairDependencyOrderViolations
+  //    and its move-validation loop are what actually enforce that ordering
+  //    (see localSearch.js's module doc comment). This lookup map uses the
+  //    FULL `tasks` list (not just the schedulable subset) since a dependency
+  //    might be locked, undated, or otherwise ineligible for allocation while
+  //    still being relevant to order against. This same full-list map is also
+  //    threaded into allocateTasks so it can resolve a sub-task's ancestor due
+  //    date even when that ancestor (e.g. a container parent) isn't itself
+  //    schedulable.
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   const parentIds = new Set(tasks.filter((t) => t.parentId).map((t) => t.parentId));
-  const schedulable = tasksWithRemaining.filter(
+  const eligibleTasks = tasksWithRemaining.filter(
     (t) =>
       !t.isLocked &&
       !t.isCompleted &&
@@ -427,9 +447,6 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       !t.sharedProjectId &&
       !!resolveDueDate(t, taskById)
   );
-  const eligibleTasks = schedulable.filter((t) => areDependenciesMet(t, taskById));
-  const dependencyBlockedTasks = schedulable.filter((t) => !areDependenciesMet(t, taskById));
-  const blockedByDependencies = dependencyBlockedTasks.length;
 
   // A recurring task (isRecurring && dueDate, already guaranteed once it's
   // schedulable) is expanded into one virtual pseudo-task per occurrence date
@@ -474,13 +491,16 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   });
   const rawBlocks = [...searchedMovableBlocks, ...immovableBlocks];
   const { blocks: newBlocks, overflow: allocatorOverflow, timeShifted: strippedTimeShifted } = stripVirtualIds(rawBlocks, rawOverflow, rawTimeShifted);
-  // Dependency-blocked tasks never reach allocateTasks, so they're appended
-  // here rather than coming back through stripVirtualIds — see
-  // buildDependencyBlockedEntries.
-  const overflow = resolveConflictLabels(
-    [...allocatorOverflow, ...buildDependencyBlockedEntries(dependencyBlockedTasks, taskById)],
-    taskById
-  );
+  // A dependency-blocked entry is now a genuinely different, POST-allocation
+  // finding — a task whose (transitive) dependency itself came out of
+  // allocateTasks with unplaced hours, so there's no valid slot to order the
+  // dependent's blocks after this round — see buildDependencyBlockedEntries.
+  // Built from `eligibleTasks` (every task actually handed to the allocator)
+  // against `allocatorOverflow` (already virtual-id-stripped, so it lines up
+  // with the real task ids in `taskById`).
+  const dependencyBlockedEntries = buildDependencyBlockedEntries(eligibleTasks, allocatorOverflow, taskById);
+  const blockedByDependencies = dependencyBlockedEntries.length;
+  const overflow = resolveConflictLabels([...allocatorOverflow, ...dependencyBlockedEntries], taskById);
   const timeShifted = resolveConflictLabels(strippedTimeShifted, taskById);
 
   // 5. Merge: historical locked/completed (untouched) + locked (untouched) +

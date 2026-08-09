@@ -187,10 +187,10 @@ function computeLastBlockEndByTask(allBlocks) {
  * covered this way over the course of the search: each chunk is validated
  * against the CURRENT state of its dependencies every time it (or one of its
  * siblings) is considered for a move, and a chunk that's never moved keeps
- * whatever ordering the seed already gave it (the seed itself never violates
- * this — rebalanceEngine.js excludes any task with an unmet dependency from
- * allocation entirely upstream, and a met dependency is already complete, so
- * its "last block" is necessarily in the past).
+ * whatever ordering repairDependencyOrderViolations already established for
+ * it before the search loop started (see that function's doc comment) — the
+ * seed entering the search loop is therefore already ordering-valid, so this
+ * check only ever needs to keep it that way, never fix it up mid-search.
  */
 function violatesDependencyOrder(task, targetDate, targetStartMinutes, dependencyIdsByTask, lastBlockEndByTask) {
   const depIds = dependencyIdsByTask.get(task.id);
@@ -230,20 +230,24 @@ function violatesDependentsOrder(taskId, newEndDate, newEndMinutes, dependentIds
  * SEED before search begins. `allocateTasks` (the greedy seed) has no
  * dependency awareness at all — it places purely by priority/urgency score,
  * so a high-priority dependent can easily land earlier than a lower-priority
- * dependency it's supposed to wait on. rebalanceEngine.js's own upstream
- * filter (`areDependenciesMet`) only ever excludes a task with an INCOMPLETE
- * dependency, so today this can't surface through that one call site — but
- * this function makes the guarantee hold unconditionally (per the spec:
- * ordering must be a real, jointly-checked constraint the search enforces,
- * not something that merely happens to hold because of how one particular
- * caller filters its input). Mutates a working copy of `blocks`, walking
- * tasks in dependency order (topological) and pushing forward, one block at a
- * time, any block that starts before its dependencies' current last-block end
- * — to the earliest (date, time) at/after that end which still fits free
- * capacity that day, or the same day's very end of working hours as a last
- * resort if nothing fits (this is only a starting point for search to refine
- * further, not the final answer). Blocks with no violation are left exactly
- * where they were.
+ * dependency it's supposed to wait on. This is a routine, expected case now
+ * that rebalanceEngine.js hands BOTH a dependency and its (possibly
+ * incomplete) dependent to allocateTasks together — a dependency is no longer
+ * excluded from allocation just because it isn't marked complete (see
+ * rebalanceEngine.js's `eligibleTasks`), so this repair pass is what actually
+ * establishes correct ordering, not just a defensive backstop. Mutates a
+ * working copy of `blocks`, walking tasks in dependency order (topological)
+ * and pushing forward, one block at a time, any block that starts before its
+ * dependencies' current last-block end — to the earliest (date, time) at/after
+ * that end which still fits free capacity that day, or the same day's very
+ * end of working hours as a last resort if nothing fits (this is only a
+ * starting point for search to refine further, not the final answer). Blocks
+ * with no violation are left exactly where they were. If a dependency has NO
+ * block at all in this run (e.g. it's already completed, so it was never
+ * handed to the allocator, or it itself ran out of capacity — see
+ * rebalanceEngine.js's buildDependencyBlockedEntries for that latter case),
+ * there's nothing to order against, so the dependent's placement is left as
+ * the seed produced it.
  */
 function repairDependencyOrderViolations(blocks, tasks, taskById, dependencyIdsByTask, capacityMap, immovableBlocks) {
   // Topological order: a task with fewer (transitive) dependencies among the

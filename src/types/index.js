@@ -154,10 +154,16 @@
  *                                              lists (see BoardView.jsx / GanttChart.jsx), which roll it up into its
  *                                              parent's progress badge instead.
  * @property {string} [todoistId]            - The task's raw numeric/string id in Todoist (source === 'todoist' only). Used to push edits back via todoistService.
- * @property {string[]} [dependsOn]          - IDs of other Tasks that must be completed before this one is eligible
- *                                              for auto-scheduling. Empty/absent means no dependencies. Checked by
- *                                              rebalanceEngine before a task is handed to the allocator — see
- *                                              utils/dependencyUtils.areDependenciesMet.
+ * @property {string[]} [dependsOn]          - IDs of other Tasks that this one must be scheduled AFTER — the
+ *                                              dependent's blocks are placed to start no earlier than the end of its
+ *                                              dependencies' last scheduled block, but an incomplete dependency does
+ *                                              NOT exclude this task from scheduling (both are handed to the
+ *                                              allocator together; see localSearch.js's dependency-ordering repair/
+ *                                              move-validation and rebalanceEngine.js's `eligibleTasks`). Empty/absent
+ *                                              means no dependencies. Manually completing a task is still blocked
+ *                                              while a dependency is incomplete — see
+ *                                              utils/dependencyUtils.areDependenciesMet, used by
+ *                                              SchedulerContext.completeTask.
  * @property {boolean} [isPassive]           - True if this task can run unattended (e.g. laundry, something baking)
  *                                              and so may be scheduled to overlap other tasks' time blocks instead
  *                                              of competing for exclusive capacity — see allocator.js.
