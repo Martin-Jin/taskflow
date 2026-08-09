@@ -55,6 +55,7 @@ playwright/.cache/
 # Personal Todoist login session used only by tests/e2e/todoist-parity.spec.js — never commit a real session.
 todoist-storage-state.json
 TODO.MD
+TODO-collab.md
 # Scratch/exploratory Playwright specs written during ad-hoc manual testing sessions — reusable but not part of the tracked suite.
 tests/e2e/manual/
 
