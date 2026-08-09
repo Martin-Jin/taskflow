@@ -695,6 +695,89 @@ test.describe('Recurring tasks', () => {
 
     expectNoErrors(errors);
   });
+
+  test('editing a recurring parent\'s due date also shifts a recurring sub-task\'s displayed due date', async ({ page }) => {
+    // See utils/recurrenceState.js's computeRecurringDescendantDueDateOverrides:
+    // a manual due-date edit on a recurring parent temporarily overrides the
+    // sub-task's DISPLAYED due date to match, without touching the sub-task's
+    // own recurrence pattern/anchor underneath.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Recurring Cascade Parent ${RUN_ID}`;
+    const childTitle = `E2E recurring cascade child ${RUN_ID}`;
+    const today = todayIsoLocal();
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    // Give the parent a due date and make it recurring.
+    await searchAndOpen(page, title);
+    const parentDueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await parentDueDateInput.fill(today);
+    await page.getByRole('button', { name: /does not repeat/i }).click();
+    await page.waitForTimeout(600);
+
+    // Add a recurring sub-task with its own (different) due date/pattern.
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    await page.keyboard.type(childTitle);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // A new sub-task under a recurring parent automatically becomes recurring
+    // too (see computeRecurrenceSyncUpdates), so there's no "does not repeat"
+    // toggle to click here — just give it its own due date of today.
+    await searchAndOpen(page, childTitle);
+    const childDueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await childDueDateInput.fill(today);
+    await childDueDateInput.blur();
+    await page.waitForTimeout(600);
+    await expect(page.locator('.detail-recurrence-toggle-active, .detail-recurrence-toggle').first()).toContainText(/every/i);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Now edit the PARENT's due date to a week from today — the sub-task's
+    // own recurring pattern is untouched, but its displayed due date should
+    // shift to match for this cycle.
+    const newDate = new Date();
+    newDate.setDate(newDate.getDate() + 7);
+    const newDateIso = `${newDate.getFullYear()}-${String(newDate.getMonth() + 1).padStart(2, '0')}-${String(newDate.getDate()).padStart(2, '0')}`;
+
+    await searchAndOpen(page, title);
+    const parentDueDateInput2 = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await parentDueDateInput2.fill(newDateIso);
+    await parentDueDateInput2.blur();
+    await page.waitForTimeout(600);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Search for the parent so the child renders nested underneath it, then
+    // confirm the child's list row now shows the new (parent's) due date.
+    await clearSearch(page);
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(300);
+    const childRow = page.locator('.task-row', { hasText: childTitle });
+    await expect(childRow).toBeVisible();
+    // Matches formatDisplayDate's own toLocaleDateString call exactly (see
+    // utils/dateUtils.js) — computed IN the browser page (not Node), whose
+    // default locale can differ from the test runner's, and parsed as a
+    // local date (not UTC) the same way fromISODate does, so this can't
+    // drift a day near a UTC boundary either.
+    const expectedLabel = await page.evaluate((iso) => {
+      const [y, m, d] = iso.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+    }, newDateIso);
+    await expect(childRow).toContainText(`due ${expectedLabel}`);
+
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Smart parse', () => {

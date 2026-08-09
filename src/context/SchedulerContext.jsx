@@ -67,6 +67,7 @@ import {
 // is a no-op instead of skipping an occurrence.
 import {
   applyRecurringCompletion,
+  computeRecurringDescendantDueDateOverrides,
   computeRecurringDescendantState,
   ensureRecurrenceAnchor,
   planOccurrenceUncompletion,
@@ -94,6 +95,7 @@ import {
   areAllChildrenCompletedForCurrentOccurrence,
   canCompact,
   applyUpwardCompletionCascade,
+  getAllDescendants,
 } from '../utils/taskHierarchy';
 import {
   fetchTasks as fetchTodoistTasks,
@@ -1471,6 +1473,12 @@ export function SchedulerProvider({ children }) {
       // Function form — see addTask's comment just above.
       commit(
         (current) => {
+          // Captured across the map below so the post-commit descendant
+          // cascade (see recurringParentDueDateChanged below) knows whether
+          // THIS edit actually moved a recurring parent's due date, without
+          // re-deriving it from `updates` again (which lacks the sanitization/
+          // reopen/re-anchor logic the map applies to get the real new value).
+          let recurringParentDueDateChanged = false;
           const nextTasks = current.tasks.map((t) => {
             if (t.id !== taskId) return t;
             let merged = { ...t, ...sanitizeTaskUpdate(updates, t), updatedAt: new Date().toISOString() };
@@ -1518,6 +1526,7 @@ export function SchedulerProvider({ children }) {
             // off the one they chose. See planSeriesReanchor.
             if (merged.isRecurring && 'dueDate' in updates && merged.dueDate && merged.dueDate !== t.dueDate) {
               merged = { ...merged, ...planSeriesReanchor(merged, merged.dueDate) };
+              recurringParentDueDateChanged = true;
             }
             // Covers a task that just BECAME recurring (or gained its first
             // due date) — it needs an anchor before anything can derive from it.
@@ -1536,13 +1545,31 @@ export function SchedulerProvider({ children }) {
             nextTasks,
             computeEnforceDueDateSyncUpdates(nextTasks)
           );
-          const syncedTasks = recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
-            ? nextTasks
-            : nextTasks.map((t) => ({
-                ...t,
-                ...recurrenceSyncUpdates.get(t.id),
-                ...enforceDueDateSyncUpdates.get(t.id),
-              }));
+          // A manual edit to a recurring PARENT's due date also nudges its
+          // recurring descendants' DISPLAYED due date to match, for this cycle
+          // only — see computeRecurringDescendantDueDateOverrides's doc
+          // comment for the full mechanism/self-healing rationale. Skip any
+          // descendant the enforceDueDate cascade above already permanently
+          // re-anchored in this same commit (it fully owns that descendant's
+          // dueDate now; adding a redundant override on top would be no-op-
+          // shaped but sloppy untested state).
+          const descendantDueDateOverrides = recurringParentDueDateChanged
+            ? computeRecurringDescendantDueDateOverrides(
+                nextTasks.find((t) => t.id === taskId),
+                getAllDescendants(taskId, nextTasks).filter((d) => !enforceDueDateSyncUpdates.has(d.id))
+              )
+            : new Map();
+          const syncedTasks =
+            recurrenceSyncUpdates.size === 0 &&
+            enforceDueDateSyncUpdates.size === 0 &&
+            descendantDueDateOverrides.size === 0
+              ? nextTasks
+              : nextTasks.map((t) => ({
+                  ...t,
+                  ...recurrenceSyncUpdates.get(t.id),
+                  ...enforceDueDateSyncUpdates.get(t.id),
+                  ...descendantDueDateOverrides.get(t.id),
+                }));
           return { tasks: syncedTasks, blocks: current.blocks };
         },
         `Updated task`
