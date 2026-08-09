@@ -58,6 +58,7 @@ import {
   computeRecurrenceSyncUpdates,
   computeEnforceDueDateSyncUpdates,
   deriveRecurrenceRule,
+  resolveCurrentOccurrenceDueDate,
 } from '../utils/recurrence';
 // The convergent recurring-task model (see utils/recurrenceState.js). Every
 // recurring completion goes through applyRecurringCompletion rather than
@@ -1935,6 +1936,28 @@ export function SchedulerProvider({ children }) {
           ? Object.fromEntries(Object.entries(existing.overrides).filter(([key]) => key !== occurrenceDate))
           : existing.overrides;
 
+        // The current occurrence may be sitting on an off-pattern override
+        // (see computeRecurringRescheduleUpdate/resolveCurrentOccurrenceDueDate)
+        // — the series' own `dueDate`/`recurrenceAnchor` deliberately stayed
+        // pinned to the old pattern date when that move happened, since a
+        // single off-pattern nudge shouldn't re-anchor every FUTURE occurrence.
+        // But completing it is different: the user is done with the occurrence
+        // sitting on the moved-to date, and "next" should count forward from
+        // THAT date, not silently resurrect the stale pre-move anchor. Re-anchor
+        // the series onto the resolved date first (same treatment updateTask's
+        // planSeriesReanchor already gives a plain manual dueDate edit — see
+        // its call site above), then let completion roll forward from there.
+        // `occurrenceDate` above is deliberately left as the pre-move date: it's
+        // the key `overrides`/`nextOverrides` already agree on, and completing
+        // an occurrence just re-anchored onto itself immediately resolves it
+        // (completedOccurrences on/after the new anchor gets dropped by
+        // planSeriesReanchor, then re-added by the completion below) so the
+        // bookkeeping still ends up correct either way.
+        const resolvedDueDate = resolveCurrentOccurrenceDueDate(existing);
+        const effectiveTask = resolvedDueDate && resolvedDueDate !== existing.dueDate
+          ? { ...existing, ...planSeriesReanchor(existing, resolvedDueDate) }
+          : existing;
+
         // A recurring SUB-TASK (has a parentId) does NOT roll forward on its
         // own — only the group as a whole (the parent, plus every recurring
         // descendant together) advances once every sub-task is done for the
@@ -1947,8 +1970,8 @@ export function SchedulerProvider({ children }) {
         // — see utils/recurrenceState.js's applyRecurringCompletion.
         const isSubtask = !!existing.parentId;
         const rolled = isSubtask
-          ? planSubtaskOccurrenceCompletion(existing, occurrenceDate, todayIso)
-          : applyRecurringCompletion(existing, occurrenceDate, todayIso, { compact: canCompact(existing) });
+          ? planSubtaskOccurrenceCompletion(effectiveTask, effectiveTask.dueDate, todayIso)
+          : applyRecurringCompletion(effectiveTask, effectiveTask.dueDate, todayIso, { compact: canCompact(effectiveTask) });
         const nextDueDate = rolled.dueDate;
 
         // Function form (see addTask's comment above) so two completions

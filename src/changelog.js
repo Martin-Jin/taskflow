@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.5.5',
+    date: '2026-08-10',
+    title: 'Fixed a recurring task jumping an extra week when completed after an off-pattern date move',
+    changes: [
+      'Completing a weekday-specific recurring task (e.g. "every Tue, Wed") right after manually moving its current occurrence to an off-pattern day now advances to the next matching day correctly. Previously it ignored the move and rolled forward from the old date instead, landing a full week later than expected.',
+    ],
+  },
+  {
     version: '3.5.4',
     date: '2026-08-10',
     title: 'Fixed a recurring sub-task quietly reverting an enforced due date',

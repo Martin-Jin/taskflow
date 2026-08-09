@@ -279,9 +279,17 @@ date, same `{date, deleted}` shape as `CalendarEvent.overrides` — see
 `recurrenceExpansion.js`'s `expandRecurringEvent` already does for Calendar
 Events, so the moved occurrence is scheduled on its actual (moved-to) date
 while every other occurrence keeps landing on its normal pattern day.
-Completing the moved occurrence (`completeTask`) advances `dueDate` from the
-untouched pattern anchor as normal and prunes that occurrence's now-closed-
-out override entry.
+Completing the moved occurrence must NOT advance from the untouched pattern
+anchor, though — that would ignore the move entirely and roll forward from
+the stale pre-move date, landing a full cycle later than the day the user
+actually moved it to. So `completeTask` (and the analogous descendant/cascade
+completion paths — `computeRecurringDescendantState`,
+`applyUpwardCompletionCascade`) first resolves the occurrence's real current
+date via `resolveCurrentOccurrenceDueDate`, and if it differs from the stored
+`dueDate`, re-anchors the series onto it with `planSeriesReanchor` (same
+re-anchor `updateTask` already applies to a plain manual due-date edit)
+before rolling forward — then prunes that occurrence's now-closed-out
+override entry as before.
 
 Because `dueDate` deliberately stays on the pattern anchor for an off-pattern
 move, every plain `task.dueDate` reader needs to resolve the override to show
