@@ -61,6 +61,13 @@ async function main() {
   if (!notificationRecipient) {
     throw new Error('NOTIFICATION_RECIPIENT env var is not set');
   }
+  // Since every match below emails the SAME fixed recipient regardless of
+  // whose account triggered it, only this one account is allowed to arm
+  // emailEnabled at all — otherwise a stray/restored `emailEnabled: true` on
+  // any other TaskFlow user's doc would silently email this recipient too.
+  // The Settings UI already hides/disables the toggle for other accounts
+  // (see SettingsPanel.jsx); this is the server-side backstop.
+  const EMAIL_NOTIFICATIONS_OWNER_UID = 'f053vFPMR1T95KX9WAZGWt9ioAq1';
 
   const serviceAccount = JSON.parse(serviceAccountJson);
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
@@ -77,6 +84,7 @@ async function main() {
 
   for (const userDoc of usersSnap.docs) {
     const uid = userDoc.id;
+    if (uid !== EMAIL_NOTIFICATIONS_OWNER_UID) continue;
     const data = userDoc.data();
     const settings = data.notificationSettings;
 

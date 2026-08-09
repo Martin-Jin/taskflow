@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.4.4',
+    date: '2026-08-09',
+    title: 'Email notifications restricted to the intended recipient',
+    changes: [
+      "Email notifications only ever go to one fixed address (see Settings → Notifications), so the toggle is now only available on the account that address belongs to — other accounts see it disabled with an explanation instead of a toggle that silently did nothing for them.",
+      'Cleaned up several stale/orphaned guest accounts whose leftover "email notifications on" setting was causing emails to keep arriving even after turning the toggle off on the current account.',
+    ],
+  },
+  {
     version: '3.4.3',
     date: '2026-08-09',
     title: 'AI Quick Add now breaks down assignment documents',
