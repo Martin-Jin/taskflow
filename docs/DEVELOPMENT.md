@@ -526,8 +526,9 @@ must leave it alone:
   calls them unchanged.
 - **Excluded from the auto-scheduler.** `rebalanceEngine` computes against one
   person's routines, hours and calendar, so a shared task has no single owner's
-  capacity to consume. Manual drag-scheduling still works and produces a block
-  in that one user's own, unshared `blocks`.
+  capacity to consume. Manual scheduling still works — Board drag-and-drop, and
+  `scheduleTaskAt` (used by `EventDetailModal`'s create-flow Task-mode toggle)
+  — and produces a block in that one user's own, unshared `blocks`.
 - **Excluded from the 30-day completed sweep**, which would otherwise delete
   other people's tasks on one user's local clock and retention preference.
 
@@ -662,7 +663,7 @@ src/
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
-│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal, ShortcutsModal (Settings → Keyboard shortcuts), ShareProjectModal (owner link/collaborator management, Phase 2), JoinProjectModal (`?join=<token>` landing, Phase 2)
+│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal (create mode has an Event/Task toggle — Task mode schedules an existing same-day-due task onto the clicked slot via `scheduleTaskAt` instead of creating a `CalendarEvent`), ShortcutsModal (Settings → Keyboard shortcuts), ShareProjectModal (owner link/collaborator management, Phase 2), JoinProjectModal (`?join=<token>` landing, Phase 2)
 │   ├── Nav/                   # Sidebar — desktop/tablet nav + a capped recent-projects strip (pin/rename/delete via ProjectActionsMenu) with a link into Projects/; BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
 │   ├── Projects/               # ProjectsPage — directory/launcher tab: fuzzy project search, Recent/Shared/My-projects columns, size/duration/creation-date sort (stats/sort logic in utils/projectStats.js)
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)

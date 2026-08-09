@@ -2857,6 +2857,50 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
+  // Manually place a task's work onto a specific date/time slot — the one
+  // "manual scheduling" entry point in the app (every other block comes from
+  // the auto-scheduler in allocator.js/rebalanceEngine.js; see
+  // EventDetailModal's Task-mode create flow, the only current caller). If
+  // the task already has a ScheduledBlock, it's moved (same
+  // `isAutoScheduled: false` convention WeekView's own drag-reschedule uses,
+  // so a later Re-balance won't fight this placement); otherwise a fresh
+  // block is created, mirroring the shape allocator.js itself stamps onto a
+  // new block. Silently replaces any prior schedule for this task — no
+  // confirmation, no dedupe beyond "at most one block per call".
+  const scheduleTaskAt = useCallback(
+    (taskId, date, startTime, endTime) => {
+      if (!date || !startTime || !endTime || timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+        setNotification({ type: 'error', message: 'Invalid time range.' });
+        return;
+      }
+      const existing = blocks.filter((b) => b.taskId === taskId);
+      if (existing.length > 0) {
+        const existingId = existing[0].id;
+        const newBlocks = blocks.map((b) =>
+          b.id === existingId ? { ...b, date, startTime, endTime, isAutoScheduled: false } : b
+        );
+        commit({ tasks, blocks: newBlocks }, `Scheduled task`);
+        return;
+      }
+      const task = tasks.find((t) => t.id === taskId);
+      const newBlock = {
+        id: generateLocalId('block'),
+        taskId,
+        date,
+        startTime,
+        endTime,
+        durationHours: (timeToMinutes(endTime) - timeToMinutes(startTime)) / 60,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+        googleEventId: null,
+        isPassive: !!task?.isPassive,
+      };
+      commit({ tasks, blocks: [...blocks, newBlock] }, `Scheduled task`);
+    },
+    [tasks, blocks, commit, setNotification]
+  );
+
   // ---- Manual blocked-time CRUD --------------------------------------------
   // A "manual" CalendarEvent has no Google counterpart — it's the user
   // saying "block this time out" directly (e.g. plans changed, doing
@@ -3526,6 +3570,7 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      scheduleTaskAt,
       addManualEvent,
       updateEvent,
       deleteEvent,
@@ -3618,6 +3663,7 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      scheduleTaskAt,
       addManualEvent,
       updateEvent,
       deleteEvent,

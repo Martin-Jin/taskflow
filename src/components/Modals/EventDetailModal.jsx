@@ -31,14 +31,14 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { X, CalendarClock, Clock, Type as TitleIcon, ListTree, Ban, AlignLeft, MapPin, Repeat } from 'lucide-react';
+import { X, CalendarClock, Clock, Type as TitleIcon, ListTree, Ban, AlignLeft, MapPin, Repeat, CheckSquare } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { timeToMinutes } from '../../utils/dateUtils';
 import { buildRRuleString, parseRRule } from '../../utils/recurrenceExpansion';
-import { findRecurrencePhrase, WEEKDAY_LABELS } from '../../utils/recurrence';
+import { findRecurrencePhrase, WEEKDAY_LABELS, expandTaskOccurrences, deriveRecurrenceRule } from '../../utils/recurrence';
 import { stripMatchedText } from '../../utils/smartParse';
 import DetailField from '../Common/DetailField';
 import HelpTooltip from '../Common/HelpTooltip';
@@ -77,7 +77,7 @@ function formatRepeatText(interval, freq, byDay) {
 }
 
 export default function EventDetailModal({ event, initial, onClose, onDeleted }) {
-  const { addManualEvent, updateEvent, deleteEvent, setEventIgnored, setNotification } = useScheduler();
+  const { tasks, addManualEvent, scheduleTaskAt, updateEvent, deleteEvent, setEventIgnored, setNotification } = useScheduler();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -97,6 +97,36 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   const [scope, setScope] = useState('this');
   const [error, setError] = useState('');
 
+  // Event/Task create-mode toggle — only ever shown for a brand new entry
+  // (isCreate), never when editing. "Task" mode reuses this same modal's
+  // Date/Start/End fields as the slot to schedule an EXISTING task into
+  // (via scheduleTaskAt) rather than creating a new CalendarEvent, so a user
+  // clicking an empty calendar slot can place a task there directly instead
+  // of duplicating it as a separate event. Deliberately scoped to this one
+  // entry point — see this file's module doc comment.
+  const [createMode, setCreateMode] = useState('event'); // 'event' | 'task'
+  const [selectedTaskId, setSelectedTaskId] = useState('');
+  // Tasks due on the exact day this create form was opened for — computed
+  // via real occurrence expansion (not a raw dueDate compare) so a recurring
+  // task whose pattern lands on this day shows up even though its stored
+  // `dueDate` is some earlier anchor date. Incomplete tasks only; the day
+  // itself never changes while this modal is open, so this only needs to be
+  // recomputed if the task list or the seeded day changes.
+  const tasksDueToday = isCreate
+    ? tasks.filter((t) => {
+        if (t.isCompleted || !date) return false;
+        // Mirrors rebalanceEngine.js's own resolveTaskRecurrenceRule: prefer
+        // the cached `recurrenceRule`, falling back to deriving it from
+        // `recurrenceString` if a task hasn't had it cached yet.
+        const rule = t.isRecurring && t.dueDate ? t.recurrenceRule || deriveRecurrenceRule(t.recurrenceString) : null;
+        if (rule) {
+          const recurringTask = t.recurrenceRule ? t : { ...t, recurrenceRule: rule };
+          return expandTaskOccurrences(recurringTask, date, date).length > 0;
+        }
+        return t.dueDate === date;
+      })
+    : [];
+
   // A "true-RRULE" series (one master row carrying `recurrenceRule`, whose
   // occurrences are only ever virtual — see recurrenceExpansion.js) is the
   // only series shape this modal's Repeat editor can meaningfully touch. A
@@ -110,7 +140,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   const isSeriesEvent = !isCreate && !!event.seriesId;
   const isTrueRruleSeries = isSeriesEvent && !!event.recurrenceRule;
   // Whether the Repeat DetailField renders at all.
-  const repeatFieldVisible = isCreate || !isSeriesEvent || isTrueRruleSeries;
+  const repeatFieldVisible = (isCreate && createMode === 'event') || (!isCreate && (!isSeriesEvent || isTrueRruleSeries));
   // Whether its controls are interactive and will actually be saved —
   // changing a whole series' cadence only makes sense at 'all' scope (a
   // 'this'/'following' edit only ever touches one occurrence's overrides or
@@ -220,12 +250,21 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
         setError('End time must be after start time.');
         return;
       }
+      if (isCreate && createMode === 'task' && !selectedTaskId) {
+        setError('Pick a task to schedule.');
+        return;
+      }
       if (repeatControlsApply && repeats && repeatEndType === 'until' && !repeatUntil) {
         setError('Pick an end date, or change "Ends" to "Never" or "After".');
         return;
       }
     }
     setError('');
+    if (isCreate && createMode === 'task') {
+      scheduleTaskAt(selectedTaskId, date, startTime, endTime);
+      requestClose();
+      return;
+    }
     if (isCreate) {
       const recurrenceRule = repeats
         ? buildRRuleString({
@@ -327,12 +366,35 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
       >
         <div className="detail-header">
           <h3 id="event-detail-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', flex: 1 }}>
-            {isCreate ? 'New event' : event.title || 'Untitled event'}
+            {isCreate ? (createMode === 'task' ? 'Schedule task' : 'New event') : event.title || 'Untitled event'}
           </h3>
           <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
             <X size={16} />
           </button>
         </div>
+
+        {isCreate && (
+          <div className="segmented-toggle" role="tablist" aria-label="Create event or schedule task">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={createMode === 'event'}
+              className={`segmented-toggle-option ${createMode === 'event' ? 'is-active' : ''}`}
+              onClick={() => setCreateMode('event')}
+            >
+              Event
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={createMode === 'task'}
+              className={`segmented-toggle-option ${createMode === 'task' ? 'is-active' : ''}`}
+              onClick={() => setCreateMode('task')}
+            >
+              Task
+            </button>
+          </div>
+        )}
 
         {error && <p className="form-error">{error}</p>}
 
@@ -346,32 +408,56 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
         )}
 
         <div className="detail-sidebar detail-sidebar--full">
-          <DetailField icon={TitleIcon} label="Title">
-            <input
-              value={title}
-              onChange={(e) => (isCreate ? handleTitleChange(e.target.value) : setTitle(e.target.value))}
-              placeholder={isCreate ? 'e.g. Team standup every Monday' : 'e.g. Team standup'}
-              disabled={isReadOnly}
-            />
-          </DetailField>
-          <DetailField icon={AlignLeft} label="Description">
-            <textarea
-              ref={descriptionRef}
-              className="detail-notes-textarea"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Description"
-              disabled={isReadOnly}
-            />
-          </DetailField>
-          <DetailField icon={MapPin} label="Location">
-            <input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. Conference room"
-              disabled={isReadOnly}
-            />
-          </DetailField>
+          {(!isCreate || createMode === 'event') && (
+            <>
+              <DetailField icon={TitleIcon} label="Title">
+                <input
+                  value={title}
+                  onChange={(e) => (isCreate ? handleTitleChange(e.target.value) : setTitle(e.target.value))}
+                  placeholder={isCreate ? 'e.g. Team standup every Monday' : 'e.g. Team standup'}
+                  disabled={isReadOnly}
+                />
+              </DetailField>
+              <DetailField icon={AlignLeft} label="Description">
+                <textarea
+                  ref={descriptionRef}
+                  className="detail-notes-textarea"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Description"
+                  disabled={isReadOnly}
+                />
+              </DetailField>
+              <DetailField icon={MapPin} label="Location">
+                <input
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="e.g. Conference room"
+                  disabled={isReadOnly}
+                />
+              </DetailField>
+            </>
+          )}
+          {isCreate && createMode === 'task' && (
+            <DetailField icon={CheckSquare} label="Task">
+              {tasksDueToday.length > 0 ? (
+                <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
+                  <option value="" disabled>
+                    Choose a task…
+                  </option>
+                  {tasksDueToday.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="form-hint" style={{ margin: 0 }}>
+                  No tasks due today.
+                </p>
+              )}
+            </DetailField>
+          )}
           <DetailField icon={CalendarClock} label="Date">
             <input
               type="date"
@@ -529,7 +615,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
             Cancel
           </button>
           <button className="btn btn-primary" onClick={handleSave}>
-            {isCreate ? 'Add event' : 'Save'}
+            {isCreate ? (createMode === 'task' ? 'Schedule task' : 'Add event') : 'Save'}
           </button>
         </div>
       </div>

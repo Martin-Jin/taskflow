@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.5.0',
+    date: '2026-08-09',
+    title: 'Schedule an existing task straight from a calendar slot',
+    changes: [
+      'Clicking an empty calendar slot to add something now offers an Event / Task toggle. Task mode lists the tasks due that day and drops the picked one straight onto the slot you clicked, instead of only being able to create a new calendar event there.',
+    ],
+  },
+  {
     version: '3.4.4',
     date: '2026-08-09',
     title: 'Email notifications restricted to the intended recipient',
