@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.7.0',
+    date: '2026-08-10',
+    title: 'Smart parse now understands "not before <date>"',
+    changes: [
+      'Typing phrases like "not before Friday", "don\'t start until tomorrow", or "can\'t start before March 3" into a task title now sets that task\'s earliest schedulable date automatically, the same way other smart-parse shorthand already works for due dates and priorities.',
+    ],
+  },
+  {
     version: '3.6.1',
     date: '2026-08-10',
     title: 'Cleaned up the dashboard customize button',

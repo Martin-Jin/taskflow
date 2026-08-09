@@ -563,12 +563,13 @@ cached copy.
 Typing naturally into the Title field — e.g. *"Call dentist tomorrow p2
 every month after Book appointment"* — auto-detects a due date, Todoist's
 `p1`–`p4` priority shorthand, a recurrence rule, an estimated duration
-(`"~2 hours"`, `"45 min"`), whether it "can run unattended", a plain URL, a
-dependency, a `#project` mention, and one or more `@label` mentions,
-surfacing each as a dismissible chip rather than applying anything
-silently. Dismissing a chip blocks that exact phrase from re-triggering
-until you edit it. See `src/utils/smartParse.js` and
-`src/hooks/useSmartTaskTitle.js`.
+(`"~2 hours"`, `"45 min"`), whether it "can run unattended", an earliest
+schedulable date (`"not before Friday"`, `"don't start until tomorrow"`,
+`"can't start before March 3"`), a plain URL, a dependency, a `#project`
+mention, and one or more `@label` mentions, surfacing each as a dismissible
+chip rather than applying anything silently. Dismissing a chip blocks that
+exact phrase from re-triggering until you edit it. See
+`src/utils/smartParse.js` and `src/hooks/useSmartTaskTitle.js`.
 
 **Recurrence** covers the phrasings Todoist's own natural-language quick-add
 produces: `"every day"` / `"daily"`, `"every 2 weeks"` / `"fortnightly"`,

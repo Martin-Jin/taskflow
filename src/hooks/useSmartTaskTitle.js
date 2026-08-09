@@ -30,6 +30,7 @@ import {
   Wind,
   CalendarClock,
   CalendarCheck,
+  CalendarX2,
   Flag,
   Link2,
   HelpCircle,
@@ -53,6 +54,7 @@ const SCALAR_FIELD_TYPES = [
   'estimatedHours',
   'unattended',
   'enforceDueDate',
+  'earliestDate',
   'dependency',
   'project',
 ];
@@ -192,6 +194,11 @@ export function buildSmartChips(smartDetected) {
     },
     smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
     smartDetected.enforceDueDate && { type: 'enforceDueDate', icon: CalendarCheck, label: 'Enforce due date' },
+    smartDetected.earliestDate && {
+      type: 'earliestDate',
+      icon: CalendarX2,
+      label: `Not before ${formatDisplayDate(smartDetected.earliestDate.iso)}`,
+    },
     smartDetected.dependency &&
       (smartDetected.dependency.task
         ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }

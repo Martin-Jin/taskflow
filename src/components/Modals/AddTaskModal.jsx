@@ -121,6 +121,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [fixedTimeEnabled, setFixedTimeEnabled] = useState(false);
   const [hasEditedFixedTime, setHasEditedFixedTime] = useState(false);
   const [earliestDate, setEarliestDate] = useState('');
+  const [hasEditedEarliestDate, setHasEditedEarliestDate] = useState(false);
   const [labelIds, setLabelIds] = useState([]);
   const [error, setError] = useState('');
   const [openField, setOpenField] = useState(null); // 'date' | 'priority' | 'labels' | null
@@ -226,6 +227,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
         },
         revert: () => setEnforceDueDate(false),
+      },
+      earliestDate: {
+        isUntouched: () => !hasEditedEarliestDate,
+        apply: (match) => setEarliestDate(match.iso),
+        revert: () => setEarliestDate(''),
       },
       dependency: {
         isUntouched: () => !hasEditedDependencies,
@@ -367,7 +373,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             textDecorationStyle: 'dotted',
           }}
         >
-          Smart parse: links, due dates, "at 5pm", p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
+          Smart parse: links, due dates, "not before Friday", "at 5pm", p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
         </button>
 
         <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
@@ -614,13 +620,24 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 <input
                   type="checkbox"
                   checked={!!earliestDate}
-                  onChange={(e) => setEarliestDate(e.target.checked ? toISODate(new Date()) : '')}
+                  onChange={(e) => {
+                    setHasEditedEarliestDate(true);
+                    setEarliestDate(e.target.checked ? toISODate(new Date()) : '');
+                  }}
                 />
                 {earliestDate ? formatDisplayDate(earliestDate) : 'Not locked'}
               </label>
               {earliestDate && (
                 <>
-                  <input type="date" value={earliestDate} onChange={(e) => setEarliestDate(e.target.value)} style={{ marginTop: 6 }} />
+                  <input
+                    type="date"
+                    value={earliestDate}
+                    onChange={(e) => {
+                      setHasEditedEarliestDate(true);
+                      setEarliestDate(e.target.value);
+                    }}
+                    style={{ marginTop: 6 }}
+                  />
                   <p className="form-hint">The scheduler won't place blocks before this date, overriding its usual pacing.</p>
                 </>
               )}
