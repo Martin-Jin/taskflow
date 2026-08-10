@@ -118,6 +118,7 @@ export default function Sidebar({
                   aria-label={`Rename project "${p.name}"`}
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
+                  onFocus={(e) => e.target.select()}
                   onBlur={commitRename}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {

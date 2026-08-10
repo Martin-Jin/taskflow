@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.1.0',
+    date: '2026-08-11',
+    title: 'Faster editing for text fields',
+    changes: [
+      'Clicking into an editable field (task title, estimated time, project/section names, notes, and more) now selects its existing text so you can start typing right away.',
+      'Pressing Enter in most editable fields now saves and exits the field, without needing to click away first.',
+    ],
+  },
+  {
     version: '4.0.0',
     date: '2026-08-11',
     title: 'Track time left on a task as you work',

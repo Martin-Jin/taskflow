@@ -560,6 +560,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                     className="board-column-title-input"
                     value={editingColumnTitle}
                     onChange={(e) => setEditingColumnTitle(e.target.value)}
+                    onFocus={(e) => e.target.select()}
                     onBlur={commitColumnEdit}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {

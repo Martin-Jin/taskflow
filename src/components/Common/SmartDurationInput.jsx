@@ -40,9 +40,10 @@ function SmartDurationInput({ hours, onChange, placeholder, disabled = false }) 
     if (inputRef.current) setScrollLeft(inputRef.current.scrollLeft);
   }
 
-  function handleFocus() {
+  function handleFocus(e) {
     setRawText(formatHours(hours));
     setEditing(true);
+    e.target.select();
   }
 
   function handleChange(e) {
@@ -56,6 +57,13 @@ function SmartDurationInput({ hours, onChange, placeholder, disabled = false }) 
   function handleBlur() {
     if (!rawText.trim()) onChange(0);
     setEditing(false);
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.target.blur();
+    }
   }
 
   let before = rawText;
@@ -90,6 +98,7 @@ function SmartDurationInput({ hours, onChange, placeholder, disabled = false }) 
         onChange={handleChange}
         onScroll={syncScroll}
         onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={disabled}
       />
