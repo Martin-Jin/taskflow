@@ -51,6 +51,7 @@ export default function SmartRecurrenceInput({ value, onChange, onBlur, onKeyDow
           syncScroll();
         }}
         onScroll={syncScroll}
+        onFocus={(e) => e.target.select()}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         disabled={disabled}

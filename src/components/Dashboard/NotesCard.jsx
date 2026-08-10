@@ -103,6 +103,15 @@ export default function NotesCard() {
     setEditingNoteId(null);
   }
 
+  /** Body textarea has no submit-on-Enter (it's multi-line), so clicking away needs its own
+   * save path — mirrors commitEdit but skips when focus is just moving to another control
+   * inside the same edit form (e.g. the title field, or Cancel/Save buttons), so Cancel still
+   * works and a stray blur mid-edit doesn't save. */
+  function handleBodyBlur(e) {
+    if (e.currentTarget.form && e.currentTarget.form.contains(e.relatedTarget)) return;
+    commitEdit(e);
+  }
+
   /** Jump to a note from the "Recently edited" strip regardless of which folder is currently selected. */
   function jumpToNote(note) {
     setNoteQuery('');
@@ -279,6 +288,7 @@ export default function NotesCard() {
                   placeholder="Title"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
+                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) => e.key === 'Escape' && setEditingNoteId(null)}
                 />
                 <textarea
@@ -287,6 +297,8 @@ export default function NotesCard() {
                   rows={3}
                   value={editBody}
                   onChange={(e) => setEditBody(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  onBlur={handleBodyBlur}
                   onKeyDown={(e) => e.key === 'Escape' && setEditingNoteId(null)}
                 />
                 <div className="note-edit-actions">

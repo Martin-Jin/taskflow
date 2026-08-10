@@ -238,7 +238,14 @@ export default function SmartTitleInput({
     const handledByKeywordSuggest = !handledByMention && keywordSuggest.handleKeyDown(e);
     if (!handledByMention && !handledByKeywordSuggest && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      onEnter?.(e);
+      if (onEnter) {
+        onEnter(e);
+      } else {
+        // No explicit commit callback (e.g. the main title field, which
+        // already autosaves on every keystroke via onChange) — Enter just
+        // exits edit mode the same way clicking away would.
+        e.target.blur();
+      }
     }
   }
 
@@ -285,6 +292,7 @@ export default function SmartTitleInput({
         onKeyUp={handleCaretMove}
         onClick={handleCaretMove}
         onKeyDown={handleKeyDown}
+        onFocus={(e) => e.target.select()}
         placeholder={placeholder}
         rows={1}
         maxLength={500}
