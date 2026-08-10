@@ -115,6 +115,22 @@
  *                                              recurrenceExpansion.expandRecurringEvent consults an event's own
  *                                              overrides. Only meaningful for `isRecurring` tasks; undefined for
  *                                              everything else.
+ * @property {Object<string, number>} [remainingHoursOverride] - Per-occurrence manual "time left" edit, keyed by the
+ *                                              occurrence's ORIGINAL (pattern-generated) ISO date — same key
+ *                                              convention as `overrides` above. A recurring task's `remainingHours`
+ *                                              is never stored (see `remainingHours` below); it's computed fresh
+ *                                              per-occurrence by rebalanceEngine.js's expandRecurringTasks as
+ *                                              `estimatedHours - spent`. When a user manually sets "time left" on a
+ *                                              specific occurrence, that value is recorded here instead, keyed by
+ *                                              that occurrence's date, and consulted by expandRecurringTasks in
+ *                                              place of the computed value (still clamped to
+ *                                              `[0, estimatedHours]`). Deleted from this map when that occurrence is
+ *                                              completed (see SchedulerContext.completeTask), so the next occurrence
+ *                                              starts fresh at the full estimate rather than inheriting a stale
+ *                                              manual value. Transient in-progress tracking, not synced completion
+ *                                              state — merged last-write-wins like any other plain field (no special
+ *                                              handling in utils/recurrenceState.js's mergeRecurringState needed).
+ *                                              Only meaningful for `isRecurring` tasks; undefined for everything else.
  * @property {string} [projectId]            - Todoist project id, if synced.
  * @property {'todoist'|'manual'} source     - Where the task originated.
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.

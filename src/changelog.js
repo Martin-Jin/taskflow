@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '4.0.0',
+    date: '2026-08-11',
+    title: 'Track time left on a task as you work',
+    changes: [
+      'Added a "Time left" field to the task detail view, next to Estimated time — update it as you make progress and the scheduler will plan the rest of your day around what actually remains, instead of the original estimate.',
+      'For repeating tasks, updating "Time left" only affects that occurrence — the next one starts fresh at the full estimate.',
+      'The task timer moved from a button in the task details to a clock icon in the top-right corner of the task, next to the menu button — tap it to start, pause, resume, or stop the timer.',
+      'Pausing the timer now offers to log the time you just worked as progress, pre-filled and editable, reducing "Time left" with one tap.',
+    ],
+  },
+  {
     version: '3.9.1',
     date: '2026-08-11',
     title: 'Fix stale devices overwriting newer synced data',

@@ -69,6 +69,7 @@ import {
   applyRecurringCompletion,
   computeRecurringDescendantDueDateOverrides,
   computeRecurringDescendantState,
+  dropClosedOccurrenceOverride,
   ensureRecurrenceAnchor,
   planOccurrenceUncompletion,
   planSeriesReanchor,
@@ -1963,9 +1964,14 @@ export function SchedulerProvider({ children }) {
         // computeRecurringRescheduleUpdate's overrides branch), its entry is
         // keyed by this same occurrenceDate — drop it now that the occurrence
         // it described is closed out, so it doesn't linger as dead data.
-        const nextOverrides = existing.overrides && occurrenceDate in existing.overrides
-          ? Object.fromEntries(Object.entries(existing.overrides).filter(([key]) => key !== occurrenceDate))
-          : existing.overrides;
+        const nextOverrides = dropClosedOccurrenceOverride(existing.overrides, occurrenceDate);
+
+        // Same drop for a manual "time left" edit on this occurrence (see
+        // types/index.js's Task.remainingHoursOverride) — once the occurrence
+        // is closed out its in-progress figure is meaningless, and leaving it
+        // would otherwise leak onto a future occurrence that reuses the same
+        // pattern date after a long recurrence cycle.
+        const nextRemainingHoursOverride = dropClosedOccurrenceOverride(existing.remainingHoursOverride, occurrenceDate);
 
         // The current occurrence may be sitting on an off-pattern override
         // (see computeRecurringRescheduleUpdate/resolveCurrentOccurrenceDueDate)
@@ -2015,7 +2021,7 @@ export function SchedulerProvider({ children }) {
         commit((current) => {
           const newTasks = current.tasks.map((t) => {
             if (t.id === taskId) {
-              return { ...t, ...rolled, overrides: nextOverrides, completedAt: nowIso, updatedAt: nowIso };
+              return { ...t, ...rolled, overrides: nextOverrides, remainingHoursOverride: nextRemainingHoursOverride, completedAt: nowIso, updatedAt: nowIso };
             }
             // A sub-task's OWN descendants (grandchildren of the top-level
             // parent — nesting is capped at 2 levels, so this is an edge case)

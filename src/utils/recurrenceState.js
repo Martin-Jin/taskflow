@@ -197,6 +197,30 @@ export function lastOccurrenceOnOrBefore(anchor, rule, on) {
   return dates.length > 0 ? dates[dates.length - 1] : null;
 }
 
+/**
+ * Drop a single key from a per-occurrence override map (e.g. Task.overrides
+ * or Task.remainingHoursOverride, both keyed by an occurrence's ORIGINAL
+ * pattern date) once that occurrence is closed out — used by
+ * SchedulerContext.completeTask so a stale per-occurrence entry doesn't leak
+ * onto a future occurrence that reuses the same pattern date after a long
+ * recurrence cycle. A plain last-write-wins delete: these maps are transient
+ * in-progress tracking, not accumulator state, so no special shared-project
+ * merge handling is needed (see utils/sharedTaskSync.js's mergeSharedTask,
+ * which takes the remote document's copy of this field wholesale like any
+ * other replace field).
+ *
+ * Returns the SAME object reference when there's nothing to drop, so callers
+ * can cheaply skip persisting a no-op change.
+ *
+ * @param {Object<string, any>|undefined} overrideMap
+ * @param {string} occurrenceDate - the closed-out occurrence's original/pattern date
+ * @returns {Object<string, any>|undefined}
+ */
+export function dropClosedOccurrenceOverride(overrideMap, occurrenceDate) {
+  if (!overrideMap || !(occurrenceDate in overrideMap)) return overrideMap;
+  return Object.fromEntries(Object.entries(overrideMap).filter(([key]) => key !== occurrenceDate));
+}
+
 /** Normalize a completed-occurrence list: unique, ascending, ISO strings only. */
 export function normalizeOccurrences(occurrences) {
   if (!Array.isArray(occurrences)) return [];

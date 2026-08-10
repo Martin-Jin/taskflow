@@ -17,6 +17,7 @@ import {
   planSubtaskOccurrenceCompletion,
   hasRecurrenceState,
   reanchorRecurringEnforceDueDateUpdates,
+  dropClosedOccurrenceOverride,
 } from '../../src/utils/recurrenceState';
 import {
   computeNextDueDate,
@@ -776,5 +777,31 @@ describe('hasRecurrenceState', () => {
     expect(hasRecurrenceState(task({ recurrenceAnchor: null }))).toBe(false);
     expect(hasRecurrenceState({ isRecurring: false, recurrenceAnchor: '2026-08-01' })).toBe(false);
     expect(hasRecurrenceState(null)).toBe(false);
+  });
+});
+
+// Shared helper behind SchedulerContext.completeTask's cleanup of a closed-out
+// occurrence's per-occurrence override entry — used for both Task.overrides
+// (off-pattern moves) and Task.remainingHoursOverride (manual "time left"
+// edits), both keyed by the occurrence's ORIGINAL pattern date.
+describe('dropClosedOccurrenceOverride', () => {
+  it('removes the entry keyed by the closed-out occurrence date', () => {
+    const result = dropClosedOccurrenceOverride({ '2026-08-01': 0.5, '2026-08-02': 1 }, '2026-08-01');
+    expect(result).toEqual({ '2026-08-02': 1 });
+  });
+
+  it('returns the same reference unchanged when the map has no entry for that date', () => {
+    const map = { '2026-08-02': 1 };
+    expect(dropClosedOccurrenceOverride(map, '2026-08-01')).toBe(map);
+  });
+
+  it('is a no-op for an undefined/null map', () => {
+    expect(dropClosedOccurrenceOverride(undefined, '2026-08-01')).toBeUndefined();
+    expect(dropClosedOccurrenceOverride(null, '2026-08-01')).toBeNull();
+  });
+
+  it('drops the only key, leaving an empty object rather than undefined', () => {
+    const result = dropClosedOccurrenceOverride({ '2026-08-01': 2 }, '2026-08-01');
+    expect(result).toEqual({});
   });
 });

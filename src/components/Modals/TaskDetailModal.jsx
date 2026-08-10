@@ -90,6 +90,7 @@ import {
   Loader2,
   Sparkles,
   Timer,
+  Hourglass,
   Pause,
   Play,
   Square,
@@ -319,6 +320,20 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [subtaskDependsOn, setSubtaskDependsOn] = useState([]);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Icon-only timer trigger in the topbar (separate from the "..." menu) —
+  // opens a small popover hosting the same TaskTimerControl used in the
+  // Timer DetailField below, for quick start/pause/stop without opening the
+  // full field list. Not explicitly reset on task switch (setActiveTaskId),
+  // mirroring menuOpen just above — both close naturally via useMenuPosition's
+  // own outside-click/Escape handling well before a real navigation click
+  // (the hierarchy label / sub-task row) would land elsewhere in the modal.
+  const [timerPopoverOpen, setTimerPopoverOpen] = useState(false);
+  // Inline "log this as progress?" prompt shown in the timer popover right
+  // after a pause — null when not showing, or { suggestedHours } pre-filled
+  // with the just-elapsed time. Lives alongside timerPopoverOpen (reset
+  // wherever that closes/switches tasks) rather than as its own modal, since
+  // it's a small follow-up to the pause action, not a separate flow.
+  const [pauseLogPrompt, setPauseLogPrompt] = useState(null);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
   const [notesLinkMatches, setNotesLinkMatches] = useState(() => getInitialNoteLinks(task));
   const [isNotesFocused, setIsNotesFocused] = useState(false);
@@ -549,6 +564,39 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     },
   });
 
+  // Clears the pause-log prompt whenever the timer popover closes (outside
+  // click, Escape, toggling the trigger again) so it doesn't linger stale
+  // the next time the popover is reopened for this or another task.
+  useEffect(() => {
+    if (!timerPopoverOpen) setPauseLogPrompt(null);
+  }, [timerPopoverOpen]);
+
+  // Positioning for the icon-only timer trigger's popover — same
+  // useMenuPosition helper as the "..." menu just above (anchored dropdown on
+  // desktop, centered-with-backdrop fallback whenever it wouldn't fit, forced
+  // centered on mobile), just a separate hook instance since the two popovers
+  // open independently of each other.
+  const timerTriggerRef = useRef(null);
+  const {
+    menuRef: timerPopoverRef,
+    mode: timerPopoverMode,
+    style: timerPopoverStyle,
+  } = useMenuPosition({
+    isOpen: timerPopoverOpen,
+    anchorRef: timerTriggerRef,
+    onClose: () => setTimerPopoverOpen(false),
+    forceCentered: isMobile,
+    computeAnchored: (anchorRect, menuRect) => {
+      const spaceBelow = window.innerHeight - anchorRect.bottom;
+      const openAbove = spaceBelow < menuRect.height && anchorRect.top > spaceBelow;
+      return {
+        left: anchorRect.right - menuRect.width,
+        top: openAbove ? undefined : anchorRect.bottom + 4,
+        bottom: openAbove ? window.innerHeight - anchorRect.top + 4 : undefined,
+      };
+    },
+  });
+
   // Snapshot of the task's saved values, refreshed whenever a *different*
   // task is opened (mirrors the reset-on-task.id effect below) — compared
   // against current form state to decide whether the inline Save/Cancel row
@@ -640,6 +688,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setFixedTimeEnabled(!!task.fixedTime);
     setHasEditedFixedTime(false);
     setLabelIds(task.labelIds || []);
+    setPauseLogPrompt(null);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
     lastSmartEarliestDateRef.current = null;
@@ -789,6 +838,46 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     tasks,
   ]);
   const atMaxSubtaskDepth = useMemo(() => isAtMaxSubtaskDepth(task, tasks), [task, tasks]);
+
+  // "Time left" (see types/index.js's Task.remainingHoursOverride) — a manual
+  // edit to how much work remains, which directly reduces the number the
+  // scheduler places going forward. Non-recurring tasks store this straight
+  // on `task.remainingHours`; a recurring task never stores remainingHours at
+  // all (rebalanceEngine.js computes it fresh per-occurrence), so instead this
+  // reads/writes a per-occurrence override keyed by `task.dueDate` — the
+  // occurrence's ORIGINAL pattern date, same key SchedulerContext.completeTask
+  // already uses for `overrides` and clears this map by on completion. (Not
+  // resolveCurrentOccurrenceDueDate's moved-to date — the override map is
+  // always keyed by the pattern date, even for a moved occurrence.)
+  const currentOccurrenceOriginalDate = task.isRecurring ? task.dueDate : null;
+  const remainingHoursOverride = currentOccurrenceOriginalDate
+    ? task.remainingHoursOverride?.[currentOccurrenceOriginalDate]
+    : null;
+  const effectiveRemainingHours = useMemo(() => {
+    if (!task.isRecurring) return Number(task.remainingHours) || 0;
+    if (typeof remainingHoursOverride === 'number' && Number.isFinite(remainingHoursOverride)) {
+      return Math.min(Math.max(0, remainingHoursOverride), task.estimatedHours);
+    }
+    // No override recorded — fall back to the full estimate. Precisely
+    // matching rebalanceEngine's `estimatedHours - spent` here would need
+    // this occurrence's already-placed block hours, which aren't cleanly
+    // available in this component; the full estimate is the correct value
+    // for a not-yet-worked occurrence and only under-states hours already
+    // spent today, which the user can still correct by hand via this field.
+    return task.estimatedHours;
+  }, [task.isRecurring, task.estimatedHours, remainingHoursOverride]);
+
+  function handleRemainingHoursChange(hours) {
+    const clamped = Math.min(Math.max(0, Number(hours) || 0), task.estimatedHours);
+    if (!task.isRecurring) {
+      updateTask(task.id, { remainingHours: clamped });
+      return;
+    }
+    if (!currentOccurrenceOriginalDate) return; // no due date yet — nothing to key the override by
+    updateTask(task.id, {
+      remainingHoursOverride: { ...(task.remainingHoursOverride || {}), [currentOccurrenceOriginalDate]: clamped },
+    });
+  }
 
   // Sections belong to a project — once a project is chosen, only show
   // that project's sections (matching Todoist's own board picker).
@@ -1671,6 +1760,100 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               </div>
             )}
 
+            {!isContainer && (
+              <div className="detail-timer-trigger-wrap">
+                <button
+                  type="button"
+                  ref={timerTriggerRef}
+                  className={`btn btn-icon timer-trigger ${getTimerForTask(task.id) ? 'is-active' : ''}`}
+                  onClick={() => setTimerPopoverOpen((v) => !v)}
+                  aria-haspopup="true"
+                  aria-expanded={timerPopoverOpen}
+                  aria-label="Timer"
+                  title={
+                    getTimerForTask(task.id)
+                      ? getTimerForTask(task.id).status === 'running'
+                        ? 'Timer running'
+                        : getTimerForTask(task.id).status === 'done'
+                        ? "Time's up"
+                        : 'Timer paused'
+                      : 'Start timer'
+                  }
+                >
+                  <Timer size={16} />
+                </button>
+                {timerPopoverOpen &&
+                  createPortal(
+                    <>
+                      {timerPopoverMode === 'centered' && (
+                        <div className="menu-popover-backdrop" onClick={() => setTimerPopoverOpen(false)} />
+                      )}
+                      <div
+                        ref={timerPopoverRef}
+                        className={`detail-timer-popover ${timerPopoverMode === 'centered' ? 'menu-popover-centered' : ''}`}
+                        style={timerPopoverMode === 'anchored' ? timerPopoverStyle : undefined}
+                      >
+                        <TaskTimerControl
+                          durationSeconds={getDefaultDurationSeconds({ ...task, estimatedHours })}
+                          timer={getTimerForTask(task.id)}
+                          onStart={(seconds) => {
+                            if (!areDependenciesMet(task, taskById)) {
+                              const blockers = (task.dependsOn || [])
+                                .map((id) => taskById.get(id))
+                                .filter((t) => t && !t.isCompleted)
+                                .map((t) => t.title);
+                              setNotification({
+                                type: 'warning',
+                                message:
+                                  blockers.length > 0
+                                    ? `Can't start the timer for "${task.title}" — finish "${blockers.join('", "')}" first.`
+                                    : `Can't start the timer for "${task.title}" — its dependencies aren't done yet.`,
+                              });
+                              return;
+                            }
+                            startTimer(task, seconds);
+                          }}
+                          onPause={() => {
+                            // Same elapsed-time math as CompleteTaskContext's
+                            // own pending-completion prompt — offer to log it
+                            // against "Time left" too, but only when it's
+                            // enough to be worth a prompt (skip a near-instant
+                            // pause with negligible elapsed time).
+                            const runningTimer = getTimerForTask(task.id);
+                            const elapsedSeconds = runningTimer
+                              ? Math.max(0, runningTimer.durationSeconds - getLiveRemaining(runningTimer))
+                              : 0;
+                            const suggestedHours = elapsedSeconds / 3600;
+                            pauseTimer(task.id);
+                            setPauseLogPrompt(suggestedHours > 0.01 ? { suggestedHours } : null);
+                          }}
+                          onResume={() => {
+                            setPauseLogPrompt(null);
+                            resumeTimer(task.id);
+                          }}
+                          onStop={() => {
+                            setPauseLogPrompt(null);
+                            stopTimer(task.id);
+                          }}
+                        />
+                        {pauseLogPrompt && (
+                          <PauseLogPrompt
+                            suggestedHours={pauseLogPrompt.suggestedHours}
+                            effectiveRemainingHours={effectiveRemainingHours}
+                            onApply={(loggedHours) => {
+                              handleRemainingHoursChange(Math.max(0, effectiveRemainingHours - loggedHours));
+                              setPauseLogPrompt(null);
+                            }}
+                            onDismiss={() => setPauseLogPrompt(null)}
+                          />
+                        )}
+                      </div>
+                    </>,
+                    document.body
+                  )}
+              </div>
+            )}
+
             <div className="detail-menu">
               <button
                 type="button"
@@ -2500,30 +2683,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               </DetailField>
 
               {!isContainer && (
-              <DetailField icon={Timer} label="Timer">
-                <TaskTimerControl
-                  durationSeconds={getDefaultDurationSeconds({ ...task, estimatedHours })}
-                  timer={getTimerForTask(task.id)}
-                  onStart={(seconds) => {
-                    if (!areDependenciesMet(task, taskById)) {
-                      const blockers = (task.dependsOn || [])
-                        .map((id) => taskById.get(id))
-                        .filter((t) => t && !t.isCompleted)
-                        .map((t) => t.title);
-                      setNotification({
-                        type: 'warning',
-                        message:
-                          blockers.length > 0
-                            ? `Can't start the timer for "${task.title}" — finish "${blockers.join('", "')}" first.`
-                            : `Can't start the timer for "${task.title}" — its dependencies aren't done yet.`,
-                      });
-                      return;
-                    }
-                    startTimer(task, seconds);
-                  }}
-                  onPause={() => pauseTimer(task.id)}
-                  onResume={() => resumeTimer(task.id)}
-                  onStop={() => stopTimer(task.id)}
+              <DetailField icon={Hourglass} label="Time left">
+                <SmartDurationInput
+                  hours={effectiveRemainingHours}
+                  onChange={handleRemainingHoursChange}
+                  disabled={isReadOnlyViewer}
                 />
               </DetailField>
               )}
@@ -2719,4 +2883,58 @@ function TaskTimerControl({ durationSeconds, timer, onStart, onPause, onResume, 
       </button>
     </div>
   );
+}
+
+/**
+ * Inline follow-up shown in the timer popover right after a pause — offers
+ * to log the just-elapsed time as progress by reducing "Time left" (see
+ * handleRemainingHoursChange), the same idea as CompleteTaskConfirmModal's
+ * pre-filled/editable elapsed-time field but rendered as plain content in
+ * this already-open popover instead of a separate modal. Deliberately
+ * doesn't touch Task.actualHours — that's a distinct action tied to
+ * completing the task, not adjusting how much work remains mid-task.
+ */
+function PauseLogPrompt({ suggestedHours, effectiveRemainingHours, onApply, onDismiss }) {
+  const [hours, setHours] = useState(roundPauseHours(suggestedHours));
+
+  return (
+    <div className="detail-timer-pause-prompt">
+      <p className="detail-timer-pause-prompt-text">
+        Log {formatTimerDuration(suggestedHours * 3600)} and reduce time left?
+      </p>
+      <div className="detail-timer-pause-prompt-row">
+        <input
+          type="number"
+          min="0"
+          max={effectiveRemainingHours}
+          step="0.1"
+          className="detail-timer-pause-prompt-input"
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+          aria-label="Hours to log"
+        />
+        <span className="detail-timer-pause-prompt-unit">h</span>
+      </div>
+      <div className="detail-timer-pause-prompt-actions">
+        <button type="button" className="btn" onClick={onDismiss}>
+          Dismiss
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            const parsed = Number(hours);
+            onApply(Number.isFinite(parsed) && parsed >= 0 ? parsed : suggestedHours);
+          }}
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Rounds to 1 decimal for display, same tolerance as the hours input's step. */
+function roundPauseHours(hours) {
+  return Math.round(hours * 10) / 10;
 }

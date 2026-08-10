@@ -702,3 +702,70 @@ describe('allocateTasks: no false no_capacity overflow when due date is beyond t
     expect(overflow[0].reason.type).toBe('fixed_time_conflict');
   });
 });
+
+// Manual "time left" edits for a recurring occurrence (Task.remainingHoursOverride,
+// keyed by the occurrence's original/pattern date — see types/index.js). These
+// exercise expandRecurringTasks's override branch directly through the public
+// `rebalance` entry point rather than reaching into the unexported helper.
+describe('rebalance: per-occurrence remainingHoursOverride', () => {
+  it("uses a recurring occurrence's remainingHoursOverride instead of the computed estimatedHours-minus-spent value", () => {
+    const tasks = [
+      {
+        id: 'trec1',
+        title: 'Recurring with manual time left',
+        isRecurring: true,
+        recurrenceString: 'every day',
+        estimatedHours: 2,
+        dueDate: today,
+        enforceDueDate: true,
+        // Manually set "time left" to 0.5h for today's occurrence, well below
+        // the full 2h estimate and with nothing spent yet to explain the gap.
+        remainingHoursOverride: { [today]: 0.5 },
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    const block = result.blocks.find((b) => b.taskId === 'trec1' && b.date === today);
+    expect(block).toBeTruthy();
+    expect(block.durationHours).toBe(0.5);
+  });
+
+  it('clamps an override above estimatedHours down to the full estimate rather than over-scheduling', () => {
+    const tasks = [
+      {
+        id: 'trec2',
+        title: 'Recurring with an over-large manual edit',
+        isRecurring: true,
+        recurrenceString: 'every day',
+        estimatedHours: 1,
+        dueDate: today,
+        enforceDueDate: true,
+        remainingHoursOverride: { [today]: 99 },
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    const block = result.blocks.find((b) => b.taskId === 'trec2' && b.date === today);
+    expect(block).toBeTruthy();
+    expect(block.durationHours).toBe(1);
+  });
+
+  it("only applies the override to the occurrence it's keyed to, leaving other occurrences on the computed value", () => {
+    const tomorrow = '2026-07-02';
+    const tasks = [
+      {
+        id: 'trec3',
+        title: 'Recurring, override keyed to today only',
+        isRecurring: true,
+        recurrenceString: 'every day',
+        estimatedHours: 2,
+        dueDate: today,
+        enforceDueDate: false,
+        remainingHoursOverride: { [today]: 0.25 },
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    const todayBlock = result.blocks.find((b) => b.taskId === 'trec3' && b.date === today);
+    const tomorrowBlock = result.blocks.find((b) => b.taskId === 'trec3' && b.date === tomorrow);
+    expect(todayBlock.durationHours).toBe(0.25);
+    expect(tomorrowBlock.durationHours).toBe(2);
+  });
+});
