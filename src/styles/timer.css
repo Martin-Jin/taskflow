@@ -107,6 +107,14 @@
   color: var(--color-accent);
 }
 
+/* Icon-only timer trigger in TaskDetailModal's topbar (see detail-timer-
+   trigger-wrap/detail-timer-popover in forms.css) — same accent color used
+   above for "time's up" to flag "a timer is running or paused for this task"
+   at a glance, without needing the popover open to see a live countdown. */
+.timer-trigger.is-active {
+  color: var(--color-accent);
+}
+
 @media (max-width: 639px) {
   .timer-widget {
     width: auto;

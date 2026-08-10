@@ -380,6 +380,13 @@
   position: relative;
 }
 
+/* Icon-only timer trigger, sitting immediately left of the "..." menu (see
+   TaskDetailModal's detail-topbar) — same relative-positioning role as
+   .detail-menu above, just for the timer popover instead. */
+.detail-timer-trigger-wrap {
+  position: relative;
+}
+
 /* Todoist-style parent/child breadcrumb — only rendered when the open task
    actually has a parent or sub-tasks (see TaskDetailModal). Sits first in the
    row (left-aligned); flex:1 lets it fill the remaining space so the "..."
@@ -453,6 +460,72 @@
   padding: 4px 10px;
   list-style: none;
   margin: 0;
+}
+
+/* Timer trigger's popover — same positioning contract as .detail-menu-dropdown
+   above (useMenuPosition, portaled to document.body), just a plain padded box
+   instead of a menu list since it only ever hosts TaskTimerControl. Sized to
+   fit that control's content rather than a fixed menu width, with a min-width
+   so the "Start timer (25:00)" button/live countdown doesn't wrap awkwardly,
+   and a max-width so it can't overflow a narrow phone viewport when centered. */
+.detail-timer-popover {
+  z-index: 200;
+  min-width: 200px;
+  max-width: min(90vw, 280px);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 10px 12px;
+}
+
+/* Inline "log this as time left?" follow-up shown after pausing a timer,
+   right inside .detail-timer-popover above — kept compact (small font,
+   tight spacing, shrunk buttons) since the popover itself is capped at
+   min(90vw, 280px) and this needs to fit below TaskTimerControl without
+   overflowing on a narrow phone. */
+.detail-timer-pause-prompt {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.detail-timer-pause-prompt-text {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+}
+
+.detail-timer-pause-prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.detail-timer-pause-prompt-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 13px;
+}
+
+.detail-timer-pause-prompt-unit {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.detail-timer-pause-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.detail-timer-pause-prompt-actions .btn {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 
 .detail-menu-divider {

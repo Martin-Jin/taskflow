@@ -102,6 +102,9 @@ function resolveTaskRecurrenceRule(task) {
  * below) assumes a single shared window, which is no longer true once each
  * occurrence gets its own independent block. A future occurrence with nothing
  * yet placed on its date naturally comes out fresh at its full estimatedHours.
+ * A per-occurrence manual edit (`task.remainingHoursOverride`, keyed by
+ * `originalDate`) takes precedence over this computed figure when present —
+ * see types/index.js's doc comment on that field.
  * Keyed by the block's actual placed date (`b.date`), so for a moved
  * occurrence that's the MOVED-TO date, not the original pattern date — see
  * the `date` lookup below.
@@ -133,8 +136,19 @@ function expandRecurringTasks(eligibleTasks, spentHoursByTaskDate, today, horizo
     const recurringTask = task.recurrenceRule ? task : { ...task, recurrenceRule: rule };
     const occurrences = expandTaskOccurrences(recurringTask, today, horizonEnd);
     for (const { originalDate, date } of occurrences) {
-      const spent = spentHoursByTaskDate.get(`${task.id}::${date}`) || 0;
-      const remainingHours = Math.max(0, task.estimatedHours - spent);
+      // A manual "time left" edit for this specific occurrence (see
+      // types/index.js's Task.remainingHoursOverride) takes precedence over
+      // the computed estimatedHours-minus-spent figure — clamped the same way
+      // a non-recurring task's remainingHours is (never negative, never more
+      // than the total estimate).
+      const override = task.remainingHoursOverride?.[originalDate];
+      let remainingHours;
+      if (typeof override === 'number' && Number.isFinite(override)) {
+        remainingHours = Math.min(Math.max(0, override), task.estimatedHours);
+      } else {
+        const spent = spentHoursByTaskDate.get(`${task.id}::${date}`) || 0;
+        remainingHours = Math.max(0, task.estimatedHours - spent);
+      }
       if (remainingHours <= 0) continue; // this occurrence is already fully covered by a locked/historical block
       virtualOccurrences.push({ ...recurringTask, id: `${task.id}::${originalDate}`, dueDate: date, enforceDueDate: true, remainingHours });
     }

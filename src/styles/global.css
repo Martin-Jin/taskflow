@@ -1393,7 +1393,8 @@ select:focus-visible,
    has equal selector specificity, so this has to come later in the
    cascade to actually win. */
 .project-actions-trigger,
-.menu-trigger {
+.menu-trigger,
+.timer-trigger {
   border-color: transparent;
   background: transparent;
 }
@@ -1401,7 +1402,9 @@ select:focus-visible,
 .project-actions-trigger:hover:not(:disabled),
 .project-actions-trigger[aria-expanded='true'],
 .menu-trigger:hover:not(:disabled),
-.menu-trigger[aria-expanded='true'] {
+.menu-trigger[aria-expanded='true'],
+.timer-trigger:hover:not(:disabled),
+.timer-trigger[aria-expanded='true'] {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
 }
