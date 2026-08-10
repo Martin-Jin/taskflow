@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.9.1',
+    date: '2026-08-11',
+    title: 'Fix stale devices overwriting newer synced data',
+    changes: [
+      'Fixed a bug where a device that had been asleep or offline for a while (e.g. a phone waking up) could sync its outdated data and silently overwrite newer changes made on another device in the meantime. Cross-device sync now checks which data is actually newer before applying it.',
+    ],
+  },
+  {
     version: '3.9.0',
     date: '2026-08-11',
     title: 'Calendar events now recover from network hiccups and cold starts',
