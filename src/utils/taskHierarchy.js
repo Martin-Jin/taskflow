@@ -106,6 +106,12 @@ export function findNearestAncestorDueDate(task, tasksById) {
  * be permanently done, which is why TaskDetailModal (editing the recurring
  * task itself) should keep reading `isCompleted` directly rather than this;
  * it's meant for list-style views that want to show "done for today".
+ * Exception: TaskDetailModal's own completion-checkbox controls (the header
+ * checkbox and the inline sub-task row checkboxes) deliberately DO use this
+ * helper rather than raw `isCompleted`, so a recurring task/sub-task already
+ * completed today shows checked and offers only "uncomplete" instead of
+ * re-offering "complete" — everywhere else in that file (recurrence editing,
+ * "apply to all sub-tasks", etc.) still reads `isCompleted` directly.
  */
 export function isCompletedForCurrentOccurrence(task, todayIso) {
   if (task.isRecurring) return !!task.completedDates?.includes(todayIso);

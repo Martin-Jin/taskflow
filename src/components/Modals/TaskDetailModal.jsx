@@ -132,7 +132,7 @@ import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
-import { getEffectiveEstimatedHours, findNearestAncestorDueDate, getAllDescendants } from '../../utils/taskHierarchy';
+import { getEffectiveEstimatedHours, findNearestAncestorDueDate, getAllDescendants, isCompletedForCurrentOccurrence } from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';
 import {
   findActiveMentionSpan,
@@ -776,6 +776,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     const cutoffISO = toISODate(cutoff);
     return task.completedDates.filter((d) => d >= cutoffISO).length;
   }, [task.isRecurring, task.completedDates]);
+  // "Done for today" for the header checkbox and inline sub-task rows — for a
+  // recurring task this must check today's completedDates entry rather than
+  // task.isCompleted (which recurring tasks never set true on a normal
+  // completion; see SchedulerContext.completeTask), otherwise a sub-task
+  // completed today re-opens showing as unchecked/completable again.
+  const todayIso = useMemo(() => toISODate(new Date()), []);
+  const isDoneForToday = isCompletedForCurrentOccurrence(task, todayIso);
   const effectiveEstimatedHours = useMemo(() => (isContainer ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours), [
     isContainer,
     task,
@@ -1872,11 +1879,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               <div className="detail-editbox">
                 <div className="detail-title-row">
                   <button
-                    className={`task-checkbox ${task.priority} ${task.isCompleted ? 'checked' : ''}`}
+                    className={`task-checkbox ${task.priority} ${isDoneForToday ? 'checked' : ''}`}
                     disabled={isReadOnlyViewer}
                     onClick={() => {
                       if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
-                      if (!task.isCompleted) {
+                      if (!isDoneForToday) {
                         // requestComplete only completes synchronously (returning true)
                         // when there's no tracked-time popup to show first — a task with
                         // a timer instead surfaces CompleteTaskConfirmModal above this
@@ -1895,11 +1902,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         playUncomplete();
                       }
                     }}
-                    title={task.isCompleted ? 'Click to restore to active' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-                    aria-label={task.isCompleted ? `Restore ${task.title}` : `Mark ${task.title} complete`}
+                    title={isDoneForToday ? 'Click to restore to active' : task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+                    aria-label={isDoneForToday ? `Restore ${task.title}` : `Mark ${task.title} complete`}
                     style={{ marginTop: 6 }}
                   >
-                    {task.isCompleted && <Check size={12} aria-hidden="true" />}
+                    {isDoneForToday && <Check size={12} aria-hidden="true" />}
                   </button>
                   <div className="detail-title-wrap">
                     <SmartTitleInput
@@ -2057,24 +2064,33 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   )}
                 </div>
                 <div className="subtask-list">
-                  {visibleChildTasks.map((child) => (
+                  {visibleChildTasks.map((child) => {
+                    const childDoneForToday = isCompletedForCurrentOccurrence(child, todayIso);
+                    return (
                     <div key={child.id} className="subtask-row">
                       <input
                         type="checkbox"
-                        checked={child.isCompleted}
-                        disabled={child.isCompleted || isReadOnlyViewer}
-                        // Same "complete, never un-complete" checkbox as a
-                        // normal task's row (TaskListPanel) — reused as-is
-                        // rather than hand-rolling a new toggle path.
+                        checked={childDoneForToday}
+                        disabled={isReadOnlyViewer}
+                        // Mirrors the header checkbox above: a recurring
+                        // child completed for today shows checked and can
+                        // only be un-completed, rather than re-offering
+                        // "complete" (child.isCompleted stays false for
+                        // recurring tasks — see isCompletedForCurrentOccurrence).
                         onChange={() => {
                           if (isReadOnlyViewer) return; // Defense in depth — checkbox is already disabled for viewers.
-                          if (!child.isCompleted) requestComplete(child.id);
+                          if (!childDoneForToday) {
+                            requestComplete(child.id);
+                          } else {
+                            uncompleteTask(child.id);
+                            playUncomplete();
+                          }
                         }}
                       />
                       <div
                         role="button"
                         tabIndex={0}
-                        className={`subtask-row-title-wrap ${child.isCompleted ? 'completed' : ''}`}
+                        className={`subtask-row-title-wrap ${childDoneForToday ? 'completed' : ''}`}
                         onClick={() => setActiveTaskId(child.id)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
@@ -2116,7 +2132,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         <X size={13} />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                   {isReadOnlyViewer ? (
                     <p className="comment-viewonly-note">
                       <Lock size={13} aria-hidden="true" />

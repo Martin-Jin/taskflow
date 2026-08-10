@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '3.8.1',
+    date: '2026-08-11',
+    title: 'Fix completed recurring sub-tasks showing as uncompleted',
+    changes: [
+      'Opening a recurring sub-task after completing today\'s occurrence (from the parent task\'s Sub-tasks list) now correctly shows it checked off and offers "uncomplete" — it no longer looked incomplete and let you complete it again.',
+    ],
+  },
+  {
     version: '3.8.0',
     date: '2026-08-10',
     title: 'Exclude a task from auto-scheduling',
