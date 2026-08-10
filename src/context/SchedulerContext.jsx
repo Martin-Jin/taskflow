@@ -916,6 +916,8 @@ export function SchedulerProvider({ children }) {
   const {
     googleConnected,
     googleNeedsReconnect,
+    googleSyncStale,
+    lastGoogleSyncAt,
     isPullingGoogleEvents,
     connectGoogleCalendar,
     pullFromGoogleCalendar,
@@ -1201,6 +1203,8 @@ export function SchedulerProvider({ children }) {
     events,
     setEvents,
     googleConnected,
+    googleSyncStale,
+    pullFromGoogleCalendar,
   });
 
   /**
@@ -3513,6 +3517,8 @@ export function SchedulerProvider({ children }) {
       lastAutoBackupAt,
       googleConnected,
       googleNeedsReconnect,
+      googleSyncStale,
+      lastGoogleSyncAt,
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
@@ -3621,6 +3627,8 @@ export function SchedulerProvider({ children }) {
       lastAutoBackupAt,
       googleConnected,
       googleNeedsReconnect,
+      googleSyncStale,
+      lastGoogleSyncAt,
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,

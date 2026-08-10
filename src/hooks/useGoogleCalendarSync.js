@@ -87,6 +87,34 @@ function getRoutineSyncRange() {
 // far-back fetch happened to occur) — see how it's combined with the synced-
 // bounds union in applyPulledEvents below.
 
+// Backoff schedule for the mount-time silent re-auth (see the effect below):
+// 3 total attempts — immediate, then ~2s, then ~5s — before this mount pass
+// gives up and leaves it to the periodic poll. Short on purpose: this is
+// covering a cold-start blip (auth.currentUser not warm yet, DNS/TCP cold),
+// not a sustained outage, and the 60s poll is the real long-run retry.
+const SILENT_REAUTH_RETRY_DELAYS_MS = [0, 2000, 5000];
+export const SILENT_REAUTH_MAX_ATTEMPTS = SILENT_REAUTH_RETRY_DELAYS_MS.length;
+
+/**
+ * Delay (ms) to wait BEFORE the attempt at `attemptIndex` (0-based). Attempt 0
+ * runs immediately; later attempts back off. Anything past the last configured
+ * attempt returns null, which callers read as "stop retrying". Pure and
+ * exported purely so the schedule is unit-testable without driving the hook.
+ */
+export function getSilentReauthRetryDelay(attemptIndex) {
+  if (!Number.isInteger(attemptIndex) || attemptIndex < 0) return null;
+  if (attemptIndex >= SILENT_REAUTH_RETRY_DELAYS_MS.length) return null;
+  return SILENT_REAUTH_RETRY_DELAYS_MS[attemptIndex];
+}
+
+// Single short retry delay for the periodic poll and the on-demand range
+// fetch. Both already have a natural next trigger (the 60s interval / the next
+// calendar navigation), so one extra attempt is enough to ride out a momentary
+// network blip without building a full backoff ladder for them.
+const TRANSIENT_RETRY_DELAY_MS = 2000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * @param {Object} deps
  * @param {Array} deps.events - Current events array (from useState in SchedulerContext)
@@ -114,6 +142,34 @@ export function useGoogleCalendarSync({
   const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
   const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
   const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);
+
+  // ---- Sync health -----------------------------------------------------------
+  // `googleSyncStale` is true when the most recent fetch attempt (mount silent
+  // re-auth, periodic poll, or on-demand range fetch) ultimately failed after
+  // exhausting its retries for a TRANSIENT reason — i.e. Google is nominally
+  // connected but nothing is actually coming back. A confirmed
+  // reconnect-needed/auth failure deliberately does NOT set it: that path
+  // already flips googleConnected/googleNeedsReconnect and has its own, more
+  // urgent messaging, and showing two indicators for one underlying cause is
+  // just noise.
+  //
+  // Deliberately plain useState, NOT usePersistedState/BACKUP_FIELDS: it's a
+  // live health signal about right-now connectivity, meaningless to restore
+  // from a backup or mirror to another device (whose own fetches succeed or
+  // fail independently). Every successful fetch clears it and stamps
+  // `lastGoogleSyncAt`.
+  //
+  // Also consumed outside the UI: SchedulerContext passes it into useCloudSync,
+  // where it broadens the events-fallback-from-backup effect from "Google is
+  // disconnected" to "no live source is currently working" — see that effect's
+  // doc comment.
+  const [googleSyncStale, setGoogleSyncStale] = useState(false);
+  const [lastGoogleSyncAt, setLastGoogleSyncAt] = useState(null);
+
+  const markGoogleSyncSucceeded = useCallback(() => {
+    setGoogleSyncStale(false);
+    setLastGoogleSyncAt(Date.now());
+  }, []);
 
   // Shared by EVERY fetch-and-apply path below — the periodic poll, the
   // visibility/focus refresh (which just calls the poll), the manual "Pull"
@@ -314,69 +370,114 @@ export function useGoogleCalendarSync({
   // A full cold browser start (closing and reopening the browser, not just
   // refreshing the page) is plausibly slower/flakier than an in-process
   // refresh — extensions initializing, DNS/TCP cold, IndexedDB not yet warm
-  // — so the very first `requestAccessToken(true)` attempt here gets one
-  // retry after a short delay before this mount-time attempt gives up.
-  // Only a CONFIRMED "needs reconnect" failure (the Worker's 404/409 —
-  // see shouldTreatAsReconnectNeeded) is treated as proof the user is
-  // actually disconnected; any other error (transient network failure,
-  // getFirebaseIdToken() throwing, etc.) is logged and left alone rather
-  // than flipping googleConnected, so it can be retried naturally by the
-  // periodic poll (60s) or the visibility/focus refresh below instead of
-  // permanently showing "disconnected" for what was just a cold-start blip.
+  // — so the silent re-auth + first fetch here get a short backoff ladder
+  // (SILENT_REAUTH_RETRY_DELAYS_MS: immediate, ~2s, ~5s) before this
+  // mount-time pass gives up. The whole attempt sequence runs INSIDE one
+  // googleFetchInFlightRef hold — releasing it between attempts would let a
+  // poll/pull start concurrently mid-ladder and reintroduce exactly the
+  // out-of-order-application race that ref exists to prevent (see its doc
+  // comment).
+  //
+  // Only a CONFIRMED "needs reconnect" failure (the Worker's 404/409 — see
+  // shouldTreatAsReconnectNeeded) is treated as proof the user is actually
+  // disconnected, and it's checked on EVERY attempt's error, not just the
+  // last: retrying a revoked grant can only ever fail again, so it bails out
+  // of the ladder immediately. Any other error (transient network failure,
+  // getFirebaseIdToken() throwing, etc.) is retried, and if the ladder is
+  // exhausted it's logged and flagged stale rather than flipping
+  // googleConnected — the periodic poll (60s) and the visibility/focus
+  // refresh keep retrying, so a cold-start blip never shows as "disconnected".
   useEffect(() => {
     let cancelled = false;
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
     async function load() {
       if (authLoading || !googleConnected) return;
+      // Guard the whole attempt sequence — see googleFetchInFlightRef's own
+      // doc comment. Unlikely to overlap anything this early, but a manual
+      // "Pull" click landing during this initial load is possible.
+      if (googleFetchInFlightRef.current) return;
+      googleFetchInFlightRef.current = true;
+      // "Connecting to Google Calendar..." loading toast (see Toast.jsx's
+      // new `loading` type) — covers the app-open case this whole ladder
+      // exists for for: the user opens the app and Google's silent re-auth
+      // is working in the background rather than nothing visibly happening
+      // for however long the retry ladder takes. Shown once the attempt
+      // sequence actually starts (not e.g. while waiting on `authLoading`),
+      // and ALWAYS replaced or cleared below on every terminal path of this
+      // function — never left on screen once the fetch has settled one way
+      // or another.
+      let shownLoadingToast = false;
       try {
-        const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-        const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        const { enabled } = await initGoogleCalendar(clientId, apiKey);
-        if (!enabled) {
-          if (!cancelled) setGoogleConnected(false);
-          return;
-        }
-
-        try {
-          await requestAccessToken(true); // silent — no consent popup
-        } catch (firstErr) {
+        for (let attempt = 0; attempt < SILENT_REAUTH_MAX_ATTEMPTS; attempt += 1) {
+          const delay = getSilentReauthRetryDelay(attempt);
+          if (delay) await sleep(delay);
           if (cancelled) return;
-          console.warn('[useGoogleCalendarSync] Initial silent re-auth attempt failed, retrying once.', firstErr);
-          await sleep(1750);
-          if (cancelled) return;
-          await requestAccessToken(true); // let a second failure propagate to the outer catch
-        }
+          try {
+            const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+            const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+            const { enabled } = await initGoogleCalendar(clientId, apiKey);
+            if (cancelled) return;
+            if (!enabled) {
+              setGoogleConnected(false);
+              return;
+            }
 
-        // Guard this fetch too — see googleFetchInFlightRef's own doc
-        // comment. Unlikely to overlap anything this early, but a manual
-        // "Pull" click landing during this initial load is possible.
-        if (googleFetchInFlightRef.current) return;
-        googleFetchInFlightRef.current = true;
-        try {
-          const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-          const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-          if (!cancelled) {
+            // Only shown once we know Google Calendar is actually configured
+            // (past the `!enabled` check above) — otherwise a device with no
+            // VITE_GOOGLE_CLIENT_ID configured would flash a "connecting..."
+            // toast for a connection attempt that was never going anywhere.
+            if (!shownLoadingToast) {
+              shownLoadingToast = true;
+              setNotification({ type: 'loading', message: 'Connecting to Google Calendar…' });
+            }
+
+            await requestAccessToken(true); // silent — no consent popup
+            if (cancelled) return;
+
+            const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
+            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+            if (cancelled) return;
             applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+            markGoogleSyncSucceeded();
             if (failedCalendars.length > 0) {
               console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
+            } else if (shownLoadingToast) {
+              // Replace the loading toast with a quiet success rather than
+              // leaving it on screen — see this effect's own doc comment.
+              setNotification({ type: 'success', message: 'Connected to Google Calendar.' });
+            }
+            return;
+          } catch (err) {
+            if (cancelled) return;
+            // Confirmed revoked/not-connected — retrying can't help, so bail
+            // out of the ladder now rather than after the remaining attempts.
+            if (shouldTreatAsReconnectNeeded(err)) {
+              console.warn('[useGoogleCalendarSync] Silent re-auth confirmed not-connected/revoked, falling back to disconnected.', err);
+              setGoogleConnected(false);
+              setGoogleNeedsReconnect(true);
+              setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+              return;
+            }
+            const isLastAttempt = attempt === SILENT_REAUTH_MAX_ATTEMPTS - 1;
+            if (!isLastAttempt) {
+              console.warn(`[useGoogleCalendarSync] Initial silent re-auth attempt ${attempt + 1} failed, retrying.`, err);
+              continue;
+            }
+            // Transient failure (network hiccup, auth.currentUser not ready
+            // yet, etc.) — don't disconnect; flag the sync as stale and let
+            // the periodic poll/visibility refresh keep retrying. Replaces
+            // the loading toast (if shown) so it doesn't linger — this is a
+            // quieter message than the disconnected/reconnect warning above
+            // since the connection itself is still nominally fine.
+            console.warn('[useGoogleCalendarSync] Initial silent re-auth failed after all retries; leaving connection state as-is for the next background retry.', err);
+            setGoogleSyncStale(true);
+            if (shownLoadingToast) {
+              setNotification({ type: 'warning', message: "Couldn't reach Google Calendar — will keep retrying in the background." });
             }
           }
-        } finally {
-          googleFetchInFlightRef.current = false;
         }
-      } catch (err) {
-        if (cancelled) return;
-        if (shouldTreatAsReconnectNeeded(err)) {
-          console.warn('[useGoogleCalendarSync] Silent re-auth confirmed not-connected/revoked, falling back to disconnected.', err);
-          setGoogleConnected(false);
-          setGoogleNeedsReconnect(true);
-          setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
-        } else {
-          // Transient failure (network hiccup, auth.currentUser not ready
-          // yet, etc.) — don't disconnect; the periodic poll/visibility
-          // refresh will retry shortly.
-          console.warn('[useGoogleCalendarSync] Initial silent re-auth failed after retry; leaving connection state as-is for the next background retry.', err);
-        }
+      } finally {
+        googleFetchInFlightRef.current = false;
       }
     }
     load();
@@ -388,23 +489,41 @@ export function useGoogleCalendarSync({
   useEffect(() => {
     if (!googleConnected) return undefined;
 
+    // One extra attempt after a short delay covers a momentary network blip
+    // without waiting a full interval; the in-flight ref stays held across
+    // both attempts (see its doc comment) so nothing else can interleave.
     const poll = async () => {
       if (googleFetchInFlightRef.current) return;
       googleFetchInFlightRef.current = true;
       lastGooglePollAtRef.current = Date.now();
+      const MAX_ATTEMPTS = 2;
       try {
-        const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-        const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-        applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
-      } catch (err) {
-        if (err?.isGoogleAuthError) {
-          console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
-          setGoogleConnected(false);
-          setGoogleNeedsReconnect(true);
-          setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
-          return;
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+          if (attempt > 0) await sleep(TRANSIENT_RETRY_DELAY_MS);
+          try {
+            const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
+            const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+            applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+            markGoogleSyncSucceeded();
+            return;
+          } catch (err) {
+            // Confirmed auth failure — fail fast, no retry benefit, and its
+            // own disconnected/reconnect messaging replaces the stale flag.
+            if (err?.isGoogleAuthError) {
+              console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
+              setGoogleConnected(false);
+              setGoogleNeedsReconnect(true);
+              setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+              return;
+            }
+            if (attempt < MAX_ATTEMPTS - 1) {
+              console.warn('[useGoogleCalendarSync] Periodic poll failed, retrying once.', err);
+              continue;
+            }
+            console.warn('[useGoogleCalendarSync] Periodic poll failed after retry', err);
+            setGoogleSyncStale(true);
+          }
         }
-        console.warn('[useGoogleCalendarSync] Periodic poll failed', err);
       } finally {
         googleFetchInFlightRef.current = false;
       }
@@ -480,6 +599,7 @@ export function useGoogleCalendarSync({
         const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
         const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
         applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+        markGoogleSyncSucceeded();
         if (failedCalendars.length > 0) {
           setNotification({
             type: 'warning',
@@ -496,7 +616,7 @@ export function useGoogleCalendarSync({
       const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
       setNotification({ type: 'error', message: `Google Calendar connection failed: ${reason}` });
     }
-  }, [setGoogleConnected, setNotification, applyPulledEvents]);
+  }, [setGoogleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded]);
 
   // ---- Pull from Google Calendar (manual) ----------------------------------
   const pullFromGoogleCalendar = useCallback(async () => {
@@ -515,6 +635,7 @@ export function useGoogleCalendarSync({
       const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
       applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+      markGoogleSyncSucceeded();
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
@@ -531,7 +652,7 @@ export function useGoogleCalendarSync({
       setIsPullingGoogleEvents(false);
       googleFetchInFlightRef.current = false;
     }
-  }, [googleConnected, setNotification, applyPulledEvents]);
+  }, [googleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded]);
 
   // ---- Force a full rebuild from Google Calendar (manual, repeatable) ------
   // Unlike the one-time hardResetEventsFromGoogle pass above (which only
@@ -573,6 +694,7 @@ export function useGoogleCalendarSync({
       const rebuiltBounds = { startIso: rangeStartIso, endIso: rangeEndIso };
       googleSyncedRangeBoundsRef.current = rebuiltBounds;
       setGoogleSyncedRangeBounds(rebuiltBounds);
+      markGoogleSyncSucceeded();
       if (failedCalendars.length > 0) {
         setNotification({
           type: 'warning',
@@ -589,7 +711,7 @@ export function useGoogleCalendarSync({
       setIsPullingGoogleEvents(false);
       googleFetchInFlightRef.current = false;
     }
-  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds]);
+  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, markGoogleSyncSucceeded]);
 
   // ---- On-demand fetch for calendar-view navigation -------------------------
   // Called by CalendarPage (debounced) whenever the viewed date range
@@ -612,23 +734,38 @@ export function useGoogleCalendarSync({
       const needed = computeOnDemandFetchRange(googleSyncedRangeBoundsRef.current, clampedViewStartIso, viewEndIso);
       if (!needed) return; // already fully covered by what's synced so far
       googleFetchInFlightRef.current = true;
+      // Same one-extra-attempt policy as the periodic poll above, with the
+      // in-flight ref held across both attempts.
+      const MAX_ATTEMPTS = 2;
       try {
-        const { events: fetchedEvents } = await fetchGoogleEvents(needed.startIso, needed.endIso);
-        applyPulledEvents(fetchedEvents, needed.startIso, needed.endIso);
-      } catch (err) {
-        if (err?.isGoogleAuthError) {
-          console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
-          setGoogleConnected(false);
-          setGoogleNeedsReconnect(true);
-          setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
-          return;
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+          if (attempt > 0) await sleep(TRANSIENT_RETRY_DELAY_MS);
+          try {
+            const { events: fetchedEvents } = await fetchGoogleEvents(needed.startIso, needed.endIso);
+            applyPulledEvents(fetchedEvents, needed.startIso, needed.endIso);
+            markGoogleSyncSucceeded();
+            return;
+          } catch (err) {
+            if (err?.isGoogleAuthError) {
+              console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
+              setGoogleConnected(false);
+              setGoogleNeedsReconnect(true);
+              setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+              return;
+            }
+            if (attempt < MAX_ATTEMPTS - 1) {
+              console.warn('[useGoogleCalendarSync] On-demand range fetch failed, retrying once.', err);
+              continue;
+            }
+            console.warn('[useGoogleCalendarSync] On-demand range fetch failed after retry', err);
+            setGoogleSyncStale(true);
+          }
         }
-        console.warn('[useGoogleCalendarSync] On-demand range fetch failed', err);
       } finally {
         googleFetchInFlightRef.current = false;
       }
     },
-    [googleConnected, applyPulledEvents, setGoogleConnected, setNotification]
+    [googleConnected, applyPulledEvents, setGoogleConnected, setNotification, markGoogleSyncSucceeded]
   );
 
   // ---- Push blocks to Google Calendar --------------------------------------
@@ -669,6 +806,9 @@ export function useGoogleCalendarSync({
     } finally {
       setGoogleConnected(false);
       setGoogleNeedsReconnect(false);
+      // Deliberately disconnected — a leftover "hasn't synced recently"
+      // warning about a connection the user just removed would be nonsense.
+      setGoogleSyncStale(false);
       setNotification({ type: 'success', message: 'Disconnected Google Calendar.' });
     }
   }, [setGoogleConnected, setNotification]);
@@ -677,6 +817,8 @@ export function useGoogleCalendarSync({
     googleConnected,
     setGoogleConnected,
     googleNeedsReconnect,
+    googleSyncStale,
+    lastGoogleSyncAt,
     isPullingGoogleEvents,
     connectGoogleCalendar,
     pullFromGoogleCalendar,

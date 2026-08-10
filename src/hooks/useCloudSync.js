@@ -26,10 +26,12 @@ import {
   listManualBackups,
   getBackup,
   deleteBackup,
+  pushGoogleCalendarStatus,
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { savePersisted } from '../utils/persistence.js';
+import { getDeviceId } from '../utils/deviceIdentity.js';
 import {
   CLOUD_SYNC_DEBOUNCE_MS,
   BACKUP_CHECK_INTERVAL_MS,
@@ -81,14 +83,66 @@ function pickValid(field, value, fallback) {
 /**
  * Pure decision for the events-fallback-from-backup effect (see its own doc
  * comment on the effect below): whether local `events` is missing with no
- * live Google Calendar connection to repopulate it, so a recent Firestore
+ * WORKING live Google Calendar source to repopulate it, so a recent Firestore
  * backup's `events` field should be restored instead. Extracted so this
  * narrow "is restoring even applicable" condition is unit-testable without
  * rendering the hook — separate from `pickValid`'s job of validating the
  * fetched backup payload once one is actually found.
+ *
+ * "No working live source" covers two cases: Google isn't connected at all,
+ * OR it's nominally connected but its fetches have been failing (see
+ * `googleSyncStale` in useGoogleCalendarSync) — e.g. a cold start where
+ * auth.currentUser wasn't ready, or a network hiccup — which left `events`
+ * just as empty as a full disconnection would.
+ *
+ * The empty-`events` guard is NOT loosened by that: this stays a narrow
+ * gap-filler for "nothing usable locally", never a general reconciliation
+ * path. Restoring a backup over non-empty live-looking local data could
+ * resurrect events the user already deleted, which is exactly why `events`
+ * is kept out of the continuously-reconciled live-sync path to begin with.
  */
-export function shouldRestoreEventsFromBackup({ events, googleConnected }) {
-  return !googleConnected && (events?.length ?? 0) === 0;
+export function shouldRestoreEventsFromBackup({ events, googleConnected, googleSyncStale }) {
+  const noWorkingLiveSource = !googleConnected || !!googleSyncStale;
+  return noWorkingLiveSource && (events?.length ?? 0) === 0;
+}
+
+/**
+ * Pure decision for the cross-device Google-Calendar-status mismatch check
+ * (see the live-listener effect below, which calls this on every snapshot).
+ *
+ * `remoteStatus` is whatever's currently at the synced doc's
+ * `googleCalendarStatus` field (see firestoreSync.js's
+ * pushGoogleCalendarStatus) — `{ deviceId, connected, stale }` from
+ * whichever device wrote it last, or undefined/null if no device has ever
+ * written it (a doc from before this feature shipped, or a first-ever sync).
+ *
+ * Returns:
+ *   - `'thisDeviceBehind'` — the remote status is from ANOTHER device and
+ *     reports a working connection (connected && !stale), while THIS device
+ *     itself is disconnected or stale. The two devices disagree, and this is
+ *     the one that should self-heal (trigger its own sync) as well as warn.
+ *   - `'otherDeviceBehind'` — the mirror image: this device is
+ *     connected-and-fresh, but the last-known status from another device
+ *     says otherwise. Nothing for THIS device to fix (it's already fine) —
+ *     surfaced only so the user isn't left thinking everything is in sync
+ *     when a device sitting elsewhere isn't.
+ *   - `null` — no mismatch: either the status is missing/from this same
+ *     device (nothing to compare against), or both sides currently agree.
+ *
+ * Deliberately ignores anything OTHER than connected/stale on both sides —
+ * this is a presence/status signal, not a data-merge decision, so it must
+ * stay isolated from computeFingerprint/planRemoteDataMerge/applyRemoteData
+ * (see pushGoogleCalendarStatus's doc comment) rather than folded into them.
+ */
+export function detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId, localConnected, localSyncStale }) {
+  if (!remoteStatus || typeof remoteStatus !== 'object') return null;
+  if (!remoteStatus.deviceId || remoteStatus.deviceId === localDeviceId) return null; // nothing to compare against, or our own echo
+
+  const remoteWorking = Boolean(remoteStatus.connected) && !remoteStatus.stale;
+  const localWorking = Boolean(localConnected) && !localSyncStale;
+  if (remoteWorking === localWorking) return null; // both sides agree — no mismatch
+
+  return localWorking ? 'otherDeviceBehind' : 'thisDeviceBehind';
 }
 
 /**
@@ -400,6 +454,18 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
  *   currently connected — gates the events-fallback-from-backup effect (see
  *   its own doc comment) so it only fires when there's no live Google
  *   Calendar connection to repopulate `events` from instead.
+ * @param {boolean} deps.googleSyncStale - Whether Google Calendar is
+ *   nominally connected but its fetches have been failing (see
+ *   useGoogleCalendarSync). Treated the same as "not connected" by the
+ *   events-fallback-from-backup effect: either way there's no working live
+ *   source to repopulate an empty `events` from. Also pushed (alongside
+ *   googleConnected) to the shared Firestore doc's `googleCalendarStatus`
+ *   field so other signed-in devices can notice a disagreement — see the
+ *   dedicated effect below and detectGoogleCalendarStatusMismatch.
+ * @param {Function} [deps.pullFromGoogleCalendar] - useGoogleCalendarSync's
+ *   manual pull, called to self-heal THIS device when the cross-device
+ *   status-mismatch check (below) finds another device reporting a working
+ *   connection while this one is disconnected/stale.
  * @returns {Object} Cloud sync state and callbacks
  */
 export function useCloudSync({
@@ -426,6 +492,8 @@ export function useCloudSync({
   events,
   setEvents,
   googleConnected,
+  googleSyncStale,
+  pullFromGoogleCalendar,
 }) {
   // ANONYMOUS VISITORS ARE DELIBERATELY NOT A SYNC ACCOUNT.
   //
@@ -469,6 +537,40 @@ export function useCloudSync({
   // When the last automatic backup ran (epoch ms), persisted so it survives a
   // reload — see the automatic-backup effect below.
   const [lastAutoBackupAt, setLastAutoBackupAt] = usePersistedState('lastAutoBackupAt', null);
+
+  // This browser's stable id (see utils/deviceIdentity.js) — computed once
+  // via useRef's lazy initializer, not useState, since nothing here ever
+  // needs to re-render on it changing (it never does after mount).  Used
+  // only to tell "this device's own googleCalendarStatus write echoing back"
+  // apart from "a different device's write" in the live listener below.
+  const deviceIdRef = useRef(null);
+  if (deviceIdRef.current === null) deviceIdRef.current = getDeviceId();
+
+  // Last mismatch kind (see detectGoogleCalendarStatusMismatch) already
+  // warned about, so the live listener below only notifies on an actual
+  // state TRANSITION rather than re-warning on every snapshot while the
+  // mismatch persists (a status doc can re-deliver identical data many times
+  // — same "warn once, not per-event" shape as this file's other dedup refs).
+  // Reset to null once the mismatch resolves so a LATER, new mismatch is
+  // still caught.
+  const lastWarnedGoogleStatusMismatchRef = useRef(null);
+
+  // Mirrors of the latest googleConnected/googleSyncStale/pullFromGoogleCalendar
+  // for the live-listener effect's closure to read — that effect only
+  // re-subscribes on [user, cloudSynced] (resubscribing the whole onSnapshot
+  // listener every time Google's connection flickers would be wasteful and
+  // risks dropping the "first snapshot" race-guard logic mid-flicker), so it
+  // needs a way to see current values without those being in its dep array.
+  // Same "ref mirror kept in sync via its own tiny effect" pattern already
+  // used elsewhere in this file/useGoogleCalendarSync.js for the same reason.
+  const googleConnectedRef = useRef(googleConnected);
+  const googleSyncStaleRef = useRef(googleSyncStale);
+  const pullFromGoogleCalendarRef = useRef(pullFromGoogleCalendar);
+  useEffect(() => {
+    googleConnectedRef.current = googleConnected;
+    googleSyncStaleRef.current = googleSyncStale;
+    pullFromGoogleCalendarRef.current = pullFromGoogleCalendar;
+  }, [googleConnected, googleSyncStale, pullFromGoogleCalendar]);
 
   const pushTimerRef = useRef(null);
   const lastPushedFingerprintRef = useRef(null);
@@ -728,6 +830,28 @@ export function useCloudSync({
     setEvents,
   ]);
 
+  // ---- Push this device's Google Calendar connection health -----------------
+  // Whenever THIS device's own googleConnected/googleSyncStale changes,
+  // merge-write a small `googleCalendarStatus` presence field (deviceId,
+  // connected, stale) onto the shared per-user doc — see
+  // firestoreSync.js's pushGoogleCalendarStatus for why this is safe to add
+  // to that doc without touching the fields computeFingerprint/
+  // planRemoteDataMerge/applyRemoteData reconcile (tasks/blocks/settings):
+  // it's a new, isolated field those functions never look at.
+  //
+  // Best-effort: a failed write here just means another device won't see
+  // this one's latest status until the next successful write (e.g. next
+  // connect/disconnect, or the next time googleSyncStale flips) — nothing
+  // else depends on it succeeding, so it's logged and otherwise ignored
+  // rather than surfaced as a user-facing error.
+  useEffect(() => {
+    if (!user || !cloudSynced) return;
+    if (typeof googleConnected !== 'boolean') return; // useGoogleCalendarSync not wired up (e.g. no Google client configured)
+    pushGoogleCalendarStatus(user.uid, deviceIdRef.current, googleConnected, Boolean(googleSyncStale)).catch((err) => {
+      console.warn('[useCloudSync] Failed to push Google Calendar status', err);
+    });
+  }, [user, cloudSynced, googleConnected, googleSyncStale]);
+
   // ---- Subscribe to Firestore on mount (when user is available) ------------
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
@@ -741,6 +865,43 @@ export function useCloudSync({
     let receivedFirstSnapshot = false;
     const unsubscribe = subscribeUserData(user.uid, (remoteData) => {
       if (!remoteData) return;
+
+      // Cross-device Google Calendar status check — deliberately BEFORE the
+      // fingerprint-equality early return just below, since that fingerprint
+      // covers only tasks/blocks/settings and would otherwise skip this
+      // check entirely on a snapshot where `googleCalendarStatus` is the
+      // ONLY thing that changed (exactly the case this exists to catch).
+      // Isolated from the merge-decision logic beneath it — this only ever
+      // reads `remoteData.googleCalendarStatus` and this device's own
+      // googleConnected/googleSyncStale, never anything applyRemoteData
+      // touches.
+      const mismatch = detectGoogleCalendarStatusMismatch({
+        remoteStatus: remoteData.googleCalendarStatus,
+        localDeviceId: deviceIdRef.current,
+        localConnected: googleConnectedRef.current,
+        localSyncStale: googleSyncStaleRef.current,
+      });
+      if (mismatch !== lastWarnedGoogleStatusMismatchRef.current) {
+        lastWarnedGoogleStatusMismatchRef.current = mismatch;
+        if (mismatch === 'thisDeviceBehind') {
+          setNotification({
+            type: 'warning',
+            message: "Google Calendar is out of sync between your devices — another device is connected, but this one isn't. Retrying now...",
+          });
+          // Self-heal: kick off this device's own pull rather than just
+          // nagging. pullFromGoogleCalendar already no-ops safely if a
+          // fetch is already in flight (googleFetchInFlightRef) or if
+          // googleConnected is false (nothing to pull with yet — the
+          // periodic/mount retry ladder is what recovers that case).
+          pullFromGoogleCalendarRef.current?.();
+        } else if (mismatch === 'otherDeviceBehind') {
+          setNotification({
+            type: 'warning',
+            message: 'Google Calendar is out of sync between your devices — this one is fine, but another device last reported a problem.',
+          });
+        }
+      }
+
       const fingerprint = computeFingerprint(stateRef.current);
       const remoteFingerprint = computeFingerprint(remoteData);
       if (fingerprint === remoteFingerprint) return; // echo of our own push, local state unchanged since
@@ -805,23 +966,30 @@ export function useCloudSync({
   }, [user, cloudSynced]);
 
   // ---- Fallback: restore events from the latest backup if there's nothing
-  // to show and no live Google Calendar connection to repopulate them -------
+  // to show and no WORKING live Google Calendar source to repopulate them ---
   // `events` is deliberately excluded from the live cross-device sync above
   // (see BACKUP_FIELDS' doc comment) — Google Calendar is the normal
   // day-to-day authoritative store, and `useGoogleCalendarSync`'s own silent
   // reconnect repopulates `events` from Google on every mount/refresh. This
-  // only covers the gap that leaves: a new device (or wiped localStorage)
-  // where Google Calendar isn't connected has no other way to see events
-  // again, even though a recent Firestore backup already has them. Restoring
-  // ONLY the `events` field (not a full backup restore) keeps this narrow —
-  // tasks/blocks/settings already come back via the live sync above. Fires
-  // only when local `events` is genuinely empty, so it can never clobber
-  // (or resurrect a deleted event out of) whatever the user already has
-  // locally — same reasoning that keeps `events` out of the continuously-
-  // reconciled live-sync path in the first place.
+  // only covers the gap that leaves: a device with no working live Google
+  // source has no other way to see events again, even though a recent
+  // Firestore backup already has them. That's two situations, not one —
+  // Google not connected at all (a new device, or wiped localStorage), AND
+  // Google nominally connected but its fetches failing after exhausting
+  // their retries (`googleSyncStale` — a cold start where auth wasn't ready
+  // yet, or a network hiccup). Both leave `events` equally empty.
+  //
+  // Restoring ONLY the `events` field (not a full backup restore) keeps this
+  // narrow — tasks/blocks/settings already come back via the live sync
+  // above. Fires only when local `events` is genuinely empty, so it can
+  // never clobber (or resurrect a deleted event out of) whatever the user
+  // already has locally — same reasoning that keeps `events` out of the
+  // continuously-reconciled live-sync path in the first place. Deliberately
+  // no "non-empty but looks stale" heuristic: any timestamp/count comparison
+  // there would be guesswork against a store this app isn't authoritative for.
   useEffect(() => {
     if (!user || !cloudSynced) return;
-    if (!shouldRestoreEventsFromBackup({ events, googleConnected })) return;
+    if (!shouldRestoreEventsFromBackup({ events, googleConnected, googleSyncStale })) return;
 
     let cancelled = false;
     (async () => {
@@ -842,7 +1010,7 @@ export function useCloudSync({
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, cloudSynced, googleConnected]);
+  }, [user, cloudSynced, googleConnected, googleSyncStale]);
 
   // ---- Schedule push whenever state changes --------------------------------
   useEffect(() => {

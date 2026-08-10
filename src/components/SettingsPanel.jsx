@@ -24,6 +24,7 @@ import {
   Search,
   Share,
   RefreshCw,
+  Clock,
   User as UserIcon,
   Pencil,
 } from 'lucide-react';
@@ -115,6 +116,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     connectGoogleCalendar,
     googleConnected,
     googleNeedsReconnect,
+    googleSyncStale,
+    lastGoogleSyncAt,
     pushToGoogleCalendar,
     pullFromGoogleCalendar,
     rebuildEventsFromGoogle,
@@ -545,6 +548,27 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               {isPullingGoogleEvents ? 'Pulling…' : 'Pull from Google Calendar'}
             </button>
           )}
+          {/* "Still connected, but recent fetches have been failing" — a
+              deliberately calmer state than the disconnected/reconnect
+              warning on the button above, which is why it's only shown while
+              googleConnected (the two never appear at once). */}
+          {googleConnected && googleSyncStale && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 8px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--color-warning)',
+                border: '1px solid var(--color-warning)',
+              }}
+            >
+              <Clock size={13} /> Hasn't synced recently
+            </span>
+          )}
         </div>
         {googleConnected && (
           <div className="google-calendar-actions" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
@@ -583,6 +607,14 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           {googleNeedsReconnect
             ? "Google's sign-in expires periodically and can't always silently renew itself in the background — reconnecting takes one click and doesn't lose anything."
             : 'Connect Google Calendar to push scheduled blocks to it with one click — it asks Google directly for permission, TaskFlow never sees your Google password.'}
+          {googleConnected && googleSyncStale && (
+            <>
+              {' '}
+              Still connected, but the last few background refreshes didn't get through
+              {lastGoogleSyncAt ? ` (last successful sync: ${new Date(lastGoogleSyncAt).toLocaleString()})` : ''} — usually a
+              brief network problem that fixes itself. Click "Pull from Google Calendar" to try again right now.
+            </>
+          )}
           {googleConnected &&
             ' "Pull from Google Calendar" immediately re-fetches your Google events, overwriting any local changes to synced events with what Google currently has. "Rebuild from Google Calendar" goes further — a full wipe-and-rebuild for when stale/duplicate events won\'t go away with a normal Pull.'}
         </p>
