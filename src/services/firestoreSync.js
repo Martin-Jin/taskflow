@@ -71,6 +71,35 @@ export async function pushUserData(uid, data) {
 }
 
 /**
+ * Merge-writes this device's Google Calendar connection health onto the
+ * user's doc, under its own `googleCalendarStatus` field — a small presence/
+ * status signal, NOT a return of `events` (or anything else) to live sync.
+ * Lets other signed-in devices notice "my Google Calendar connection
+ * disagrees with what another device is reporting" via subscribeUserData's
+ * listener (see useCloudSync.js's detectGoogleCalendarStatusMismatch).
+ *
+ * Deliberately its own field, isolated from every field computeFingerprint/
+ * planRemoteDataMerge/applyRemoteData look at — those functions simply don't
+ * reference `googleCalendarStatus`, so this write can never be picked up by
+ * (or interfere with) the tasks/blocks/settings merge logic. `merge: true`
+ * (inherited from pushUserData/setDoc) means this write also never touches
+ * any other field in the doc, including another device's own status, task
+ * data, etc. — same "each writer only ever mentions its own concern" contract
+ * every other pushUserData caller already relies on.
+ * @param {string} uid
+ * @param {string} deviceId - this device's id (see utils/deviceIdentity.js)
+ * @param {boolean} connected - this device's current googleConnected
+ * @param {boolean} stale - this device's current googleSyncStale
+ */
+export async function pushGoogleCalendarStatus(uid, deviceId, connected, stale) {
+  await setDoc(
+    doc(db, 'users', uid),
+    { googleCalendarStatus: { deviceId, connected, stale, updatedAt: serverTimestamp() } },
+    { merge: true }
+  );
+}
+
+/**
  * Live-subscribes to the user's synced doc so a change pushed from another
  * device (or another tab) converges into this one within moments, instead
  * of only on the next sign-in/reload/manual "Sync now". `onData` fires with

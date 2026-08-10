@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '3.9.0',
+    date: '2026-08-11',
+    title: 'Calendar events now recover from network hiccups and cold starts',
+    changes: [
+      'Google Calendar events no longer go missing after a cold computer start or a brief network problem — TaskFlow now retries a failed refresh a few times instead of quietly giving up until the next background check.',
+      'If nothing can be fetched from Google and you have no events showing, TaskFlow falls back to your latest cloud backup to fill them in — previously that only happened when Google Calendar was fully disconnected.',
+      'Settings now shows a "Hasn\'t synced recently" note when Google Calendar is still connected but its background refreshes are failing, along with when it last succeeded — separate from the more urgent "disconnected, please reconnect" warning.',
+      'If your devices disagree about whether Google Calendar is connected (e.g. one device is fine but another has lost its connection), TaskFlow now warns you and automatically retries the sync on the affected device instead of leaving it silently out of date.',
+      'Opening the app now shows a brief "Connecting to Google Calendar…" notification while it reconnects in the background, so it is clear a sync is in progress instead of nothing appearing to happen.',
+    ],
+  },
+  {
     version: '3.8.1',
     date: '2026-08-11',
     title: 'Fix completed recurring sub-tasks showing as uncompleted',

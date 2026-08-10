@@ -57,6 +57,7 @@ import {
   planAutoBackupPrune,
   shouldRestoreEventsFromBackup,
   hasNewCompletion,
+  detectGoogleCalendarStatusMismatch,
 } from '../../src/hooks/useCloudSync.js';
 
 describe('isValidFieldValue', () => {
@@ -666,21 +667,116 @@ describe('hasNewCompletion', () => {
 
 describe('shouldRestoreEventsFromBackup', () => {
   it('restores when events is empty and Google Calendar is not connected', () => {
-    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: false })).toBe(true);
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: false, googleSyncStale: false })).toBe(true);
   });
 
-  it('does not restore when Google Calendar is connected, even with no local events', () => {
+  it('does not restore when Google Calendar is connected and syncing fine, even with no local events', () => {
     // Google Calendar's own silent reconnect already repopulates events in
     // this case — falling back to a possibly-stale backup here could
     // resurrect an event the user (or Google) already deleted.
-    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: true })).toBe(false);
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: true, googleSyncStale: false })).toBe(false);
   });
 
-  it('does not restore when local events already has data, regardless of Google connection', () => {
-    expect(shouldRestoreEventsFromBackup({ events: [{ id: '1' }], googleConnected: false })).toBe(false);
+  it('restores when Google is nominally connected but its fetches keep failing and events is empty', () => {
+    // The actual bug this broadening fixes: a cold start where the token/auth
+    // wasn't ready leaves googleConnected true but nothing ever arrives, so
+    // "connected" alone isn't proof of a working live source.
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: true, googleSyncStale: true })).toBe(true);
+  });
+
+  it('restores when both disconnected and stale', () => {
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: false, googleSyncStale: true })).toBe(true);
+  });
+
+  it('does not restore when local events already has data, regardless of connection or staleness', () => {
+    // The empty-events guard is deliberately NOT loosened by the stale
+    // signal — restoring over live-looking local data could resurrect
+    // already-deleted events.
+    for (const googleConnected of [true, false]) {
+      for (const googleSyncStale of [true, false]) {
+        expect(shouldRestoreEventsFromBackup({ events: [{ id: '1' }], googleConnected, googleSyncStale })).toBe(false);
+      }
+    }
   });
 
   it('treats a missing/undefined events array as empty', () => {
-    expect(shouldRestoreEventsFromBackup({ events: undefined, googleConnected: false })).toBe(true);
+    expect(shouldRestoreEventsFromBackup({ events: undefined, googleConnected: false, googleSyncStale: false })).toBe(true);
+    expect(shouldRestoreEventsFromBackup({ events: undefined, googleConnected: true, googleSyncStale: true })).toBe(true);
+  });
+
+  it('treats an omitted googleSyncStale as not-stale (back-compat with callers that predate it)', () => {
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: true })).toBe(false);
+    expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: false })).toBe(true);
+  });
+});
+
+describe('detectGoogleCalendarStatusMismatch', () => {
+  it('returns null when there is no remote status yet (doc predates this feature, or first-ever sync)', () => {
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus: undefined, localDeviceId: 'device-A', localConnected: true, localSyncStale: false })
+    ).toBe(null);
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus: null, localDeviceId: 'device-A', localConnected: false, localSyncStale: false })
+    ).toBe(null);
+  });
+
+  it('returns null when the remote status is this same device echoing its own write back', () => {
+    const remoteStatus = { deviceId: 'device-A', connected: false, stale: true };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: true, localSyncStale: false })
+    ).toBe(null);
+  });
+
+  it('returns null when both devices agree it is working', () => {
+    const remoteStatus = { deviceId: 'device-B', connected: true, stale: false };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: true, localSyncStale: false })
+    ).toBe(null);
+  });
+
+  it('returns null when both devices agree it is broken (disconnected or stale)', () => {
+    const remoteDisconnected = { deviceId: 'device-B', connected: false, stale: false };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus: remoteDisconnected, localDeviceId: 'device-A', localConnected: false, localSyncStale: false })
+    ).toBe(null);
+    const remoteStale = { deviceId: 'device-B', connected: true, stale: true };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus: remoteStale, localDeviceId: 'device-A', localConnected: true, localSyncStale: true })
+    ).toBe(null);
+  });
+
+  it("flags 'thisDeviceBehind' when another device reports working but this device is disconnected", () => {
+    const remoteStatus = { deviceId: 'device-B', connected: true, stale: false };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: false, localSyncStale: false })
+    ).toBe('thisDeviceBehind');
+  });
+
+  it("flags 'thisDeviceBehind' when another device reports working but this device is connected-yet-stale", () => {
+    const remoteStatus = { deviceId: 'device-B', connected: true, stale: false };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: true, localSyncStale: true })
+    ).toBe('thisDeviceBehind');
+  });
+
+  it("flags 'otherDeviceBehind' when this device is working but another device's last-known status is broken", () => {
+    const remoteStatus = { deviceId: 'device-B', connected: false, stale: false };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: true, localSyncStale: false })
+    ).toBe('otherDeviceBehind');
+  });
+
+  it('treats a remote status missing its own deviceId as unusable (nothing to compare against)', () => {
+    const remoteStatus = { connected: true, stale: false };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: false, localSyncStale: false })
+    ).toBe(null);
+  });
+
+  it('ignores fields other than connected/stale on the remote status (a presence signal, not a data merge)', () => {
+    const remoteStatus = { deviceId: 'device-B', connected: true, stale: false, updatedAt: { toMillis: () => 123 } };
+    expect(
+      detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: true, localSyncStale: false })
+    ).toBe(null);
   });
 });
