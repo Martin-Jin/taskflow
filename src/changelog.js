@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.1.1',
+    date: '2026-08-11',
+    title: 'AI Quick Add can now attach links to tasks',
+    changes: [
+      'AI Quick Add can now set a task\'s link directly (e.g. an assignment page, submission portal, or doc URL) — previously it could only mention a URL in notes, so it never turned the task title into a clickable link the way typing a URL manually does.',
+    ],
+  },
+  {
     version: '4.1.0',
     date: '2026-08-11',
     title: 'Faster editing for text fields',
