@@ -49,6 +49,7 @@ const TYPE_LABELS = {
   estimatedHours: 'duration',
   unattended: 'unattended flag',
   enforceDueDate: 'due date enforcement',
+  excludeFromAutoSchedule: 'auto-schedule exclusion',
   dependency: 'dependency',
   project: 'project',
   labels: 'tag',
@@ -62,6 +63,7 @@ const SCALAR_TYPES = [
   'estimatedHours',
   'unattended',
   'enforceDueDate',
+  'excludeFromAutoSchedule',
   'dependency',
   'project',
 ];

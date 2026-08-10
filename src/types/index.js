@@ -118,6 +118,14 @@
  * @property {string} [projectId]            - Todoist project id, if synced.
  * @property {'todoist'|'manual'} source     - Where the task originated.
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.
+ * @property {boolean} [excludeFromAutoSchedule] - If true, the auto-scheduler (rebalanceEngine.js's `eligibleTasks`
+ *                                              filter) skips this task entirely — it never gets a block placed or
+ *                                              moved by Re-balance schedule, the same carve-out phrasing used for
+ *                                              shared-project tasks just above that filter. It can still be
+ *                                              scheduled MANUALLY by dragging it onto the calendar, which produces a
+ *                                              block in the user's own local blocks array like any other manual
+ *                                              placement. Falsy/absent means no override (the normal case, task is
+ *                                              eligible like any other).
  * @property {boolean} isCompleted           - Completion state. Recurring tasks never reach `true` via normal
  *                                              completion — see `isRecurring` above.
  * @property {string|null} [completedAt]     - ISO datetime stamped when `isCompleted` is set true (see

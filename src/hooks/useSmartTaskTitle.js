@@ -38,6 +38,7 @@ import {
   Tag,
   Clock,
   Link as LinkIcon,
+  Ban,
 } from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
 import { formatDisplayDate, formatTime12h } from '../utils/dateUtils';
@@ -55,6 +56,7 @@ const SCALAR_FIELD_TYPES = [
   'unattended',
   'enforceDueDate',
   'earliestDate',
+  'excludeFromAutoSchedule',
   'dependency',
   'project',
 ];
@@ -199,6 +201,7 @@ export function buildSmartChips(smartDetected) {
       icon: CalendarX2,
       label: `Not before ${formatDisplayDate(smartDetected.earliestDate.iso)}`,
     },
+    smartDetected.excludeFromAutoSchedule && { type: 'excludeFromAutoSchedule', icon: Ban, label: 'Excluded from auto-schedule' },
     smartDetected.dependency &&
       (smartDetected.dependency.task
         ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }

@@ -19,8 +19,9 @@
  * later from the task detail modal.
  *
  * SMART PARSE: covers a plain URL (becomes the task's `link` field), due
- * date, estimated hours, "unattended", recurrence, dependency ("after X"),
- * priority ("p1"-"p4"), plus "#project" and "@tag".
+ * date, estimated hours, "unattended", "!noauto" (exclude from auto-
+ * schedule), recurrence, dependency ("after X"), priority ("p1"-"p4"),
+ * plus "#project" and "@tag".
  * Every field but priority/project/labels reads plain English — no leading
  * symbol needed. Priority stays p1-p4 only (deliberately not inferred from
  * bare words like "high"/"low" — too easy to mistake an unrelated word in
@@ -49,6 +50,7 @@ import {
   Tag,
   Clock,
   MoreHorizontal,
+  Ban,
   X,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -109,6 +111,8 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
   const [enforceDueDate, setEnforceDueDate] = useState(false);
   const [hasEditedEnforceDueDate, setHasEditedEnforceDueDate] = useState(false);
+  const [excludeFromAutoSchedule, setExcludeFromAutoSchedule] = useState(false);
+  const [hasEditedExcludeFromAutoSchedule, setHasEditedExcludeFromAutoSchedule] = useState(false);
   const [fixedTime, setFixedTime] = useState('');
   // "Fixed time" has no value to speak of while the checkbox is checked but
   // no time has been picked yet — fixedTimeEnabled tracks the checkbox
@@ -233,6 +237,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         apply: (match) => setEarliestDate(match.iso),
         revert: () => setEarliestDate(''),
       },
+      excludeFromAutoSchedule: {
+        isUntouched: () => !hasEditedExcludeFromAutoSchedule,
+        apply: () => setExcludeFromAutoSchedule(true),
+        revert: () => setExcludeFromAutoSchedule(false),
+      },
       dependency: {
         isUntouched: () => !hasEditedDependencies,
         apply: (match) => {
@@ -315,6 +324,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       dependsOn,
       isPassive,
       enforceDueDate: enforceDueDate && !!dueDate,
+      excludeFromAutoSchedule,
       fixedTime: fixedTimeEnabled && fixedTime ? fixedTime : null,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
@@ -373,7 +383,8 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             textDecorationStyle: 'dotted',
           }}
         >
-          Smart parse: links, due dates, "not before Friday", "at 5pm", p1–p4, duration, "unattended", "on the day", #project, @tag, "every month"
+          Smart parse: links, due dates, "not before Friday", "at 5pm", p1–p4, duration, "unattended", "on the day", "!noauto",
+          #project, @tag, "every month"
         </button>
 
         <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
@@ -403,7 +414,9 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           <button
             type="button"
             className={`addtask-pill ${
-              isRecurring || isPassive || enforceDueDate || !!earliestDate || dependsOn.length > 0 ? 'is-set' : ''
+              isRecurring || isPassive || enforceDueDate || excludeFromAutoSchedule || !!earliestDate || dependsOn.length > 0
+                ? 'is-set'
+                : ''
             }`}
             onClick={() => setMoreOpen((v) => !v)}
             aria-label="More options"
@@ -656,6 +669,25 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 Can run unattended
               </label>
               <p className="form-hint">e.g. laundry — can overlap other scheduled work.</p>
+            </DetailField>
+
+            <DetailField icon={Ban} label="Auto-schedule">
+              <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={excludeFromAutoSchedule}
+                  onChange={(e) => {
+                    setHasEditedExcludeFromAutoSchedule(true);
+                    setExcludeFromAutoSchedule(e.target.checked);
+                  }}
+                />
+                {excludeFromAutoSchedule ? 'Excluded from auto-schedule' : 'Included in auto-schedule'}
+              </label>
+              <p className="form-hint">
+                {excludeFromAutoSchedule
+                  ? "Re-balance schedule will skip this task — you can still drag it onto the calendar manually."
+                  : 'Re-balance schedule can place and move this task like any other.'}
+              </p>
             </DetailField>
           </div>
         )}

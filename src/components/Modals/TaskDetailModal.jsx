@@ -1704,6 +1704,20 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         <button
                           type="button"
                           role="menuitem"
+                          className="detail-menu-item"
+                          onClick={() => {
+                            updateTask(task.id, { excludeFromAutoSchedule: !task.excludeFromAutoSchedule });
+                            setMenuOpen(false);
+                          }}
+                        >
+                          <Ban size={14} aria-hidden="true" />
+                          {task.excludeFromAutoSchedule ? 'Include in auto-schedule' : 'Exclude from auto-schedule'}
+                        </button>
+                      </li>
+                      <li role="none">
+                        <button
+                          type="button"
+                          role="menuitem"
                           className="detail-menu-item detail-menu-item-danger"
                           onClick={handleDelete}
                           disabled={isReadOnlyViewer}

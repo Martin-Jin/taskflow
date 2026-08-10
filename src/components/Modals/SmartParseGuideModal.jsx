@@ -49,6 +49,11 @@ const SECTIONS = [
     description: 'Forces scheduling right on the due date instead of earlier.',
   },
   {
+    title: 'Exclude from auto-schedule',
+    examples: ['!noauto', '!manual'],
+    description: 'Keeps the task off Re-balance schedule entirely — you can still drag it onto the calendar yourself.',
+  },
+  {
     title: 'Dependency',
     examples: ['after Book appointment', 'depends on Design review'],
     description: 'Links this task to run after another task, matched by title.',
