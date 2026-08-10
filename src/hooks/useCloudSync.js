@@ -61,7 +61,7 @@ export function planAutoBackupPrune(backups, retentionCount = BACKUP_RETENTION_C
 }
 
 /** Firestore Timestamps expose `.toMillis()`; a plain number (e.g. in tests) is used as-is. Missing/unknown values sort last (treated as oldest). */
-function toMillis(createdAt) {
+export function toMillis(createdAt) {
   if (createdAt && typeof createdAt.toMillis === 'function') return createdAt.toMillis();
   if (typeof createdAt === 'number') return createdAt;
   return 0;
@@ -221,6 +221,59 @@ export function hasNewCompletion(prevTasks, nextTasks) {
  */
 export function hasLocalEditRaced(baselineActionId, currentActionId) {
   return baselineActionId !== currentActionId;
+}
+
+/**
+ * Cross-device staleness gate (distinct from, and orthogonal to,
+ * isStaleOwnEcho/hasLocalEditRaced below, which both guard against a
+ * DEVICE'S OWN in-flight push racing its own newer local edit). This one
+ * guards against a DIFFERENT problem: a whole other device — e.g. a phone
+ * that's been asleep for hours with stale in-memory state — waking up and
+ * pushing, whose debounced write can otherwise land on the server AFTER a
+ * desktop's newer edit and silently overwrite it, purely by virtue of
+ * arriving last. `setDoc(..., {merge:true})` has no concept of "older" vs.
+ * "newer" data on its own, so this doc's `lastWriteAt` (a `serverTimestamp()`
+ * stamped on every push, see firestoreSync.js's pushUserData) is the signal
+ * used to reject an incoming snapshot that is provably older than one this
+ * device has already observed — on either the pull or live-listener path.
+ *
+ * `knownLastWriteAtMillis` is the highest `lastWriteAt` this device has ever
+ * actually observed coming back FROM the server (via a pull or a live
+ * snapshot — never the optimistic pre-ack write, which is filtered out
+ * upstream by subscribeUserData/`hasPendingWrites`). It is intentionally NOT
+ * "this device's own last push time" — a device that has only ever pushed,
+ * but never yet seen its own push's server-confirmed echo, has no observed
+ * timestamp yet and must not reject anything (see the null-baseline case
+ * below).
+ *
+ * Deliberately whole-doc, not per-field: this app's sync model is a single
+ * merge-written doc (see pushUserData), so one `lastWriteAt` covering the
+ * entire doc is the granularity that actually matches how writes land —
+ * matching the same all-or-nothing shape `planRemoteDataMerge`'s `skipAll`
+ * already uses for the same reason.
+ *
+ * Two cases are deliberately treated as "not stale" (never reject):
+ *   - `remoteLastWriteAt` is missing/absent — an older doc that predates this
+ *     field, or (in principle) a same-write race where the read arrives
+ *     before the timestamp resolves. Same permissive "absent means don't
+ *     drop it" fallback this file already uses per-field elsewhere (see
+ *     `'x' in remoteData` checks in planRemoteDataMerge, and the legacy
+ *     pinnedLinks->notes migration).
+ *   - `knownLastWriteAtMillis` is null/undefined — this device has never yet
+ *     observed a server-confirmed timestamp (first-ever pull/subscribe this
+ *     session), so there is nothing to compare against and no basis to
+ *     reject anything.
+ *
+ * Uses `<` (strictly older), not `<=`: a remote snapshot carrying the SAME
+ * timestamp this device already knows about is this device's own echo
+ * arriving back (or a duplicate delivery) — genuinely-equal timestamps are
+ * not evidence of staleness, and isStaleOwnEcho/fingerprint-equality already
+ * handle the echo case on their own terms.
+ */
+export function isRemoteWriteStale(remoteLastWriteAt, knownLastWriteAtMillis) {
+  if (remoteLastWriteAt === undefined || remoteLastWriteAt === null) return false;
+  if (knownLastWriteAtMillis === undefined || knownLastWriteAtMillis === null) return false;
+  return toMillis(remoteLastWriteAt) < knownLastWriteAtMillis;
 }
 
 /**
@@ -574,6 +627,31 @@ export function useCloudSync({
 
   const pushTimerRef = useRef(null);
   const lastPushedFingerprintRef = useRef(null);
+  // Highest doc-level `lastWriteAt` (millis) this device has actually
+  // observed coming BACK from the server — via a pull's getDoc, or a live
+  // snapshot (subscribeUserData already filters out the optimistic
+  // pre-ack event, so every delivery here is server-confirmed). Starts null
+  // ("nothing observed yet") so the very first pull/snapshot of a session is
+  // never treated as stale — see isRemoteWriteStale's doc comment. Updated
+  // unconditionally on every observed snapshot (even one whose data body is
+  // otherwise skipped as a stale/echo/raced write) since it's a "what does
+  // the server currently know" bookkeeping signal, not tied to whether this
+  // particular snapshot's fields were applied.
+  const lastKnownWriteAtMillisRef = useRef(null);
+  // Widens lastKnownWriteAtMillisRef to `remoteLastWriteAt` if it's newer
+  // than (or nothing was recorded yet) what's already known — shared by
+  // every call site that observes a server-confirmed snapshot (initial pull,
+  // live listener, and the explicit toggleCloudSync/pullFromCloud actions),
+  // so the "highest timestamp seen so far" bookkeeping stays one rule
+  // instead of copy-pasted at each site. No-ops for a missing/absent
+  // timestamp (older doc, see isRemoteWriteStale's doc comment).
+  const recordObservedWriteAt = useCallback((remoteLastWriteAt) => {
+    if (remoteLastWriteAt == null) return;
+    const millis = toMillis(remoteLastWriteAt);
+    if (lastKnownWriteAtMillisRef.current == null || millis > lastKnownWriteAtMillisRef.current) {
+      lastKnownWriteAtMillisRef.current = millis;
+    }
+  }, []);
   // Fingerprints of every push sent whose server ack (echo) hasn't arrived
   // yet — see isStaleOwnEcho's doc comment for why lastPushedFingerprintRef
   // alone (overwritten on every push) isn't enough once two pushes can be in
@@ -866,6 +944,16 @@ export function useCloudSync({
     const unsubscribe = subscribeUserData(user.uid, (remoteData) => {
       if (!remoteData) return;
 
+      // Record the highest server-confirmed `lastWriteAt` this device has
+      // seen, unconditionally and before any of the checks below — this is
+      // "what does the server currently know" bookkeeping, independent of
+      // whether THIS particular snapshot's data body ends up applied,
+      // skipped as a race, or recognized as our own echo. Every path through
+      // this callback has now observed a real, current server timestamp
+      // (subscribeUserData already filtered out the pre-ack optimistic
+      // event), so every path should widen the freshness baseline.
+      recordObservedWriteAt(remoteData.lastWriteAt);
+
       // Cross-device Google Calendar status check — deliberately BEFORE the
       // fingerprint-equality early return just below, since that fingerprint
       // covers only tasks/blocks/settings and would otherwise skip this
@@ -925,7 +1013,15 @@ export function useCloudSync({
         inFlightPushFingerprintsRef.current = retireInFlightFingerprint(inFlightPushFingerprintsRef.current, remoteFingerprint);
       }
       const localEditLandedFirst = isFirstSnapshot && hasLocalEditRaced(actionIdAtSubscribe, currentActionIdRef.current);
-      applyRemoteData(remoteData, { skipAll: isStaleEcho || localEditLandedFirst });
+      // Cross-device staleness gate (see isRemoteWriteStale's doc comment) —
+      // a DIFFERENT device's write that is provably older than one this
+      // device already observed (e.g. a phone that just woke up, pushing a
+      // debounced write queued hours ago). Independent of, and checked
+      // alongside, the own-echo/own-race checks above: those two are about
+      // THIS device's own in-flight pushes, this one is about another
+      // device's write arriving out of order.
+      const isCrossDeviceStale = isRemoteWriteStale(remoteData.lastWriteAt, lastKnownWriteAtMillisRef.current);
+      applyRemoteData(remoteData, { skipAll: isStaleEcho || localEditLandedFirst || isCrossDeviceStale });
     });
     unsubscribeRef.current = unsubscribe;
     return () => unsubscribe();
@@ -952,6 +1048,16 @@ export function useCloudSync({
       try {
         const remoteData = await pullUserData(user.uid);
         if (!cancelled && remoteData) {
+          // Record the server-confirmed `lastWriteAt` this pull observed —
+          // same bookkeeping as the live listener, done BEFORE the
+          // staleness check inside isRemoteWriteStale (called via
+          // applyRemoteData's skipAll below) so this pull's own timestamp
+          // never gates itself. At this point in a fresh session
+          // lastKnownWriteAtMillisRef is still null, so isRemoteWriteStale
+          // can never flag THIS pull as stale — there's nothing yet to
+          // compare it against (see its doc comment) — but subsequent live
+          // snapshots this session will compare against what's recorded here.
+          recordObservedWriteAt(remoteData.lastWriteAt);
           const localEditLandedDuringPull = hasLocalEditRaced(actionIdAtStart, currentActionIdRef.current);
           applyRemoteData(remoteData, { skipAll: localEditLandedDuringPull });
         }
@@ -1031,6 +1137,14 @@ export function useCloudSync({
       try {
         const remoteData = await pullUserData(user.uid);
         if (remoteData) {
+          // Explicit, user-initiated "enable cloud sync" always applies
+          // whatever's remote — deliberately no skipAll/staleness gate here,
+          // same as pullFromCloud below (an explicit "pull now" action isn't
+          // subject to the background race guards that protect an automatic
+          // pull/listener from silently stomping a newer local edit). Still
+          // records the observed timestamp so the background listener's
+          // freshness baseline reflects it.
+          recordObservedWriteAt(remoteData.lastWriteAt);
           applyRemoteData(remoteData);
         }
         setNotification({ type: 'success', message: 'Cloud sync enabled.' });
@@ -1052,6 +1166,8 @@ export function useCloudSync({
     try {
       const remoteData = await pullUserData(user.uid);
       if (remoteData) {
+        // Same deliberate no-gate/record-only treatment as toggleCloudSync above.
+        recordObservedWriteAt(remoteData.lastWriteAt);
         applyRemoteData(remoteData);
         setNotification({ type: 'success', message: 'Pulled latest data from cloud.' });
       } else {

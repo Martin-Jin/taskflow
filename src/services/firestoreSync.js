@@ -65,9 +65,19 @@ export function stripUndefined(value) {
   return value;
 }
 
-/** Merge-writes the given fields into the user's doc — never clobbers fields this call doesn't mention. */
+/**
+ * Merge-writes the given fields into the user's doc — never clobbers fields
+ * this call doesn't mention. Every push also stamps top-level `lastWriteAt`
+ * with a fresh `serverTimestamp()`, regardless of which fields `data`
+ * contains — this is the doc-level "when was this doc's data last written"
+ * signal useCloudSync.js's isRemoteWriteStale gates pulls/live snapshots
+ * against, so a stale device's delayed push can't silently look newer than
+ * data another device already applied. Deliberately a separate top-level
+ * field from `googleCalendarStatus.updatedAt` (a narrow presence signal for
+ * a different mismatch check) — this one covers the whole doc.
+ */
 export async function pushUserData(uid, data) {
-  await setDoc(doc(db, 'users', uid), stripUndefined(data), { merge: true });
+  await setDoc(doc(db, 'users', uid), { ...stripUndefined(data), lastWriteAt: serverTimestamp() }, { merge: true });
 }
 
 /**

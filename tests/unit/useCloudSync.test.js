@@ -50,6 +50,7 @@ import {
   computeFingerprint,
   hasLocalEditRaced,
   isStaleOwnEcho,
+  isRemoteWriteStale,
   addInFlightFingerprint,
   retireInFlightFingerprint,
   planRemoteDataMerge,
@@ -335,6 +336,39 @@ describe('isStaleOwnEcho', () => {
     inFlight = retireInFlightFingerprint(inFlight, 'fp-A');
     expect(inFlight).toEqual(['fp-A']);
     expect(isStaleOwnEcho('fp-A', inFlight)).toBe(true);
+  });
+});
+
+describe('isRemoteWriteStale', () => {
+  // Firestore Timestamp-shaped values (see toMillis) and plain millis numbers
+  // are used interchangeably, same as elsewhere in this file's tests.
+  const ts = (ms) => ({ toMillis: () => ms });
+
+  it('flags a remote write strictly older than the last one this device has observed (a stale device pushing a delayed write)', () => {
+    expect(isRemoteWriteStale(ts(1000), 2000)).toBe(true);
+  });
+
+  it('does not flag a remote write newer than the last one observed', () => {
+    expect(isRemoteWriteStale(ts(3000), 2000)).toBe(false);
+  });
+
+  it('does not flag a remote write with the SAME timestamp already observed (this device`s own echo, or a duplicate delivery — not evidence of staleness)', () => {
+    expect(isRemoteWriteStale(ts(2000), 2000)).toBe(false);
+  });
+
+  it('never flags anything when this device has not yet observed any server-confirmed timestamp (first pull/subscribe of a session — nothing to compare against)', () => {
+    expect(isRemoteWriteStale(ts(1000), null)).toBe(false);
+    expect(isRemoteWriteStale(ts(1000), undefined)).toBe(false);
+  });
+
+  it('never flags a remote doc missing lastWriteAt entirely (an older doc that predates this field) even if this device has observed a later timestamp elsewhere', () => {
+    expect(isRemoteWriteStale(undefined, 2000)).toBe(false);
+    expect(isRemoteWriteStale(null, 2000)).toBe(false);
+  });
+
+  it('works with plain millis numbers (as used in tests) as well as Timestamp-shaped objects', () => {
+    expect(isRemoteWriteStale(1000, 2000)).toBe(true);
+    expect(isRemoteWriteStale(3000, 2000)).toBe(false);
   });
 });
 
