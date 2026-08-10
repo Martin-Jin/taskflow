@@ -511,8 +511,11 @@ cached copy.
   short even with a large project list.
   - **List** — searchable/filterable; add/edit/complete/delete/lock tasks
     (adding requires a due date); open a task to edit every field, manage
-    subtasks, set dependencies, mark it as able to run unattended, or force
-    it to be scheduled entirely on its due date ("Enforce due date"). Making
+    subtasks, set dependencies, mark it as able to run unattended, force
+    it to be scheduled entirely on its due date ("Enforce due date"), or
+    exclude it from Re-balance schedule entirely (from the task's "⋯" menu,
+    or when adding it) so it's only ever scheduled by dragging it onto the
+    calendar yourself. Making
     a task recurring automatically makes its parent (or sub-tasks) recurring
     too, since they represent the steps toward the same repeating goal — no
     need to set it on both sides yourself.
@@ -565,11 +568,12 @@ every month after Book appointment"* — auto-detects a due date, Todoist's
 `p1`–`p4` priority shorthand, a recurrence rule, an estimated duration
 (`"~2 hours"`, `"45 min"`), whether it "can run unattended", an earliest
 schedulable date (`"not before Friday"`, `"don't start until tomorrow"`,
-`"can't start before March 3"`), a plain URL, a dependency, a `#project`
-mention, and one or more `@label` mentions, surfacing each as a dismissible
-chip rather than applying anything silently. Dismissing a chip blocks that
-exact phrase from re-triggering until you edit it. See
-`src/utils/smartParse.js` and `src/hooks/useSmartTaskTitle.js`.
+`"can't start before March 3"`), `!noauto` / `!manual` to exclude the task
+from Re-balance schedule, a plain URL, a dependency, a `#project` mention,
+and one or more `@label` mentions, surfacing each as a dismissible chip
+rather than applying anything silently. Dismissing a chip blocks that exact
+phrase from re-triggering until you edit it. See `src/utils/smartParse.js`
+and `src/hooks/useSmartTaskTitle.js`.
 
 **Recurrence** covers the phrasings Todoist's own natural-language quick-add
 produces: `"every day"` / `"daily"`, `"every 2 weeks"` / `"fortnightly"`,

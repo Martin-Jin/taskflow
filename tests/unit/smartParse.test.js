@@ -126,6 +126,23 @@ describe('parseTaskText', () => {
     expect(result.detected.earliestDate).toBeTruthy();
     expect(result.detected.earliestDate.matchedText).toBe('no sooner than next week');
   });
+
+  it('detects "!noauto" as an exclude-from-auto-schedule mention and strips it', () => {
+    const result = parseTaskText('Water the garden !noauto');
+    expect(result.detected.excludeFromAutoSchedule).toEqual({ matchedText: '!noauto', index: expect.any(Number) });
+    expect(result.cleanedTitle).toBe('Water the garden');
+  });
+
+  it('also accepts "!manual" for the same exclude-from-auto-schedule mention', () => {
+    const result = parseTaskText('Water the garden !manual');
+    expect(result.detected.excludeFromAutoSchedule).toEqual({ matchedText: '!manual', index: expect.any(Number) });
+    expect(result.cleanedTitle).toBe('Water the garden');
+  });
+
+  it('does not detect exclude-from-auto-schedule when there is no "!" trigger', () => {
+    const result = parseTaskText('Water the garden manually noauto');
+    expect(result.detected.excludeFromAutoSchedule).toBeUndefined();
+  });
 });
 
 describe('findLinkPhrases', () => {

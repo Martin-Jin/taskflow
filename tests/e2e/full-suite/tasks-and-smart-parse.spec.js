@@ -800,6 +800,43 @@ test.describe('Smart parse', () => {
     expectNoErrors(errors);
   });
 
+  test('detects "!noauto" as an exclude-from-auto-schedule chip, saves it, and the task detail menu can toggle it back off', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E noauto task ${RUN_ID}`;
+    const titleInput = page.getByPlaceholder('Task name');
+    await titleInput.fill(`${title} !noauto`);
+    await page.waitForTimeout(400);
+
+    const chipsText = await page.locator('.smart-chip-row').innerText();
+    expect(chipsText).toMatch(/Excluded from auto-schedule/i);
+
+    // "More options" pill should show its "is-set" state once the checkbox
+    // is implicitly checked via the smart-parsed chip.
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // Toggle back off via the "..." menu, mirroring the Lock/Unlock toggle.
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.waitForTimeout(200);
+    const menuItem = page.getByRole('menuitem', { name: /auto-schedule/i });
+    await expect(menuItem).toHaveText(/Include in auto-schedule/i);
+    await menuItem.click();
+    await page.waitForTimeout(300);
+
+    // Re-open the menu and confirm the label flipped, confirming the toggle persisted.
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.waitForTimeout(200);
+    await expect(page.getByRole('menuitem', { name: /auto-schedule/i })).toHaveText(/Exclude from auto-schedule/i);
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
   test('multi-word "#Project Name" resolves the full project (not just its first word) even when another project shares that first word', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);

@@ -462,6 +462,10 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       // by dragging them onto a calendar, which produces a block in that one
       // user's own local, unshared blocks array.
       !t.sharedProjectId &&
+      // User opted this task out of auto-scheduling entirely (see the Task
+      // typedef's excludeFromAutoSchedule doc comment) — it can still be
+      // scheduled manually by dragging it onto the calendar.
+      !t.excludeFromAutoSchedule &&
       !!resolveDueDate(t, taskById)
   );
 

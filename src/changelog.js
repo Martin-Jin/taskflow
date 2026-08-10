@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '3.8.0',
+    date: '2026-08-10',
+    title: 'Exclude a task from auto-scheduling',
+    changes: [
+      'Tasks now have an "Exclude from auto-schedule" toggle (in the task\'s "..." menu, or when adding a new task) — Re-balance schedule will skip it entirely, though you can still drag it onto the calendar yourself.',
+      'Smart parse recognizes "!noauto" and "!manual" typed into a task title as shorthand for the same thing.',
+    ],
+  },
+  {
     version: '3.7.0',
     date: '2026-08-10',
     title: 'Smart parse now understands "not before <date>"',

@@ -328,6 +328,25 @@ describe('rebalance', () => {
     expect(result.blocks.some((b) => b.id === 'b-rec-future')).toBe(true);
     expect(result.stats.blocksCleared).toBe(0);
   });
+
+  it('never schedules a task with excludeFromAutoSchedule set, even though it has a resolvable due date and remaining hours', () => {
+    const tasks = [
+      { id: 'noauto', title: 'Manual only', excludeFromAutoSchedule: true, estimatedHours: 1, dueDate: today },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'noauto')).toBe(false);
+  });
+
+  it('clears an excluded task\'s existing unlocked block instead of leaving it in place', () => {
+    const tasks = [
+      { id: 'noauto2', title: 'Newly excluded', excludeFromAutoSchedule: true, estimatedHours: 1, dueDate: today },
+    ];
+    const existingBlocks = [
+      { id: 'b-noauto2', taskId: 'noauto2', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-noauto2')).toBe(false);
+  });
 });
 
 // Coverage for `todayOnly` (used by SchedulerContext.completeTask so

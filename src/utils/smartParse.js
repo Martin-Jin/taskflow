@@ -22,8 +22,8 @@
  *
  * Detection runs in sequence — link, "not before <date>"/earliest date, due
  * date, recurrence, priority, duration, "can run unattended", "on the
- * day"/enforce due date, dependency, project, then labels — stripping each
- * match out of the working text
+ * day"/enforce due date, "!noauto" (exclude from auto-schedule), dependency,
+ * project, then labels — stripping each match out of the working text
  * before the next detector runs. This keeps the dependency fragment (which
  * captures "everything after the trigger word", up to the next "@"/"#" or
  * the end of the string) free of unrelated phrases typed after it, e.g.
@@ -136,6 +136,19 @@ function findEarliestDatePhrase(text) {
   if (!dateMatch) return null;
   const matchedText = text.slice(m.index, m.index + m[0].length + dateMatch.index + dateMatch.matchedText.length);
   return { iso: dateMatch.iso, matchedText, index: m.index };
+}
+
+/**
+ * "!noauto" (also accepts "!manual") — a bang-prefixed shorthand, distinct
+ * from the "#project"/"@label" mentions, that opts a task out of the
+ * auto-scheduler entirely (matches Task.excludeFromAutoSchedule — see
+ * rebalanceEngine.js's eligibleTasks filter). A "!" prefix keeps it from
+ * colliding with any plain English word a title might otherwise contain.
+ */
+function findExcludeFromAutoSchedulePhrase(text) {
+  const m = text.match(/!(?:noauto|manual)\b/i);
+  if (!m) return null;
+  return { matchedText: m[0], index: m.index };
 }
 
 /**
@@ -310,6 +323,7 @@ function findLabelPhrases(text) {
  *     priority?: {level: string, matchedText: string},
  *     enforceDueDate?: {matchedText: string},
  *     earliestDate?: {iso: string, matchedText: string},
+ *     excludeFromAutoSchedule?: {matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
  *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
  *     labels?: Array<{name: string, matchedText: string}>,
@@ -389,6 +403,12 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (enforceDueDateMatch) {
     detected.enforceDueDate = enforceDueDateMatch;
     working = removeMatch(working, enforceDueDateMatch.matchedText);
+  }
+
+  const excludeFromAutoScheduleMatch = findExcludeFromAutoSchedulePhrase(working);
+  if (excludeFromAutoScheduleMatch) {
+    detected.excludeFromAutoSchedule = excludeFromAutoScheduleMatch;
+    working = removeMatch(working, excludeFromAutoScheduleMatch.matchedText);
   }
 
   const depMatch = findDependencyPhrase(working, existingTasks);

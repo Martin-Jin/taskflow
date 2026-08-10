@@ -113,4 +113,17 @@ describe('needsRescheduleOnTaskUpdate', () => {
   it('does not flag isLocked already false being redundantly set to false', () => {
     expect(needsRescheduleOnTaskUpdate(baseTask, { isLocked: false }, true)).toBe(false);
   });
+
+  it('flags turning excludeFromAutoSchedule on, even with an existing block to invalidate', () => {
+    expect(needsRescheduleOnTaskUpdate(baseTask, { excludeFromAutoSchedule: true }, true)).toBe(true);
+  });
+
+  it('flags turning excludeFromAutoSchedule off so the task can be placed for the first time', () => {
+    const excludedTask = { ...baseTask, excludeFromAutoSchedule: true };
+    expect(needsRescheduleOnTaskUpdate(excludedTask, { excludeFromAutoSchedule: false }, false)).toBe(true);
+  });
+
+  it('does not flag excludeFromAutoSchedule already false being redundantly set to false', () => {
+    expect(needsRescheduleOnTaskUpdate(baseTask, { excludeFromAutoSchedule: false }, true)).toBe(false);
+  });
 });

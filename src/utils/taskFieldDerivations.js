@@ -23,6 +23,14 @@ export function deriveRemainingHoursOnEstimateChange(currentRemainingHours, curr
  * that feeds the scheduler. */
 const OTHER_SCHEDULING_FIELDS = ['earliestDate', 'enforceDueDate', 'dependsOn', 'priority', 'isPassive', 'fixedTime'];
 
+// excludeFromAutoSchedule is checked separately below (mirroring isLocked)
+// rather than through OTHER_SCHEDULING_FIELDS: turning it ON removes the task
+// from eligibleTasks entirely, so there's no "existing block" for the usual
+// otherSchedulingFieldChanged branch to invalidate — the rebalance itself is
+// what has to remove any block it already placed. Turning it OFF is the
+// mirror of unlocking a task: newly eligible, needs a rebalance to be placed
+// for the first time even if it currently has no block to invalidate.
+
 function isSameSchedulingValue(a, b) {
   if (Array.isArray(a) || Array.isArray(b)) {
     const arrA = Array.isArray(a) ? a : [];
@@ -65,6 +73,13 @@ export function needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedSchedu
   // has remainingHours forced to 0, so it has no existing block to
   // invalidate; it needs a rebalance to be placed for the first time instead.
   if (prevTask.isLocked && 'isLocked' in updates && updates.isLocked === false) {
+    return true;
+  }
+
+  // Turning excludeFromAutoSchedule ON needs a rebalance so the engine can
+  // drop this task's existing block (if any); turning it OFF needs one so
+  // the engine can place it for the first time, mirroring isLocked above.
+  if ('excludeFromAutoSchedule' in updates && updates.excludeFromAutoSchedule !== !!prevTask.excludeFromAutoSchedule) {
     return true;
   }
 
