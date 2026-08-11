@@ -63,6 +63,47 @@ describe('parseTaskText', () => {
     expect(cleanedTitle).toBe('Ship release');
   });
 
+  it('resolves an exact title match for "sub of <task>"', () => {
+    const existingTasks = [{ id: 't1', title: 'Video Assignment' }, { id: 't2', title: 'Essay Assignment' }];
+    const { detected, cleanedTitle } = parseTaskText('Draft script sub of Video Assignment', { existingTasks });
+
+    expect(detected.subOf.task).toEqual(existingTasks[0]);
+    expect(detected.subOf.fragment).toBe('Video Assignment');
+    expect(cleanedTitle).toBe('Draft script');
+  });
+
+  it('resolves an unambiguous fuzzy/substring match for "subtask of <task>"', () => {
+    const existingTasks = [{ id: 't1', title: 'Video Assignment for Class' }];
+    const { detected, cleanedTitle } = parseTaskText('Draft script subtask of Video Assignment', { existingTasks });
+
+    expect(detected.subOf.task).toEqual(existingTasks[0]);
+    expect(cleanedTitle).toBe('Draft script');
+  });
+
+  it('returns a null task with the raw fragment preserved when "sub of <task>" is ambiguous or has no match', () => {
+    const existingTasks = [{ id: 't1', title: 'Video Assignment' }, { id: 't2', title: 'Video Assignment Two' }];
+    const { detected } = parseTaskText('Draft script sub of Video Assignment', { existingTasks: [] });
+    expect(detected.subOf.task).toBeNull();
+    expect(detected.subOf.fragment).toBe('Video Assignment');
+
+    const ambiguous = parseTaskText('Draft script sub of Video', { existingTasks });
+    expect(ambiguous.detected.subOf.task).toBeNull();
+    expect(ambiguous.detected.subOf.fragment).toBe('Video');
+  });
+
+  it('leaves a trailing "#project"/"@label" mention alone for a "sub of" fragment bounded at the trigger', () => {
+    const existingTasks = [{ id: 't1', title: 'Design review' }];
+    const { detected, cleanedTitle } = parseTaskText('Draft script sub of Design review #Writing', {
+      existingTasks,
+      projects: [{ id: 'p1', name: 'Writing' }],
+    });
+
+    expect(detected.subOf.task).toEqual(existingTasks[0]);
+    expect(detected.subOf.fragment).toBe('Design review');
+    expect(detected.project.project).toEqual({ id: 'p1', name: 'Writing' });
+    expect(cleanedTitle).toBe('Draft script');
+  });
+
   it('returns plain text with no detections and an unmodified cleanedTitle when nothing matches', () => {
     const result = parseTaskText('Buy groceries and cook dinner');
     expect(result.detected).toEqual({});
@@ -142,6 +183,99 @@ describe('parseTaskText', () => {
   it('does not detect exclude-from-auto-schedule when there is no "!" trigger', () => {
     const result = parseTaskText('Water the garden manually noauto');
     expect(result.detected.excludeFromAutoSchedule).toBeUndefined();
+  });
+});
+
+describe('parseTaskText — "%section" shorthand', () => {
+  it('resolves a unique exact-name match across all projects, with the owning project attached', () => {
+    const projects = [{ id: 'p1', name: 'Home' }, { id: 'p2', name: 'Work' }];
+    const sections = [
+      { id: 's1', name: 'Groceries', projectId: 'p1' },
+      { id: 's2', name: 'Inbox', projectId: 'p2' },
+    ];
+    const { detected, cleanedTitle } = parseTaskText('Buy milk %Groceries', { projects, sections });
+
+    expect(detected.sectionShorthand.section).toEqual(sections[0]);
+    expect(detected.sectionShorthand.project).toEqual(projects[0]);
+    expect(detected.sectionShorthand.candidates).toEqual([]);
+    expect(cleanedTitle).toBe('Buy milk');
+  });
+
+  it('resolves an unambiguous substring match', () => {
+    const projects = [{ id: 'p1', name: 'Home' }];
+    const sections = [{ id: 's1', name: 'Groceries List', projectId: 'p1' }];
+    const { detected } = parseTaskText('Buy milk %Groc', { projects, sections });
+
+    expect(detected.sectionShorthand.section).toEqual(sections[0]);
+    expect(detected.sectionShorthand.project).toEqual(projects[0]);
+  });
+
+  it('returns every candidate when multiple projects share an exact-name section, without picking one', () => {
+    const projects = [{ id: 'p1', name: 'Home' }, { id: 'p2', name: 'Work' }];
+    const sections = [
+      { id: 's1', name: 'Todo', projectId: 'p1' },
+      { id: 's2', name: 'Todo', projectId: 'p2' },
+    ];
+    const { detected } = parseTaskText('Plan trip %Todo', { projects, sections });
+
+    expect(detected.sectionShorthand.section).toBeNull();
+    expect(detected.sectionShorthand.project).toBeNull();
+    expect(detected.sectionShorthand.fragment).toBe('Todo');
+    expect(detected.sectionShorthand.candidates).toEqual([
+      { section: sections[0], project: projects[0] },
+      { section: sections[1], project: projects[1] },
+    ]);
+  });
+
+  it('exact-name match beats substring match when only the exact match is unique', () => {
+    const projects = [{ id: 'p1', name: 'Home' }];
+    const sections = [
+      { id: 's1', name: 'Todo', projectId: 'p1' },
+      { id: 's2', name: 'Todo List', projectId: 'p1' },
+    ];
+    const { detected } = parseTaskText('Plan trip %Todo', { projects, sections });
+
+    expect(detected.sectionShorthand.section).toEqual(sections[0]);
+  });
+
+  it('returns null section/project with the raw fragment preserved when there is no match at all', () => {
+    const { detected, cleanedTitle } = parseTaskText('Plan trip %Nonexistent', { projects: [], sections: [] });
+
+    expect(detected.sectionShorthand.section).toBeNull();
+    expect(detected.sectionShorthand.project).toBeNull();
+    expect(detected.sectionShorthand.fragment).toBe('Nonexistent');
+    expect(detected.sectionShorthand.candidates).toEqual([]);
+    expect(cleanedTitle).toBe('Plan trip');
+  });
+
+  it('does not detect anything when there is no "%" trigger', () => {
+    const result = parseTaskText('Plan trip to the store');
+    expect(result.detected.sectionShorthand).toBeUndefined();
+  });
+
+  it('lets an explicit "#Project/Section" mention take priority and does not double-match the same text', () => {
+    const projects = [{ id: 'p1', name: 'Home' }];
+    const sections = [{ id: 's1', name: 'Groceries', projectId: 'p1' }];
+    // "#Home/Groceries" is consumed entirely by findProjectPhrase (including the
+    // section name after the slash) before the "%section" detector ever runs, so
+    // there's no leftover "%"-triggered text left for it to match.
+    const { detected, cleanedTitle } = parseTaskText('Buy milk #Home/Groceries', { projects, sections });
+
+    expect(detected.project.project).toEqual(projects[0]);
+    expect(detected.project.section).toEqual(sections[0]);
+    expect(detected.sectionShorthand).toBeUndefined();
+    expect(cleanedTitle).toBe('Buy milk');
+  });
+
+  it('detects a standalone "%section" mention alongside an unrelated "#project" mention in the same title', () => {
+    const projects = [{ id: 'p1', name: 'Home' }, { id: 'p2', name: 'Work' }];
+    const sections = [{ id: 's1', name: 'Groceries', projectId: 'p1' }];
+    const { detected, cleanedTitle } = parseTaskText('Buy milk #Work %Groceries', { projects, sections });
+
+    expect(detected.project.project).toEqual(projects[1]);
+    expect(detected.sectionShorthand.section).toEqual(sections[0]);
+    expect(detected.sectionShorthand.project).toEqual(projects[0]);
+    expect(cleanedTitle).toBe('Buy milk');
   });
 });
 

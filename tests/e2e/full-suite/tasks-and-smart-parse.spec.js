@@ -42,6 +42,24 @@ function todayIsoLocal() {
   return `${y}-${m}-${day}`;
 }
 
+// Drags one `.task-row` onto another via native HTML5 DnD (TaskListPanel's
+// rows are `draggable` + onDragStart/onDrop — see its SUB-TASK DRAG note).
+// Chromium fires its real drag machinery off plain mouse events as long as the
+// move happens in several steps past the drag threshold. Releases at the
+// target row's vertical centre, since a drop grazing a row's top/bottom edge
+// deliberately doesn't arm (see useReparentDrag's EDGE_DEAD_ZONE_PX).
+async function rowDnd(page, source, target) {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2 + 12, sourceBox.y + sourceBox.height / 2 + 12, { steps: 5 });
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 10 });
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+}
+
 test.describe('Task CRUD', () => {
   test('creates a task with full metadata, edits it, then deletes it', async ({ page }) => {
     const errors = trackConsoleErrors(page);
@@ -159,6 +177,61 @@ test.describe('Sub-tasks', () => {
     await expect(subtaskCheckbox).toBeChecked();
 
     await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
+  test('dragging one list row onto another makes it a sub-task, and dropping it back on itself is a no-op', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    // Two fresh top-level tasks with a shared prefix, so they're easy to
+    // isolate from mock data's own rows via the search box.
+    const prefix = `E2E Drag ${RUN_ID}`;
+    for (const suffix of ['Parent', 'Child']) {
+      await openAddTask(page);
+      await page.getByPlaceholder('Task name').fill(`${prefix} ${suffix}`);
+      await submitAddTask(page);
+    }
+
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill(prefix);
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape'); // dismiss the search dropdown so it can't cover the rows
+
+    const parentRow = page.locator('.task-row', { hasText: `${prefix} Parent` }).first();
+    const childRow = page.locator('.task-row', { hasText: `${prefix} Child` }).first();
+    await expect(parentRow).toBeVisible();
+    await expect(childRow).toBeVisible();
+
+    // Dropping a row on ITSELF is never a valid reparent (getIneligibleParentIds
+    // includes the dragged task) — no nesting, no crash.
+    await rowDnd(page, childRow, childRow);
+    await expect(page.locator('.task-row-child', { hasText: `${prefix} Child` })).toHaveCount(0);
+
+    await rowDnd(page, childRow, parentRow);
+
+    // The child is now nested (a `.task-row-child`, indented under its parent)
+    // and the parent shows the sub-task count badge.
+    await expect(page.locator('.task-row-child', { hasText: `${prefix} Child` })).toBeVisible();
+    await expect(parentRow.locator('.task-row-subtask-count')).toContainText('1');
+
+    // Persisted, not just a visual nesting: the parent's detail modal lists it.
+    await parentRow.click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText('Sub-tasks (0/1)')).toBeVisible();
+    await closeAnyModal(page);
+
+    // The reverse drop would be a cycle (a task can't become a child of its own
+    // sub-task) — getIneligibleParentIds rules it out, so the target never arms
+    // and the drop is a no-op rather than corrupting the hierarchy.
+    const nestedChildRow = page.locator('.task-row-child', { hasText: `${prefix} Child` }).first();
+    await rowDnd(page, parentRow, nestedChildRow);
+    await expect(page.locator('.task-row-child', { hasText: `${prefix} Child` })).toBeVisible();
+    await expect(page.locator('.task-row.is-reparent-target')).toHaveCount(0);
+    await expect(page.locator('.task-row', { hasText: `${prefix} Parent` }).first()).not.toHaveClass(/task-row-child/);
+
+    await clearSearch(page);
     expectNoErrors(errors);
   });
 

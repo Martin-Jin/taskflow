@@ -59,9 +59,20 @@ const SECTIONS = [
     description: 'Links this task to run after another task, matched by title.',
   },
   {
+    title: 'Sub-task of',
+    examples: ['sub of Video Assignment', 'subtask of Design review'],
+    description: 'Makes this task a sub-task of another, matched by title.',
+  },
+  {
     title: 'Project',
     examples: ['#Health', '#Tasks/Errands'],
     description: 'Assigns the task to a project, optionally a section within it.',
+  },
+  {
+    title: 'Section shorthand',
+    examples: ['%Errands', '%Backlog'],
+    description:
+      'A shorter way to pick a section without typing its project — searches every project\'s sections. If more than one project has a matching section, tap the suggestion to choose which one you meant.',
   },
   {
     title: 'Label',

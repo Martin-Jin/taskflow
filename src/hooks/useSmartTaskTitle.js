@@ -39,6 +39,8 @@ import {
   Clock,
   Link as LinkIcon,
   Ban,
+  CornerUpRight,
+  ListFilter,
 } from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
 import { formatDisplayDate, formatTime12h } from '../utils/dateUtils';
@@ -58,7 +60,9 @@ const SCALAR_FIELD_TYPES = [
   'earliestDate',
   'excludeFromAutoSchedule',
   'dependency',
+  'subOf',
   'project',
+  'sectionShorthand',
 ];
 
 export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields }) {
@@ -150,6 +154,38 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields 
   }
 
   /**
+   * Resolve an ambiguous (multi-candidate) chip by applying one specific
+   * candidate the user picked from the chip's disambiguation popover (see
+   * SmartChips' `expandable` chips) — generic across any field that can
+   * produce a `candidates` array, not just `sectionShorthand`, so a future
+   * ambiguous-match field can reuse this same path without changes here.
+   *
+   * `candidate` is field-specific — for `sectionShorthand` it's the
+   * `{project, section}` pair the user clicked. It's forwarded into
+   * `fields[type].apply` as `{ ...candidate, task: null }` so every field's
+   * `apply(match)` can keep reading `match.project`/`match.section`/
+   * `match.task` the same way it already does for a normal (non-ambiguous)
+   * detection — `task: null` is just a filler for fields that also check a
+   * `match.task` shape (none currently do for an expandable field, but this
+   * keeps the match object shape consistent rather than field-dependent).
+   *
+   * Once applied, the ambiguous entry in `smartDetected` is replaced with a
+   * resolved one carrying the same matchedText/fragment (so buildFinalTitle
+   * still strips the right span of text) but the chosen project/section and
+   * an empty candidates list — the same lifecycle a normal chip's
+   * `apply` already produces, so the "Multiple matches" chip turns straight
+   * into the resolved "Project → Section" chip rather than needing a second
+   * keystroke to re-detect.
+   */
+  function applySmartChipCandidate(type, candidate) {
+    const entry = smartDetected[type];
+    if (!entry || !fields[type]) return;
+    const resolvedMatch = { ...entry, ...candidate, candidates: [] };
+    fields[type].apply(resolvedMatch, smartDetected);
+    setSmartDetected((prev) => ({ ...prev, [type]: resolvedMatch }));
+  }
+
+  /**
    * Strip whatever smart-parse phrases are still accepted (visible) out of
    * the saved title. If that leaves nothing (e.g. the whole title was just
    * a smart-parsed link), falls back to `fallback` if the caller passed one
@@ -173,7 +209,7 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields 
     setDismissedKeys(new Set());
   }
 
-  return { smartDetected, handleTitleChange, dismissSmartChip, buildFinalTitle, resetSmartState };
+  return { smartDetected, handleTitleChange, dismissSmartChip, applySmartChipCandidate, buildFinalTitle, resetSmartState };
 }
 
 /**
@@ -206,6 +242,10 @@ export function buildSmartChips(smartDetected) {
       (smartDetected.dependency.task
         ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
         : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
+    smartDetected.subOf &&
+      (smartDetected.subOf.task
+        ? { type: 'subOf', icon: CornerUpRight, label: `Sub-task of: ${smartDetected.subOf.task.title}` }
+        : { type: 'subOf', icon: HelpCircle, label: `No match for "${smartDetected.subOf.fragment}"` }),
     smartDetected.project &&
       (smartDetected.project.project
         ? {
@@ -218,6 +258,22 @@ export function buildSmartChips(smartDetected) {
               : `Project: ${smartDetected.project.project.name}`,
           }
         : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
+    smartDetected.sectionShorthand &&
+      (smartDetected.sectionShorthand.candidates.length > 0
+        ? {
+            type: 'sectionShorthand',
+            icon: ListFilter,
+            label: `Multiple matches for "${smartDetected.sectionShorthand.fragment}"`,
+            expandable: true,
+            candidates: smartDetected.sectionShorthand.candidates,
+          }
+        : smartDetected.sectionShorthand.section
+          ? {
+              type: 'sectionShorthand',
+              icon: Folder,
+              label: `Project: ${smartDetected.sectionShorthand.project.name} → ${smartDetected.sectionShorthand.section.name}`,
+            }
+          : { type: 'sectionShorthand', icon: HelpCircle, label: `No section match for "${smartDetected.sectionShorthand.fragment}"` }),
     ...(smartDetected.labels || []).map((m) => ({
       type: 'labels',
       key: `labels:${m.matchedText}`,

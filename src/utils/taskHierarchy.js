@@ -233,6 +233,37 @@ export function getAllDescendants(taskId, tasks) {
 }
 
 /**
+ * Sub-task nesting is capped at 2 levels (task -> sub-task -> sub-task of
+ * that sub-task) — true if `task` is already a sub-task of a sub-task, i.e.
+ * it cannot itself take on any children. Shared by every path that can
+ * create or move a parent/child relationship (adding a new sub-task,
+ * reparenting an existing task via the menu/move-to picker/drag-and-drop, or
+ * smart-parse's "sub of <task>" detector) so they can't drift on the rule.
+ */
+export function isAtMaxSubtaskDepth(task, tasks) {
+  if (!task.parentId) return false;
+  const parent = tasks.find((t) => t.id === task.parentId);
+  return !!(parent && parent.parentId);
+}
+
+/**
+ * Every task id that is NOT a valid new parent for `taskId` — itself (can't
+ * be its own parent), every one of its own descendants (would create a
+ * cycle), and any task already at max sub-task depth (see
+ * isAtMaxSubtaskDepth — it can't take on a child of its own). Used to filter
+ * candidate lists for reparenting UI (the move-to picker, drag-and-drop
+ * targets) and to validate smart-parse's "sub of <task>" match before
+ * applying it, so all three paths enforce the identical rule.
+ */
+export function getIneligibleParentIds(taskId, tasks) {
+  const ids = new Set([taskId, ...getAllDescendants(taskId, tasks).map((t) => t.id)]);
+  tasks.forEach((t) => {
+    if (!ids.has(t.id) && isAtMaxSubtaskDepth(t, tasks)) ids.add(t.id);
+  });
+  return ids;
+}
+
+/**
  * Whether this client may compact `task`'s completed-occurrence history.
  *
  * Compaction is the one non-commutative operation in the recurring-task model

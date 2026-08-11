@@ -243,6 +243,59 @@
   }
 }
 
+/* Wraps a single chip + its optional disambiguation popover so the popover
+   can anchor directly under just that chip rather than the whole row. */
+.smart-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.smart-chip-expandable {
+  cursor: pointer;
+}
+
+/* Disambiguation popover for an "expandable" chip (see SmartChips.jsx) —
+   e.g. "%section" shorthand matching several same-named sections across
+   different projects. Reuses .detail-move-to-popover/.detail-move-to-item's
+   visual language (border/background/shadow/radius) rather than a plain
+   absolutely-positioned list with no matching style. */
+.smart-chip-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  max-width: min(90vw, 280px);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.smart-chip-popover-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smart-chip-popover-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
 /* ----------------------------------------------------------------------
    DependencyPicker — combobox with removable chips, replacing the old
    native <select multiple> (which required an undiscoverable ctrl/cmd
@@ -440,6 +493,83 @@
 .detail-hierarchy-count {
   color: var(--color-text-tertiary, var(--color-text-secondary));
   flex-shrink: 0;
+}
+
+/* "Move to" button — sits at the right end of .detail-hierarchy's flex row,
+   always visible regardless of how much the breadcrumb text truncates (see
+   .detail-hierarchy-link/.detail-hierarchy-current's ellipsis above). Shown
+   even for a standalone task with no parent/children, since that's exactly
+   the case that needs a way to become a sub-task in the first place. */
+.detail-move-to-trigger {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Positioned via useMenuPosition, same contract as .detail-menu-dropdown/
+   .detail-timer-popover above — anchored on desktop, centered with a
+   .menu-popover-backdrop when it wouldn't fit (always forced centered on
+   mobile). Capped to roughly the same width as the "..." menu. */
+.detail-move-to-popover {
+  z-index: 200;
+  width: 260px;
+  max-width: min(90vw, 280px);
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail-move-to-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.detail-move-to-list {
+  max-height: min(50vh, 280px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-move-to-item {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-move-to-item:hover,
+.detail-move-to-item.active {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-move-to-item-none {
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  margin-bottom: 2px;
+}
+
+.detail-move-to-empty {
+  margin: 4px 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 /* Positioned via useMenuPosition (src/hooks/useMenuPosition.js) — portaled

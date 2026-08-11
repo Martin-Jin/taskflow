@@ -172,7 +172,17 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
       dismiss();
       return true;
     }
-    if (e.key === 'Enter' || e.key === 'Tab') {
+    if (e.key === 'Tab') {
+      // Cycles the highlight instead of accepting — matches
+      // useSmartKeywordSuggest's Tab-cycles/Enter-accepts split, so the two
+      // autocomplete popups in this same title field behave consistently.
+      // Shift+Tab cycles backward; wraps in both directions.
+      e.preventDefault();
+      const direction = e.shiftKey ? -1 : 1;
+      setHighlightedIndex((i) => (i + direction + rowCount) % rowCount);
+      return true;
+    }
+    if (e.key === 'Enter') {
       if (highlightedIndex >= rowCount) return false;
       e.preventDefault();
       selectByIndex(highlightedIndex);

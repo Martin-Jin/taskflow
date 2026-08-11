@@ -8,7 +8,10 @@ import { gotoApp, gotoTab, closeAnyModal, trackConsoleErrors, expectNoErrors } f
 // (Board/Gantt/List) by its exact label — mirrors ViewFilterMenu's
 // role="menuitemradio" items.
 async function switchTaskView(page, label) {
-  await page.getByRole('button', { name: /change view or filter/i }).click();
+  // On mobile the same trigger also carries the project actions, so it's
+  // labelled differently (see ViewFilterMenu's `projectActions` prop) — match
+  // either wording so this helper works at both widths.
+  await page.getByRole('button', { name: /change view or filter|view, filter, and project actions/i }).click();
   await page.waitForTimeout(200);
   await page.getByRole('menuitemradio', { name: label, exact: true }).click();
   await page.waitForTimeout(400);
@@ -44,6 +47,70 @@ async function htmlDnd(page, source, target) {
   await page.waitForTimeout(300);
 }
 
+// Same gesture, but released in `column`'s empty space BELOW its last card
+// rather than at its centre — a drop on a card's own body is now the "make
+// sub-task" gesture (see BoardView's DRAG SEMANTICS note), so a section move
+// has to aim at the column background. Falls back to the body's centre when
+// the column has no cards at all.
+async function htmlDndToColumnBackground(page, source, column) {
+  const body = column.locator('.board-column-body');
+  const bodyBox = await body.boundingBox();
+  const lastCard = body.locator('.board-card').last();
+  const lastCardBox = (await lastCard.count()) > 0 ? await lastCard.boundingBox() : null;
+  const dropY = lastCardBox
+    ? Math.min(lastCardBox.y + lastCardBox.height + 20, bodyBox.y + bodyBox.height - 12)
+    : bodyBox.y + bodyBox.height / 2;
+
+  const sourceBox = await source.boundingBox();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2 + 10, sourceBox.y + sourceBox.height / 2 + 10, { steps: 5 });
+  await page.mouse.move(bodyBox.x + bodyBox.width / 2, dropY, { steps: 10 });
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+}
+
+// Long-press touch drag (the mobile equivalent of the two helpers above —
+// see useReparentDrag's touch path). Holds past LONG_PRESS_MS without moving
+// so the gesture reads as a drag rather than a scroll, then tracks to the
+// target and releases.
+async function touchDnd(page, source, target) {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  const from = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 };
+  const to = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };
+  // Dispatched straight at the source element (touchmove/touchend go to window
+  // listeners, which these bubble up to) rather than via page.touchscreen —
+  // Playwright's tap is a single down/up with no hold, so it can't express the
+  // long press the gesture is gated on.
+  await source.evaluate(
+    async (el, { from, to }) => {
+      function touchEvent(type, x, y) {
+        const touch = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+        el.dispatchEvent(
+          new TouchEvent(type, {
+            touches: type === 'touchend' ? [] : [touch],
+            targetTouches: type === 'touchend' ? [] : [touch],
+            changedTouches: [touch],
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+      }
+      touchEvent('touchstart', from.x, from.y);
+      await new Promise((r) => setTimeout(r, 400)); // past LONG_PRESS_MS (250ms)
+      for (let i = 1; i <= 8; i += 1) {
+        touchEvent('touchmove', from.x + ((to.x - from.x) * i) / 8, from.y + ((to.y - from.y) * i) / 8);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      touchEvent('touchend', to.x, to.y);
+    },
+    { from, to }
+  );
+  await page.waitForTimeout(500);
+}
+
 test.describe('Board view', () => {
   test('drag a card from one column to another moves it between sections', async ({ page }) => {
     const errors = trackConsoleErrors(page);
@@ -72,7 +139,10 @@ test.describe('Board view', () => {
     await expect(card).toBeVisible();
     const cardTitle = (await card.locator('.board-card-title').innerText()).trim();
 
-    await htmlDnd(page, card, inProgressColumn.locator('.board-column-body'));
+    // Released in the column body's empty space near the bottom, deliberately
+    // NOT on one of its existing cards — a card-on-card drop is the "make
+    // sub-task" gesture now (see the reparent test below).
+    await htmlDndToColumnBackground(page, card, inProgressColumn);
 
     // The card should now render inside In Progress's column body instead of
     // Planning's, and Planning's count should have dropped by one.
@@ -88,6 +158,85 @@ test.describe('Board view', () => {
     await closeAnyModal(page);
 
     expectNoErrors(errors);
+  });
+
+  // Adds two fresh cards to `column` and returns their titles — mock data only
+  // seeds one card per Work section, and the reparent gesture needs a pair in
+  // the SAME column (a cross-column drop would also be a legal section move,
+  // so a same-column pair isolates the reparent behaviour on its own).
+  async function seedTwoCards(page, column, runId) {
+    const titles = [`E2E Parent ${runId}`, `E2E Child ${runId}`];
+    for (const title of titles) {
+      await column.getByRole('button', { name: /add task/i }).click();
+      await page.getByPlaceholder('Task name').fill(title);
+      await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
+      await page.waitForTimeout(400);
+    }
+    return titles;
+  }
+
+  test('drag a card onto another card makes it a sub-task of that card', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+    await switchToProject(page, 'Work');
+    await switchTaskView(page, 'Board');
+
+    const planningColumn = page.locator('.board-column', { has: page.locator('.board-column-title', { hasText: 'Planning' }) });
+    await expect(planningColumn).toBeVisible();
+    const [parentTitle, childTitle] = await seedTwoCards(page, planningColumn, Date.now());
+    const parentCard = planningColumn.locator('.board-card', { hasText: parentTitle });
+    const childCard = planningColumn.locator('.board-card', { hasText: childTitle });
+
+    await htmlDnd(page, childCard, parentCard);
+
+    // Board never gives a sub-task its own card (see BoardView's SUB-TASKS
+    // note) — it rolls up into the parent's "x/y" progress badge instead, so
+    // the dragged card disappearing from the board IS the visible outcome.
+    await expect(page.locator('.board-card-title', { hasText: childTitle })).toHaveCount(0);
+    await expect(planningColumn.locator('.board-card', { hasText: parentTitle }).locator('.board-card-meta')).toContainText('0/1');
+
+    // And it really is a child, not just hidden from the board: the parent's
+    // detail modal now lists it as a sub-task.
+    await planningColumn.locator('.board-card', { hasText: parentTitle }).click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText('Sub-tasks (0/1)')).toBeVisible();
+    await expect(page.locator('.subtask-row', { hasText: childTitle })).toBeVisible();
+    await closeAnyModal(page);
+
+    expectNoErrors(errors);
+  });
+
+  test('long-press touch drag reparents a card on mobile', async ({ browser }) => {
+    // Needs a genuinely touch-capable context, not just a phone-sized window:
+    // the gesture is driven entirely by touch events (see useReparentDrag's
+    // touch path), which a plain viewport resize doesn't enable.
+    const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+    await switchToProject(page, 'Work');
+    await switchTaskView(page, 'Board');
+
+    const planningColumn = page.locator('.board-column', { has: page.locator('.board-column-title', { hasText: 'Planning' }) });
+    await expect(planningColumn).toBeVisible();
+    const [parentTitle, childTitle] = await seedTwoCards(page, planningColumn, Date.now());
+
+    await touchDnd(
+      page,
+      planningColumn.locator('.board-card', { hasText: childTitle }),
+      planningColumn.locator('.board-card', { hasText: parentTitle })
+    );
+
+    await expect(page.locator('.board-card-title', { hasText: childTitle })).toHaveCount(0);
+    await planningColumn.locator('.board-card', { hasText: parentTitle }).click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText('Sub-tasks (0/1)')).toBeVisible();
+    await closeAnyModal(page);
+
+    expectNoErrors(errors);
+    await context.close();
   });
 
   test('drag a column header grip reorders columns, and the order survives a reload', async ({ page }) => {
@@ -137,9 +286,11 @@ test.describe('Board view', () => {
   // exist anywhere in this codebase today — TaskListPanel's rows and
   // BoardView's cards are both purely sorted (by due date/priority/etc,
   // see filterTasksByStatus) and only animate reordering, they don't accept
-  // a user drag to reprioritize order within a column (BoardView's own
+  // a user drag to reprioritize order within a column (BoardView's column
   // onDrop only ever changes `sectionId`, never a same-column position — see
-  // handleColumnDrop's early-return when `task.sectionId === col.id`).
+  // handleColumnDrop's early-return when `task.sectionId === col.id`; a
+  // card-on-card drop is the separate sub-task reparent gesture, tested
+  // above, not a reorder).
   // Skipping rather than asserting behavior that isn't implemented.
   test.skip('drag-reorder two tasks within the same column (no such feature exists yet)', () => {});
 

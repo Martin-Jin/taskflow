@@ -48,9 +48,26 @@
  * target for card drags, and making the entire thing draggable would make
  * "drag a card out of column A" ambiguous with "drag column A". The two
  * drags also carry different dataTransfer types for the same reason.
- * Desktop only, matching the card drag (no drag gesture on touch).
+ * Desktop only, matching the card's section-move drag (mobile's only drag
+ * gesture is the sub-task reparent above).
  * The synthetic "No Section" column is not reorderable — it isn't a real
  * Section and always leads, so it has no persisted id.
+ *
+ * DRAG SEMANTICS: three separate drags coexist here, and each has to be
+ * unambiguous about which one the user meant.
+ *  1. Card -> column background = move to that section (the original gesture).
+ *  2. Card -> another CARD's body = make it a sub-task of that card (see
+ *     hooks/useReparentDrag.js, shared with TaskListPanel's rows). The card's
+ *     own dragover/drop handlers `stopPropagation()` once they arm, so the
+ *     column body underneath doesn't also treat the same drop as a section
+ *     move — the same trick handleColumnReorderOver already uses. A card only
+ *     arms when the pointer is clearly inside its box (not grazing an edge)
+ *     and the target is a legal parent, so dragging a card *past* another one
+ *     on the way to a column still reads as a plain section move.
+ *  3. Column grip -> column = reorder columns (see COLUMN REORDER below).
+ * 1 and 3 are desktop-only; 2 also works on mobile via a long-press touch
+ * drag, since promoting a task to a sub-task is a core organising action and
+ * mobile had no way to do it by drag at all.
  *
  * CARD MOTION: cards are framer-motion elements so that a card leaving a
  * column (completed, deleted, dragged to another column, filtered out) lets
@@ -80,11 +97,13 @@ import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMotionEnabled } from '../../hooks/useMotionEnabled';
 import { usePersistedState } from '../../hooks/usePersistedState';
+import { useReparentDrag } from '../../hooks/useReparentDrag';
 import AddTaskModal from '../Modals/AddTaskModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import { taskMatchesQuery } from '../Common/SearchBar';
 import AddTaskFabGroup from '../Common/AddTaskFabGroup';
+import ReparentDropHint from '../Common/ReparentDropHint';
 import { formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
@@ -175,10 +194,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const [addingSection, setAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
   // Native HTML5 DnD for cross-column moves (mirrors WeekView's block drag)
-  // — disabled on mobile, where there's no drag gesture to hook into.
+  // — desktop only, since there's no native touch DnD to hook into. The
+  // "in the air" card state is tracked by useReparentDrag below instead of a
+  // separate flag here, so it covers the touch path too.
   const isMobile = useIsMobile();
   const motionEnabled = useMotionEnabled();
-  const [dragTaskId, setDragTaskId] = useState(null);
   const [dragOverColumnId, setDragOverColumnId] = useState(undefined); // undefined = none, null = "No Section" column
   // Column reordering — a separate drag from the card drag above, started
   // only from the header's grip handle so it can't hijack a card drop (see
@@ -232,6 +252,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   const isSectionsReadOnly =
     !!selectedProject?.sharedProjectId &&
     computeEffectiveRole(sharedProjects[selectedProject.sharedProjectId], user?.uid) === 'viewer';
+
+  // Card -> card drop = "make this a sub-task of that" (see DRAG SEMANTICS).
+  // Works on both mouse and touch; a viewer can't reparent, same as every
+  // other write on a shared project they only have read access to.
+  const reparent = useReparentDrag({ tasks, updateTask, disabled: isSectionsReadOnly });
 
   // Natural (synced) order, then the user's local drag arrangement layered on
   // top — see utils/boardColumnOrder.js.
@@ -297,11 +322,10 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   }
 
   // --- Drag handlers (native HTML5 DnD for cross-column moves) --------------
-  function handleCardDragStart(e, task) {
-    e.dataTransfer.setData('text/plain', task.id);
-    setDragTaskId(task.id);
-  }
-
+  // A card drag is started by useReparentDrag's own dragStart (it sets the same
+  // `text/plain` task-id payload handleColumnDrop below reads back), so one
+  // gesture can end either as a section move or as a reparent depending on
+  // which drop target it lands on — see DRAG SEMANTICS.
   function handleColumnDragOver(e, col) {
     e.preventDefault();
     setDragOverColumnId(col.id);
@@ -310,7 +334,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   function handleColumnDrop(e, col) {
     e.preventDefault();
     setDragOverColumnId(undefined);
-    setDragTaskId(null);
+    reparent.endDrag();
     if (isSectionsReadOnly) return; // Defense in depth — cards aren't draggable for viewers in the first place.
     // A column-reorder drag passes over column bodies on its way to its drop
     // target; ignore it here so it can't also be treated as a card drop.
@@ -365,26 +389,40 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     // the title's text right of the card's left edge — match that on the
     // meta line below so the two lines' text shares the same left edge.
     const titleIconOffset = (task.isRecurring ? 17 : 0) + (task.isPassive ? 17 : 0);
+    const isReparentTarget = reparent.targetId === task.id;
     return (
       <motion.div
         key={task.id}
         layout={motionEnabled ? 'position' : false}
         transition={CARD_TRANSITION}
         exit={motionEnabled ? CARD_EXIT : undefined}
-        className={`board-card ${dragTaskId === task.id ? 'is-dragging' : ''}`}
+        className={`board-card ${reparent.draggedId === task.id ? 'is-dragging' : ''} ${
+          isReparentTarget ? 'is-reparent-target' : ''
+        }`}
         style={{ borderLeftColor: priorityColor(task.priority) }}
         role="button"
         tabIndex={0}
         // framer-motion normally swallows onDragStart/onDragEnd (they're its
         // own gesture props) — it only forwards them to the DOM when
         // `draggable` is set, which is exactly the desktop case below, so
-        // native HTML5 DnD keeps working. Mobile passes neither. A viewer
-        // can't move a card between sections either (same rule as the
-        // section-edit controls), so drag is off for them too.
+        // native HTML5 DnD keeps working. Mobile has no native DnD at all, so
+        // it gets the long-press touch path instead (see useReparentDrag). A
+        // viewer can't move or reparent a card (same rule as the section-edit
+        // controls), so both are off for them.
         draggable={!isMobile && !isSectionsReadOnly}
-        onDragStart={isMobile || isSectionsReadOnly ? undefined : (e) => handleCardDragStart(e, task)}
-        onDragEnd={isMobile || isSectionsReadOnly ? undefined : () => setDragTaskId(null)}
-        onClick={() => setEditingTaskId(task.id)}
+        onDragStart={isMobile || isSectionsReadOnly ? undefined : (e) => reparent.handlers.dragStart(e, task.id)}
+        onDragEnd={isMobile || isSectionsReadOnly ? undefined : reparent.endDrag}
+        // Card-level reparent drop zone (desktop). `data-task-id` is what the
+        // touch path resolves the card under the finger by.
+        data-task-id={task.id}
+        onDragOver={isMobile || isSectionsReadOnly ? undefined : (e) => reparent.handlers.dragOver(e, task.id)}
+        onDragLeave={isMobile || isSectionsReadOnly ? undefined : () => reparent.handlers.dragLeave(task.id)}
+        onDrop={isMobile || isSectionsReadOnly ? undefined : (e) => reparent.handlers.drop(e, task.id)}
+        onTouchStart={isSectionsReadOnly ? undefined : (e) => reparent.handlers.touchStart(e, task.id)}
+        onClick={() => {
+          if (reparent.handlers.consumeClick()) return; // trailing click of a long-press drag, not a tap
+          setEditingTaskId(task.id);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -392,6 +430,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
           }
         }}
       >
+        {isReparentTarget && <ReparentDropHint parentTitle={task.title} />}
         <button
           className="board-card-check"
           title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
@@ -599,7 +638,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
               </div>
 
               <div
-                className={`board-column-body ${dragOverColumnId === col.id ? 'is-dragover' : ''}`}
+                // The section-drop tint is suppressed while a card is armed for
+                // a reparent: the card's own dragover stops propagating, so
+                // this state would otherwise stay stuck on from just before
+                // the pointer entered the card, showing both drop hints at once.
+                className={`board-column-body ${dragOverColumnId === col.id && !reparent.targetId ? 'is-dragover' : ''}`}
                 onDragOver={isMobile ? undefined : (e) => handleColumnDragOver(e, col)}
                 onDragLeave={isMobile ? undefined : () => setDragOverColumnId(undefined)}
                 onDrop={isMobile ? undefined : (e) => handleColumnDrop(e, col)}

@@ -198,6 +198,15 @@ could never actually finish that goal on time. Nesting is capped at 2
 levels (task → sub-task → sub-task of that sub-task), enforced going
 forward only.
 
+`parentId` can also be changed after creation — via TaskDetailModal's "..."
+menu ("Remove from parent task"), its breadcrumb "move to" picker, dragging
+one task's card/row onto another in Board/List (`hooks/useReparentDrag.js`,
+shared by both views), or smart-parse's "sub of <task>" title trigger. Every
+one of these funnels through the same `getIneligibleParentIds`/
+`isAtMaxSubtaskDepth` pair in `utils/taskHierarchy.js` to reject an invalid
+target (the task itself, one of its own descendants, or a task already at
+the 2-level cap) so the depth/cycle rule can't drift between entry points.
+
 The moment a task has ≥1 sub-task, it becomes a **container**: it never
 gets its own calendar block again, no matter its own due date or hours —
 only its leaf sub-tasks (or deeper leaves, if nested) do. Its
@@ -924,10 +933,16 @@ files that should change if an external API's shape changes.
 
 **Smart-parse is composed, not monolithic.** Free-text detection for the
 task title is split into small single-purpose detectors
-(`dateParse.js`, `recurrence.js`, plus inline priority/dependency detectors)
-that `smartParse.js` runs in sequence, stripping each match before the next
-detector runs. `useSmartTaskTitle.js` wires that logic into both the Add and
-Edit modals identically so they can't drift apart.
+(`dateParse.js`, `recurrence.js`, plus inline priority/dependency/"sub
+of"/section-shorthand detectors) that `smartParse.js` runs in sequence,
+stripping each match before the next detector runs. `useSmartTaskTitle.js`
+wires that logic into both the Add and Edit modals identically so they can't
+drift apart. A detector that can match more than one candidate ambiguously
+(the standalone "%section" shorthand, which searches every project's
+sections at once) returns every qualifying candidate instead of guessing —
+its chip is `expandable`, and clicking it opens a small popover
+(`SmartChips.jsx`) to disambiguate; this mechanism is generic, not
+section-specific, so a future ambiguous-match detector can reuse it.
 
 **Animation follows one pattern.** React unmounts a component the instant
 its parent stops rendering it, cutting off any CSS exit transition. Every

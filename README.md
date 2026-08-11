@@ -569,11 +569,15 @@ every month after Book appointment"* — auto-detects a due date, Todoist's
 (`"~2 hours"`, `"45 min"`), whether it "can run unattended", an earliest
 schedulable date (`"not before Friday"`, `"don't start until tomorrow"`,
 `"can't start before March 3"`), `!noauto` / `!manual` to exclude the task
-from Re-balance schedule, a plain URL, a dependency, a `#project` mention,
-and one or more `@label` mentions, surfacing each as a dismissible chip
-rather than applying anything silently. Dismissing a chip blocks that exact
-phrase from re-triggering until you edit it. See `src/utils/smartParse.js`
-and `src/hooks/useSmartTaskTitle.js`.
+from Re-balance schedule, a plain URL, a dependency, a `sub of`/`subtask of`
+mention that makes the task a sub-task of another, a `#project` mention, a
+standalone `%section` shorthand, and one or more `@label` mentions,
+surfacing each as a dismissible chip rather than applying anything
+silently. Dismissing a chip blocks that exact phrase from re-triggering
+until you edit it. A chip that matched more than one thing ambiguously
+(e.g. `%section` matching sections in several different projects) is
+clickable instead, opening a small list to pick which one you meant. See
+`src/utils/smartParse.js` and `src/hooks/useSmartTaskTitle.js`.
 
 **Recurrence** covers the phrasings Todoist's own natural-language quick-add
 produces: `"every day"` / `"daily"`, `"every 2 weeks"` / `"fortnightly"`,
@@ -586,11 +590,24 @@ weeks) — see `src/utils/recurrence.js`.
 **Projects and sections**: `#Tasks` matches an existing Project by name;
 `#Tasks/Scholarships` or `#Tasks / scholarships` (spaces around the slash
 are fine) additionally matches a Section within that project, the same
-`#Project/Section` shorthand Todoist itself uses. Typing `@` or `#` also
-opens a live autocomplete dropdown filtered as you type — arrow keys +
-Enter to pick a project/section/label, Escape to dismiss — rather than
-only showing a result after the fact as a chip; see
+`#Project/Section` shorthand Todoist itself uses. `%Scholarships` is a
+shorter alternative when you don't need to spell out the project — it
+searches every project's sections at once, so if more than one project has
+a matching section the chip lists them for you to pick from instead of
+guessing. Typing `@` or `#` also opens a live autocomplete dropdown
+filtered as you type — arrow keys to move the highlight, Tab to cycle
+through the options, Enter to pick the highlighted one, Escape to dismiss —
+rather than only showing a result after the fact as a chip; see
 `src/hooks/useMentionAutocomplete.js`.
+
+**Sub-tasks**: besides adding a new one under a task, an existing task can
+be reparented — made a sub-task of another task, or turned back into a
+standalone task — four ways: the task's "..." menu ("Remove from parent
+task"), the "move to" picker next to its breadcrumb (searches every task by
+title), dragging its card/row onto another one in Board or List view (works
+with touch on mobile via a long-press), or typing `sub of <task title>` /
+`subtask of <task title>` into its title. See `src/hooks/useReparentDrag.js`
+and `src/utils/taskHierarchy.js`.
 
 **Links**: a plain URL (`https://…`, `www.…`, or a bare `domain.tld/path`)
 becomes the task's `link` field — the URL itself is stripped out of the
