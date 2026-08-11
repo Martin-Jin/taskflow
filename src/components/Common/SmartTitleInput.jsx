@@ -52,6 +52,7 @@ const TYPE_LABELS = {
   excludeFromAutoSchedule: 'auto-schedule exclusion',
   dependency: 'dependency',
   project: 'project',
+  sectionShorthand: 'section',
   labels: 'tag',
 };
 
@@ -66,6 +67,7 @@ const SCALAR_TYPES = [
   'excludeFromAutoSchedule',
   'dependency',
   'project',
+  'sectionShorthand',
 ];
 
 /** Find where each still-active detection's matched text sits in the current title, in reading order. */
