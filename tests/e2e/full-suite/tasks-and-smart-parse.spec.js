@@ -351,6 +351,70 @@ test.describe('Sub-tasks', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+  test('removing a task from its parent while a sidebar edit is still debouncing leaves it top-level', async ({ page }) => {
+    // Regression test for a stale-closure bug in TaskDetailModal's sidebar
+    // auto-save: editing a sidebar field (e.g. Priority) arms a 500ms
+    // debounced commitChanges() call whose closure captures parentId at
+    // schedule time. If "Remove from parent task" ran WHILE that timer was
+    // still pending, the timer fired afterward and reasserted the stale
+    // parent, silently re-nesting the task moments after the user un-nested
+    // it — see TaskDetailModal.jsx's parentId local-state tracking and
+    // commitChanges' doc comment for the fix.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    const parentTitle = `E2E Reparent Race Parent ${RUN_ID}`;
+    const childTitle = `E2E reparent race child ${RUN_ID}`;
+    await openAddTask(page);
+    await page.getByPlaceholder('Task name').fill(parentTitle);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, parentTitle);
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    await page.keyboard.type(childTitle);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    await searchAndOpen(page, childTitle);
+    // Confirm it actually opened nested under the parent before racing anything.
+    await expect(page.locator('.detail-hierarchy-link', { hasText: parentTitle })).toBeVisible();
+
+    // Edit a sidebar field to arm the 500ms auto-save debounce, then
+    // IMMEDIATELY (well within that window) fire the direct reparent action
+    // — this is the race: the debounce timer is still pending when
+    // "Remove from parent task" calls updateTask directly.
+    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
+    await prioritySelect.selectOption('high');
+
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.getByRole('menuitem', { name: /remove from parent task/i }).click();
+
+    // The hierarchy breadcrumb should disappear immediately (direct action).
+    await expect(page.locator('.detail-hierarchy-link', { hasText: parentTitle })).toHaveCount(0);
+
+    // Wait well past the 500ms debounce window for the earlier priority
+    // edit's timer to fire (if it was going to incorrectly revert the
+    // reparent, it would do so in this window).
+    await page.waitForTimeout(1000);
+    await expect(page.locator('.detail-hierarchy-link', { hasText: parentTitle })).toHaveCount(0);
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Reopen from scratch and confirm the reparent truly persisted (not just
+    // an in-memory state that a reload/re-fetch would revert) and the
+    // priority edit landed too.
+    await searchAndOpen(page, childTitle);
+    await expect(page.locator('.detail-hierarchy-link', { hasText: parentTitle })).toHaveCount(0);
+    const prioritySelect2 = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
+    await expect(prioritySelect2).toHaveValue('high');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Reopening a completed task', () => {
@@ -849,6 +913,76 @@ test.describe('Recurring tasks', () => {
     }, newDateIso);
     await expect(childRow).toContainText(`due ${expectedLabel}`);
 
+    expectNoErrors(errors);
+  });
+
+  test('moving a weekday-pinned recurring task off-pattern settles without looping or reverting', async ({ page }) => {
+    // Regression coverage for TaskDetailModal's sidebar auto-save
+    // self-re-arming loop bug. A weekly rule pinned to specific weekdays
+    // (e.g. "every monday") records an off-pattern manual move (e.g. onto a
+    // Wednesday) as a one-occurrence override rather than re-anchoring the
+    // series (see utils/recurrence.js's computeRecurringRescheduleUpdate) —
+    // one of several updateTask cascade paths (see also
+    // computeEnforceDueDateSyncUpdates) that can settle a field onto a
+    // different value than what commitChanges() requested, which is what the
+    // fix's isReconcilingOwnCommitRef/suppressNextAutoSaveRef mechanism in
+    // TaskDetailModal.jsx guards against. This specific scenario turns out
+    // not to reach that guard in practice — resolveCurrentOccurrenceDueDate
+    // already resolves the override transparently, so the modal's own
+    // snapshot and the cascade's result agree without any correction being
+    // needed — but it's kept as a direct regression test for this cascade
+    // path's *outcome* (no flicker/revert across the debounce window) since
+    // it's cheap, realistic, and would catch a regression in either the
+    // cascade or the modal's handling of it.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Off-Pattern Recurring ${RUN_ID}`;
+    const titleInput = page.getByPlaceholder('Task name');
+    await titleInput.fill(`${title} every monday`);
+    await page.waitForTimeout(400);
+    await expect(page.locator('.smart-chip-row')).toContainText(/repeats/i);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    await expect(page.getByText(/Every week on Mon/i)).toBeVisible();
+
+    // Move the due date onto a Wednesday two weeks out — off the Monday
+    // pattern, so this lands on computeRecurringRescheduleUpdate's override
+    // branch instead of a plain re-anchor.
+    const nextWednesday = new Date();
+    nextWednesday.setDate(nextWednesday.getDate() + ((3 - nextWednesday.getDay() + 7) % 7 || 7) + 7);
+    const wedIso = `${nextWednesday.getFullYear()}-${String(nextWednesday.getMonth() + 1).padStart(2, '0')}-${String(nextWednesday.getDate()).padStart(2, '0')}`;
+
+    const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await dueDateInput.fill(wedIso);
+    await dueDateInput.blur();
+
+    // Sample the field repeatedly across and past the 500ms debounce window
+    // — if the bug's loop were still present, the value would be seen
+    // reverting/flip-flopping at some point in this window rather than
+    // settling once and staying put.
+    const samples = [];
+    for (let i = 0; i < 5; i++) {
+      await page.waitForTimeout(300);
+      samples.push(await dueDateInput.inputValue());
+    }
+    expect(samples.every((v) => v === wedIso)).toBe(true);
+
+    // The series' own pattern stays anchored on Monday underneath the
+    // override — confirm that didn't get silently re-anchored onto Wednesday.
+    await expect(page.getByText(/Every week on Mon/i)).toBeVisible();
+
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Reopen from scratch to confirm the moved date actually persisted.
+    await searchAndOpen(page, title);
+    const dueDateInput2 = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    await expect(dueDateInput2).toHaveValue(wedIso);
+
+    await closeAnyModal(page);
     expectNoErrors(errors);
   });
 });

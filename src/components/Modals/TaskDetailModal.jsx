@@ -276,6 +276,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // project itself is still smart-parse-driven.
   const [hasEditedSection, setHasEditedSection] = useState(false);
   const [dependsOn, setDependsOn] = useState(task.dependsOn || []);
+  // Tracked as its own piece of local state (like every other sidebar field)
+  // rather than read live off `task.parentId` at commit time — see
+  // commitChanges below. It used to be read straight off `task` there, which
+  // was a stale-closure bug: a direct reparent action (the "move to" popover,
+  // "Remove from parent task") calls updateTask immediately, but if the
+  // sidebar's debounced auto-save (commitChanges, below) had a timer already
+  // pending from an earlier edit, that timer's closure had captured the OLD
+  // `task.parentId` and would silently reassert it moments later, undoing the
+  // direct action the user just took. Both direct-reparent call sites now
+  // update this state (and the snapshot, so it isn't left dirty) synchronously
+  // alongside their updateTask call, so any pending or future commitChanges
+  // call reads the value the user actually asked for.
+  const [parentId, setParentId] = useState(task.parentId ?? null);
   // Draft parent id from a smart-parsed "sub of <task>"/"subtask of <task>"
   // title mention — null means "not touched by smart parse", distinct from
   // clearing the parent (which the "move to" popover does directly via
@@ -655,6 +668,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   function handleMoveToParent(newParentId) {
     updateTask(task.id, { parentId: newParentId });
+    // Mirror the change into local state (see the parentId declaration above)
+    // and directly into the snapshot, the same way commitChanges syncs its own
+    // snapshot right after firing updateTask — otherwise this field would sit
+    // "dirty" against the pre-move snapshot and, if a sidebar auto-save timer
+    // from an earlier edit fires afterward, commitChanges would either fight
+    // this direct change or (before this field existed as local state) simply
+    // reassert the stale task.parentId it had captured. Also clears
+    // smartParentTaskId so a stale smart-parsed "sub of" draft from earlier in
+    // this session can't override this deliberate direct action on the next
+    // autosave (see its use in commitChanges below).
+    setParentId(newParentId);
+    setSmartParentTaskId(null);
+    if (initialSnapshotRef.current) initialSnapshotRef.current.parentId = newParentId;
     setMoveToOpen(false);
     setMoveToQuery('');
   }
@@ -679,6 +705,38 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // (rendered right under the description, Todoist-style, instead of a
   // permanent footer) should show at all.
   const initialSnapshotRef = useRef(null);
+  // Set to true by commitChanges() right after it calls updateTask, and
+  // checked/cleared by the "pull in external change" effect below whenever
+  // that effect ends up pushing a correction into local state. Exists to fix
+  // a self-re-arming loop: updateTask's own cascade helpers
+  // (computeRecurringRescheduleUpdate, computeEnforceDueDateSyncUpdates,
+  // computeRecurrenceSyncUpdates — all in SchedulerContext.jsx) can settle a
+  // field onto a value that differs from what commitChanges just requested
+  // (e.g. an off-pattern recurring move recorded as a one-occurrence override
+  // instead of a plain reschedule, or an ancestor's enforceDueDate forcing
+  // itself back on). The pull-in effect can't otherwise tell that apart from
+  // a genuinely external change (another device's sync, an undo elsewhere) —
+  // both look like "task's live value no longer matches our snapshot" — and
+  // pushing either into local state re-arms the sidebar auto-save timer (the
+  // field is one of its dependencies), which calls commitChanges() again,
+  // which can trigger the same cascade again, repeating for as long as it
+  // takes to stabilize ("repeated update notifications for a few seconds").
+  // The field still needs to visually update to the cascade's authoritative
+  // value (it IS the real saved state) — this flag doesn't block that, it
+  // only tells the debounce effect that the very next re-arm opportunity is a
+  // reaction to OUR OWN save landing, not fresh user input, so it should be
+  // skipped once rather than scheduling another commitChanges() call. A
+  // genuinely new edit right after still arms normally, since typing into a
+  // field sets that field's own state directly rather than going through
+  // this flag.
+  const isReconcilingOwnCommitRef = useRef(false);
+  // Companion to the flag above: set by the pull-in effect the moment it
+  // actually pushes a correction while isReconcilingOwnCommitRef is true, and
+  // consumed (read-then-cleared) by the debounce effect's very next run. Kept
+  // separate from isReconcilingOwnCommitRef itself because the pull-in effect
+  // only sometimes has something to reconcile (a commit whose cascade didn't
+  // touch any tracked field leaves nothing to suppress).
+  const suppressNextAutoSaveRef = useRef(false);
   // Latches true the first time an *appliable* shared field (the ones
   // handleApplyToAllSubtasks actually copies: priority, due date, project/
   // section, labels, passive — see that function's doc comment) goes dirty
@@ -712,6 +770,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       projectId: task.projectId || '',
       sectionId: task.sectionId || '',
       dependsOn: task.dependsOn || [],
+      parentId: task.parentId ?? null,
       isPassive: !!task.isPassive,
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
@@ -757,6 +816,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setSectionId(task.sectionId || '');
     setHasEditedSection(false);
     setDependsOn(task.dependsOn || []);
+    setParentId(task.parentId ?? null);
     setSmartParentTaskId(null);
     setIsPassive(!!task.isPassive);
     setEarliestDate(task.earliestDate || '');
@@ -773,6 +833,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     lastSmartEarliestDateRef.current = null;
     hasEditedSharedFieldsRef.current = false;
     setJustAppliedToAll(false);
+    isReconcilingOwnCommitRef.current = false;
+    suppressNextAutoSaveRef.current = false;
     initialSnapshotRef.current = {
       title: task.title,
       link: task.link || '',
@@ -787,6 +849,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       projectId: task.projectId || '',
       sectionId: task.sectionId || '',
       dependsOn: task.dependsOn || [],
+      parentId: task.parentId ?? null,
       isPassive: !!task.isPassive,
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
@@ -807,9 +870,28 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // (see sidebarDirty/commitChanges below). Deliberately excludes
   // title/link/notes, which keep the existing task.id-only reset behavior
   // since they're gated behind an explicit Save/Cancel instead.
+  //
+  // This effect can't tell "something else changed this field" (genuine
+  // external change) apart from "our OWN commitChanges just landed, and
+  // updateTask's cascade helpers settled this field on a slightly different
+  // value than we asked for" purely from the mismatch itself — both look
+  // identical (task's live value != our snapshot). It doesn't need to: either
+  // way, the cascade's value is authoritative and belongs in local state, so
+  // the sync below runs unconditionally. What it DOES need to prevent is that
+  // sync re-arming the sidebar auto-save timer for a reason that isn't fresh
+  // user input — see isReconcilingOwnCommitRef/suppressNextAutoSaveRef
+  // (declared above commitChanges) for how that's done: if this effect is
+  // running as a direct result of our own commit (the flag commitChanges set
+  // right after calling updateTask) AND it actually pushes a correction here,
+  // it marks suppressNextAutoSaveRef so the debounce effect's very next check
+  // skips arming once, then clears the "our own commit" flag either way once
+  // this pass has seen it.
   useEffect(() => {
     const snap = initialSnapshotRef.current;
     if (!snap) return;
+    const isOwnCommit = isReconcilingOwnCommitRef.current;
+    isReconcilingOwnCommitRef.current = false;
+    let pushedCorrection = false;
     const rule = parseRecurrenceRule(task.recurrenceString) || { unit: 'month', count: 1 };
     const taskValues = {
       estimatedHours: task.estimatedHours,
@@ -820,6 +902,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       recurrenceUnit: rule.unit,
       projectId: task.projectId || '',
       sectionId: task.sectionId || '',
+      parentId: task.parentId ?? null,
       isPassive: !!task.isPassive,
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
@@ -835,6 +918,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       recurrenceUnit: setRecurrenceUnit,
       projectId: setProjectId,
       sectionId: setSectionId,
+      parentId: setParentId,
       isPassive: setIsPassive,
       earliestDate: setEarliestDate,
       enforceDueDate: setEnforceDueDate,
@@ -850,6 +934,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       recurrenceUnit,
       projectId,
       sectionId,
+      parentId,
       isPassive,
       earliestDate,
       enforceDueDate,
@@ -860,23 +945,28 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       if (String(localValues[key]) === String(snap[key]) && String(taskValues[key]) !== String(snap[key])) {
         setters[key](taskValues[key]);
         snap[key] = taskValues[key];
+        pushedCorrection = true;
       }
     });
     const taskRecurrenceDays = rule.days || null;
     if (jsonArrayEq(recurrenceDays, snap.recurrenceDays) && !jsonArrayEq(taskRecurrenceDays, snap.recurrenceDays)) {
       setRecurrenceDays(taskRecurrenceDays);
       snap.recurrenceDays = taskRecurrenceDays;
+      pushedCorrection = true;
     }
     const taskDependsOn = task.dependsOn || [];
     if (jsonArrayEq(dependsOn, snap.dependsOn) && !jsonArrayEq(taskDependsOn, snap.dependsOn)) {
       setDependsOn(taskDependsOn);
       snap.dependsOn = taskDependsOn;
+      pushedCorrection = true;
     }
     const taskLabelIds = task.labelIds || [];
     if (jsonArrayEq(labelIds, snap.labelIds) && !jsonArrayEq(taskLabelIds, snap.labelIds)) {
       setLabelIds(taskLabelIds);
       snap.labelIds = taskLabelIds;
+      pushedCorrection = true;
     }
+    if (isOwnCommit && pushedCorrection) suppressNextAutoSaveRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task]);
 
@@ -1391,6 +1481,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     fixedTimeEnabled !== initialSnapshotRef.current.fixedTimeEnabled ||
     dependsOn.length !== initialSnapshotRef.current.dependsOn.length ||
     dependsOn.some((id) => !initialSnapshotRef.current.dependsOn.includes(id)) ||
+    parentId !== initialSnapshotRef.current.parentId ||
     smartParentTaskId !== null ||
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
@@ -1639,10 +1730,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionName: section ? section.name : null,
       dependsOn,
       // Only override parentId if smart-parse actually produced a draft
-      // parent this session — otherwise leave the task's existing parent
-      // alone (reparenting away from smart-parse goes through the "move to"
-      // popover's own direct updateTask call instead).
-      parentId: smartParentTaskId !== null ? smartParentTaskId : task.parentId,
+      // parent this session — otherwise fall back to this modal's own local
+      // parentId state, NOT task.parentId read live off the prop. Reading the
+      // prop here used to be a stale-closure bug: this function can run up to
+      // 500ms after the debounce effect scheduled it (see that effect below),
+      // and if a direct reparent action (the "move to" popover, "Remove from
+      // parent task") landed via its own updateTask call in the meantime, the
+      // closure captured at schedule-time still held the OLD task.parentId —
+      // silently reasserting it and undoing the direct action. Local state
+      // doesn't have that problem: both direct-reparent call sites update it
+      // synchronously, so whatever this function reads here (however late it
+      // actually runs) is always the value the user most recently asked for.
+      parentId: smartParentTaskId !== null ? smartParentTaskId : parentId,
       isPassive,
       earliestDate: earliestDate || null,
       // Only meaningful once a due date exists — clear it rather than
@@ -1654,6 +1753,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       fixedTime: isContainer ? null : fixedTimeEnabled && fixedTime ? fixedTime : null,
       labelIds: finalLabelIds,
     });
+    // The next "pull in external change" effect pass (below) is a direct
+    // reaction to the updateTask call just above — mark it so that effect can
+    // tell a cascade side-effect of THIS save apart from a genuinely new
+    // external change, and suppress the debounce effect's next re-arm if it
+    // ends up correcting anything (see isReconcilingOwnCommitRef's doc
+    // comment above, and the "self-re-arming loop" note on the debounce
+    // effect below).
+    isReconcilingOwnCommitRef.current = true;
 
     // Sync local title/label state to what was just persisted, and clear
     // smart-parse detection state. Without the setLabelIds call, a label
@@ -1667,10 +1774,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // text with stale link highlighting.
     setTitle(nextTitle);
     setLabelIds(finalLabelIds);
-    // The draft parent (if any) is now baked into task.parentId — clear it so
-    // isUntouched() goes back to true instead of staying permanently blocked
-    // against re-applying a later "sub of" edit (mirrors dependsOn/labelIds
-    // syncing back to their own just-saved values above).
+    // The draft parent (if any) is now baked into local parentId state itself
+    // — mirrors labelIds just above (a pending draft is folded into the
+    // "real" tracked field once committed) — then clear the smart-parse draft
+    // so isUntouched() goes back to true instead of staying permanently
+    // blocked against re-applying a later "sub of" edit.
+    if (smartParentTaskId !== null) setParentId(smartParentTaskId);
     setSmartParentTaskId(null);
     resetSmartState();
 
@@ -1688,6 +1797,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       projectId: projectId || '',
       sectionId: sectionId || '',
       dependsOn,
+      parentId: smartParentTaskId !== null ? smartParentTaskId : parentId,
       isPassive,
       earliestDate: earliestDate || '',
       enforceDueDate: enforceDueDate && !!nextDueDate,
@@ -1774,7 +1884,27 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // while fixedTimeError or dueDateError is set, so an enabled-but-empty
   // "Fixed time" or a due date past the parent goal's deadline never
   // silently autosaves.
+  //
+  // SELF-RE-ARMING LOOP GUARD: this effect's own dependency list includes the
+  // raw field values (dueDate, recurrenceCount, ...), not just the derived
+  // sidebarDirty — so it re-evaluates any time the "pull in external change"
+  // effect (above) pushes a correction into one of them, even if that
+  // correction resolves sidebarDirty back to false in the same pass. Most of
+  // the time that's harmless (sidebarDirty is false, so the guard below
+  // returns early regardless) — but if the cascade behind that correction
+  // left a DIFFERENT field genuinely dirty against commitChanges' own
+  // pre-cascade snapshot, this would otherwise arm a fresh 500ms timer whose
+  // eventual commitChanges() call re-triggers the same cascade, repeating
+  // until it stabilizes. suppressNextAutoSaveRef (set by that effect only
+  // when the correction was reconciling OUR OWN just-landed commit, not a
+  // genuinely new external change) short-circuits exactly that one re-arm,
+  // without blocking any later timer that arms because of real new user
+  // input.
   useEffect(() => {
+    if (suppressNextAutoSaveRef.current) {
+      suppressNextAutoSaveRef.current = false;
+      return undefined;
+    }
     if (mainDirty || !sidebarDirty || fixedTimeError || dueDateError || dueDateRequiredError) return undefined;
     const handle = setTimeout(() => commitChanges(), 500);
     return () => clearTimeout(handle);
@@ -1794,6 +1924,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     recurrenceDays,
     projectId,
     sectionId,
+    parentId,
     isPassive,
     earliestDate,
     enforceDueDate,
@@ -1821,6 +1952,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setSectionId(snap.sectionId);
     setHasEditedSection(false);
     setDependsOn(snap.dependsOn);
+    setParentId(snap.parentId);
     setSmartParentTaskId(null);
     setIsPassive(snap.isPassive);
     setEarliestDate(snap.earliestDate);
@@ -2112,6 +2244,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                             className="detail-menu-item"
                             onClick={() => {
                               updateTask(task.id, { parentId: null });
+                              // Same reasoning as handleMoveToParent(null) above
+                              // — sync local state + snapshot immediately so a
+                              // pending sidebar auto-save can't reassert the
+                              // old parentId out from under this direct action.
+                              setParentId(null);
+                              setSmartParentTaskId(null);
+                              if (initialSnapshotRef.current) initialSnapshotRef.current.parentId = null;
                               setMenuOpen(false);
                             }}
                           >

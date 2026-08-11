@@ -207,6 +207,27 @@ one of these funnels through the same `getIneligibleParentIds`/
 target (the task itself, one of its own descendants, or a task already at
 the 2-level cap) so the depth/cycle rule can't drift between entry points.
 
+Inside TaskDetailModal specifically, `parentId` is tracked as its own local
+state (like every other sidebar field), not read live off the `task` prop at
+commit time. The modal's sidebar fields auto-save via a 500ms debounced
+`commitChanges()` call — if that read `task.parentId` directly, a direct
+reparent action (the menu/picker above) landing while an earlier edit's
+timer was still pending would get silently undone moments later by that
+timer firing with a stale closure. Tracking `parentId` as local state that
+both direct-reparent call sites update synchronously (alongside the
+snapshot) closes that gap — see `commitChanges`' and `handleMoveToParent`'s
+doc comments. The same debounce effect also guards against a related
+self-re-arming loop: `updateTask`'s own cascade helpers
+(`computeRecurringRescheduleUpdate`, `computeEnforceDueDateSyncUpdates`) can
+settle a field on a slightly different value than what `commitChanges` just
+requested, which the modal's separate "pull in external change" effect
+can't tell apart from a genuinely external edit — pushing either into local
+state would otherwise re-arm the same debounce timer for another commit,
+repeating until the cascade stabilizes. `isReconcilingOwnCommitRef`/
+`suppressNextAutoSaveRef` (declared above `commitChanges`) suppress exactly
+that one re-arm without blocking a timer armed by fresh user input or a
+genuinely independent external change.
+
 The moment a task has ≥1 sub-task, it becomes a **container**: it never
 gets its own calendar block again, no matter its own due date or hours —
 only its leaf sub-tasks (or deeper leaves, if nested) do. Its
