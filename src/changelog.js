@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.5',
+    date: '2026-08-12',
+    title: 'Task editing reliability fixes',
+    changes: [
+      'Fixed removing a task from its parent sometimes silently reverting a moment later if a sidebar edit (e.g. priority) was made right before it — the task now reliably stays top-level.',
+      'Fixed editing a due date (or other fields) on a recurring or deadline-linked task sometimes triggering several rapid, repeated saves in a row instead of one.',
+    ],
+  },
+  {
     version: '4.4.4',
     date: '2026-08-12',
     title: 'Overdue recurring task double-scheduling fix',
