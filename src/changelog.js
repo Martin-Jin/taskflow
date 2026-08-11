@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.1',
+    date: '2026-08-11',
+    title: 'Smart-parse and "move to" picker fixes',
+    changes: [
+      '"%section" now also gets a live suggestion dropdown while you type, matching how "#project" and "@label" already behave — no more needing to finish typing and tap the resolved chip to see other matches.',
+      'Fixed "%section" continuing to swallow the rest of the title after a match instead of stopping at the next space, which broke typing further words.',
+      'Fixed squished, overlapping text in the "move to" task picker\'s search results list.',
+      'Removed a stray border around the "move to" button next to a task\'s breadcrumb.',
+    ],
+  },
+  {
     version: '4.4.0',
     date: '2026-08-11',
     title: 'Move tasks in and out of sub-task relationships',

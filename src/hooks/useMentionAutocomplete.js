@@ -58,15 +58,16 @@ function resolveProjectStrict(projectQuery, projects) {
 /**
  * Find the active trigger span ending at `caret`, or null if the caret
  * isn't currently inside one. Scans backward from the caret for the most
- * recent "@" or "#" — whichever is closer wins, since a title can contain
- * both kinds of mentions.
+ * recent "@", "#" or "%" — whichever is closer wins, since a title can
+ * contain more than one kind of mention.
  */
 function findActiveSpan(text, caret) {
   const upToCaret = text.slice(0, caret);
   const lastAt = upToCaret.lastIndexOf('@');
   const lastHash = upToCaret.lastIndexOf('#');
+  const lastPercent = upToCaret.lastIndexOf('%');
 
-  if (lastHash !== -1 && lastHash >= lastAt) {
+  if (lastHash !== -1 && lastHash >= lastAt && lastHash >= lastPercent) {
     const afterHash = upToCaret.slice(lastHash + 1);
     const slashIndex = afterHash.indexOf('/');
     if (slashIndex === -1) {
@@ -84,10 +85,19 @@ function findActiveSpan(text, caret) {
     return { trigger: '#', start: lastHash, projectQuery, sectionQuery };
   }
 
-  if (lastAt !== -1) {
+  if (lastAt !== -1 && lastAt >= lastPercent) {
     const afterAt = upToCaret.slice(lastAt + 1);
     if (/\s/.test(afterAt)) return null;
     return { trigger: '@', start: lastAt, query: afterAt };
+  }
+
+  if (lastPercent !== -1) {
+    const afterPercent = upToCaret.slice(lastPercent + 1);
+    // Same "a bare space finishes the token" rule as "#" above — the
+    // "%section" shorthand (see findSectionShorthandPhrase in smartParse.js)
+    // has no "/" continuation to worry about, so this is simpler than "#".
+    if (/\s/.test(afterPercent)) return null;
+    return { trigger: '%', start: lastPercent, query: afterPercent };
   }
 
   return null;
@@ -97,7 +107,7 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [span, setSpan, refresh, dismiss] = useCaretActiveSpan(inputRef, value, findActiveSpan, () => setHighlightedIndex(0));
 
-  let mode = null; // 'label' | 'project' | 'section'
+  let mode = null; // 'label' | 'project' | 'section' | 'sectionShorthand'
   let matches = [];
   let query = '';
   if (span?.trigger === '@') {
@@ -114,6 +124,15 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
     const project = resolveProjectStrict(span.projectQuery, projects);
     const projectSections = project ? sections.filter((s) => s.projectId === project.id) : [];
     matches = fuzzyFilter(query, projectSections, (s) => s.name);
+  } else if (span?.trigger === '%') {
+    // "%section" shorthand — searches every section across every project,
+    // same "no project context yet" scope as findSectionShorthandPhrase in
+    // smartParse.js. Duplicate section names across projects are kept
+    // distinct here (fuzzyFilter/rankByNameSearch dedupes by id, not name),
+    // so the dropdown can offer either one to disambiguate.
+    mode = 'sectionShorthand';
+    query = span.query;
+    matches = fuzzyFilter(query, sections, (s) => s.name);
   }
 
   // Labels can always be created on the fly — offer that as a trailing
@@ -151,6 +170,7 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
     if (mode === 'label') selectMatch(`@${chosen.name}`);
     else if (mode === 'project') selectMatch(`#${chosen.name}`);
     else if (mode === 'section') selectMatch(`#${span.projectQuery.trim()}/${chosen.name}`);
+    else if (mode === 'sectionShorthand') selectMatch(`%${chosen.name}`);
   }
 
   /** Returns true if it handled the key (caller should preventDefault/stop). */

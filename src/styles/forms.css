@@ -503,6 +503,7 @@
 .detail-move-to-trigger {
   flex-shrink: 0;
   margin-left: auto;
+  border-color: transparent;
 }
 
 /* Positioned via useMenuPosition, same contract as .detail-menu-dropdown/
@@ -546,6 +547,7 @@
   border-radius: var(--radius-sm);
   color: var(--color-text-primary);
   font-size: 13px;
+  line-height: 1.4;
   text-align: left;
   cursor: pointer;
   overflow: hidden;
