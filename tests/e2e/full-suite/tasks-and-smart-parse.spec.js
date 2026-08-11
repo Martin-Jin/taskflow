@@ -1018,6 +1018,36 @@ test.describe('Validation edge cases', () => {
     expectNoErrors(errors);
   });
 
+  test('missing-info hint appears only after typing a title, and clears as fields are filled in', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const hint = page.getByText(/you haven't specified/i);
+    await expect(hint).not.toBeVisible();
+
+    await page.getByPlaceholder('Task name').fill(`E2E Missing Info ${RUN_ID}`);
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText('a project');
+    await expect(hint).toContainText('a due date');
+    await expect(hint).toContainText('a duration');
+
+    // Clearing the title back to empty must not hide the hint again.
+    await page.getByPlaceholder('Task name').fill('');
+    await expect(hint).toBeVisible();
+    await page.getByPlaceholder('Task name').fill(`E2E Missing Info ${RUN_ID}`);
+
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click(); // Date pill
+    await page.locator('.addtask-pill-panel input[type="date"]').fill('2026-09-01');
+    await expect(hint).not.toContainText('a due date');
+    await expect(hint).toContainText('a project');
+    await expect(hint).toContainText('a duration');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
   test('checking "Fixed time" without picking a time blocks submission', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);

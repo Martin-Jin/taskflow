@@ -128,6 +128,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedEarliestDate, setHasEditedEarliestDate] = useState(false);
   const [labelIds, setLabelIds] = useState([]);
   const [error, setError] = useState('');
+  // Set the first time the user types into the title, and never cleared —
+  // gates the "missing info" hint below so it doesn't show on a fresh,
+  // untouched modal (only once the user has actually started filling it in,
+  // even if they later clear the title back to empty).
+  const [hasTypedTitle, setHasTypedTitle] = useState(false);
   const [openField, setOpenField] = useState(null); // 'date' | 'priority' | 'labels' | null
   const [moreOpen, setMoreOpen] = useState(false);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
@@ -273,9 +278,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   function handleTitleChange(value) {
     setTitle(value);
     handleSmartTitleChange(value);
+    if (!hasTypedTitle) setHasTypedTitle(true);
   }
 
   const smartChips = buildSmartChips(smartDetected);
+
+  const missingFields = [];
+  if (!projectId) missingFields.push('a project');
+  if (!dueDate) missingFields.push('a due date');
+  if (!hasEditedHours) missingFields.push('a duration');
 
   function handleNotesBlur() {
     const parsed = parseDurationHours(notes);
@@ -366,6 +377,12 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         </div>
 
         {error && <p className="form-error">{error}</p>}
+
+        {hasTypedTitle && missingFields.length > 0 && (
+          <p className="form-hint" style={{ marginTop: -6, paddingLeft: 7 }}>
+            Note: you haven't specified {missingFields.join(', ')}.
+          </p>
+        )}
 
         <button
           type="button"

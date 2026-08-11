@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.2.0',
+    date: '2026-08-11',
+    title: 'Missing-info hint when adding a task',
+    changes: [
+      "The Add Task screen now shows a small note if you haven't set a project, due date, or duration once you start filling in a task — a gentle reminder, not a blocker.",
+    ],
+  },
+  {
     version: '4.1.1',
     date: '2026-08-11',
     title: 'AI Quick Add can now attach links to tasks',
