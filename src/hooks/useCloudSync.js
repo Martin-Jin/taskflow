@@ -30,7 +30,7 @@ import {
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { getBrowserTimeZone } from '../utils/dateUtils';
-import { savePersisted } from '../utils/persistence.js';
+import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { getDeviceId } from '../utils/deviceIdentity.js';
 import {
   CLOUD_SYNC_DEBOUNCE_MS,
@@ -626,7 +626,13 @@ export function useCloudSync({
   }, [googleConnected, googleSyncStale, pullFromGoogleCalendar]);
 
   const pushTimerRef = useRef(null);
-  const lastPushedFingerprintRef = useRef(null);
+  // Seeded from localStorage (not hardcoded null) so a push that Firestore
+  // actually confirmed in a PREVIOUS session is still known about after a
+  // full reload/tab-kill — see the 'lastPushedFingerprint' persistence below
+  // for why this in-memory ref alone isn't enough. Only ever written to
+  // localStorage once a push is server-confirmed (never optimistically), so
+  // a persisted value is always a real, known-good baseline, not a guess.
+  const lastPushedFingerprintRef = useRef(loadPersisted('lastPushedFingerprint', null));
   // Highest doc-level `lastWriteAt` (millis) this device has actually
   // observed coming BACK from the server — via a pull's getDoc, or a live
   // snapshot (subscribeUserData already filters out the optimistic
@@ -694,6 +700,16 @@ export function useCloudSync({
       // isn't enough.
       inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       await pushUserData(user.uid, currentState);
+      // Only persist to localStorage once Firestore has actually confirmed
+      // this write (i.e. after the await, never before) — this is the
+      // durable record that survives a tab kill/reload, unlike the in-memory
+      // ref above which is stamped optimistically for the in-session race
+      // guard. If the tab dies before this line runs, the persisted value
+      // stays at whatever the last CONFIRMED push was, so next launch
+      // correctly detects "current local state doesn't match my last known
+      // good push" and retries via computePushStampPlan — instead of
+      // silently treating this edit as already synced forever.
+      savePersisted('lastPushedFingerprint', plan.fingerprint);
     } catch (err) {
       console.warn('[useCloudSync] Push failed', err);
       // Roll back the optimistic stamp — otherwise this fingerprint looks
@@ -821,7 +837,16 @@ export function useCloudSync({
     // Firestore — but only when tasks/blocks were actually applied as-is
     // (see planRemoteDataMerge's stampFingerprint comment).
     if (plan.stampFingerprint) {
-      lastPushedFingerprintRef.current = computeFingerprint(remoteData);
+      const remoteFingerprint = computeFingerprint(remoteData);
+      lastPushedFingerprintRef.current = remoteFingerprint;
+      // This data just came FROM Firestore (a pull or a confirmed live
+      // snapshot), so it's just as much a known-good "Firestore has this"
+      // baseline as a successful push — persist it the same way, otherwise
+      // a tab kill shortly after an incoming remote update would leave the
+      // persisted value stale relative to what Firestore (and now this
+      // device) actually has, and the next launch would wrongly think a
+      // push is needed for data that's already in sync.
+      savePersisted('lastPushedFingerprint', remoteFingerprint);
     }
   }, [
     overwritePresent,
@@ -1194,6 +1219,10 @@ export function useCloudSync({
     try {
       await pushUserData(user.uid, stateRef.current);
       lastPushedFingerprintRef.current = fingerprint;
+      // Confirmed by the server (after the await) — persist it, same as
+      // runPushNow's debounced push, so this manual push also survives a
+      // tab kill/reload as a known-good baseline.
+      savePersisted('lastPushedFingerprint', fingerprint);
       setNotification({ type: 'success', message: 'Pushed data to cloud.' });
     } catch (err) {
       console.error(err);
