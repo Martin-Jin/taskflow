@@ -94,12 +94,19 @@ import {
   Pause,
   Play,
   Square,
+  CheckCircle,
   ExternalLink,
   ChevronRight,
 } from 'lucide-react';
 import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
-import { useTimers, getLiveRemaining, getDefaultDurationSeconds, formatTimerDuration } from '../../context/TimerContext';
+import {
+  useTimers,
+  getSignedLiveRemaining,
+  getSignedElapsedSeconds,
+  getDefaultDurationSeconds,
+  formatTimerDuration,
+} from '../../context/TimerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useSound } from '../../context/SoundContext';
 import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
@@ -133,7 +140,14 @@ import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
-import { getEffectiveEstimatedHours, findNearestAncestorDueDate, getAllDescendants, isCompletedForCurrentOccurrence } from '../../utils/taskHierarchy';
+import {
+  getEffectiveEstimatedHours,
+  findNearestAncestorDueDate,
+  getAllDescendants,
+  isCompletedForCurrentOccurrence,
+  getEffectiveRemainingHoursForOccurrence,
+  computeRemainingHoursPatchAfterElapsed,
+} from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';
 import {
   findActiveMentionSpan,
@@ -841,31 +855,18 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   // "Time left" (see types/index.js's Task.remainingHoursOverride) — a manual
   // edit to how much work remains, which directly reduces the number the
-  // scheduler places going forward. Non-recurring tasks store this straight
-  // on `task.remainingHours`; a recurring task never stores remainingHours at
-  // all (rebalanceEngine.js computes it fresh per-occurrence), so instead this
-  // reads/writes a per-occurrence override keyed by `task.dueDate` — the
-  // occurrence's ORIGINAL pattern date, same key SchedulerContext.completeTask
-  // already uses for `overrides` and clears this map by on completion. (Not
-  // resolveCurrentOccurrenceDueDate's moved-to date — the override map is
-  // always keyed by the pattern date, even for a moved occurrence.)
+  // scheduler places going forward. Read/write logic (including the
+  // recurring per-occurrence override keying) lives in taskHierarchy.js so
+  // TimerContext-driven actions (Stop, Mark as done) can reuse the exact same
+  // rule instead of re-deriving it.
   const currentOccurrenceOriginalDate = task.isRecurring ? task.dueDate : null;
-  const remainingHoursOverride = currentOccurrenceOriginalDate
-    ? task.remainingHoursOverride?.[currentOccurrenceOriginalDate]
-    : null;
-  const effectiveRemainingHours = useMemo(() => {
-    if (!task.isRecurring) return Number(task.remainingHours) || 0;
-    if (typeof remainingHoursOverride === 'number' && Number.isFinite(remainingHoursOverride)) {
-      return Math.min(Math.max(0, remainingHoursOverride), task.estimatedHours);
-    }
-    // No override recorded — fall back to the full estimate. Precisely
-    // matching rebalanceEngine's `estimatedHours - spent` here would need
-    // this occurrence's already-placed block hours, which aren't cleanly
-    // available in this component; the full estimate is the correct value
-    // for a not-yet-worked occurrence and only under-states hours already
-    // spent today, which the user can still correct by hand via this field.
-    return task.estimatedHours;
-  }, [task.isRecurring, task.estimatedHours, remainingHoursOverride]);
+  const effectiveRemainingHours = useMemo(() => getEffectiveRemainingHoursForOccurrence(task), [
+    task.isRecurring,
+    task.estimatedHours,
+    task.remainingHours,
+    task.dueDate,
+    task.remainingHoursOverride,
+  ]);
 
   function handleRemainingHoursChange(hours) {
     const clamped = Math.min(Math.max(0, Number(hours) || 0), task.estimatedHours);
@@ -1774,8 +1775,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     getTimerForTask(task.id)
                       ? getTimerForTask(task.id).status === 'running'
                         ? 'Timer running'
-                        : getTimerForTask(task.id).status === 'done'
-                        ? "Time's up"
                         : 'Timer paused'
                       : 'Start timer'
                   }
@@ -1815,14 +1814,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           }}
                           onPause={() => {
                             // Same elapsed-time math as CompleteTaskContext's
-                            // own pending-completion prompt — offer to log it
-                            // against "Time left" too, but only when it's
-                            // enough to be worth a prompt (skip a near-instant
-                            // pause with negligible elapsed time).
+                            // own pending-completion prompt (including
+                            // overtime) — offer to log it against "Time
+                            // left" too, but only when it's enough to be
+                            // worth a prompt (skip a near-instant pause with
+                            // negligible elapsed time).
                             const runningTimer = getTimerForTask(task.id);
-                            const elapsedSeconds = runningTimer
-                              ? Math.max(0, runningTimer.durationSeconds - getLiveRemaining(runningTimer))
-                              : 0;
+                            const elapsedSeconds = runningTimer ? Math.max(0, getSignedElapsedSeconds(runningTimer)) : 0;
                             const suggestedHours = elapsedSeconds / 3600;
                             pauseTimer(task.id);
                             setPauseLogPrompt(suggestedHours > 0.01 ? { suggestedHours } : null);
@@ -1833,7 +1831,25 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           }}
                           onStop={() => {
                             setPauseLogPrompt(null);
+                            // Log elapsed (incl. overtime) against "Time
+                            // left" before removing the timer — same rule
+                            // TimerWidget's Stop button uses.
+                            const runningTimer = getTimerForTask(task.id);
+                            if (runningTimer) {
+                              const elapsedHours = Math.max(0, getSignedElapsedSeconds(runningTimer)) / 3600;
+                              const patch = computeRemainingHoursPatchAfterElapsed(task, elapsedHours);
+                              if (patch) updateTask(task.id, patch);
+                            }
                             stopTimer(task.id);
+                          }}
+                          onMarkDone={() => {
+                            setPauseLogPrompt(null);
+                            setTimerPopoverOpen(false);
+                            // Routes through the normal completion flow
+                            // (dependency checks, recurring handling, the
+                            // elapsed-time confirmation) — it reads this
+                            // timer's own elapsed time itself.
+                            requestComplete(task.id);
                           }}
                         />
                         {pauseLogPrompt && (
@@ -2840,13 +2856,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 }
 
 /**
- * Start/pause/resume/stop controls for this task's Pomodoro timer (see
- * TimerContext), plus a live "MM:SS remaining" readout. Ticks its own
- * 1-second interval only while a timer is actually running for this task,
- * so the rest of the (fairly heavy) detail modal doesn't re-render every
- * second just because a timer elsewhere is counting down.
+ * Start/pause/resume/stop/mark-done controls for this task's Pomodoro timer
+ * (see TimerContext), plus a live "MM:SS remaining" readout that keeps
+ * counting up into overtime past zero instead of stopping at "Time's up".
+ * Ticks its own 1-second interval only while a timer is actually running for
+ * this task, so the rest of the (fairly heavy) detail modal doesn't
+ * re-render every second just because a timer elsewhere is counting down.
  */
-function TaskTimerControl({ durationSeconds, timer, onStart, onPause, onResume, onStop }) {
+function TaskTimerControl({ durationSeconds, timer, onStart, onPause, onResume, onStop, onMarkDone }) {
   const [, forceTick] = useState(0);
 
   useEffect(() => {
@@ -2863,21 +2880,31 @@ function TaskTimerControl({ durationSeconds, timer, onStart, onPause, onResume, 
     );
   }
 
-  const remaining = getLiveRemaining(timer);
-  const isDone = timer.status === 'done';
+  const remaining = getSignedLiveRemaining(timer);
+  const isOvertime = timer.status === 'running' && remaining < 0;
+  const displayTime = `${remaining < 0 ? '-' : ''}${formatTimerDuration(Math.abs(remaining))}`;
 
   return (
     <div className="detail-timer-control">
-      <span className={`detail-timer-time ${isDone ? 'is-done' : ''}`}>{isDone ? "Time's up" : formatTimerDuration(remaining)}</span>
+      <span className={`detail-timer-time ${isOvertime ? 'is-overtime' : ''}`}>{displayTime}</span>
       {timer.status === 'running' ? (
         <button type="button" className="btn btn-icon" onClick={onPause} title="Pause" aria-label="Pause timer">
           <Pause size={14} />
         </button>
       ) : (
-        <button type="button" className="btn btn-icon" onClick={onResume} title={isDone ? 'Restart' : 'Resume'} aria-label={isDone ? 'Restart timer' : 'Resume timer'}>
+        <button type="button" className="btn btn-icon" onClick={onResume} title="Resume" aria-label="Resume timer">
           <Play size={14} />
         </button>
       )}
+      <button
+        type="button"
+        className="btn btn-icon"
+        onClick={onMarkDone}
+        title="Mark as done"
+        aria-label="Mark task as done"
+      >
+        <CheckCircle size={14} />
+      </button>
       <button type="button" className="btn btn-icon" onClick={onStop} title="Stop" aria-label="Stop timer">
         <Square size={14} />
       </button>

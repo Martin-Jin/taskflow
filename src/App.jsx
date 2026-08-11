@@ -480,8 +480,12 @@ function AppShell() {
           />
         ))}
         <InstallAppBanner />
-        <TimerWidget />
       </div>
+      {/* Its own independently-positioned, draggable floating window —
+          deliberately NOT inside .floating-notifications, so it isn't
+          shuffled around by toasts appearing/disappearing (see
+          TimerWidget.jsx / useDraggableWindowPosition.js). */}
+      <TimerWidget />
       {showManageProjects && (
         <ManageProjectsModal
           projects={projects}

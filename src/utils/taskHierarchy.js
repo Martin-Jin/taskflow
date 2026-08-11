@@ -65,6 +65,52 @@ export function getEffectiveRemainingHours(task, tasks) {
 }
 
 /**
+ * "Time left" read/write for a single (non-container) task — shared by
+ * TaskDetailModal's "Time left" field and anything else that needs to log
+ * elapsed work against it (e.g. TimerContext's stop/mark-done actions). Not
+ * container-aware (see getEffectiveRemainingHours for that rollup); callers
+ * with a container task should use the rollup for display and never let a
+ * container be logged against directly.
+ *
+ * A non-recurring task stores this straight on `task.remainingHours`. A
+ * recurring task never stores `remainingHours` at all (rebalanceEngine.js
+ * computes it fresh per-occurrence), so this instead reads/writes a
+ * per-occurrence override keyed by `task.dueDate` — the occurrence's
+ * ORIGINAL pattern-generated due date (see Task.remainingHoursOverride's
+ * doc comment in types/index.js), same key SchedulerContext.completeTask
+ * already uses for `overrides` and clears this map on completion. NOT
+ * resolveCurrentOccurrenceDueDate's moved-to date — the override map is
+ * always keyed by the pattern date, even for a moved occurrence.
+ */
+export function getEffectiveRemainingHoursForOccurrence(task) {
+  if (!task.isRecurring) return Number(task.remainingHours) || 0;
+  const override = task.dueDate ? task.remainingHoursOverride?.[task.dueDate] : null;
+  if (typeof override === 'number' && Number.isFinite(override)) {
+    return Math.min(Math.max(0, override), task.estimatedHours);
+  }
+  // No override recorded — fall back to the full estimate. Precisely
+  // matching rebalanceEngine's `estimatedHours - spent` here would need this
+  // occurrence's already-placed block hours, which aren't cleanly available
+  // to every caller; the full estimate is correct for a not-yet-worked
+  // occurrence and only under-states hours already spent today.
+  return task.estimatedHours;
+}
+
+/**
+ * Field patch (pass straight to updateTask) that reduces `task`'s current
+ * "Time left" by `elapsedHours`, clamped to never go below 0. See
+ * getEffectiveRemainingHoursForOccurrence for the read-side counterpart and
+ * the recurring-override keying rule.
+ */
+export function computeRemainingHoursPatchAfterElapsed(task, elapsedHours) {
+  const current = getEffectiveRemainingHoursForOccurrence(task);
+  const clamped = Math.min(Math.max(0, current - elapsedHours), task.estimatedHours);
+  if (!task.isRecurring) return { remainingHours: clamped };
+  if (!task.dueDate) return null; // no due date yet — nothing to key the override by
+  return { remainingHoursOverride: { ...(task.remainingHoursOverride || {}), [task.dueDate]: clamped } };
+}
+
+/**
  * Walk up `task.parentId` (arbitrarily deep — nesting is capped at 2 levels
  * by the UI, but this walk stays general/defensive rather than assuming
  * that) to find the nearest ancestor with its own `dueDate`. Returns null if

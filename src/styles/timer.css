@@ -3,7 +3,14 @@
    See src/components/Common/TimerWidget.jsx / src/context/TimerContext.jsx.
    ============================================================================ */
 
+/* Independently positioned (position: fixed, left/top driven by
+   useDraggableWindowPosition's state) rather than living inside
+   .floating-notifications' flex stack — same z-index tier that stack uses
+   (1100, above .guided-tour-overlay's 1000) so it still floats above normal
+   content once decoupled from it. touch-action: none stops the browser's
+   own touch-scroll/pan gestures from fighting the drag on mobile. */
 .timer-widget {
+  z-index: 1100;
   width: 260px;
   max-width: calc(100vw - 40px);
   background: var(--color-bg-surface-raised);
@@ -11,6 +18,7 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   overflow: hidden;
+  touch-action: none;
 }
 
 .timer-widget-header {
@@ -24,8 +32,14 @@
   color: var(--color-text-primary);
   font-size: 12.5px;
   font-weight: 600;
-  cursor: pointer;
+  cursor: grab;
   text-align: left;
+  touch-action: none;
+  user-select: none;
+}
+
+.timer-widget-header:active {
+  cursor: grabbing;
 }
 
 .timer-widget-header span {
@@ -53,8 +67,11 @@
   border-bottom: none;
 }
 
-.timer-widget-row.is-done .timer-widget-row-time {
-  color: var(--color-accent);
+/* Counting up past zero into overtime (see TimerContext's "no automatic
+   'done' status" note) — red/accent so it clearly reads as "running over",
+   distinct from the neutral in-progress countdown color. */
+.timer-widget-row.is-overtime .timer-widget-row-time {
+  color: var(--color-danger);
   font-weight: 600;
 }
 
@@ -103,8 +120,8 @@
   min-width: 52px;
 }
 
-.detail-timer-time.is-done {
-  color: var(--color-accent);
+.detail-timer-time.is-overtime {
+  color: var(--color-danger);
 }
 
 /* Icon-only timer trigger in TaskDetailModal's topbar (see detail-timer-

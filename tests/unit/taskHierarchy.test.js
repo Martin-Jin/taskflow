@@ -4,6 +4,8 @@ import {
   areAllChildrenCompletedForCurrentOccurrence,
   isCheckedForListDisplay,
   applyUpwardCompletionCascade,
+  getEffectiveRemainingHoursForOccurrence,
+  computeRemainingHoursPatchAfterElapsed,
 } from '../../src/utils/taskHierarchy';
 import { planSubtaskOccurrenceCompletion } from '../../src/utils/recurrenceState';
 import { deriveRecurrenceRule } from '../../src/utils/recurrence';
@@ -218,5 +220,68 @@ describe('applyUpwardCompletionCascade', () => {
     expect(tasks.find((t) => t.id === 'parent').dueDate).toBe(nextDay);
     expect(tasks.find((t) => t.id === 'c1').dueDate).toBe(nextDay);
     expect(tasks.find((t) => t.id === 'c2').dueDate).toBe(nextDay);
+  });
+});
+
+describe('getEffectiveRemainingHoursForOccurrence', () => {
+  it('reads remainingHours directly for a non-recurring task', () => {
+    expect(getEffectiveRemainingHoursForOccurrence({ isRecurring: false, remainingHours: 3 })).toBe(3);
+    expect(getEffectiveRemainingHoursForOccurrence({ isRecurring: false })).toBe(0);
+  });
+
+  it('falls back to the full estimate for a recurring task with no override recorded', () => {
+    const task = { isRecurring: true, dueDate: TODAY, estimatedHours: 4, remainingHoursOverride: {} };
+    expect(getEffectiveRemainingHoursForOccurrence(task)).toBe(4);
+  });
+
+  it('reads the override keyed by the pattern dueDate for a recurring task', () => {
+    const task = { isRecurring: true, dueDate: TODAY, estimatedHours: 4, remainingHoursOverride: { [TODAY]: 1.5 } };
+    expect(getEffectiveRemainingHoursForOccurrence(task)).toBe(1.5);
+  });
+
+  it('clamps a stored override into [0, estimatedHours]', () => {
+    const over = { isRecurring: true, dueDate: TODAY, estimatedHours: 2, remainingHoursOverride: { [TODAY]: 99 } };
+    expect(getEffectiveRemainingHoursForOccurrence(over)).toBe(2);
+    const under = { isRecurring: true, dueDate: TODAY, estimatedHours: 2, remainingHoursOverride: { [TODAY]: -5 } };
+    expect(getEffectiveRemainingHoursForOccurrence(under)).toBe(0);
+  });
+});
+
+describe('computeRemainingHoursPatchAfterElapsed', () => {
+  it('reduces remainingHours for a non-recurring task, clamped at 0', () => {
+    const task = { isRecurring: false, remainingHours: 2, estimatedHours: 5 };
+    expect(computeRemainingHoursPatchAfterElapsed(task, 0.5)).toEqual({ remainingHours: 1.5 });
+    expect(computeRemainingHoursPatchAfterElapsed(task, 10)).toEqual({ remainingHours: 0 });
+  });
+
+  it('writes a per-occurrence override keyed by the pattern dueDate for a recurring task', () => {
+    const task = { isRecurring: true, dueDate: TODAY, estimatedHours: 4, remainingHoursOverride: {} };
+    expect(computeRemainingHoursPatchAfterElapsed(task, 1)).toEqual({
+      remainingHoursOverride: { [TODAY]: 3 },
+    });
+  });
+
+  it('merges into any existing override map instead of clobbering other occurrences', () => {
+    const task = {
+      isRecurring: true,
+      dueDate: TODAY,
+      estimatedHours: 4,
+      remainingHoursOverride: { '2026-08-05': 1 },
+    };
+    expect(computeRemainingHoursPatchAfterElapsed(task, 1)).toEqual({
+      remainingHoursOverride: { '2026-08-05': 1, [TODAY]: 3 },
+    });
+  });
+
+  it('returns null for a recurring task with no dueDate to key the override by', () => {
+    const task = { isRecurring: true, dueDate: null, estimatedHours: 4 };
+    expect(computeRemainingHoursPatchAfterElapsed(task, 1)).toBeNull();
+  });
+
+  it('elapsed time exceeding remaining hours clamps the patch at 0, never negative', () => {
+    const task = { isRecurring: true, dueDate: TODAY, estimatedHours: 4, remainingHoursOverride: { [TODAY]: 1 } };
+    expect(computeRemainingHoursPatchAfterElapsed(task, 5)).toEqual({
+      remainingHoursOverride: { [TODAY]: 0 },
+    });
   });
 });

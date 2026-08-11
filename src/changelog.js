@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '4.3.0',
+    date: '2026-08-11',
+    title: 'Timer widget fixes: live countdown, overtime, and a new "Mark as done"',
+    changes: [
+      'The floating timer widget now visibly counts down every second again, instead of only updating when you interacted with it.',
+      'A timer that reaches zero no longer freezes at "Time\'s up" — it keeps counting into overtime (shown in red with a "+"), so you can see exactly how far over you\'ve gone.',
+      'Stopping a timer now logs the time you worked (including any overtime) against the task\'s "Time left", instead of discarding it.',
+      'Added a "Mark as done" button to the timer widget and the task detail timer controls, completing the task with the timer\'s elapsed time in one tap.',
+      'The timer widget is now its own draggable floating window — drag it by its header to move it anywhere on screen, and its position is remembered on this device.',
+    ],
+  },
+  {
     version: '4.2.0',
     date: '2026-08-11',
     title: 'Missing-info hint when adding a task',
