@@ -20,11 +20,15 @@
  *   - Timer exists, task is not recurring -> completion is held pending a
  *     confirmation (see `pending` below, rendered by the global
  *     CompleteTaskConfirmModal singleton in App.jsx) showing the live
- *     elapsed time, editable, so the user can log what they actually worked
- *     (e.g. lowering it if they completed the task later than when they
- *     stopped working). Confirming stops the timer and completes the task
- *     with that value as `Task.actualHours`; cancelling leaves both the task
- *     and its timer untouched.
+ *     elapsed time (including any overtime past the timer's original
+ *     duration — see getSignedElapsedSeconds), editable, so the user can log
+ *     what they actually worked (e.g. lowering it if they completed the task
+ *     later than when they stopped working). Confirming stops the timer and
+ *     completes the task with that value as `Task.actualHours`; cancelling
+ *     leaves both the task and its timer untouched. This is also what the
+ *     "Mark as done" action on a running timer (TimerWidget/TaskTimerControl)
+ *     goes through, unchanged — it just calls requestComplete(taskId), which
+ *     already reads the timer's own elapsed time.
  *
  * `pending` is context (not local component state) because completion can be
  * triggered from three different components, but the confirmation popup is
@@ -34,7 +38,7 @@
 
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { useScheduler } from './SchedulerContext';
-import { useTimers, getLiveRemaining } from './TimerContext';
+import { useTimers, getSignedElapsedSeconds } from './TimerContext';
 import { useSound } from './SoundContext';
 
 const CompleteTaskContext = createContext(null);
@@ -65,7 +69,9 @@ export function CompleteTaskProvider({ children }) {
         if (completed) playComplete();
         return completed;
       }
-      const elapsedSeconds = Math.max(0, timer.durationSeconds - getLiveRemaining(timer));
+      // Signed elapsed so overtime (running past the original duration)
+      // counts as extra elapsed time rather than being clamped away.
+      const elapsedSeconds = Math.max(0, getSignedElapsedSeconds(timer));
       setPending({ taskId, taskTitle: timer.taskTitle, elapsedHours: elapsedSeconds / 3600 });
       return false;
     },
