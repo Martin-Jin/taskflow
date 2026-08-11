@@ -163,6 +163,20 @@ changelog" for the same rule in the contributor docs.
 - Before changing a component, check what else depends on it. E.g. adding a new
   input field may also require updating integrations with other apps (syncing/
   importing that new field).
+- **When adding a new feature or field that's likely to get exposed broadly,
+  explicitly list which cross-cutting systems it touches before considering
+  the change done** — it's easy to ship the feature itself and forget the
+  systems that fan out from it. Check each of: backups/restore
+  (`BACKUP_FIELDS`, see Backups), cross-device cloud sync (`computeFingerprint`/
+  `planRemoteDataMerge`/`applyRemoteData` in `useCloudSync.js`), smart-parse /
+  natural-language input (`smartParse.js`, `dateParse.js` — does the new field
+  need a parse path?), the AI quick-add prompt (does the model need to know
+  this field exists to fill it in?), Google Calendar/Todoist sync
+  (`eventSyncService.js`/`todoistSync.js`), and shared-project permissions/
+  presence (if the field is visible to collaborators). Not every feature
+  touches all of these — the point is to check each one deliberately rather
+  than assume "it's just a UI field" and find out later it silently doesn't
+  sync, back up, or get recognized by AI input.
 - Keep data changes backwards compatible. If that's not possible or is too
   costly, write a one-time migration function to convert the old format to the
   new one — and remove that migration code once it's no longer needed (see
