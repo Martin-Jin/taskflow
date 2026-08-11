@@ -2708,3 +2708,74 @@ input[type='checkbox']:checked::after {
 .join-modal-body:not(.join-modal-centered) .join-modal-actions .btn {
   width: 100%;
 }
+
+/* ---------------------------------------------------------------------------
+   Sub-task reparent drag (see hooks/useReparentDrag.js) — shared by Board
+   cards and List rows. The armed target gets a solid accent ring plus the
+   "Make sub-task of X" label below, deliberately different in kind from
+   Board's section-drop cue (which tints a whole column body, see
+   .board-column-body.is-dragover) so the two drop outcomes can't be mistaken
+   for one another mid-drag.
+   --------------------------------------------------------------------------- */
+.board-card.is-reparent-target,
+.task-row.is-reparent-target {
+  position: relative;
+  box-shadow: inset 0 0 0 2px var(--color-accent-solid-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+}
+
+/* Overlaid rather than in-flow so arming a target never reflows the list
+   under the pointer/finger. Sits just INSIDE the target's top-right corner
+   rather than straddling its edge — Board's column body is a clipped scroll
+   container (see .board-column-body), which would cut off anything hanging
+   outside the topmost card. `max-width` keeps a long task title from
+   spilling out of a narrow card. */
+.reparent-drop-hint {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 8px);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-accent-solid-bg);
+  color: white;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.reparent-drop-hint svg {
+  flex-shrink: 0;
+}
+
+.reparent-drop-hint-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow screens: pull in tighter so the pill stays fully on-card, and let it
+   run the card's full width (the ellipsis above handles the overflow) — it's
+   the only thing telling a touch user what releasing here will do. */
+@media (max-width: 480px) {
+  .reparent-drop-hint {
+    right: 4px;
+    left: 4px;
+    max-width: none;
+    width: fit-content;
+    margin-left: auto;
+  }
+}
+
+/* The item being dragged (both views, both input paths) — the touch path has
+   no browser-supplied drag image, so this is its only "in the air" feedback. */
+.task-row.is-dragging {
+  opacity: 0.5;
+}

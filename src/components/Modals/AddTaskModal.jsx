@@ -60,6 +60,7 @@ import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
+import { isAtMaxSubtaskDepth } from '../../utils/taskHierarchy';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -107,6 +108,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedSection, setHasEditedSection] = useState(false);
   const [dependsOn, setDependsOn] = useState([]);
   const [hasEditedDependencies, setHasEditedDependencies] = useState(false);
+  // Draft parent id from a smart-parsed "sub of <task>"/"subtask of <task>"
+  // title mention — there's no widget to edit this directly (a brand-new
+  // task has no "move to" picker of its own), so null just means "not set"
+  // rather than needing a separate hasEdited flag like the fields above.
+  const [parentTaskId, setParentTaskId] = useState(null);
   const [isPassive, setIsPassive] = useState(false);
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
   const [enforceDueDate, setEnforceDueDate] = useState(false);
@@ -168,7 +174,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     }
   }
 
-  const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle } = useSmartTaskTitle({
+  const {
+    smartDetected,
+    handleTitleChange: handleSmartTitleChange,
+    dismissSmartChip,
+    applySmartChipCandidate,
+    buildFinalTitle,
+  } = useSmartTaskTitle({
     tasks,
     projects,
     sections,
@@ -256,6 +268,20 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           if (entry.task) setDependsOn((prev) => prev.filter((id) => id !== entry.task.id));
         },
       },
+      subOf: {
+        isUntouched: () => parentTaskId === null,
+        apply: (match) => {
+          if (!match.task) return;
+          // A brand-new task has no id/descendants of its own yet, so the
+          // only real check needed is the matched task's own depth — it
+          // can't already be a cycle, and can't already be a descendant of
+          // itself (see taskHierarchy.js's getIneligibleParentIds, which a
+          // pre-existing task would need instead).
+          if (isAtMaxSubtaskDepth(match.task, tasks)) return;
+          setParentTaskId(match.task.id);
+        },
+        revert: () => setParentTaskId(null),
+      },
       project: {
         isUntouched: () => !hasEditedProject,
         apply: (match) => {
@@ -266,6 +292,26 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           // later keystroke re-running this same detection shouldn't clobber
           // that manual section choice.
           if (match.section && !hasEditedSection) setSectionId(match.section.id);
+        },
+        revert: () => {
+          handleProjectChange('');
+          if (!hasEditedSection) setSectionId('');
+        },
+      },
+      // Standalone "%section" shorthand — same untouched guard as `project`
+      // above (both write to the same projectId/sectionId state, so a
+      // manual project/section choice must block either trigger equally).
+      // An ambiguous match (match.candidates non-empty) is left alone here:
+      // it has no single project/section to apply yet, and is instead
+      // resolved later via applySmartChipCandidate once the user picks one
+      // from the chip's disambiguation popover.
+      sectionShorthand: {
+        isUntouched: () => !hasEditedProject,
+        apply: (match) => {
+          if (match.section) {
+            handleProjectChange(match.project.id);
+            setSectionId(match.section.id);
+          }
         },
         revert: () => {
           handleProjectChange('');
@@ -333,6 +379,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       sectionId: sectionId || null,
       sectionName: section ? section.name : null,
       dependsOn,
+      parentId: parentTaskId || null,
       isPassive,
       enforceDueDate: enforceDueDate && !!dueDate,
       excludeFromAutoSchedule,
@@ -404,7 +451,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           #project, @tag, "every month"
         </button>
 
-        <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
+        <SmartChips chips={smartChips} onDismiss={dismissSmartChip} onSelectCandidate={applySmartChipCandidate} />
 
         <div className="form-row form-row-compact-notes">
           <textarea

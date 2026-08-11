@@ -17,6 +17,13 @@
  * toggle. (Board/Gantt keep the older rolled-up-badge presentation instead —
  * see BoardView.jsx/GanttChart.jsx.)
  *
+ * SUB-TASK DRAG: dragging one row onto another makes the dragged task a
+ * sub-task of the row it was dropped on (mouse on desktop, long-press on
+ * touch) — see hooks/useReparentDrag.js, shared with BoardView's cards. This
+ * is the list's only drag gesture, so unlike Board there's nothing for it to
+ * be confused with; the drop still has to land clearly inside a row's body
+ * rather than graze its edge, so merely dragging past a row doesn't arm it.
+ *
  * ROW MOTION: rows are framer-motion elements so that reordering (a
  * priority change, a new sort/filter, a task completing and leaving the
  * list) slides the survivors into their new positions instead of snapping
@@ -51,6 +58,7 @@ import BoardView from './Board/BoardView';
 import GanttChart from './Gantt/GanttChart';
 import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
 import AddTaskFabGroup from './Common/AddTaskFabGroup';
+import ReparentDropHint from './Common/ReparentDropHint';
 import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import PresenceAvatars from './Common/PresenceAvatars';
@@ -62,6 +70,7 @@ import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useReparentDrag } from '../hooks/useReparentDrag';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -121,7 +130,7 @@ export default function TaskListPanel({
   onOpenSearch,
   onShareProject,
 }) {
-  const { tasks, labels, projects, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
+  const { tasks, labels, projects, updateTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const { user } = useAuth();
@@ -246,6 +255,17 @@ export default function TaskListPanel({
     }
     return ids;
   }, [projects, sharedProjects, user?.uid]);
+  // Row -> row drag = "make this a sub-task of that" (see SUB-TASK DRAG in the
+  // header). Unlike Board there's no competing section/column drop gesture
+  // here, so a row is a drop target for its whole body. `isTaskLocked` gates
+  // per row rather than for the view as a whole, since "All Tasks" can list a
+  // viewer-only shared project's rows next to editable ones.
+  const isTaskLocked = useCallback(
+    (task) => !!task.projectId && viewerOnlyProjectIds.has(task.projectId),
+    [viewerOnlyProjectIds]
+  );
+  const reparent = useReparentDrag({ tasks, updateTask, isTaskLocked });
+
   // Direct children (parentId chain) per task id — the basis for the
   // recursive nested rows below (renderTaskRow reads this at every depth).
   const childrenByParentId = useMemo(() => {
@@ -440,6 +460,10 @@ export default function TaskListPanel({
         onComplete={requestComplete}
         onUncomplete={handleUncomplete}
         isReadOnlyViewer={!!task.projectId && viewerOnlyProjectIds.has(task.projectId)}
+        isDragging={reparent.draggedId === task.id}
+        isReparentTarget={reparent.targetId === task.id}
+        reparentHandlers={reparent.handlers}
+        onDragEnd={reparent.endDrag}
       />
     );
   }
@@ -692,16 +716,39 @@ const TaskRow = React.memo(function TaskRow({
   onComplete,
   onUncomplete,
   isReadOnlyViewer,
+  isDragging,
+  isReparentTarget,
+  reparentHandlers,
+  onDragEnd,
 }) {
   return (
     <motion.div
       layout={motionEnabled ? 'position' : false}
       transition={ROW_TRANSITION}
       exit={motionEnabled ? ROW_EXIT : undefined}
-      className={`task-row ${depth === 0 ? 'card' : 'task-row-child'}`}
+      className={`task-row ${depth === 0 ? 'card' : 'task-row-child'} ${isDragging ? 'is-dragging' : ''} ${
+        isReparentTarget ? 'is-reparent-target' : ''
+      }`}
       style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
-      onClick={() => onOpen(task.id)}
+      // Drag a row onto another row to make it that row's sub-task (see
+      // SUB-TASK DRAG in TaskListPanel's header). framer-motion only forwards
+      // onDragStart/onDragEnd to the DOM when `draggable` is set — which it is
+      // here — so native HTML5 DnD works through it; touch gets the
+      // long-press path instead, since there's no native touch DnD.
+      draggable={!isReadOnlyViewer}
+      data-task-id={task.id}
+      onDragStart={(e) => reparentHandlers.dragStart(e, task.id)}
+      onDragEnd={onDragEnd}
+      onDragOver={(e) => reparentHandlers.dragOver(e, task.id)}
+      onDragLeave={() => reparentHandlers.dragLeave(task.id)}
+      onDrop={(e) => reparentHandlers.drop(e, task.id)}
+      onTouchStart={(e) => reparentHandlers.touchStart(e, task.id)}
+      onClick={() => {
+        if (reparentHandlers.consumeClick()) return; // trailing click of a long-press drag, not a tap
+        onOpen(task.id);
+      }}
     >
+      {isReparentTarget && <ReparentDropHint parentTitle={task.title} />}
       <button
         className={`task-checkbox ${task.priority} ${isCheckedForDisplay ? 'checked' : ''}`}
         onClick={(e) => {

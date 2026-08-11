@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.0',
+    date: '2026-08-11',
+    title: 'Move tasks in and out of sub-task relationships',
+    changes: [
+      'A task can now be reparented after creation, four ways: "Remove from parent task" in its "..." menu, a new "move to" search picker next to its breadcrumb, dragging its card/row onto another task in Board or List view (works on mobile too, via a long press), or typing "sub of <task title>" / "subtask of <task title>" into its title.',
+      'Added a shorter "%section" smart-parse shortcut for assigning a section without spelling out its project — if more than one project has a matching section, tap the suggestion to pick which one you meant.',
+      'The "#project"/"@label" autocomplete while typing a title now uses Tab to cycle through suggestions (Enter still applies the highlighted one), instead of Tab immediately applying the first result.',
+    ],
+  },
+  {
     version: '4.3.0',
     date: '2026-08-11',
     title: 'Timer widget fixes: live countdown, overtime, and a new "Mark as done"',

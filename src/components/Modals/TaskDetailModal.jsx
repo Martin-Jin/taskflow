@@ -97,6 +97,8 @@ import {
   CheckCircle,
   ExternalLink,
   ChevronRight,
+  CornerUpLeft,
+  FolderInput,
 } from 'lucide-react';
 import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -129,6 +131,7 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import DependencyPicker from '../Common/DependencyPicker';
 import HelpTooltip from '../Common/HelpTooltip';
@@ -147,6 +150,8 @@ import {
   isCompletedForCurrentOccurrence,
   getEffectiveRemainingHoursForOccurrence,
   computeRemainingHoursPatchAfterElapsed,
+  isAtMaxSubtaskDepth,
+  getIneligibleParentIds,
 } from '../../utils/taskHierarchy';
 import SmartParseGuideModal from './SmartParseGuideModal';
 import {
@@ -165,18 +170,6 @@ import { computeEffectiveRole, isSharedProject, resolveOwnerProfile } from '../.
 // allocator.js's prioritizeTasks — but keeps the two "new task" entry
 // points consistent).
 const DEFAULT_SUBTASK_ESTIMATED_HOURS = 5 / 60;
-
-// Sub-task nesting is capped at 2 levels (task -> sub-task -> sub-task of
-// that sub-task), enforced going forward only (no migration/backfill for
-// any pre-existing data that might already violate it — see TaskDetailModal's
-// handleAddSubtask). A task is already at the max depth once ITS OWN parent
-// is itself a sub-task (i.e. `task` is a depth-2 sub-task already); adding a
-// child to it would create a depth-3 grandchild.
-function isAtMaxSubtaskDepth(task, tasks) {
-  if (!task.parentId) return false;
-  const parent = tasks.find((t) => t.id === task.parentId);
-  return !!(parent && parent.parentId);
-}
 
 // Smart-parsed link phrases (e.g. "check out example.com") get stripped out
 // of notes text on load/save so the raw phrase doesn't linger once it's
@@ -283,6 +276,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // project itself is still smart-parse-driven.
   const [hasEditedSection, setHasEditedSection] = useState(false);
   const [dependsOn, setDependsOn] = useState(task.dependsOn || []);
+  // Draft parent id from a smart-parsed "sub of <task>"/"subtask of <task>"
+  // title mention — null means "not touched by smart parse", distinct from
+  // clearing the parent (which the "move to" popover does directly via
+  // updateTask, not through this draft). No widget edits this directly (like
+  // dependsOn's DependencyPicker has), so unlike most sidebar fields it can't
+  // compare against a task.* original to decide "untouched" — null itself IS
+  // the untouched state, same idea as fixedTimeEnabled's hasEditedFixedTime.
+  const [smartParentTaskId, setSmartParentTaskId] = useState(null);
   const [isPassive, setIsPassive] = useState(!!task.isPassive);
   const [earliestDate, setEarliestDate] = useState(task.earliestDate || '');
   const [enforceDueDate, setEnforceDueDate] = useState(!!task.enforceDueDate);
@@ -334,6 +335,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [subtaskDependsOn, setSubtaskDependsOn] = useState([]);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // "Move to" popover (breadcrumb button next to the hierarchy label) — lets
+  // the user manually reparent this task, or clear its parent, instead of the
+  // AI-tool-only path that existed before. Filter text is local to the
+  // popover and cleared whenever it closes or a selection is made.
+  const [moveToOpen, setMoveToOpen] = useState(false);
+  const [moveToQuery, setMoveToQuery] = useState('');
   // Icon-only timer trigger in the topbar (separate from the "..." menu) —
   // opens a small popover hosting the same TaskTimerControl used in the
   // Timer DetailField below, for quick start/pause/stop without opening the
@@ -611,6 +618,61 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     },
   });
 
+  // Positioning for the "move to" popover — same useMenuPosition helper as
+  // the "..." menu and timer popover above (its own independent instance so
+  // all three can open without interfering with each other).
+  const moveToTriggerRef = useRef(null);
+  const {
+    menuRef: moveToPopoverRef,
+    mode: moveToPopoverMode,
+    style: moveToPopoverStyle,
+  } = useMenuPosition({
+    isOpen: moveToOpen,
+    anchorRef: moveToTriggerRef,
+    onClose: () => setMoveToOpen(false),
+    forceCentered: isMobile,
+    computeAnchored: (anchorRect, menuRect) => {
+      const spaceBelow = window.innerHeight - anchorRect.bottom;
+      const openAbove = spaceBelow < menuRect.height && anchorRect.top > spaceBelow;
+      return {
+        left: anchorRect.right - menuRect.width,
+        top: openAbove ? undefined : anchorRect.bottom + 4,
+        bottom: openAbove ? window.innerHeight - anchorRect.top + 4 : undefined,
+      };
+    },
+  });
+
+  // Candidate tasks for "move to": every task except this one, its own
+  // descendants (would create a cycle), and anything already at the max
+  // sub-task depth (would create a 3-level chain) — see taskHierarchy.js's
+  // getIneligibleParentIds, the single source of truth for this rule shared
+  // with the AI reparent tool.
+  const ineligibleParentIds = useMemo(() => getIneligibleParentIds(task.id, tasks), [task.id, tasks]);
+  const moveToCandidates = useMemo(() => {
+    const q = moveToQuery.trim().toLowerCase();
+    return tasks.filter((t) => !ineligibleParentIds.has(t.id) && (!q || t.title.toLowerCase().includes(q)));
+  }, [tasks, ineligibleParentIds, moveToQuery]);
+
+  function handleMoveToParent(newParentId) {
+    updateTask(task.id, { parentId: newParentId });
+    setMoveToOpen(false);
+    setMoveToQuery('');
+  }
+
+  const {
+    activeIndex: moveToActiveIndex,
+    setActiveIndex: setMoveToActiveIndex,
+    listRef: moveToListRef,
+    handleKeyDown: handleMoveToKeyDown,
+  } = useListKeyboardNav({
+    itemCount: moveToCandidates.length,
+    onSelect: (index) => {
+      const candidate = moveToCandidates[index];
+      if (candidate) handleMoveToParent(candidate.id);
+    },
+    resetKey: moveToQuery,
+  });
+
   // Snapshot of the task's saved values, refreshed whenever a *different*
   // task is opened (mirrors the reset-on-task.id effect below) — compared
   // against current form state to decide whether the inline Save/Cancel row
@@ -695,6 +757,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setSectionId(task.sectionId || '');
     setHasEditedSection(false);
     setDependsOn(task.dependsOn || []);
+    setSmartParentTaskId(null);
     setIsPassive(!!task.isPassive);
     setEarliestDate(task.earliestDate || '');
     setEnforceDueDate(!!task.enforceDueDate);
@@ -703,6 +766,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setHasEditedFixedTime(false);
     setLabelIds(task.labelIds || []);
     setPauseLogPrompt(null);
+    setMoveToOpen(false);
+    setMoveToQuery('');
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
     lastSmartEarliestDateRef.current = null;
@@ -944,7 +1009,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const lastSmartEarliestDateRef = useRef(null);
   const lastSmartProjectRef = useRef(null);
   const lastSmartDependencyIdRef = useRef(null);
-  const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle, resetSmartState } = useSmartTaskTitle({
+  const {
+    smartDetected,
+    handleTitleChange: handleSmartTitleChange,
+    dismissSmartChip,
+    applySmartChipCandidate,
+    buildFinalTitle,
+    resetSmartState,
+  } = useSmartTaskTitle({
     tasks,
     projects,
     sections,
@@ -1099,6 +1171,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           }
         },
       },
+      subOf: {
+        isUntouched: () => smartParentTaskId === null,
+        apply: (match) => {
+          if (!match.task) return;
+          // Invalid target (would create a cycle, or is already at max
+          // sub-task depth) — behave like no match, never silently apply.
+          if (getIneligibleParentIds(task.id, tasks).has(match.task.id)) return;
+          setSmartParentTaskId(match.task.id);
+        },
+        revert: () => setSmartParentTaskId(null),
+      },
       project: {
         isUntouched: () =>
           projectId === (task.projectId || '') ||
@@ -1109,6 +1192,30 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
             handleProjectChange(match.project.id);
           }
           if (match.section && !hasEditedSection) setSectionId(match.section.id);
+        },
+        revert: () => {
+          lastSmartProjectRef.current = null;
+          handleProjectChange(task.projectId || '');
+          if (!hasEditedSection) setSectionId(task.sectionId || '');
+        },
+      },
+      // Standalone "%section" shorthand — shares `project`'s own touch-guard
+      // (both write to the same projectId/sectionId state) rather than
+      // tracking a separate lastSmart*Ref, since the two triggers are
+      // interchangeable from the field's point of view. An ambiguous match
+      // (match.candidates non-empty) is left alone here; it's resolved later
+      // via applySmartChipCandidate once the user picks a candidate from the
+      // chip's disambiguation popover.
+      sectionShorthand: {
+        isUntouched: () =>
+          projectId === (task.projectId || '') ||
+          (lastSmartProjectRef.current !== null && projectId === lastSmartProjectRef.current),
+        apply: (match) => {
+          if (match.section) {
+            lastSmartProjectRef.current = match.project.id;
+            handleProjectChange(match.project.id);
+            if (!hasEditedSection) setSectionId(match.section.id);
+          }
         },
         revert: () => {
           lastSmartProjectRef.current = null;
@@ -1284,6 +1391,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     fixedTimeEnabled !== initialSnapshotRef.current.fixedTimeEnabled ||
     dependsOn.length !== initialSnapshotRef.current.dependsOn.length ||
     dependsOn.some((id) => !initialSnapshotRef.current.dependsOn.includes(id)) ||
+    smartParentTaskId !== null ||
     labelIds.length !== initialSnapshotRef.current.labelIds.length ||
     labelIds.some((id) => !initialSnapshotRef.current.labelIds.includes(id));
   const isDirty = mainDirty || sidebarDirty;
@@ -1530,6 +1638,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionId: sectionId || null,
       sectionName: section ? section.name : null,
       dependsOn,
+      // Only override parentId if smart-parse actually produced a draft
+      // parent this session — otherwise leave the task's existing parent
+      // alone (reparenting away from smart-parse goes through the "move to"
+      // popover's own direct updateTask call instead).
+      parentId: smartParentTaskId !== null ? smartParentTaskId : task.parentId,
       isPassive,
       earliestDate: earliestDate || null,
       // Only meaningful once a due date exists — clear it rather than
@@ -1554,6 +1667,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // text with stale link highlighting.
     setTitle(nextTitle);
     setLabelIds(finalLabelIds);
+    // The draft parent (if any) is now baked into task.parentId — clear it so
+    // isUntouched() goes back to true instead of staying permanently blocked
+    // against re-applying a later "sub of" edit (mirrors dependsOn/labelIds
+    // syncing back to their own just-saved values above).
+    setSmartParentTaskId(null);
     resetSmartState();
 
     initialSnapshotRef.current = {
@@ -1682,6 +1800,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     fixedTime,
     fixedTimeEnabled,
     dependsOn,
+    smartParentTaskId,
     labelIds,
   ]);
 
@@ -1702,6 +1821,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setSectionId(snap.sectionId);
     setHasEditedSection(false);
     setDependsOn(snap.dependsOn);
+    setSmartParentTaskId(null);
     setIsPassive(snap.isPassive);
     setEarliestDate(snap.earliestDate);
     setEnforceDueDate(snap.enforceDueDate);
@@ -1734,32 +1854,96 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           tabIndex={-1}
         >
           <div className="detail-topbar">
-            {(parentTask || childTasks.length > 0) && (
-              <div className="detail-hierarchy">
-                {parentTask ? (
-                  <>
-                    <button
-                      type="button"
-                      className="detail-hierarchy-link"
-                      onClick={() => setActiveTaskId(parentTask.id)}
-                      title={`Open parent task: ${parentTask.title}`}
-                    >
-                      {parentTask.title}
-                    </button>
-                    <ChevronRight size={12} className="detail-hierarchy-sep" aria-hidden="true" />
-                    <span className="detail-hierarchy-current">{task.title}</span>
-                  </>
-                ) : (
-                  <span className="detail-hierarchy-current">
-                    <Layers size={12} aria-hidden="true" />
-                    {task.title}
-                    <span className="detail-hierarchy-count">
-                      {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'}
-                    </span>
+            {/* Always rendered (not gated on having a parent/children) so the
+                "move to" button is reachable from a plain standalone task too
+                — only the breadcrumb text itself is conditional. */}
+            <div className="detail-hierarchy">
+              {parentTask ? (
+                <>
+                  <button
+                    type="button"
+                    className="detail-hierarchy-link"
+                    onClick={() => setActiveTaskId(parentTask.id)}
+                    title={`Open parent task: ${parentTask.title}`}
+                  >
+                    {parentTask.title}
+                  </button>
+                  <ChevronRight size={12} className="detail-hierarchy-sep" aria-hidden="true" />
+                  <span className="detail-hierarchy-current">{task.title}</span>
+                </>
+              ) : childTasks.length > 0 ? (
+                <span className="detail-hierarchy-current">
+                  <Layers size={12} aria-hidden="true" />
+                  {task.title}
+                  <span className="detail-hierarchy-count">
+                    {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'}
                   </span>
+                </span>
+              ) : null}
+              <button
+                type="button"
+                ref={moveToTriggerRef}
+                className="btn btn-icon detail-move-to-trigger"
+                onClick={() => setMoveToOpen((v) => !v)}
+                aria-haspopup="true"
+                aria-expanded={moveToOpen}
+                aria-label="Move to another task"
+                title="Move to another task"
+              >
+                <FolderInput size={14} />
+              </button>
+              {moveToOpen &&
+                createPortal(
+                  <>
+                    {moveToPopoverMode === 'centered' && (
+                      <div className="menu-popover-backdrop" onClick={() => setMoveToOpen(false)} />
+                    )}
+                    <div
+                      ref={moveToPopoverRef}
+                      className={`detail-move-to-popover ${moveToPopoverMode === 'centered' ? 'menu-popover-centered' : ''}`}
+                      style={moveToPopoverMode === 'anchored' ? moveToPopoverStyle : undefined}
+                    >
+                      <input
+                        type="text"
+                        autoFocus
+                        className="detail-move-to-input"
+                        placeholder="Search tasks…"
+                        value={moveToQuery}
+                        onChange={(e) => setMoveToQuery(e.target.value)}
+                        onKeyDown={handleMoveToKeyDown}
+                      />
+                      <div className="detail-move-to-list" ref={moveToListRef}>
+                        {task.parentId && (
+                          <button
+                            type="button"
+                            className="detail-move-to-item detail-move-to-item-none"
+                            onClick={() => handleMoveToParent(null)}
+                          >
+                            None (make top-level task)
+                          </button>
+                        )}
+                        {moveToCandidates.length === 0 ? (
+                          <p className="detail-move-to-empty">No matching tasks.</p>
+                        ) : (
+                          moveToCandidates.map((t, i) => (
+                            <button
+                              type="button"
+                              key={t.id}
+                              className={`detail-move-to-item ${i === moveToActiveIndex ? 'active' : ''}`}
+                              data-active={i === moveToActiveIndex}
+                              onMouseEnter={() => setMoveToActiveIndex(i)}
+                              onClick={() => handleMoveToParent(t.id)}
+                            >
+                              {t.title}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>,
+                  document.body
                 )}
-              </div>
-            )}
+            </div>
 
             {!isContainer && (
               <div className="detail-timer-trigger-wrap">
@@ -1920,6 +2104,22 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           {task.excludeFromAutoSchedule ? 'Include in auto-schedule' : 'Exclude from auto-schedule'}
                         </button>
                       </li>
+                      {task.parentId && (
+                        <li role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="detail-menu-item"
+                            onClick={() => {
+                              updateTask(task.id, { parentId: null });
+                              setMenuOpen(false);
+                            }}
+                          >
+                            <CornerUpLeft size={14} aria-hidden="true" />
+                            Remove from parent task
+                          </button>
+                        </li>
+                      )}
                       <li role="none">
                         <button
                           type="button"
@@ -2120,7 +2320,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   </div>
                 </div>
 
-                <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
+                <SmartChips chips={smartChips} onDismiss={dismissSmartChip} onSelectCandidate={applySmartChipCandidate} />
 
                 {link && (
                   <div className="detail-link-badge">
