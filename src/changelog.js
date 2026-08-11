@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.2',
+    date: '2026-08-11',
+    title: 'Move-to picker text and "%section" highlight fixes',
+    changes: [
+      'Actually fixed the "move to" task picker\'s squished/overlapping result text — the previous 4.4.1 attempt addressed the wrong cause, letting the flex list layout keep shrinking each row below the height its text needed.',
+      'A resolved "%section" mention in the title now gets the same highlight as other smart-parse detections ("#project", due dates, etc.) instead of showing no highlight at all despite correctly resolving.',
+    ],
+  },
+  {
     version: '4.4.1',
     date: '2026-08-11',
     title: 'Smart-parse and "move to" picker fixes',
