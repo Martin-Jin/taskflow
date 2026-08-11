@@ -651,6 +651,55 @@ describe('computePushStampPlan', () => {
     expect(plan.shouldPush).toBe(true);
     expect(plan.rollbackFingerprint).toBe(null);
   });
+
+  // Regression coverage for the cross-device sync bug fixed alongside this
+  // test: lastPushedFingerprintRef used to be purely in-memory, stamped
+  // optimistically before the write resolved. A tab kill mid-push (mobile OS
+  // suspend, aborted request) meant the edit was safe in localStorage (the
+  // app's source of truth) but never reached Firestore — and on the NEXT
+  // session the ref reset to null in memory, so if the user made no further
+  // edit, every future schedulePush saw "no change" (comparing against
+  // whatever it was last stamped to in THIS fresh session, coincidentally or
+  // not) and the edit was silently dropped from Firestore forever. The fix
+  // persists the fingerprint to localStorage, but ONLY after a confirmed
+  // successful push (see runPushNow in useCloudSync.js) — never optimistically
+  // — so a "next session" ref-seed reflects the last write Firestore actually
+  // has, not a guess. These tests simulate that seed (what
+  // `loadPersisted('lastPushedFingerprint', null)` would return) fed straight
+  // into computePushStampPlan, without needing to render the hook itself.
+  it('a fingerprint persisted only on confirmed success correctly triggers a retry next session when local state has since diverged', () => {
+    // Session 1: last confirmed push was of `state`. The user then edits
+    // locally (new state), but the tab is killed before that edit's push
+    // resolves — so nothing newer was ever confirmed, and the persisted
+    // value on disk is still the fingerprint of the OLD `state`.
+    const persistedFingerprintFromDisk = computeFingerprint(state);
+
+    // Session 2 (fresh launch, in-memory ref reseeded from that persisted
+    // value): current local state (localStorage, the source of truth)
+    // already reflects the edit that never made it to Firestore.
+    const editedState = { ...state, tasks: [{ id: '1' }, { id: '2', title: 'added while offline' }] };
+    const plan = computePushStampPlan(editedState, persistedFingerprintFromDisk);
+
+    expect(plan.shouldPush).toBe(true);
+    expect(plan.fingerprint).toBe(computeFingerprint(editedState));
+  });
+
+  it('a fingerprint persisted on confirmed success correctly reports nothing to do when local state matches it next session (no false retry)', () => {
+    const persistedFingerprintFromDisk = computeFingerprint(state);
+    // Session 2: local state is unchanged since the last confirmed push.
+    const plan = computePushStampPlan(state, persistedFingerprintFromDisk);
+    expect(plan.shouldPush).toBe(false);
+  });
+
+  it('an optimistically-stamped (never confirmed) fingerprint would have wrongly reported nothing to do — the exact bug this persistence fix avoids by only stamping after the await resolves', () => {
+    // Contrast case: if the OPTIMISTIC fingerprint (the failed push's target
+    // state) had been the one persisted instead of the last CONFIRMED one,
+    // the next session would wrongly see the edit as "already pushed" and
+    // skip it forever.
+    const optimisticallyStampedFingerprint = computeFingerprint(state);
+    const plan = computePushStampPlan(state, optimisticallyStampedFingerprint);
+    expect(plan.shouldPush).toBe(false); // demonstrates why persisting pre-await would have been wrong
+  });
 });
 
 describe('hasNewCompletion', () => {

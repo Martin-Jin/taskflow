@@ -501,6 +501,19 @@ export function useGoogleCalendarSync({
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
           if (attempt > 0) await sleep(TRANSIENT_RETRY_DELAY_MS);
           try {
+            // Silently refresh the access token first (mirrors the initial
+            // mount-time silent re-auth at requestAccessToken(true) above) —
+            // without this, fetchGoogleEvents alone can't distinguish "no
+            // access token yet" from "genuinely revoked": fetchEvents() just
+            // falls back to mock data with no error at all when accessToken
+            // is null (e.g. the mount-time silent re-auth exhausted its
+            // retries on a transient failure and never obtained one), so a
+            // refresh token revoked in the meantime would otherwise never
+            // surface here — the poll would keep "succeeding" against mock
+            // events forever. Routing through requestAccessToken(true) puts
+            // any confirmed Worker 404/409 into THIS catch, where it's now
+            // checked below alongside the existing isGoogleAuthError case.
+            await requestAccessToken(true);
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
             const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
             applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
@@ -509,7 +522,10 @@ export function useGoogleCalendarSync({
           } catch (err) {
             // Confirmed auth failure — fail fast, no retry benefit, and its
             // own disconnected/reconnect messaging replaces the stale flag.
-            if (err?.isGoogleAuthError) {
+            // Covers both a live gapi 401 (isGoogleAuthError) and a confirmed
+            // revoked/not-connected refresh token from the requestAccessToken
+            // call above (needsReconnect) — see this function's own comment.
+            if (err?.isGoogleAuthError || shouldTreatAsReconnectNeeded(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
               setGoogleConnected(false);
               setGoogleNeedsReconnect(true);
@@ -741,12 +757,19 @@ export function useGoogleCalendarSync({
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
           if (attempt > 0) await sleep(TRANSIENT_RETRY_DELAY_MS);
           try {
+            // See the periodic poll's identical call above for why this is
+            // needed: fetchGoogleEvents alone can't surface a confirmed
+            // revoked/not-connected refresh token (fetchEvents() silently
+            // falls back to mock data when there's no access token yet,
+            // rather than throwing) — refreshing first routes that signal
+            // into this catch instead.
+            await requestAccessToken(true);
             const { events: fetchedEvents } = await fetchGoogleEvents(needed.startIso, needed.endIso);
             applyPulledEvents(fetchedEvents, needed.startIso, needed.endIso);
             markGoogleSyncSucceeded();
             return;
           } catch (err) {
-            if (err?.isGoogleAuthError) {
+            if (err?.isGoogleAuthError || shouldTreatAsReconnectNeeded(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
               setGoogleConnected(false);
               setGoogleNeedsReconnect(true);

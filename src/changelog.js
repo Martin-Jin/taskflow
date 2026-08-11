@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.3',
+    date: '2026-08-12',
+    title: 'Sync reliability fixes',
+    changes: [
+      'Fixed a cross-device sync bug where an edit made right before closing the app (e.g. on your phone) could fail to reach the cloud in time and then be silently forgotten — it now reliably retries on your next app open instead of only on your next edit.',
+      'Fixed Google Calendar silently showing as connected (using placeholder events) instead of prompting you to reconnect when your Google access had actually been revoked and the periodic background sync could not recover on its own.',
+    ],
+  },
+  {
     version: '4.4.2',
     date: '2026-08-11',
     title: 'Move-to picker text and "%section" highlight fixes',
