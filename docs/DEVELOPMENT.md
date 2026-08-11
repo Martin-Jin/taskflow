@@ -942,7 +942,13 @@ drift apart. A detector that can match more than one candidate ambiguously
 sections at once) returns every qualifying candidate instead of guessing —
 its chip is `expandable`, and clicking it opens a small popover
 (`SmartChips.jsx`) to disambiguate; this mechanism is generic, not
-section-specific, so a future ambiguous-match detector can reuse it.
+section-specific, so a future ambiguous-match detector can reuse it. Beyond
+that after-the-fact chip, "@label", "#project[/section]" and "%section" all
+also get a live-while-typing suggestion dropdown (`useMentionAutocomplete.js`
++ `MentionDropdown.jsx`, wired into `SmartTitleInput.jsx`) — the two
+mechanisms are independent: the dropdown helps pick a candidate before the
+mention is finished, the chip reports/disambiguates the result once
+`smartParse.js` has actually resolved it.
 
 **Animation follows one pattern.** React unmounts a component the instant
 its parent stops rendering it, cutting off any CSS exit transition. Every

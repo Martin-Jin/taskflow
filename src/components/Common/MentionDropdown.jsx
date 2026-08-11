@@ -19,7 +19,7 @@ import { createPortal } from 'react-dom';
 import { Tag, Folder, Layers, Plus } from 'lucide-react';
 import { useAnchoredPosition } from '../../hooks/useAnchoredPosition';
 
-const MODE_ICONS = { label: Tag, project: Folder, section: Layers };
+const MODE_ICONS = { label: Tag, project: Folder, section: Layers, sectionShorthand: Layers };
 
 export default function MentionDropdown({ anchorRect, mode, matches, showCreateOption, highlightedIndex, onHighlight, onSelect, query }) {
   const { elementRef: listRef, position: pos } = useAnchoredPosition(anchorRect);

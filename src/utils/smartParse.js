@@ -351,11 +351,37 @@ function findProjectPhrase(text, projects, sections) {
  * as a candidate.
  */
 function findSectionShorthandPhrase(text, projects, sections) {
-  const m = text.match(/%([^@#%]+?)(?=\s*[@#%]|$)/);
-  if (!m || !m[1].trim()) return null;
-  const fragment = m[1].trim();
-  const matchedText = m[0];
-  const index = m.index;
+  const percentMatch = text.match(/%(?!\s)/);
+  if (!percentMatch) return null;
+  const afterPercent = text.slice(percentMatch.index + 1);
+
+  // Prefer stopping at the end of whichever known section name is actually
+  // spelled out (mirrors findProjectPhrase's section match above), so that
+  // once a section resolves, further words typed on the same line aren't
+  // folded into the match. Falls back to a single whitespace-free word when
+  // no known section name is fully typed yet — either way the match always
+  // stops at a space, so typing past it starts a new, unrelated word instead
+  // of continuing to extend this shorthand indefinitely.
+  const sectionsByNameLengthDesc = [...sections].sort((a, b) => b.name.length - a.name.length);
+  let consumed = null;
+  for (const candidate of sectionsByNameLengthDesc) {
+    const candidateName = candidate.name.trim();
+    if (!candidateName) continue;
+    const prefixMatch = afterPercent.match(new RegExp(`^${escapeRegExp(candidateName)}(?=\\s|[@#%]|$)`, 'i'));
+    if (prefixMatch) {
+      consumed = prefixMatch[0];
+      break;
+    }
+  }
+  if (consumed === null) {
+    const wordFallback = afterPercent.match(/^[^\s@#%]*/);
+    consumed = wordFallback[0];
+  }
+  if (!consumed.trim()) return null;
+
+  const fragment = consumed.trim();
+  const matchedText = `%${consumed}`;
+  const index = percentMatch.index;
   const f = fragment.toLowerCase();
 
   const exactMatches = [];

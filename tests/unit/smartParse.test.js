@@ -267,6 +267,16 @@ describe('parseTaskText — "%section" shorthand', () => {
     expect(cleanedTitle).toBe('Buy milk');
   });
 
+  it('stops the fragment at a space instead of continuing to swallow later words', () => {
+    const projects = [{ id: 'p1', name: 'Home' }];
+    const sections = [{ id: 's1', name: 'Groceries', projectId: 'p1' }];
+    const { detected, cleanedTitle } = parseTaskText('Buy milk %Groceries and eggs', { projects, sections });
+
+    expect(detected.sectionShorthand.section).toEqual(sections[0]);
+    expect(detected.sectionShorthand.fragment).toBe('Groceries');
+    expect(cleanedTitle).toBe('Buy milk and eggs');
+  });
+
   it('detects a standalone "%section" mention alongside an unrelated "#project" mention in the same title', () => {
     const projects = [{ id: 'p1', name: 'Home' }, { id: 'p2', name: 'Work' }];
     const sections = [{ id: 's1', name: 'Groceries', projectId: 'p1' }];
