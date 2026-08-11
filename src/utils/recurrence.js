@@ -588,6 +588,29 @@ export function generateTaskOccurrences(task, rangeStartIso, rangeEndIso) {
  * Backward compatible: a task with no `overrides` (the pre-existing case)
  * behaves identically to generateTaskOccurrences.
  *
+ * DEDUPING A PATTERN/OVERRIDE COLLISION: an override is meant to represent a
+ * single occurrence temporarily moved onto a different date (see
+ * computeRecurringRescheduleUpdate's off-pattern branch, and
+ * computeRecurringDescendantDueDateOverrides's parent-due-date cascade in
+ * recurrenceState.js). But the descendant's own pattern keeps walking forward
+ * independently of any override written against it — if the pattern happens
+ * to reach the override's destination date on its own (most commonly: an
+ * overdue daily/weekly descendant whose parent's due date got pulled forward,
+ * landing the override's `date` on the same day the descendant's un-moved
+ * pattern was already going to produce), naively concatenating patternDates
+ * and movedInDates would emit TWO entries resolving to the same `date` — and
+ * every caller (rebalanceEngine.js's expandRecurringTasks) turns each entry
+ * into its own independently-scheduled virtual occurrence, i.e. a real task
+ * scheduled twice on the same day. `computeRecurringDescendantDueDateOverrides`'s
+ * own doc comment already calls this override "self-healing... harmless dead
+ * weight" once the pattern catches up to it — so once both an override and
+ * the natural pattern resolve to the same date, the override entry is
+ * redundant and dropped here, keeping only the natural pattern-date entry
+ * (`originalDate === date`). This only collapses a pattern-vs-override
+ * collision; two DIFFERENT overrides that happen to resolve to the same date
+ * (or an override colliding with a different pattern date it wasn't keyed
+ * against) is a separate, much rarer case not handled here.
+ *
  * @param {import('../types').Task} task
  * @param {string} rangeStartIso - "YYYY-MM-DD"
  * @param {string} rangeEndIso - "YYYY-MM-DD"
@@ -605,14 +628,25 @@ export function expandTaskOccurrences(task, rangeStartIso, rangeEndIso) {
     return movedTo && movedTo >= rangeStartIso && movedTo <= rangeEndIso;
   });
 
-  return [...patternDates, ...movedInDates]
+  const resolved = [...patternDates, ...movedInDates]
     .map((originalDate) => ({ originalDate, date: overrides[originalDate]?.date || originalDate }))
     .filter((occ) => !overrides[occ.originalDate]?.deleted)
     // A pattern date whose override moved it OUT of [rangeStartIso, rangeEndIso]
     // must not surface here — patternDates only guarantees the ORIGINAL date is
     // in range, not the resolved one.
-    .filter((occ) => occ.date >= rangeStartIso && occ.date <= rangeEndIso)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    .filter((occ) => occ.date >= rangeStartIso && occ.date <= rangeEndIso);
+
+  // Collapse a pattern-date entry and a moved-in override entry that resolve
+  // to the same `date` (see doc comment above) — keep the natural pattern
+  // entry (originalDate === date) over the moved-in one wherever both exist
+  // for the same resolved date.
+  const byDate = new Map();
+  for (const occ of resolved) {
+    const existing = byDate.get(occ.date);
+    if (!existing || occ.originalDate === occ.date) byDate.set(occ.date, occ);
+  }
+
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 /**
