@@ -475,6 +475,70 @@ describe('expandTaskOccurrences', () => {
       { originalDate: '2026-07-05', date: '2026-07-05' },
     ]);
   });
+
+  // Regression coverage for the "Sleep routine" double-scheduling bug: a
+  // recurring parent's due-date edit cascades a temporary override onto each
+  // recurring descendant (computeRecurringDescendantDueDateOverrides in
+  // recurrenceState.js), keyed by the descendant's OWN (still-overdue)
+  // dueDate and pointing at the parent's new date. If the descendant's own
+  // daily/weekly pattern independently reaches that same new date on its own
+  // (which it always does for an overdue daily task, since "every 1 day"
+  // naturally walks forward through every date including today), the pattern
+  // date and the override's destination collide — without dedup this would
+  // surface as TWO entries resolving to the same `date`, and
+  // rebalanceEngine.js's expandRecurringTasks would schedule the real task
+  // twice for that day (two separate block sets, exactly what the user saw).
+  describe('collapsing a pattern-date/override collision (overdue-descendant cascade)', () => {
+    it('returns exactly one entry for today when an overdue daily descendant\'s override points at the same date its own pattern already reaches', () => {
+      // Descendant is a daily task still anchored on a past due date
+      // (2026-08-10); its own "every 1 day" pattern naturally reaches
+      // 2026-08-12 ("today") on its own. The parent's due-date cascade wrote
+      // an override keyed by the OLD due date pointing at the same "today".
+      const descendant = {
+        dueDate: '2026-08-10',
+        recurrenceRule: { unit: 'day', count: 1 },
+        overrides: { '2026-08-10': { date: '2026-08-12' } },
+      };
+      const occurrences = expandTaskOccurrences(descendant, '2026-08-12', '2026-08-12');
+      expect(occurrences).toEqual([{ originalDate: '2026-08-12', date: '2026-08-12' }]);
+    });
+
+    it('still surfaces every other naturally-occurring date around the collapsed collision', () => {
+      const descendant = {
+        dueDate: '2026-08-10',
+        recurrenceRule: { unit: 'day', count: 1 },
+        overrides: { '2026-08-10': { date: '2026-08-12' } },
+      };
+      const occurrences = expandTaskOccurrences(descendant, '2026-08-10', '2026-08-13');
+      // 2026-08-10 (the override's source key) is consumed by the override,
+      // not emitted as its own pattern-date entry — it only resolves once,
+      // to 2026-08-12, and 08-11/08-13 are untouched pattern dates.
+      expect(occurrences).toEqual([
+        { originalDate: '2026-08-11', date: '2026-08-11' },
+        { originalDate: '2026-08-12', date: '2026-08-12' },
+        { originalDate: '2026-08-13', date: '2026-08-13' },
+      ]);
+    });
+
+    it('does not collapse two different overrides that happen to land on the same date as each other (no natural pattern entry involved)', () => {
+      // Neither override's destination matches a natural pattern date here
+      // (weekly Mon/Wed task; both overrides moved distant occurrences onto
+      // the same Thursday) — dedup only kicks in against a natural pattern
+      // entry, so this rarer case is expected to keep just one of the two
+      // (whichever is encountered first), not silently duplicate either.
+      const task = {
+        dueDate: '2026-07-01', // Wednesday
+        recurrenceRule: { unit: 'week', count: 1, days: [1, 3] }, // Mon/Wed
+        overrides: {
+          '2026-07-06': { date: '2026-07-09' }, // Monday -> Thursday
+          '2026-07-08': { date: '2026-07-09' }, // Wednesday -> same Thursday
+        },
+      };
+      const occurrences = expandTaskOccurrences(task, '2026-07-09', '2026-07-09');
+      expect(occurrences).toHaveLength(1);
+      expect(occurrences[0].date).toBe('2026-07-09');
+    });
+  });
 });
 
 describe('findRecurrencePhrase', () => {

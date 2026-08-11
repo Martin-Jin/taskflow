@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.4',
+    date: '2026-08-12',
+    title: 'Overdue recurring task double-scheduling fix',
+    changes: [
+      'Fixed a bug where moving an overdue recurring task\'s due date forward (e.g. onto today) could schedule it twice for the same day — once from its normal recurring pattern and once from the temporary catch-up adjustment, producing two separate time slots instead of one.',
+    ],
+  },
+  {
     version: '4.4.3',
     date: '2026-08-12',
     title: 'Sync reliability fixes',
