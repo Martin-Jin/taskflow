@@ -95,6 +95,16 @@ describe('BACKUP_FIELDS / buildBackupPayload integrity', () => {
     expect(payload.blocks).toHaveLength(1);
     expect(payload.blocks[0].id).toBe('b1');
   });
+
+  it('excludes deletion tombstones from the payload — nothing to restore them to, same reasoning as completed tasks', () => {
+    const state = makeSampleState();
+    state.tasks.push({ id: 't3', title: 'Deleted task', deletedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' });
+    const payload = buildBackupPayload(state);
+    const ids = payload.tasks.map((t) => t.id);
+    expect(ids).not.toContain('t3');
+    // Incomplete, non-deleted tasks are unaffected by this exclusion.
+    expect(ids).toContain('t1');
+  });
 });
 
 describe('isValidFieldValue', () => {

@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.4.6',
+    date: '2026-08-12',
+    title: 'Cross-device sync no longer loses newer edits',
+    changes: [
+      "Fixed a real data-loss bug: a device that had been offline (e.g. your phone left open for a while) could overwrite a newer edit made on another device, purely because its sync happened to reach the cloud last. Tasks now merge per-task instead of one device's whole list winning outright — whichever device edited a given task most recently wins, for that task, so unrelated changes on both devices are kept.",
+      'Deleting a task is now tracked more carefully behind the scenes so a delete on one device can no longer be silently undone by an older, unsynced edit arriving later from another device.',
+    ],
+  },
+  {
     version: '4.4.5',
     date: '2026-08-12',
     title: 'Task editing reliability fixes',

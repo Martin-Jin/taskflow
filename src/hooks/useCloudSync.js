@@ -29,6 +29,7 @@ import {
   pushGoogleCalendarStatus,
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
+import { mergeTasksByUpdatedAt } from '../utils/taskMerge';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { getDeviceId } from '../utils/deviceIdentity.js';
@@ -417,10 +418,27 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
   const plan = {};
 
   if ('tasks' in remoteData || 'blocks' in remoteData) {
+    // Shape-validate first: a malformed/corrupted remote `tasks` (wrong
+    // type, not an array) still falls back to local WHOLESALE, exactly as
+    // before — the per-task merge below only ever runs once remote is known
+    // to be a real tasks array. `blocks` keeps its old whole-value
+    // shape-validation-only behavior; ScheduledBlocks have no stable id
+    // across a rebalance (ids are regenerated wholesale every run) and no
+    // `updatedAt`, so per-block merge doesn't make sense — instead, whenever
+    // the task merge below actually changes something, applyRemoteData
+    // triggers a local rebalance that regenerates `blocks` fresh from the
+    // merged tasks, superseding whatever's picked here as a throwaway value.
+    const validRemoteTasks = pickValid('tasks', remoteData.tasks, null);
+    const tasksMerged = validRemoteTasks !== null;
     plan.tasksBlocks = {
-      tasks: pickValid('tasks', remoteData.tasks, localState.tasks),
+      tasks: tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks,
       blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
     };
+    // Whether a real per-task merge ran (remote tasks were shape-valid), as
+    // opposed to falling back to local wholesale — applyRemoteData needs
+    // this to decide whether the merged result can safely be fingerprinted
+    // against the raw incoming remoteData (see its own comment).
+    plan.tasksMerged = tasksMerged;
   }
   if ('sections' in remoteData) plan.sections = pickValid('sections', remoteData.sections, localState.sections);
   if ('projects' in remoteData) plan.projects = pickValid('projects', remoteData.projects, localState.projects);
@@ -458,6 +476,35 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
   plan.stampFingerprint = true;
 
   return plan;
+}
+
+/**
+ * Pure decision for applyRemoteData: did the per-task merge (plan.tasksMerged,
+ * see planRemoteDataMerge's `tasks` handling) actually produce a task set that
+ * differs from what was local a moment ago? Extracted so this narrow
+ * before/after comparison is unit-testable without rendering the hook — same
+ * precedent as this file's other pure decisions.
+ *
+ * Answers two questions the hook needs after applying a plan:
+ *   1. Should a local rebalance run (so `blocks` regenerates fresh from the
+ *      merged tasks, since blocks are never merged themselves)?
+ *   2. Is it UNSAFE to fingerprint the applied result against the raw
+ *      incoming `remoteData` (see applyRemoteData's own comment) — a real
+ *      merge that changed anything produced a combined result that generally
+ *      matches neither side's raw array exactly, so treating `remoteData` as
+ *      "what's now in sync" would falsely suppress the push that's supposed
+ *      to carry the merged result up to Firestore.
+ *
+ * Both questions share the same answer (`plan.tasksMerged && changed`), so
+ * one function covers both call sites instead of duplicating the condition.
+ *
+ * A cheap JSON-equality check is enough here — this only gates a rebalance
+ * trigger and a fingerprint-stamp skip, not correctness of the merge itself
+ * (mergeTasksByUpdatedAt already guarantees that on its own).
+ */
+export function didTaskMergeChangeAnything(plan, localTasksBefore) {
+  if (!plan.tasksMerged || !plan.tasksBlocks) return false;
+  return JSON.stringify(plan.tasksBlocks.tasks) !== JSON.stringify(localTasksBefore);
 }
 
 /**
@@ -519,6 +566,18 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
  *   manual pull, called to self-heal THIS device when the cross-device
  *   status-mismatch check (below) finds another device reporting a working
  *   connection while this one is disconnected/stale.
+ * @param {Function} deps.runRebalance - Triggers SchedulerContext's local
+ *   rebalance/reschedule engine. Called by applyRemoteData after a per-task
+ *   merge (see planRemoteDataMerge's `tasks` handling, mergeTasksByUpdatedAt)
+ *   actually changes the task set, so `blocks` gets regenerated fresh from
+ *   the merged tasks instead of staying a stale/incompatible mix of two
+ *   devices' block arrays (blocks are never merged themselves — see
+ *   planRemoteDataMerge's comment on why). Must be a STABLE callback (empty
+ *   deps) since SchedulerContext.jsx defines the real rebalance function
+ *   AFTER calling this hook — see that file's `runRebalanceRef`/
+ *   `triggerRebalanceFromMerge` for the forward-reference wiring, matching
+ *   the existing `queueDueDateRebalanceRef`/`triggerDueDateRebalance` pattern
+ *   already used for the same "needed before it's defined" problem.
  * @returns {Object} Cloud sync state and callbacks
  */
 export function useCloudSync({
@@ -547,6 +606,7 @@ export function useCloudSync({
   googleConnected,
   googleSyncStale,
   pullFromGoogleCalendar,
+  runRebalance,
 }) {
   // ANONYMOUS VISITORS ARE DELIBERATELY NOT A SYNC ACCOUNT.
   //
@@ -590,6 +650,18 @@ export function useCloudSync({
   // When the last automatic backup ran (epoch ms), persisted so it survives a
   // reload — see the automatic-backup effect below.
   const [lastAutoBackupAt, setLastAutoBackupAt] = usePersistedState('lastAutoBackupAt', null);
+
+  // Mirrors the latest `runRebalance` prop for applyRemoteData's closure to
+  // read — `runRebalance` (passed in as the STABLE `triggerRebalanceFromMerge`
+  // wrapper from SchedulerContext.jsx, see this hook's own JSDoc above) never
+  // actually changes identity across renders, but mirroring it via a ref (the
+  // same "ref kept in sync via its own tiny effect" pattern already used for
+  // googleConnectedRef/etc. below) means applyRemoteData doesn't need
+  // `runRebalance` in its own dependency array at all.
+  const runRebalanceTriggerRef = useRef(runRebalance);
+  useEffect(() => {
+    runRebalanceTriggerRef.current = runRebalance;
+  }, [runRebalance]);
 
   // This browser's stable id (see utils/deviceIdentity.js) — computed once
   // via useRef's lazy initializer, not useState, since nothing here ever
@@ -812,6 +884,7 @@ export function useCloudSync({
   // signal to fall back on the way tasks/blocks at least have an action id
   // for.
   const applyRemoteData = useCallback((remoteData, { skipAll = false } = {}) => {
+    const localTasksBefore = stateRef.current.tasks;
     const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll });
     if (plan.tasksBlocks) overwritePresent(plan.tasksBlocks);
     if ('sections' in plan) setSections(plan.sections);
@@ -832,11 +905,41 @@ export function useCloudSync({
       savePersisted('shortcutBindings', plan.shortcutBindings);
     }
     if ('sharedProjectIds' in plan) setSharedProjectIds(plan.sharedProjectIds);
+
+    // Did the per-task merge actually produce a task set different from what
+    // was local a moment ago? See didTaskMergeChangeAnything's own doc
+    // comment — this one answer gates both the rebalance trigger and the
+    // fingerprint-stamp skip below.
+    const mergeChangedTasks = didTaskMergeChangeAnything(plan, localTasksBefore);
+
+    // A real per-task merge that changed anything produced a combined result
+    // that generally matches NEITHER side's raw array exactly — blocks are
+    // never merged themselves (see planRemoteDataMerge's comment), so
+    // `blocks` needs to regenerate fresh from the merged tasks rather than
+    // staying whatever throwaway value planRemoteDataMerge picked for it.
+    // This sits AFTER skipAll/plan computation, so it only ever runs when
+    // applyRemoteData would have applied the merge anyway — it doesn't
+    // bypass or duplicate the isStaleOwnEcho/hasLocalEditRaced/
+    // isRemoteWriteStale race guards upstream of this call, it just
+    // piggybacks on their decision.
+    if (mergeChangedTasks) {
+      runRebalanceTriggerRef.current();
+    }
+
     // Stamp what we just applied as "already synced" so the debounced push
     // effect doesn't immediately echo this same data straight back to
     // Firestore — but only when tasks/blocks were actually applied as-is
-    // (see planRemoteDataMerge's stampFingerprint comment).
-    if (plan.stampFingerprint) {
+    // (see planRemoteDataMerge's stampFingerprint comment) AND the tasks
+    // branch didn't just produce a genuinely NEW combined result via the
+    // per-task merge. Fingerprinting against raw `remoteData` in that case
+    // would falsely mark the merged-but-not-yet-pushed result as "Firestore
+    // already has this" — permanently suppressing the push that's supposed
+    // to carry it up. Skipping the stamp here is deliberately simpler than
+    // fingerprinting the as-applied plan instead: the normal debounced push
+    // effect already watches `state`/`stateRef` and will notice this local
+    // change like any other edit and push it up on its own, no special-
+    // casing needed here.
+    if (plan.stampFingerprint && !mergeChangedTasks) {
       const remoteFingerprint = computeFingerprint(remoteData);
       lastPushedFingerprintRef.current = remoteFingerprint;
       // This data just came FROM Firestore (a pull or a confirmed live

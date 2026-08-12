@@ -480,6 +480,16 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       // typedef's excludeFromAutoSchedule doc comment) — it can still be
       // scheduled manually by dragging it onto the calendar.
       !t.excludeFromAutoSchedule &&
+      // Tombstoned (deleted) tasks stay in `tasks` for a while rather than
+      // being removed outright (see SchedulerContext.deleteTask/utils/
+      // taskTombstones.js), so this engine — which is handed the RAW array,
+      // tombstones included — must exclude them explicitly, or a deleted
+      // task could get a fresh block placed for it by the very next
+      // rebalance. Every UI-facing consumer already never sees a tombstoned
+      // task (SchedulerContext filters it out of the `tasks` it exposes),
+      // so this is purely a belt-and-suspenders guard for this engine
+      // specifically, which is always called with the unfiltered array.
+      !t.deletedAt &&
       !!resolveDueDate(t, taskById)
   );
 

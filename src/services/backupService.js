@@ -141,14 +141,31 @@ function excludeCompletedTasks(tasks, blocks) {
   return { tasks: keptTasks, blocks: blocks.filter((block) => keptTaskIds.has(block.taskId)) };
 }
 
-/** Assemble a full backup payload from current state, tagged with when it was taken. Completed one-off tasks (and their blocks) are left out — there's nothing to restore them to. */
+/**
+ * Deletion tombstones (`task.deletedAt`, see utils/taskTombstones.js) exist
+ * purely to let a per-task cross-device merge tell "never existed here"
+ * apart from "deleted here" (useCloudSync.js's mergeTasksByUpdatedAt) — a
+ * transient signal for live sync to converge on, not content worth
+ * preserving in a point-in-time backup. Same reasoning as
+ * excludeCompletedTasks just above: there's nothing to restore a tombstone
+ * TO, and keeping one around only risks a much-later restore reintroducing a
+ * dead entry that every live device already purged via its own retention
+ * sweep. Blocks are already dropped at delete time (deleteTask never
+ * tombstones blocks), so unlike excludeCompletedTasks there's no companion
+ * blocks list to filter here.
+ */
+function excludeDeletedTasks(tasks) {
+  return tasks.filter((task) => !task.deletedAt);
+}
+
+/** Assemble a full backup payload from current state, tagged with when it was taken. Completed one-off tasks (and their blocks), and deleted-task tombstones, are left out — there's nothing to restore them to. */
 export function buildBackupPayload(state) {
   const payload = { exportedAt: new Date().toISOString() };
   BACKUP_FIELDS.forEach((field) => {
     payload[field] = state[field];
   });
   const { tasks, blocks } = excludeCompletedTasks(payload.tasks, payload.blocks);
-  return { ...payload, tasks, blocks };
+  return { ...payload, tasks: excludeDeletedTasks(tasks), blocks };
 }
 
 /**

@@ -19,6 +19,16 @@ import { toISODate } from '../utils/dateUtils';
 /** Personal one-off tasks marked completed — deleted after this many days. */
 export const RETENTION_DAYS_COMPLETED_TASKS = 30;
 
+/**
+ * Personal tasks tombstoned by deleteTask (see utils/taskTombstones.js) —
+ * purged after this many days. Matches RETENTION_DAYS_COMPLETED_TASKS: long
+ * enough that a device offline for a realistic stretch still sees the
+ * tombstone before it's swept, since a tombstone purged too early would let
+ * a returning device see the task as merely "missing" rather than
+ * "deleted" — exactly the corruption tombstones exist to prevent.
+ */
+export const RETENTION_DAYS_DELETED_TASKS = 30;
+
 /** Google Calendar events and synced history — kept for rolling window. */
 export const RETENTION_DAYS_CALENDAR_EVENTS = 365;
 
