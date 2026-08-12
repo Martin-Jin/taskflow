@@ -130,7 +130,7 @@ export default function TaskListPanel({
   onOpenSearch,
   onShareProject,
 }) {
-  const { tasks, labels, projects, updateTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
+  const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const { user } = useAuth();
@@ -369,12 +369,13 @@ export default function TaskListPanel({
     }
   }
 
-  // Grouped into Overdue/Today/Upcoming sections so what needs attention
-  // stands out instead of being buried in one priority-sorted list. Only
-  // meaningful for the dated tabs — "Completed" and "No due date" render
-  // as a flat list. Overdue is its own bucket (dueDate strictly before
-  // today) rather than being silently lumped into "Upcoming" — it's
-  // surfaced first since it's the most urgent thing in the list.
+  // Grouped into Overdue/Today/Scheduled/Upcoming sections so what needs
+  // attention stands out instead of being buried in one priority-sorted
+  // list. Only meaningful for the dated tabs — "Completed" and "No due
+  // date" render as a flat list. Overdue is its own bucket (dueDate
+  // strictly before today) rather than being silently lumped into
+  // "Upcoming" — it's surfaced first since it's the most urgent thing in
+  // the list.
   //
   // Uses resolveCurrentOccurrenceDueDate rather than the raw task.dueDate —
   // a recurring task's dueDate is the series' fixed pattern anchor and stays
@@ -382,29 +383,46 @@ export default function TaskListPanel({
   // function's own doc comment), so grouping on the raw field would leave a
   // rescheduled occurrence sitting in its old Overdue/Today/Upcoming bucket
   // instead of the one it was actually moved to.
+  // Ids of tasks with a calendar block placed today — used to peel a
+  // "Scheduled" group out of Upcoming/No-due-date below. Overdue and Today
+  // (by due date) both stay put regardless of today's blocks: Overdue is
+  // already the most urgent bucket, and Today-by-block would just be
+  // relabeling a task that's already surfaced in Today-by-due-date.
+  const taskIdsScheduledToday = useMemo(() => {
+    const ids = new Set();
+    for (const block of blocks) {
+      if (block.date === today) ids.add(block.taskId);
+    }
+    return ids;
+  }, [blocks, today]);
   const showGroups = filter === 'active' || filter === 'all';
   const taskGroups = useMemo(() => {
     if (!showGroups) return null;
     const overdue = [];
     const todayTasks = [];
+    const scheduledToday = [];
     const upcoming = [];
     const undated = [];
     for (const task of visibleTasks) {
       const dueDate = resolveCurrentOccurrenceDueDate(task);
-      if (!dueDate) undated.push(task);
-      else if (dueDate < today) overdue.push(task);
+      if (!dueDate) {
+        if (taskIdsScheduledToday.has(task.id)) scheduledToday.push(task);
+        else undated.push(task);
+      } else if (dueDate < today) overdue.push(task);
       else if (dueDate === today) todayTasks.push(task);
+      else if (taskIdsScheduledToday.has(task.id)) scheduledToday.push(task);
       else upcoming.push(task);
     }
     return [
       { key: 'overdue', label: 'Overdue', tasks: overdue },
       { key: 'today', label: 'Today', tasks: todayTasks },
+      { key: 'scheduledToday', label: 'Scheduled', tasks: scheduledToday },
       { key: 'upcoming', label: 'Upcoming', tasks: upcoming },
       // Only "All" ever surfaces undated tasks here — "Active" already
       // filters them out above, so this group is empty (and hidden) there.
       { key: 'noDueDate', label: 'No due date', tasks: undated },
     ].filter((group) => group.tasks.length > 0);
-  }, [visibleTasks, showGroups, today]);
+  }, [visibleTasks, showGroups, today, taskIdsScheduledToday]);
 
   /**
    * Expands a top-level task into the flat, in-order list of rows it

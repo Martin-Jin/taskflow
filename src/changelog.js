@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.5.0',
+    date: '2026-08-12',
+    title: 'New "Scheduled" section in the Tasks list',
+    changes: [
+      "The Tasks list now shows a \"Scheduled\" section between Today and Upcoming, for tasks that have a calendar block placed today but aren't actually due today (e.g. a task due next week that you've scheduled time for today).",
+    ],
+  },
+  {
     version: '4.4.6',
     date: '2026-08-12',
     title: 'Cross-device sync no longer loses newer edits',
