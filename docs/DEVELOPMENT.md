@@ -829,6 +829,59 @@ for these so a shape change can't strand users on a stale persisted value,
 and merge the loaded value over the defaults defensively rather than
 trusting it.
 
+**Cross-device merge and deletion tombstones.** `useCloudSync.js`'s
+`planRemoteDataMerge` used to treat `tasks` as one atomic value — whichever
+side (local or remote) "won" got its entire array applied wholesale. That
+meant a device waking up with a stale local copy (e.g. a phone left open for
+days) could push its own array AFTER a genuinely newer edit from another
+device, and — because a fresh write simply lands "last" — silently overwrite
+the newer edit even though its content was actually older. The whole-document
+`lastWriteAt` staleness gate (`isRemoteWriteStale`) can't catch this: the
+stale device's push IS a fresh write, just of stale content, so a doc-level
+timestamp can't tell the two apart.
+
+`mergeTasksByUpdatedAt` (`src/utils/taskMerge.js`) fixes this with a per-task
+merge: for each task id present on either side, whichever copy has the newer
+`updatedAt` wins (a task on only one side — e.g. just created, not yet synced
+— is kept as-is). This is why every task mutation in `SchedulerContext.jsx`
+must reliably stamp `updatedAt`; a mutation that forgets to would make that
+task invisible to the merge's recency check. `ScheduledBlock`s are
+deliberately NOT part of this merge — they have no stable id across a
+rebalance (`rebalanceEngine.js`'s `rebalance()` regenerates every unlocked
+block from scratch on each run, keeping only locked/historical/completed ones
+by reference) and no `updatedAt` of their own, so per-block merging doesn't
+make sense. Instead, whenever a per-task merge actually changes the task set,
+`applyRemoteData` triggers a local rebalance (via `SchedulerContext.jsx`'s
+`runRebalanceRef`/`triggerRebalanceFromMerge` — a forward-reference wrapper,
+same pattern as `queueDueDateRebalanceRef`, since `useCloudSync` is called
+before `runRebalance` itself is defined) so `blocks` regenerates fresh from
+the merged tasks rather than staying an incompatible mix of two devices'
+block arrays.
+
+Deletion needed its own fix to work with this merge: `deleteTask` no longer
+removes a task from the array outright — it tombstones it in place
+(`deletedAt`/`updatedAt` stamped, heavy content fields cleared — see
+`utils/taskTombstones.js`'s `tombstoneTasks`). Without this, the merge
+couldn't tell "this task never existed on this device" apart from "it existed
+here and was deleted," so a delete on one device could be silently undone by
+a stale edit arriving from a device that never saw the delete. A tombstone
+competes in the SAME `updatedAt` comparison as any live edit, with no special
+casing — a delete newer than a stale edit correctly wins (the deletion
+sticks), and an edit newer than an old tombstone correctly wins too (the task
+"un-deletes", which is intentional: an undo, or the user recreating similar
+content after deleting). Every UI-facing consumer of `useScheduler()` gets a
+tombstone-filtered `tasks` view (`SchedulerContext.jsx`'s `visibleTasks`) —
+tombstones are invisible everywhere except `stateRef`/persistence/sync, which
+need to see them for the merge to work. A mount-time retention sweep
+(`RETENTION_DAYS_DELETED_TASKS`, `dataRetention.js`) permanently purges
+tombstones older than 30 days — long enough that a realistically-offline
+device still sees the tombstone before it's gone for good. Point-in-time
+backups exclude tombstones entirely (`backupService.js`'s
+`excludeDeletedTasks`), same reasoning as excluding completed one-off tasks:
+there's nothing to restore a tombstone to, and a much-later restore
+reintroducing a dead entry would just create a zombie every live device had
+already purged.
+
 If signed in (see [Account & cross-device sync](../README.md#account--cross-device-sync)
 in the README), the same data also syncs to Firestore — `localStorage` on
 the current device stays the always-on, works-offline source of truth, and
@@ -863,6 +916,7 @@ of inlining time math.
 | Data | Retention | Cleanup Location |
 |------|-----------|------------------|
 | Personal completed tasks | 30 days | `SchedulerContext.jsx` on mount |
+| Deleted task tombstones | 30 days | `SchedulerContext.jsx` on mount (`utils/taskTombstones.js`) |
 | Google Calendar events | 365 days | `eventSyncService.js` during pulls |
 | Automatic cloud backups | 14 most recent | `useCloudSync.js` hourly/daily |
 | Manual cloud backups | 14 most recent | `useCloudSync.js` per-backup + daily |

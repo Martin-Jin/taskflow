@@ -347,6 +347,29 @@ describe('rebalance', () => {
     const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
     expect(result.blocks.some((b) => b.id === 'b-noauto2')).toBe(false);
   });
+
+  // Tombstoned tasks (SchedulerContext.deleteTask/utils/taskTombstones.js)
+  // stay in the array rather than being removed outright, so this engine —
+  // always called with the raw, unfiltered array — must never schedule one,
+  // same as excludeFromAutoSchedule/sharedProjectId above.
+  it('never schedules a tombstoned (deletedAt set) task, even with a resolvable due date and remaining hours', () => {
+    const tasks = [
+      { id: 'deleted1', title: 'Deleted task', deletedAt: '2026-07-01T00:00:00.000Z', estimatedHours: 1, dueDate: today },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'deleted1')).toBe(false);
+  });
+
+  it("clears a tombstoned task's existing unlocked block instead of leaving it in place", () => {
+    const tasks = [
+      { id: 'deleted2', title: 'Deleted task', deletedAt: '2026-07-01T00:00:00.000Z', estimatedHours: 1, dueDate: today },
+    ];
+    const existingBlocks = [
+      { id: 'b-deleted2', taskId: 'deleted2', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-deleted2')).toBe(false);
+  });
 });
 
 // Coverage for `todayOnly` (used by SchedulerContext.completeTask so

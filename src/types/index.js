@@ -147,6 +147,20 @@
  * @property {string|null} [completedAt]     - ISO datetime stamped when `isCompleted` is set true (see
  *                                              SchedulerContext.completeTask), cleared back to null on restore
  *                                              (uncompleteTask). Drives the 30-day auto-delete sweep on load.
+ * @property {string} [deletedAt]            - ISO datetime stamped by SchedulerContext.deleteTask instead of
+ *                                              actually removing the task from `tasks` — a TOMBSTONE, so a future
+ *                                              per-task cross-device merge can tell "never existed on this device"
+ *                                              apart from "existed, then was deleted here," which a plain removal
+ *                                              can't (see utils/taskTombstones.js). `notes`/`noteLinks`/`comments`/
+ *                                              `deletedCommentIds` are cleared at tombstone time since they're the
+ *                                              heaviest/most private fields with nothing left to show; `title` and
+ *                                              every other field are left as-is (harmless, and useful for
+ *                                              debugging). SchedulerContext filters every tombstoned task out of
+ *                                              the `tasks` value it hands to the rest of the app (components never
+ *                                              see this field), but it stays in `state`/persistence/cloud sync so
+ *                                              the merge layer and the retention sweep (utils/taskTombstones.js's
+ *                                              isStaleTombstone, RETENTION_DAYS_DELETED_TASKS in dataRetention.js)
+ *                                              can see it. Undefined/absent for every normal, non-deleted task.
  * @property {number} minChunkHours          - Historical per-task minimum chunk size field; no longer read by the
  *                                              allocator. Splitting is now governed purely by a chunk-COUNT cap
  *                                              (round(durationHours*60/30), see maxChunksFor in allocator.js) plus

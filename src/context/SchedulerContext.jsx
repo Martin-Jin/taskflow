@@ -79,7 +79,8 @@ import {
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
-import { RETENTION_DAYS_COMPLETED_TASKS, computeCutoffMs } from '../services/dataRetention';
+import { RETENTION_DAYS_COMPLETED_TASKS, RETENTION_DAYS_DELETED_TASKS, computeCutoffMs } from '../services/dataRetention';
+import { tombstoneTasks, isStaleTombstone } from '../utils/taskTombstones';
 import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
 import { setGuestDisplayName } from '../utils/guestIdentity';
 import {
@@ -435,6 +436,18 @@ export function SchedulerProvider({ children }) {
   // so the hook's own dependency array never needs to change.
   const queueDueDateRebalanceRef = useRef(() => {});
   const triggerDueDateRebalance = useCallback(() => queueDueDateRebalanceRef.current(), []);
+  // Same forward-reference problem, same fix: useCloudSync (constructed
+  // below, before runRebalance exists later in this component) needs to
+  // trigger a rebalance after a per-task cross-device merge changes the task
+  // set (see useCloudSync.js's applyRemoteData/planRemoteDataMerge) so
+  // `blocks` regenerates fresh from the merged tasks instead of staying a
+  // stale mix of two devices' block arrays. Backfilled once the real
+  // runRebalance is defined — reuses the SAME runRebalanceRef the debounced
+  // due-date-rebalance queue already maintains (see queueDueDateRebalance
+  // below), since that ref is already kept current via its own effect and
+  // read from async/deferred callers exactly like this one.
+  const runRebalanceRef = useRef(() => {});
+  const triggerRebalanceFromMerge = useCallback(() => runRebalanceRef.current(), []);
   // Owned live by ThemeContext (which wraps this provider — see App.jsx) —
   // only read/written here so the backup payload (exportBackup/
   // createCloudBackup, both in useCloudSync) can capture it and a restore
@@ -679,15 +692,44 @@ export function SchedulerProvider({ children }) {
     setSettingsSectionRequest((prev) => ({ section, requestId: prev ? prev.requestId + 1 : 1 }));
   }, []);
 
+  // `tasks` here is intentionally the RAW array, tombstones and all — nearly
+  // every mutator below reads it, mutates it, and hands the result straight
+  // back into commit()/setState (e.g. `commit({ tasks, blocks: newBlocks })`
+  // in the block-CRUD actions further down); if this binding were pre-
+  // filtered, every one of those passthrough commits would silently drop
+  // every tombstone from state on its next unrelated write. `visibleTasks`
+  // below is the ONLY place tombstones are filtered out, and it's used
+  // solely for what's exposed to the rest of the app (`value.tasks`) and for
+  // the notification checker (no reason to notify about a deleted task) —
+  // see its own comment for why this is safe and where the line is drawn.
   const { tasks, blocks } = state;
+
+  // The tombstone-aware view of `tasks` handed to every component/hook OUTSIDE
+  // this file (search, board, list, scheduler eligibility, dependency/reparent
+  // pickers, dashboard stats, etc. — all consume `tasks` via useScheduler(),
+  // which returns `value` below) plus useNotificationChecker just under this.
+  // Filtering ONCE here means none of those ~10+ consumers need their own
+  // `!t.deletedAt` check — a tombstoned task simply never appears to them,
+  // the same way a tombstoned task is already invisible today (it's just
+  // "deleted" from their point of view).
+  //
+  // CRITICAL: this filtering must NEVER reach `stateRef.current` (mirrors the
+  // full, unfiltered `state` — see the effect below), the raw `tasks` binding
+  // above (used internally throughout this file, including every commit()
+  // passthrough), or anything persisted/synced (savePersisted('tasks', ...),
+  // cloudSyncState.tasks) — the whole point of a tombstone is that the
+  // sync/merge layer (built in a later step) and local persistence NEED to
+  // see it; only the rendered-UI-facing value below hides it.
+  const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks]);
 
   // In-app notification checker (TODO.md #10, Phase 2) — scans tasks/blocks
   // on an interval and fires a native Notification (or Toast fallback) per
   // notificationSettings' toggles. Fully inert when in-app notifications are
   // off. Lives in its own hook rather than inline here since this file is
   // already large — see hooks/useNotificationChecker.js for the trigger/
-  // dedupe logic.
-  useNotificationChecker({ tasks, blocks, notificationSettings, setNotification });
+  // dedupe logic. Uses the tombstone-filtered view — no reason to notify
+  // about a task that's already been deleted.
+  useNotificationChecker({ tasks: visibleTasks, blocks, notificationSettings, setNotification });
 
   // Async Todoist-sync continuations (the `.then()` after a create call)
   // resolve after the fact, potentially after other commits have landed —
@@ -898,6 +940,31 @@ export function SchedulerProvider({ children }) {
     const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
     const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
     commit({ tasks: newTasks, blocks: newBlocks }, `Removed ${staleIds.size} completed task(s) older than ${RETENTION_DAYS_COMPLETED_TASKS} days`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- Deleted task (tombstone) retention sweep ----------------------------
+  // Runs once on mount, same shape as the completed-task sweep just above.
+  // A tombstoned task (see deleteTask/utils/taskTombstones.js) stays in
+  // `tasks` — never physically removed at delete time — so a cross-device
+  // merge has time to see the deletion before it's gone for good. Once
+  // that window (RETENTION_DAYS_DELETED_TASKS) has passed, this actually
+  // drops it from the array, same as the completed-task sweep does for
+  // isCompleted tasks. Reads/writes stateRef.current.tasks (the RAW array),
+  // not the tombstone-filtered `tasks`/`visibleTasks` binding — the whole
+  // point of this sweep is to find tombstones, which that filtered view
+  // never contains.
+  useEffect(() => {
+    const staleTombstones = stateRef.current.tasks.filter((t) => isStaleTombstone(t, RETENTION_DAYS_DELETED_TASKS));
+    if (staleTombstones.length === 0) return;
+    const staleIds = new Set(staleTombstones.map((t) => t.id));
+    const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
+    // Blocks were already dropped at delete time (deleteTask never tombstones
+    // blocks — see its own comment), but filtering here too is cheap
+    // insurance against any future path that tombstones a task without also
+    // clearing its blocks.
+    const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
+    commit({ tasks: newTasks, blocks: newBlocks }, `Purged ${staleIds.size} deleted task(s) older than ${RETENTION_DAYS_DELETED_TASKS} days`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1206,6 +1273,7 @@ export function SchedulerProvider({ children }) {
     googleConnected,
     googleSyncStale,
     pullFromGoogleCalendar,
+    runRebalance: triggerRebalanceFromMerge,
   });
 
   /**
@@ -1325,7 +1393,9 @@ export function SchedulerProvider({ children }) {
 
   // Always-current ref to runRebalance so the debounced callback below never
   // fires against a stale tasks/blocks closure captured when it was queued.
-  const runRebalanceRef = useRef(runRebalance);
+  // (Declared as `runRebalanceRef` further up, alongside `triggerRebalanceFromMerge`,
+  // so useCloudSync's forward reference to it can be wired before runRebalance
+  // itself exists — this effect is what actually keeps it current.)
   useEffect(() => {
     runRebalanceRef.current = runRebalance;
   }, [runRebalance]);
@@ -1661,15 +1731,19 @@ export function SchedulerProvider({ children }) {
       // transform runs against `current`, not the closed-over `tasks`/
       // `blocks`, so this is safe even when several deletes/creates happen
       // in the same synchronous batch.
+      //
+      // TOMBSTONES: the deleted task (and its cascade) is no longer removed
+      // from `tasks` — it's tombstoned in place (deletedAt stamped, heavy
+      // content cleared) via tombstoneTasks, so a future per-task cross-
+      // device merge can tell "never existed here" apart from "deleted
+      // here" (see utils/taskTombstones.js). Blocks are still dropped
+      // outright — they don't participate in this scheme. Every OTHER
+      // component/view reads tasks through the filtered `tasks` binding
+      // (see line ~682), which strips tombstones out, so this is invisible
+      // to the rest of the app; only stateRef/persistence/sync see it.
       commit(
         (current) => ({
-          tasks: current.tasks
-            .filter((t) => !idsToDelete.has(t.id))
-            .map((t) =>
-              t.dependsOn?.some((id) => idsToDelete.has(id))
-                ? { ...t, dependsOn: t.dependsOn.filter((id) => !idsToDelete.has(id)) }
-                : t
-            ),
+          tasks: tombstoneTasks(current.tasks, idsToDelete, new Date().toISOString()),
           blocks: current.blocks.filter((b) => !idsToDelete.has(b.taskId)),
         }),
         `Deleted task`
@@ -1756,7 +1830,7 @@ export function SchedulerProvider({ children }) {
         if (mentions.length) newComment.mentions = mentions;
       }
       const newTasks = stateRef.current.tasks.map((t) =>
-        t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment] } : t
+        t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment], updatedAt: new Date().toISOString() } : t
       );
       commit({ tasks: newTasks, blocks: stateRef.current.blocks }, 'Added comment');
     },
@@ -2100,13 +2174,14 @@ export function SchedulerProvider({ children }) {
               completedAt: nowIso,
               remainingHours: 0,
               ...(actualHours != null ? { actualHours } : {}),
+              updatedAt: nowIso,
             };
           }
           if (descendantIds.has(t.id)) {
-            return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0 };
+            return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0, updatedAt: nowIso };
           }
           if (t.dependsOn?.some((id) => completedIds.has(id))) {
-            return { ...t, dependsOn: t.dependsOn.filter((id) => !completedIds.has(id)) };
+            return { ...t, dependsOn: t.dependsOn.filter((id) => !completedIds.has(id)), updatedAt: nowIso };
           }
           return t;
         });
@@ -2489,7 +2564,9 @@ export function SchedulerProvider({ children }) {
           tasks: sharedId
             ? current.tasks.filter((t) => t.sharedProjectId !== sharedId)
             : current.tasks.map((t) =>
-              t.projectId === projectId ? { ...t, projectId: null, sectionId: null, sectionName: null } : t
+              t.projectId === projectId
+                ? { ...t, projectId: null, sectionId: null, sectionName: null, updatedAt: new Date().toISOString() }
+                : t
             ),
           blocks: sharedId ? current.blocks.filter((b) => !current.tasks.some((t) => t.id === b.taskId && t.sharedProjectId === sharedId)) : current.blocks,
         }),
@@ -2819,7 +2896,9 @@ export function SchedulerProvider({ children }) {
       // write in a same-tick batch.
       commit(
         (current) => ({
-          tasks: current.tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionName: trimmed } : t)),
+          tasks: current.tasks.map((t) =>
+            t.sectionId === sectionId ? { ...t, sectionName: trimmed, updatedAt: new Date().toISOString() } : t
+          ),
           blocks: current.blocks,
         }),
         `Renamed section`
@@ -2844,7 +2923,11 @@ export function SchedulerProvider({ children }) {
       // case. Function form — see addTask's comment above.
       commit(
         (current) => ({
-          tasks: current.tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionId: null, sectionName: null } : t)),
+          tasks: current.tasks.map((t) =>
+            t.sectionId === sectionId
+              ? { ...t, sectionId: null, sectionName: null, updatedAt: new Date().toISOString() }
+              : t
+          ),
           blocks: current.blocks,
         }),
         `Deleted section`
@@ -3505,7 +3588,9 @@ export function SchedulerProvider({ children }) {
 
   const value = useMemo(
     () => ({
-      tasks,
+      // The tombstone-filtered view — see visibleTasks' own comment above.
+      // Every consumer of useScheduler() gets this, never the raw array.
+      tasks: visibleTasks,
       blocks,
       routines,
       events,
@@ -3615,7 +3700,7 @@ export function SchedulerProvider({ children }) {
       clearAllData,
     }),
     [
-      tasks,
+      visibleTasks,
       blocks,
       routines,
       events,

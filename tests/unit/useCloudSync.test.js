@@ -54,6 +54,7 @@ import {
   addInFlightFingerprint,
   retireInFlightFingerprint,
   planRemoteDataMerge,
+  didTaskMergeChangeAnything,
   computePushStampPlan,
   planAutoBackupPrune,
   shouldRestoreEventsFromBackup,
@@ -400,7 +401,7 @@ describe('addInFlightFingerprint / retireInFlightFingerprint', () => {
 
 describe('planRemoteDataMerge', () => {
   const localState = {
-    tasks: [{ id: 'local-1' }],
+    tasks: [{ id: 'local-1', updatedAt: '2026-08-01T00:00:00.000Z' }],
     blocks: [{ id: 'local-block-1' }],
     sections: ['local-section'],
     projects: ['local-project'],
@@ -416,7 +417,7 @@ describe('planRemoteDataMerge', () => {
   };
 
   const remoteData = {
-    tasks: [{ id: 'remote-1' }],
+    tasks: [{ id: 'remote-1', updatedAt: '2026-08-02T00:00:00.000Z' }],
     blocks: [{ id: 'remote-block-1' }],
     sections: ['remote-section'],
     projects: ['remote-project'],
@@ -436,9 +437,16 @@ describe('planRemoteDataMerge', () => {
     shortcutBindings: { remote: 'binding' },
   };
 
-  it('non-race path: applies every field including tasks/blocks, and stamps the fingerprint', () => {
+  it('non-race path: applies every field including blocks, per-task-merges tasks, and stamps the fingerprint', () => {
     const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
-    expect(plan.tasksBlocks).toEqual({ tasks: remoteData.tasks, blocks: remoteData.blocks });
+    // tasks is now a per-task merge (union of ids, since 'local-1' and
+    // 'remote-1' are different ids here), not a wholesale replace — see the
+    // dedicated 'tasks per-task merge' describe block below for the full
+    // matrix of merge outcomes.
+    expect(plan.tasksBlocks.tasks).toEqual(expect.arrayContaining([localState.tasks[0], remoteData.tasks[0]]));
+    expect(plan.tasksBlocks.tasks).toHaveLength(2);
+    expect(plan.tasksBlocks.blocks).toEqual(remoteData.blocks);
+    expect(plan.tasksMerged).toBe(true);
     expect(plan.sections).toBe(remoteData.sections);
     expect(plan.projects).toBe(remoteData.projects);
     expect(plan.labels).toBe(remoteData.labels);
@@ -528,6 +536,102 @@ describe('planRemoteDataMerge', () => {
     const plan = planRemoteDataMerge(legacyRemote, localState, { skipAll: false });
     expect(plan.notes).toBeDefined();
     expect(plan.notes.notes.some((n) => n.body === 'https://example.com')).toBe(true);
+  });
+});
+
+describe('planRemoteDataMerge — tasks per-task merge wiring', () => {
+  // Covers the wiring around mergeTasksByUpdatedAt itself (see taskMerge.test.js
+  // for the merge function's own exhaustive semantics): a corrupt remote
+  // `tasks` shape must still fall back to local WHOLESALE exactly as before,
+  // and only a shape-valid remote `tasks` should trigger the per-task merge.
+  const localState = {
+    tasks: [
+      { id: 'shared', title: 'local version', updatedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'local-only', title: 'only here locally', updatedAt: '2026-08-01T00:00:00.000Z' },
+    ],
+    blocks: [{ id: 'local-block-1' }],
+  };
+  const remoteData = {
+    tasks: [
+      { id: 'shared', title: 'remote version (newer)', updatedAt: '2026-08-10T00:00:00.000Z' },
+      { id: 'remote-only', title: 'only here remotely', updatedAt: '2026-08-10T00:00:00.000Z' },
+    ],
+    blocks: [{ id: 'remote-block-1' }],
+  };
+
+  it('a corrupt remote tasks shape (not an array) falls back to local tasks wholesale, unmerged', () => {
+    const tamperedRemote = { ...remoteData, tasks: 'not-an-array' };
+    const plan = planRemoteDataMerge(tamperedRemote, localState, { skipAll: false });
+    expect(plan.tasksBlocks.tasks).toBe(localState.tasks);
+    expect(plan.tasksMerged).toBe(false);
+  });
+
+  it('a shape-valid remote tasks array produces a per-task merge, not a wholesale replace', () => {
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
+    expect(plan.tasksMerged).toBe(true);
+    const byId = new Map(plan.tasksBlocks.tasks.map((t) => [t.id, t]));
+    // Union of both sides' ids, not just remote's.
+    expect(byId.size).toBe(3);
+    expect(byId.get('local-only')).toBeDefined();
+    expect(byId.get('remote-only')).toBeDefined();
+    // Newer remote edit to the shared id wins.
+    expect(byId.get('shared').title).toBe('remote version (newer)');
+  });
+
+  it('blocks keep their old shape-validation-only behavior (still picked wholesale, unmerged)', () => {
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
+    expect(plan.tasksBlocks.blocks).toEqual(remoteData.blocks);
+  });
+});
+
+describe('didTaskMergeChangeAnything', () => {
+  // Regression coverage for the fingerprint-correctness fix: a per-task merge
+  // that actually changes the task set must NOT be fingerprinted against the
+  // raw incoming remoteData (see applyRemoteData's comment) — this is the
+  // exact signal that decision is built on, so it's tested directly.
+
+  it('false when no real merge ran (plan.tasksMerged is false — corrupt remote shape fell back to local)', () => {
+    const localTasks = [{ id: 't1', updatedAt: '2026-08-01T00:00:00.000Z' }];
+    const plan = { tasksMerged: false, tasksBlocks: { tasks: localTasks, blocks: [] } };
+    expect(didTaskMergeChangeAnything(plan, localTasks)).toBe(false);
+  });
+
+  it('false when skipAll produced no tasksBlocks plan at all', () => {
+    const plan = {}; // skipAll path — planRemoteDataMerge returns {stampFingerprint: false}
+    expect(didTaskMergeChangeAnything(plan, [{ id: 't1' }])).toBe(false);
+  });
+
+  it('false when a real merge ran but produced the SAME task set already local (nothing actually changed)', () => {
+    const localTasks = [{ id: 't1', title: 'same', updatedAt: '2026-08-01T00:00:00.000Z' }];
+    const plan = { tasksMerged: true, tasksBlocks: { tasks: [{ ...localTasks[0] }], blocks: [] } };
+    expect(didTaskMergeChangeAnything(plan, localTasks)).toBe(false);
+  });
+
+  it('true when a real merge ran and the merged tasks differ from what was local a moment ago', () => {
+    const localTasksBefore = [{ id: 't1', title: 'old', updatedAt: '2026-08-01T00:00:00.000Z' }];
+    const mergedTasks = [
+      { id: 't1', title: 'old', updatedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 't2', title: 'new from remote', updatedAt: '2026-08-10T00:00:00.000Z' },
+    ];
+    const plan = { tasksMerged: true, tasksBlocks: { tasks: mergedTasks, blocks: [] } };
+    expect(didTaskMergeChangeAnything(plan, localTasksBefore)).toBe(true);
+  });
+
+  it('end-to-end: planRemoteDataMerge -> didTaskMergeChangeAnything correctly flags a real content-changing merge', () => {
+    const localTasksBefore = [{ id: 't1', title: 'local', updatedAt: '2026-08-01T00:00:00.000Z' }];
+    const remoteData = { tasks: [{ id: 't1', title: 'remote newer', updatedAt: '2026-08-10T00:00:00.000Z' }] };
+    const plan = planRemoteDataMerge(remoteData, { tasks: localTasksBefore }, { skipAll: false });
+    expect(didTaskMergeChangeAnything(plan, localTasksBefore)).toBe(true);
+  });
+
+  it('end-to-end: a merge that resolves to exactly the same local content is correctly NOT flagged', () => {
+    // e.g. a routine sync tick where remote sent back exactly what's already
+    // local (same id, remote's updatedAt not newer) — must not cause a
+    // spurious rebalance or fingerprint-skip on every tick.
+    const localTasksBefore = [{ id: 't1', title: 'local', updatedAt: '2026-08-10T00:00:00.000Z' }];
+    const remoteData = { tasks: [{ id: 't1', title: 'stale remote copy', updatedAt: '2026-08-01T00:00:00.000Z' }] };
+    const plan = planRemoteDataMerge(remoteData, { tasks: localTasksBefore }, { skipAll: false });
+    expect(didTaskMergeChangeAnything(plan, localTasksBefore)).toBe(false);
   });
 });
 
