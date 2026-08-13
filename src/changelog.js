@@ -26,6 +26,7 @@ export const CHANGELOG = [
     title: 'New "Scheduled" section in the Tasks list',
     changes: [
       "The Tasks list now shows a \"Scheduled\" section between Today and Upcoming, for tasks that have a calendar block placed today but aren't actually due today (e.g. a task due next week that you've scheduled time for today).",
+      "Fixed a recurring task you'd already completed for today still showing up in that new Scheduled section.",
     ],
   },
   {
