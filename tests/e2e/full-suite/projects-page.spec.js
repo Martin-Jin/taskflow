@@ -111,7 +111,10 @@ test.describe('Projects page', () => {
     await gotoTab(page, 'Projects');
 
     const myProjectsColumn = page.locator('.projects-page-column', { has: page.getByRole('heading', { name: 'My projects', exact: true }) });
-    const rowNames = () => myProjectsColumn.locator('.projects-page-row-name').allInnerTexts();
+    // "My projects" always has the Inbox pseudo-project pinned above the real,
+    // sortable rows (see ProjectsPage's leadingRow) — excluded here since it's
+    // never part of the sort itself.
+    const rowNames = async () => (await myProjectsColumn.locator('.projects-page-row-name').allInnerTexts()).filter((n) => n !== 'Inbox');
 
     // Default is Size, descending — Work (9 tasks) > Personal (3) > Writing (1).
     await expect.poll(rowNames).toEqual(['Work', 'Personal', 'Writing']);
@@ -156,6 +159,25 @@ test.describe('Projects page', () => {
     await page.getByRole('menuitemradio', { name: 'Creation date', exact: true }).click();
     await page.waitForTimeout(200);
     await expect.poll(rowNames).toEqual(['Personal', 'Writing', 'Work']);
+
+    expectNoErrors(errors);
+  });
+
+  test('Inbox pseudo-project row appears above "My projects" and navigates to Tasks with Inbox selected', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Projects');
+
+    const myProjectsColumn = page.locator('.projects-page-column', { has: page.getByRole('heading', { name: 'My projects', exact: true }) });
+    const inboxRow = myProjectsColumn.locator('.projects-page-row', { hasText: 'Inbox' });
+    await expect(inboxRow).toBeVisible();
+    // Seeded mock data assigns every task to a real project, so Inbox (tasks
+    // with no projectId) is empty here — 0 tasks/0h.
+    await expect(inboxRow).toContainText('0 tasks');
+
+    await inboxRow.click();
+    await page.waitForTimeout(400);
+    await expectActiveProject(page, 'Inbox');
 
     expectNoErrors(errors);
   });

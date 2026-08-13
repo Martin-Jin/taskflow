@@ -359,10 +359,12 @@ test.describe('Board view', () => {
     await gotoTab(page, 'Tasks');
 
     // Board only appears in the view menu once a real project (not the "All
-    // Tasks" pseudo view) is selected — see TaskListPanel's PAGE_VIEWS filter.
+    // Tasks"/"Inbox" pseudo views) is selected — see TaskListPanel's
+    // PAGE_VIEWS filter. Option 0 is "All Tasks", option 1 is "Inbox", so the
+    // first real project is option 2.
     await page.getByRole('button', { name: 'Switch project' }).click();
     await page.waitForTimeout(200);
-    await page.getByRole('option').nth(1).click();
+    await page.getByRole('option').nth(2).click();
     await page.waitForTimeout(300);
 
     await switchTaskView(page, 'Board');

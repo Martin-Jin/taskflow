@@ -50,7 +50,7 @@ import { readJoinToken } from './utils/joinFlow';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
 import ProjectsPage from './components/Projects/ProjectsPage';
-import { ALL_TASKS_PROJECT_ID } from './utils/projectConstants';
+import { ALL_TASKS_PROJECT_ID, INBOX_PROJECT_ID } from './utils/projectConstants';
 import { CURRENT_VERSION } from './changelog';
 import {
   LayoutDashboard,
@@ -90,14 +90,16 @@ function AppShell() {
   // Project A to Project B shouldn't drag Board along with it if B was last
   // viewed as List.
   const [taskViewByProject, setTaskViewByProject] = usePersistedState('taskViewByProject', {});
-  // Board can't render the All Tasks pseudo-project (see resolveBoardProject
-  // below) — if that key was ever persisted as 'board' (e.g. from a session
-  // before the Board option was hidden here), clamp it back to 'list' rather
-  // than letting BoardView mount, bounce off its invalid-project check, and
-  // instantly redirect the user to whatever real project happens to be
-  // first — which reads as "All Tasks" being broken.
+  // Board can't render the All Tasks/Inbox pseudo-projects (see
+  // resolveBoardProject below) — if that key was ever persisted as 'board'
+  // (e.g. from a session before the Board option was hidden here), clamp it
+  // back to 'list' rather than letting BoardView mount, bounce off its
+  // invalid-project check, and instantly redirect the user to whatever real
+  // project happens to be first — which reads as the pseudo-project being
+  // broken.
   const rawTaskView = taskViewByProject[activeProjectId] || 'list';
-  const taskView = activeProjectId === ALL_TASKS_PROJECT_ID && rawTaskView === 'board' ? 'list' : rawTaskView;
+  const isPseudoProjectActive = activeProjectId === ALL_TASKS_PROJECT_ID || activeProjectId === INBOX_PROJECT_ID;
+  const taskView = isPseudoProjectActive && rawTaskView === 'board' ? 'list' : rawTaskView;
   function setTaskView(next) {
     setTaskViewByProject((prev) => {
       const current = prev[activeProjectId] || 'list';
@@ -163,9 +165,11 @@ function AppShell() {
   // Shared by the sidebar, List view, and Board view — selecting a project
   // always jumps to the Tasks tab and stamps it as "recently visited" so the
   // sidebar's unpinned-project ordering (sortProjectsForSidebar) stays fresh.
+  // Neither pseudo-project (All Tasks/Inbox) is a real project record, so
+  // there's nothing for touchProjectVisited to stamp for either.
   function selectProject(projectId) {
     setActiveProjectId(projectId);
-    if (projectId !== ALL_TASKS_PROJECT_ID) touchProjectVisited(projectId);
+    if (projectId !== ALL_TASKS_PROJECT_ID && projectId !== INBOX_PROJECT_ID) touchProjectVisited(projectId);
     setTab('tasks');
   }
 

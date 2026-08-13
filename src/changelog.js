@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.6.0',
+    date: '2026-08-13',
+    title: 'New "Inbox" for tasks with no project',
+    changes: [
+      'Added a permanent "Inbox" view (sidebar, Tasks project picker, Command Palette, and the Projects page) that shows every task with no project assigned — the same tasks that already land there when you delete a project.',
+    ],
+  },
+  {
     version: '4.5.0',
     date: '2026-08-12',
     title: 'New "Scheduled" section in the Tasks list',

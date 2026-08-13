@@ -499,11 +499,13 @@ cached copy.
   lock icon on a block to protect it from future rebalances. **Re-balance
   schedule** re-runs the engine while preserving locked blocks.
 - **Tasks** — one page, three views via its own List/Board/Gantt switch, all
-  scoped to one project at a time (or "All Tasks"). Switch projects from the
-  sidebar, the Projects page, the project picker shown above List/Board, or
-  the search bar; pin, rename, or delete a project from its "⋯" menu (sidebar
-  row or the page header) — pinned projects sort first, unpinned ones by most
-  recently visited.
+  scoped to one project at a time (or "All Tasks", or "Inbox" for tasks with
+  no project assigned). Switch projects from the sidebar, the Projects page,
+  the project picker shown above List/Board, or the search bar; pin, rename,
+  or delete a project from its "⋯" menu (sidebar row or the page header) —
+  pinned projects sort first, unpinned ones by most recently visited. Like
+  "All Tasks", Inbox is a permanent, undeletable pseudo-project, not a real
+  project you create.
 - **Projects** — a directory of every project: a fuzzy search box, and
   Recent / Shared / My Projects columns (the last sortable by size, total
   estimated hours, or creation date). The sidebar itself only shows your 5

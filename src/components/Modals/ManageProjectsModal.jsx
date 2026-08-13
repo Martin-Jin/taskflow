@@ -10,7 +10,7 @@
  */
 
 import React, { useState } from 'react';
-import { X, Plus, Search, Pin } from 'lucide-react';
+import { X, Plus, Search, Pin, Inbox as InboxIcon } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
@@ -18,7 +18,13 @@ import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
-import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, sortProjectsForSidebar } from '../../utils/projectConstants';
+import {
+  ALL_TASKS_PROJECT_ID,
+  ALL_TASKS_PROJECT_LABEL,
+  INBOX_PROJECT_ID,
+  INBOX_PROJECT_LABEL,
+  sortProjectsForSidebar,
+} from '../../utils/projectConstants';
 import { rankByNameSearch } from '../../utils/nameSearch';
 
 export default function ManageProjectsModal({
@@ -96,7 +102,7 @@ export default function ManageProjectsModal({
   }
 
   function handleDelete(project) {
-    if (window.confirm(`Delete "${project.name}"? Its tasks will move to All Tasks.`)) {
+    if (window.confirm(`Delete "${project.name}"? Its tasks will move to Inbox.`)) {
       onDeleteProject(project.id);
     }
   }
@@ -164,6 +170,14 @@ export default function ManageProjectsModal({
             onClick={() => pickProject(ALL_TASKS_PROJECT_ID)}
           >
             <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
+          </button>
+
+          <button
+            className={`nav-item sidebar-project-row ${activeProjectId === INBOX_PROJECT_ID ? 'active' : ''}`}
+            onClick={() => pickProject(INBOX_PROJECT_ID)}
+          >
+            <InboxIcon size={14} aria-hidden="true" />
+            <span className="sidebar-project-name">{INBOX_PROJECT_LABEL}</span>
           </button>
 
           {visibleProjects.map((p, index) => (
