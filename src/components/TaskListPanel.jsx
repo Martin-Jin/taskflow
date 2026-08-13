@@ -74,7 +74,7 @@ import { useReparentDrag } from '../hooks/useReparentDrag';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay } from '../utils/taskHierarchy';
+import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { resolveCurrentOccurrenceDueDate } from '../utils/recurrence';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
 import { computeEffectiveRole } from '../utils/sharedProjectAccess';
@@ -405,12 +405,18 @@ export default function TaskListPanel({
     const undated = [];
     for (const task of visibleTasks) {
       const dueDate = resolveCurrentOccurrenceDueDate(task);
+      // A recurring task already marked done for today (completedDates
+      // includes today, which is what rolled its own dueDate forward past
+      // today in the first place — see isCompletedForCurrentOccurrence)
+      // shouldn't reappear in Scheduled just because an old block for
+      // today's now-closed-out occurrence is still lying around.
+      const isScheduledToday = taskIdsScheduledToday.has(task.id) && !isCompletedForCurrentOccurrence(task, today);
       if (!dueDate) {
-        if (taskIdsScheduledToday.has(task.id)) scheduledToday.push(task);
+        if (isScheduledToday) scheduledToday.push(task);
         else undated.push(task);
       } else if (dueDate < today) overdue.push(task);
       else if (dueDate === today) todayTasks.push(task);
-      else if (taskIdsScheduledToday.has(task.id)) scheduledToday.push(task);
+      else if (isScheduledToday) scheduledToday.push(task);
       else upcoming.push(task);
     }
     return [
