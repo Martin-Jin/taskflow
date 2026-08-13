@@ -97,8 +97,8 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
   await page.waitForTimeout(500);
 
-  // Delete the project — its task(s) should move to "All Tasks" per the
-  // confirm-dialog copy in ManageProjectsModal ("Its tasks will move to All Tasks").
+  // Delete the project — its task(s) should move to Inbox per the
+  // confirm-dialog copy in ManageProjectsModal ("Its tasks will move to Inbox").
   await gotoTab(page, 'Projects');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog2 = page.getByRole('dialog', { name: 'Manage projects' });
@@ -106,7 +106,7 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   const projectRow2 = dialog2.locator('.sidebar-project-row-wrap', { hasText: renamedProjectName });
   await projectRow2.getByRole('button', { name: `Actions for ${renamedProjectName}` }).click();
   page.once('dialog', (d) => {
-    expect(d.message()).toMatch(/move to All Tasks/i);
+    expect(d.message()).toMatch(/move to Inbox/i);
     d.accept();
   });
   await page.getByText('Delete', { exact: true }).first().click();
@@ -274,10 +274,12 @@ test('Tasks page header "See / manage all projects" button opens Manage Projects
 
   // Switch to a real project — the trigger's accessible name becomes
   // project-specific ("Actions for <name>", see TaskListPanel.jsx) instead
-  // of the generic "Manage projects" used for "All Tasks", but the menu it
-  // opens still offers this same menuitem regardless.
+  // of the generic "Manage projects" used for "All Tasks"/"Inbox", but the
+  // menu it opens still offers this same menuitem regardless. Option 0 is
+  // "All Tasks", option 1 is the "Inbox" pseudo-project, so the first real
+  // project is option 2.
   await page.getByRole('button', { name: 'Switch project' }).click();
-  const projectOption = page.getByRole('option').nth(1);
+  const projectOption = page.getByRole('option').nth(2);
   const projectName = await projectOption.textContent();
   await projectOption.click();
   // Scoped to main — this same label also exists in the sidebar's own copy

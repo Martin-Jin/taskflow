@@ -4,7 +4,11 @@
  * fuzzy search bar styled like the Ctrl+K command palette, and three columns
  * of project rows (Recent / Shared / My projects). Read-only navigation —
  * rename/pin/delete/share stay in ManageProjectsModal/ProjectActionsMenu,
- * this page only calls `onSelectProject`.
+ * this page only calls `onSelectProject`. The Inbox pseudo-project (tasks
+ * with no real project assigned) is pinned above "My projects" via
+ * InboxRow/leadingRow rather than mixed into Recent/Shared, since those
+ * columns are driven by real project metadata (lastVisitedAt, share state)
+ * that Inbox doesn't have.
  *
  * Not yet wired into App.jsx's tab switch — see TODO.md's "Projects tab —
  * dedicated projects page & sidebar refactor" for the integration pass.
@@ -12,12 +16,13 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Folder, SlidersHorizontal, Check, ChevronDown, FolderKanban } from 'lucide-react';
+import { Search, Folder, Inbox, SlidersHorizontal, Check, ChevronDown, FolderKanban } from 'lucide-react';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { rankByNameSearch } from '../../utils/nameSearch';
 import { getProjectShareState } from '../../utils/sharedProjectAccess';
 import { getProjectTaskCount, getProjectTotalHours, sortProjectsBy, PROJECT_SORT_KEYS } from '../../utils/projectStats';
+import { INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../../utils/projectConstants';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 
 /** Tasteful, non-gimmicky rotating subtitles, split by time of day (same three-way split as DashboardPage's greetingForHour). One is picked once per mount below — never re-randomized on re-render. */
@@ -62,17 +67,39 @@ function ProjectRow({ project, tasks, sharedProjects, uid, onSelectProject }) {
   );
 }
 
-function ProjectColumn({ title, projects, tasks, sharedProjects, uid, onSelectProject, emptyLabel, headerExtra }) {
+/**
+ * Inbox pseudo-project's row — same visual treatment as ProjectRow, but reads
+ * its task count/hours off `!task.projectId` (via projectConstants'
+ * INBOX_PROJECT_ID handling in getProjectTaskCount/getProjectTotalHours)
+ * rather than a real project record, and never shows a SharedProjectBadge
+ * since Inbox can't be shared.
+ */
+function InboxRow({ tasks, onSelectProject }) {
+  const taskCount = getProjectTaskCount(INBOX_PROJECT_ID, tasks);
+  const hours = Math.round(getProjectTotalHours(INBOX_PROJECT_ID, tasks));
+  return (
+    <button type="button" className="projects-page-row" onClick={() => onSelectProject(INBOX_PROJECT_ID)}>
+      <Inbox size={14} className="projects-page-row-icon" aria-hidden="true" />
+      <span className="projects-page-row-name">{INBOX_PROJECT_LABEL}</span>
+      <span className="projects-page-row-stats">
+        {taskCount} task{taskCount === 1 ? '' : 's'} · {hours}h
+      </span>
+    </button>
+  );
+}
+
+function ProjectColumn({ title, projects, tasks, sharedProjects, uid, onSelectProject, emptyLabel, headerExtra, leadingRow }) {
   return (
     <div className="projects-page-column">
       <div className="projects-page-column-header">
         <h2>{title}</h2>
         {headerExtra}
       </div>
-      {projects.length === 0 ? (
+      {!leadingRow && projects.length === 0 ? (
         <p className="projects-page-column-empty">{emptyLabel}</p>
       ) : (
         <div className="projects-page-column-list">
+          {leadingRow}
           {projects.map((p) => (
             <ProjectRow key={p.id} project={p} tasks={tasks} sharedProjects={sharedProjects} uid={uid} onSelectProject={onSelectProject} />
           ))}
@@ -354,6 +381,7 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
           uid={uid}
           onSelectProject={onSelectProject}
           emptyLabel={isSearching ? 'No matches.' : 'No projects yet.'}
+          leadingRow={isSearching ? null : <InboxRow tasks={tasks} onSelectProject={onSelectProject} />}
           headerExtra={<ProjectSortMenu sortKey={sortKey} ascending={ascending} onChange={(k, a) => { setSortKey(k); setAscending(a); }} />}
         />
       </div>

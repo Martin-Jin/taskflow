@@ -24,7 +24,7 @@ import { X, Search, Folder, CheckSquare2, Zap } from 'lucide-react';
 import { useAnimatedUnmount } from '../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
-import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL } from '../utils/projectConstants';
+import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../utils/projectConstants';
 import { rankByNameSearch } from '../utils/nameSearch';
 
 /**
@@ -106,7 +106,11 @@ export default function CommandPalette({
 
     const projectItems = rankByNameSearch(
       q,
-      [{ id: ALL_TASKS_PROJECT_ID, name: ALL_TASKS_PROJECT_LABEL }, ...projects].map((p) => ({ ...p, label: p.name }))
+      [
+        { id: ALL_TASKS_PROJECT_ID, name: ALL_TASKS_PROJECT_LABEL },
+        { id: INBOX_PROJECT_ID, name: INBOX_PROJECT_LABEL },
+        ...projects,
+      ].map((p) => ({ ...p, label: p.name }))
     ).map((p) => ({ key: `project-${p.id}`, label: p.name, icon: Folder, run: () => onSelectProject(p.id) }));
 
     const taskItems = q

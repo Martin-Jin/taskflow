@@ -76,7 +76,14 @@ import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { resolveCurrentOccurrenceDueDate } from '../utils/recurrence';
-import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, filterTasksByProject, filterTasksByStatus } from '../utils/projectConstants';
+import {
+  ALL_TASKS_PROJECT_ID,
+  ALL_TASKS_PROJECT_LABEL,
+  INBOX_PROJECT_ID,
+  INBOX_PROJECT_LABEL,
+  filterTasksByProject,
+  filterTasksByStatus,
+} from '../utils/projectConstants';
 import { computeEffectiveRole } from '../utils/sharedProjectAccess';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -298,12 +305,19 @@ export default function TaskListPanel({
     },
     [uncompleteTask, playUncomplete]
   );
-  const activeProject = activeProjectId === ALL_TASKS_PROJECT_ID ? null : projects.find((p) => p.id === activeProjectId);
+  // Neither "All Tasks" nor "Inbox" is a real Project record, so both resolve
+  // to a null activeProject — every downstream consumer (rename/delete
+  // buttons, ProjectActionsMenu, SharedProjectBadge) already treats a null
+  // activeProject as "nothing to rename/delete/share here", so Inbox gets
+  // that for free by construction rather than needing its own checks.
+  const isPseudoProject = activeProjectId === ALL_TASKS_PROJECT_ID || activeProjectId === INBOX_PROJECT_ID;
+  const activeProject = isPseudoProject ? null : projects.find((p) => p.id === activeProjectId);
 
   // A viewer-role collaborator can browse a shared project's List view but
   // not add tasks to it — same precedent as BoardView's isSectionsReadOnly.
-  // "All Tasks" never counts as viewer-only: the FAB there opens AddTaskModal
-  // with no pre-selected project (Inbox), which is never itself a shared
+  // "All Tasks"/"Inbox" never count as viewer-only: the FAB there opens
+  // AddTaskModal with no pre-selected project (for Inbox) or the default
+  // empty selection (for All Tasks), neither of which is itself a shared
   // project, so there's nothing to gate at this level (AddTaskModal's own
   // dropdown still excludes any viewer-only project the user might pick there).
   const isActiveProjectViewerOnly =
@@ -316,11 +330,15 @@ export default function TaskListPanel({
   // disagreeing with each other — unlike Board, List always has a valid
   // "All Tasks" fallback so there's no need to pick a substitute project.
   useEffect(() => {
-    if (activeProjectId === ALL_TASKS_PROJECT_ID) return;
+    if (isPseudoProject) return;
     if (!projects.some((p) => p.id === activeProjectId)) onChangeActiveProject(ALL_TASKS_PROJECT_ID);
-  }, [activeProjectId, projects, onChangeActiveProject]);
+  }, [activeProjectId, isPseudoProject, projects, onChangeActiveProject]);
   const projectSelectOptions = useMemo(
-    () => [{ value: ALL_TASKS_PROJECT_ID, label: ALL_TASKS_PROJECT_LABEL }, ...projects.map((p) => ({ value: p.id, label: p.name }))],
+    () => [
+      { value: ALL_TASKS_PROJECT_ID, label: ALL_TASKS_PROJECT_LABEL },
+      { value: INBOX_PROJECT_ID, label: INBOX_PROJECT_LABEL },
+      ...projects.map((p) => ({ value: p.id, label: p.name })),
+    ],
     [projects]
   );
 
@@ -363,7 +381,7 @@ export default function TaskListPanel({
 
   function handleDeleteProject() {
     if (!activeProject) return;
-    if (window.confirm(`Delete "${activeProject.name}"? Its tasks will move to All Tasks.`)) {
+    if (window.confirm(`Delete "${activeProject.name}"? Its tasks will move to Inbox.`)) {
       deleteProject(activeProject.id);
       onChangeActiveProject(ALL_TASKS_PROJECT_ID);
     }
@@ -555,7 +573,9 @@ export default function TaskListPanel({
                   }
                 }}
               >
-                <MarqueeText text={activeProject ? activeProject.name : ALL_TASKS_PROJECT_LABEL} />
+                <MarqueeText
+                  text={activeProject ? activeProject.name : activeProjectId === INBOX_PROJECT_ID ? INBOX_PROJECT_LABEL : ALL_TASKS_PROJECT_LABEL}
+                />
               </h2>
             )}
             {/* Which of the three sharing states this project is in. Unlike
@@ -581,7 +601,7 @@ export default function TaskListPanel({
             <ViewFilterMenu
               view={view}
               onChangeView={onChangeView}
-              viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || activeProjectId !== ALL_TASKS_PROJECT_ID)}
+              viewOptions={PAGE_VIEWS.filter((v) => v.key !== 'board' || !isPseudoProject)}
               filter={filter}
               onChangeFilter={setFilter}
               projectActions={isMobile ? projectActionsProps : undefined}

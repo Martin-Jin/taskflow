@@ -20,12 +20,17 @@
  */
 
 import React, { useState } from 'react';
-import { ArrowRight, Pin } from 'lucide-react';
+import { ArrowRight, Inbox, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
-import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL } from '../../utils/projectConstants';
+import {
+  ALL_TASKS_PROJECT_ID,
+  ALL_TASKS_PROJECT_LABEL,
+  INBOX_PROJECT_ID,
+  INBOX_PROJECT_LABEL,
+} from '../../utils/projectConstants';
 
 const RECENT_PROJECT_LIMIT = 5;
 
@@ -69,7 +74,7 @@ export default function Sidebar({
   }
 
   function handleDelete(project) {
-    if (window.confirm(`Delete "${project.name}"? Its tasks will move to All Tasks.`)) {
+    if (window.confirm(`Delete "${project.name}"? Its tasks will move to Inbox.`)) {
       onDeleteProject(project.id);
     }
   }
@@ -106,6 +111,15 @@ export default function Sidebar({
           aria-current={activeProjectId === ALL_TASKS_PROJECT_ID ? 'page' : undefined}
         >
           <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
+        </button>
+
+        <button
+          className={`nav-item sidebar-project-row ${activeProjectId === INBOX_PROJECT_ID ? 'active' : ''}`}
+          onClick={() => onSelectProject(INBOX_PROJECT_ID)}
+          aria-current={activeProjectId === INBOX_PROJECT_ID ? 'page' : undefined}
+        >
+          <Inbox size={14} aria-hidden="true" />
+          <span className="sidebar-project-name">{INBOX_PROJECT_LABEL}</span>
         </button>
 
         <div className="sidebar-project-list">

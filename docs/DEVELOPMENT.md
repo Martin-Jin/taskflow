@@ -766,7 +766,7 @@ src/
 │   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
 │   ├── nameSearch.js         # Single shared typo-tolerant/relevance-ranked name matcher (rankByNameSearch/scoreNameMatch) — the one source of truth for searching projects (and reused for Views/Actions) in Sidebar, ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette, and CalendarFilterMenu; don't add another ad-hoc `.includes()` matcher for names elsewhere
 │   ├── calendarFilter.js     # Calendar show-mode/project/tag filter predicates (CalendarFilterMenu's logic) — project search itself now lives in nameSearch.js
-│   ├── projectConstants.js   # "All Tasks" pseudo-project sentinel + sidebar project ordering
+│   ├── projectConstants.js   # "All Tasks"/"Inbox" pseudo-project sentinels + sidebar project ordering
 │   ├── projectStats.js       # Read-only per-project stats/sort for the Projects page: task count, top-level-only effective-hours total (avoids double-counting a parent's rolled-up subtask hours), sortProjectsBy(size|duration|created)
 │   ├── sharedTaskSync.js     # Pure decision logic for shared-task Firestore sync: which fields merge vs. last-write-wins, presence staleness, in-flight write race guards (Phase 1)
 │   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0)
