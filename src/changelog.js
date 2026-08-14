@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '5.0.2',
+    date: '2026-08-14',
+    title: 'Fixed: confirmation popups no longer rely on your browser',
+    changes: [
+      "Every \"Are you sure?\" confirmation (deleting a project/label/section, clearing all data, restoring a backup, disconnecting an integration, and more) now uses TaskFlow's own popup instead of the browser's native confirm dialog.",
+      'Some browsers (seen in the wild: Firefox, under certain settings) silently block the native dialog entirely — no popup, no error, nothing — which made every one of those buttons look like it was doing nothing. The in-app popup can\'t be silently blocked this way.',
+      'The "copy share link" fallback (used when your browser blocks clipboard access) also no longer relies on a native popup — it now shows the link directly in a toast notification instead.',
+    ],
+  },
+  {
     version: '5.0.1',
     date: '2026-08-14',
     title: 'Fixed demo tasks reappearing after signing back in',

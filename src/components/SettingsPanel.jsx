@@ -32,6 +32,7 @@ import { useScheduler } from '../context/SchedulerContext';
 import { useTheme } from '../context/ThemeContext';
 import { useSound } from '../context/SoundContext';
 import { useAuth } from '../context/AuthContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { clearAllPersisted, loadPersisted, savePersisted } from '../utils/persistence';
 import { getStoredApiKey } from '../services/aiQuickAddService';
@@ -108,6 +109,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   const { theme, setTheme } = useTheme();
   const { soundEnabled, setSoundEnabled, soundVolume, setSoundVolume, playComplete } = useSound();
   const { user, authLoading, logout } = useAuth();
+  const confirm = useConfirm();
   const {
     routines,
     setRoutines,
@@ -284,7 +286,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     const file = e.target.files?.[0];
     e.target.value = ''; // reset so picking the same file twice still fires onChange
     if (!file) return;
-    if (!window.confirm('Restore from this backup file? This replaces your current tasks, boards, and settings on this device.')) {
+    if (
+      !(await confirm('Restore from this backup file? This replaces your current tasks, boards, and settings on this device.', {
+        confirmLabel: 'Restore',
+      }))
+    ) {
       return;
     }
     const restored = await importBackupFromFile(file);
@@ -300,13 +306,14 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   // calendars are never touched — this app only ever writes to your own
   // primary calendar) and that it can't be undone from within TaskFlow.
   async function handleRewriteGoogleCalendar() {
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       "Rewrite Google Calendar to match TaskFlow?\n\n" +
         "This deletes/overwrites events on your PRIMARY Google Calendar that don't match what TaskFlow currently has, " +
         'and creates or updates events there to match your current tasks, scheduled blocks, and calendar events.\n\n' +
         "Safe: any subscribed or shared calendar you don't own (e.g. a shared team calendar or a university timetable) " +
         'is never touched — only your own primary calendar is ever changed.\n\n' +
-        "This can't be undone from within TaskFlow — deleted Google Calendar events are gone for good. Continue?"
+        "This can't be undone from within TaskFlow — deleted Google Calendar events are gone for good. Continue?",
+      { confirmLabel: 'Rewrite' }
     );
     if (!confirmed) return;
     await rewriteGoogleCalendarFromTaskflow();
@@ -462,12 +469,12 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               <button
                 className="btn"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)' }}
-                onClick={() => {
+                onClick={async () => {
                   const confirmMessage =
                     sharedProjectIds.length > 0
                       ? "Leave this guest session? You'll lose access to any shared project you joined as a guest, and any data saved only on this device."
                       : "Leave this guest session? You'll lose any data saved only on this device.";
-                  if (window.confirm(confirmMessage)) {
+                  if (await confirm(confirmMessage, { confirmLabel: 'Leave' })) {
                     logout();
                   }
                 }}
@@ -623,10 +630,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             <button
               className="btn"
               style={{ color: 'var(--color-danger)' }}
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  window.confirm(
-                    'Rebuild ALL calendar events from Google Calendar? This wipes every local event first — including any purely local "blocked time" that was never pushed to Google — then rebuilds entirely from what Google currently has. Use this if events keep reappearing or you still see events that no longer exist on Google after a normal Pull.'
+                  await confirm(
+                    'Rebuild ALL calendar events from Google Calendar? This wipes every local event first — including any purely local "blocked time" that was never pushed to Google — then rebuilds entirely from what Google currently has. Use this if events keep reappearing or you still see events that no longer exist on Google after a normal Pull.',
+                    { confirmLabel: 'Rebuild' }
                   )
                 ) {
                   rebuildEventsFromGoogle();
@@ -641,8 +649,12 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             <button
               className="btn"
               style={{ color: 'var(--color-danger)' }}
-              onClick={() => {
-                if (window.confirm('Disconnect Google Calendar? Synced events stay in TaskFlow, but reconnecting will need a fresh Google sign-in.')) {
+              onClick={async () => {
+                if (
+                  await confirm('Disconnect Google Calendar? Synced events stay in TaskFlow, but reconnecting will need a fresh Google sign-in.', {
+                    confirmLabel: 'Disconnect',
+                  })
+                ) {
                   disconnectGoogleCalendar();
                 }
               }}
@@ -738,8 +750,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                 <button
                   className="btn"
                   style={{ fontSize: 12, color: 'var(--color-danger)' }}
-                  onClick={() => {
-                    if (window.confirm('Disconnect Todoist? Tasks will fall back to sample data until you reconnect.')) {
+                  onClick={async () => {
+                    if (await confirm('Disconnect Todoist? Tasks will fall back to sample data until you reconnect.', { confirmLabel: 'Disconnect' })) {
                       setTodoistApiToken(null);
                     }
                   }}
@@ -873,8 +885,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                   <button
                     className="btn"
                     style={{ fontSize: 12, color: 'var(--color-danger)' }}
-                    onClick={() => {
-                      if (window.confirm('Remove your Anthropic API key from this browser?')) setAiApiKey('anthropic', null);
+                    onClick={async () => {
+                      if (await confirm('Remove your Anthropic API key from this browser?', { confirmLabel: 'Remove' })) setAiApiKey('anthropic', null);
                     }}
                   >
                     Disconnect
@@ -940,8 +952,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                   <button
                     className="btn"
                     style={{ fontSize: 12, color: 'var(--color-danger)' }}
-                    onClick={() => {
-                      if (window.confirm('Remove your Gemini API key from this browser?')) setAiApiKey('gemini', null);
+                    onClick={async () => {
+                      if (await confirm('Remove your Gemini API key from this browser?', { confirmLabel: 'Remove' })) setAiApiKey('gemini', null);
                     }}
                   >
                     Disconnect
@@ -1378,8 +1390,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
         <button
           className="btn"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)' }}
-          onClick={() => {
-            if (window.confirm('Clear all tasks and boards? This cannot be undone.')) {
+          onClick={async () => {
+            if (await confirm('Clear all tasks and boards? This cannot be undone.', { confirmLabel: 'Clear all data' })) {
               clearAllData();
             }
           }}
@@ -1395,8 +1407,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
         <button
           className="btn"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)', marginTop: 10 }}
-          onClick={() => {
-            if (window.confirm('Reset all local TaskFlow data? This cannot be undone.')) {
+          onClick={async () => {
+            if (await confirm('Reset all local TaskFlow data? This cannot be undone.', { confirmLabel: 'Reset' })) {
               clearAllPersisted();
               window.location.reload();
             }

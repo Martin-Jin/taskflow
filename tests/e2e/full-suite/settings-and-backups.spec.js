@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { trackConsoleErrors, gotoApp, gotoTab, openAddTask, closeAnyModal, expectNoErrors } from './helpers.js';
+import { trackConsoleErrors, gotoApp, gotoTab, openAddTask, closeAnyModal, expectNoErrors, resolveConfirmModal } from './helpers.js';
 
 test.beforeEach(async ({ page }) => {
   await gotoApp(page);
@@ -39,9 +39,9 @@ test('Labels modal: create via @tag, rename, and delete a label', async ({ page 
   await expect(dialog.getByText(renamedName, { exact: true })).toBeVisible();
   await expect(dialog.getByText(tagName, { exact: true })).toHaveCount(0);
 
-  // Delete it — confirm() is auto-accepted below.
-  page.once('dialog', (d) => d.accept());
+  // Delete it — the shared in-app confirm modal is accepted below.
   await dialog.getByRole('button', { name: `Delete ${renamedName}` }).click();
+  await resolveConfirmModal(page, { confirmLabel: 'Delete' });
   await page.waitForTimeout(300);
   await expect(dialog.getByText(renamedName, { exact: true })).toHaveCount(0);
 
@@ -105,11 +105,8 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   await expect(dialog2).toBeVisible();
   const projectRow2 = dialog2.locator('.sidebar-project-row-wrap', { hasText: renamedProjectName });
   await projectRow2.getByRole('button', { name: `Actions for ${renamedProjectName}` }).click();
-  page.once('dialog', (d) => {
-    expect(d.message()).toMatch(/move to Inbox/i);
-    d.accept();
-  });
   await page.getByText('Delete', { exact: true }).first().click();
+  await resolveConfirmModal(page, { expectMessage: /move to Inbox/i, confirmLabel: 'Delete' });
   await page.waitForTimeout(400);
   await expect(dialog2.getByText(renamedProjectName, { exact: true })).toHaveCount(0);
 
@@ -324,8 +321,8 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   await expect(manageDialog2).toBeVisible();
   const projectRow = manageDialog2.locator('.sidebar-project-row-wrap', { hasText: projectName });
   await projectRow.getByRole('button', { name: `Actions for ${projectName}` }).click();
-  page.once('dialog', (d) => d.accept());
   await page.getByText('Delete', { exact: true }).first().click();
+  await resolveConfirmModal(page, { confirmLabel: 'Delete' });
   await page.waitForTimeout(400);
   await closeAnyModal(page);
   await page.waitForTimeout(300);
@@ -368,8 +365,8 @@ test('Backups: export/restore round trip preserves tasks and a dashboard note', 
   await download.saveAs(downloadPath);
 
   const fileInput = page.locator('input[type="file"]');
-  page.once('dialog', (d) => d.accept());
   await fileInput.setInputFiles(downloadPath);
+  await resolveConfirmModal(page, { confirmLabel: 'Restore' });
   await page.waitForTimeout(600);
 
   await gotoTab(page, 'Tasks');
@@ -401,8 +398,8 @@ test('Backups: restoring a corrupt/invalid file shows an error and leaves existi
 
   await gotoTab(page, 'Settings');
   const fileInput = page.locator('input[type="file"]');
-  page.once('dialog', (d) => d.accept());
   await fileInput.setInputFiles(malformedPath);
+  await resolveConfirmModal(page, { confirmLabel: 'Restore' });
   await page.waitForTimeout(500);
   await expect(page.locator('.toast')).toContainText(/not valid JSON|failed to read/i);
 
@@ -416,8 +413,8 @@ test('Backups: restoring a corrupt/invalid file shows an error and leaves existi
   await fs.writeFile(garbagePath, JSON.stringify({ garbage: true }));
 
   await gotoTab(page, 'Settings');
-  page.once('dialog', (d) => d.accept());
   await fileInput.setInputFiles(garbagePath);
+  await resolveConfirmModal(page, { confirmLabel: 'Restore' });
   await page.waitForTimeout(500);
   await expect(page.locator('.toast')).toContainText(/invalid backup/i);
 

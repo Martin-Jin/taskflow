@@ -94,6 +94,7 @@ import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink, GripVert
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMotionEnabled } from '../../hooks/useMotionEnabled';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -150,6 +151,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   } = useScheduler();
   const { user } = useAuth();
   const { requestComplete } = useCompleteTask();
+  const confirm = useConfirm();
   // Recurring subtasks never set isCompleted true (see completeTask) —
   // "done for now" is tracked per-occurrence via completedDates instead, so
   // the card's subtask tally below needs isCheckedForListDisplay rather than
@@ -306,9 +308,12 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     setEditingColumnTitle('');
   }
 
-  function handleDeleteColumn(col) {
+  async function handleDeleteColumn(col) {
     if (col.isNoSection || isSectionsReadOnly) return;
-    if (col.tasks.length > 0 && !window.confirm(`Delete "${col.name}"? Its ${col.tasks.length} task(s) will move to No Section.`)) {
+    if (
+      col.tasks.length > 0 &&
+      !(await confirm(`Delete "${col.name}"? Its ${col.tasks.length} task(s) will move to No Section.`, { confirmLabel: 'Delete' }))
+    ) {
       return;
     }
     deleteSection(col.id);

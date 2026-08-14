@@ -13,9 +13,11 @@ import { X, Tag, Pencil, Trash2, Check } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useConfirm } from '../../context/ConfirmContext';
 
 export default function LabelsModal({ onClose }) {
   const { labels, tasks, renameLabel, deleteLabel } = useScheduler();
+  const confirm = useConfirm();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const [editingId, setEditingId] = useState(null);
@@ -44,12 +46,12 @@ export default function LabelsModal({ onClose }) {
     setEditValue('');
   }
 
-  function handleDelete(label) {
+  async function handleDelete(label) {
     const message =
       label.count > 0
         ? `Delete "${label.name}"? It will be removed from ${label.count} task${label.count === 1 ? '' : 's'}.`
         : `Delete "${label.name}"?`;
-    if (window.confirm(message)) deleteLabel(label.id);
+    if (await confirm(message, { confirmLabel: 'Delete' })) deleteLabel(label.id);
   }
 
   return (

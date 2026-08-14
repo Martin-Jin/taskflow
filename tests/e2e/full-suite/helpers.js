@@ -112,6 +112,34 @@ export async function closeAnyModal(page) {
   await page.waitForTimeout(200);
 }
 
+// Every window.confirm() in the app was replaced by an in-app modal
+// (ConfirmContext.jsx/ConfirmModal.jsx) so a browser silently blocking
+// window.confirm (seen in the wild in Firefox) can no longer make every
+// destructive-action button do nothing with zero feedback. Tests that used
+// to pre-register `page.once('dialog', ...)` before triggering a
+// window.confirm now await this modal instead — it renders as
+// `role="dialog"` with a fixed accessible name of "Confirm" (or "Confirm
+// destructive action" for the danger-styled variant), body text in
+// `.confirm-modal-message`, and Confirm/Cancel buttons labeled per call site
+// (e.g. "Delete", "Restore", "Disconnect" — see each call site's
+// `confirmLabel` option).
+export function getConfirmModal(page) {
+  return page.getByRole('dialog', { name: /^Confirm/ });
+}
+
+/** Waits for the shared confirm modal, optionally checks its message, then clicks Confirm/Cancel. */
+export async function resolveConfirmModal(page, { expectMessage, confirmLabel, accept = true } = {}) {
+  const dialog = getConfirmModal(page);
+  await expect(dialog).toBeVisible();
+  if (expectMessage) await expect(dialog.locator('.confirm-modal-message')).toContainText(expectMessage);
+  if (accept) {
+    await (confirmLabel ? dialog.getByRole('button', { name: confirmLabel, exact: true }) : dialog.getByRole('button').last()).click();
+  } else {
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  }
+  await expect(dialog).toHaveCount(0);
+}
+
 export function expectNoErrors(errors) {
   expect(errors, errors.join('\n')).toEqual([]);
 }
