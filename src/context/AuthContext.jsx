@@ -49,7 +49,7 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 import { auth } from '../firebase';
-import { clearAllPersisted } from '../utils/persistence';
+import { clearAllPersisted, savePersisted } from '../utils/persistence';
 import { loadScript } from '../utils/loadScript';
 import { isRunningStandalone } from '../utils/installPrompt';
 import { isGuestUser } from '../utils/sharedProjectAccess';
@@ -244,6 +244,26 @@ export function AuthProvider({ children }) {
       // account's tasks. A reload is needed since SchedulerContext seeds its
       // state from localStorage only on mount.
       clearAllPersisted();
+      // SchedulerContext seeds `tasks` as `loadPersisted('tasks', null) ??
+      // getMockTasks()` — that fallback exists for a genuine first-ever visit
+      // (no persisted key at all), so a brand-new visitor sees the demo data.
+      // But clearAllPersisted() just above also removes the 'tasks' key, so
+      // WITHOUT this line the post-signout reload would hit that exact same
+      // fallback and re-seed 16 hardcoded demo tasks — freshly stamped with
+      // `updatedAt: now` — as if this were a first-ever visit. Signing back
+      // in then pulls the real cloud tasks, but mergeTasksByUpdatedAt
+      // (useCloudSync.js) has no way to tell "genuinely new local task" apart
+      // from "freshly re-generated demo placeholder", so every demo task
+      // (using its own fixed id, never colliding with a real task's
+      // crypto.randomUUID()) survives the merge and gets unioned in
+      // permanently alongside the user's real data. Explicitly persisting an
+      // EMPTY tasks/blocks array here (rather than leaving the key absent)
+      // means the post-signout reload finds a real "no tasks yet" state
+      // instead of falling through to the mock-data fallback, so the
+      // subsequent sign-in's pull merges against nothing instead of against
+      // a fresh batch of demo clutter.
+      savePersisted('tasks', []);
+      savePersisted('blocks', []);
       window.location.reload();
     } catch (err) {
       console.error('[AuthContext] Sign-out failed', err);
