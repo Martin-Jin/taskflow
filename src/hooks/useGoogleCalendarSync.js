@@ -217,13 +217,6 @@ export function useGoogleCalendarSync({
   const lastGooglePollAtRef = useRef(0);
   const pollGoogleEventsRef = useRef(null);
 
-  // Populated below (near "Push blocks to Google Calendar") with a function
-  // that pushes every block lacking a googleEventId — kept in a ref, same
-  // reasoning as pollGoogleEventsRef, so the periodic-poll effect (which only
-  // depends on googleConnected) can call the latest version without needing
-  // to be redefined whenever stateRef's contents change.
-  const pushUnsyncedBlocksRef = useRef(async () => 0);
-
   // googleEventId -> timestamp this app instance issued a delete for it.
   // Consulted (and pruned of expired entries) by every mergePulledGoogleEvents
   // call below so a poll/pull that lands before Google's own delete has
@@ -543,22 +536,6 @@ export function useGoogleCalendarSync({
             const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
             applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
             markGoogleSyncSucceeded();
-            // Also push any block scheduled since the last tick that has no
-            // googleEventId yet — the only other push sites are the manual
-            // "Push to Google Calendar" button and addManualEvent's own
-            // immediate push for directly-created calendar events (see
-            // pushUnsyncedBlocksToCalendar's doc comment). Without this, a
-            // task auto-scheduled by Re-balance (including one created via AI
-            // quick-add) or manually scheduled via scheduleTaskAt would never
-            // reach Google Calendar until the user opened Settings and
-            // clicked that button. Failures here are non-fatal to the poll
-            // itself — the next tick will just retry the same unsynced
-            // blocks, so they're logged rather than flagged stale/disconnected.
-            try {
-              await pushUnsyncedBlocksRef.current();
-            } catch (pushErr) {
-              console.warn('[useGoogleCalendarSync] Auto-push of unsynced blocks failed; will retry next poll.', pushErr);
-            }
             return;
           } catch (err) {
             // Confirmed auth failure — fail fast, no retry benefit, and its
@@ -867,50 +844,30 @@ export function useGoogleCalendarSync({
   );
 
   // ---- Push blocks to Google Calendar --------------------------------------
-  // Pushes every block that doesn't yet have a googleEventId, i.e. every
-  // block scheduled since the last push, regardless of how it was created
-  // (manual scheduleTaskAt, a Re-balance placing a newly-added task, or an AI
-  // quick-add task that got auto-scheduled) — none of those creation sites
-  // push individually, unlike addManualEvent's immediate push for a directly-
-  // created calendar event. Mirrored into pushUnsyncedBlocksRef so the
-  // periodic poll below can call the latest version silently on every
-  // successful tick (see that effect), in addition to this being the
-  // manual "Push to Google Calendar" button's own action. Reads live
-  // tasks/blocks off stateRef rather than the closed-over values so neither
-  // call site ever pushes against stale block data.
-  const pushUnsyncedBlocksToCalendar = useCallback(async () => {
-    const latestTasks = stateRef.current.tasks;
-    const latestBlocks = stateRef.current.blocks;
-    const toPush = latestBlocks.filter((b) => !b.googleEventId);
-    if (toPush.length === 0) return 0;
-    const pushedEventIdsByBlockId = new Map();
-    for (const block of toPush) {
-      const task = latestTasks.find((t) => t.id === block.taskId);
-      if (!task) continue;
-      const eventId = await pushBlockToCalendar(block, task);
-      if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
-    }
-    if (pushedEventIdsByBlockId.size === 0) return 0;
-    const updated = stateRef.current.blocks.map((b) =>
-      pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
-    );
-    commit({ tasks: stateRef.current.tasks, blocks: updated }, `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar`);
-    return pushedEventIdsByBlockId.size;
-  }, [stateRef, commit]);
-  pushUnsyncedBlocksRef.current = pushUnsyncedBlocksToCalendar;
-
   const pushToGoogleCalendar = useCallback(async () => {
     setIsPullingGoogleEvents(true);
     try {
-      const pushedCount = await pushUnsyncedBlocksToCalendar();
-      setNotification({ type: 'success', message: `Pushed ${pushedCount} block(s) to Google Calendar.` });
+      const toPush = blocks.filter((b) => !b.googleEventId);
+      const pushedEventIdsByBlockId = new Map();
+      for (const block of toPush) {
+        const task = tasks.find((t) => t.id === block.taskId);
+        if (!task) continue;
+        const eventId = await pushBlockToCalendar(block, task);
+        if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
+      }
+      const latestBlocks = stateRef.current.blocks;
+      const updated = latestBlocks.map((b) =>
+        pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
+      );
+      commit({ tasks: stateRef.current.tasks, blocks: updated }, `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar`);
+      setNotification({ type: 'success', message: `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar.` });
     } catch (err) {
       console.error(err);
       setNotification({ type: 'error', message: `Push to Google Calendar failed: ${err.message || err}` });
     } finally {
       setIsPullingGoogleEvents(false);
     }
-  }, [pushUnsyncedBlocksToCalendar, setNotification]);
+  }, [blocks, tasks, commit, stateRef, setNotification]);
 
   // ---- Disconnect Google Calendar (user-initiated) -------------------------
   const disconnectGoogleCalendar = useCallback(async () => {
