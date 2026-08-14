@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.8.0',
+    date: '2026-08-14',
+    title: 'Warning when Google Calendar stays disconnected',
+    changes: [
+      "If Google Calendar can't sync for an extended stretch (network issue, revoked access, etc.), you'll now get a notification prompting you to check your connection or reconnect in Settings — previously this only showed as a small badge in Settings that was easy to miss.",
+    ],
+  },
+  {
     version: '4.7.1',
     date: '2026-08-14',
     title: 'Auto-scheduled tasks now sync to Google Calendar',
