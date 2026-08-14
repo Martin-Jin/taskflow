@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.1.1',
+    date: '2026-08-15',
+    title: 'Fixed duplicate events surviving "Restore & overwrite Google Calendar"',
+    changes: [
+      'Fixed a bug where "Restore & overwrite Google Calendar" could leave duplicate copies of a recurring event (e.g. a repeating "Piano" event) on Google Calendar instead of cleaning them up — an earlier duplicate-event bug had left two local copies of the same event, each pointing at a different real Google event, so the rewrite treated both as legitimate and kept both instead of collapsing to one.',
+    ],
+  },
+  {
     version: '5.1.0',
     date: '2026-08-15',
     title: 'Combined "Restore & overwrite Google Calendar" action',

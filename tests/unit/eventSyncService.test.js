@@ -23,6 +23,7 @@ import {
   expandSyncedBounds,
   computeOnDemandFetchRange,
   computeEffectivePurgeBoundary,
+  findDuplicateGoogleSourcedEvents,
   RECENTLY_DELETED_TTL_MS,
 } from '../../src/services/eventSyncService.js';
 
@@ -416,5 +417,75 @@ describe('computeEffectivePurgeBoundary — capping retention at a rolling maxRe
   it('rolls forward with real time — the same synced bound eventually falls outside a LATER retention ceiling', () => {
     const oneYearLaterMs = new Date(2027, 7, 1).getTime(); // 2027-08-01
     expect(computeEffectivePurgeBoundary('2026-07-02', 365, oneYearLaterMs)).toBe('2026-08-01');
+  });
+});
+
+describe('findDuplicateGoogleSourcedEvents — same-logical-event duplicate rows left by the historical duplicate-push bug', () => {
+  // Two local `source: 'google'` rows for what is visually the same
+  // recurring event (e.g. "Piano" every week), each with its OWN distinct
+  // googleEventId because Google genuinely has two physical copies — the
+  // scenario a "rewrite Google Calendar to match TaskFlow" pass must collapse
+  // to one, or it protects/keeps both Google-side copies forever.
+  function recurringEvent(overrides = {}) {
+    return googleEvent({
+      title: 'Piano',
+      startTime: '10:10',
+      endTime: '10:55',
+      recurrenceRule: 'FREQ=WEEKLY',
+      ...overrides,
+    });
+  }
+
+  it('flags every row but the most-recently-synced one in a duplicate group', () => {
+    const events = [
+      recurringEvent({ id: 'local1', googleEventId: 'gA', googleUpdatedAt: '2026-08-01T00:00:00Z' }),
+      recurringEvent({ id: 'local2', googleEventId: 'gB', googleUpdatedAt: '2026-08-10T00:00:00Z' }),
+    ];
+    const dups = findDuplicateGoogleSourcedEvents(events);
+    expect(dups.has('local1')).toBe(true); // older googleUpdatedAt -> dropped
+    expect(dups.has('local2')).toBe(false); // most recent -> kept canonical
+  });
+
+  it('does not flag a single, non-duplicated event', () => {
+    const events = [recurringEvent({ id: 'local1', googleEventId: 'gA' })];
+    expect(findDuplicateGoogleSourcedEvents(events).size).toBe(0);
+  });
+
+  it('does not treat two events with different titles/times as duplicates of each other', () => {
+    const events = [
+      recurringEvent({ id: 'local1', googleEventId: 'gA' }),
+      recurringEvent({ id: 'local2', googleEventId: 'gB', title: 'Guitar' }),
+    ];
+    expect(findDuplicateGoogleSourcedEvents(events).size).toBe(0);
+  });
+
+  it('never flags a manual (source: "manual") event, even if it shares title/time with a google-sourced one', () => {
+    const events = [
+      recurringEvent({ id: 'local1', googleEventId: 'gA' }),
+      { ...recurringEvent({ id: 'local2', googleEventId: null }), source: 'manual' },
+    ];
+    expect(findDuplicateGoogleSourcedEvents(events).size).toBe(0);
+  });
+
+  it('handles a group of 3+ duplicates, keeping only the single most recent', () => {
+    const events = [
+      recurringEvent({ id: 'local1', googleEventId: 'gA', googleUpdatedAt: '2026-08-01T00:00:00Z' }),
+      recurringEvent({ id: 'local2', googleEventId: 'gB', googleUpdatedAt: '2026-08-15T00:00:00Z' }),
+      recurringEvent({ id: 'local3', googleEventId: 'gC', googleUpdatedAt: '2026-08-05T00:00:00Z' }),
+    ];
+    const dups = findDuplicateGoogleSourcedEvents(events);
+    expect(dups.has('local1')).toBe(true);
+    expect(dups.has('local2')).toBe(false);
+    expect(dups.has('local3')).toBe(true);
+  });
+
+  it('treats a missing googleUpdatedAt as oldest, so a row that has one is kept over one that does not', () => {
+    const events = [
+      recurringEvent({ id: 'local1', googleEventId: 'gA', googleUpdatedAt: undefined }),
+      recurringEvent({ id: 'local2', googleEventId: 'gB', googleUpdatedAt: '2026-08-10T00:00:00Z' }),
+    ];
+    const dups = findDuplicateGoogleSourcedEvents(events);
+    expect(dups.has('local1')).toBe(true);
+    expect(dups.has('local2')).toBe(false);
   });
 });

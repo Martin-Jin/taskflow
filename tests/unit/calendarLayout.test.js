@@ -278,15 +278,43 @@ describe('cross-group sequential visual overlap', () => {
 });
 
 describe('packLane', () => {
-  it('gives an individual (non-cluster) item its TRUE proportional height, with no minimum-height floor', () => {
+  it('grows a too-short lone item up to MIN_BLOCK_HEIGHT_PX when there is no next item to bump into', () => {
     // A lone 4-minute item at max zoom (1.25px/min) is genuinely only 5px
-    // tall — it must render at that true height rather than being stretched
-    // to MIN_BLOCK_HEIGHT_PX. Short-but-individually-rendered items are an
-    // accepted tradeoff (clipped text), not something layout should hide.
+    // tall — with idle space below it (nothing else in the lane), it may
+    // grow into that free room up to the legibility floor rather than
+    // rendering as an illegible sliver sitting above empty space.
     const items = [{ start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } }];
     const packed = packLane(items, 1.25);
-    expect(packed[0].height).toBe(Math.round(4 * 1.25));
-    expect(packed[0].height).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
+    expect(packed[0].height).toBe(MIN_BLOCK_HEIGHT_PX);
+  });
+
+  it('does not grow a too-short item past the real idle room before the next item in its lane', () => {
+    // "Tiny" (4 min, ~5px) is followed 10 real minutes later by "Next" — only
+    // 12.5px of genuinely free room, still under MIN_BLOCK_HEIGHT_PX (26px).
+    // It should grow to fill exactly that idle room, not the full floor,
+    // and must never reach into "Next"'s own natural top.
+    const items = [
+      { start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } },
+      { start: 554, end: 600, kind: 'single', type: 'block', data: { id: 'Next', title: 'Next' } },
+    ];
+    const packed = packLane(items, 1.25);
+    const tiny = packed.find((p) => p.data?.id === 'Tiny');
+    const next = packed.find((p) => p.data?.id === 'Next');
+    expect(tiny.height).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
+    expect(tiny.top + tiny.height).toBeLessThanOrEqual(next.top);
+  });
+
+  it('grows a too-short item to fill ample idle room up to (but not past) MIN_BLOCK_HEIGHT_PX', () => {
+    // "Tiny" (4 min, ~5px) is followed 40 real minutes later by "Next" —
+    // plenty of idle room, so growth is capped at the legibility floor
+    // itself rather than expanding to fill the entire gap.
+    const items = [
+      { start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } },
+      { start: 584, end: 600, kind: 'single', type: 'block', data: { id: 'Next', title: 'Next' } },
+    ];
+    const packed = packLane(items, 1.25);
+    const tiny = packed.find((p) => p.data?.id === 'Tiny');
+    expect(tiny.height).toBe(MIN_BLOCK_HEIGHT_PX);
   });
 
   it('a kind:"cluster" item is still floored to MIN_BLOCK_HEIGHT_PX', () => {

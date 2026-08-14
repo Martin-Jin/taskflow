@@ -37,6 +37,7 @@ import {
   expandSyncedBounds,
   computeOnDemandFetchRange,
   computeEffectivePurgeBoundary,
+  findDuplicateGoogleSourcedEvents,
   RECENTLY_DELETED_TTL_MS,
 } from '../services/eventSyncService';
 
@@ -1070,12 +1071,37 @@ export function useGoogleCalendarSync({
       // on the user's primary calendar just because it's absent there. Only
       // a manual event or one already sourced from the user's OWN primary
       // calendar belongs in TaskFlow's notion of "what should be on primary".
+      const primaryEvents = latestEvents.filter((e) => e.source !== 'google' || e.calendarId === 'primary');
+
+      // A local `source: 'google'` event's own googleEventId is always
+      // protected from toDelete below and its schedule is treated as already
+      // correct on Google — but a HISTORICAL duplicate-push bug (see git
+      // history around the rewrite/auto-push features) could leave TWO local
+      // rows for the very same logical event, each carrying its OWN distinct
+      // (both real) googleEventId, because Google actually has two physical
+      // copies. Neither id collides with the other, so without this step
+      // BOTH would be treated as legitimately authoritative and the rewrite
+      // would protect/keep both Google-side copies forever — recreating
+      // exactly the "duplicate survives a full rewrite" symptom this feature
+      // exists to fix. See findDuplicateGoogleSourcedEvents' own doc comment
+      // for the grouping/canonical-pick policy. Excluding every duplicate row
+      // from eventItems below (not just the canonical one's id) is what lets
+      // computeCalendarRewritePlan's own "not claimed by any local item"
+      // check naturally sweep the duplicate's Google-side id into toDelete —
+      // no separate delete list needed. Duplicate rows are dropped from
+      // local `events` state too so they don't keep resurrecting on the next
+      // normal pull.
+      const duplicateLocalEventIds = findDuplicateGoogleSourcedEvents(primaryEvents);
+      if (duplicateLocalEventIds.size > 0) {
+        setEvents((prev) => prev.filter((e) => !duplicateLocalEventIds.has(e.id)));
+      }
+
       // Events already on Google's primary calendar (source: 'google') don't
       // need re-pushing (needsPush: false) — only protecting their
       // googleEventId from toDelete; a manual event needs an actual push to
       // get created there for the first time.
-      const eventItems = latestEvents
-        .filter((e) => e.source !== 'google' || e.calendarId === 'primary')
+      const eventItems = primaryEvents
+        .filter((e) => !duplicateLocalEventIds.has(e.id))
         .map((e) => ({
           kind: 'event',
           event: e,

@@ -294,6 +294,54 @@ export function mergePulledGoogleEvents(
 }
 
 /**
+ * Find local `source: 'google'` CalendarEvent rows that represent the SAME
+ * logical Google event duplicated across two-or-more distinct, both-real
+ * `googleEventId`s — the leftover of a historical duplicate-push bug (see
+ * git history around the rewrite/auto-push features), not something
+ * `mergePulledGoogleEvents` itself can catch: that function keys everything
+ * by `googleEventId`, so two rows with different (but each individually
+ * valid) ids never collide there and both survive indefinitely as
+ * "legitimate" events.
+ *
+ * This matters specifically for "rewrite Google Calendar to match TaskFlow"
+ * (rewriteGoogleCalendarFromTaskflow in useGoogleCalendarSync.js): without
+ * pre-deduping, that feature would see both duplicate rows as independently
+ * authoritative and PROTECT both of their Google-side ids from deletion,
+ * recreating the exact "duplicate survives a full rewrite" symptom the
+ * feature exists to fix.
+ *
+ * Grouping key is title+date+startTime+endTime+recurrenceRule — the same
+ * fields that would make two Google events visually indistinguishable to the
+ * user. Within a group of 2+, the row with the most recent `googleUpdatedAt`
+ * is kept as canonical; every other row's id in the group is reported as a
+ * duplicate local row to drop. The caller doesn't need the duplicates'
+ * Google-side ids separately — excluding these rows from whatever it feeds
+ * into computeCalendarRewritePlan is enough for that function's own "not
+ * claimed by any local item" check to naturally sweep each duplicate's
+ * Google-side event into toDelete.
+ * @param {import('../types').CalendarEvent[]} events
+ * @returns {Set<string>} ids of local CalendarEvent rows that are duplicates to drop
+ */
+export function findDuplicateGoogleSourcedEvents(events) {
+  const key = (e) => `${e.title}|${e.date}|${e.startTime}|${e.endTime}|${e.recurrenceRule || ''}`;
+  const byKey = new Map();
+  for (const e of events) {
+    if (e.source !== 'google') continue;
+    const k = key(e);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(e);
+  }
+
+  const duplicateLocalEventIds = new Set();
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue;
+    const [, ...rest] = [...group].sort((a, b) => new Date(b.googleUpdatedAt || 0) - new Date(a.googleUpdatedAt || 0));
+    for (const dup of rest) duplicateLocalEventIds.add(dup.id);
+  }
+  return duplicateLocalEventIds;
+}
+
+/**
  * One-time hard reset, run for the first sync after the manual-echo-
  * duplicate fix shipped (see useGoogleCalendarSync's `googleEventsHardReset
  * Done` flag) — an EXPLICIT user-requested tidy-up of accumulated bad local
