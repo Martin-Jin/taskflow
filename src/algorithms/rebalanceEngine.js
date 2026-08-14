@@ -565,7 +565,22 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   //    A stale, never-completed historical block is deliberately NOT included
   //    here — it's cleared (see step 1) rather than kept, freeing its task up
   //    to be rescheduled.
-  const finalBlocks = [...historicalLocked, ...historicalCompleted, ...lockedBlocks, ...completedBlocks, ...newBlocks, ...untouchedFutureBlocks];
+  const finalBlocksBeforeGoogleIdPreservation = [
+    ...historicalLocked,
+    ...historicalCompleted,
+    ...lockedBlocks,
+    ...completedBlocks,
+    ...newBlocks,
+    ...untouchedFutureBlocks,
+  ];
+  // See preserveGoogleEventIds' own doc comment below — applied here, inside
+  // rebalance() itself, rather than left to each caller to remember. This bit
+  // TWO separate call sites in practice (SchedulerContext's runRebalance AND
+  // rebalanceTodayOnly) before each was fixed to call this separately — folding
+  // it into rebalance() itself means every CURRENT and FUTURE caller gets this
+  // protection automatically, closing off the whole class of bug rather than
+  // relying on every new call site remembering it.
+  const finalBlocks = preserveGoogleEventIds(finalBlocksBeforeGoogleIdPreservation, existingBlocks);
 
   const stats = {
     tasksRescheduled: eligibleTasks.length,
