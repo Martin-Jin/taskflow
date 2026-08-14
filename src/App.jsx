@@ -27,6 +27,7 @@ import { ConfirmProvider } from './context/ConfirmContext';
 import TimerWidget from './components/Common/TimerWidget';
 import CompleteTaskConfirmModal from './components/Common/CompleteTaskConfirmModal';
 import ConfirmModal from './components/Common/ConfirmModal';
+import CalendarRewriteOverlay from './components/Common/CalendarRewriteOverlay';
 import AccountButton from './components/Nav/AccountButton';
 import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
@@ -550,6 +551,7 @@ function AppShell() {
       )}
       <CompleteTaskConfirmModal />
       <ConfirmModal />
+      <CalendarRewriteOverlay />
     </div>
   );
 }
