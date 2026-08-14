@@ -76,6 +76,19 @@ const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const CLUSTER_LABEL_CHAR_BUDGET = 42;
 
 /**
+ * A cluster item's own `data` is either a CalendarEvent (which carries its
+ * `title` directly) or a raw ScheduledBlock (which does NOT — a block's
+ * title lives on its associated Task, looked up via `taskById[data.taskId]`,
+ * same as the cluster popover and every other block-title lookup in this
+ * file). Falls back to 'Untitled' only if the task itself can't be found
+ * (e.g. a stale block whose task was deleted).
+ */
+function clusterItemTitle(it, taskById) {
+  if (it.type === 'block') return taskById[it.data.taskId]?.title || 'Untitled';
+  return it.data.title || 'Untitled';
+}
+
+/**
  * Builds a cluster chip's label as a truncated list of its actual contained
  * event/task titles (e.g. "Standup, 1:1 with Sam, Review, …") rather than a
  * generic "N events" summary — the whole point of a cluster chip is that it's
@@ -86,8 +99,8 @@ const CLUSTER_LABEL_CHAR_BUDGET = 42;
  * always ends either with every title spelled out, or with an ellipsis after
  * a whole number of complete titles, never a half-title fragment.
  */
-function clusterLabel(items) {
-  const titles = items.map((it) => it.data.title || 'Untitled');
+function clusterLabel(items, taskById) {
+  const titles = items.map((it) => clusterItemTitle(it, taskById));
   let out = '';
   for (let i = 0; i < titles.length; i++) {
     const candidate = out ? `${out}, ${titles[i]}` : titles[i];
@@ -939,8 +952,8 @@ export default function WeekView({
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
                 const hasEvent = item.items.some((it) => it.type === 'event');
-                const label = clusterLabel(item.items);
-                const fullTitleList = item.items.map((it) => it.data.title).join(', ');
+                const label = clusterLabel(item.items, taskById);
+                const fullTitleList = item.items.map((it) => clusterItemTitle(it, taskById)).join(', ');
                 const totalMinutes = item.items
                   .filter((it) => it.type === 'block')
                   .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);

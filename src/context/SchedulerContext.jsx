@@ -1981,7 +1981,14 @@ export function SchedulerProvider({ children }) {
   const rebalanceTodayOnly = useCallback(
     (currentTasks, currentBlocks) => {
       const result = rebalance({ tasks: currentTasks, existingBlocks: currentBlocks, routines, events, rules, todayOnly: true });
-      return { tasks: currentTasks, blocks: result.blocks };
+      // See runRebalance's identical call — without this, every completeTask
+      // (which calls this after every completion, including routine/recurring
+      // occurrences finished throughout the day) would strip googleEventId
+      // from any OTHER task's block this today-only pass re-touches, making
+      // useGoogleCalendarSync's auto-push treat it as newly-unsynced and
+      // create a duplicate Google Calendar event on the very next poll tick.
+      const blocksWithPreservedGoogleIds = preserveGoogleEventIds(result.blocks, currentBlocks);
+      return { tasks: currentTasks, blocks: blocksWithPreservedGoogleIds };
     },
     [routines, events, rules]
   );

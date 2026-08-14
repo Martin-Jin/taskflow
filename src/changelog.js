@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.9.1',
+    date: '2026-08-14',
+    title: 'Fixed a second source of duplicate Google Calendar events, and cluster labels showing "Untitled"',
+    changes: [
+      "Completing a task (including a routine/recurring one) could still re-sync OTHER tasks' calendar blocks as if they were brand new, creating duplicate Google Calendar events over time — a second instance of the same bug fixed in 4.8.2, in a different code path (the same-day re-plan that runs after completing a task). If you're still seeing duplicated recurring events building up, this should stop new ones; existing duplicates still need manual cleanup in Google Calendar.",
+      'Fixed the overlapping-events cluster chip (see 4.9.0) showing "Untitled" for every scheduled task inside it instead of the task\'s real title.',
+    ],
+  },
+  {
     version: '4.9.0',
     date: '2026-08-14',
     title: 'Overlapping calendar events now get their own columns',
