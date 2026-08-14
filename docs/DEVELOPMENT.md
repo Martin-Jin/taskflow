@@ -745,7 +745,7 @@ src/
 │   └── migrateRecurrenceState.js       # One-time migration adopting utils/recurrenceState.js's convergent completedOccurrences/skippedThrough model on existing recurring tasks — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
-│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull)
+│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull) + planCalendarRewrite/computeCalendarRewritePlan (opt-in reverse-direction "make Google match TaskFlow" planning, primary-calendar-only)
 │   ├── eventSyncService.js       # Google-wins merge/reconcile logic for pulled events
 │   ├── firestoreSync.js          # Pull/push/live-subscribe to a signed-in user's synced data
 │   ├── mockData.js               # Zero-config sample data
@@ -817,6 +817,47 @@ local tasks are always the source of truth, and a Todoist import only ever
 happens when you click **Settings → Import from Todoist**. Use
 **Settings → Reset local data** to wipe everything and start fresh from
 mock data.
+
+**Reversing Google Calendar's sync direction ("Rewrite Google Calendar to
+match TaskFlow").** The routine sync (`eventSyncService.js`'s
+`mergePulledGoogleEvents`) is explicitly "Google always wins" — a pulled
+event always replaces the local copy, never the other way around. This
+feature is the one deliberate exception: an explicit, opt-in action
+(Settings → Integrations, and an optional post-restore follow-up prompt —
+never run automatically) that flips the direction for one run, making
+TaskFlow's current local blocks/events authoritative and reconciling
+Google's calendar to match.
+
+- **Planning** (`planCalendarRewrite`/`computeCalendarRewritePlan` in
+  `googleCalendarService.js`, pure and unit-tested) diffs local
+  authoritative items against Google's current PRIMARY-calendar events in
+  the same date range and produces `{ toDelete, toUpsert }`. A local item
+  whose `googleEventId` no longer resolves against Google's current list
+  (stale/deleted-on-Google) falls back to an insert instead of a doomed
+  update.
+- **Safety boundary (the one thing that must never regress):** everything
+  here operates ONLY on `calendarId: 'primary'` — the only calendar this
+  app's own writes (`pushBlockToCalendar`/`pushEventToCalendar`) have ever
+  targeted. `computeCalendarRewritePlan` is the only place that fetches
+  Google's events for this feature, and it fetches (and thus can only ever
+  delete) `calendarId === 'primary'` events — a subscribed/shared calendar
+  the user doesn't own is never even in the candidate set, so it's
+  structurally impossible for `planCalendarRewrite` to schedule one of its
+  events for deletion. `rewriteGoogleCalendarFromTaskflow` (the executor,
+  in `useGoogleCalendarSync.js`) mirrors this on the local side: a
+  `CalendarEvent` sourced from a non-primary Google calendar is excluded
+  from the authoritative set entirely (never re-created on primary as a
+  duplicate).
+- **Execution** (`rewriteGoogleCalendarFromTaskflow`) is the only place in
+  this codebase that batches more than a handful of Calendar API calls, so
+  it's also the only place with real batching precautions: each
+  delete/insert/update is its own try/catch (accumulated into
+  `{succeeded, failed}` rather than aborting the batch on first error), a
+  small fixed pacing delay runs between calls, and a 429 (rate limit,
+  `isRateLimitError`) gets one retry with backoff before counting as a real
+  per-item failure. Freshly-created events get their `googleEventId`
+  stamped back onto local state the same way `pushUnsyncedBlocksToCalendar`
+  already does, so the result isn't orphaned from normal sync bookkeeping.
 
 Some persisted state is deliberately **device-local** — it lives in
 `localStorage` (usually via `usePersistedState`) but is deliberately kept

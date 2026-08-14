@@ -179,6 +179,24 @@ sync), so backups do capture your events as a point-in-time safety net —
 restoring an old backup will bring back whatever events it had, which may
 since have changed or been deleted in Google Calendar.
 
+**Restoring a backup only ever changes local TaskFlow data — it never
+touches your actual Google Calendar.** Since Google Calendar remains the
+source of truth for the live sync (above), the very next periodic pull
+would otherwise silently re-overwrite whatever calendar-related data a
+restore brought back. If you want your Google Calendar itself to reflect
+what you just restored (or generally want to fix a Google Calendar that's
+drifted out of sync with TaskFlow), use **Settings → Integrations →
+"Rewrite Google Calendar to match TaskFlow"** — a separate, explicit,
+opt-in action (never run automatically by restore itself) that flips the
+normal sync direction: TaskFlow's current data becomes authoritative, and
+Google is updated to match, deleting any conflicting events. It's scoped
+tightly for safety — it only ever touches your own **primary** Google
+Calendar (never a calendar you've merely subscribed to or been shared,
+like a shared team calendar or a university timetable) and only within the
+date range your own tasks/events actually span. It asks for a clear
+confirmation first, since — unlike everything else in this section — it
+can delete real events on an external service that TaskFlow can't undo.
+
 ### Sharing a project
 
 A project can be turned into a **shared project** that other people work in

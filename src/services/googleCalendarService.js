@@ -1019,6 +1019,148 @@ export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
   }
 }
 
+/**
+ * ============================================================================
+ * "Rewrite Google Calendar to match TaskFlow" — planning
+ * ============================================================================
+ * A new, explicit, opt-in action (Settings, and an optional post-restore
+ * follow-up) that flips the normal sync direction: instead of Google Calendar
+ * always winning (see eventSyncService.js's module doc — the routine pull
+ * policy), TaskFlow's own local data becomes authoritative and Google is
+ * overwritten to match it. This is the one place in the app that deletes real
+ * Google Calendar events on the user's behalf without them clicking delete on
+ * each one individually, so the safety boundary below is deliberately
+ * conservative and load-bearing:
+ *
+ * SAFETY BOUNDARY — PRIMARY CALENDAR ONLY, NEVER A SUBSCRIBED/FOREIGN ONE.
+ * This app's own writes (pushBlockToCalendar/pushEventToCalendar for the
+ * common case) only ever target `calendarId: 'primary'` — TaskFlow has never
+ * written to any other calendar the user can see (e.g. a subscribed lecture
+ * timetable, or a shared team calendar they merely have writer/reader access
+ * to). So the only calendar this feature is allowed to reconcile is 'primary'
+ * — `planCalendarRewrite` below takes `googleEventsInRange` already
+ * pre-filtered by the caller to `calendarId === 'primary'` (see its own
+ * `@param` doc), and never even inspects `calendarId` itself; the filtering
+ * happens one layer up so it's impossible for this function to accidentally
+ * fold a non-primary event into `toDelete` even if a caller passed the wrong
+ * variable. `computeCalendarRewritePlan` (the caller-facing wrapper) is the
+ * only entry point that talks to `fetchEvents`, and it does the filtering.
+ * ============================================================================
+ */
+
+/**
+ * Pure planning step: given the items TaskFlow considers authoritative for a
+ * date range (already flattened to one list by the caller — see
+ * rewriteGoogleCalendarFromTaskflow in useGoogleCalendarSync.js, which builds
+ * this from current blocks+tasks and manual/already-synced events) and the
+ * events Google's PRIMARY calendar currently has in that same range, compute
+ * what to delete and what to insert/update to make Google match.
+ *
+ * @param {Array<{googleEventId?: string|null, needsPush?: boolean}>} authoritativeItems
+ *   - local blocks/events (or their backup-payload equivalents) to treat as
+ *   truth, already filtered to the relevant date range by the caller.
+ *   `needsPush: false` marks an item that's already known to exist on
+ *   Google's primary calendar exactly as-is (e.g. an event pulled FROM
+ *   Google's primary calendar in a normal sync) — it still protects its
+ *   `googleEventId` from `toDelete` but is excluded from `toUpsert`, since
+ *   re-pushing it would be a wasted API call at best. Defaults to true
+ *   (needs pushing) when omitted, so existing callers/tests that don't care
+ *   about this distinction don't need to set it.
+ * @param {Array<{id: string}>} googleEventsInRange - Google's OWN raw
+ *   `events.list` items (not the app's mapped CalendarEvent shape) for the
+ *   PRIMARY calendar only, in the same range — caller MUST have already
+ *   filtered out every non-primary calendar's events before calling this;
+ *   this function has no calendarId of its own to check and trusts its input.
+ * @returns {{ toDelete: string[], toUpsert: Array<{item: Object, isUpdate: boolean}> }}
+ */
+export function planCalendarRewrite(authoritativeItems, googleEventsInRange) {
+  const googleIdsInRange = new Set(googleEventsInRange.map((e) => e.id));
+  const localGoogleIds = new Set(
+    authoritativeItems.filter((item) => item.googleEventId && googleIdsInRange.has(item.googleEventId)).map((item) => item.googleEventId)
+  );
+
+  // Delete every primary-calendar Google event that isn't still claimed by a
+  // local item in range — this is the destructive half, so it deliberately
+  // only ever sees pre-filtered primary-calendar input (see module doc above).
+  const toDelete = googleEventsInRange.filter((e) => !localGoogleIds.has(e.id)).map((e) => e.id);
+
+  // Insert vs. update: a local item's googleEventId only counts as "still
+  // live" if Google's CURRENT primary-calendar fetch actually contains it —
+  // an id that's stale (event deleted/moved on Google's side since TaskFlow
+  // last saw it) must fall back to a fresh insert rather than attempting an
+  // update against an id Google no longer recognizes, which would just fail.
+  // `needsPush: false` items (already-synced Google-primary events, see
+  // param doc) are excluded entirely — their googleEventId already protected
+  // them from toDelete above, and there's nothing to insert/update for them.
+  const toUpsert = authoritativeItems
+    .filter((item) => item.needsPush !== false)
+    .map((item) => ({
+      item,
+      isUpdate: !!(item.googleEventId && googleIdsInRange.has(item.googleEventId)),
+    }));
+
+  return { toDelete, toUpsert };
+}
+
+/**
+ * Fetch Google's current PRIMARY-calendar events in `[startIso, endIso]` and
+ * compute a rewrite plan against `authoritativeItems` (already-flattened
+ * local blocks/events, or a backup payload's equivalents, for that same
+ * range). This is the only function that actually talks to `fetchEvents` for
+ * this feature — the primary-calendar filter happens here, once, so
+ * `planCalendarRewrite` itself never needs to re-derive or trust a
+ * `calendarId` check. Falls back to an empty Google-side list (mock/offline
+ * mode, or `fetchEvents`'s own mock fallback) rather than throwing, so the
+ * caller can still preview/no-op safely when not connected.
+ * @param {Array<{googleEventId?: string|null}>} authoritativeItems
+ * @param {string} startIso
+ * @param {string} endIso
+ * @returns {Promise<{ toDelete: string[], toUpsert: Array<{item: Object, isUpdate: boolean}> }>}
+ */
+export async function computeCalendarRewritePlan(authoritativeItems, startIso, endIso) {
+  if (!gapiInited || !accessToken) {
+    // Not connected — nothing on Google to reconcile against. Every local
+    // item with no matching Google id just becomes an insert; nothing to delete.
+    return planCalendarRewrite(authoritativeItems, []);
+  }
+
+  const { timeMin, timeMax } = computeFetchTimeRange(startIso, endIso);
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const items = [];
+  let pageToken;
+  do {
+    const resp = await window.gapi.client.calendar.events.list({
+      calendarId: 'primary',
+      timeMin,
+      timeMax,
+      timeZone: localTimeZone,
+      singleEvents: false,
+      ...(pageToken ? { pageToken } : {}),
+    });
+    items.push(...(resp.result.items || []));
+    pageToken = resp.result.nextPageToken;
+  } while (pageToken);
+  // Same cancelled-instance exclusion as fetchEvents above — a tombstone
+  // resource shouldn't count as "still live on Google" for delete-skipping
+  // purposes, or a genuinely-removed event would never make it into toDelete.
+  const liveItems = items.filter((e) => e.status !== 'cancelled');
+
+  return planCalendarRewrite(authoritativeItems, liveItems);
+}
+
+/**
+ * True if a gapi client error is a rate-limit (429) response — Google's
+ * Calendar API returns this under sustained bursts (exactly what a rewrite's
+ * batch of deletes+upserts can produce, unlike any existing single-item push
+ * in this file). Distinct from `isAuthError` (401) above; checked the same
+ * way (`err.status` first, falling back to the nested gapi error shape) for
+ * consistency with the rest of this file's error handling.
+ */
+export function isRateLimitError(err) {
+  const code = err?.status ?? err?.result?.error?.code;
+  return code === 429;
+}
+
 function priorityToColorId(priority) {
   // Google Calendar colorId palette (1-11). Chosen for intuitive severity mapping.
   switch (priority) {

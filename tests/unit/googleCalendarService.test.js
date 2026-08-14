@@ -24,6 +24,18 @@
  *     following" directly in Google's own UI (a split-off master's own id
  *     already carries a `_R{timestamp}` suffix, so appending a second
  *     constructed suffix on top never matched anything real).
+ *   - `planCalendarRewrite` is the pure decision core of "Rewrite Google
+ *     Calendar to match TaskFlow" (see its own doc comment in
+ *     googleCalendarService.js) — given local authoritative items and
+ *     Google's current primary-calendar events, decides delete/insert/update
+ *     for each. Covered thoroughly here since it's the single place this
+ *     destructive, opt-in feature decides what to delete; the executor
+ *     (rewriteGoogleCalendarFromTaskflow in useGoogleCalendarSync.js) that
+ *     actually calls the live API isn't unit-testable the same way as the
+ *     rest of this file, but its input to this function is.
+ *   - `isRateLimitError` is the 429 counterpart to `isAuthError`'s 401 check,
+ *     added for this feature's batch executor (see
+ *     REWRITE_RATE_LIMIT_BACKOFF_MS in useGoogleCalendarSync.js).
  * ============================================================================
  */
 
@@ -34,6 +46,8 @@ import {
   isInstanceAlreadyGoneError,
   instanceMatchesOccurrence,
   shouldTreatAsReconnectNeeded,
+  planCalendarRewrite,
+  isRateLimitError,
 } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
@@ -171,5 +185,129 @@ describe('instanceMatchesOccurrence', () => {
 
   it('returns false when the instance has neither originalStartTime nor start', () => {
     expect(instanceMatchesOccurrence({}, '2026-08-01', '08:00')).toBe(false);
+  });
+});
+
+describe('planCalendarRewrite', () => {
+  // "Rewrite Google Calendar to match TaskFlow" (see googleCalendarService.js's
+  // own module doc above planCalendarRewrite) — TaskFlow's local blocks/events
+  // become authoritative and Google's PRIMARY calendar is reconciled to match.
+  // The single most important property to get right: a subscribed/foreign
+  // calendar's events must NEVER be deleted just because they're absent from
+  // TaskFlow's local data — that's enforced by this function only ever being
+  // handed already-primary-filtered `googleEventsInRange` input (the caller's
+  // job, see computeCalendarRewritePlan), so every test here constructs that
+  // input as if it already went through that filter.
+
+  it('a local item with no googleEventId is planned as an insert', () => {
+    const local = [{ googleEventId: null }];
+    const { toDelete, toUpsert } = planCalendarRewrite(local, []);
+    expect(toDelete).toEqual([]);
+    expect(toUpsert).toHaveLength(1);
+    expect(toUpsert[0]).toMatchObject({ item: local[0], isUpdate: false });
+  });
+
+  it('a local item whose googleEventId still exists on Google is planned as an update', () => {
+    const local = [{ googleEventId: 'gcal_1' }];
+    const google = [{ id: 'gcal_1' }];
+    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual([]);
+    expect(toUpsert).toHaveLength(1);
+    expect(toUpsert[0]).toMatchObject({ item: local[0], isUpdate: true });
+  });
+
+  it('a local item whose googleEventId is stale/gone from Google falls back to insert, not a doomed update', () => {
+    const local = [{ googleEventId: 'gcal_deleted_on_google' }];
+    const google = []; // Google no longer has this event — deleted or moved since TaskFlow last saw it
+    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual([]);
+    expect(toUpsert).toHaveLength(1);
+    expect(toUpsert[0]).toMatchObject({ item: local[0], isUpdate: false });
+  });
+
+  it('a Google primary-calendar event not present locally at all is scheduled for delete', () => {
+    const local = []; // nothing local claims this event
+    const google = [{ id: 'gcal_orphaned' }];
+    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual(['gcal_orphaned']);
+    expect(toUpsert).toEqual([]);
+  });
+
+  it('CRITICAL SAFETY: a Google event absent from the pre-filtered primary-calendar input never appears in toDelete', () => {
+    // This simulates the caller having already excluded a non-primary/
+    // read-only subscribed-calendar event from `googleEventsInRange` (its
+    // job, per this function's own doc comment) — planCalendarRewrite never
+    // even sees a foreign calendar's event, so it structurally cannot plan a
+    // delete for one. Nothing local claims it either (an empty local set),
+    // which would normally mean "delete everything Google has" — but since
+    // the foreign event was never included in `googleEventsInRange` to begin
+    // with, it's simply never a candidate for toDelete at all.
+    const local = [];
+    const googlePrimaryOnly = [{ id: 'gcal_primary_event' }]; // the foreign-calendar event is NOT in this list
+    const { toDelete } = planCalendarRewrite(local, googlePrimaryOnly);
+    expect(toDelete).toEqual(['gcal_primary_event']);
+    expect(toDelete).not.toContain('gcal_subscribed_calendar_event_should_never_appear');
+  });
+
+  it('mixed scenario: insert + update + stale-fallback-to-insert + delete all resolve independently', () => {
+    const local = [
+      { id: 'new-task', googleEventId: null }, // insert
+      { id: 'synced-task', googleEventId: 'gcal_still_there' }, // update
+      { id: 'stale-task', googleEventId: 'gcal_long_gone' }, // insert (fallback)
+    ];
+    const google = [{ id: 'gcal_still_there' }, { id: 'gcal_orphaned_on_google' }];
+    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual(['gcal_orphaned_on_google']);
+    expect(toUpsert).toHaveLength(3);
+    expect(toUpsert.find((u) => u.item.id === 'new-task')).toMatchObject({ isUpdate: false });
+    expect(toUpsert.find((u) => u.item.id === 'synced-task')).toMatchObject({ isUpdate: true });
+    expect(toUpsert.find((u) => u.item.id === 'stale-task')).toMatchObject({ isUpdate: false });
+  });
+
+  it('needsPush: false excludes an item from toUpsert while still protecting its googleEventId from delete', () => {
+    // Used by rewriteGoogleCalendarFromTaskflow for events already pulled
+    // FROM Google's own primary calendar — they already exist there exactly
+    // as-is, so re-pushing them would be a wasted (at best) API call, but
+    // they must still count as "claimed" so they aren't deleted.
+    const local = [{ id: 'already-synced-event', googleEventId: 'gcal_1', needsPush: false }];
+    const google = [{ id: 'gcal_1' }];
+    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual([]);
+    expect(toUpsert).toEqual([]);
+  });
+
+  it('an empty local set plans every in-range primary-calendar Google event for deletion', () => {
+    const google = [{ id: 'a' }, { id: 'b' }];
+    const { toDelete, toUpsert } = planCalendarRewrite([], google);
+    expect(toDelete.sort()).toEqual(['a', 'b']);
+    expect(toUpsert).toEqual([]);
+  });
+
+  it('an empty Google-side set plans every local item as an insert and nothing to delete', () => {
+    const local = [{ googleEventId: null }, { googleEventId: 'gcal_stale' }];
+    const { toDelete, toUpsert } = planCalendarRewrite(local, []);
+    expect(toDelete).toEqual([]);
+    expect(toUpsert.every((u) => u.isUpdate === false)).toBe(true);
+  });
+});
+
+describe('isRateLimitError', () => {
+  it('treats a 429 status as a rate limit error', () => {
+    expect(isRateLimitError({ status: 429 })).toBe(true);
+  });
+
+  it('treats a nested gapi error code of 429 as a rate limit error', () => {
+    expect(isRateLimitError({ result: { error: { code: 429 } } })).toBe(true);
+  });
+
+  it('does not treat other statuses (e.g. 401, 404, 500) as rate limit errors', () => {
+    expect(isRateLimitError({ status: 401 })).toBe(false);
+    expect(isRateLimitError({ status: 404 })).toBe(false);
+    expect(isRateLimitError({ status: 500 })).toBe(false);
+  });
+
+  it('handles null/undefined gracefully', () => {
+    expect(isRateLimitError(null)).toBe(false);
+    expect(isRateLimitError(undefined)).toBe(false);
   });
 });

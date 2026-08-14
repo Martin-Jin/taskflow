@@ -122,6 +122,8 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     pullFromGoogleCalendar,
     rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
+    isRewritingCalendar,
+    rewriteGoogleCalendarFromTaskflow,
     isSyncing,
     isBackingUp,
     isPullingGoogleEvents,
@@ -257,6 +259,27 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     setRoutines((prev) => prev.filter((r) => r.id !== id));
   }
 
+  // After a successful restore, Google Calendar's periodic pull (every 60s)
+  // would otherwise re-pull Google's still-unchanged events and silently undo
+  // anything calendar-related the restore brought back — because the normal
+  // sync policy is "Google always wins" (see eventSyncService.js's module
+  // doc). This offers the SEPARATE, explicit "Rewrite Google Calendar to
+  // match TaskFlow" action as a one-click follow-up rather than running it
+  // automatically — restore's own behavior/confirmation stays exactly as it
+  // was; this is purely an opt-in extra step surfaced via the success toast's
+  // action button (see AddTaskFabGroup.jsx for the same actionLabel/onAction
+  // pattern). Only offered when Google Calendar is actually connected —
+  // nothing to rewrite otherwise.
+  function offerRewriteGoogleCalendarFollowUp() {
+    if (!googleConnected) return;
+    setNotification({
+      type: 'info',
+      message: 'Restored. Want to also make Google Calendar match what you just restored?',
+      actionLabel: 'Rewrite Google Calendar',
+      onAction: handleRewriteGoogleCalendar,
+    });
+  }
+
   async function handleBackupFileSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = ''; // reset so picking the same file twice still fires onChange
@@ -264,7 +287,29 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     if (!window.confirm('Restore from this backup file? This replaces your current tasks, boards, and settings on this device.')) {
       return;
     }
-    await importBackupFromFile(file);
+    const restored = await importBackupFromFile(file);
+    if (restored) offerRewriteGoogleCalendarFollowUp();
+  }
+
+  // "Rewrite Google Calendar to match TaskFlow" — the reverse of the app's
+  // normal sync direction (Google always wins, day to day). Explicit,
+  // opt-in, and MORE destructive than the "Restore from backup"/"Rebuild
+  // from Google Calendar" confirms above: it deletes real events on an
+  // external system (Google Calendar), not just local app state, so the
+  // confirmation spells out exactly what's safe (subscribed/shared
+  // calendars are never touched — this app only ever writes to your own
+  // primary calendar) and that it can't be undone from within TaskFlow.
+  async function handleRewriteGoogleCalendar() {
+    const confirmed = window.confirm(
+      "Rewrite Google Calendar to match TaskFlow?\n\n" +
+        "This deletes/overwrites events on your PRIMARY Google Calendar that don't match what TaskFlow currently has, " +
+        'and creates or updates events there to match your current tasks, scheduled blocks, and calendar events.\n\n' +
+        "Safe: any subscribed or shared calendar you don't own (e.g. a shared team calendar or a university timetable) " +
+        'is never touched — only your own primary calendar is ever changed.\n\n' +
+        "This can't be undone from within TaskFlow — deleted Google Calendar events are gone for good. Continue?"
+    );
+    if (!confirmed) return;
+    await rewriteGoogleCalendarFromTaskflow();
   }
 
   async function openBackupsModal() {
@@ -590,6 +635,9 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
             >
               Rebuild from Google Calendar
             </button>
+            <button className="btn" style={{ color: 'var(--color-danger)' }} onClick={handleRewriteGoogleCalendar} disabled={isRewritingCalendar}>
+              {isRewritingCalendar ? 'Rewriting…' : 'Rewrite Google Calendar to match TaskFlow'}
+            </button>
             <button
               className="btn"
               style={{ color: 'var(--color-danger)' }}
@@ -617,6 +665,15 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           )}
           {googleConnected &&
             ' "Pull from Google Calendar" immediately re-fetches your Google events, overwriting any local changes to synced events with what Google currently has. "Rebuild from Google Calendar" goes further — a full wipe-and-rebuild for when stale/duplicate events won\'t go away with a normal Pull.'}
+          {googleConnected && (
+            <>
+              {' '}
+              "Rewrite Google Calendar to match TaskFlow" flips that direction — use it after restoring a backup, or
+              any time your Google Calendar has drifted out of sync, to make TaskFlow authoritative instead. It only
+              ever touches your own primary Google Calendar; a subscribed or shared calendar you don't own is never
+              modified.
+            </>
+          )}
         </p>
 
         <div
@@ -1355,6 +1412,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           backups={cloudBackups}
           isBusy={isBackingUp}
           onRestore={restoreCloudBackup}
+          onRestored={offerRewriteGoogleCalendarFollowUp}
           onDelete={deleteCloudBackup}
           onClose={() => setShowBackupsModal(false)}
         />

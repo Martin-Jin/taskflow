@@ -997,6 +997,8 @@ export function SchedulerProvider({ children }) {
     unmarkGoogleEventDeleted,
     markGoogleEventInstanceDeleted,
     unmarkGoogleEventInstanceDeleted,
+    isRewritingCalendar,
+    rewriteGoogleCalendarFromTaskflow,
   } = useGoogleCalendarSync({
     events,
     setEvents,
@@ -1307,12 +1309,18 @@ export function SchedulerProvider({ children }) {
     }
   }, [createCloudBackup]);
 
-  /** Settings' cloud-backups picker "Restore" action — same busy-flag wrapping as backupToCloud above. */
+  /**
+   * Settings' cloud-backups picker "Restore" action — same busy-flag
+   * wrapping as backupToCloud above. Passes through restoreCloudBackupRaw's
+   * boolean result (whether the restore actually applied) so BackupsModal
+   * can offer the "Rewrite Google Calendar to match TaskFlow" follow-up only
+   * after a real restore.
+   */
   const restoreCloudBackup = useCallback(
     async (backupId) => {
       setIsBackingUp(true);
       try {
-        await restoreCloudBackupRaw(backupId);
+        return await restoreCloudBackupRaw(backupId);
       } finally {
         setIsBackingUp(false);
       }
@@ -3713,6 +3721,8 @@ export function SchedulerProvider({ children }) {
       rebuildEventsFromGoogle,
       disconnectGoogleCalendar,
       ensureGoogleRangeSynced,
+      isRewritingCalendar,
+      rewriteGoogleCalendarFromTaskflow,
       syncNow,
       exportBackup,
       importBackupFromFile,
@@ -3808,6 +3818,8 @@ export function SchedulerProvider({ children }) {
       rebuildEventsFromGoogle,
       disconnectGoogleCalendar,
       ensureGoogleRangeSynced,
+      isRewritingCalendar,
+      rewriteGoogleCalendarFromTaskflow,
       syncNow,
       exportBackup,
       importBackupFromFile,

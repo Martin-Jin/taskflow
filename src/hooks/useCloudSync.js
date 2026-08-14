@@ -1344,17 +1344,24 @@ export function useCloudSync({
   }, [stateRef, theme, events, setNotification]);
 
   // ---- Import local backup file --------------------------------------------
+  // Returns whether the restore actually applied, so callers (SettingsPanel)
+  // can offer the separate, explicit "Rewrite Google Calendar to match
+  // TaskFlow" follow-up action only after a real restore — never on a
+  // rejected/invalid file. See restoreCloudBackup below for the cloud-backup
+  // equivalent of this same signal.
   const importBackup = useCallback(async (file) => {
     try {
       const payload = await readBackupFile(file);
       if (!isValidBackupPayload(payload)) {
         setNotification({ type: 'error', message: 'Invalid backup file.' });
-        return;
+        return false;
       }
       applyBackupPayload(payload);
       setNotification({ type: 'success', message: 'Backup restored.' });
+      return true;
     } catch (err) {
       setNotification({ type: 'error', message: err.message || 'Failed to read backup file.' });
+      return false;
     }
   }, [applyBackupPayload, setNotification]);
 
@@ -1490,19 +1497,24 @@ export function useCloudSync({
     }
   }, [user]);
 
+  // Returns whether the restore actually applied — same reasoning as
+  // importBackup above (BackupsModal/SettingsPanel use this to decide
+  // whether to offer the "Rewrite Google Calendar to match TaskFlow" follow-up).
   const restoreCloudBackup = useCallback(async (backupId) => {
-    if (!user) return;
+    if (!user) return false;
     try {
       const payload = await getBackup(user.uid, backupId);
       if (!isValidBackupPayload(payload)) {
         setNotification({ type: 'error', message: 'Invalid cloud backup.' });
-        return;
+        return false;
       }
       applyBackupPayload(payload);
       setNotification({ type: 'success', message: 'Cloud backup restored.' });
+      return true;
     } catch (err) {
       console.error(err);
       setNotification({ type: 'error', message: 'Failed to restore cloud backup.' });
+      return false;
     }
   }, [user, applyBackupPayload, setNotification]);
 
