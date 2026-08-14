@@ -125,6 +125,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
     isRewritingCalendar,
+    rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
     isSyncing,
     isBackingUp,
@@ -644,7 +645,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
               Rebuild from Google Calendar
             </button>
             <button className="btn" style={{ color: 'var(--color-danger)' }} onClick={handleRewriteGoogleCalendar} disabled={isRewritingCalendar}>
-              {isRewritingCalendar ? 'Rewriting…' : 'Rewrite Google Calendar to match TaskFlow'}
+              {isRewritingCalendar
+                ? rewriteProgress
+                  ? `Rewriting… (${rewriteProgress.done}/${rewriteProgress.total})`
+                  : 'Rewriting…'
+                : 'Rewrite Google Calendar to match TaskFlow'}
             </button>
             <button
               className="btn"

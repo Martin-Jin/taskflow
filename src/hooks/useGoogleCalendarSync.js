@@ -962,6 +962,13 @@ export function useGoogleCalendarSync({
   }, [pushUnsyncedBlocksToCalendar, setNotification]);
 
   const [isRewritingCalendar, setIsRewritingCalendar] = useState(false);
+  // { done, total } | null — live progress through the rewrite's delete+push
+  // batch, surfaced by SettingsPanel's button so a long-running rewrite (a
+  // large batch of leftover duplicate events each needs its own paced API
+  // call, see REWRITE_CALL_PACING_MS below — this can genuinely take minutes
+  // for hundreds of events) never looks indistinguishable from a hang. Reset
+  // to null once the rewrite finishes (success or failure) or hasn't started.
+  const [rewriteProgress, setRewriteProgress] = useState(null);
 
   // ---- "Rewrite Google Calendar to match TaskFlow" (explicit, opt-in) ------
   // The reverse of the app's normal sync direction: instead of Google always
@@ -1058,6 +1065,17 @@ export function useGoogleCalendarSync({
       const stampedGoogleEventIdsByBlockId = new Map();
       const stampedGoogleEventIdsByEventId = new Map();
 
+      // Live progress — see rewriteProgress's own comment. Without this, a
+      // rewrite processing hundreds of leftover duplicate events (one at a
+      // time, with a deliberate pacing delay between each so as not to burst
+      // Google's rate limit — see REWRITE_CALL_PACING_MS) can genuinely take
+      // several minutes with the button's label as the only visible state,
+      // which looks indistinguishable from a hang.
+      const totalCalls = toDelete.length + toUpsert.length;
+      let doneCalls = 0;
+      setRewriteProgress({ done: 0, total: totalCalls });
+      const advanceProgress = () => setRewriteProgress({ done: ++doneCalls, total: totalCalls });
+
       for (const googleEventId of toDelete) {
         try {
           await withRateLimitRetry(() => deleteCalendarEvent(googleEventId, 'primary'));
@@ -1066,6 +1084,7 @@ export function useGoogleCalendarSync({
           console.warn('[useGoogleCalendarSync] Rewrite: failed to delete Google event', googleEventId, err);
           failed.push({ type: 'delete', googleEventId, error: err?.message || String(err) });
         }
+        advanceProgress();
         await sleep(REWRITE_CALL_PACING_MS);
       }
 
@@ -1087,6 +1106,7 @@ export function useGoogleCalendarSync({
           console.warn('[useGoogleCalendarSync] Rewrite: failed to push local item to Google', label, err);
           failed.push({ type: isUpdate ? 'update' : 'insert', label, error: err?.message || String(err) });
         }
+        advanceProgress();
         await sleep(REWRITE_CALL_PACING_MS);
       }
 
@@ -1129,6 +1149,7 @@ export function useGoogleCalendarSync({
       return { succeeded: [], failed: [{ type: 'fatal', error: err?.message || String(err) }] };
     } finally {
       setIsRewritingCalendar(false);
+      setRewriteProgress(null);
     }
   }, [stateRef, events, commit, setEvents, setNotification]);
 
@@ -1169,6 +1190,7 @@ export function useGoogleCalendarSync({
     markGoogleEventInstanceDeleted,
     unmarkGoogleEventInstanceDeleted,
     isRewritingCalendar,
+    rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
   };
 }

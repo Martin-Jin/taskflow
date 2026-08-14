@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.0.3',
+    date: '2026-08-14',
+    title: 'Progress indicator for "Rewrite Google Calendar"',
+    changes: [
+      '"Rewrite Google Calendar to match TaskFlow" (Settings → Integrations) now shows live progress ("Rewriting… (42/500)") instead of a static "Rewriting…" label — with a large backlog of events to reconcile (e.g. after the duplicate-event bug some users hit), the button could look stuck for minutes even though it was steadily working through the list.',
+    ],
+  },
+  {
     version: '5.0.2',
     date: '2026-08-14',
     title: 'Fixed: confirmation popups no longer rely on your browser',
