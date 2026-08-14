@@ -614,23 +614,6 @@
   );
 }
 
-/* A completed task's block is frozen (see WeekView's draggable/resize-handle
-   guards) — crossed-out title + reduced opacity mirrors TodayAgenda's own
-   completed styling. (TodayAgenda separately labels a late completion with
-   text — "Completed late" — rather than a border accent; a border accent
-   here would visually clash with the block's existing priority-colored
-   left border, showing as a double stripe.) */
-.cal-block.block-completed .cal-block-title,
-.cal-cluster-popover-title.is-completed {
-  text-decoration: line-through;
-  opacity: 0.55;
-}
-
-.cal-block.cal-cluster-completed .cal-block-title {
-  text-decoration: line-through;
-  opacity: 0.55;
-}
-
 .cal-cluster {
   border-left-style: dashed;
   border-left-color: var(--color-border-strong);

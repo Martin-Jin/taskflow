@@ -2027,6 +2027,15 @@ export function SchedulerProvider({ children }) {
         const baseDate = existing.dueDate < todayIso ? todayIso : existing.dueDate;
         const nowIso = new Date().toISOString();
 
+        // Same reasoning as the non-recurring branch's freedFutureCapacity
+        // below: closing out an occurrence whose kept historical block
+        // (date === baseDate) sits on a FUTURE day (completed ahead of its
+        // due date) frees that slot up — capacityEngine no longer counts a
+        // completed block as busy (see rebalanceEngine.js), so without this,
+        // nothing would re-fill it until the user manually rebalances.
+        // rebalanceTodayOnly below only ever touches today, never later days.
+        const freedFutureCapacity = baseDate > todayIso;
+
         // Record this occurrence's completion against the actual occurrence
         // date (the original dueDate). When a task is completed late we still
         // advance its next due date from today, but recording the closed
@@ -2144,6 +2153,9 @@ export function SchedulerProvider({ children }) {
           // to today rather than reusing the full-horizon runRebalance.
           return rebalanceTodayOnly(cascadedTasks, newBlocks);
         }, isSubtask ? `Completed recurring sub-task for today` : `Completed recurring task — advanced to ${nextDueDate}`);
+        // Gated on the user's auto-reschedule toggle — see the non-recurring
+        // branch's identical check below for the convention this follows.
+        if (freedFutureCapacity && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
         return true;
       }
 

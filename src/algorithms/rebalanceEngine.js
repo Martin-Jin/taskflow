@@ -409,7 +409,18 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
 
   // 3. Compute capacity treating locked blocks as busy (via events-like
   //    busy accounting inside capacityEngine — we pass lockedBlocks as
-  //    "blocks" so they're subtracted from free time).
+  //    "blocks" so they're subtracted from free time). completedBlocks are
+  //    deliberately NOT included here — a completed task's old slot is done
+  //    and gone; treating it as still-busy time would keep the allocator
+  //    from ever using that freed capacity for other work. completedBlocks
+  //    is still preserved elsewhere in this function (spentHoursByTask,
+  //    finalBlocks) purely as bookkeeping/historical record, same as before
+  //    — only the capacity-math busy-time input changes. (Completed blocks
+  //    also no longer render on the calendar at all — see CalendarPage —
+  //    so there's no longer a display reason to keep them "occupying" a
+  //    slot visually either; that was the original, now-stale rationale
+  //    for folding them in here, from the "completed tasks vanish on
+  //    reschedule" fix — see git history.)
   //
   //    nowClamp: only meaningful when `today` is the actual current date
   //    (i.e. this is a live run, not a re-run pinned to a past/future
@@ -429,7 +440,7 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   const capacityMap = computeHorizonCapacity(today, horizonDays, {
     routines,
     events: expandedEvents,
-    blocks: [...lockedBlocks, ...completedBlocks],
+    blocks: lockedBlocks,
     rules,
     nowClamp,
   });

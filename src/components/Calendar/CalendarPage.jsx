@@ -28,6 +28,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { DEFAULT_CALENDAR_FILTER, filterCalendarItems, isCalendarFilterActive, normalizeCalendarFilter } from '../../utils/calendarFilter';
+import { isBlockTaskCompleted } from '../../utils/missedTasks';
 import HelpTooltip from '../Common/HelpTooltip';
 
 function getWeekStart(iso) {
@@ -93,9 +94,21 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   const [rawCalendarFilter, setCalendarFilter] = usePersistedState('taskflow_calendar_filter_v1', DEFAULT_CALENDAR_FILTER);
   const calendarFilter = normalizeCalendarFilter(rawCalendarFilter);
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  // Completed tasks' blocks are dropped before either the filtered or
+  // "unfiltered" arrays reach WeekView/MonthView — completion status is
+  // already visible on the Dashboard's today view (isBlockTaskCompleted,
+  // shared with missedTasks.js), so once a task is done its old slot
+  // shouldn't keep occupying calendar space. Applied to unfilteredBlocks too
+  // (not just filteredBlocks) so WeekView/MonthView's "did the calendar
+  // filter hide something" empty-state check isn't tripped by completed
+  // blocks that were never part of that filter to begin with.
+  const incompleteBlocks = useMemo(
+    () => blocks.filter((b) => !isBlockTaskCompleted(b, taskById.get(b.taskId))),
+    [blocks, taskById]
+  );
   const { filteredBlocks, filteredEvents } = useMemo(
-    () => filterCalendarItems(blocks, events, calendarFilter, taskById),
-    [blocks, events, calendarFilter, taskById]
+    () => filterCalendarItems(incompleteBlocks, events, calendarFilter, taskById),
+    [incompleteBlocks, events, calendarFilter, taskById]
   );
   // Whether ANY filter is currently narrowing the calendar — WeekView/
   // MonthView each compute their own visible-range-specific "did the filter
@@ -286,7 +299,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
           monthStart={base}
           blocks={filteredBlocks}
           events={filteredEvents}
-          unfilteredBlocks={blocks}
+          unfilteredBlocks={incompleteBlocks}
           unfilteredEvents={events}
           filterIsActive={calendarFilterIsActive}
           onClearFilter={() => setCalendarFilter(DEFAULT_CALENDAR_FILTER)}
@@ -304,7 +317,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
         pxPerMin={pxPerMin}
         blocks={filteredBlocks}
         events={filteredEvents}
-        unfilteredBlocks={blocks}
+        unfilteredBlocks={incompleteBlocks}
         unfilteredEvents={events}
         filterIsActive={calendarFilterIsActive}
         onClearFilter={() => setCalendarFilter(DEFAULT_CALENDAR_FILTER)}

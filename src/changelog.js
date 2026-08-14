@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.7.0',
+    date: '2026-08-14',
+    title: 'Completed tasks free up their calendar slot',
+    changes: [
+      "Completed tasks no longer show a greyed-out block on the calendar — that slot is now completely free, and the scheduler treats it as open capacity for other work instead of still holding it as busy.",
+      'If auto-reschedule is on (Settings → Scheduling rules), finishing a task early now immediately re-plans into the time it just freed up; with auto-reschedule off, that capacity stays available for the next manual "Re-balance".',
+    ],
+  },
+  {
     version: '4.6.0',
     date: '2026-08-13',
     title: 'New "Inbox" for tasks with no project',

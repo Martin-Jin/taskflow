@@ -41,7 +41,6 @@ import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { groupItemsByDay } from '../../utils/calendarGrouping';
 import { GRID_START_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
-import { isBlockTaskCompleted } from '../../utils/missedTasks';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import HoverPreviewCard from './HoverPreviewCard';
 
@@ -395,12 +394,6 @@ export default function WeekView({
       e.preventDefault();
       return;
     }
-    // A completed task's block is frozen in place as a historical record —
-    // dragging it to a new time wouldn't make sense once the work is done.
-    if (item.type === 'block' && isBlockTaskCompleted(item.data, taskById[item.data.taskId])) {
-      e.preventDefault();
-      return;
-    }
     // Read-only events (calendars the user can't write to on Google) mustn't
     // be movable here either — dragging calls updateEvent below just like
     // the detail modal's Save does, which would attempt to push a change
@@ -592,7 +585,6 @@ export default function WeekView({
 
   function handleItemTouchStart(e, item) {
     if (item.type === 'block' && item.data.isLocked) return;
-    if (item.type === 'block' && isBlockTaskCompleted(item.data, taskById[item.data.taskId])) return;
     if (item.type === 'event' && item.data.canEdit === false) return;
     // Stop this touch from bubbling up to CalendarPage's swipe-navigation
     // listener — without this, dragging an item sideways across columns
@@ -905,10 +897,6 @@ export default function WeekView({
                 // rather than left to clip into the block below.
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
-                // Events have no "completed" concept, so a chip containing any
-                // live event is never fully completed — only true when every
-                // underlying block is a completed-task block.
-                const isAllCompleted = item.items.every((it) => it.type === 'block' && isBlockTaskCompleted(it.data, taskById[it.data.taskId]));
                 const hasEvent = item.items.some((it) => it.type === 'event');
                 const hasBlock = item.items.some((it) => it.type === 'block');
                 const label = `${item.items.length} ${hasEvent && hasBlock ? 'tasks/events' : hasEvent ? 'events' : 'tasks'}`;
@@ -919,7 +907,7 @@ export default function WeekView({
                 return (
                   <div
                     key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${isAllCompleted ? 'cal-cluster-completed' : ''}`}
+                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
@@ -1017,19 +1005,18 @@ export default function WeekView({
               // hover/hint text and the detail modal show.
               const parentTask = task.parentId ? taskById[task.parentId] : null;
               const displayTitle = parentTask?.title || task.title;
-              const isCompleted = isBlockTaskCompleted(block, task);
               return (
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${isCompleted ? 'block-completed' : ''}`}
+                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
                   style={{
                     top,
                     height,
                     borderLeftColor: priorityColor(task.priority),
                     ...laneStyle,
                   }}
-                  draggable={!isMobile && !block.isLocked && !isCompleted}
+                  draggable={!isMobile && !block.isLocked}
                   onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
                   onDragEnd={isMobile ? undefined : endDrag}
                   onTouchStart={(e) => handleItemTouchStart(e, item)}
@@ -1044,11 +1031,6 @@ export default function WeekView({
                             priority: task.priority,
                             projectName: projectById[task.projectId]?.name,
                             isPassive: block.isPassive,
-                            // completedAt is a single scalar on the shared master task, not
-                            // per-occurrence — for recurring tasks it reflects whichever
-                            // occurrence was most recently completed, which may not be this
-                            // block's date. Only trust it for non-recurring tasks.
-                            completedAt: isCompleted && !task.isRecurring ? task?.completedAt ?? null : null,
                           })
                   }
                   onMouseLeave={isMobile ? undefined : cancelHoverPreview}
@@ -1095,7 +1077,7 @@ export default function WeekView({
                       {block.startTime}–{endTime}
                     </div>
                   )}
-                  {!block.isLocked && !isCompleted && (
+                  {!block.isLocked && (
                     <div
                       className="resize-handle"
                       onMouseDown={(e) => handleResizeStart(e, item)}
@@ -1133,7 +1115,7 @@ export default function WeekView({
                     <span className="cal-cluster-popover-time">
                       {it.data.startTime}–{it.data.endTime}
                     </span>
-                    <span className={`cal-cluster-popover-title ${isBlockTaskCompleted(it.data, t) ? 'is-completed' : ''}`}>{t.title}</span>
+                    <span className="cal-cluster-popover-title">{t.title}</span>
                   </button>
                 );
               }

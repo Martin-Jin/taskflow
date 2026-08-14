@@ -441,6 +441,70 @@ describe('rebalance: todayOnly scoping', () => {
   });
 });
 
+// Coverage for capacity math no longer treating a completed task's block as
+// busy time (see rebalanceEngine.js's capacityMap computation) — completing
+// a task frees its old slot for other schedulable work instead of leaving it
+// permanently blocked out on the calendar/capacity view even though the
+// block itself is preserved as a historical record.
+describe('rebalance: completed blocks no longer count as busy capacity', () => {
+  it("lets another task claim EXACTLY the 09:00-10:00 slot a completed task's preserved historical block occupies", () => {
+    const tasks = [
+      // Completed — its 09:00-10:00 block is preserved as history but must
+      // not block that slot from being reused.
+      { id: 'done', title: 'Finished', isCompleted: true, estimatedHours: 1, dueDate: today },
+      // Fixed-time task pinned to exactly the freed slot — only placeable
+      // there if capacity math genuinely sees it as free, not busy.
+      {
+        id: 'claim',
+        title: 'Wants the freed slot',
+        isCompleted: false,
+        estimatedHours: 1,
+        remainingHours: 1,
+        dueDate: today,
+        enforceDueDate: true,
+        fixedTime: '09:00',
+      },
+    ];
+    const existingBlocks = [
+      { id: 'b-done', taskId: 'done', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    // The completed task's historical block is still preserved...
+    expect(result.blocks.some((b) => b.id === 'b-done')).toBe(true);
+    // ...and the other task successfully claimed the exact same clock slot.
+    const claimBlock = result.blocks.find((b) => b.taskId === 'claim');
+    expect(claimBlock).toBeTruthy();
+    expect(claimBlock.startTime).toBe('09:00');
+  });
+
+  it("still treats a LOCKED (incomplete) block's slot as busy — a fixed-time task cannot double-book over it", () => {
+    const tasks = [
+      // Locked, not completed — its slot must remain genuinely busy.
+      { id: 'locked', title: 'Locked in progress', isCompleted: false, estimatedHours: 1, dueDate: today, isLocked: true },
+      {
+        id: 'claim2',
+        title: 'Wants the locked slot',
+        isCompleted: false,
+        estimatedHours: 1,
+        remainingHours: 1,
+        dueDate: today,
+        enforceDueDate: true,
+        fixedTime: '09:00',
+      },
+    ];
+    const existingBlocks = [
+      { id: 'b-locked', taskId: 'locked', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: true },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    // The locked block survives untouched.
+    expect(result.blocks.some((b) => b.id === 'b-locked')).toBe(true);
+    // The fixed-time task could NOT claim 09:00 (still busy) — either placed
+    // elsewhere or reported as a conflict, but never overlapping the lock.
+    const claimBlock = result.blocks.find((b) => b.taskId === 'claim2');
+    if (claimBlock) expect(claimBlock.startTime).not.toBe('09:00');
+  });
+});
+
 // Regression coverage for a false "no free time left" report on a recurring,
 // fixedTime task (e.g. "Piano" at a fixed practice time, or "Practice
 // questions" today) whose per-occurrence virtual task collapses its window to
