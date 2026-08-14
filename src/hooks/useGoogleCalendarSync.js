@@ -113,6 +113,16 @@ export function getSilentReauthRetryDelay(attemptIndex) {
 // network blip without building a full backoff ladder for them.
 const TRANSIENT_RETRY_DELAY_MS = 2000;
 
+// How long `googleSyncStale` has to stay true before it escalates from a
+// quiet Settings-only badge to a proactive toast. Every individual stale
+// fetch is still just as likely to be a momentary blip (see googleSyncStale's
+// own doc comment) — but a blip that hasn't cleared after this many minutes
+// of 60s-interval polling stops looking transient and starts looking like a
+// connection the user actually needs to know about, since nothing else here
+// prompts them unless they happen to open Settings. Long enough that normal
+// brief hiccups (a few missed poll ticks) never trigger it.
+const STALE_SYNC_WARNING_THRESHOLD_MS = 15 * 60 * 1000;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -170,6 +180,14 @@ export function useGoogleCalendarSync({
     setGoogleSyncStale(false);
     setLastGoogleSyncAt(Date.now());
   }, []);
+
+  // Timestamp the sync FIRST went stale, so the escalation effect below can
+  // tell "just went stale this tick" from "has been stale for a while" without
+  // re-deriving it from lastGoogleSyncAt (which doesn't update while stale).
+  // Cleared whenever a fetch succeeds or the connection is confirmed lost —
+  // see the two effects that touch it.
+  const staleSinceRef = useRef(null);
+  const staleWarningShownRef = useRef(false);
 
   // Shared by EVERY fetch-and-apply path below — the periodic poll, the
   // visibility/focus refresh (which just calls the poll), the manual "Pull"
@@ -582,6 +600,40 @@ export function useGoogleCalendarSync({
     return () => clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleConnected]);
+
+  // ---- Stale-sync escalation --------------------------------------------------
+  // Every individual stale fetch (poll/on-demand/mount ladder exhausting its
+  // retries) only sets googleSyncStale + a console.warn — deliberately quiet,
+  // since most are a momentary network blip that clears on the next 60s tick
+  // (see googleSyncStale's own doc comment). But if it DOESN'T clear, the user
+  // has no way to find out short of opening Settings and noticing the "hasn't
+  // synced recently" badge. This effect watches for staleness outlasting
+  // STALE_SYNC_WARNING_THRESHOLD_MS and, if so, surfaces exactly one proactive
+  // toast — re-armed only once the connection recovers (or is confirmed lost,
+  // at which point the disconnect toast already covers it) — so a prolonged
+  // outage doesn't spam a fresh toast on every subsequent poll tick.
+  useEffect(() => {
+    if (!googleConnected || !googleSyncStale) {
+      staleSinceRef.current = null;
+      staleWarningShownRef.current = false;
+      return undefined;
+    }
+    if (staleSinceRef.current === null) staleSinceRef.current = Date.now();
+
+    const checkEscalation = () => {
+      if (staleWarningShownRef.current || staleSinceRef.current === null) return;
+      if (Date.now() - staleSinceRef.current >= STALE_SYNC_WARNING_THRESHOLD_MS) {
+        staleWarningShownRef.current = true;
+        setNotification({
+          type: 'warning',
+          message: "Google Calendar hasn't synced in a while — check your connection or reconnect in Settings.",
+        });
+      }
+    };
+    checkEscalation();
+    const handle = setInterval(checkEscalation, 60 * 1000);
+    return () => clearInterval(handle);
+  }, [googleConnected, googleSyncStale, setNotification]);
 
   // ---- Visibility/focus refresh ----------------------------------------------
   // Pulls immediately when the user comes back to the app — covers both
