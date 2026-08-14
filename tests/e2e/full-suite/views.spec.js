@@ -2,7 +2,7 @@
 // event creation/detail, date picker, mobile swipe carousel) and the
 // Tasks page's View/Filter menu. See helpers.js for shared setup.
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, closeAnyModal, trackConsoleErrors, expectNoErrors } from './helpers';
+import { gotoApp, gotoTab, closeAnyModal, trackConsoleErrors, expectNoErrors, resolveConfirmModal } from './helpers';
 
 // Opens the Tasks page's "Change view or filter" menu and picks a view
 // (Board/Gantt/List) by its exact label — mirrors ViewFilterMenu's
@@ -336,12 +336,10 @@ test.describe('Board view', () => {
     await page.waitForTimeout(400);
     await expect(renamedColumn.locator('.board-card-title', { hasText: taskTitle })).toBeVisible();
 
-    // Delete the section — confirm() warns it'll move the task(s) to No Section.
-    page.once('dialog', (d) => {
-      expect(d.message()).toMatch(/No Section/i);
-      d.accept();
-    });
+    // Delete the section — the shared in-app confirm modal warns it'll move
+    // the task(s) to No Section.
     await renamedColumn.locator('.board-column-delete').click();
+    await resolveConfirmModal(page, { expectMessage: /No Section/i, confirmLabel: 'Delete' });
     await page.waitForTimeout(400);
 
     await expect(page.locator('.board-column-title', { hasText: renamedName })).toHaveCount(0);

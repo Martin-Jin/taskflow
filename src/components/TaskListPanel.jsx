@@ -50,6 +50,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { useSound } from '../context/SoundContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import AIQuickAddModal from './Modals/AIQuickAddModal';
@@ -141,6 +142,7 @@ export default function TaskListPanel({
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const isMobile = useIsMobile();
   const motionEnabled = useMotionEnabled();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -379,9 +381,9 @@ export default function TaskListPanel({
     setIsRenamingProject(false);
   }
 
-  function handleDeleteProject() {
+  async function handleDeleteProject() {
     if (!activeProject) return;
-    if (window.confirm(`Delete "${activeProject.name}"? Its tasks will move to Inbox.`)) {
+    if (await confirm(`Delete "${activeProject.name}"? Its tasks will move to Inbox.`, { confirmLabel: 'Delete' })) {
       deleteProject(activeProject.id);
       onChangeActiveProject(ALL_TASKS_PROJECT_ID);
     }

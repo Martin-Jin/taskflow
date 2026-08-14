@@ -2,6 +2,7 @@ import React from 'react';
 import { X, RotateCcw, Trash2 } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { useConfirm } from '../../context/ConfirmContext';
 
 /**
  * Lists the signed-in user's recent cloud backups (newest first, capped
@@ -11,13 +12,14 @@ import { useModalA11y } from '../../hooks/useModalA11y';
  * pruneBackupPool/runAutomaticBackupIfDue/createCloudBackup); this list is
  * display-only and doesn't drive that pruning decision. Picking WHICH
  * snapshot to restore needs a list, so this is a small modal rather than a
- * bare confirm(); restoring/deleting a specific row still confirms via
- * window.confirm, matching the rest of the app's destructive-action
- * convention.
+ * bare confirm(); restoring/deleting a specific row still confirms via the
+ * app's shared in-app confirm modal (useConfirm, see ConfirmContext.jsx),
+ * matching the rest of the app's destructive-action convention.
  */
 export default function BackupsModal({ backups, isBusy, onRestore, onRestored, onDelete, onClose }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
+  const confirm = useConfirm();
 
   function formatWhen(backup) {
     const iso = backup.createdAt?.toDate ? backup.createdAt.toDate().toISOString() : backup.exportedAt;
@@ -75,7 +77,8 @@ export default function BackupsModal({ backups, isBusy, onRestore, onRestored, o
                     style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                     disabled={isBusy}
                     onClick={async () => {
-                      if (!window.confirm('Restore this backup? This replaces your current tasks, boards, and settings.')) return;
+                      if (!(await confirm('Restore this backup? This replaces your current tasks, boards, and settings.', { confirmLabel: 'Restore' })))
+                        return;
                       const restored = await onRestore(backup.id);
                       // Separate, explicit opt-in follow-up (see
                       // SettingsPanel.jsx's offerRewriteGoogleCalendarFollowUp) —
@@ -90,8 +93,8 @@ export default function BackupsModal({ backups, isBusy, onRestore, onRestored, o
                     className="btn"
                     style={{ fontSize: 12, color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                     disabled={isBusy}
-                    onClick={() => {
-                      if (window.confirm('Delete this backup? This cannot be undone.')) {
+                    onClick={async () => {
+                      if (await confirm('Delete this backup? This cannot be undone.', { confirmLabel: 'Delete' })) {
                         onDelete(backup.id);
                       }
                     }}

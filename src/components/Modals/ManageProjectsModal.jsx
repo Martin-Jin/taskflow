@@ -18,6 +18,7 @@ import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import {
   ALL_TASKS_PROJECT_ID,
   ALL_TASKS_PROJECT_LABEL,
@@ -45,6 +46,7 @@ export default function ManageProjectsModal({
   // would be noise — same approach as Sidebar's own badge wiring.
   const { sharedProjects } = useScheduler();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const [query, setQuery] = useState('');
@@ -101,8 +103,8 @@ export default function ManageProjectsModal({
     setRenameValue('');
   }
 
-  function handleDelete(project) {
-    if (window.confirm(`Delete "${project.name}"? Its tasks will move to Inbox.`)) {
+  async function handleDelete(project) {
+    if (await confirm(`Delete "${project.name}"? Its tasks will move to Inbox.`, { confirmLabel: 'Delete' })) {
       onDeleteProject(project.id);
     }
   }

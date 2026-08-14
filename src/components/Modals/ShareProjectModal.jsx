@@ -28,6 +28,7 @@ import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { fetchShareLinks, setShareLink, ShareLinkError } from '../../services/shareLinkService';
 import { buildShareUrl } from '../../utils/joinFlow';
 import {
@@ -65,6 +66,8 @@ function dateInputValue(expiresAt) {
  * attribute or logged.
  */
 function LinkRow({ label, linkType, link, busy, onAction }) {
+  const { setNotification } = useScheduler();
+  const confirm = useConfirm();
   const [copied, setCopied] = useState(false);
   const [expiryDraft, setExpiryDraft] = useState(dateInputValue(link?.expiresAt));
 
@@ -83,8 +86,15 @@ function LinkRow({ label, linkType, link, busy, onAction }) {
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard API rejects on insecure origins / some browser permission
-      // states — fall back to a manual select so the value is still copyable.
-      window.prompt('Copy this link:', url);
+      // states. window.prompt('Copy this link:', url) used to be the
+      // fallback here, letting the user Ctrl+C the value out of the
+      // browser's own prompt UI — but window.prompt is just as vulnerable to
+      // silent browser suppression as window.confirm (see ConfirmContext.jsx),
+      // so this now surfaces the same toast notification the rest of the app
+      // uses (SchedulerContext's setNotification) with the link in the
+      // message text, so the URL is still visible/selectable even though
+      // there's no dedicated "copy" UI in a toast.
+      setNotification({ type: 'error', message: `Couldn't copy automatically — copy this link manually: ${url}` });
     }
   }
 
@@ -141,8 +151,8 @@ function LinkRow({ label, linkType, link, busy, onAction }) {
               type="button"
               className="btn"
               disabled={busy}
-              onClick={() => {
-                if (window.confirm(`Rotate the ${label.toLowerCase()}? The current link will stop working immediately.`)) {
+              onClick={async () => {
+                if (await confirm(`Rotate the ${label.toLowerCase()}? The current link will stop working immediately.`, { confirmLabel: 'Rotate' })) {
                   onAction('rotate');
                 }
               }}
@@ -159,8 +169,8 @@ function LinkRow({ label, linkType, link, busy, onAction }) {
               className="btn"
               style={{ color: 'var(--color-danger)' }}
               disabled={busy}
-              onClick={() => {
-                if (window.confirm(`Delete the ${label.toLowerCase()}? The current link will stop working immediately.`)) {
+              onClick={async () => {
+                if (await confirm(`Delete the ${label.toLowerCase()}? The current link will stop working immediately.`, { confirmLabel: 'Delete' })) {
                   onAction('delete');
                 }
               }}
@@ -180,6 +190,7 @@ export default function ShareProjectModal({ project, onClose }) {
   const modalRef = useModalA11y(requestClose);
   const { sharedProjects } = useScheduler();
   const { user } = useAuth();
+  const confirm = useConfirm();
 
   const sharedProjectId = project?.sharedProjectId;
   const sharedProject = sharedProjectId ? sharedProjects[sharedProjectId] : null;
@@ -247,7 +258,7 @@ export default function ShareProjectModal({ project, onClose }) {
   }
 
   async function handleRemove(collabUid, displayName) {
-    if (!window.confirm(`Remove ${displayName} from this project? They'll lose access immediately.`)) return;
+    if (!(await confirm(`Remove ${displayName} from this project? They'll lose access immediately.`, { confirmLabel: 'Remove' }))) return;
     setCollabBusy(collabUid);
     setActionError('');
     try {
@@ -266,9 +277,10 @@ export default function ShareProjectModal({ project, onClose }) {
       return;
     }
     if (
-      !window.confirm(
-        `Transfer ownership of this project to ${displayName}? You'll become an editor and lose owner-only controls.`
-      )
+      !(await confirm(
+        `Transfer ownership of this project to ${displayName}? You'll become an editor and lose owner-only controls.`,
+        { confirmLabel: 'Transfer', danger: false }
+      ))
     ) {
       return;
     }

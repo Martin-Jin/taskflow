@@ -23,8 +23,10 @@ import { SoundProvider } from './context/SoundContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { TimerProvider } from './context/TimerContext';
 import { CompleteTaskProvider } from './context/CompleteTaskContext';
+import { ConfirmProvider } from './context/ConfirmContext';
 import TimerWidget from './components/Common/TimerWidget';
 import CompleteTaskConfirmModal from './components/Common/CompleteTaskConfirmModal';
+import ConfirmModal from './components/Common/ConfirmModal';
 import AccountButton from './components/Nav/AccountButton';
 import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
@@ -547,24 +549,27 @@ function AppShell() {
         />
       )}
       <CompleteTaskConfirmModal />
+      <ConfirmModal />
     </div>
   );
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ThemeProvider>
-        <SchedulerProvider>
-          <SoundProvider>
-            <TimerProvider>
-              <CompleteTaskProvider>
-                <AppShell />
-              </CompleteTaskProvider>
-            </TimerProvider>
-          </SoundProvider>
-        </SchedulerProvider>
-      </ThemeProvider>
-    </AuthProvider>
+    <ConfirmProvider>
+      <AuthProvider>
+        <ThemeProvider>
+          <SchedulerProvider>
+            <SoundProvider>
+              <TimerProvider>
+                <CompleteTaskProvider>
+                  <AppShell />
+                </CompleteTaskProvider>
+              </TimerProvider>
+            </SoundProvider>
+          </SchedulerProvider>
+        </ThemeProvider>
+      </AuthProvider>
+    </ConfirmProvider>
   );
 }

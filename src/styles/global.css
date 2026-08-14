@@ -1993,6 +1993,30 @@ input.search-bar-input {
   }
 }
 
+/* ConfirmModal — the in-app window.confirm() replacement (see
+   ConfirmContext.jsx). Deliberately small/narrow next to the default 480px
+   .modal, since its content is never more than a short message + two
+   buttons. */
+.modal-confirm {
+  width: 380px;
+}
+
+.confirm-modal-icon {
+  color: var(--color-danger);
+  margin-bottom: 8px;
+}
+
+.confirm-modal-message {
+  margin: 0 0 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  /* Some call sites build a multi-paragraph message with embedded "\n\n"
+     (e.g. SettingsPanel's "Rewrite Google Calendar" confirm) — preserve
+     that instead of collapsing it onto one line like a plain <p> would. */
+  white-space: pre-wrap;
+}
+
 .form-row {
   display: flex;
   flex-direction: column;
