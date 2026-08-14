@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.8.2',
+    date: '2026-08-14',
+    title: 'Auto-scheduled tasks now sync to Google Calendar',
+    changes: [
+      "Tasks scheduled automatically (by Re-balance, including ones created through AI quick-add) or scheduled manually onto the calendar weren't reaching Google Calendar until you clicked \"Push to Google Calendar\" in Settings. They're now pushed automatically in the background.",
+      "This replaces an earlier attempt at the same fix that had to be reverted — it was creating duplicate Google Calendar events on every schedule recalculation. If you saw duplicated recurring events (Piano, routine lectures, etc.) on your calendar, those are safe to delete manually in Google Calendar; new duplicates won't be created going forward.",
+    ],
+  },
+  {
     version: '4.8.1',
     date: '2026-08-14',
     title: 'Fixed duplicate Google Calendar events',
