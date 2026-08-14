@@ -50,7 +50,7 @@ import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/note
 import { playAddSound, playDeleteSound } from '../services/soundService';
 import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowed } from '../services/attachmentService';
 import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
-import { rebalance, preserveGoogleEventIds } from '../algorithms/rebalanceEngine';
+import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate } from '../utils/taskFieldDerivations';
 import {
@@ -1353,13 +1353,11 @@ export function SchedulerProvider({ children }) {
     let result;
     commit(
       (current) => {
+        // rebalance() itself now preserves googleEventId across the run for
+        // any block whose exact placement survives unchanged — see
+        // rebalanceEngine.js's own doc comment on preserveGoogleEventIds.
         result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
-        // See preserveGoogleEventIds' own doc comment — without this, every
-        // rebalance would make already-synced blocks look unsynced to
-        // useGoogleCalendarSync's auto-push, creating duplicate Google
-        // Calendar events.
-        const blocksWithPreservedGoogleIds = preserveGoogleEventIds(result.blocks, current.blocks);
-        return { tasks: current.tasks, blocks: blocksWithPreservedGoogleIds };
+        return { tasks: current.tasks, blocks: result.blocks };
       },
       // Function-form label (see useHistoryState's commit) — result.stats
       // isn't known until the updater above has actually run.
@@ -1988,15 +1986,10 @@ export function SchedulerProvider({ children }) {
    */
   const rebalanceTodayOnly = useCallback(
     (currentTasks, currentBlocks) => {
+      // rebalance() itself preserves googleEventId across the run — see
+      // runRebalance's identical call and rebalanceEngine.js's own comment.
       const result = rebalance({ tasks: currentTasks, existingBlocks: currentBlocks, routines, events, rules, todayOnly: true });
-      // See runRebalance's identical call — without this, every completeTask
-      // (which calls this after every completion, including routine/recurring
-      // occurrences finished throughout the day) would strip googleEventId
-      // from any OTHER task's block this today-only pass re-touches, making
-      // useGoogleCalendarSync's auto-push treat it as newly-unsynced and
-      // create a duplicate Google Calendar event on the very next poll tick.
-      const blocksWithPreservedGoogleIds = preserveGoogleEventIds(result.blocks, currentBlocks);
-      return { tasks: currentTasks, blocks: blocksWithPreservedGoogleIds };
+      return { tasks: currentTasks, blocks: result.blocks };
     },
     [routines, events, rules]
   );

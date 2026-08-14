@@ -370,6 +370,36 @@ describe('rebalance', () => {
     const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
     expect(result.blocks.some((b) => b.id === 'b-deleted2')).toBe(false);
   });
+
+  // Regression coverage for a real bug: rebalance() always stamps a freshly
+  // (re)placed block's googleEventId as null, since the scheduling engine has
+  // no concept of Google Calendar. Any caller that auto-pushes blocks lacking
+  // a googleEventId (useGoogleCalendarSync) would treat every rebalance as
+  // producing all-new blocks otherwise, creating a duplicate Google Calendar
+  // event on every run — this bit two separate call sites (SchedulerContext's
+  // runRebalance and rebalanceTodayOnly) before rebalance() itself was fixed
+  // to call preserveGoogleEventIds internally, so every caller (current and
+  // future) gets this guarantee automatically rather than relying on each one
+  // remembering to call preserveGoogleEventIds separately.
+  it("carries a block's googleEventId forward across a rebalance run when its exact placement (id) survives unchanged", () => {
+    const tasks = [
+      { id: 'trec-gcal', title: 'Daily routine-like task', isRecurring: true, recurrenceString: 'every day', estimatedHours: 1, dueDate: today },
+    ];
+    const first = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    const firstBlock = first.blocks.find((b) => b.taskId === 'trec-gcal' && b.date === today);
+    expect(firstBlock).toBeTruthy();
+
+    // Simulate the block having been pushed to Google Calendar since the
+    // first rebalance (exactly what useGoogleCalendarSync's auto-push does).
+    const blocksWithGoogleId = first.blocks.map((b) => (b.id === firstBlock.id ? { ...b, googleEventId: 'gcal-existing-id' } : b));
+
+    // A second rebalance run (e.g. triggered by an unrelated task change)
+    // re-places this same recurring occurrence at the identical id.
+    const second = rebalance({ tasks, existingBlocks: blocksWithGoogleId, routines: [], events: [], rules: baseRules, fromDate: today });
+    const secondBlock = second.blocks.find((b) => b.id === firstBlock.id);
+    expect(secondBlock).toBeTruthy();
+    expect(secondBlock.googleEventId).toBe('gcal-existing-id');
+  });
 });
 
 // Coverage for `todayOnly` (used by SchedulerContext.completeTask so
