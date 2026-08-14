@@ -24,10 +24,15 @@
  *   - Click the lock icon -> toggleBlockLock() so the rebalance engine will
  *     never move it again. Events have no lock concept.
  *   - Click a block/event -> opens its detail modal for full editing.
- *   - Two or more overlapping blocks/events pack into side-by-side lanes;
- *     any that are shorter than 30min collapse into a single "N events"
- *     chip instead (mobile's narrow columns make this matter most, but the
- *     same 30min cutoff applies on desktop too) — see layoutDayItems.
+ *   - Two or more overlapping blocks/events each get their own proportional
+ *     side-by-side lane by default, sized to their true duration at the
+ *     current zoom (no artificial minimum height) — matching Google
+ *     Calendar's own continuous layout. Only once an item's own height would
+ *     genuinely be too short to show a legible title does it become a
+ *     cluster-candidate, collapsing together with whatever else it overlaps
+ *     that's equally too-short into a single chip labelled with a truncated
+ *     list of the actual contained titles (see clusterLabel) instead of a
+ *     generic "N events" summary — see layoutDayItems/isLegibleAlone.
  * ============================================================================
  */
 
@@ -57,6 +62,42 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+// Character budget for a cluster chip's title-list label (see clusterLabel
+// below) — an approximation of "how much text fits" rather than a true pixel
+// measurement, since a chip's actual rendered width isn't known at render
+// time (day columns are fluid `1fr` grid tracks — see calendar.css). This is
+// deliberately conservative (a single-lane chip at typical day-column widths
+// comfortably fits well more than this many characters), so the JS-built
+// truncation almost always kicks in before CSS's own `text-overflow:
+// ellipsis` on .cal-block-title would ever need to (that CSS rule stays as a
+// backstop for the rare narrower case — e.g. a multi-lane chip sharing the
+// column with another item, or a very narrow phone screen).
+const CLUSTER_LABEL_CHAR_BUDGET = 42;
+
+/**
+ * Builds a cluster chip's label as a truncated list of its actual contained
+ * event/task titles (e.g. "Standup, 1:1 with Sam, Review, …") rather than a
+ * generic "N events" summary — the whole point of a cluster chip is that it's
+ * standing in for items too small to show individually, so the user should
+ * still be able to tell AT A GLANCE what's inside without opening its popover.
+ * Titles are added whole (never cut mid-title) until the running length would
+ * exceed CLUSTER_LABEL_CHAR_BUDGET, then "…" is appended — so the result
+ * always ends either with every title spelled out, or with an ellipsis after
+ * a whole number of complete titles, never a half-title fragment.
+ */
+function clusterLabel(items) {
+  const titles = items.map((it) => it.data.title || 'Untitled');
+  let out = '';
+  for (let i = 0; i < titles.length; i++) {
+    const candidate = out ? `${out}, ${titles[i]}` : titles[i];
+    if (candidate.length > CLUSTER_LABEL_CHAR_BUDGET && out) {
+      return `${out}, …`;
+    }
+    out = candidate;
+  }
+  return out;
+}
 
 // Fixed viewport coordinates for a cluster's popover, anchored to the
 // clicked chip's own bounding rect (see openCluster state in WeekView) —
@@ -898,8 +939,8 @@ export default function WeekView({
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
                 const hasEvent = item.items.some((it) => it.type === 'event');
-                const hasBlock = item.items.some((it) => it.type === 'block');
-                const label = `${item.items.length} ${hasEvent && hasBlock ? 'tasks/events' : hasEvent ? 'events' : 'tasks'}`;
+                const label = clusterLabel(item.items);
+                const fullTitleList = item.items.map((it) => it.data.title).join(', ');
                 const totalMinutes = item.items
                   .filter((it) => it.type === 'block')
                   .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);
@@ -923,7 +964,7 @@ export default function WeekView({
                         else openThisCluster(e.currentTarget.getBoundingClientRect());
                       }
                     }}
-                    title={`${label} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
+                    title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
                     <div className="cal-block-title">{label}</div>
                     {showTimeLine && (

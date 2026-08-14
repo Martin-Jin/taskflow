@@ -485,14 +485,19 @@ cached copy.
   drag-edge-to-resize, on desktop with the mouse and on mobile via
   long-press-then-drag/resize by touch — any event you create counts as
   busy time the scheduler avoids, there's no separate "blocked time" concept
-  anymore. Overlapping events/blocks render side-by-side in columns on
-  desktop; on mobile, where there's no room for columns, they collapse into
-  a single tappable "N events" chip instead. Week/3 Day/Day view clusters
-  runs of short back-to-back tasks into a single "N short tasks" chip (click
-  to expand) and packs every block/chip with a guaranteed non-overlapping
-  layout, so a densely scheduled day always stays legible no matter how many
-  short tasks land close together. Hold Ctrl and scroll (or pinch on a
-  trackpad) over the grid to zoom the time axis in/out. Month view shows a
+  anymore. Every event/block gets its own proportionally-sized column on the
+  continuous time axis by default — overlapping items render side-by-side,
+  each sized to its true duration (no artificial minimum height), matching
+  how Google Calendar's own web UI lays out a busy day. Only once a group of
+  overlapping or back-to-back items becomes too small to render legibly
+  individually does it collapse into a single tappable chip instead (click
+  to expand) — that chip's label lists the actual event/task titles it
+  contains (truncated with "…" once space runs out), not a generic "N
+  events" summary. This packs every block/chip with a guaranteed
+  non-overlapping layout, so a densely scheduled day always stays legible no
+  matter how many short tasks land close together. Hold Ctrl and scroll (or
+  pinch on a trackpad) over the grid to zoom the time axis in/out — more room
+  at a higher zoom means less clustering, never more. Month view shows a
   density overview (chips per day, clustering short tasks, "+N more" on busy
   days) and clicking a day drills into Day view for the full time grid,
   matching how most calendar apps handle month → day navigation. Tap the
