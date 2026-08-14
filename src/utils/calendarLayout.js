@@ -30,20 +30,49 @@ export const GRID_START_MIN = 6 * 60;
 // forcing a fold regardless of how much pixel room the zoom level offers.
 export const CLUSTER_MAX_GAP_MIN = 30;
 
-// Within an overlap group (see layoutDayItems), an item this long or longer
-// always gets its own visible side-by-side lane, even if it overlaps
-// something shorter. Items below this duration are candidates to fold into
-// an "N events" chip alongside other short items they actually overlap.
-// Applies to a whole `kind: 'cluster'` run's own span, not its individual
-// blocks — a cluster is already one unit by the time layoutDayItems sees it.
-export const LONG_ITEM_MIN = 30;
-
-// Floor height for any single block/cluster, and the breathing room left
-// between two boxes stacked back-to-back in the same lane — see packLane.
+// Floor height a box needs to show at least one legible line of text: derived
+// from .cal-block's own font-size (11.5px) + line-height + vertical padding
+// (~4px top, ~4px bottom — see calendar.css), which together need roughly
+// 22-24px to avoid clipping into the box border. Rounded up slightly for
+// breathing room. This is a judgment call (there's no single "correct" pixel
+// value — it depends on font metrics that could themselves change), so it's
+// named for what it protects (legibility) rather than an arbitrary duration.
+//
+// Two different jobs read this same floor:
+//   1. packLane: the MINIMUM a `kind: 'cluster'` box is ever drawn at
+//      (clusters deliberately summarize 2+ items the caller already decided
+//      couldn't render individually — see isLegibleAlone below — so unlike a
+//      single item, a cluster is NEVER allowed to render shorter than "one
+//      legible line", since there'd be nothing else to fall back to). A
+//      single (non-cluster) item's height is its TRUE proportional duration
+//      instead — no floor — matching Google Calendar's own continuous,
+//      zoom-aware layout: a 5-minute event is a genuinely thin sliver, not
+//      stretched to look like a 20-minute one.
+//   2. layoutDayItems: the height (not duration) below which an overlapping
+//      item is a cluster-candidate — see isLegibleAlone.
 export const MIN_BLOCK_HEIGHT_PX = 26;
 export const BLOCK_GAP_PX = 2;
 
-// Two individually "long enough" (non-cluster-eligible, see LONG_ITEM_MIN)
+// Within an overlap group (see layoutDayItems), an item whose OWN true
+// proportional height (at the current zoom) would already clear
+// MIN_BLOCK_HEIGHT_PX always gets its own visible side-by-side lane, however
+// short its duration is — a 10-minute event at max zoom (1.25px/min = 12.5px)
+// is still under this floor and folds, but the same 10 minutes at a lower
+// zoom that already renders past MIN_BLOCK_HEIGHT_PX must NOT fold just
+// because "10 minutes" sounds short: whether an item can stand on its own is
+// a question of pixels, not duration, exactly like everything else in this
+// file. This intentionally replaces an earlier fixed-duration cutoff
+// (`LONG_ITEM_MIN = 30`, "any overlapping item under 30 real minutes always
+// clusters") that ignored zoom entirely and force-merged plenty of
+// individually-legible short events — see git history / calendarLayout.test.js
+// for the cases this used to wrongly cluster.
+// Applies to a whole `kind: 'cluster'` run's own span, not its individual
+// blocks — a cluster is already one unit by the time layoutDayItems sees it.
+export function isLegibleAlone(durationMin, pxPerMin) {
+  return durationMin * pxPerMin >= MIN_BLOCK_HEIGHT_PX;
+}
+
+// Two individually "legible enough to stand alone" (see isLegibleAlone)
 // items can still read as a jumbled mess at a zoomed-out level if they sit
 // nearly flush against each other — e.g. two 90-min blocks with only 30 real
 // minutes (~16px at the lowest zoom) between them, each rendering a full
@@ -222,24 +251,28 @@ export function foldSequentialItems(items, pxPerMin) {
  * caller is responsible for computing `start`/`end` via timeToMinutes
  * beforehand.
  *
- * Side-by-side lanes get thin on both mobile and (to a lesser extent)
- * desktop once 3+ items overlap, so within each overlap group, items whose
- * OWN duration is under LONG_ITEM_MIN are further split out and re-grouped
- * by mutual overlap *among themselves* (a gap between two short items is
- * only "one group" if a long item happens to bridge them into the same
- * overlap group — removing the long item can split them into two
+ * Every item that CAN render as its own legible box does — side-by-side lane
+ * assignment (packLanes below) is the default outcome, matching Google
+ * Calendar's own "every event gets a proportional column" layout. Only items
+ * whose own true proportional height at this zoom would fall under
+ * MIN_BLOCK_HEIGHT_PX (see isLegibleAlone) are cluster-candidates: within
+ * each overlap group, those too-short items are further split out and
+ * re-grouped by mutual overlap *among themselves* (a gap between two short
+ * items is only "one group" if a legible-alone item happens to bridge them
+ * into the same overlap group — removing it can split them into two
  * time-disjoint short-runs, which must become two separate chips, not one
  * spanning the gap). Each short-run of 2+ collapses into a single `kind:
- * 'cluster'` item (the same tappable "N tasks/events" chip foldSequentialItems
- * produces — see WeekView's render, which no longer needs to distinguish the
- * two); a short-run of exactly 1 stays a normal item — nothing to collapse
- * into. Items >= LONG_ITEM_MIN always keep an individual lane, whether that's
- * alongside something shorter or another long item — this is what keeps a
- * long block visible in its own box side-by-side with a chip of short items
- * it genuinely overlaps, rather than the two merging together. Long items and
- * chips are then lane-packed together in one pass (sorted by start) so a chip
- * that overlaps a long item in time still gets a distinct lane rather than
- * visually colliding with it.
+ * 'cluster'` item (the same tappable chip foldSequentialItems produces — see
+ * WeekView's render, which no longer needs to distinguish the two, and whose
+ * label lists the contained items' own titles); a short-run of exactly 1
+ * stays a normal item — nothing to collapse into. Legible-alone items always
+ * keep an individual lane, whether that's alongside something shorter or
+ * another legible-alone item — this is what keeps a real event visible in
+ * its own box side-by-side with a chip of short items it genuinely overlaps,
+ * rather than the two merging together. Legible items and chips are then
+ * lane-packed together in one pass (sorted by start) so a chip that overlaps
+ * a legible item in time still gets a distinct lane rather than visually
+ * colliding with it.
  */
 export function layoutDayItems(dayItems, pxPerMin) {
   const items = [...dayItems].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -272,13 +305,13 @@ export function layoutDayItems(dayItems, pxPerMin) {
   function flushGroup() {
     if (overlapGroup.length === 0) return;
 
-    const longItems = overlapGroup.filter((it) => it.end - it.start >= LONG_ITEM_MIN);
-    const shortItems = overlapGroup.filter((it) => it.end - it.start < LONG_ITEM_MIN);
+    const legibleItems = overlapGroup.filter((it) => isLegibleAlone(it.end - it.start, pxPerMin));
+    const shortItems = overlapGroup.filter((it) => !isLegibleAlone(it.end - it.start, pxPerMin));
 
     // Re-sweep just the short items (already start-sorted, as a subsequence
     // of `folded`) for their own mutual-overlap runs, independent of any
-    // long item(s) that pulled them into the same overlapGroup.
-    const laneItems = [...longItems];
+    // legible-alone item(s) that pulled them into the same overlapGroup.
+    const laneItems = [...legibleItems];
     let shortRun = [];
     let shortRunEnd = -Infinity;
     function flushShortRun() {
@@ -387,7 +420,18 @@ export function packLane(items, pxPerMin) {
 
   for (const item of sorted) {
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
-    const naturalHeight = Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin);
+    // Only a `kind: 'cluster'` box is floored to MIN_BLOCK_HEIGHT_PX — it's
+    // already a stand-in for 2+ items layoutDayItems/foldSequentialItems
+    // decided couldn't render individually, so it must stay legible. A plain
+    // single item renders at its TRUE proportional height, however short —
+    // no floor — matching Google Calendar's own continuous, zoom-aware
+    // layout rather than artificially stretching short (but individually
+    // legible-enough-to-be-here-at-all) events. This is what keeps pushdown
+    // (below) a genuinely rare event now: two real back-to-back items with
+    // zero gap naturally sit flush with no floor-induced false collision.
+    const naturalHeight = item.kind === 'cluster'
+      ? Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin)
+      : (item.end - item.start) * pxPerMin;
     const pushedTop = Math.max(naturalTop, prevBottom);
     const pushdownPx = pushedTop - naturalTop;
 

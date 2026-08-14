@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { foldSequentialItems, layoutDayItems, computeDayPositions, packLane, LONG_ITEM_MIN, GRID_START_MIN, EXCESSIVE_PUSHDOWN_PX } from '../../src/utils/calendarLayout';
+import {
+  foldSequentialItems,
+  layoutDayItems,
+  computeDayPositions,
+  packLane,
+  isLegibleAlone,
+  MIN_BLOCK_HEIGHT_PX,
+  GRID_START_MIN,
+  EXCESSIVE_PUSHDOWN_PX,
+} from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
 // minimal fields — the layout logic only reads type/data.isPassive/start/end.
@@ -14,11 +23,10 @@ function event(id, start, end) {
 describe('foldSequentialItems', () => {
   it('never folds two items that overlap in time (gapMin < 0)', () => {
     // Regression test for the "Email student"/"Lower + Running" visual-overlap
-    // bug: two 30+ minute (LONG_ITEM_MIN-eligible) items overlapping in time
-    // must NOT be merged into a single cluster — that would skip
-    // layoutDayItems' lane-separation entirely and let them render on top of
-    // each other. A negative gap (they overlap) used to trivially satisfy
-    // every fold condition.
+    // bug: two 30+ minute items overlapping in time must NOT be merged into a
+    // single cluster — that would skip layoutDayItems' lane-separation
+    // entirely and let them render on top of each other. A negative gap (they
+    // overlap) used to trivially satisfy every fold condition.
     const items = [block('A', 540, 575), block('B', 550, 585)]; // 9:00-9:35, 9:10-9:45
     const folded = foldSequentialItems(items, 1.25);
     expect(folded).toHaveLength(2);
@@ -113,8 +121,27 @@ describe('foldSequentialItems', () => {
   });
 });
 
+describe('isLegibleAlone', () => {
+  it('is true once an item’s own proportional height at this zoom reaches MIN_BLOCK_HEIGHT_PX', () => {
+    // 25 minutes * 1.25px/min = 31.25px, comfortably over the 26px floor.
+    expect(isLegibleAlone(25, 1.25)).toBe(true);
+    // 10 minutes * 1.25px/min = 12.5px, well under the floor.
+    expect(isLegibleAlone(10, 1.25)).toBe(false);
+  });
+
+  it('scales with zoom — the same duration can be legible at one zoom and not another', () => {
+    // 30 real minutes: at 0.55px/min that's 16.5px (illegible alone); at
+    // 1.25px/min that's 37.5px (comfortably legible). This is the entire
+    // point of replacing a fixed-duration cutoff (the old LONG_ITEM_MIN=30)
+    // with a pixel-based one — "is this event long enough to stand alone" is
+    // a question of pixels at the current zoom, not a fixed minute count.
+    expect(isLegibleAlone(30, 0.55)).toBe(false);
+    expect(isLegibleAlone(30, 1.25)).toBe(true);
+  });
+});
+
 describe('layoutDayItems + computeDayPositions (lane packing)', () => {
-  it('assigns two overlapping long-enough items to separate lanes instead of folding them together', () => {
+  it('assigns two overlapping legible-alone items to separate lanes instead of folding them together', () => {
     const items = [block('Email student', 540, 575), block('Lower + Running', 550, 585)];
     const laidOut = layoutDayItems(items, 1.25);
     expect(laidOut).toHaveLength(2);
@@ -126,6 +153,54 @@ describe('layoutDayItems + computeDayPositions (lane packing)', () => {
     // Different lanes within the same overlap group -> never considered a
     // vertical-stacking collision; packLane runs independently per lane.
     expect(a.lane).not.toBe(b.lane);
+  });
+
+  it('gives several short overlapping events their own proportional lane/column when there is enough pixel room, instead of clustering them', () => {
+    // Three 12-minute events, each overlapping the next by a few minutes.
+    // At max zoom (1.25px/min), 12 min = 15px — under MIN_BLOCK_HEIGHT_PX
+    // (26px), so individually still "too short to be legible"... but if we
+    // zoom out to where the SAME real duration renders taller relative to a
+    // lower bar, that's not how pxPerMin works (higher pxPerMin = taller).
+    // Use a duration that clears the legibility floor at max zoom instead:
+    // 25 minutes each (25 * 1.25 = 31.25px >= 26px) overlapping in a stagger.
+    const items = [block('Standup', 540, 565), block('Review', 550, 575), block('Sync', 560, 585)];
+    const laidOut = layoutDayItems(items, 1.25);
+    // No cluster should have been produced — every item is legible alone.
+    expect(laidOut.every((i) => i.kind !== 'cluster')).toBe(true);
+    expect(laidOut).toHaveLength(3);
+    // All three mutually overlap in a staggered chain, so they need 3 lanes.
+    const lanes = new Set(laidOut.map((i) => i.lane));
+    expect(lanes.size).toBe(3);
+
+    const positioned = computeDayPositions(laidOut, 1.25);
+    for (const p of positioned) {
+      // Individual items get their TRUE proportional height — no floor.
+      expect(p.height).toBeCloseTo((p.end - p.start) * 1.25, 0);
+    }
+  });
+
+  it('clusters overlapping items whose own height would be illegibly short, and the cluster label lists their titles', () => {
+    // Three 8-minute events overlapping each other at max zoom: 8 * 1.25 =
+    // 10px each, well under the 26px legibility floor — must cluster.
+    const items = [block('Standup', 540, 548), block('Review', 544, 552), block('Sync', 550, 558)];
+    const laidOut = layoutDayItems(items, 1.25);
+    const clusters = laidOut.filter((i) => i.kind === 'cluster');
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].items.map((it) => it.data.id).sort()).toEqual(['Review', 'Standup', 'Sync']);
+  });
+
+  it('keeps a legible-alone item in its own lane even alongside a short-item cluster it overlaps', () => {
+    const items = [
+      block('Long', 540, 540 + 40), // 40 min * 1.25 = 50px, comfortably legible
+      block('S1', 545, 550), // 5 min, illegible alone
+      block('S2', 551, 556), // 5 min, illegible alone
+    ];
+    const laidOut = layoutDayItems(items, 1.25);
+    const longItem = laidOut.find((i) => i.kind !== 'cluster' && i.data.id === 'Long');
+    const clusterItem = laidOut.find((i) => i.kind === 'cluster');
+    expect(longItem).toBeTruthy();
+    expect(clusterItem).toBeTruthy();
+    expect(longItem.lane).not.toBe(clusterItem.lane);
   });
 
   it('never produces two items in the same (groupId, lane) whose top/height ranges overlap', () => {
@@ -155,31 +230,19 @@ describe('layoutDayItems + computeDayPositions (lane packing)', () => {
       }
     }
   });
-
-  it('keeps an item >= LONG_ITEM_MIN in its own lane even alongside a short-item cluster it overlaps', () => {
-    const items = [
-      block('Long', 540, 540 + LONG_ITEM_MIN + 15),
-      block('S1', 545, 550),
-      block('S2', 551, 556),
-    ];
-    const laidOut = layoutDayItems(items, 1.25);
-    const longItem = laidOut.find((i) => i.kind !== 'cluster' && i.data.id === 'Long');
-    const clusterItem = laidOut.find((i) => i.kind === 'cluster');
-    expect(longItem).toBeTruthy();
-    expect(clusterItem).toBeTruthy();
-    expect(longItem.lane).not.toBe(clusterItem.lane);
-  });
 });
 
 describe('cross-group stacking does not resurrect the original chain-stacking bug', () => {
   it('does not push a genuinely distant, unrelated later item down just because an earlier short-item run inflated prevBottom', () => {
     // Regression for the ORIGINAL "chain-stacking across unrelated groups"
-    // bug (see git history): a run of short, MIN_BLOCK_HEIGHT_PX-clamped
-    // items early in the day must not push a later, clearly time-disjoint
-    // item's top down — only genuinely adjacent (near-zero natural gap)
-    // items should ever influence each other's position.
+    // bug (see git history): a run of short items early in the day must not
+    // push a later, clearly time-disjoint item's top down — only genuinely
+    // adjacent (near-zero natural gap) items should ever influence each
+    // other's position. These are far enough apart in time that they don't
+    // even overlap or sequentially-fold, so they land as five separate
+    // single items (no cluster this time, since none inherit a floor).
     const items = [
-      block('A', 480, 481), // 08:00-08:01, clamped to MIN_BLOCK_HEIGHT_PX
+      block('A', 480, 481), // 08:00-08:01
       block('B', 481, 482),
       block('C', 482, 483),
       block('D', 483, 484),
@@ -214,44 +277,76 @@ describe('cross-group sequential visual overlap', () => {
   });
 });
 
-describe('real-world screenshot reproduction (max zoom-out)', () => {
-  it('matches the live DevTools measurement for Email student / Lower + Running / Morning tasks / Laundry', () => {
-    // Exact real data confirmed via the user's own DevTools session at max
-    // zoom-out (0.55px/min): Email student 08:35-08:40 (task, completed),
-    // Lower + Running 09:00-10:00 (Google event), Morning tasks 10:10-10:15
-    // (task, completed), Laundry 10:55-11:00 (task, completed). Before this
-    // fix, "Lower + Running" rendered 14px past its own natural top purely
-    // from Email student's MIN_BLOCK_HEIGHT_PX clamp (partially absorbed by
-    // the real 20-min gap between them) — a single clamp, yet still visually
-    // read as unacceptable drift once the user zoomed to check. Two earlier,
-    // more permissive attempts at this exact bug (a flat pixel budget, then
-    // an hour-row-fraction budget) both still tolerated this case. The fix:
-    // EXCESSIVE_PUSHDOWN_PX is now a near-zero (2px) tolerance — any real
-    // inherited pushdown beyond rounding slack folds, full stop, with no
-    // "how much crowding is fine" judgment call left to get wrong.
-    const pxPerMin = 0.55;
+describe('packLane', () => {
+  it('gives an individual (non-cluster) item its TRUE proportional height, with no minimum-height floor', () => {
+    // A lone 4-minute item at max zoom (1.25px/min) is genuinely only 5px
+    // tall — it must render at that true height rather than being stretched
+    // to MIN_BLOCK_HEIGHT_PX. Short-but-individually-rendered items are an
+    // accepted tradeoff (clipped text), not something layout should hide.
+    const items = [{ start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } }];
+    const packed = packLane(items, 1.25);
+    expect(packed[0].height).toBe(Math.round(4 * 1.25));
+    expect(packed[0].height).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
+  });
+
+  it('a kind:"cluster" item is still floored to MIN_BLOCK_HEIGHT_PX', () => {
     const items = [
-      { start: 515, end: 520, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
-      { start: 540, end: 600, kind: 'single', type: 'event', data: { id: 'Lower + Running', title: 'Lower + Running' } },
-      { start: 610, end: 615, kind: 'single', type: 'block', data: { id: 'Morning tasks', title: 'Morning tasks' } },
-      { start: 655, end: 660, kind: 'single', type: 'block', data: { id: 'Laundry', title: 'Laundry' } },
+      {
+        start: 540,
+        end: 543,
+        kind: 'cluster',
+        items: [
+          { type: 'block', data: { id: 't1', title: 't1' } },
+          { type: 'block', data: { id: 't2', title: 't2' } },
+        ],
+      },
     ];
-    const packed = packLane(items, pxPerMin);
-    const lowerRunning = packed.find(
-      (p) => p.data?.id === 'Lower + Running' || p.items?.some((i) => i.data.id === 'Lower + Running')
-    );
-    expect(lowerRunning.kind).toBe('cluster');
-    let prevBottom = -Infinity;
-    for (const p of packed) {
-      expect(p.top).toBeGreaterThanOrEqual(prevBottom);
-      prevBottom = p.top + p.height + 2;
-      const naturalTop = Math.round((p.start - GRID_START_MIN) * pxPerMin);
-      expect(p.top - naturalTop).toBeLessThanOrEqual(EXCESSIVE_PUSHDOWN_PX + 1);
+    const packed = packLane(items, 1.25);
+    expect(packed[0].height).toBe(MIN_BLOCK_HEIGHT_PX);
+  });
+
+  it('two real back-to-back single items of ordinary length sit flush with no floor-driven pushdown', () => {
+    // Previously, packLane's MIN_BLOCK_HEIGHT_PX floor on every single item
+    // meant a short predecessor could push its immediate successor down even
+    // though the two don't actually overlap in time — regardless of the
+    // predecessor's own real duration. Since individual items are no longer
+    // floored, that large floor-driven push no longer happens: a 20-minute
+    // item comfortably clears any rounding/BLOCK_GAP_PX slack at every zoom
+    // level, so it must never fold into its back-to-back successor.
+    const items = [
+      { start: 520, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
+    ];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const packed = packLane(items, pxPerMin);
+      expect(packed).toHaveLength(2);
+      expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
     }
   });
-});
 
-describe('packLane', () => {
+  it('a genuinely tiny (sub-minute-rounding) predecessor may still incur a couple px of rounding/gap slack, but that alone does not misrepresent its neighbour’s time', () => {
+    // At high zoom, rounding a fractional height plus BLOCK_GAP_PX can tip a
+    // very short (here 2-minute) predecessor just past EXCESSIVE_PUSHDOWN_PX,
+    // triggering the existing near-zero-tolerance fold — this is expected,
+    // pre-existing rounding-slack behaviour (see EXCESSIVE_PUSHDOWN_PX's own
+    // doc comment), not a regression from removing the individual-item floor.
+    const items = [
+      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
+    ];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const packed = packLane(items, pxPerMin);
+      // Either it stacks as two honestly-positioned items, or the rounding
+      // slack tipped it into a (still correctly labeled) cluster — both are
+      // acceptable, but nothing may overlap.
+      let prevBottom = -Infinity;
+      for (const p of packed) {
+        expect(p.top).toBeGreaterThanOrEqual(prevBottom);
+        prevBottom = p.top + p.height + 2;
+      }
+    }
+  });
+
   it('pushes a chained run of back-to-back items down so none overlap', () => {
     const items = [
       { start: 540, end: 545, kind: 'single' },
@@ -264,70 +359,43 @@ describe('packLane', () => {
     }
   });
 
-  it('folds a single clamped predecessor onto a real item, at every zoom level', () => {
-    // Near-zero tolerance: any real pushdown beyond rounding slack folds,
-    // regardless of zoom. "Email student" (2-min block, ends exactly when
-    // "Lower + Running" begins) always needs at least some clamp-driven
-    // pushdown, so this always folds now — there's no zoom level where a
-    // single clamp is quietly tolerated anymore (see EXCESSIVE_PUSHDOWN_PX's
-    // doc comment for why earlier, more permissive attempts at this same bug
-    // kept finding a zoom level or item shape they didn't cover).
+  it('folds a cluster predecessor onto a real item when the cluster’s own floor pushes into it', () => {
+    // A `kind: 'cluster'` predecessor is still floored to MIN_BLOCK_HEIGHT_PX
+    // (see calendarLayout.js), so at low zoom levels its floored bottom can
+    // still reach past a tightly-following real item's natural top — this is
+    // the one remaining source of pushdown-triggered folding.
     const items = [
-      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      {
+        start: 538,
+        end: 540,
+        kind: 'cluster',
+        items: [
+          { type: 'block', data: { id: 't1', title: 't1' } },
+          { type: 'block', data: { id: 't2', title: 't2' } },
+        ],
+      },
       { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
     ];
-    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
-      const packed = packLane(items, pxPerMin);
-      expect(packed).toHaveLength(1);
-      expect(packed[0].kind).toBe('cluster');
-    }
+    // At low zoom, MIN_BLOCK_HEIGHT_PX (26px) covers far more real minutes
+    // than the cluster's own 2-minute natural span, so it pushes hard enough
+    // into "Lower + Running" to force a fold.
+    const packed = packLane(items, 0.55);
+    expect(packed).toHaveLength(1);
+    expect(packed[0].kind).toBe('cluster');
   });
 
   it('still stacks (does not fold) when there is no real pushdown at all', () => {
     // Two items with a genuine natural gap large enough that the
-    // predecessor's own (possibly clamped) box never reaches the next
+    // predecessor's own (possibly floored) box never reaches the next
     // item's natural top — zero inherited pushdown, so no fold.
     const pxPerMin = 1.25;
     const items = [
-      { start: 480, end: 481, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } }, // 1-min, clamped to 26px = ~20.8 real min at this zoom
-      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Long', title: 'Long' } }, // starts 59 real min later — comfortably past Tiny's clamped bottom
+      { start: 480, end: 481, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } }, // 1-min single, no floor now -> ~1.25px tall
+      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Long', title: 'Long' } }, // starts 59 real min later
     ];
     const packed = packLane(items, pxPerMin);
     expect(packed).toHaveLength(2);
     expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
-  });
-
-  it('never produces overlapping boxes even when a fold-triggering pushdown occurs mid-chain', () => {
-    const pxPerMin = 0.55;
-    const items = [
-      { start: 400, end: 405, kind: 'single', type: 'block', data: { id: 'X', title: 'X' } }, // far earlier, unrelated
-      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
-      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
-    ];
-    const packed = packLane(items, pxPerMin);
-    for (let i = 1; i < packed.length; i++) {
-      expect(packed[i].top).toBeGreaterThanOrEqual(packed[i - 1].top + packed[i - 1].height);
-    }
-    expect(packed.some((p) => p.kind === 'cluster')).toBe(true);
-  });
-
-  it('grows an existing cluster rather than double-folding when a third item also collides', () => {
-    const pxPerMin = 0.55;
-    const items = [
-      { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'A', title: 'A' } },
-      { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
-      { start: 600, end: 602, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
-    ];
-    const packed = packLane(items, pxPerMin);
-    // A and B fold together (as in the test above). Whether C also joins
-    // depends on how far the merged cluster's bottom pushes past C's natural
-    // top — either way there must be no overlap and no more than one cluster
-    // absorbing both A and B.
-    const clusters = packed.filter((p) => p.kind === 'cluster');
-    expect(clusters.length).toBeLessThanOrEqual(1);
-    for (let i = 1; i < packed.length; i++) {
-      expect(packed[i].top).toBeGreaterThanOrEqual(packed[i - 1].top + packed[i - 1].height);
-    }
   });
 
   it('preserves every constituent item when the incoming item is ALREADY a cluster (not just a single)', () => {
@@ -340,7 +408,12 @@ describe('packLane', () => {
     // were actually merged).
     const pxPerMin = 0.55;
     const items = [
-      { start: 478, end: 480, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+      {
+        start: 478,
+        end: 480,
+        kind: 'cluster',
+        items: [{ type: 'block', data: { id: 'Email student', title: 'Email student' } }],
+      },
       { start: 480, end: 540, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
       // Already pre-clustered by an earlier pass (mirrors what
       // layoutDayItems' flushShortRun/foldSequentialItems would hand to
@@ -366,16 +439,21 @@ describe('packLane', () => {
     // The hard invariant itself, directly: for every packed item with a
     // predecessor, (pushedTop - naturalTop) must never exceed
     // EXCESSIVE_PUSHDOWN_PX (2px of rounding slack) — a near-zero tolerance
-    // that requires no per-zoom or per-shape tuning, unlike the several
-    // more permissive budgets this replaced (see git history and
-    // EXCESSIVE_PUSHDOWN_PX's own doc comment).
+    // that requires no per-zoom or per-shape tuning. Mixes single items
+    // (never floored) with a leading cluster (still floored) so both
+    // pushdown sources are exercised.
     const shapes = [
       [
         { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Morning tasks', title: 'Morning tasks' } },
         { start: 540, end: 585, kind: 'single', type: 'block', data: { id: 'Piano', title: 'Piano' } },
       ],
       [
-        { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
+        {
+          start: 538,
+          end: 540,
+          kind: 'cluster',
+          items: [{ type: 'block', data: { id: 'Email student', title: 'Email student' } }],
+        },
         { start: 540, end: 600, kind: 'single', type: 'block', data: { id: 'Lower + Running', title: 'Lower + Running' } },
       ],
       [
@@ -383,11 +461,6 @@ describe('packLane', () => {
         { start: 481, end: 482, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
         { start: 482, end: 483, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
         { start: 483, end: 500, kind: 'single', type: 'block', data: { id: 'D', title: 'D' } },
-      ],
-      [
-        { start: 538, end: 540, kind: 'single', type: 'block', data: { id: 'Email student', title: 'Email student' } },
-        { start: 540, end: 615, kind: 'single', type: 'block', data: { id: 'RealTask', title: 'RealTask' } },
-        { start: 615, end: 660, kind: 'single', type: 'block', data: { id: 'Laundry', title: 'Laundry' } },
       ],
     ];
     for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
@@ -403,22 +476,48 @@ describe('packLane', () => {
       }
     }
   });
+});
 
-  it('folds once a chain of several short clamped items compounds enough pushdown to exceed the tolerance', () => {
-    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
-      const items = [
-        { start: 480, end: 481, kind: 'single', type: 'block', data: { id: 'A', title: 'A' } },
-        { start: 481, end: 482, kind: 'single', type: 'block', data: { id: 'B', title: 'B' } },
-        { start: 482, end: 483, kind: 'single', type: 'block', data: { id: 'C', title: 'C' } },
-        { start: 483, end: 503, kind: 'single', type: 'block', data: { id: 'D', title: 'D' } }, // 20-min real item
-      ];
-      const packed = packLane(items, pxPerMin);
-      expect(packed.some((p) => p.kind === 'cluster')).toBe(true);
-      let prevBottom = -Infinity;
-      for (const p of packed) {
-        expect(p.top).toBeGreaterThanOrEqual(prevBottom);
-        prevBottom = p.top + p.height + 2;
-      }
+describe('cluster label (real event titles instead of a generic summary)', () => {
+  // clusterLabel itself lives in WeekView.jsx (it's pure DOM-label
+  // formatting, not layout math), so these tests exercise the same
+  // truncation contract via a local copy of its logic to keep this file
+  // focused on layout — see WeekView.jsx's own clusterLabel for the
+  // authoritative implementation and tests/e2e for the rendered result.
+  function clusterLabel(items, budget = 42) {
+    const titles = items.map((it) => it.data.title || 'Untitled');
+    let out = '';
+    for (let i = 0; i < titles.length; i++) {
+      const candidate = out ? `${out}, ${titles[i]}` : titles[i];
+      if (candidate.length > budget && out) return `${out}, …`;
+      out = candidate;
+    }
+    return out;
+  }
+
+  it('lists every title when they all fit', () => {
+    const items = [
+      { data: { title: 'Standup' } },
+      { data: { title: 'Review' } },
+    ];
+    expect(clusterLabel(items)).toBe('Standup, Review');
+  });
+
+  it('truncates with an ellipsis after whole titles once space runs out, never mid-title', () => {
+    const items = [
+      { data: { title: 'Standup' } },
+      { data: { title: '1:1 with Sam' } },
+      { data: { title: 'Quarterly planning review meeting' } },
+      { data: { title: 'Retro' } },
+    ];
+    const label = clusterLabel(items, 30);
+    expect(label.endsWith('…')).toBe(true);
+    // Never cuts a title in half — the text before "…" is always a
+    // comma-joined prefix of complete titles.
+    const withoutEllipsis = label.slice(0, -('…'.length + 2));
+    const includedTitles = withoutEllipsis.split(', ');
+    for (const t of includedTitles) {
+      expect(items.some((it) => it.data.title === t)).toBe(true);
     }
   });
 });

@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '4.9.0',
+    date: '2026-08-14',
+    title: 'Overlapping calendar events now get their own columns',
+    changes: [
+      "Week/Day view used to merge overlapping or short events into one combined \"N tasks/events\" chip. Every event now gets its own side-by-side column sized to its true duration, matching Google Calendar's layout — short events render as genuinely thin boxes instead of being puffed up to a fake minimum height.",
+      "Grouping into a single chip still happens, but only once there's truly not enough room to show events individually — and that chip's label now lists the actual event/task titles it contains (e.g. \"Standup, Review, …\") instead of a generic \"3 events\" summary.",
+    ],
+  },
+  {
     version: '4.8.2',
     date: '2026-08-14',
     title: 'Auto-scheduled tasks now sync to Google Calendar',
