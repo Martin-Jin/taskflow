@@ -25,6 +25,10 @@
  *     drop the whole snapshot, and whether to stamp lastPushedFingerprintRef).
  *   - `computePushStampPlan(currentState, lastPushedFingerprint)` —
  *     schedulePush's optimistic-stamp/rollback fingerprint sequencing.
+ *   - `computePushSingleFlightDecision(pushInFlight)` — runPushNow's guard
+ *     against two full-document setDocs being on the wire at once, which is
+ *     what used to flood Firestore's write stream ("Write stream exhausted
+ *     maximum allowed queued writes") during a burst of commits.
  *   - `hasNewCompletion(prevTasks, nextTasks)` — whether an edit just marked a
  *     task completed, which schedulePush uses to bypass the push debounce so
  *     the notify-worker can't read a stale incomplete task and email an
@@ -56,6 +60,7 @@ import {
   planRemoteDataMerge,
   didTaskMergeChangeAnything,
   computePushStampPlan,
+  computePushSingleFlightDecision,
   planAutoBackupPrune,
   shouldRestoreEventsFromBackup,
   hasNewCompletion,
@@ -803,6 +808,44 @@ describe('computePushStampPlan', () => {
     const optimisticallyStampedFingerprint = computeFingerprint(state);
     const plan = computePushStampPlan(state, optimisticallyStampedFingerprint);
     expect(plan.shouldPush).toBe(false); // demonstrates why persisting pre-await would have been wrong
+  });
+});
+
+describe('computePushSingleFlightDecision', () => {
+  // Guards against the "Write stream exhausted maximum allowed queued writes"
+  // Firestore error. runPushNow used to have no in-flight check at all, so a
+  // burst of commits close together (restore -> rebalance -> calendar
+  // rewrite, each committing separately, plus the tab-close flush path
+  // calling runPushNow directly) could put many concurrent full-document
+  // setDocs on the wire at once and exhaust the write stream.
+
+  it('lets a push proceed when nothing is currently in flight', () => {
+    expect(computePushSingleFlightDecision(false)).toEqual({ proceed: true, queue: false });
+  });
+
+  it('blocks a second concurrent push while one is already in flight', () => {
+    expect(computePushSingleFlightDecision(true).proceed).toBe(false);
+  });
+
+  it('QUEUES rather than drops the blocked push, so the newest state still reaches Firestore', () => {
+    // The critical property: skipping must never mean losing. The queued flag
+    // is what makes the in-flight push re-run once when it settles.
+    expect(computePushSingleFlightDecision(true).queue).toBe(true);
+  });
+
+  it('does not queue a redundant follow-up when the push proceeded normally', () => {
+    expect(computePushSingleFlightDecision(false).queue).toBe(false);
+  });
+
+  it('coalesces many blocked callers into a single queued follow-up, not one per caller', () => {
+    // N concurrent callers collapse to at most 2 sequential writes (the one
+    // in flight + one follow-up), rather than N parallel ones. Since the flag
+    // is a boolean, setting it repeatedly is idempotent — and because
+    // runPushNow re-reads state fresh on entry, that one follow-up covers
+    // every skipped caller's changes.
+    const decisions = [true, true, true, true, true].map(computePushSingleFlightDecision);
+    expect(decisions.every((d) => d.proceed === false)).toBe(true);
+    expect(decisions.every((d) => d.queue === true)).toBe(true);
   });
 });
 

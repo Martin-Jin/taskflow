@@ -21,7 +21,6 @@ import {
   fetchEvents as fetchGoogleEvents,
   pushBlockToCalendar,
   pushEventToCalendar,
-  deleteCalendarEvent,
   pushEventInstanceUpdate,
   deleteCalendarEventInstance,
   initGoogleCalendar,
@@ -30,6 +29,12 @@ import {
   shouldTreatAsReconnectNeeded,
   computeCalendarRewritePlan,
   isRateLimitError,
+  chunkForBatch,
+  batchDeleteCalendarEvents,
+  batchInsertCalendarEvents,
+  buildBlockEventResource,
+  buildCalendarEventResource,
+  isBlockSourcedEvent,
 } from '../services/googleCalendarService';
 import {
   mergePulledGoogleEvents,
@@ -37,7 +42,6 @@ import {
   expandSyncedBounds,
   computeOnDemandFetchRange,
   computeEffectivePurgeBoundary,
-  findDuplicateGoogleSourcedEvents,
   RECENTLY_DELETED_TTL_MS,
 } from '../services/eventSyncService';
 
@@ -129,30 +133,37 @@ const STALE_SYNC_WARNING_THRESHOLD_MS = 15 * 60 * 1000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---- "Rewrite Google Calendar to match TaskFlow" pacing/retry -------------
-// No existing call site in this file bursts more than a handful of API calls
-// in quick succession (pushUnsyncedBlocksToCalendar above is the closest
-// precedent, and even that is usually 1-2 blocks per poll tick) — a rewrite
-// can plausibly delete+upsert dozens of events in one action, which is new
-// territory for hitting Google's per-user rate limit. A small fixed delay
-// between calls keeps a normal-sized rewrite well under that limit without
-// meaningfully slowing down the common case (a handful of events).
-const REWRITE_CALL_PACING_MS = 150;
-// Backoff before retrying a single call that got a 429 — longer than the
-// pacing delay above since a 429 means the limit was already hit, not just
-// approached. One retry is enough for the burst this feature itself causes
-// to settle; a second consecutive 429 on the same item is treated as a real
+// A rewrite is by far the heaviest burst of Google API traffic this app ever
+// produces — a delete-all rewrite (see planCalendarRewrite in
+// googleCalendarService.js) issues one delete per event on the primary
+// calendar plus one insert per authoritative local item, easily several
+// hundred operations. Those operations are bundled into batches of up to
+// MAX_BATCH_SIZE (50) sub-requests per HTTP call, so this delay is paid once
+// per BATCH rather than once per event — the same guard against bursting past
+// Google's per-user rate limit, at ~50x fewer round-trips. Slightly longer
+// than the old per-call value since each batch is itself ~50 operations
+// arriving at once.
+const REWRITE_BATCH_PACING_MS = 300;
+// Backoff before retrying a batch that got a 429 — longer than the pacing
+// delay above since a 429 means the limit was already hit, not just
+// approached. One retry is enough for the burst this feature itself causes to
+// settle; a second consecutive 429 on the same batch is treated as a real
 // failure rather than retried again indefinitely.
 const REWRITE_RATE_LIMIT_BACKOFF_MS = 2000;
 
 /**
- * Runs `callFn` (a single Google Calendar API call, e.g. a delete or a push)
- * with one retry specifically for a 429 (rate limit) response — everything
- * else in this codebase treats a failed API call as a hard per-item failure
- * (see pushUnsyncedBlocksToCalendar), which is fine for a single occasional
- * call but too eager to give up for a rewrite's batch, where a 429 midway
- * through is an expected/recoverable condition, not a real error. Rethrows
- * after the retry also 429s (or on any non-429 error, immediately) — the
- * caller's own try/catch is what accumulates that into `failed`.
+ * Runs `callFn` (one batched Google Calendar API call) with a single retry
+ * specifically for a 429 (rate limit) response — everything else in this
+ * codebase treats a failed API call as a hard per-item failure (see
+ * pushUnsyncedItemsToCalendar), which is fine for a single occasional call
+ * but too eager to give up for a rewrite, where a 429 midway through is an
+ * expected/recoverable condition, not a real error.
+ *
+ * This covers a 429 (or network failure) against the BATCH endpoint itself,
+ * which rejects the whole call. A 429 on an individual SUB-request inside an
+ * otherwise-successful batch doesn't reject at all — it comes back as that
+ * sub-response's own status, and is retried separately by
+ * runBatchesWithRetry's failed-sub-request follow-up pass below.
  */
 async function withRateLimitRetry(callFn) {
   try {
@@ -162,6 +173,146 @@ async function withRateLimitRetry(callFn) {
     await sleep(REWRITE_RATE_LIMIT_BACKOFF_MS);
     return callFn(); // let a second failure (429 or otherwise) propagate to the caller
   }
+}
+
+/**
+ * True if a local CalendarEvent still needs pushing to Google — i.e. it has
+ * no googleEventId yet AND it's one this app is allowed to create there.
+ *
+ * Excluded deliberately:
+ *   - anything sourced from a calendar the user doesn't own (`source:
+ *     'google'` with a non-primary calendarId): pushing a copy of a
+ *     subscribed/shared event onto the user's own primary calendar would
+ *     duplicate someone else's event. Same rule the rewrite's authoritative
+ *     set applies.
+ *   - block-mirror rows (see isBlockSourcedEvent): the ScheduledBlock is what
+ *     gets pushed for those; pushing the mirror too would create a duplicate.
+ *   - anything without a date/start/end, which can't build a valid resource.
+ *
+ * Pure and exported so the "which events are still unsynced" decision — the
+ * gap that let a failed one-shot push strand an event forever — is unit
+ * testable without driving the hook.
+ */
+export function isUnsyncedPushableEvent(event) {
+  if (!event || event.googleEventId) return false;
+  if (event.source === 'google' && event.calendarId !== 'primary') return false;
+  if (isBlockSourcedEvent(event)) return false;
+  return !!(event.date && event.startTime && event.endTime);
+}
+
+/**
+ * Collapses authoritative rewrite items that would create INDISTINGUISHABLE
+ * Google events — same kind, title, date, start/end time and recurrence rule.
+ * The first occurrence of each signature wins; the rest are dropped.
+ *
+ * This is a defence-in-depth backstop for the rewrite's push phase, not the
+ * primary fix. The real duplicate source was structural (every block's own
+ * Google mirror event being pushed alongside the block — see
+ * isBlockSourcedEvent and the mirror filter in
+ * rewriteGoogleCalendarFromTaskflow), and that's handled upstream. But the
+ * push phase is the one place in the app that can mint permanent duplicates
+ * on a user's real calendar, and a duplicate that reaches Google survives
+ * every subsequent sync; so it's worth one cheap O(n) pass to guarantee no
+ * single rewrite run can ever insert the same event twice, whatever new way
+ * local state finds to disagree with itself.
+ *
+ * Returns `{ items, duplicates }` so the caller can log the duplicates —
+ * anything caught here means local state genuinely holds redundant rows,
+ * which is a bug worth surfacing rather than silently absorbing.
+ *
+ * Keyed on the user-visible identity of the resulting event rather than on
+ * local ids: two rows with different ids that would render as the same event
+ * at the same time ARE the duplicate case this exists to catch.
+ */
+export function dedupeAuthoritativeItems(items) {
+  const signatureOf = (item) => {
+    if (item.kind === 'block') {
+      const { block, task } = item;
+      return ['block', task?.title || '', block.date, block.startTime, block.endTime].join('|');
+    }
+    const { event } = item;
+    return ['event', event.title || '', event.date, event.startTime, event.endTime, event.recurrenceRule || ''].join('|');
+  };
+
+  const seen = new Set();
+  const kept = [];
+  const duplicates = [];
+  for (const item of items) {
+    const signature = signatureOf(item);
+    if (seen.has(signature)) {
+      duplicates.push(item);
+      continue;
+    }
+    seen.add(signature);
+    kept.push(item);
+  }
+  return { items: kept, duplicates };
+}
+
+/**
+ * Drives a list of items through batched API calls, with per-item result
+ * tracking and a retry pass for individually-rate-limited sub-requests.
+ *
+ * @param {Array} items - the units of work (event ids to delete, or insert
+ *   descriptors), chunked internally into MAX_BATCH_SIZE-sized batches.
+ * @param {Function} runBatch - `(chunk) => Promise<Map<key, {ok, status, error, ...}>>`
+ *   — one batched API call (batchDeleteCalendarEvents / batchInsertCalendarEvents).
+ * @param {Function} keyOf - `(item) => key` matching how `runBatch` keys its
+ *   returned map, so a failed sub-request can be mapped back to its item.
+ * @param {Function} onBatchDone - called with the number of items just
+ *   finished, for progress reporting (advances a batch at a time — a batched
+ *   call gives no per-item timing to report within it).
+ * @returns {Promise<Map<key, {ok, status, error, ...}>>} merged results for
+ *   every item, whether it succeeded, failed, or failed its whole batch.
+ */
+async function runBatchesWithRetry(items, runBatch, keyOf, onBatchDone) {
+  const results = new Map();
+  const chunks = chunkForBatch(items);
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    const chunk = chunks[i];
+    try {
+      const chunkResults = await withRateLimitRetry(() => runBatch(chunk));
+      for (const [key, res] of chunkResults) results.set(key, res);
+
+      // Individually rate-limited sub-requests: the batch as a whole
+      // succeeded, but some entries inside it came back 429. Retry exactly
+      // those in one smaller follow-up batch rather than re-running the whole
+      // original (which would re-issue the already-succeeded ones — for
+      // deletes that's merely wasteful, but for INSERTS it would create
+      // duplicate events, which is the precise bug this feature exists to fix).
+      const rateLimited = chunk.filter((item) => {
+        const res = results.get(keyOf(item));
+        return res && !res.ok && res.status === 429;
+      });
+      if (rateLimited.length > 0) {
+        await sleep(REWRITE_RATE_LIMIT_BACKOFF_MS);
+        try {
+          const retryResults = await runBatch(rateLimited);
+          for (const [key, res] of retryResults) results.set(key, res);
+        } catch (retryErr) {
+          // Leave the original 429 results in place — they're already
+          // recorded as failures, which is the correct outcome here.
+          console.warn('[useGoogleCalendarSync] Rewrite: rate-limit retry batch failed', retryErr);
+        }
+      }
+    } catch (err) {
+      // The whole batch call failed (network/auth, or a 429 that survived the
+      // retry above) — mark every item in it as failed so the per-item
+      // success/failure totals stay accurate rather than silently dropping
+      // this chunk.
+      console.warn('[useGoogleCalendarSync] Rewrite: batch call failed', err);
+      const message = err?.message || String(err);
+      for (const item of chunk) {
+        results.set(keyOf(item), { ok: false, status: err?.status ?? 0, error: message, googleEventId: null });
+      }
+    }
+    onBatchDone(chunk.length);
+    // Pace BETWEEN batches only (never within one) — see REWRITE_BATCH_PACING_MS.
+    if (i < chunks.length - 1) await sleep(REWRITE_BATCH_PACING_MS);
+  }
+
+  return results;
 }
 
 /**
@@ -275,17 +426,27 @@ export function useGoogleCalendarSync({
   // read it.
   const pollPausedRef = useRef(false);
 
+  // Latest `events` prop, mirrored into a ref for the same reason
+  // stateRef exists for tasks/blocks: the periodic-poll effect only re-runs
+  // on `googleConnected`, so its interval closure would otherwise keep
+  // reading whatever `events` array existed at that render and sweep a stale
+  // list forever (see pushUnsyncedItemsToCalendar's event pass). Assigned in
+  // render rather than an effect so it's already current for any call made
+  // during this same commit.
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
   // Populated below (near "Push blocks to Google Calendar") with a function
-  // that pushes every block lacking a googleEventId — kept in a ref, same
-  // reasoning as pollGoogleEventsRef, so the periodic-poll effect (which only
-  // depends on googleConnected) can call the latest version without needing
-  // to be redefined whenever stateRef's contents change. Safe to call
+  // that pushes every block AND event lacking a googleEventId — kept in a
+  // ref, same reasoning as pollGoogleEventsRef, so the periodic-poll effect
+  // (which only depends on googleConnected) can call the latest version
+  // without needing to be redefined whenever state changes. Safe to call
   // automatically because SchedulerContext's runRebalance now carries a
   // block's googleEventId forward across rebalance runs whenever its id is
   // unchanged (see that function's own comment) — without that, every
   // rebalance would make already-synced blocks look brand new and this would
   // create a duplicate Google Calendar event on every poll tick.
-  const pushUnsyncedBlocksRef = useRef(async () => 0);
+  const pushUnsyncedItemsRef = useRef(async () => ({ blocks: 0, events: 0 }));
 
   // googleEventId -> timestamp this app instance issued a delete for it.
   // Consulted (and pruned of expired entries) by every mergePulledGoogleEvents
@@ -606,19 +767,22 @@ export function useGoogleCalendarSync({
             const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
             applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
             markGoogleSyncSucceeded();
-            // Also push any block scheduled since the last tick that has no
-            // googleEventId yet — the only other push sites are the manual
-            // "Push to Google Calendar" button and addManualEvent's own
-            // immediate push for directly-created calendar events (see
-            // pushUnsyncedBlocksToCalendar's doc comment). Without this, a
-            // task auto-scheduled by Re-balance (including one created via AI
-            // quick-add) or manually scheduled via scheduleTaskAt would never
-            // reach Google Calendar until the user opened Settings and
-            // clicked that button. Failures here are non-fatal to the poll
-            // itself — the next tick will just retry the same unsynced
-            // blocks, so they're logged rather than flagged stale/disconnected.
+            // Also push anything unsynced since the last tick — blocks
+            // scheduled with no googleEventId yet, AND events whose one-shot
+            // push at create/edit time failed (see
+            // pushUnsyncedItemsToCalendar's doc comment; the other push sites
+            // are the manual "Push to Google Calendar" button and
+            // addManualEvent/updateEvent's own immediate pushes, none of
+            // which retry). Without this, a task auto-scheduled by Re-balance
+            // (including one created via AI quick-add) or manually scheduled
+            // via scheduleTaskAt would never reach Google Calendar until the
+            // user opened Settings and clicked that button — and an event
+            // whose push failed would never reach it at all. Failures here
+            // are non-fatal to the poll itself — the next tick just retries
+            // whatever is still unsynced, so they're logged rather than
+            // flagged stale/disconnected.
             try {
-              await pushUnsyncedBlocksRef.current();
+              await pushUnsyncedItemsRef.current();
             } catch (pushErr) {
               console.warn('[useGoogleCalendarSync] Auto-push of unsynced blocks failed; will retry next poll.', pushErr);
             }
@@ -929,13 +1093,13 @@ export function useGoogleCalendarSync({
     [googleConnected, applyPulledEvents, setGoogleConnected, setNotification, markGoogleSyncSucceeded]
   );
 
-  // ---- Push blocks to Google Calendar --------------------------------------
+  // ---- Push blocks and events to Google Calendar ---------------------------
   // Pushes every block that doesn't yet have a googleEventId, i.e. every
   // block scheduled since the last push, regardless of how it was created
   // (manual scheduleTaskAt, a Re-balance placing a newly-added task, or an AI
   // quick-add task that got auto-scheduled) — none of those creation sites
   // push individually, unlike addManualEvent's immediate push for a directly-
-  // created calendar event. Mirrored into pushUnsyncedBlocksRef so the
+  // created calendar event. Mirrored into pushUnsyncedItemsRef so the
   // periodic poll below can call the latest version silently on every
   // successful tick (see that effect), in addition to this being the
   // manual "Push to Google Calendar" button's own action. Reads live
@@ -947,81 +1111,146 @@ export function useGoogleCalendarSync({
   // unchanged — otherwise every block a rebalance merely re-confirmed in
   // place (not a genuinely new placement) would look unsynced here and get
   // pushed again as a duplicate Google Calendar event on every poll tick.
-  const pushUnsyncedBlocksToCalendar = useCallback(async () => {
+  //
+  // It also sweeps unsynced EVENTS, not just blocks. Events used to have no
+  // retry path at all: addManualEvent/updateEvent (SchedulerContext.jsx) each
+  // fire a single best-effort push at create/edit time and only log or toast
+  // on failure. If that one push failed — offline, not connected yet, tab
+  // closed before the fire-and-forget promise resolved — the event was left
+  // with googleEventId: null and nothing ever looked at it again, so it never
+  // reached Google no matter how many times the app synced afterward. Blocks
+  // were swept on every poll tick; events simply weren't. Sweeping both here
+  // makes the retry behavior symmetric, and is why this returns per-kind
+  // counts rather than a single number.
+  const pushUnsyncedItemsToCalendar = useCallback(async () => {
     const latestTasks = stateRef.current.tasks;
     const latestBlocks = stateRef.current.blocks;
-    const toPush = latestBlocks.filter((b) => !b.googleEventId);
-    if (toPush.length === 0) return 0;
+
     const pushedEventIdsByBlockId = new Map();
-    for (const block of toPush) {
+    for (const block of latestBlocks.filter((b) => !b.googleEventId)) {
       const task = latestTasks.find((t) => t.id === block.taskId);
       if (!task) continue;
-      const eventId = await pushBlockToCalendar(block, task);
-      if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
+      // Per-item try/catch so one failure doesn't abort the rest of the sweep
+      // — the next tick retries whatever is still unsynced.
+      try {
+        const eventId = await pushBlockToCalendar(block, task);
+        if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
+      } catch (err) {
+        console.warn('[useGoogleCalendarSync] Failed to push block to Google Calendar; will retry next sync.', block.id, err);
+      }
     }
-    if (pushedEventIdsByBlockId.size === 0) return 0;
-    const updated = stateRef.current.blocks.map((b) =>
-      pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
-    );
-    commit({ tasks: stateRef.current.tasks, blocks: updated }, `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar`);
-    return pushedEventIdsByBlockId.size;
-  }, [stateRef, commit]);
-  pushUnsyncedBlocksRef.current = pushUnsyncedBlocksToCalendar;
+    if (pushedEventIdsByBlockId.size > 0) {
+      const updated = stateRef.current.blocks.map((b) =>
+        pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
+      );
+      commit({ tasks: stateRef.current.tasks, blocks: updated }, `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar`);
+    }
+
+    // Events eligible to push: never one sourced from a subscribed/foreign
+    // calendar (pushing that would create a duplicate copy of someone else's
+    // event on the user's own primary calendar — the same rule the rewrite's
+    // authoritative set uses), and never a block-mirror row (the block itself
+    // is what gets pushed — see isBlockSourcedEvent).
+    const toPushEvents = (eventsRef.current || []).filter(isUnsyncedPushableEvent);
+    const pushedByEventId = new Map();
+    for (const event of toPushEvents) {
+      try {
+        const result = await pushEventToCalendar(event);
+        if (result?.id) pushedByEventId.set(event.id, result);
+      } catch (err) {
+        console.warn('[useGoogleCalendarSync] Failed to push event to Google Calendar; will retry next sync.', event.id, err);
+      }
+    }
+    if (pushedByEventId.size > 0) {
+      // Same fields addManualEvent/updateEvent stamp on their own successful
+      // push, including flipping source to 'google' — a row left at 'manual'
+      // after it exists on Google is permanently exempt from pull-driven
+      // updates and deletion detection (see addManualEvent's own comment).
+      setEvents((prev) =>
+        prev.map((e) => {
+          const result = pushedByEventId.get(e.id);
+          return result ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e;
+        })
+      );
+    }
+
+    return { blocks: pushedEventIdsByBlockId.size, events: pushedByEventId.size };
+  }, [stateRef, commit, setEvents]);
+  pushUnsyncedItemsRef.current = pushUnsyncedItemsToCalendar;
 
   const pushToGoogleCalendar = useCallback(async () => {
     setIsPullingGoogleEvents(true);
     try {
-      const pushedCount = await pushUnsyncedBlocksToCalendar();
-      setNotification({ type: 'success', message: `Pushed ${pushedCount} block(s) to Google Calendar.` });
+      const { blocks: pushedBlocks, events: pushedEvents } = await pushUnsyncedItemsToCalendar();
+      // Name only what was actually pushed, so the message never claims
+      // "block(s)" for a run that only pushed events (or vice versa).
+      const parts = [];
+      if (pushedBlocks > 0) parts.push(`${pushedBlocks} block(s)`);
+      if (pushedEvents > 0) parts.push(`${pushedEvents} event(s)`);
+      setNotification({
+        type: 'success',
+        message: parts.length > 0 ? `Pushed ${parts.join(' and ')} to Google Calendar.` : 'Everything is already synced to Google Calendar.',
+      });
     } catch (err) {
       console.error(err);
       setNotification({ type: 'error', message: `Push to Google Calendar failed: ${err.message || err}` });
     } finally {
       setIsPullingGoogleEvents(false);
     }
-  }, [pushUnsyncedBlocksToCalendar, setNotification]);
+  }, [pushUnsyncedItemsToCalendar, setNotification]);
 
   const [isRewritingCalendar, setIsRewritingCalendar] = useState(false);
-  // { done, total } | null — live progress through the rewrite's delete+push
-  // batch, surfaced by SettingsPanel's button so a long-running rewrite (a
-  // large batch of leftover duplicate events each needs its own paced API
-  // call, see REWRITE_CALL_PACING_MS below — this can genuinely take minutes
-  // for hundreds of events) never looks indistinguishable from a hang. Reset
-  // to null once the rewrite finishes (success or failure) or hasn't started.
+  // { done, total } | null — live progress through the rewrite's delete+insert
+  // work, surfaced by CalendarRewriteOverlay/SettingsPanel so a long-running
+  // rewrite never looks indistinguishable from a hang. Both numbers count
+  // individual EVENTS (the unit a user actually recognizes), but `done`
+  // advances one BATCH at a time (up to MAX_BATCH_SIZE events per step) since
+  // a batched call returns all its results at once with no per-item timing —
+  // so the bar moves in visible jumps rather than smoothly. Reset to null once
+  // the rewrite finishes (success or failure) or hasn't started.
   const [rewriteProgress, setRewriteProgress] = useState(null);
 
   // ---- "Rewrite Google Calendar to match TaskFlow" (explicit, opt-in) ------
   // The reverse of the app's normal sync direction: instead of Google always
   // winning (eventSyncService.js's documented policy for the routine pull),
   // this makes TaskFlow's OWN current tasks/blocks/events authoritative and
-  // overwrites Google's primary calendar to match — deleting/overwriting
-  // conflicting real events there. Never runs automatically; only from an
-  // explicit Settings button or an explicit post-restore follow-up offer
-  // (see SchedulerContext.jsx/SettingsPanel.jsx), and always behind a strong
-  // confirmation the caller shows before invoking this.
+  // overwrites Google's primary calendar to match. Never runs automatically;
+  // only from an explicit Settings button or the combined restore-and-
+  // overwrite action (see SchedulerContext.jsx/SettingsPanel.jsx), and always
+  // behind a strong confirmation the caller shows before invoking this.
+  //
+  // DELETE-ALL, THEN INSERT-ALL. Phase 1 deletes every event in range on the
+  // primary calendar unconditionally; phase 2 re-inserts every authoritative
+  // local item fresh. It does NOT diff local state against Google's and spare
+  // the matches — that older design is precisely what let duplicates survive
+  // (see planCalendarRewrite's own doc comment in googleCalendarService.js
+  // for the full reasoning). Consequences, both accepted deliberately: an
+  // event created directly in Google Calendar on the primary calendar is
+  // wiped too, and every surviving event is recreated with a NEW id.
   //
   // SAFETY BOUNDARY (see googleCalendarService.js's own module doc on
   // planCalendarRewrite for the full reasoning): scoped to the PRIMARY
   // calendar only, and only to the date range the authoritative items
   // actually span — computeCalendarRewritePlan does the primary-calendar
   // filtering, so nothing here ever sees (and therefore can never touch) a
-  // subscribed/shared/foreign calendar's events.
+  // subscribed/shared/foreign calendar's events. That filter now carries the
+  // whole boundary on its own, since no per-event protection remains.
   //
   // Reads live tasks/blocks/events off stateRef (same reasoning as
-  // pushUnsyncedBlocksToCalendar above) so this always reconciles against
+  // pushUnsyncedItemsToCalendar above) so this always reconciles against
   // the CURRENT local state at the moment it's clicked — including a backup
   // that was just restored, since applyBackupPayload commits synchronously
   // before the post-restore follow-up prompt can be clicked.
   //
-  // Each delete/upsert is its own try/catch (accumulated into
-  // succeeded/failed) so one failure doesn't abort the rest of a batch that
-  // can plausibly be dozens of events — unlike every other push/delete call
-  // site in this file, which is only ever asked to do one or a handful of
-  // items at a time. See withRateLimitRetry/REWRITE_CALL_PACING_MS above for
-  // the batching precautions this needed that nothing else here does yet.
-  const rewriteGoogleCalendarFromTaskflow = useCallback(async () => {
+  // Both phases go through Google's BATCH endpoint (up to MAX_BATCH_SIZE
+  // operations per HTTP round-trip) rather than one call per event, which is
+  // what keeps a several-hundred-event rewrite to seconds instead of minutes.
+  // Per-item success/failure is read back out of each batch's sub-responses
+  // and accumulated into succeeded/failed, so one bad event never aborts the
+  // rest — see runBatchesWithRetry above for the retry/pacing policy.
+  const rewriteGoogleCalendarFromTaskflow = useCallback(async ({ blocksOverride } = {}) => {
     // Hold BOTH guards for this call's entire duration (a rewrite can run for
-    // minutes on a large batch — see REWRITE_CALL_PACING_MS's own comment):
+    // a while on a large calendar — see REWRITE_BATCH_PACING_MS's own comment):
     //   - googleFetchInFlightRef: if a poll/pull/push happens to already be
     //     mid-flight right when this is clicked, wait it out rather than
     //     racing a fetch that's already reading/writing state.
@@ -1042,7 +1271,16 @@ export function useGoogleCalendarSync({
     setIsRewritingCalendar(true);
     try {
       const latestTasks = stateRef.current.tasks;
-      const latestBlocks = stateRef.current.blocks;
+      // `blocksOverride` lets a caller that just mutated blocks via its OWN
+      // synchronous commit() updater (see restoreCloudBackupAndRewriteCalendar
+      // in SchedulerContext.jsx) pass the truly-current post-mutation blocks
+      // straight through, rather than this hook re-reading stateRef.current —
+      // stateRef is only refreshed by a useEffect keyed on `state` (see its
+      // own comment in SchedulerContext.jsx), so it can still be one render
+      // behind a commit() that resolved moments ago with no gap for React to
+      // flush in between. Every other caller (the plain Settings button)
+      // omits this and gets the normal stateRef.current.blocks.
+      const latestBlocks = blocksOverride || stateRef.current.blocks;
       // Unlike tasks/blocks (mirrored into stateRef, see its own comment in
       // SchedulerContext.jsx), `events` is a plain useState outside the
       // {tasks, blocks} history-tracked bundle — this hook already receives
@@ -1051,18 +1289,15 @@ export function useGoogleCalendarSync({
       const latestEvents = events;
 
       // Flatten blocks (paired with their owning task, needed for the event
-      // summary/description pushBlockToCalendar builds) and manual/Google-
-      // sourced events into one authoritative list, each tagged with which
-      // kind it is and enough to push it back individually below. Each item
-      // IS the planCalendarRewrite input directly (not rebuilt/re-matched
-      // afterward) so the plan's `toUpsert` entries carry these same rich
-      // objects straight through — see planCalendarRewrite's own doc comment
-      // for why `needsPush` (set false below for events already known to
-      // exist as-is on Google's primary calendar) has to be on this object
-      // and not derived separately.
+      // summary/description the push builds) and manual/Google-sourced events
+      // into one authoritative list, each tagged with which kind it is and
+      // enough to push it back individually below. Each item IS the
+      // planCalendarRewrite input directly (not rebuilt/re-matched afterward)
+      // so the plan's `toInsert` entries carry these same rich objects
+      // straight through.
       const blockItems = latestBlocks
         .map((block) => ({ kind: 'block', block, task: latestTasks.find((t) => t.id === block.taskId), googleEventId: block.googleEventId }))
-        .filter((item) => item.task); // an orphaned block with no owning task can't be pushed (mirrors pushUnsyncedBlocksToCalendar's own skip)
+        .filter((item) => item.task); // an orphaned block with no owning task can't be pushed (mirrors pushUnsyncedItemsToCalendar's own skip)
       // Events sourced from a calendar the user doesn't own (a subscribed
       // timetable, a shared calendar merely shared WITH them, etc. — i.e.
       // anything with calendarId !== 'primary') are excluded from the
@@ -1073,42 +1308,52 @@ export function useGoogleCalendarSync({
       // calendar belongs in TaskFlow's notion of "what should be on primary".
       const primaryEvents = latestEvents.filter((e) => e.source !== 'google' || e.calendarId === 'primary');
 
-      // A local `source: 'google'` event's own googleEventId is always
-      // protected from toDelete below and its schedule is treated as already
-      // correct on Google — but a HISTORICAL duplicate-push bug (see git
-      // history around the rewrite/auto-push features) could leave TWO local
-      // rows for the very same logical event, each carrying its OWN distinct
-      // (both real) googleEventId, because Google actually has two physical
-      // copies. Neither id collides with the other, so without this step
-      // BOTH would be treated as legitimately authoritative and the rewrite
-      // would protect/keep both Google-side copies forever — recreating
-      // exactly the "duplicate survives a full rewrite" symptom this feature
-      // exists to fix. See findDuplicateGoogleSourcedEvents' own doc comment
-      // for the grouping/canonical-pick policy. Excluding every duplicate row
-      // from eventItems below (not just the canonical one's id) is what lets
-      // computeCalendarRewritePlan's own "not claimed by any local item"
-      // check naturally sweep the duplicate's Google-side id into toDelete —
-      // no separate delete list needed. Duplicate rows are dropped from
-      // local `events` state too so they don't keep resurrecting on the next
-      // normal pull.
-      const duplicateLocalEventIds = findDuplicateGoogleSourcedEvents(primaryEvents);
-      if (duplicateLocalEventIds.size > 0) {
-        setEvents((prev) => prev.filter((e) => !duplicateLocalEventIds.has(e.id)));
+      // THE push-side duplicate fix. Every block TaskFlow pushes comes back on
+      // the next poll as an ordinary `source: 'google'` CalendarEvent, so
+      // local state holds both the ScheduledBlock AND a mirror event of it.
+      // Pushing both — which is what "blocks and events are both
+      // authoritative" literally means — manufactures a second real Google
+      // event for every synced block on EVERY run. That's why duplicates kept
+      // reappearing during the push phase itself even after the delete phase
+      // correctly cleared the calendar: the rewrite was creating them, not
+      // failing to remove them. Dropping mirror rows here lets the block be
+      // the single source of truth for its own event. See
+      // isBlockSourcedEvent for how a mirror is recognized (and why the
+      // legacy title-prefix fallback is safe).
+      const mirrorEvents = primaryEvents.filter(isBlockSourcedEvent);
+      const authoritativeEvents = primaryEvents.filter((e) => !isBlockSourcedEvent(e));
+      if (mirrorEvents.length > 0) {
+        console.info(
+          `[useGoogleCalendarSync] Rewrite: skipping ${mirrorEvents.length} block-mirror event(s) — their ScheduledBlocks are pushed instead.`
+        );
       }
 
-      // Events already on Google's primary calendar (source: 'google') don't
-      // need re-pushing (needsPush: false) — only protecting their
-      // googleEventId from toDelete; a manual event needs an actual push to
-      // get created there for the first time.
-      const eventItems = primaryEvents
-        .filter((e) => !duplicateLocalEventIds.has(e.id))
-        .map((e) => ({
-          kind: 'event',
-          event: e,
-          googleEventId: e.googleEventId,
-          needsPush: e.source !== 'google',
-        }));
-      const authoritativeItems = [...blockItems, ...eventItems];
+      // Every remaining primary-scoped local event is re-pushed, including
+      // ones originally pulled FROM Google (`source: 'google'`). Under the old
+      // diff-based plan those were marked `needsPush: false` — their Google
+      // copy already existed and was protected from deletion, so re-pushing
+      // was a wasted call. A delete-all rewrite deletes that copy along with
+      // everything else, so it genuinely does need re-creating.
+      const eventItems = authoritativeEvents.map((e) => ({
+        kind: 'event',
+        event: e,
+        googleEventId: e.googleEventId,
+      }));
+      // Final safety net: collapse anything that would still push two
+      // identical Google events (same kind+title+date+time+recurrence). This
+      // should be a no-op once the mirror filter above has done its job — so
+      // a non-empty result is a smoking gun that local state itself contains
+      // genuine duplicate rows, and is logged loudly as such rather than
+      // silently swallowed. Cheap insurance either way: the cost of a wrong
+      // drop is one missing event that the next poll re-pushes, versus a
+      // permanent duplicate on the user's real calendar.
+      const { items: authoritativeItems, duplicates: localDuplicates } = dedupeAuthoritativeItems([...blockItems, ...eventItems]);
+      if (localDuplicates.length > 0) {
+        console.warn(
+          `[useGoogleCalendarSync] Rewrite: local state contains ${localDuplicates.length} redundant item(s) that would have created duplicate Google events — collapsed before pushing. This indicates duplicate rows in local blocks/events:`,
+          localDuplicates.map((d) => (d.kind === 'block' ? `block:${d.task?.title} ${d.block.date} ${d.block.startTime}` : `event:${d.event.title} ${d.event.date} ${d.event.startTime}`))
+        );
+      }
 
       if (authoritativeItems.length === 0) {
         setNotification({ type: 'info', message: 'Nothing to rewrite — TaskFlow has no scheduled blocks or events.' });
@@ -1121,89 +1366,145 @@ export function useGoogleCalendarSync({
       const startIso = dates.reduce((min, d) => (d < min ? d : min));
       const endIso = dates.reduce((max, d) => (d > max ? d : max));
 
-      const { toDelete, toUpsert: planUpsert } = await computeCalendarRewritePlan(authoritativeItems, startIso, endIso);
-      const toUpsert = planUpsert.map((planItem) => ({ ...planItem, source: planItem.item }));
+      const { toDelete, toInsert } = await computeCalendarRewritePlan(authoritativeItems, startIso, endIso);
 
       const succeeded = [];
       const failed = [];
       const stampedGoogleEventIdsByBlockId = new Map();
       const stampedGoogleEventIdsByEventId = new Map();
 
-      // Live progress — see rewriteProgress's own comment. Without this, a
-      // rewrite processing hundreds of leftover duplicate events (one at a
-      // time, with a deliberate pacing delay between each so as not to burst
-      // Google's rate limit — see REWRITE_CALL_PACING_MS) can genuinely take
-      // several minutes with the button's label as the only visible state,
-      // which looks indistinguishable from a hang.
-      const totalCalls = toDelete.length + toUpsert.length;
+      // Live progress — see rewriteProgress's own comment. `total` counts
+      // individual EVENTS (not batches), which is what's meaningful to a user
+      // watching the overlay; `done` simply advances a whole batch at a time
+      // once each batched call returns, since a batch gives no per-item timing
+      // to report within it.
+      const totalCalls = toDelete.length + toInsert.length;
       let doneCalls = 0;
       setRewriteProgress({ done: 0, total: totalCalls });
-      const advanceProgress = () => setRewriteProgress({ done: ++doneCalls, total: totalCalls });
+      const advanceProgress = (n) => {
+        doneCalls += n;
+        setRewriteProgress({ done: doneCalls, total: totalCalls });
+      };
 
+      // ---- Phase 1: delete EVERYTHING in range on the primary calendar ----
+      // Unconditional — nothing is protected by matching a local
+      // googleEventId anymore (see planCalendarRewrite's own doc comment for
+      // why that protection was the bug). The primary-calendar scoping in
+      // computeCalendarRewritePlan is the sole remaining safety boundary.
+      const deleteResults = await runBatchesWithRetry(
+        toDelete,
+        (chunk) => batchDeleteCalendarEvents(chunk),
+        (googleEventId) => googleEventId,
+        advanceProgress
+      );
       for (const googleEventId of toDelete) {
-        try {
-          await withRateLimitRetry(() => deleteCalendarEvent(googleEventId, 'primary'));
+        const res = deleteResults.get(googleEventId);
+        if (res?.ok) {
           succeeded.push({ type: 'delete', googleEventId });
-        } catch (err) {
-          console.warn('[useGoogleCalendarSync] Rewrite: failed to delete Google event', googleEventId, err);
-          failed.push({ type: 'delete', googleEventId, error: err?.message || String(err) });
+        } else {
+          console.warn('[useGoogleCalendarSync] Rewrite: failed to delete Google event', googleEventId, res?.error);
+          failed.push({ type: 'delete', googleEventId, error: res?.error || 'Unknown error' });
         }
-        advanceProgress();
-        await sleep(REWRITE_CALL_PACING_MS);
       }
 
-      for (const { source, isUpdate } of toUpsert) {
-        try {
-          if (source.kind === 'block') {
-            const blockToPush = isUpdate ? source.block : { ...source.block, googleEventId: null };
-            const eventId = await withRateLimitRetry(() => pushBlockToCalendar(blockToPush, source.task));
-            if (eventId) stampedGoogleEventIdsByBlockId.set(source.block.id, eventId);
-            succeeded.push({ type: isUpdate ? 'update' : 'insert', kind: 'block', id: source.block.id });
-          } else {
-            const eventToPush = isUpdate ? source.event : { ...source.event, googleEventId: null };
-            const result = await withRateLimitRetry(() => pushEventToCalendar(eventToPush));
-            if (result?.id) stampedGoogleEventIdsByEventId.set(source.event.id, result.id);
-            succeeded.push({ type: isUpdate ? 'update' : 'insert', kind: 'event', id: source.event.id });
+      // ---- Phase 2: insert every authoritative local item fresh -----------
+      // All inserts, never updates: phase 1 just removed everything there was
+      // to update against. Each item's local id keys the batch so the fresh
+      // googleEventId Google returns can be stamped back onto the right record.
+      const insertEntries = toInsert
+        .map(({ item }) => {
+          if (item.kind === 'block') {
+            return { id: `block:${item.block.id}`, source: item, resource: buildBlockEventResource(item.block, item.task) };
           }
-        } catch (err) {
-          const label = source.kind === 'block' ? source.task?.title || source.block.id : source.event.title || source.event.id;
-          console.warn('[useGoogleCalendarSync] Rewrite: failed to push local item to Google', label, err);
-          failed.push({ type: isUpdate ? 'update' : 'insert', label, error: err?.message || String(err) });
+          return { id: `event:${item.event.id}`, source: item, resource: buildCalendarEventResource(item.event) };
+        })
+        // A non-primary event can't reach here (primaryEvents filtered them
+        // out above), but an event with no date/time would build an invalid
+        // resource — skip rather than send Google a malformed insert.
+        .filter((entry) => entry.resource.start?.dateTime && entry.resource.end?.dateTime);
+
+      const insertResults = await runBatchesWithRetry(
+        insertEntries,
+        (chunk) => batchInsertCalendarEvents(chunk.map(({ id, resource }) => ({ id, resource }))),
+        (entry) => entry.id,
+        advanceProgress
+      );
+      for (const entry of insertEntries) {
+        const res = insertResults.get(entry.id);
+        const { source } = entry;
+        const label = source.kind === 'block' ? source.task?.title || source.block.id : source.event.title || source.event.id;
+        if (res?.ok) {
+          if (res.googleEventId) {
+            if (source.kind === 'block') stampedGoogleEventIdsByBlockId.set(source.block.id, res.googleEventId);
+            else stampedGoogleEventIdsByEventId.set(source.event.id, res.googleEventId);
+          }
+          succeeded.push({ type: 'insert', kind: source.kind, id: source.kind === 'block' ? source.block.id : source.event.id });
+        } else {
+          console.warn('[useGoogleCalendarSync] Rewrite: failed to push local item to Google', label, res?.error);
+          failed.push({ type: 'insert', label, error: res?.error || 'Unknown error' });
         }
-        advanceProgress();
-        await sleep(REWRITE_CALL_PACING_MS);
+      }
+      // Anything filtered out above as unpushable still needs accounting for,
+      // or the totals would silently under-report.
+      if (insertEntries.length < toInsert.length) {
+        advanceProgress(toInsert.length - insertEntries.length);
+        for (const { item } of toInsert) {
+          const id = item.kind === 'block' ? `block:${item.block.id}` : `event:${item.event.id}`;
+          if (insertEntries.some((e) => e.id === id)) continue;
+          const label = item.kind === 'block' ? item.task?.title || item.block.id : item.event.title || item.event.id;
+          failed.push({ type: 'insert', label, error: 'Missing or invalid start/end time' });
+        }
       }
 
-      // Stamp fresh googleEventIds back onto local state for anything that
-      // was freshly inserted (or whose update call returned a possibly-new
-      // id) — mirrors pushUnsyncedBlocksToCalendar's own bookkeeping above,
-      // so this feature's results are consistent with normal sync instead of
-      // leaving freshly-pushed blocks/events looking unsynced on the very
-      // next poll (which would re-push them again as duplicates).
-      if (stampedGoogleEventIdsByBlockId.size > 0) {
-        const updatedBlocks = stateRef.current.blocks.map((b) =>
-          stampedGoogleEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: stampedGoogleEventIdsByBlockId.get(b.id) } : b
-        );
-        commit({ tasks: stateRef.current.tasks, blocks: updatedBlocks }, 'Rewrote Google Calendar from TaskFlow');
-      }
-      if (stampedGoogleEventIdsByEventId.size > 0) {
-        setEvents((prev) =>
-          prev.map((e) => (stampedGoogleEventIdsByEventId.has(e.id) ? { ...e, googleEventId: stampedGoogleEventIdsByEventId.get(e.id) } : e))
-        );
-      }
+      // Re-stamp googleEventIds across local state. Under delete-all EVERY
+      // pre-existing googleEventId is now stale by construction — the event
+      // it pointed at was deleted in phase 1 — so this rewrites the id for
+      // successfully-inserted items and CLEARS it (null) for everything else,
+      // rather than only touching the successes. Leaving a stale id behind
+      // would be actively harmful: the block would look "already synced", so
+      // pushUnsyncedItemsToCalendar would never re-push it, and any later
+      // update/delete would target an id Google no longer knows — the block
+      // would silently never reappear on the calendar. Nulling it instead
+      // makes the very next poll's auto-push pick it up and recreate it.
+      const updatedBlocks = stateRef.current.blocks.map((b) => {
+        const fresh = stampedGoogleEventIdsByBlockId.get(b.id) ?? null;
+        return b.googleEventId === fresh ? b : { ...b, googleEventId: fresh };
+      });
+      commit({ tasks: stateRef.current.tasks, blocks: updatedBlocks }, 'Rewrote Google Calendar from TaskFlow');
+      // Same for events, with one extra step: block-mirror rows are DROPPED
+      // rather than re-stamped. Their Google copies were deleted in phase 1
+      // and deliberately not re-created from the event side (the block was
+      // pushed instead — see the mirror filter above), so keeping them would
+      // leave phantom local rows pointing at nothing, which would render as
+      // ghost events until the next pull happened to clear them. Deleting
+      // them here makes the block the single source of truth immediately.
+      // The next pull re-creates a fresh mirror row for each block, which is
+      // harmless and now correctly tagged/recognized.
+      //
+      // A non-primary (subscribed/foreign) event was never part of the
+      // rewrite at all — its Google copy still exists untouched, so it's
+      // returned completely unmodified.
+      setEvents((prev) =>
+        prev
+          .filter((e) => !((e.source !== 'google' || e.calendarId === 'primary') && isBlockSourcedEvent(e)))
+          .map((e) => {
+            if (e.source === 'google' && e.calendarId !== 'primary') return e;
+            const fresh = stampedGoogleEventIdsByEventId.get(e.id) ?? null;
+            return e.googleEventId === fresh ? e : { ...e, googleEventId: fresh };
+          })
+      );
 
       const deletedCount = succeeded.filter((s) => s.type === 'delete').length;
       const insertedCount = succeeded.filter((s) => s.type === 'insert').length;
-      const updatedCount = succeeded.filter((s) => s.type === 'update').length;
       if (failed.length === 0) {
         setNotification({
           type: 'success',
-          message: `Rewrote Google Calendar: ${deletedCount} deleted, ${insertedCount} created, ${updatedCount} updated.`,
+          message: `Rewrote Google Calendar: ${deletedCount} deleted, ${insertedCount} created.`,
         });
       } else {
         setNotification({
           type: 'warning',
-          message: `Rewrote Google Calendar with some failures: ${deletedCount} deleted, ${insertedCount} created, ${updatedCount} updated, ${failed.length} failed — see console for details.`,
+          message: `Rewrote Google Calendar with some failures: ${deletedCount} deleted, ${insertedCount} created, ${failed.length} failed — see console for details.`,
         });
       }
       return { succeeded, failed };

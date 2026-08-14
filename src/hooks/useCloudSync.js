@@ -336,10 +336,14 @@ export function isStaleOwnEcho(remoteFingerprint, inFlightFingerprints) {
   return Array.isArray(inFlightFingerprints) && inFlightFingerprints.includes(remoteFingerprint);
 }
 
-// Safety cap on how many in-flight push fingerprints are tracked at once —
-// pushes are debounced 1500ms apart and each ack normally arrives well
-// within that, so this should never realistically fill up. It exists purely
-// so a pathological case (acks never arriving, e.g. a permanently broken
+// Safety cap on how many in-flight push fingerprints are tracked at once.
+// Note this is NOT a cap on concurrent WRITES — runPushNow's single-flight
+// guard (see computePushSingleFlightDecision) allows only one setDoc on the
+// wire at a time. This list can still legitimately hold several entries,
+// because a fingerprint is only retired when its server ECHO comes back
+// through the live listener, which lands some time after the write itself
+// resolved and the next push has already started. It exists purely so a
+// pathological case (echoes never arriving, e.g. a permanently broken
 // listener) can't grow this list forever; the oldest entry is dropped first,
 // same "oldest first" policy as retireInFlightFingerprint's consumption order.
 const MAX_IN_FLIGHT_FINGERPRINTS = 20;
@@ -384,6 +388,41 @@ export function computePushStampPlan(currentState, lastPushedFingerprint) {
     return { shouldPush: false };
   }
   return { shouldPush: true, fingerprint, rollbackFingerprint: lastPushedFingerprint };
+}
+
+/**
+ * Single-flight decision for runPushNow: given whether a push is already on
+ * the wire, decide whether this call may proceed or must be coalesced into a
+ * follow-up run after the current one finishes.
+ *
+ * Why this exists: schedulePush resets a debounce timer on every `state`
+ * change, but several unrelated paths call runPushNow directly (the
+ * immediate-completion path, and the visibilitychange/pagehide/beforeunload
+ * flush). Nothing used to stop two of those from both reaching `pushUserData`
+ * — a full-document setDoc — with neither awaiting the other. A burst of
+ * commits in quick succession (a restore, then a rebalance, then a calendar
+ * rewrite, each committing separately) could therefore stack many concurrent
+ * full-document writes onto Firestore's write stream and trip its
+ * "Write stream exhausted maximum allowed queued writes" error, after which
+ * further writes fail until the stream recovers. MAX_IN_FLIGHT_FINGERPRINTS
+ * being 20 is a fossil of that era: the echo bookkeeping was sized for up to
+ * 20 simultaneous in-flight pushes because that many really were possible.
+ *
+ * Coalescing rather than dropping is the important part. A skipped push must
+ * not be lost — the queued flag makes the in-flight push re-run exactly once
+ * when it completes, and because runPushNow re-reads `stateRef.current` fresh
+ * on entry, that single follow-up necessarily covers every change made while
+ * the wire was busy, no matter how many callers were skipped. So N concurrent
+ * callers collapse into at most 2 sequential writes rather than N parallel
+ * ones, and the newest state still reaches Firestore.
+ *
+ * @param {boolean} pushInFlight - is a push currently awaiting its ack?
+ * @returns {{ proceed: boolean, queue: boolean }} `proceed` to issue the write
+ *   now; `queue` to mark that another run is owed once the current one settles.
+ */
+export function computePushSingleFlightDecision(pushInFlight) {
+  if (pushInFlight) return { proceed: false, queue: true };
+  return { proceed: true, queue: false };
 }
 
 /**
@@ -749,15 +788,40 @@ export function useCloudSync({
   const lastAutoBackupAtRef = useRef(lastAutoBackupAt);
   const autoBackupInFlightRef = useRef(false);
 
+  // Single-flight guard for runPushNow — see computePushSingleFlightDecision
+  // for the full reasoning. `pushInFlightRef` is true from just before
+  // pushUserData is awaited until it settles; `pushQueuedRef` records that at
+  // least one further push was requested while it was busy, so exactly one
+  // follow-up run happens afterward (against freshly-read state) instead of
+  // that request being dropped.
+  const pushInFlightRef = useRef(false);
+  const pushQueuedRef = useRef(false);
+  // runPushNow re-invokes itself for the queued follow-up, which a plain
+  // useCallback can't reference from inside its own body — this ref holds the
+  // latest instance so the finally block can call it.
+  const runPushNowRef = useRef(null);
+
   // ---- Debounced push to Firestore -----------------------------------------
   // The fingerprint stamp/rollback decision itself lives in the pure,
   // exported computePushStampPlan — this just performs the actual write and
   // ref mutation around it.
   const runPushNow = useCallback(async () => {
     if (!user) return;
+    // Never let two full-document setDocs be on the wire at once — see
+    // computePushSingleFlightDecision. Checked before the fingerprint compare
+    // deliberately: the in-flight push has already optimistically stamped
+    // lastPushedFingerprintRef, so a concurrent caller could otherwise read
+    // "no change" and return without arranging for the newer state to be
+    // pushed at all.
+    const { proceed, queue } = computePushSingleFlightDecision(pushInFlightRef.current);
+    if (!proceed) {
+      if (queue) pushQueuedRef.current = true;
+      return;
+    }
     const currentState = stateRef.current;
     const plan = computePushStampPlan(currentState, lastPushedFingerprintRef.current);
     if (!plan.shouldPush) return; // no change
+    pushInFlightRef.current = true;
     setIsPushingCloud(true);
     try {
       // Stamp the ref before the write resolves, not after — otherwise a
@@ -799,8 +863,22 @@ export function useCloudSync({
       setNotification({ type: 'error', message: 'Failed to sync to the cloud. Your changes are saved locally and will retry on your next edit.' });
     } finally {
       setIsPushingCloud(false);
+      // Release the wire, then run exactly once more if anything was
+      // requested while this push was busy. The follow-up re-reads
+      // stateRef.current fresh, so one run covers every skipped caller's
+      // changes — and if nothing actually changed, its own
+      // computePushStampPlan check makes it a no-op rather than a wasted
+      // write. Deliberately fire-and-forget: awaiting it here would make this
+      // push's promise cover an arbitrary chain of follow-ups, which the
+      // tab-close flush path (which can't wait anyway) has no use for.
+      pushInFlightRef.current = false;
+      if (pushQueuedRef.current) {
+        pushQueuedRef.current = false;
+        runPushNowRef.current?.();
+      }
     }
   }, [user, stateRef, setNotification]);
+  runPushNowRef.current = runPushNow;
 
   // Push completions straight away instead of waiting out the debounce — see
   // hasNewCompletion for why this one edit type earns the exception.
@@ -850,6 +928,15 @@ export function useCloudSync({
   // this narrows the race, it doesn't close it.
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
+    // Goes through runPushNow's single-flight guard like every other caller:
+    // if a push is already on the wire when the tab is going away, this
+    // doesn't issue a second concurrent write — it sets the queued flag, and
+    // the in-flight push runs one final follow-up when it settles. That
+    // follow-up may well not finish before the tab is actually torn down,
+    // which is an inherent limit of this path (see the note below: none of
+    // these three events can guarantee an in-flight write completes) — it
+    // narrows the race rather than closing it, and matters little now that
+    // completions bypass the debounce entirely.
     const flush = () => {
       if (pushTimerRef.current) {
         clearTimeout(pushTimerRef.current);

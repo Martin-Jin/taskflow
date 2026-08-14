@@ -142,10 +142,21 @@ There's deliberately no separate "unplaced" cost term — an unplaced task
 already surfaces through the allocator's own `overflow` reporting, and
 priority only ever multiplies the two terms above, never stands alone.
 
-**`localSearch.js`** takes the greedy seed and runs a time-boxed
-simulated-annealing search (default ~100ms wall-clock or 2000 iterations,
-whichever comes first) over single-chunk relocate moves, trying to reduce
-total cost. Locked, fixed-time, and passive blocks are never candidates
+**`localSearch.js`** takes the greedy seed and runs a simulated-annealing
+search over single-chunk relocate moves, trying to reduce total cost. It is
+bounded primarily by a fixed `MAX_ITERATIONS` (2000) with a fixed RNG seed,
+which makes it **deterministic: identical inputs always produce identical
+placements**. That's load-bearing beyond scheduling quality — a block's id is
+derived from its placement (`blk_${taskId}_${date}_${startTime}`), and
+`preserveGoogleEventIds` carries a synced block's `googleEventId` forward by
+matching that id exactly, so a placement that drifted by a minute between two
+otherwise-identical runs would look like a brand-new unsynced block and get
+pushed to Google as a duplicate. `SEARCH_TIME_BUDGET_MS` (1000ms) is a
+pathological-case safety valve only, deliberately set well above real cost (a
+realistic workload finishes all 2000 iterations in well under 100ms, and
+converges to stable placements after ~100) so it effectively never fires —
+any run it truncated would be machine-speed-dependent and therefore
+non-reproducible. Locked, fixed-time, and passive blocks are never candidates
 for a move — they're treated as fixed busy time. Every candidate move is
 checked against capacity, `minGapBetweenBlocksMins`, the daily deep-work
 budget, and dependency ordering (see below) *before* it's accepted, never
@@ -828,13 +839,34 @@ never run automatically) that flips the direction for one run, making
 TaskFlow's current local blocks/events authoritative and reconciling
 Google's calendar to match.
 
+Separately from that one-off action, `pushUnsyncedItemsToCalendar`
+(`useGoogleCalendarSync.js`) is the always-on retry sweep: it runs on every
+periodic poll tick and behind the manual "Push to Google Calendar" button,
+and pushes anything still missing a `googleEventId`. It covers **both**
+blocks and events. Events were previously excluded, which was a real bug —
+`addManualEvent`/`updateEvent` each fire a single best-effort push and only
+log/toast on failure, so an event whose one push failed (offline, not yet
+connected, tab closed mid-flight) was stranded unsynced forever while blocks
+were retried every 60s. `isUnsyncedPushableEvent` (pure, unit-tested) decides
+eligibility: never a subscribed/foreign-calendar event (pushing a copy onto
+the user's own primary calendar would duplicate someone else's event), never
+a block-mirror row, and never one missing date/time.
+
 - **Planning** (`planCalendarRewrite`/`computeCalendarRewritePlan` in
-  `googleCalendarService.js`, pure and unit-tested) diffs local
-  authoritative items against Google's current PRIMARY-calendar events in
-  the same date range and produces `{ toDelete, toUpsert }`. A local item
-  whose `googleEventId` no longer resolves against Google's current list
-  (stale/deleted-on-Google) falls back to an insert instead of a doomed
-  update.
+  `googleCalendarService.js`, pure and unit-tested) produces
+  `{ toDelete, toInsert }`: EVERY Google PRIMARY-calendar event in the date
+  range goes into `toDelete` unconditionally, and every local authoritative
+  item into `toInsert` as a fresh create.
+- **Why delete-all instead of a diff.** The original design spared any Google
+  event whose id was still claimed by a local item's `googleEventId`. That
+  protection rule was itself the bug: a historical duplicate-push left users
+  with two local rows for one logical event, each holding its own genuinely
+  valid `googleEventId`, so both Google copies were "claimed" and both
+  survived a rewrite that reported complete success. Deleting everything and
+  re-inserting sidesteps local-state disagreement entirely — nothing survives
+  to be wrongly protected. Accepted costs: an event created directly in Google
+  Calendar on the primary calendar within the range is wiped too, and every
+  kept event is recreated with a new id.
 - **Safety boundary (the one thing that must never regress):** everything
   here operates ONLY on `calendarId: 'primary'` — the only calendar this
   app's own writes (`pushBlockToCalendar`/`pushEventToCalendar`) have ever
@@ -843,21 +875,49 @@ Google's calendar to match.
   delete) `calendarId === 'primary'` events — a subscribed/shared calendar
   the user doesn't own is never even in the candidate set, so it's
   structurally impossible for `planCalendarRewrite` to schedule one of its
-  events for deletion. `rewriteGoogleCalendarFromTaskflow` (the executor,
-  in `useGoogleCalendarSync.js`) mirrors this on the local side: a
+  events for deletion. This filter now carries the WHOLE boundary, since no
+  per-event protection remains, so it matters more than ever.
+  `rewriteGoogleCalendarFromTaskflow` (the executor, in
+  `useGoogleCalendarSync.js`) mirrors this on the local side: a
   `CalendarEvent` sourced from a non-primary Google calendar is excluded
   from the authoritative set entirely (never re-created on primary as a
   duplicate).
+- **Block-mirror events (the push-side duplicate cause).** A block pushed to
+  Google comes back on the next poll as an ordinary `source: 'google'`
+  CalendarEvent, so local state holds BOTH the block and a mirror event of
+  it. Since the rewrite treats blocks and events as authoritative, it pushed
+  both — manufacturing a second real Google event for every synced block on
+  every run, which is why duplicates appeared during the PUSH phase even
+  after the delete phase had correctly cleared the calendar. Block pushes now
+  carry a private `extendedProperties` marker
+  (`TASKFLOW_BLOCK_PROPERTY_KEY`); `isBlockSourcedEvent` reads it back (with
+  a legacy "📋 " title-prefix fallback) so mirror rows are dropped from the
+  authoritative set and removed from local state, leaving the block as the
+  single source of truth. `dedupeAuthoritativeItems` is a final backstop that
+  collapses anything that would still push two identical events, logging a
+  warning since that indicates genuinely duplicated local rows.
 - **Execution** (`rewriteGoogleCalendarFromTaskflow`) is the only place in
-  this codebase that batches more than a handful of Calendar API calls, so
-  it's also the only place with real batching precautions: each
-  delete/insert/update is its own try/catch (accumulated into
-  `{succeeded, failed}` rather than aborting the batch on first error), a
-  small fixed pacing delay runs between calls, and a 429 (rate limit,
-  `isRateLimitError`) gets one retry with backoff before counting as a real
-  per-item failure. Freshly-created events get their `googleEventId`
-  stamped back onto local state the same way `pushUnsyncedBlocksToCalendar`
-  already does, so the result isn't orphaned from normal sync bookkeeping.
+  this codebase that issues more than a handful of Calendar API calls, so
+  it's also the only place with real batching precautions. Deletes and
+  inserts each go through Google's BATCH endpoint (`gapi.client.newBatch()`,
+  up to `MAX_BATCH_SIZE` = 50 sub-requests per HTTP round-trip), which is
+  what keeps a several-hundred-event rewrite to seconds rather than minutes.
+  A batch resolves as ONE promise and does not reject on individual
+  sub-request failure, so per-item results are read out of the response map
+  (`classifyBatchSubResponse`) and accumulated into `{succeeded, failed}`
+  rather than aborting on first error; a 404/410 on a delete counts as
+  success (already gone). Rate limits are handled at two levels: a 429
+  against the batch endpoint itself gets one retry with backoff
+  (`withRateLimitRetry`), while individual 429'd sub-requests are collected
+  and retried in one smaller follow-up batch — never by re-running the whole
+  original batch, which would re-insert already-succeeded items as
+  duplicates. Pacing runs BETWEEN batches, never within one. Progress
+  (`rewriteProgress`) counts individual events but advances a batch at a
+  time. Because delete-all invalidates every pre-existing `googleEventId`,
+  the executor re-stamps ids across local state afterward — writing the fresh
+  id for successful inserts and CLEARING it to null otherwise, so a failed
+  item is picked up by the next poll's auto-push instead of silently looking
+  synced forever.
 
 Some persisted state is deliberately **device-local** — it lives in
 `localStorage` (usually via `usePersistedState`) but is deliberately kept

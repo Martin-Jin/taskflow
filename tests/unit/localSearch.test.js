@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { allocateTasks, resolveDueDate } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
-import { runLocalSearch } from '../../src/algorithms/localSearch';
+import { runLocalSearch, MAX_ITERATIONS, SEARCH_TIME_BUDGET_MS } from '../../src/algorithms/localSearch';
 import { evaluatePlacementCost } from '../../src/algorithms/placementCost';
 import { timeToMinutes } from '../../src/utils/dateUtils';
 
@@ -152,6 +152,91 @@ describe('runLocalSearch: dependency ordering is never violated', () => {
       expect(isAfterOrEqual({ date: c.date, minutes: timeToMinutes(c.startTime) }, bEnd)).toBe(true);
       expect(isAfterOrEqual({ date: c.date, minutes: timeToMinutes(c.startTime) }, aEnd)).toBe(true);
     }
+  });
+});
+
+describe('runLocalSearch: determinism (Google Calendar duplicate prevention)', () => {
+  // Determinism here is not just an algorithmic nicety — it's load-bearing for
+  // Google Calendar sync. A block's id is derived from its placement
+  // (`blk_${taskId}_${date}_${startTime}`, see allocator.js), and
+  // preserveGoogleEventIds (rebalanceEngine.js) carries a synced block's
+  // googleEventId forward by matching that id EXACTLY. If two rebalances over
+  // identical inputs could place a block even one minute apart, its id would
+  // change, the id match would miss, the block would look brand new and
+  // unsynced, and the auto-push-on-poll would create a duplicate Google
+  // Calendar event — every time, forever, silently.
+  //
+  // The search is seeded with a fixed RNG and bounded primarily by a fixed
+  // MAX_ITERATIONS. SEARCH_TIME_BUDGET_MS exists only as a pathological-case
+  // safety valve: because it's wall-clock based, any run it truncates would be
+  // machine-speed-dependent and therefore non-reproducible, so it's set well
+  // above real cost specifically so it doesn't fire in normal operation.
+
+  function crowdedTasks() {
+    // Seeded far from their due dates so the search has real improvements to
+    // find — a trivially-optimal seed would pass any determinism test
+    // vacuously, since the search would never move anything at all.
+    return Array.from({ length: 12 }, (_, i) => ({
+      id: `t${i}`,
+      title: `Task ${i}`,
+      estimatedHours: 2,
+      remainingHours: 2,
+      priority: i % 3 === 0 ? 'urgent' : 'medium',
+      dueDate: `2026-07-${String(3 + (i % 6)).padStart(2, '0')}`,
+      isCompleted: false,
+      dependencies: [],
+    }));
+  }
+
+  const placementSignature = (blocks) =>
+    blocks
+      .map((b) => `${b.taskId}@${b.date}T${b.startTime}-${b.endTime}`)
+      .sort()
+      .join('|');
+
+  it('produces byte-identical placements across repeated runs on identical input', () => {
+    const tasks = crowdedTasks();
+    const capacityMap = computeHorizonCapacity(today, 2, { routines: [], events: [], blocks: [], rules: baseRules });
+    const runs = Array.from({ length: 5 }, () => seedAndSearch(tasks, capacityMap));
+    const signatures = runs.map((r) => placementSignature(r.finalBlocks));
+    expect(new Set(signatures).size).toBe(1);
+  });
+
+  it('CRITICAL: has converged well before MAX_ITERATIONS, so a truncated run still yields the same placements', () => {
+    // This is what makes the wall-clock safety valve harmless. If the result
+    // were still drifting at the iteration cap, then a slow device — whose
+    // budget cut the loop short — would land on DIFFERENT placements than a
+    // fast one, regenerating block ids and duplicating Google events. Pinning
+    // convergence means even a heavily truncated run agrees with a full one.
+    const tasks = crowdedTasks();
+    const capacityMap = computeHorizonCapacity(today, 2, { routines: [], events: [], blocks: [], rules: baseRules });
+    const full = seedAndSearch(tasks, capacityMap, baseRules, undefined, { maxIterations: MAX_ITERATIONS });
+    const converged = seedAndSearch(tasks, capacityMap, baseRules, undefined, { maxIterations: Math.floor(MAX_ITERATIONS / 4) });
+    expect(placementSignature(converged.finalBlocks)).toBe(placementSignature(full.finalBlocks));
+  });
+
+  it('completes the full iteration budget well within the time-box, so the wall-clock valve does not decide the result', () => {
+    // Guards the assumption the two tests above rest on. If this ever starts
+    // failing (a much costlier cost function, a far larger default task set),
+    // the time budget would begin truncating real runs and reintroduce
+    // machine-dependent placements — so it should fail loudly rather than
+    // silently degrade into non-determinism.
+    const tasks = crowdedTasks();
+    const capacityMap = computeHorizonCapacity(today, 2, { routines: [], events: [], blocks: [], rules: baseRules });
+    const startedAt = Date.now();
+    const { searchResult } = seedAndSearch(tasks, capacityMap);
+    const elapsedMs = Date.now() - startedAt;
+    expect(searchResult.iterations).toBe(MAX_ITERATIONS); // stopped on the deterministic cap, not the clock
+    expect(elapsedMs).toBeLessThan(SEARCH_TIME_BUDGET_MS);
+  });
+
+  it('never returns a result worse than the seed even when heavily truncated', () => {
+    // The graceful-degradation property that makes the safety valve safe to
+    // keep at all: an early cutoff costs optimization quality, never validity.
+    const tasks = crowdedTasks();
+    const capacityMap = computeHorizonCapacity(today, 2, { routines: [], events: [], blocks: [], rules: baseRules });
+    const truncated = seedAndSearch(tasks, capacityMap, baseRules, undefined, { maxIterations: 3 });
+    expect(truncated.finalCost).toBeLessThanOrEqual(truncated.seedCost + 1e-9);
   });
 });
 
