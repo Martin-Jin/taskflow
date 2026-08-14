@@ -998,6 +998,7 @@ export function SchedulerProvider({ children }) {
     markGoogleEventInstanceDeleted,
     unmarkGoogleEventInstanceDeleted,
     isRewritingCalendar,
+    rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
   } = useGoogleCalendarSync({
     events,
@@ -3715,6 +3716,7 @@ export function SchedulerProvider({ children }) {
       disconnectGoogleCalendar,
       ensureGoogleRangeSynced,
       isRewritingCalendar,
+      rewriteProgress,
       rewriteGoogleCalendarFromTaskflow,
       syncNow,
       exportBackup,
@@ -3812,6 +3814,7 @@ export function SchedulerProvider({ children }) {
       disconnectGoogleCalendar,
       ensureGoogleRangeSynced,
       isRewritingCalendar,
+      rewriteProgress,
       rewriteGoogleCalendarFromTaskflow,
       syncNow,
       exportBackup,
