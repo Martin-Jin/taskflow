@@ -1330,6 +1330,31 @@ export function SchedulerProvider({ children }) {
   );
 
   /**
+   * Regenerate blocks across the scheduler's full horizon (same engine call
+   * runRebalance makes) and return the fresh blocks array, WITHOUT any of
+   * runRebalance's own toast/notification side effects — this is an internal
+   * step of a bigger atomic action (see restoreCloudBackupAndRewriteCalendar
+   * below), not a user-facing "re-balance schedule" click, so it must stay
+   * silent. Uses commit()'s function-form updater (same reasoning as
+   * runRebalance's own doc comment: must run against `current`, the truly-
+   * latest tasks/blocks, not a closure that could be stale) so the returned
+   * blocks are guaranteed fresh even though stateRef.current itself won't
+   * reflect them until React flushes the effect that mirrors state into it.
+   */
+  const silentRebalanceForRewrite = useCallback(() => {
+    let freshBlocks;
+    commit(
+      (current) => {
+        const result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
+        freshBlocks = result.blocks;
+        return { tasks: current.tasks, blocks: result.blocks };
+      },
+      'Re-balanced schedule'
+    );
+    return freshBlocks;
+  }, [routines, events, rules, commit]);
+
+  /**
    * One atomic "restore, then make Google Calendar match" action — replaces
    * the earlier design of restoring and then separately OFFERING a rewrite
    * follow-up via a toast action button. That gap between "restore lands"
@@ -1343,6 +1368,24 @@ export function SchedulerProvider({ children }) {
    * than trying to win it. rewriteGoogleCalendarFromTaskflow's own guards
    * (googleFetchInFlightRef + pollPausedRef — see useGoogleCalendarSync.js)
    * keep the poll paused for this whole sequence, not just the rewrite half.
+   *
+   * Runs a SILENT rebalance right after the restore lands, before the
+   * rewrite — a restored backup's own `blocks` snapshot only contains
+   * whatever had already been materialized at backup time, which can fall
+   * short of the scheduler's full horizonWeeks (recurring tasks' blocks for
+   * a future week may not have existed yet then). Without this, the
+   * rewrite's own date range (computed from whatever blocks/events happen to
+   * be in authoritativeItems — see rewriteGoogleCalendarFromTaskflow) would
+   * silently stop short of that horizon too, leaving old/duplicate Google
+   * events for the un-materialized weeks completely unreconciled — the
+   * rewrite would report success while real leftover events sat untouched
+   * just outside its fetch window. The freshly-rebalanced blocks are passed
+   * straight into rewriteGoogleCalendarFromTaskflow's blocksOverride rather
+   * than relying on it to re-read stateRef.current afterward, since stateRef
+   * only refreshes via a useEffect and can still be one render behind this
+   * function's own commit() at the moment rewriteGoogleCalendarFromTaskflow
+   * runs (see blocksOverride's own doc comment in useGoogleCalendarSync.js).
+   *
    * Only runs the rewrite if the restore actually applied AND Google Calendar
    * is connected (nothing to rewrite otherwise) — returns the restore's own
    * boolean result either way so the caller's UI can react the same as a
@@ -1351,10 +1394,13 @@ export function SchedulerProvider({ children }) {
   const restoreCloudBackupAndRewriteCalendar = useCallback(
     async (backupId) => {
       const restored = await restoreCloudBackup(backupId);
-      if (restored && googleConnected) await rewriteGoogleCalendarFromTaskflow();
+      if (restored && googleConnected) {
+        const freshBlocks = silentRebalanceForRewrite();
+        await rewriteGoogleCalendarFromTaskflow({ blocksOverride: freshBlocks });
+      }
       return restored;
     },
-    [restoreCloudBackup, googleConnected, rewriteGoogleCalendarFromTaskflow]
+    [restoreCloudBackup, googleConnected, silentRebalanceForRewrite, rewriteGoogleCalendarFromTaskflow]
   );
 
   /** Settings' "Restore from file" action — matches old importBackupFromFile's name. */
@@ -1362,16 +1408,20 @@ export function SchedulerProvider({ children }) {
 
   /**
    * File-restore counterpart to restoreCloudBackupAndRewriteCalendar above —
-   * same reasoning, same no-gap chaining. importBackupFromFile already
-   * returns whether the restore applied (see importBackup/applyBackupPayload).
+   * same reasoning, same no-gap chaining, same silent-rebalance-before-
+   * rewrite step. importBackupFromFile already returns whether the restore
+   * applied (see importBackup/applyBackupPayload).
    */
   const importBackupFromFileAndRewriteCalendar = useCallback(
     async (file) => {
       const restored = await importBackupFromFile(file);
-      if (restored && googleConnected) await rewriteGoogleCalendarFromTaskflow();
+      if (restored && googleConnected) {
+        const freshBlocks = silentRebalanceForRewrite();
+        await rewriteGoogleCalendarFromTaskflow({ blocksOverride: freshBlocks });
+      }
       return restored;
     },
-    [importBackupFromFile, googleConnected, rewriteGoogleCalendarFromTaskflow]
+    [importBackupFromFile, googleConnected, silentRebalanceForRewrite, rewriteGoogleCalendarFromTaskflow]
   );
 
   /** Settings' cloud-backups picker open action — matches old refreshCloudBackups' name. */

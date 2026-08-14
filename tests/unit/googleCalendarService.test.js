@@ -27,15 +27,22 @@
  *   - `planCalendarRewrite` is the pure decision core of "Rewrite Google
  *     Calendar to match TaskFlow" (see its own doc comment in
  *     googleCalendarService.js) — given local authoritative items and
- *     Google's current primary-calendar events, decides delete/insert/update
- *     for each. Covered thoroughly here since it's the single place this
- *     destructive, opt-in feature decides what to delete; the executor
+ *     Google's current primary-calendar events, decides what to delete and
+ *     what to insert. Covered thoroughly here since it's the single place
+ *     this destructive, opt-in feature decides what to delete; the executor
  *     (rewriteGoogleCalendarFromTaskflow in useGoogleCalendarSync.js) that
  *     actually calls the live API isn't unit-testable the same way as the
  *     rest of this file, but its input to this function is.
  *   - `isRateLimitError` is the 429 counterpart to `isAuthError`'s 401 check,
  *     added for this feature's batch executor (see
  *     REWRITE_RATE_LIMIT_BACKOFF_MS in useGoogleCalendarSync.js).
+ *   - `chunkForBatch` and `classifyBatchSubResponse` are the pure halves of
+ *     that executor's batched Google API path (up to MAX_BATCH_SIZE
+ *     operations per HTTP round-trip). The batch plumbing itself is `gapi`-
+ *     bound and untestable here, but the size limit that keeps a batch legal
+ *     and the per-sub-response success/failure classification the user-facing
+ *     result toast is built from are both pure — and both are easy to get
+ *     subtly wrong in ways a diff wouldn't reveal.
  * ============================================================================
  */
 
@@ -48,6 +55,9 @@ import {
   shouldTreatAsReconnectNeeded,
   planCalendarRewrite,
   isRateLimitError,
+  chunkForBatch,
+  classifyBatchSubResponse,
+  MAX_BATCH_SIZE,
 } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
@@ -188,60 +198,61 @@ describe('instanceMatchesOccurrence', () => {
   });
 });
 
-describe('planCalendarRewrite', () => {
+describe('planCalendarRewrite — delete-all rewrite', () => {
   // "Rewrite Google Calendar to match TaskFlow" (see googleCalendarService.js's
   // own module doc above planCalendarRewrite) — TaskFlow's local blocks/events
   // become authoritative and Google's PRIMARY calendar is reconciled to match.
-  // The single most important property to get right: a subscribed/foreign
-  // calendar's events must NEVER be deleted just because they're absent from
-  // TaskFlow's local data — that's enforced by this function only ever being
-  // handed already-primary-filtered `googleEventsInRange` input (the caller's
-  // job, see computeCalendarRewritePlan), so every test here constructs that
-  // input as if it already went through that filter.
+  //
+  // This is deliberately NOT a diff: every in-range primary-calendar event is
+  // deleted unconditionally and every local item re-inserted fresh. The old
+  // diff-based design spared any Google event still claimed by a local
+  // googleEventId, which is exactly what let duplicates survive — two local
+  // rows for one logical event, each with its own genuinely-valid id, claimed
+  // (and therefore protected) both Google-side copies forever.
+  //
+  // The single most important property to get right is unchanged: a
+  // subscribed/foreign calendar's events must NEVER be deleted. That's now
+  // carried ENTIRELY by this function only ever being handed already-primary-
+  // filtered `googleEventsInRange` input (the caller's job, see
+  // computeCalendarRewritePlan), since no per-event protection remains — so
+  // every test here constructs that input as if it already went through that
+  // filter.
 
-  it('a local item with no googleEventId is planned as an insert', () => {
-    const local = [{ googleEventId: null }];
-    const { toDelete, toUpsert } = planCalendarRewrite(local, []);
-    expect(toDelete).toEqual([]);
-    expect(toUpsert).toHaveLength(1);
-    expect(toUpsert[0]).toMatchObject({ item: local[0], isUpdate: false });
-  });
-
-  it('a local item whose googleEventId still exists on Google is planned as an update', () => {
-    const local = [{ googleEventId: 'gcal_1' }];
+  it('deletes every in-range primary-calendar Google event, even one still claimed by a local item', () => {
+    // The core behavior change. Under the old diff-based plan `gcal_1` was
+    // spared because a local item claimed it; now it is deleted like anything
+    // else and the local item is re-inserted fresh.
+    const local = [{ id: 'task-1', googleEventId: 'gcal_1' }];
     const google = [{ id: 'gcal_1' }];
-    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
-    expect(toDelete).toEqual([]);
-    expect(toUpsert).toHaveLength(1);
-    expect(toUpsert[0]).toMatchObject({ item: local[0], isUpdate: true });
+    const { toDelete, toInsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual(['gcal_1']);
+    expect(toInsert).toHaveLength(1);
+    expect(toInsert[0]).toMatchObject({ item: local[0] });
   });
 
-  it('a local item whose googleEventId is stale/gone from Google falls back to insert, not a doomed update', () => {
-    const local = [{ googleEventId: 'gcal_deleted_on_google' }];
-    const google = []; // Google no longer has this event — deleted or moved since TaskFlow last saw it
-    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
-    expect(toDelete).toEqual([]);
-    expect(toUpsert).toHaveLength(1);
-    expect(toUpsert[0]).toMatchObject({ item: local[0], isUpdate: false });
-  });
-
-  it('a Google primary-calendar event not present locally at all is scheduled for delete', () => {
-    const local = []; // nothing local claims this event
-    const google = [{ id: 'gcal_orphaned' }];
-    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
-    expect(toDelete).toEqual(['gcal_orphaned']);
-    expect(toUpsert).toEqual([]);
+  it('REGRESSION: duplicate local rows with distinct valid ids no longer protect their Google copies', () => {
+    // The exact shape of the bug this redesign exists to fix: two local rows
+    // for one logical "Piano" event, each carrying its own real googleEventId
+    // because Google genuinely has two physical copies. The old plan matched
+    // both ids and kept both copies, reporting complete success while the
+    // duplicate remained. Now both Google copies are deleted outright.
+    const local = [
+      { id: 'piano-a', googleEventId: 'gcal_piano_1' },
+      { id: 'piano-b', googleEventId: 'gcal_piano_2' },
+    ];
+    const google = [{ id: 'gcal_piano_1' }, { id: 'gcal_piano_2' }];
+    const { toDelete } = planCalendarRewrite(local, google);
+    expect([...toDelete].sort()).toEqual(['gcal_piano_1', 'gcal_piano_2']);
   });
 
   it('CRITICAL SAFETY: a Google event absent from the pre-filtered primary-calendar input never appears in toDelete', () => {
     // This simulates the caller having already excluded a non-primary/
     // read-only subscribed-calendar event from `googleEventsInRange` (its
-    // job, per this function's own doc comment) — planCalendarRewrite never
+    // job, per this function's own doc comment). planCalendarRewrite never
     // even sees a foreign calendar's event, so it structurally cannot plan a
-    // delete for one. Nothing local claims it either (an empty local set),
-    // which would normally mean "delete everything Google has" — but since
-    // the foreign event was never included in `googleEventsInRange` to begin
-    // with, it's simply never a candidate for toDelete at all.
+    // delete for one. This matters MORE under delete-all than it did before:
+    // the caller's primary-only filter is now the sole safety boundary, since
+    // nothing is spared by matching a local id anymore.
     const local = [];
     const googlePrimaryOnly = [{ id: 'gcal_primary_event' }]; // the foreign-calendar event is NOT in this list
     const { toDelete } = planCalendarRewrite(local, googlePrimaryOnly);
@@ -249,45 +260,128 @@ describe('planCalendarRewrite', () => {
     expect(toDelete).not.toContain('gcal_subscribed_calendar_event_should_never_appear');
   });
 
-  it('mixed scenario: insert + update + stale-fallback-to-insert + delete all resolve independently', () => {
-    const local = [
-      { id: 'new-task', googleEventId: null }, // insert
-      { id: 'synced-task', googleEventId: 'gcal_still_there' }, // update
-      { id: 'stale-task', googleEventId: 'gcal_long_gone' }, // insert (fallback)
-    ];
-    const google = [{ id: 'gcal_still_there' }, { id: 'gcal_orphaned_on_google' }];
-    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
-    expect(toDelete).toEqual(['gcal_orphaned_on_google']);
-    expect(toUpsert).toHaveLength(3);
-    expect(toUpsert.find((u) => u.item.id === 'new-task')).toMatchObject({ isUpdate: false });
-    expect(toUpsert.find((u) => u.item.id === 'synced-task')).toMatchObject({ isUpdate: true });
-    expect(toUpsert.find((u) => u.item.id === 'stale-task')).toMatchObject({ isUpdate: false });
+  it('CRITICAL SAFETY: toDelete never contains an id that was not in the primary-calendar input', () => {
+    // Guards the inverse direction of the boundary: no id may be synthesized
+    // from local state. Everything deleted must have come from the (already
+    // primary-filtered) Google-side list.
+    const local = [{ id: 'l1', googleEventId: 'gcal_local_claims_this' }];
+    const google = [{ id: 'gcal_from_primary' }];
+    const { toDelete } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual(['gcal_from_primary']);
+    const googleIds = new Set(google.map((e) => e.id));
+    expect(toDelete.every((id) => googleIds.has(id))).toBe(true);
   });
 
-  it('needsPush: false excludes an item from toUpsert while still protecting its googleEventId from delete', () => {
-    // Used by rewriteGoogleCalendarFromTaskflow for events already pulled
-    // FROM Google's own primary calendar — they already exist there exactly
-    // as-is, so re-pushing them would be a wasted (at best) API call, but
-    // they must still count as "claimed" so they aren't deleted.
-    const local = [{ id: 'already-synced-event', googleEventId: 'gcal_1', needsPush: false }];
-    const google = [{ id: 'gcal_1' }];
-    const { toDelete, toUpsert } = planCalendarRewrite(local, google);
+  it('plans every local item as an insert regardless of whether it has a googleEventId', () => {
+    // No isUpdate distinction exists anymore — the deletes run first, so
+    // there is nothing left on Google to update against.
+    const local = [{ id: 'a', googleEventId: null }, { id: 'b', googleEventId: 'gcal_stale' }];
+    const { toDelete, toInsert } = planCalendarRewrite(local, []);
     expect(toDelete).toEqual([]);
-    expect(toUpsert).toEqual([]);
+    expect(toInsert.map((u) => u.item.id)).toEqual(['a', 'b']);
+    expect(toInsert.every((u) => u.isUpdate === undefined)).toBe(true);
   });
 
-  it('an empty local set plans every in-range primary-calendar Google event for deletion', () => {
+  it('an event previously pulled FROM Google is re-inserted, not skipped', () => {
+    // Under the old plan these were marked needsPush: false and skipped,
+    // since their Google copy already existed and was protected. Delete-all
+    // removes that copy, so they must be re-created.
+    const local = [{ id: 'already-synced-event', googleEventId: 'gcal_1' }];
+    const google = [{ id: 'gcal_1' }];
+    const { toDelete, toInsert } = planCalendarRewrite(local, google);
+    expect(toDelete).toEqual(['gcal_1']);
+    expect(toInsert).toHaveLength(1);
+  });
+
+  it('an empty local set still deletes every in-range primary-calendar Google event', () => {
     const google = [{ id: 'a' }, { id: 'b' }];
-    const { toDelete, toUpsert } = planCalendarRewrite([], google);
-    expect(toDelete.sort()).toEqual(['a', 'b']);
-    expect(toUpsert).toEqual([]);
+    const { toDelete, toInsert } = planCalendarRewrite([], google);
+    expect([...toDelete].sort()).toEqual(['a', 'b']);
+    expect(toInsert).toEqual([]);
   });
 
   it('an empty Google-side set plans every local item as an insert and nothing to delete', () => {
     const local = [{ googleEventId: null }, { googleEventId: 'gcal_stale' }];
-    const { toDelete, toUpsert } = planCalendarRewrite(local, []);
+    const { toDelete, toInsert } = planCalendarRewrite(local, []);
     expect(toDelete).toEqual([]);
-    expect(toUpsert.every((u) => u.isUpdate === false)).toBe(true);
+    expect(toInsert).toHaveLength(2);
+  });
+});
+
+describe('chunkForBatch', () => {
+  // Google's batch endpoint accepts at most MAX_BATCH_SIZE (50) sub-requests
+  // per HTTP call; exceeding it rejects the whole batch, so this split is
+  // load-bearing rather than cosmetic.
+  it('splits into chunks of at most MAX_BATCH_SIZE by default', () => {
+    const items = Array.from({ length: 120 }, (_, i) => i);
+    const chunks = chunkForBatch(items);
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]).toHaveLength(MAX_BATCH_SIZE);
+    expect(chunks[1]).toHaveLength(MAX_BATCH_SIZE);
+    expect(chunks[2]).toHaveLength(20);
+    expect(chunks.flat()).toEqual(items); // nothing dropped or reordered
+  });
+
+  it('never produces a chunk larger than the limit', () => {
+    const items = Array.from({ length: 501 }, (_, i) => i);
+    expect(chunkForBatch(items).every((c) => c.length <= MAX_BATCH_SIZE)).toBe(true);
+  });
+
+  it('returns an empty list for no items rather than one empty chunk', () => {
+    expect(chunkForBatch([])).toEqual([]);
+  });
+
+  it('returns a single short chunk when there are fewer items than the limit', () => {
+    expect(chunkForBatch([1, 2, 3])).toEqual([[1, 2, 3]]);
+  });
+
+  it('guards against a zero/invalid size instead of looping forever', () => {
+    expect(chunkForBatch([1, 2], 0)).toEqual([[1], [2]]);
+  });
+});
+
+describe('classifyBatchSubResponse', () => {
+  // A gapi batch resolves as ONE promise regardless of whether individual
+  // sub-requests failed — each sub-response carries its own status. Per-item
+  // success/failure reporting in the rewrite hangs entirely off this.
+  it('treats a 2xx sub-response as success and passes the result through', () => {
+    const res = classifyBatchSubResponse({ status: 200, result: { id: 'gcal_new' } });
+    expect(res.ok).toBe(true);
+    expect(res.result).toEqual({ id: 'gcal_new' });
+  });
+
+  it('treats a 201 Created as success', () => {
+    expect(classifyBatchSubResponse({ status: 201, result: { id: 'x' } }).ok).toBe(true);
+  });
+
+  it('treats a 4xx sub-response as a failure and surfaces its message', () => {
+    const res = classifyBatchSubResponse({ status: 403, result: { error: { message: 'Forbidden' } } });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(403);
+    expect(res.error).toBe('Forbidden');
+  });
+
+  it('reports a 429 sub-response with its status so it can be retried specifically', () => {
+    const res = classifyBatchSubResponse({ status: 429, result: { error: { message: 'Rate Limit Exceeded' } } });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(429);
+  });
+
+  it('falls back to the nested gapi error code when no top-level status is present', () => {
+    const res = classifyBatchSubResponse({ result: { error: { code: 404, message: 'Not Found' } } });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(404);
+  });
+
+  it('treats a MISSING sub-response as a failure, never as silent success', () => {
+    // A dropped sub-request must not be counted as done — that would silently
+    // under-report failures and leave a local item wrongly marked as synced.
+    const res = classifyBatchSubResponse(undefined);
+    expect(res.ok).toBe(false);
+  });
+
+  it('synthesizes a message when the error carries no message field', () => {
+    expect(classifyBatchSubResponse({ status: 500 }).error).toBe('HTTP 500');
   });
 });
 

@@ -21,6 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '5.2.0',
+    date: '2026-08-15',
+    title: 'Google Calendar duplicate events fixed at the source, and much faster rewrites',
+    changes: [
+      'Fixed the real cause of Google Calendar events duplicating over time. Every task block TaskFlow sends to Google was being read back on the next sync as if it were a separate calendar event, so the app ended up tracking the same thing twice — and then created a second copy of it on Google. This is why duplicates kept multiplying during normal use, and why they reappeared even while "Restore & overwrite Google Calendar" was running. Blocks are now tagged as TaskFlow\'s own, so they are never re-created as separate events.',
+      '"Restore & overwrite Google Calendar" now clears your primary calendar for the affected dates and rebuilds it from scratch, rather than trying to work out which existing events to keep. That matching step was what let duplicates slip through. Please note: this means any event you created directly in Google Calendar (rather than in TaskFlow) on your primary calendar within those dates will also be removed by this action. Your other calendars — subscribed, shared, or work calendars — are never touched.',
+      'Rewrites are dramatically faster. Changes are now sent to Google in batches of up to 50 instead of one at a time, turning a job that could take several minutes into one that usually takes seconds. The progress bar now moves in larger steps as each batch completes.',
+      'Calendar events you create or edit are now retried automatically if they fail to reach Google Calendar. Previously only scheduled task blocks were retried, so an event that failed to sync once (for example while offline) would stay missing from Google Calendar indefinitely.',
+      'Scheduling now always produces the same result for the same set of tasks, instead of very occasionally shifting a block depending on how busy your device was. A shifted block used to look brand new to Google Calendar sync, which could create yet another duplicate.',
+      'Fixed an error that could interrupt cloud sync ("write stream exhausted") when several changes happened in quick succession, such as during a restore. Updates to the cloud are now sent one at a time instead of all at once.',
+    ],
+  },
+  {
     version: '5.1.2',
     date: '2026-08-15',
     title: 'Full-screen progress overlay while rewriting Google Calendar',

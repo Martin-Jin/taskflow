@@ -709,6 +709,13 @@ export async function fetchEvents(startIso, endIso) {
         canEdit: e.__accessRole === 'owner' || e.__accessRole === 'writer',
         googleUpdatedAt: e.updated,
         localUpdatedAt: null,
+        // Set only on events this app itself created from a ScheduledBlock —
+        // lets the rewrite recognize (and skip) its own mirror rows instead
+        // of re-pushing them as duplicates alongside the real block. See
+        // TASKFLOW_BLOCK_PROPERTY_KEY.
+        ...(e.extendedProperties?.private?.[TASKFLOW_BLOCK_PROPERTY_KEY]
+          ? { taskflowBlockId: e.extendedProperties.private[TASKFLOW_BLOCK_PROPERTY_KEY] }
+          : {}),
         // Google's shared master-event id for every instance of a recurring
         // event — lets "ignore this event" be applied to just this
         // instance, this-and-following, or the whole series. See
@@ -766,6 +773,82 @@ function withSyntheticSeries(events) {
 }
 
 /**
+ * Marker written into every event this app creates FROM a ScheduledBlock, via
+ * Google's private extended properties (visible only to this app, never shown
+ * to the user or synced to other clients).
+ *
+ * Why it exists: TaskFlow pushes a block to Google, and the very next poll
+ * pulls that same event straight back as an ordinary `source: 'google'`
+ * CalendarEvent — nothing distinguished it from an event the user created by
+ * hand. So local state ends up holding BOTH the ScheduledBlock and a mirror
+ * CalendarEvent of it. Normal sync tolerates that (the mirror just renders on
+ * top of its own block), but "Rewrite Google Calendar to match TaskFlow"
+ * treats blocks AND events as authoritative and pushes both — creating a
+ * second, real Google event for every synced block on every single run. That
+ * is the duplicate-on-rewrite bug users kept seeing ("Piano" twice, "Charge"
+ * twice), and it reproduced no matter how the DELETE half was written, since
+ * it's the PUSH half that manufactures the duplicates.
+ *
+ * `isBlockSourcedEvent` below reads this back so the rewrite can drop mirror
+ * rows from its authoritative set and let the block itself be the single
+ * source of truth for that event.
+ */
+export const TASKFLOW_BLOCK_PROPERTY_KEY = 'taskflowBlockId';
+
+/**
+ * True if a pulled event is TaskFlow's own mirror of a ScheduledBlock (see
+ * TASKFLOW_BLOCK_PROPERTY_KEY). Pure/exported for unit testing.
+ *
+ * Also matches the legacy shape: events pushed before this marker existed
+ * carry no extended property at all, so they're identified by the "📋 " title
+ * prefix this app has always written. That fallback is deliberately narrow
+ * (prefix only) and only ever used to SKIP re-pushing a mirror row — never to
+ * delete anything — so a user's own event that happens to start with the same
+ * emoji is at worst not re-created from its mirror row, while the block it
+ * shadows still pushes normally.
+ */
+export function isBlockSourcedEvent(event) {
+  if (!event) return false;
+  if (event.taskflowBlockId) return true;
+  return typeof event.title === 'string' && event.title.startsWith('📋 ');
+}
+
+/**
+ * The Google Calendar event resource for a ScheduledBlock. Split out from
+ * `pushBlockToCalendar` below so the batched rewrite path
+ * (`batchInsertCalendarEvents`) builds byte-identical resources instead of
+ * maintaining a second, drift-prone copy of this mapping.
+ */
+export function buildBlockEventResource(block, task) {
+  return {
+    summary: `📋 ${task.title}`,
+    description: task.notes || `Auto-scheduled by TaskFlow · Priority: ${task.priority}`,
+    start: { dateTime: `${block.date}T${block.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { dateTime: `${block.date}T${block.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    colorId: priorityToColorId(task.priority),
+    // Tag it as block-sourced so a later pull can recognize its own mirror —
+    // see TASKFLOW_BLOCK_PROPERTY_KEY.
+    extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: String(block.id) } },
+  };
+}
+
+/**
+ * The Google Calendar event resource for a CalendarEvent — the manual/event
+ * counterpart to `buildBlockEventResource` above, split out for the same
+ * reason (shared with the batched rewrite path).
+ */
+export function buildCalendarEventResource(event) {
+  return {
+    summary: event.title,
+    description: event.description || undefined,
+    location: event.location || undefined,
+    start: { dateTime: `${event.date}T${event.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    recurrence: event.recurrenceRule ? [`RRULE:${event.recurrenceRule}`] : undefined,
+  };
+}
+
+/**
  * Push a single ScheduledBlock to Google Calendar as an event. Returns the
  * created event's id (to store on the block for future updates/deletes).
  */
@@ -775,13 +858,7 @@ export async function pushBlockToCalendar(block, task) {
     return null;
   }
 
-  const event = {
-    summary: `📋 ${task.title}`,
-    description: task.notes || `Auto-scheduled by TaskFlow · Priority: ${task.priority}`,
-    start: { dateTime: `${block.date}T${block.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    end: { dateTime: `${block.date}T${block.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    colorId: priorityToColorId(task.priority),
-  };
+  const event = buildBlockEventResource(block, task);
 
   const resp = block.googleEventId
     ? await window.gapi.client.calendar.events.update({ calendarId: 'primary', eventId: block.googleEventId, resource: event })
@@ -805,14 +882,7 @@ export async function pushEventToCalendar(event) {
   }
 
   const calendarId = event.calendarId || 'primary';
-  const resource = {
-    summary: event.title,
-    description: event.description || undefined,
-    location: event.location || undefined,
-    start: { dateTime: `${event.date}T${event.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    recurrence: event.recurrenceRule ? [`RRULE:${event.recurrenceRule}`] : undefined,
-  };
+  const resource = buildCalendarEventResource(event);
 
   const resp = event.googleEventId
     ? await window.gapi.client.calendar.events.update({ calendarId, eventId: event.googleEventId, resource })
@@ -1045,6 +1115,31 @@ export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
  * fold a non-primary event into `toDelete` even if a caller passed the wrong
  * variable. `computeCalendarRewritePlan` (the caller-facing wrapper) is the
  * only entry point that talks to `fetchEvents`, and it does the filtering.
+ *
+ * DELETE-ALL, NOT DIFF-BASED (changed deliberately — read before "optimizing"
+ * it back). The original design was a diff: keep any Google event whose id was
+ * still claimed by some local item's `googleEventId`, delete the rest, and
+ * update-in-place the claimed ones. That protection rule is exactly what made
+ * the feature unable to fix the problem it exists for. A historical
+ * duplicate-push bug left users with TWO local rows for one logical event,
+ * each carrying its own distinct-but-genuinely-valid `googleEventId` (because
+ * Google really did have two physical copies). Both ids matched, so both
+ * copies were "claimed", so both survived a rewrite that reported full success
+ * — the duplicates were structurally immune to the very action meant to clear
+ * them. Deduplicating local rows first only patched the CalendarEvent half of
+ * that and left duplicate ScheduledBlocks (and any other unforeseen way local
+ * state can disagree with itself) still able to protect a duplicate.
+ *
+ * So the rewrite no longer matches local state against Google's at all: it
+ * deletes EVERY event in range on the primary calendar unconditionally, then
+ * re-inserts every authoritative local item fresh. Nothing survives to be
+ * wrongly protected, so no amount of local duplication or stale-id confusion
+ * can leak a duplicate through. The costs of this are real and accepted:
+ * an event created directly in Google Calendar on the primary calendar (never
+ * synced from TaskFlow) is wiped too, and every kept event is re-created with
+ * a brand-new id rather than updated in place. Both were explicitly accepted
+ * by the user — this action already announces itself as "TaskFlow overwrites
+ * Google", and it's opt-in behind a strong confirmation.
  * ============================================================================
  */
 
@@ -1054,73 +1149,73 @@ export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
  * rewriteGoogleCalendarFromTaskflow in useGoogleCalendarSync.js, which builds
  * this from current blocks+tasks and manual/already-synced events) and the
  * events Google's PRIMARY calendar currently has in that same range, compute
- * what to delete and what to insert/update to make Google match.
+ * what to delete and what to insert to make Google match.
  *
- * @param {Array<{googleEventId?: string|null, needsPush?: boolean}>} authoritativeItems
- *   - local blocks/events (or their backup-payload equivalents) to treat as
- *   truth, already filtered to the relevant date range by the caller.
- *   `needsPush: false` marks an item that's already known to exist on
- *   Google's primary calendar exactly as-is (e.g. an event pulled FROM
- *   Google's primary calendar in a normal sync) — it still protects its
- *   `googleEventId` from `toDelete` but is excluded from `toUpsert`, since
- *   re-pushing it would be a wasted API call at best. Defaults to true
- *   (needs pushing) when omitted, so existing callers/tests that don't care
- *   about this distinction don't need to set it.
+ * Every in-range primary-calendar event goes into `toDelete`, unconditionally
+ * — `authoritativeItems`' own `googleEventId`s are deliberately NOT consulted
+ * to spare anything (see the DELETE-ALL note in the module doc above). Every
+ * authoritative item then goes into `toInsert` as a fresh create, since after
+ * the deletes there is by definition nothing left on Google to update against.
+ *
+ * @param {Array<Object>} authoritativeItems - local blocks/events to treat as
+ *   truth, already filtered to the relevant date range by the caller. Passed
+ *   through to `toInsert` untouched; no field on them affects the plan (in
+ *   particular `googleEventId` no longer protects anything from deletion, and
+ *   the old `needsPush: false` opt-out is gone — an event previously pulled
+ *   from Google's primary calendar is about to be deleted along with
+ *   everything else, so it genuinely does need re-inserting).
  * @param {Array<{id: string}>} googleEventsInRange - Google's OWN raw
  *   `events.list` items (not the app's mapped CalendarEvent shape) for the
  *   PRIMARY calendar only, in the same range — caller MUST have already
  *   filtered out every non-primary calendar's events before calling this;
  *   this function has no calendarId of its own to check and trusts its input.
- * @returns {{ toDelete: string[], toUpsert: Array<{item: Object, isUpdate: boolean}> }}
+ *   This is the ONLY thing standing between a subscribed/foreign calendar and
+ *   deletion now that nothing else is protected, so it matters more than ever.
+ * @returns {{ toDelete: string[], toInsert: Array<{item: Object}> }}
  */
 export function planCalendarRewrite(authoritativeItems, googleEventsInRange) {
-  const googleIdsInRange = new Set(googleEventsInRange.map((e) => e.id));
-  const localGoogleIds = new Set(
-    authoritativeItems.filter((item) => item.googleEventId && googleIdsInRange.has(item.googleEventId)).map((item) => item.googleEventId)
-  );
+  // The destructive half: everything Google's primary calendar has in range,
+  // with no "claimed by a local item" escape hatch. Only ever sees
+  // pre-filtered primary-calendar input (see module doc above) — that filter
+  // is now the sole safety boundary, since no per-event protection remains.
+  const toDelete = googleEventsInRange.map((e) => e.id);
 
-  // Delete every primary-calendar Google event that isn't still claimed by a
-  // local item in range — this is the destructive half, so it deliberately
-  // only ever sees pre-filtered primary-calendar input (see module doc above).
-  const toDelete = googleEventsInRange.filter((e) => !localGoogleIds.has(e.id)).map((e) => e.id);
+  // Everything local is a fresh insert. No isUpdate distinction exists
+  // anymore: the deletes above run first and clear the calendar, so there is
+  // nothing left to update against by the time these are pushed.
+  const toInsert = authoritativeItems.map((item) => ({ item }));
 
-  // Insert vs. update: a local item's googleEventId only counts as "still
-  // live" if Google's CURRENT primary-calendar fetch actually contains it —
-  // an id that's stale (event deleted/moved on Google's side since TaskFlow
-  // last saw it) must fall back to a fresh insert rather than attempting an
-  // update against an id Google no longer recognizes, which would just fail.
-  // `needsPush: false` items (already-synced Google-primary events, see
-  // param doc) are excluded entirely — their googleEventId already protected
-  // them from toDelete above, and there's nothing to insert/update for them.
-  const toUpsert = authoritativeItems
-    .filter((item) => item.needsPush !== false)
-    .map((item) => ({
-      item,
-      isUpdate: !!(item.googleEventId && googleIdsInRange.has(item.googleEventId)),
-    }));
-
-  return { toDelete, toUpsert };
+  return { toDelete, toInsert };
 }
 
 /**
  * Fetch Google's current PRIMARY-calendar events in `[startIso, endIso]` and
  * compute a rewrite plan against `authoritativeItems` (already-flattened
  * local blocks/events, or a backup payload's equivalents, for that same
- * range). This is the only function that actually talks to `fetchEvents` for
- * this feature — the primary-calendar filter happens here, once, so
- * `planCalendarRewrite` itself never needs to re-derive or trust a
+ * range). This is the only function that actually talks to Google's
+ * `events.list` for this feature — the primary-calendar scoping happens here,
+ * once, so `planCalendarRewrite` itself never needs to re-derive or trust a
  * `calendarId` check. Falls back to an empty Google-side list (mock/offline
- * mode, or `fetchEvents`'s own mock fallback) rather than throwing, so the
- * caller can still preview/no-op safely when not connected.
- * @param {Array<{googleEventId?: string|null}>} authoritativeItems
+ * mode) rather than throwing, so the caller can still preview/no-op safely
+ * when not connected.
+ *
+ * The range stays bounded to what the authoritative items span rather than
+ * fetching all history: a delete-all rewrite over an unbounded multi-year
+ * window would quietly destroy years of primary-calendar history the user
+ * never had in view, which is a far bigger blast radius than this feature
+ * advertises. Bounded delete-all is already enough to fix the duplicate
+ * problem this exists for (the duplicates always fall inside the range the
+ * items themselves span).
+ *
+ * @param {Array<Object>} authoritativeItems
  * @param {string} startIso
  * @param {string} endIso
- * @returns {Promise<{ toDelete: string[], toUpsert: Array<{item: Object, isUpdate: boolean}> }>}
+ * @returns {Promise<{ toDelete: string[], toInsert: Array<{item: Object}> }>}
  */
 export async function computeCalendarRewritePlan(authoritativeItems, startIso, endIso) {
   if (!gapiInited || !accessToken) {
     // Not connected — nothing on Google to reconcile against. Every local
-    // item with no matching Google id just becomes an insert; nothing to delete.
+    // item just becomes an insert; nothing to delete.
     return planCalendarRewrite(authoritativeItems, []);
   }
 
@@ -1141,8 +1236,8 @@ export async function computeCalendarRewritePlan(authoritativeItems, startIso, e
     pageToken = resp.result.nextPageToken;
   } while (pageToken);
   // Same cancelled-instance exclusion as fetchEvents above — a tombstone
-  // resource shouldn't count as "still live on Google" for delete-skipping
-  // purposes, or a genuinely-removed event would never make it into toDelete.
+  // resource is already gone, so issuing a delete for it would just be a
+  // wasted (and noisily-failing) API call.
   const liveItems = items.filter((e) => e.status !== 'cancelled');
 
   return planCalendarRewrite(authoritativeItems, liveItems);
@@ -1159,6 +1254,166 @@ export async function computeCalendarRewritePlan(authoritativeItems, startIso, e
 export function isRateLimitError(err) {
   const code = err?.status ?? err?.result?.error?.code;
   return code === 429;
+}
+
+/**
+ * ============================================================================
+ * Batched rewrite execution
+ * ============================================================================
+ * A delete-all rewrite (see planCalendarRewrite above) issues one API call per
+ * event on the primary calendar plus one per authoritative local item — easily
+ * several hundred calls for a real calendar. Done one at a time with the
+ * pacing delay the executor needs to stay under Google's per-user rate limit,
+ * that runs for minutes behind a blocking overlay.
+ *
+ * Google Calendar supports batching (`gapi.client.newBatch()`), which bundles
+ * up to 50 sub-requests into ONE HTTP round-trip. That's the whole win here:
+ * ~50x fewer round-trips, and the pacing delay is paid once per batch rather
+ * than once per event.
+ *
+ * Two gapi batch behaviours drive the shape of the code below:
+ *   - A batch resolves as a SINGLE promise whose `result` is keyed by the id
+ *     given to `batch.add(request, { id })`. It does NOT reject when an
+ *     individual sub-request fails — a failed sub-request just carries its own
+ *     non-2xx `status`/`result.error` in that map. So per-item success/failure
+ *     has to be read out of the map, not caught.
+ *   - The batch as a WHOLE can still reject (network failure, auth, or a
+ *     429 against the batch endpoint itself). That's handled one level up by
+ *     the caller, which retries the whole batch.
+ */
+
+// Google's documented maximum sub-requests per batch request. Exceeding it
+// makes the batch endpoint reject the whole call, so nothing here should ever
+// build a bigger batch than this.
+export const MAX_BATCH_SIZE = 50;
+
+/**
+ * Split `items` into consecutive chunks of at most `size`. Pure and exported
+ * for unit testing (and so the executor's progress math can use the same chunk
+ * count the executor actually iterates).
+ */
+export function chunkForBatch(items, size = MAX_BATCH_SIZE) {
+  const safeSize = Math.max(1, Math.floor(size) || 1);
+  const chunks = [];
+  for (let i = 0; i < items.length; i += safeSize) {
+    chunks.push(items.slice(i, i + safeSize));
+  }
+  return chunks;
+}
+
+/**
+ * Normalize one gapi batch sub-response into a plain
+ * `{ ok, status, error, result }`. Pure/exported for unit testing, since the
+ * per-item success/failure tracking the rewrite reports to the user hangs
+ * entirely off getting this classification right.
+ *
+ * A missing sub-response (id absent from the batch result map — shouldn't
+ * happen, but a silently-dropped sub-request would otherwise read as success)
+ * is treated as a failure rather than assumed fine.
+ */
+export function classifyBatchSubResponse(subResponse) {
+  if (!subResponse) return { ok: false, status: 0, error: 'No response returned for this batch entry', result: null };
+  const status = subResponse.status ?? subResponse.result?.error?.code ?? 0;
+  // A delete whose target is already gone (404/410) is the state the delete
+  // was trying to reach — same reasoning as isAlreadyGoneError for the
+  // single-call path, applied here to a batch sub-response's own status.
+  if (status >= 200 && status < 300) return { ok: true, status, error: null, result: subResponse.result };
+  const message = subResponse.result?.error?.message || `HTTP ${status}`;
+  return { ok: false, status, error: message, result: subResponse.result || null };
+}
+
+/**
+ * True if a batch sub-response's status means "already gone" for a DELETE —
+ * see `isAlreadyGoneError`'s doc comment for the single-call equivalent. A
+ * delete-all rewrite hits this routinely (e.g. a recurring master and one of
+ * its own instances both appearing in the fetched list, where deleting the
+ * master already removed the instance), so it must count as success or a
+ * normal rewrite would report dozens of phantom failures.
+ */
+function isBatchDeleteAlreadyGone(status) {
+  return status === 404 || status === 410;
+}
+
+/**
+ * Run one gapi batch of already-built request objects.
+ * `entries` is `[{ id, request }]`; resolves to a Map of id -> the normalized
+ * `{ ok, status, error, result }` from `classifyBatchSubResponse`.
+ *
+ * Rejects only if the batch call ITSELF fails (network/auth/429 on the batch
+ * endpoint) — per-sub-request failures come back in the map, see the module
+ * note above.
+ */
+async function executeBatch(entries) {
+  const batch = window.gapi.client.newBatch();
+  for (const { id, request } of entries) {
+    batch.add(request, { id });
+  }
+  const response = await batch;
+  const byId = response?.result || {};
+  const out = new Map();
+  for (const { id } of entries) {
+    out.set(id, classifyBatchSubResponse(byId[id]));
+  }
+  return out;
+}
+
+/**
+ * Delete up to MAX_BATCH_SIZE primary-calendar events in one batched HTTP
+ * call. `googleEventIds` must already be scoped to the primary calendar by
+ * the caller (see planCalendarRewrite's safety boundary) — this hardcodes
+ * `calendarId: 'primary'` so a batch can never reach another calendar even if
+ * a caller passed the wrong list.
+ *
+ * @param {string[]} googleEventIds
+ * @returns {Promise<Map<string, {ok: boolean, status: number, error: string|null}>>}
+ *   keyed by googleEventId.
+ */
+export async function batchDeleteCalendarEvents(googleEventIds) {
+  if (!gapiInited || !accessToken) return new Map(googleEventIds.map((id) => [id, { ok: true, status: 200, error: null }]));
+
+  const entries = googleEventIds.map((googleEventId) => ({
+    id: googleEventId,
+    // PRIMARY ONLY — hardcoded, never taken from the item. See above.
+    request: window.gapi.client.calendar.events.delete({ calendarId: 'primary', eventId: googleEventId }),
+  }));
+  const results = await executeBatch(entries);
+  // Fold "already gone" into success — see isBatchDeleteAlreadyGone.
+  for (const [id, res] of results) {
+    if (!res.ok && isBatchDeleteAlreadyGone(res.status)) results.set(id, { ...res, ok: true, error: null });
+  }
+  return results;
+}
+
+/**
+ * Insert up to MAX_BATCH_SIZE events onto the PRIMARY calendar in one batched
+ * HTTP call. Every entry is a fresh insert (the rewrite deleted everything
+ * first, so there is nothing to update against — see planCalendarRewrite).
+ *
+ * @param {Array<{id: string, resource: Object}>} inserts - `id` is the
+ *   CALLER's own local id for the item (block id / event id), used to key the
+ *   returned map so the caller can stamp the resulting googleEventId back onto
+ *   the right local record.
+ * @returns {Promise<Map<string, {ok: boolean, status: number, error: string|null, googleEventId: string|null}>>}
+ */
+export async function batchInsertCalendarEvents(inserts) {
+  if (!gapiInited || !accessToken) {
+    console.info('[googleCalendarService] Not authorized — skipping batch insert (mock mode).');
+    return new Map(inserts.map(({ id }) => [id, { ok: true, status: 200, error: null, googleEventId: null }]));
+  }
+
+  const entries = inserts.map(({ id, resource }) => ({
+    id,
+    // PRIMARY ONLY — the rewrite's authoritative set is by definition what
+    // belongs on the user's own primary calendar (see the caller's own
+    // primaryEvents filter), so this is hardcoded rather than per-item.
+    request: window.gapi.client.calendar.events.insert({ calendarId: 'primary', resource }),
+  }));
+  const results = await executeBatch(entries);
+  const out = new Map();
+  for (const [id, res] of results) {
+    out.set(id, { ...res, googleEventId: res.ok ? res.result?.id ?? null : null });
+  }
+  return out;
 }
 
 function priorityToColorId(priority) {
