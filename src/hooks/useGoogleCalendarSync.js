@@ -1460,23 +1460,29 @@ export function useGoogleCalendarSync({
   // and accumulated into succeeded/failed, so one bad event never aborts the
   // rest — see runBatchesWithRetry above for the retry/pacing policy.
   const rewriteGoogleCalendarFromTaskflow = useCallback(async ({ blocksOverride } = {}) => {
-    // Hold BOTH guards for this call's entire duration (a rewrite can run for
-    // a while on a large calendar — see REWRITE_BATCH_PACING_MS's own comment):
-    //   - googleFetchInFlightRef: if a poll/pull/push happens to already be
-    //     mid-flight right when this is clicked, wait it out rather than
-    //     racing a fetch that's already reading/writing state.
-    //   - pollPausedRef: actively BLOCKS any new poll tick from starting for
-    //     the rest of this call, not just de-duplicating an overlapping one —
-    //     without this, the very next 60s poll tick (whose policy is "Google
-    //     always wins") would re-pull Google's still-stale event list mid-
-    //     rewrite and undo whatever the rewrite has done so far, or push
-    //     its own unsynced-blocks batch concurrently with this one. See
-    //     pollPausedRef's own doc comment for the second scenario (restore →
-    //     rewrite gap) this same flag also covers.
-    if (googleFetchInFlightRef.current) {
-      setNotification({ type: 'info', message: 'Already syncing with Google Calendar — try again in a moment.' });
-      return { succeeded: [], failed: [] };
-    }
+    // Unlike every other caller of googleFetchInFlightRef, a rewrite
+    // DELIBERATELY TAKES OVER the guard immediately instead of bailing out
+    // when a poll/pull/push is already mid-flight — it doesn't wait, and it
+    // doesn't ask the in-flight work to finish first. This is safe SPECIFICALLY
+    // for this function (not a precedent for the other guarded call sites,
+    // which still correctly bail rather than race an in-flight fetch's
+    // out-of-order-application risk — see googleFetchInFlightRef's own doc
+    // comment): a rewrite is about to unconditionally delete every event on
+    // the primary calendar and rebuild it fresh from TaskFlow's current
+    // state, so whatever an in-flight poll was fetching/reconciling FROM
+    // GOOGLE is about to be superseded regardless of how it resolves — there's
+    // nothing left for it to "win" a race against. The only residual risk is
+    // reading `stateRef`/`events` a moment before the interrupted poll's own
+    // local-state write would have landed (e.g. its reconciliation sweep
+    // stamping a freshly-pushed googleEventId) — narrow, self-correcting on
+    // the very next poll tick, and preferable to leaving the user stuck
+    // behind a routine sync tick they have no way to interrupt otherwise.
+    //
+    // pollPausedRef still matters for the rest of THIS call's own duration —
+    // it actively blocks any NEW poll tick from starting until the rewrite
+    // finishes, so the very next 60s tick (policy: "Google always wins")
+    // can't re-pull Google's mid-rewrite state or race the rewrite's own
+    // pushes once it's underway.
     googleFetchInFlightRef.current = true;
     pollPausedRef.current = true;
     setIsRewritingCalendar(true);

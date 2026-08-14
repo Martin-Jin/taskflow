@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.2.1',
+    date: '2026-08-15',
+    title: 'Fixed "Restore & overwrite Google Calendar" refusing to run',
+    changes: [
+      'Fixed "Restore & overwrite Google Calendar" repeatedly refusing to run with "Already syncing — try again in a moment", with no way to proceed. It now takes over immediately instead of waiting on a routine background sync to finish — safe to do, since the rewrite is about to replace everything on your primary calendar anyway.',
+    ],
+  },
+  {
     version: '5.2.0',
     date: '2026-08-15',
     title: 'Google Calendar duplicate events fixed at the source, and much faster rewrites',
