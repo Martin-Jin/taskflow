@@ -21,19 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '4.8.1',
+    date: '2026-08-14',
+    title: 'Fixed duplicate Google Calendar events',
+    changes: [
+      "Reverted the previous update's auto-push of scheduled tasks to Google Calendar — it was creating duplicate calendar events every time the schedule recalculated. Investigating a correct fix.",
+    ],
+  },
+  {
     version: '4.8.0',
     date: '2026-08-14',
     title: 'Warning when Google Calendar stays disconnected',
     changes: [
       "If Google Calendar can't sync for an extended stretch (network issue, revoked access, etc.), you'll now get a notification prompting you to check your connection or reconnect in Settings — previously this only showed as a small badge in Settings that was easy to miss.",
-    ],
-  },
-  {
-    version: '4.7.1',
-    date: '2026-08-14',
-    title: 'Auto-scheduled tasks now sync to Google Calendar',
-    changes: [
-      "Tasks scheduled automatically (by Re-balance, including ones created through AI quick-add) or scheduled by dragging onto the calendar weren't reaching Google Calendar until you manually clicked \"Push to Google Calendar\" in Settings. They're now pushed automatically in the background, same as manually-created calendar events already were.",
     ],
   },
   {
