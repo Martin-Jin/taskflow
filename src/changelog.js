@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '5.1.0',
+    date: '2026-08-15',
+    title: 'Combined "Restore & overwrite Google Calendar" action',
+    changes: [
+      'Restoring a backup and making Google Calendar match it are now one single action ("Restore & overwrite Google Calendar", in Backups) instead of a restore followed by a separate follow-up prompt — closing a real gap where Google\'s background sync could silently undo a restore before you got the chance to click the follow-up.',
+      'The standalone "Rewrite Google Calendar to match TaskFlow" button (previously under Integrations) has moved into the Backups section as part of this combined action; the plain "Restore" and "Restore from file" buttons are unchanged and still only touch local TaskFlow data.',
+      "Fixed a related bug where a rewrite running at the same time as Google's background sync could fight over the same data — background syncing now pauses for the whole restore-and-overwrite sequence and resumes once it's done.",
+    ],
+  },
+  {
     version: '5.0.3',
     date: '2026-08-14',
     title: 'Progress indicator for "Rewrite Google Calendar"',

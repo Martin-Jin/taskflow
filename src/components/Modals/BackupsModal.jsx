@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, RotateCcw, Trash2 } from 'lucide-react';
+import { X, RotateCcw, RefreshCw, Trash2 } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useConfirm } from '../../context/ConfirmContext';
@@ -15,8 +15,19 @@ import { useConfirm } from '../../context/ConfirmContext';
  * bare confirm(); restoring/deleting a specific row still confirms via the
  * app's shared in-app confirm modal (useConfirm, see ConfirmContext.jsx),
  * matching the rest of the app's destructive-action convention.
+ *
+ * Two restore options per row: plain "Restore" (local TaskFlow data only,
+ * Google Calendar untouched — unchanged long-standing behavior) and
+ * "Restore & overwrite Google Calendar" (onRestoreAndRewrite —
+ * SchedulerContext.restoreCloudBackupAndRewriteCalendar), which chains the
+ * restore directly into rewriteGoogleCalendarFromTaskflow with no gap for
+ * the periodic Google poll to land in between and undo the restore first —
+ * see that function's own doc comment for the race this closes. Only shown
+ * when Google Calendar is actually connected (isGoogleConnected) — nothing
+ * to rewrite otherwise, and showing a button that would silently no-op is
+ * worse than not showing it.
  */
-export default function BackupsModal({ backups, isBusy, onRestore, onRestored, onDelete, onClose }) {
+export default function BackupsModal({ backups, isBusy, isGoogleConnected, onRestore, onRestoreAndRewrite, onDelete, onClose }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const confirm = useConfirm();
@@ -71,7 +82,7 @@ export default function BackupsModal({ backups, isBusy, onRestore, onRestored, o
                     {backup.automatic ? 'Automatic' : 'Manual'}
                   </span>
                 </span>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
                   <button
                     className="btn"
                     style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
@@ -79,16 +90,37 @@ export default function BackupsModal({ backups, isBusy, onRestore, onRestored, o
                     onClick={async () => {
                       if (!(await confirm('Restore this backup? This replaces your current tasks, boards, and settings.', { confirmLabel: 'Restore' })))
                         return;
-                      const restored = await onRestore(backup.id);
-                      // Separate, explicit opt-in follow-up (see
-                      // SettingsPanel.jsx's offerRewriteGoogleCalendarFollowUp) —
-                      // only offered after a restore that actually applied.
-                      if (restored) onRestored?.();
+                      await onRestore(backup.id);
                     }}
                   >
                     <RotateCcw size={12} />
                     Restore
                   </button>
+                  {isGoogleConnected && (
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      disabled={isBusy}
+                      onClick={async () => {
+                        if (
+                          !(await confirm(
+                            "Restore this backup AND make Google Calendar match it?\n\n" +
+                              'This replaces your current tasks, boards, and settings, then deletes/overwrites events on ' +
+                              "your PRIMARY Google Calendar that don't match the restored data.\n\n" +
+                              "Safe: any subscribed or shared calendar you don't own is never touched — only your own " +
+                              'primary calendar is ever changed.\n\n' +
+                              "This can't be undone from within TaskFlow — deleted Google Calendar events are gone for good. Continue?",
+                            { confirmLabel: 'Restore & overwrite' }
+                          ))
+                        )
+                          return;
+                        await onRestoreAndRewrite(backup.id);
+                      }}
+                    >
+                      <RefreshCw size={12} />
+                      Restore & overwrite Google Calendar
+                    </button>
+                  )}
                   <button
                     className="btn"
                     style={{ fontSize: 12, color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}

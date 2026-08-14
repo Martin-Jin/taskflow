@@ -255,6 +255,25 @@ export function useGoogleCalendarSync({
   const lastGooglePollAtRef = useRef(0);
   const pollGoogleEventsRef = useRef(null);
 
+  // Set true to suppress the periodic poll (and the visibility/focus refresh
+  // that calls the same poll function) without touching googleFetchInFlightRef
+  // — that ref only guards against overlapping IN-PROGRESS fetches, it can't
+  // stop a NEW poll tick from starting once a previous one has finished.
+  // rewriteGoogleCalendarFromTaskflow holds this for its entire duration: the
+  // routine sync policy is "Google always wins" (see eventSyncService.js),
+  // which is exactly backwards for a rewrite — a poll landing mid-rewrite
+  // would re-pull whatever's still on Google (including events the rewrite
+  // just deleted, or hasn't yet reached) and undo the rewrite's own work as
+  // it goes. This also covers restore -> rewrite: SchedulerContext's
+  // restoreCloudBackupAndRewriteCalendar/importBackupFromFileAndRewriteCalendar
+  // chain a restore directly into this function with no gap for a poll to
+  // land in between (an earlier design offered a separate opt-in follow-up
+  // toast after restore instead, which left exactly that gap open — replaced
+  // for this reason). A plain boolean ref (not state) since nothing needs to
+  // re-render off it — only the poll/visibility-refresh effect's closures
+  // read it.
+  const pollPausedRef = useRef(false);
+
   // Populated below (near "Push blocks to Google Calendar") with a function
   // that pushes every block lacking a googleEventId — kept in a ref, same
   // reasoning as pollGoogleEventsRef, so the periodic-poll effect (which only
@@ -561,7 +580,7 @@ export function useGoogleCalendarSync({
     // without waiting a full interval; the in-flight ref stays held across
     // both attempts (see its doc comment) so nothing else can interleave.
     const poll = async () => {
-      if (googleFetchInFlightRef.current) return;
+      if (googleFetchInFlightRef.current || pollPausedRef.current) return;
       googleFetchInFlightRef.current = true;
       lastGooglePollAtRef.current = Date.now();
       const MAX_ATTEMPTS = 2;
@@ -1000,6 +1019,25 @@ export function useGoogleCalendarSync({
   // items at a time. See withRateLimitRetry/REWRITE_CALL_PACING_MS above for
   // the batching precautions this needed that nothing else here does yet.
   const rewriteGoogleCalendarFromTaskflow = useCallback(async () => {
+    // Hold BOTH guards for this call's entire duration (a rewrite can run for
+    // minutes on a large batch — see REWRITE_CALL_PACING_MS's own comment):
+    //   - googleFetchInFlightRef: if a poll/pull/push happens to already be
+    //     mid-flight right when this is clicked, wait it out rather than
+    //     racing a fetch that's already reading/writing state.
+    //   - pollPausedRef: actively BLOCKS any new poll tick from starting for
+    //     the rest of this call, not just de-duplicating an overlapping one —
+    //     without this, the very next 60s poll tick (whose policy is "Google
+    //     always wins") would re-pull Google's still-stale event list mid-
+    //     rewrite and undo whatever the rewrite has done so far, or push
+    //     its own unsynced-blocks batch concurrently with this one. See
+    //     pollPausedRef's own doc comment for the second scenario (restore →
+    //     rewrite gap) this same flag also covers.
+    if (googleFetchInFlightRef.current) {
+      setNotification({ type: 'info', message: 'Already syncing with Google Calendar — try again in a moment.' });
+      return { succeeded: [], failed: [] };
+    }
+    googleFetchInFlightRef.current = true;
+    pollPausedRef.current = true;
     setIsRewritingCalendar(true);
     try {
       const latestTasks = stateRef.current.tasks;
@@ -1150,6 +1188,8 @@ export function useGoogleCalendarSync({
     } finally {
       setIsRewritingCalendar(false);
       setRewriteProgress(null);
+      pollPausedRef.current = false;
+      googleFetchInFlightRef.current = false;
     }
   }, [stateRef, events, commit, setEvents, setNotification]);
 
