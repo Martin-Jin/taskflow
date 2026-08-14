@@ -578,3 +578,29 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
 
   return { blocks: finalBlocks, overflow, timeShifted, stats };
 }
+
+/**
+ * rebalance() always stamps a freshly (re)placed block's googleEventId as
+ * null — the scheduling engine has no concept of Google Calendar (see
+ * allocator.js/localSearch.js) — even when that exact placement already
+ * existed pre-rebalance and had already been pushed to Google Calendar. A
+ * block's id is deterministic from its placement (`blk_${taskId}_${date}_
+ * ${startTime}...`, see allocator.js's placeAndRecordBlocks) and survives
+ * unchanged across rebalance runs as long as localSearch doesn't relocate it
+ * — so matching on id and carrying the old googleEventId forward whenever it
+ * matches is a safe, conservative way to tell "this exact placement was
+ * already synced" from "this is a genuinely new/moved placement that still
+ * needs a push". Without this, every rebalance would make already-synced
+ * blocks (most commonly recurring/routine tasks, re-placed on essentially
+ * every run) look brand new to any caller that auto-pushes unsynced blocks —
+ * creating a duplicate Google Calendar event each time.
+ *
+ * Pure and exported so this identity-matching rule is unit-testable
+ * independent of the rest of rebalance()/SchedulerContext's commit plumbing.
+ */
+export function preserveGoogleEventIds(newBlocks, oldBlocks) {
+  const oldGoogleEventIdById = new Map(oldBlocks.map((b) => [b.id, b.googleEventId]).filter(([, g]) => g));
+  return newBlocks.map((b) =>
+    !b.googleEventId && oldGoogleEventIdById.has(b.id) ? { ...b, googleEventId: oldGoogleEventIdById.get(b.id) } : b
+  );
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rebalance } from '../../src/algorithms/rebalanceEngine';
+import { rebalance, preserveGoogleEventIds } from '../../src/algorithms/rebalanceEngine';
 import { allocateTasks } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
 
@@ -854,5 +854,49 @@ describe('rebalance: per-occurrence remainingHoursOverride', () => {
     const tomorrowBlock = result.blocks.find((b) => b.taskId === 'trec3' && b.date === tomorrow);
     expect(todayBlock.durationHours).toBe(0.25);
     expect(tomorrowBlock.durationHours).toBe(2);
+  });
+});
+
+describe('preserveGoogleEventIds', () => {
+  it('carries a googleEventId forward onto a new block with the same id', () => {
+    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-abc' }];
+    const newBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null }];
+    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
+    expect(result[0].googleEventId).toBe('gcal-abc');
+  });
+
+  it('leaves a genuinely new block (no matching old id) unsynced', () => {
+    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-abc' }];
+    const newBlocks = [{ id: 'blk_t1_2026-07-02_540', taskId: 't1', googleEventId: null }];
+    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
+    expect(result[0].googleEventId).toBeNull();
+  });
+
+  it("doesn't overwrite a new block that already has its own googleEventId", () => {
+    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-old' }];
+    const newBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-new' }];
+    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
+    expect(result[0].googleEventId).toBe('gcal-new');
+  });
+
+  it('ignores an old block that was never synced (null/undefined googleEventId)', () => {
+    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null }];
+    const newBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null }];
+    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
+    expect(result[0].googleEventId).toBeNull();
+  });
+
+  it('handles multiple blocks independently by id', () => {
+    const oldBlocks = [
+      { id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-1' },
+      { id: 'blk_t2_2026-07-01_600', taskId: 't2', googleEventId: 'gcal-2' },
+    ];
+    const newBlocks = [
+      { id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null },
+      { id: 'blk_t2_2026-07-02_600', taskId: 't2', googleEventId: null }, // moved to a new date -> new id
+    ];
+    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
+    expect(result.find((b) => b.id === 'blk_t1_2026-07-01_540').googleEventId).toBe('gcal-1');
+    expect(result.find((b) => b.id === 'blk_t2_2026-07-02_600').googleEventId).toBeNull();
   });
 });

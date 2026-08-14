@@ -50,7 +50,7 @@ import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/note
 import { playAddSound, playDeleteSound } from '../services/soundService';
 import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowed } from '../services/attachmentService';
 import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
-import { rebalance } from '../algorithms/rebalanceEngine';
+import { rebalance, preserveGoogleEventIds } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate } from '../utils/taskFieldDerivations';
 import {
@@ -1346,7 +1346,12 @@ export function SchedulerProvider({ children }) {
     commit(
       (current) => {
         result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
-        return { tasks: current.tasks, blocks: result.blocks };
+        // See preserveGoogleEventIds' own doc comment — without this, every
+        // rebalance would make already-synced blocks look unsynced to
+        // useGoogleCalendarSync's auto-push, creating duplicate Google
+        // Calendar events.
+        const blocksWithPreservedGoogleIds = preserveGoogleEventIds(result.blocks, current.blocks);
+        return { tasks: current.tasks, blocks: blocksWithPreservedGoogleIds };
       },
       // Function-form label (see useHistoryState's commit) — result.stats
       // isn't known until the updater above has actually run.
