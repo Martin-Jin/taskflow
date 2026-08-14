@@ -839,18 +839,45 @@ never run automatically) that flips the direction for one run, making
 TaskFlow's current local blocks/events authoritative and reconciling
 Google's calendar to match.
 
-Separately from that one-off action, `pushUnsyncedItemsToCalendar`
-(`useGoogleCalendarSync.js`) is the always-on retry sweep: it runs on every
-periodic poll tick and behind the manual "Push to Google Calendar" button,
-and pushes anything still missing a `googleEventId`. It covers **both**
-blocks and events. Events were previously excluded, which was a real bug —
-`addManualEvent`/`updateEvent` each fire a single best-effort push and only
-log/toast on failure, so an event whose one push failed (offline, not yet
-connected, tab closed mid-flight) was stranded unsynced forever while blocks
-were retried every 60s. `isUnsyncedPushableEvent` (pure, unit-tested) decides
-eligibility: never a subscribed/foreign-calendar event (pushing a copy onto
-the user's own primary calendar would duplicate someone else's event), never
-a block-mirror row, and never one missing date/time.
+**Ongoing reconciliation is the more important half.** The rewrite cleans up
+accumulated drift; `pushUnsyncedItemsToCalendar` (`useGoogleCalendarSync.js`)
+is what stops drift accumulating between rewrites. It runs on every periodic
+poll tick and behind the manual "Push to Google Calendar" button.
+
+It used to only push blocks with **no** `googleEventId`, which left three
+silent leaks during ordinary use. A block that was already synced and then
+moved — dragged/resized in WeekView, edited in `BlockDetailModal`, or
+re-placed by a rebalance — kept its id, looked "already synced", and was
+never pushed again, so its Google event stayed at the old time indefinitely.
+A block that disappeared (`deleteBlock`, or a rebalance dropping it) left its
+Google event orphaned with nothing referencing it. And relocation was worst
+of all: a block's id encodes its placement
+(`blk_${taskId}_${date}_${startTime}`), so a rebalance that moves it mints a
+new id, `preserveGoogleEventIds`' exact-id match finds no predecessor and
+doesn't carry the `googleEventId` over — the block looks brand new (push → a
+duplicate) while the original event is orphaned. That's one duplicate plus
+one orphan per moved recurring block, on every rebalance.
+
+`planOngoingCalendarSync` (pure, heavily unit-tested) now returns
+`{ toCreate, toUpdate, toDelete }` against a persisted, device-local record
+(`googleLastSyncedBlocks`: blockId → `{ googleEventId, signature, taskId }`)
+of what each block was last pushed as. `blockSyncSignature` covers exactly
+the fields written into the Google event resource (date/start/end/title), so
+an unchanged block produces no API call and the steady state stays silent.
+A relocated block whose id was re-minted inherits the `googleEventId` from an
+unclaimed record for the same task, so it's recognized as a **move** (one
+in-place update) rather than a delete+create pair — and each relocated block
+claims a *distinct* event, so a recurring task with several re-minted blocks
+can't collapse them all onto one. The rewrite path rebuilds this record from
+its own results, since delete-all invalidates every id it held.
+
+The same sweep also retries **events**, not just blocks — previously they had
+no retry path at all, so an event whose one best-effort push from
+`addManualEvent`/`updateEvent` failed (offline, not yet connected, tab closed
+mid-flight) was stranded unsynced forever. `isUnsyncedPushableEvent` (pure,
+unit-tested) decides eligibility: never a subscribed/foreign-calendar event
+(pushing a copy onto the user's own primary calendar would duplicate someone
+else's event), never a block-mirror row, and never one missing date/time.
 
 - **Planning** (`planCalendarRewrite`/`computeCalendarRewritePlan` in
   `googleCalendarService.js`, pure and unit-tested) produces
@@ -924,8 +951,12 @@ Some persisted state is deliberately **device-local** — it lives in
 out of `BACKUP_FIELDS` and cloud sync, because it's a per-device view
 preference rather than data a user would be sad to lose on a device switch:
 dashboard widget visibility, calendar zoom level, the Tasks page's
-per-view status filter (`taskflow_tasks_filter_by_view_v1`), and the
-Calendar's filter menu (`taskflow_calendar_filter_v1`). Use a versioned key
+per-view status filter (`taskflow_tasks_filter_by_view_v1`), the
+Calendar's filter menu (`taskflow_calendar_filter_v1`), and the Google
+Calendar sync record (`googleLastSyncedBlocks` — a description of what THIS
+device has pushed; each device's sweep converges on the same Google state
+independently, and mirroring it across devices would let a stale snapshot
+delete events another device had legitimately just created). Use a versioned key
 for these so a shape change can't strand users on a stale persisted value,
 and merge the loaded value over the defaults defensively rather than
 trusting it.
