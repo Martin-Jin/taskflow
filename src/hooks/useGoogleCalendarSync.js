@@ -21,6 +21,7 @@ import {
   fetchEvents as fetchGoogleEvents,
   pushBlockToCalendar,
   pushEventToCalendar,
+  deleteCalendarEvent,
   pushEventInstanceUpdate,
   deleteCalendarEventInstance,
   initGoogleCalendar,
@@ -198,6 +199,135 @@ export function isUnsyncedPushableEvent(event) {
   if (event.source === 'google' && event.calendarId !== 'primary') return false;
   if (isBlockSourcedEvent(event)) return false;
   return !!(event.date && event.startTime && event.endTime);
+}
+
+/**
+ * The scheduling-relevant signature of a block as it exists on Google — the
+ * exact fields pushBlockToCalendar writes into the event resource. If this
+ * changes, the Google event is stale and needs an update pushed.
+ *
+ * `title` is included because pushBlockToCalendar writes it into the event's
+ * summary, so renaming a task must also refresh Google — but nothing else
+ * from the task (notes/priority) is, since those only affect
+ * description/colour and aren't worth a re-push storm on every minor edit.
+ */
+export function blockSyncSignature(block, task) {
+  return [block.date, block.startTime, block.endTime, task?.title || ''].join('|');
+}
+
+/**
+ * Decides what the ongoing (non-rewrite) reconciliation sweep must send to
+ * Google so the calendar keeps matching TaskFlow during ORDINARY use — the
+ * everyday counterpart to the one-off "Rewrite Google Calendar" action.
+ *
+ * The gap this closes: `pushBlockToCalendar` used to be called from exactly
+ * one place, and only for blocks with NO googleEventId. So a block that was
+ * already synced and then MOVED — by a drag/resize in WeekView, an edit in
+ * BlockDetailModal, or a rebalance re-placing it — kept its googleEventId,
+ * looked "already synced", and was never pushed again. Its Google event just
+ * stayed behind at the old time, permanently. And a block that disappeared
+ * (deleteBlock, or a rebalance dropping/relocating it) left its Google event
+ * orphaned with nothing referencing it, so nothing could ever clean it up.
+ *
+ * Relocation is the worst case, because a block's id encodes its placement
+ * (`blk_${taskId}_${date}_${startTime}`, see allocator.js). A rebalance that
+ * moves a block mints a NEW id, so `preserveGoogleEventIds`' exact-id match
+ * finds no predecessor and the googleEventId is not carried over: the new
+ * block looks unsynced (push -> a fresh duplicate event) while the old
+ * Google event is orphaned. That is one duplicate plus one orphan per moved
+ * recurring block, accumulating silently on every rebalance — which no
+ * amount of fixing the rewrite button prevents, since it happens between
+ * rewrites.
+ *
+ * Matching is therefore by `lastSyncedById` (a persisted record of what each
+ * block was last pushed as) rather than by block identity alone, so a block
+ * that changed id but is still the same underlying work is recognized as a
+ * MOVE (update the existing Google event in place) rather than as a
+ * delete + create pair.
+ *
+ * @param {Array} blocks - current ScheduledBlocks
+ * @param {Array} tasks - current tasks (for titles / orphan detection)
+ * @param {Object<string, {googleEventId: string, signature: string}>} lastSyncedById
+ *   - what each block id was last successfully pushed as
+ * @returns {{ toCreate: Array, toUpdate: Array, toDelete: Array }}
+ */
+export function planOngoingCalendarSync(blocks, tasks, lastSyncedById = {}) {
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const toCreate = [];
+  const toUpdate = [];
+
+  // googleEventIds still claimed by a live block — anything in the synced
+  // record but absent here is an orphan whose block is gone.
+  const liveGoogleEventIds = new Set();
+
+  // Records whose block id no longer exists, grouped by taskId. A rebalance
+  // that relocates a block mints a NEW id (the id encodes the placement), so
+  // the record filed under the OLD id is the only remaining pointer to that
+  // block's Google event. Without this, a relocated block would look brand
+  // new (create a duplicate) while its original event became an orphan
+  // (deleted, then recreated) — a delete+create churn on every rebalance
+  // instead of a single in-place move. Keyed by task since that is what
+  // survives the re-mint.
+  const liveBlockIds = new Set(blocks.map((b) => b.id));
+  const orphanedRecordsByTask = new Map();
+  for (const [blockId, record] of Object.entries(lastSyncedById)) {
+    if (!record?.googleEventId || liveBlockIds.has(blockId)) continue;
+    // The block id embeds its taskId (`blk_${taskId}_...`, see allocator.js);
+    // fall back to the record's own taskId when present.
+    const taskId = record.taskId || (blockId.startsWith('blk_') ? blockId.split('_')[1] : null);
+    if (!taskId) continue;
+    if (!orphanedRecordsByTask.has(taskId)) orphanedRecordsByTask.set(taskId, []);
+    orphanedRecordsByTask.get(taskId).push({ blockId, ...record });
+  }
+  const claimedOrphanBlockIds = new Set();
+
+  for (const block of blocks) {
+    const task = taskById.get(block.taskId);
+    if (!task) continue; // orphaned block; the task-delete path handles its Google cleanup
+    const signature = blockSyncSignature(block, task);
+
+    // Prefer the block's own googleEventId, then whatever this block id was
+    // last synced as, then — for a block a rebalance just re-minted under a
+    // new id — an unclaimed record from the same task (see above).
+    const record = lastSyncedById[block.id];
+    let googleEventId = block.googleEventId || record?.googleEventId || null;
+    let inheritedFromBlockId = null;
+    if (!googleEventId) {
+      const candidates = orphanedRecordsByTask.get(block.taskId) || [];
+      const inherited = candidates.find((c) => !claimedOrphanBlockIds.has(c.blockId));
+      if (inherited) {
+        googleEventId = inherited.googleEventId;
+        inheritedFromBlockId = inherited.blockId;
+        claimedOrphanBlockIds.add(inherited.blockId);
+      }
+    }
+
+    if (!googleEventId) {
+      toCreate.push({ block, task, signature });
+      continue;
+    }
+    liveGoogleEventIds.add(googleEventId);
+    // Unchanged since its last successful push -> nothing to send. Without a
+    // record (e.g. synced by an older build) assume it needs refreshing once,
+    // which is idempotent: an update writes the same values it already has.
+    if (record && record.signature === signature) continue;
+    toUpdate.push({ block, task, googleEventId, signature, inheritedFromBlockId });
+  }
+
+  // Orphans: previously-synced Google events no live block claims anymore.
+  // Deleting these is what stops stale events piling up after every
+  // deleteBlock / rebalance drop.
+  const toDelete = [];
+  const seenForDelete = new Set();
+  for (const [blockId, record] of Object.entries(lastSyncedById)) {
+    if (!record?.googleEventId) continue;
+    if (liveGoogleEventIds.has(record.googleEventId)) continue;
+    if (seenForDelete.has(record.googleEventId)) continue;
+    seenForDelete.add(record.googleEventId);
+    toDelete.push({ blockId, googleEventId: record.googleEventId });
+  }
+
+  return { toCreate, toUpdate, toDelete };
 }
 
 /**
@@ -435,6 +565,27 @@ export function useGoogleCalendarSync({
   // during this same commit.
   const eventsRef = useRef(events);
   eventsRef.current = events;
+
+  // blockId -> { googleEventId, signature } for every block this device has
+  // successfully pushed — the memory that makes ongoing reconciliation
+  // possible (see planOngoingCalendarSync). Without it the sweep can't tell
+  // "already correct on Google" from "moved since it was pushed", and can't
+  // recognize a Google event whose block has since been deleted or re-minted
+  // under a new id.
+  //
+  // Persisted rather than session-only: a rebalance/drag can happen in one
+  // session and the next sync tick land in another, and a forgotten record
+  // means a permanently orphaned Google event nothing can clean up.
+  // Deliberately device-local (not in BACKUP_FIELDS/cloud sync): it describes
+  // what THIS device has pushed, and each device's own sweep converges on the
+  // same Google state independently — mirroring it across devices would just
+  // let a stale snapshot issue deletes for events another device had legitimately
+  // just re-created.
+  const [lastSyncedBlocks, setLastSyncedBlocks] = usePersistedState('googleLastSyncedBlocks', {});
+  const lastSyncedBlocksRef = useRef(lastSyncedBlocks);
+  useEffect(() => {
+    lastSyncedBlocksRef.current = lastSyncedBlocks;
+  }, [lastSyncedBlocks]);
 
   // Populated below (near "Push blocks to Google Calendar") with a function
   // that pushes every block AND event lacking a googleEventId — kept in a
@@ -1126,19 +1277,69 @@ export function useGoogleCalendarSync({
     const latestTasks = stateRef.current.tasks;
     const latestBlocks = stateRef.current.blocks;
 
+    // Full reconciliation, not just "push what has no id yet" — creates,
+    // UPDATES for blocks that moved since their last push, and DELETES for
+    // Google events whose block is gone. See planOngoingCalendarSync for why
+    // each of those three is required to stop drift accumulating.
+    const syncRecord = { ...(lastSyncedBlocksRef.current || {}) };
+    const { toCreate, toUpdate, toDelete } = planOngoingCalendarSync(latestBlocks, latestTasks, syncRecord);
+
     const pushedEventIdsByBlockId = new Map();
-    for (const block of latestBlocks.filter((b) => !b.googleEventId)) {
-      const task = latestTasks.find((t) => t.id === block.taskId);
-      if (!task) continue;
-      // Per-item try/catch so one failure doesn't abort the rest of the sweep
-      // — the next tick retries whatever is still unsynced.
+    // Per-item try/catch throughout so one failure never aborts the sweep —
+    // the next tick simply retries whatever is still out of sync.
+    for (const { block, task, signature } of toCreate) {
       try {
         const eventId = await pushBlockToCalendar(block, task);
-        if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
+        if (eventId) {
+          pushedEventIdsByBlockId.set(block.id, eventId);
+          syncRecord[block.id] = { googleEventId: eventId, signature, taskId: block.taskId };
+        }
       } catch (err) {
         console.warn('[useGoogleCalendarSync] Failed to push block to Google Calendar; will retry next sync.', block.id, err);
       }
     }
+
+    for (const { block, task, googleEventId, signature, inheritedFromBlockId } of toUpdate) {
+      try {
+        // Passing the googleEventId makes pushBlockToCalendar issue an
+        // `update` against the existing event rather than creating a second
+        // one — this is what moves the Google event instead of duplicating it.
+        const resultId = await pushBlockToCalendar({ ...block, googleEventId }, task);
+        const effectiveId = resultId || googleEventId;
+        // A relocated block has a different id than the one that was synced,
+        // so re-stamp it onto the block and retire the record filed under the
+        // old id — otherwise that entry would look like an orphan next tick
+        // and this event would be deleted right after being moved.
+        if (block.googleEventId !== effectiveId) pushedEventIdsByBlockId.set(block.id, effectiveId);
+        if (inheritedFromBlockId) delete syncRecord[inheritedFromBlockId];
+        syncRecord[block.id] = { googleEventId: effectiveId, signature, taskId: block.taskId };
+      } catch (err) {
+        console.warn('[useGoogleCalendarSync] Failed to update moved block on Google Calendar; will retry next sync.', block.id, err);
+      }
+    }
+
+    for (const { blockId, googleEventId } of toDelete) {
+      try {
+        // Suppress the pull that would otherwise race this delete and
+        // resurrect the event locally — same guard deleteEvent/task-delete use.
+        markGoogleEventDeleted(googleEventId);
+        await deleteCalendarEvent(googleEventId, 'primary');
+        delete syncRecord[blockId];
+      } catch (err) {
+        unmarkGoogleEventDeleted(googleEventId);
+        console.warn('[useGoogleCalendarSync] Failed to delete orphaned block event from Google Calendar; will retry next sync.', googleEventId, err);
+      }
+    }
+
+    // Drop records for block ids that no longer exist, so the record can't
+    // grow without bound as blocks are re-minted across rebalances.
+    const liveBlockIds = new Set(latestBlocks.map((b) => b.id));
+    for (const blockId of Object.keys(syncRecord)) {
+      if (!liveBlockIds.has(blockId)) delete syncRecord[blockId];
+    }
+    lastSyncedBlocksRef.current = syncRecord;
+    setLastSyncedBlocks(syncRecord);
+
     if (pushedEventIdsByBlockId.size > 0) {
       const updated = stateRef.current.blocks.map((b) =>
         pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
@@ -1174,22 +1375,32 @@ export function useGoogleCalendarSync({
       );
     }
 
-    return { blocks: pushedEventIdsByBlockId.size, events: pushedByEventId.size };
-  }, [stateRef, commit, setEvents]);
+    // Counts reflect what actually succeeded (the sync record is only written
+    // on success), not what was attempted — a failed item stays out of the
+    // totals and is retried on the next tick.
+    const createdCount = toCreate.filter(({ block }) => syncRecord[block.id]).length;
+    const updatedCount = toUpdate.filter(({ block, signature }) => syncRecord[block.id]?.signature === signature).length;
+    const deletedCount = toDelete.filter(({ blockId }) => !syncRecord[blockId]).length;
+    return { blocks: createdCount, events: pushedByEventId.size, updated: updatedCount, deleted: deletedCount };
+  }, [stateRef, commit, setEvents, setLastSyncedBlocks, markGoogleEventDeleted, unmarkGoogleEventDeleted]);
   pushUnsyncedItemsRef.current = pushUnsyncedItemsToCalendar;
 
   const pushToGoogleCalendar = useCallback(async () => {
     setIsPullingGoogleEvents(true);
     try {
-      const { blocks: pushedBlocks, events: pushedEvents } = await pushUnsyncedItemsToCalendar();
-      // Name only what was actually pushed, so the message never claims
-      // "block(s)" for a run that only pushed events (or vice versa).
+      const { blocks: pushedBlocks, events: pushedEvents, updated, deleted } = await pushUnsyncedItemsToCalendar();
+      // Name only what actually happened, so the message never claims
+      // "block(s)" for a run that only pushed events (or vice versa). Updates
+      // and cleanups are reported too — those are the ongoing reconciliation
+      // steps that keep Google matching TaskFlow between rewrites.
       const parts = [];
       if (pushedBlocks > 0) parts.push(`${pushedBlocks} block(s)`);
       if (pushedEvents > 0) parts.push(`${pushedEvents} event(s)`);
+      if (updated > 0) parts.push(`${updated} moved`);
+      if (deleted > 0) parts.push(`${deleted} removed`);
       setNotification({
         type: 'success',
-        message: parts.length > 0 ? `Pushed ${parts.join(' and ')} to Google Calendar.` : 'Everything is already synced to Google Calendar.',
+        message: parts.length > 0 ? `Synced ${parts.join(', ')} to Google Calendar.` : 'Everything is already synced to Google Calendar.',
       });
     } catch (err) {
       console.error(err);
@@ -1471,6 +1682,24 @@ export function useGoogleCalendarSync({
         return b.googleEventId === fresh ? b : { ...b, googleEventId: fresh };
       });
       commit({ tasks: stateRef.current.tasks, blocks: updatedBlocks }, 'Rewrote Google Calendar from TaskFlow');
+
+      // Rebuild the ongoing-sync record from scratch to match what the
+      // rewrite just created. Every id it previously held was deleted in
+      // phase 1, so carrying it forward would make the next reconciliation
+      // sweep (see planOngoingCalendarSync) issue deletes for events that are
+      // already gone and mis-read fresh inserts as "moved". Rebuilding here
+      // keeps the two paths consistent: after a rewrite, the record describes
+      // exactly the events now on Google.
+      const rewrittenRecord = {};
+      const tasksById = new Map(stateRef.current.tasks.map((t) => [t.id, t]));
+      for (const b of updatedBlocks) {
+        if (!b.googleEventId) continue;
+        const task = tasksById.get(b.taskId);
+        if (!task) continue;
+        rewrittenRecord[b.id] = { googleEventId: b.googleEventId, signature: blockSyncSignature(b, task), taskId: b.taskId };
+      }
+      lastSyncedBlocksRef.current = rewrittenRecord;
+      setLastSyncedBlocks(rewrittenRecord);
       // Same for events, with one extra step: block-mirror rows are DROPPED
       // rather than re-stamped. Their Google copies were deleted in phase 1
       // and deliberately not re-created from the event side (the block was
@@ -1518,7 +1747,7 @@ export function useGoogleCalendarSync({
       pollPausedRef.current = false;
       googleFetchInFlightRef.current = false;
     }
-  }, [stateRef, events, commit, setEvents, setNotification]);
+  }, [stateRef, events, commit, setEvents, setNotification, setLastSyncedBlocks]);
 
   // ---- Disconnect Google Calendar (user-initiated) -------------------------
   const disconnectGoogleCalendar = useCallback(async () => {
