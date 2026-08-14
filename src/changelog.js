@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '4.7.1',
+    date: '2026-08-14',
+    title: 'Auto-scheduled tasks now sync to Google Calendar',
+    changes: [
+      "Tasks scheduled automatically (by Re-balance, including ones created through AI quick-add) or scheduled by dragging onto the calendar weren't reaching Google Calendar until you manually clicked \"Push to Google Calendar\" in Settings. They're now pushed automatically in the background, same as manually-created calendar events already were.",
+    ],
+  },
+  {
     version: '4.7.0',
     date: '2026-08-14',
     title: 'Completed tasks free up their calendar slot',
