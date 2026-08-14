@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.0.1',
+    date: '2026-08-14',
+    title: 'Fixed demo tasks reappearing after signing back in',
+    changes: [
+      "Signing out and back in could leave the sample demo tasks (\"Finish Q3 investor deck\" and friends) mixed in alongside your real synced tasks — sign-out was re-seeding the sample data on reload, and your real tasks getting pulled back in couldn't tell those apart from genuinely new tasks. Signing out now leaves a clean, empty slate instead, so a subsequent sign-in only shows your real data.",
+    ],
+  },
+  {
     version: '5.0.0',
     date: '2026-08-14',
     title: 'New: rewrite Google Calendar to match TaskFlow',
