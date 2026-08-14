@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '5.0.0',
+    date: '2026-08-14',
+    title: 'New: rewrite Google Calendar to match TaskFlow',
+    changes: [
+      'Added a new, explicit action in Settings → Integrations, "Rewrite Google Calendar to match TaskFlow", for when your Google Calendar has drifted out of sync (e.g. after restoring an old backup) — it flips the normal sync direction and makes TaskFlow authoritative, deleting/updating events on your primary Google Calendar to match your current tasks, scheduled blocks, and calendar events.',
+      "Safety: it only ever touches your own PRIMARY Google Calendar — any calendar you've merely subscribed to or been shared (e.g. a shared team calendar or a university timetable) is never modified, and it never wipes a wider date range than your own data actually spans.",
+      'Restoring a backup (local file or cloud) now offers this as a separate, optional one-click follow-up afterward — restoring itself still only ever touches local TaskFlow data, exactly as before.',
+      'Requires a clear confirmation before running, since — unlike other TaskFlow actions — it can delete real events on an external service that TaskFlow cannot undo.',
+    ],
+  },
+  {
     version: '4.9.1',
     date: '2026-08-14',
     title: 'Fixed a second source of duplicate Google Calendar events, and cluster labels showing "Untitled"',

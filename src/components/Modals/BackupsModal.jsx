@@ -15,7 +15,7 @@ import { useModalA11y } from '../../hooks/useModalA11y';
  * window.confirm, matching the rest of the app's destructive-action
  * convention.
  */
-export default function BackupsModal({ backups, isBusy, onRestore, onDelete, onClose }) {
+export default function BackupsModal({ backups, isBusy, onRestore, onRestored, onDelete, onClose }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
@@ -74,10 +74,13 @@ export default function BackupsModal({ backups, isBusy, onRestore, onDelete, onC
                     className="btn"
                     style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                     disabled={isBusy}
-                    onClick={() => {
-                      if (window.confirm('Restore this backup? This replaces your current tasks, boards, and settings.')) {
-                        onRestore(backup.id);
-                      }
+                    onClick={async () => {
+                      if (!window.confirm('Restore this backup? This replaces your current tasks, boards, and settings.')) return;
+                      const restored = await onRestore(backup.id);
+                      // Separate, explicit opt-in follow-up (see
+                      // SettingsPanel.jsx's offerRewriteGoogleCalendarFollowUp) —
+                      // only offered after a restore that actually applied.
+                      if (restored) onRestored?.();
                     }}
                   >
                     <RotateCcw size={12} />
