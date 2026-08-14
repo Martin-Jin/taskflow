@@ -126,7 +126,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     rebuildEventsFromGoogle,
     disconnectGoogleCalendar,
     isRewritingCalendar,
-    rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
     isSyncing,
     isBackingUp,
@@ -1335,11 +1334,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
                 disabled={isRewritingCalendar}
               >
                 <Upload size={14} />
-                {isRewritingCalendar
-                  ? rewriteProgress
-                    ? `Rewriting… (${rewriteProgress.done}/${rewriteProgress.total})`
-                    : 'Rewriting…'
-                  : 'Restore from file & overwrite Google Calendar'}
+                Restore from file & overwrite Google Calendar
               </button>
               <input
                 ref={fileInputAndRewriteRef}

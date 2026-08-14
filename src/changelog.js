@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.1.2',
+    date: '2026-08-15',
+    title: 'Full-screen progress overlay while rewriting Google Calendar',
+    changes: [
+      '"Restore & overwrite Google Calendar" now shows a full-screen progress overlay for its whole duration instead of just changing the button\'s label — it blocks the rest of the app until the rewrite finishes, making it clear you shouldn\'t navigate away or make other changes while Google Calendar events are actively being deleted/recreated.',
+    ],
+  },
+  {
     version: '5.1.1',
     date: '2026-08-15',
     title: 'Fixed duplicate events surviving "Restore & overwrite Google Calendar"',
