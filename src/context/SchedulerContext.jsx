@@ -1329,8 +1329,50 @@ export function SchedulerProvider({ children }) {
     [restoreCloudBackupRaw]
   );
 
+  /**
+   * One atomic "restore, then make Google Calendar match" action — replaces
+   * the earlier design of restoring and then separately OFFERING a rewrite
+   * follow-up via a toast action button. That gap between "restore lands"
+   * and "user clicks the follow-up" was a real race: the periodic Google
+   * poll (every 60s, policy "Google always wins" — see eventSyncService.js)
+   * could fire in that window and pull Google's still-stale state back over
+   * the just-restored data before the user ever got to decide, so by the
+   * time they clicked the offer the rewrite would run against already-
+   * reverted local state. Chaining restore directly into rewrite here, with
+   * no gap for a poll to land in between, closes that race outright rather
+   * than trying to win it. rewriteGoogleCalendarFromTaskflow's own guards
+   * (googleFetchInFlightRef + pollPausedRef — see useGoogleCalendarSync.js)
+   * keep the poll paused for this whole sequence, not just the rewrite half.
+   * Only runs the rewrite if the restore actually applied AND Google Calendar
+   * is connected (nothing to rewrite otherwise) — returns the restore's own
+   * boolean result either way so the caller's UI can react the same as a
+   * plain restore.
+   */
+  const restoreCloudBackupAndRewriteCalendar = useCallback(
+    async (backupId) => {
+      const restored = await restoreCloudBackup(backupId);
+      if (restored && googleConnected) await rewriteGoogleCalendarFromTaskflow();
+      return restored;
+    },
+    [restoreCloudBackup, googleConnected, rewriteGoogleCalendarFromTaskflow]
+  );
+
   /** Settings' "Restore from file" action — matches old importBackupFromFile's name. */
   const importBackupFromFile = useCallback((file) => importBackup(file), [importBackup]);
+
+  /**
+   * File-restore counterpart to restoreCloudBackupAndRewriteCalendar above —
+   * same reasoning, same no-gap chaining. importBackupFromFile already
+   * returns whether the restore applied (see importBackup/applyBackupPayload).
+   */
+  const importBackupFromFileAndRewriteCalendar = useCallback(
+    async (file) => {
+      const restored = await importBackupFromFile(file);
+      if (restored && googleConnected) await rewriteGoogleCalendarFromTaskflow();
+      return restored;
+    },
+    [importBackupFromFile, googleConnected, rewriteGoogleCalendarFromTaskflow]
+  );
 
   /** Settings' cloud-backups picker open action — matches old refreshCloudBackups' name. */
   const refreshCloudBackups = useCallback(() => loadCloudBackups(), [loadCloudBackups]);
@@ -3721,9 +3763,11 @@ export function SchedulerProvider({ children }) {
       syncNow,
       exportBackup,
       importBackupFromFile,
+      importBackupFromFileAndRewriteCalendar,
       refreshCloudBackups,
       backupToCloud,
       restoreCloudBackup,
+      restoreCloudBackupAndRewriteCalendar,
       deleteCloudBackup,
       clearNotification,
       clearAllData,
@@ -3819,9 +3863,11 @@ export function SchedulerProvider({ children }) {
       syncNow,
       exportBackup,
       importBackupFromFile,
+      importBackupFromFileAndRewriteCalendar,
       refreshCloudBackups,
       backupToCloud,
       restoreCloudBackup,
+      restoreCloudBackupAndRewriteCalendar,
       deleteCloudBackup,
       clearNotification,
       clearAllData,
