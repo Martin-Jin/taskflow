@@ -388,6 +388,16 @@ export const EXCESSIVE_PUSHDOWN_PX = 2;
  * far as needed — mirroring how Google Calendar visually stretches a dense
  * run of short meetings rather than letting their boxes collide.
  *
+ * Before that pushdown logic even runs, a too-short single item (own natural
+ * height under MIN_BLOCK_HEIGHT_PX) first gets a chance to grow into any
+ * genuinely idle space below it in the same lane — capped by the NEXT item's
+ * own natural top, so it only ever borrows real empty space, never reaches
+ * into a neighbour. This is what fixes the "5-minute sliver sitting above a
+ * big empty gap" look while everything after it (pushdown/fold) still works
+ * exactly the same off the resulting (possibly grown) naturalHeight — growing
+ * is a strictly separate, earlier step. The box's bottom no longer landing
+ * exactly on its true end time is an accepted tradeoff here.
+ *
  * That pushdown has no upper bound by itself though: if enough predecessors
  * in a lane were stretched (each pushdown adding to the last), the
  * accumulated push can shove a later, perfectly real-length item's box down
@@ -418,7 +428,8 @@ export function packLane(items, pxPerMin) {
   const out = [];
   let prevBottom = -Infinity;
 
-  for (const item of sorted) {
+  for (let i = 0; i < sorted.length; i++) {
+    const item = sorted[i];
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
     // Only a `kind: 'cluster'` box is floored to MIN_BLOCK_HEIGHT_PX — it's
     // already a stand-in for 2+ items layoutDayItems/foldSequentialItems
@@ -429,9 +440,31 @@ export function packLane(items, pxPerMin) {
     // legible-enough-to-be-here-at-all) events. This is what keeps pushdown
     // (below) a genuinely rare event now: two real back-to-back items with
     // zero gap naturally sit flush with no floor-induced false collision.
-    const naturalHeight = item.kind === 'cluster'
+    let naturalHeight = item.kind === 'cluster'
       ? Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin)
       : (item.end - item.start) * pxPerMin;
+
+    // A too-short single item that has genuinely free room below it (the
+    // next lane-mate's natural top is well past this item's own natural
+    // bottom) may borrow some of that idle space to reach MIN_BLOCK_HEIGHT_PX
+    // instead of rendering as an illegible sliver with empty space sitting
+    // right below it — e.g. a 5-minute task followed 40 minutes later by the
+    // next item. This never reaches INTO another item (capped by the next
+    // item's own natural top, so it can still be pushed down if needed
+    // afterward) and never applies to a cluster (already floored above). The
+    // bottom no longer landing exactly on the true end time is an accepted
+    // tradeoff here — see this function's own doc comment.
+    if (item.kind !== 'cluster' && naturalHeight < MIN_BLOCK_HEIGHT_PX) {
+      const nextNaturalTop = i + 1 < sorted.length ? (sorted[i + 1].start - GRID_START_MIN) * pxPerMin : Infinity;
+      // Leave BLOCK_GAP_PX of the available room untouched so growing into it
+      // still lands comfortably under EXCESSIVE_PUSHDOWN_PX against the next
+      // item's own natural top — otherwise this growth step could itself
+      // trigger the fold-into-cluster path below for a pair that actually had
+      // (barely) enough real breathing room to stay separate.
+      const availableBelow = nextNaturalTop - naturalTop - BLOCK_GAP_PX;
+      naturalHeight = Math.min(MIN_BLOCK_HEIGHT_PX, Math.max(naturalHeight, availableBelow));
+    }
+
     const pushedTop = Math.max(naturalTop, prevBottom);
     const pushdownPx = pushedTop - naturalTop;
 
