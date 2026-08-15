@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * useHistoryState.commitReducer — same-tick batching regression coverage
+ * useHistoryState reducers — same-tick batching + deferred-updater regressions
  * ============================================================================
  * The hook itself can't be rendered here (no @testing-library/react, node
  * environment) — see useCloudSync.test.js for the same rationale. Its pure
@@ -13,7 +13,7 @@
  * alongside this test) depends on.
  */
 import { describe, it, expect } from 'vitest';
-import { commitReducer, overwritePresentReducer } from '../../src/hooks/useHistoryState.js';
+import { commitReducer, overwritePresentReducer, commitAndGetReducer } from '../../src/hooks/useHistoryState.js';
 
 function makeHistory(tasks, blocks) {
   return {
@@ -74,6 +74,96 @@ describe('commitReducer', () => {
     const h = makeHistory([], []);
     const next = commitReducer(h, { tasks: [], blocks: [] }, () => 'label');
     expect(next.future).toEqual([]);
+  });
+});
+
+/**
+ * ============================================================================
+ * commitAndGetReducer — the "can't access property 'overflow', e is undefined"
+ * crash when re-balancing
+ * ============================================================================
+ * SchedulerContext's runRebalance used to run the scheduling engine INSIDE a
+ * `commit()` updater and assign the engine result to an outer `let`, then read
+ * `result.overflow`/`result.stats` on the very next line. React makes no
+ * promise that a setState updater runs before setState returns — under
+ * automatic batching (runRebalance is reachable from a debounced setTimeout,
+ * `queueDueDateRebalance`, and silentRebalanceForRewrite from an awaited
+ * restore) the updater was deferred, leaving `result` undefined and throwing
+ * before the toast/lastOverflow/conflicts-modal work could run. That's why
+ * "press reschedule multiple times" was a symptom.
+ *
+ * commitAndGet fixes it by resolving the payload EAGERLY (still against the
+ * freshest queued history, so same-tick batching is preserved) and handing the
+ * caller its value back as a return value rather than via a closure that races
+ * React's scheduler.
+ */
+describe('commitAndGetReducer', () => {
+  it('returns the value computed inside the updater, synchronously', () => {
+    const h = makeHistory([{ id: 't1' }], []);
+    const { history, value } = commitAndGetReducer(
+      h,
+      (current) => ({
+        next: { tasks: current.tasks, blocks: [{ id: 'b1' }] },
+        value: { overflow: [], stats: { blocksCreated: 1 } },
+      }),
+      'Re-balanced schedule'
+    );
+    // The crash was that this was `undefined` at the equivalent moment.
+    expect(value).toEqual({ overflow: [], stats: { blocksCreated: 1 } });
+    expect(history.present.blocksSnapshot).toEqual([{ id: 'b1' }]);
+  });
+
+  it('still resolves against the freshest queued history, so same-tick batching is not regressed', () => {
+    // The exact scenario the updater form was introduced for: addTask commits
+    // t1, then a debounced rebalance fires in the same tick. The rebalance
+    // must see t1 — computing it outside the commit (off a one-render-behind
+    // `stateRef`) would have silently dropped it.
+    let h = makeHistory([], []);
+    h = commitReducer(h, (current) => ({ tasks: [...current.tasks, { id: 't1' }], blocks: current.blocks }), 'Added task "t1"');
+    const { history, value } = commitAndGetReducer(
+      h,
+      (current) => {
+        const placed = current.tasks.map((t) => ({ id: `b_${t.id}`, taskId: t.id }));
+        return { next: { tasks: current.tasks, blocks: placed }, value: { stats: { blocksCreated: placed.length } } };
+      },
+      'Re-balanced schedule'
+    );
+    expect(value.stats.blocksCreated).toBe(1);
+    expect(history.present.blocksSnapshot).toEqual([{ id: 'b_t1', taskId: 't1' }]);
+  });
+
+  it('chains: a second commit in the same tick builds on the commitAndGet result', () => {
+    let h = makeHistory([{ id: 't1' }], []);
+    const first = commitAndGetReducer(
+      h,
+      (current) => ({ next: { tasks: current.tasks, blocks: [{ id: 'b1' }] }, value: 'ok' }),
+      'Re-balanced schedule'
+    );
+    h = commitReducer(first.history, (current) => ({ tasks: [...current.tasks, { id: 't2' }], blocks: current.blocks }), 'Added task "t2"');
+    // The rebalance's blocks survived the later commit, and vice versa.
+    expect(h.present.blocksSnapshot).toEqual([{ id: 'b1' }]);
+    expect(h.present.tasksSnapshot).toEqual([{ id: 't1' }, { id: 't2' }]);
+  });
+
+  it('supports a function-form actionLabel reading the value the updater computed', () => {
+    const h = makeHistory([], []);
+    const { history } = commitAndGetReducer(
+      h,
+      (current) => ({ next: { tasks: current.tasks, blocks: [{ id: 'b1' }, { id: 'b2' }] }, value: { stats: { blocksCreated: 2 } } }),
+      (resolved) => `Re-balanced schedule (${resolved.blocks.length} blocks placed)`
+    );
+    expect(history.present.actionLabel).toBe('Re-balanced schedule (2 blocks placed)');
+  });
+
+  it('pushes exactly one undoable entry and clears the redo stack, like any other commit', () => {
+    const h = makeHistory([{ id: 't1' }], []);
+    const { history } = commitAndGetReducer(
+      h,
+      (current) => ({ next: { tasks: current.tasks, blocks: [] }, value: null }),
+      'Re-balanced schedule'
+    );
+    expect(history.past).toEqual([h.present]);
+    expect(history.future).toEqual([]);
   });
 });
 

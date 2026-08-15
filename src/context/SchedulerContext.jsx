@@ -460,7 +460,7 @@ export function SchedulerProvider({ children }) {
   // (see the effect) — `blocks` (calendar placements) have no Todoist
   // equivalent and are NEVER overwritten by that effect; the persisted
   // copy is always the source of truth for them.
-  const { state, commit, undo: undoHistory, redo: redoHistory, canUndo, canRedo, currentActionLabel, currentActionId, overwritePresent} = useHistoryState({
+  const { state, commit, commitAndGet, undo: undoHistory, redo: redoHistory, canUndo, canRedo, currentActionLabel, currentActionId, overwritePresent} = useHistoryState({
     tasks: loadPersisted('tasks', null) ?? getMockTasks(),
     blocks: loadPersisted('blocks', null) ?? [],
   });
@@ -1335,24 +1335,24 @@ export function SchedulerProvider({ children }) {
    * runRebalance's own toast/notification side effects — this is an internal
    * step of a bigger atomic action (see restoreCloudBackupAndRewriteCalendar
    * below), not a user-facing "re-balance schedule" click, so it must stay
-   * silent. Uses commit()'s function-form updater (same reasoning as
-   * runRebalance's own doc comment: must run against `current`, the truly-
-   * latest tasks/blocks, not a closure that could be stale) so the returned
-   * blocks are guaranteed fresh even though stateRef.current itself won't
+   * silent. Uses commitAndGet (same reasoning as runRebalance's own doc
+   * comment: the engine must run against `current`, the truly-latest tasks/
+   * blocks rather than a possibly-stale closure, AND the resulting blocks
+   * must be readable synchronously here) so the returned blocks are
+   * guaranteed fresh and defined even though stateRef.current itself won't
    * reflect them until React flushes the effect that mirrors state into it.
+   * Both callers below are async (`await`ed restore/import), so a plain
+   * commit()'s deferred updater would have returned undefined here.
    */
   const silentRebalanceForRewrite = useCallback(() => {
-    let freshBlocks;
-    commit(
+    return commitAndGet(
       (current) => {
         const result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
-        freshBlocks = result.blocks;
-        return { tasks: current.tasks, blocks: result.blocks };
+        return { next: { tasks: current.tasks, blocks: result.blocks }, value: result.blocks };
       },
       'Re-balanced schedule'
     );
-    return freshBlocks;
-  }, [routines, events, rules, commit]);
+  }, [routines, events, rules, commitAndGet]);
 
   /**
    * One atomic "restore, then make Google Calendar match" action — replaces
@@ -1432,25 +1432,32 @@ export function SchedulerProvider({ children }) {
 
   // ---- Core action: run the rebalance/reschedule engine -------------------
   const runRebalance = useCallback(() => {
-    // Function-form commit (see addTask's comment above, and useHistoryState's
-    // own doc comment) — this can be invoked from a debounced timer
-    // (queueDueDateRebalance) that may fire in the same tick as another
-    // commit (a second addTask/updateTask, a completeTask, a Google Calendar
-    // sync callback, etc.). rebalance() itself must run against `current`
-    // (the freshest queued tasks/blocks), not the closure's stale `tasks`/
-    // `blocks` — otherwise it could schedule against a task that was just
-    // deleted, or silently drop one just added. `result` is captured via this
-    // outer `let` so the notification logic below (which needs
-    // result.overflow/stats/timeShifted) still has access to it after commit,
-    // and so the actionLabel (below) can report the real block count.
+    // commitAndGet, not commit (see useHistoryState's own doc comments) —
+    // this can be invoked from a debounced timer (queueDueDateRebalance) that
+    // may fire in the same tick as another commit (a second addTask/
+    // updateTask, a completeTask, a Google Calendar sync callback, etc.).
+    // Two requirements have to hold at once here, and only commitAndGet gives
+    // both:
+    //   1. rebalance() must run against `current` (the freshest queued
+    //      tasks/blocks), not the closure's stale `tasks`/`blocks` —
+    //      otherwise it could schedule against a task that was just deleted,
+    //      or silently drop one just added.
+    //   2. `result` must be readable SYNCHRONOUSLY below, for the toast /
+    //      lastOverflow / conflicts modal.
+    // Plain commit() satisfied (1) but not (2): React doesn't guarantee a
+    // setState updater runs before setState returns, so under automatic
+    // batching (precisely the debounced-timer/awaited-promise callers above)
+    // the updater was deferred and `result` was still undefined on the next
+    // line — a live "can't access property 'overflow'" crash that aborted the
+    // rest of this function.
     let result;
-    commit(
+    commitAndGet(
       (current) => {
         // rebalance() itself now preserves googleEventId across the run for
         // any block whose exact placement survives unchanged — see
         // rebalanceEngine.js's own doc comment on preserveGoogleEventIds.
         result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
-        return { tasks: current.tasks, blocks: result.blocks };
+        return { next: { tasks: current.tasks, blocks: result.blocks }, value: result };
       },
       // Function-form label (see useHistoryState's commit) — result.stats
       // isn't known until the updater above has actually run.
@@ -1493,7 +1500,7 @@ export function SchedulerProvider({ children }) {
       setNotification({ type: 'success', message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
     }
     return result;
-  }, [routines, events, rules, commit]);
+  }, [routines, events, rules, commitAndGet]);
 
   // Always-current ref to runRebalance so the debounced callback below never
   // fires against a stale tasks/blocks closure captured when it was queued.
