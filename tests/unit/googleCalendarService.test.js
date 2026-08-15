@@ -53,6 +53,7 @@ import {
   isInstanceAlreadyGoneError,
   instanceMatchesOccurrence,
   shouldTreatAsReconnectNeeded,
+  isConfirmedGoogleAuthFailure,
   planCalendarRewrite,
   isRateLimitError,
   chunkForBatch,
@@ -164,6 +165,38 @@ describe('shouldTreatAsReconnectNeeded', () => {
   it('handles null/undefined gracefully', () => {
     expect(shouldTreatAsReconnectNeeded(null)).toBe(false);
     expect(shouldTreatAsReconnectNeeded(undefined)).toBe(false);
+  });
+});
+
+describe('isConfirmedGoogleAuthFailure — the combined "reconnect, don\'t silently retry" signal', () => {
+  // Regression test for the "Google Calendar entry never catches up after a
+  // reschedule" bug: computeTodaysBlockPushPlan/executeBatch mark a live 401
+  // (a token that expired mid-session, since nothing else ever revalidates
+  // the in-memory access token) with `isGoogleAuthError`, while
+  // refreshAccessTokenFromWorker marks a confirmed revoked/not-connected
+  // refresh token with `needsReconnect` — every caller that decides between
+  // "keep silently retrying" and "disconnect and prompt reconnect" needs to
+  // treat both the same way, which is what this combined check exists for.
+  it('treats a live gapi 401 (isGoogleAuthError) as a confirmed auth failure', () => {
+    const err = new Error('Google Calendar authorization expired — please reconnect.');
+    err.isGoogleAuthError = true;
+    expect(isConfirmedGoogleAuthFailure(err)).toBe(true);
+  });
+
+  it('treats a confirmed needsReconnect error as a confirmed auth failure', () => {
+    const err = new Error('Google Calendar not yet connected.');
+    err.needsReconnect = true;
+    expect(isConfirmedGoogleAuthFailure(err)).toBe(true);
+  });
+
+  it('does not treat a transient network/error as a confirmed auth failure', () => {
+    expect(isConfirmedGoogleAuthFailure(new TypeError('Failed to fetch'))).toBe(false);
+    expect(isConfirmedGoogleAuthFailure(new Error('some other failure'))).toBe(false);
+  });
+
+  it('handles null/undefined gracefully', () => {
+    expect(isConfirmedGoogleAuthFailure(null)).toBe(false);
+    expect(isConfirmedGoogleAuthFailure(undefined)).toBe(false);
   });
 });
 

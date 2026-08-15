@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.1',
+    date: '2026-08-16',
+    title: "Fixed today's Google Calendar sync sometimes getting permanently stuck at an old time",
+    changes: [
+      "Fixed a bug where rescheduling a task scheduled for today (dragging its block to a new time, editing it, or a re-balance moving it) could leave its Google Calendar entry stuck at its OLD time indefinitely, with no error shown. This happened once the app's short-lived Google access token silently expired mid-session (which happens roughly hourly) — the sync would keep quietly failing against the same dead token on every future change and every background check, forever, instead of noticing and reconnecting. It now detects an expired connection immediately and prompts you to reconnect, the same way every other Google Calendar sync path in the app already does.",
+    ],
+  },
+  {
     version: '5.5.0',
     date: '2026-08-16',
     title: 'AI Quick Add is now available everywhere, with a new context-scope picker and smarter defaults',
