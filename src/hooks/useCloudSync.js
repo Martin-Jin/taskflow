@@ -337,9 +337,11 @@ export function isStaleOwnEcho(remoteFingerprint, inFlightFingerprints) {
 }
 
 // Safety cap on how many in-flight push fingerprints are tracked at once.
-// Note this is NOT a cap on concurrent WRITES — runPushNow's single-flight
-// guard (see computePushSingleFlightDecision) allows only one setDoc on the
-// wire at a time. This list can still legitimately hold several entries,
+// Note this is NOT a cap on concurrent WRITES — the single-flight guard (see
+// computePushSingleFlightDecision) allows only one setDoc on the wire at a
+// time, and BOTH write paths respect it: runPushNow coalesces behind it, and
+// the manual pushToCloud waits for it. This list can still legitimately hold
+// several entries,
 // because a fingerprint is only retired when its server ECHO comes back
 // through the live listener, which lands some time after the write itself
 // resolved and the next push has already started. It exists purely so a
@@ -347,6 +349,13 @@ export function isStaleOwnEcho(remoteFingerprint, inFlightFingerprints) {
 // listener) can't grow this list forever; the oldest entry is dropped first,
 // same "oldest first" policy as retireInFlightFingerprint's consumption order.
 const MAX_IN_FLIGHT_FINGERPRINTS = 20;
+
+// How the manual "Push to cloud" button waits out an already-in-flight push
+// (see waitForPushWireToClear). A push is one setDoc, so the wait is normally
+// zero or a single interval; the timeout only guards against a write that
+// never settles at all.
+const PUSH_WIRE_WAIT_POLL_MS = 50;
+const PUSH_WIRE_WAIT_TIMEOUT_MS = 10000;
 
 /**
  * Appends `fingerprint` to the in-flight queue (a push was just sent whose
@@ -800,6 +809,40 @@ export function useCloudSync({
   // useCallback can't reference from inside its own body — this ref holds the
   // latest instance so the finally block can call it.
   const runPushNowRef = useRef(null);
+
+  // Waits until no push is on the wire, for the one caller that can't simply
+  // coalesce itself away: the manual "Push to cloud" button (see pushToCloud).
+  // runPushNow's callers are all background/automatic, so being folded into
+  // another run is invisible and correct for them; a user-clicked push instead
+  // has to actually happen, because it reports its own result. Polling a ref
+  // rather than awaiting a shared promise keeps this to a few lines and needs
+  // no extra bookkeeping on the hot path — the wait is normally zero or one
+  // interval, since a push is a single setDoc.
+  //
+  // The cap exists so a push that somehow never settles can't leave the button
+  // hanging forever; hitting it rejects, and pushToCloud deliberately proceeds
+  // anyway (a possible overlap is a better outcome for an explicit user action
+  // than silently doing nothing).
+  const waitForPushWireToClear = useCallback(
+    () =>
+      new Promise((resolve, reject) => {
+        if (!pushInFlightRef.current) {
+          resolve();
+          return;
+        }
+        const startedAt = Date.now();
+        const handle = setInterval(() => {
+          if (!pushInFlightRef.current) {
+            clearInterval(handle);
+            resolve();
+          } else if (Date.now() - startedAt >= PUSH_WIRE_WAIT_TIMEOUT_MS) {
+            clearInterval(handle);
+            reject(new Error('Timed out waiting for the in-flight cloud push to finish'));
+          }
+        }, PUSH_WIRE_WAIT_POLL_MS);
+      }),
+    []
+  );
 
   // ---- Debounced push to Firestore -----------------------------------------
   // The fingerprint stamp/rollback decision itself lives in the pure,
@@ -1397,13 +1440,39 @@ export function useCloudSync({
   }, [user, setNotification, applyRemoteData]);
 
   // ---- Manual push to cloud ------------------------------------------------
+  // Shares runPushNow's single-flight guard, not just its echo bookkeeping.
+  // The two used to differ: this function did the fingerprint/in-flight-echo
+  // half but wrote via pushUserData directly, without ever consulting
+  // pushInFlightRef — so clicking "Push to cloud" while the debounced
+  // auto-push was already on the wire put two full-document setDocs on the
+  // same doc concurrently, exactly the pattern computePushSingleFlightDecision
+  // exists to prevent ("Write stream exhausted maximum allowed queued
+  // writes"). That overlap is not hypothetical: any edit arms the debounce
+  // timer, and the user can click the button before it fires or while its
+  // write is still in flight.
+  //
+  // Unlike runPushNow, a skipped write can't just be coalesced away here —
+  // this one is a user-visible action that owes an honest toast, and
+  // reporting "Pushed data to cloud" for a write that never happened would be
+  // a lie. So instead of dropping the call, it waits for the wire to clear and
+  // then performs its own write against freshly-read state.
   const pushToCloud = useCallback(async () => {
     if (!user) return;
     setIsPushingCloud(true);
+    try {
+      await waitForPushWireToClear();
+    } catch {
+      // Wire never cleared within the cap — fall through and write anyway
+      // rather than silently doing nothing for an explicit user action.
+    }
+    // Claim the wire for this write, so a debounced push starting mid-flight
+    // coalesces behind it instead of racing it.
+    pushInFlightRef.current = true;
     // Same in-flight bookkeeping as runPushNow (see isStaleOwnEcho's doc
     // comment) — this button can just as easily overlap a debounced push (or
     // another manual push) while the write is in flight, so its echo needs
-    // to be recognizable too.
+    // to be recognizable too. Read AFTER the wait above, so it fingerprints
+    // the state actually being written rather than a pre-wait snapshot.
     const fingerprint = computeFingerprint(stateRef.current);
     inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, fingerprint);
     try {
@@ -1420,8 +1489,17 @@ export function useCloudSync({
       setNotification({ type: 'error', message: 'Push to cloud failed.' });
     } finally {
       setIsPushingCloud(false);
+      // Release the wire and honour anything that queued behind this write,
+      // exactly as runPushNow's own finally block does — otherwise a
+      // debounced push that coalesced while this one held the wire would be
+      // dropped instead of run.
+      pushInFlightRef.current = false;
+      if (pushQueuedRef.current) {
+        pushQueuedRef.current = false;
+        runPushNowRef.current?.();
+      }
     }
-  }, [user, stateRef, setNotification, computeFingerprint]);
+  }, [user, stateRef, setNotification, computeFingerprint, waitForPushWireToClear]);
 
   // ---- Export local backup file --------------------------------------------
   const exportBackup = useCallback(() => {

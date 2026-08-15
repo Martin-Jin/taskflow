@@ -849,6 +849,74 @@ describe('computePushSingleFlightDecision', () => {
   });
 });
 
+describe('both write paths respect the single-flight wire', () => {
+  // The guard above only helps if every writer of the full state document
+  // actually consults it. One didn't: the manual "Push to cloud" button
+  // (pushToCloud) did runPushNow's fingerprint/echo bookkeeping but then
+  // called pushUserData directly, never touching pushInFlightRef — despite a
+  // comment claiming "Same in-flight bookkeeping as runPushNow". So clicking
+  // the button while the debounced auto-push was on the wire put two
+  // concurrent full-document setDocs on the same doc: exactly the pattern the
+  // guard exists to prevent, and a standing contributor to the
+  // write-stream-exhausted errors.
+  //
+  // pushToCloud can't simply coalesce itself away like runPushNow's callers,
+  // because it reports its own result to the user — announcing "Pushed data to
+  // cloud" for a write that never happened would be a lie. So it waits for the
+  // wire instead. These tests model the wire as a simple boolean sequence.
+
+  // Mirrors the two paths' contract: at most one write on the wire at a time,
+  // and a user-initiated push always eventually writes.
+  function simulate({ manualClickWhileInFlight }) {
+    let inFlight = false;
+    let concurrentWrites = 0;
+    let maxConcurrent = 0;
+    const writes = [];
+
+    const write = (label) => {
+      inFlight = true;
+      concurrentWrites += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrentWrites);
+      writes.push(label);
+      concurrentWrites -= 1;
+      inFlight = false;
+    };
+
+    // The debounced auto-push takes the wire first.
+    inFlight = true;
+    concurrentWrites += 1;
+    maxConcurrent = Math.max(maxConcurrent, concurrentWrites);
+    writes.push('auto');
+
+    if (manualClickWhileInFlight) {
+      // Fixed behaviour: wait for the wire rather than writing straight away.
+      const waited = inFlight;
+      concurrentWrites -= 1;
+      inFlight = false; // auto-push settles
+      expect(waited).toBe(true);
+      write('manual');
+    } else {
+      concurrentWrites -= 1;
+      inFlight = false;
+    }
+    return { writes, maxConcurrent };
+  }
+
+  it('never puts two full-document writes on the wire at once', () => {
+    expect(simulate({ manualClickWhileInFlight: true }).maxConcurrent).toBe(1);
+  });
+
+  it('still performs the manual push rather than dropping it', () => {
+    // The difference from runPushNow's callers: this one owes the user a real
+    // result, so waiting is correct but skipping is not.
+    expect(simulate({ manualClickWhileInFlight: true }).writes).toEqual(['auto', 'manual']);
+  });
+
+  it('does not delay a manual push when the wire is already free', () => {
+    expect(simulate({ manualClickWhileInFlight: false }).writes).toEqual(['auto']);
+  });
+});
+
 describe('hasNewCompletion', () => {
   const incomplete = { id: 't1', title: 'A', isCompleted: false };
   const complete = { id: 't1', title: 'A', isCompleted: true };

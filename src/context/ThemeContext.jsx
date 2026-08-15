@@ -84,6 +84,17 @@ export function ThemeProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  // Deliberately NOT routed through useCloudSync's single-flight push guard,
+  // unlike the two paths that write the full state document (runPushNow and
+  // pushToCloud, which share that guard so two full-document setDocs are never
+  // on the wire at once). This write is a different shape: a `merge: true`
+  // write naming exactly one field, which no other writer touches and which
+  // computeFingerprint/planRemoteDataMerge never read — so it can't conflict
+  // with or be clobbered by a state push, and vice versa. It also fires only
+  // when `theme` actually changes, i.e. on a deliberate user toggle, so it
+  // can't produce the repeated bursts that make concurrent writes a problem.
+  // Coordinating it with the state-push guard would add cross-hook plumbing
+  // for a write that has nothing to contend with.
   useEffect(() => {
     if (!user) return;
     if (!initialPullDone) return; // wait for this sign-in's pull to settle first — see initialPullDone's comment

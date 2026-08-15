@@ -1385,7 +1385,28 @@ export function SchedulerProvider({ children }) {
   const deleteCloudBackup = useCallback((backupId) => removeCloudBackup(backupId), [removeCloudBackup]);
 
   // ---- Core action: run the rebalance/reschedule engine -------------------
+  // Debounce handle for the auto-rebalance queue (queueDueDateRebalance,
+  // defined below). Declared up here so runRebalance can cancel a pending
+  // queued run — see the cancel at the top of runRebalance for why.
+  const dueDateRebalanceTimeoutRef = useRef(null);
+
   const runRebalance = useCallback(() => {
+    // Any rebalance now in the debounce queue is about to be made redundant:
+    // this run reads the freshest tasks/blocks/events itself, so a queued run
+    // firing moments later would only recompute the same thing — except
+    // rebalance() re-mints block ids freely, so its "same thing" is a
+    // DIFFERENT block layout that silently replaces the one just produced.
+    // That is what made a manual "Re-balance schedule" click look like it
+    // didn't take: the button calls this function directly rather than going
+    // through queueDueDateRebalance, so the 300ms debounce could never
+    // coalesce the click with an already-queued run (from a Google Calendar
+    // poll, say) — both fired, as two separate full rebalances, and the
+    // second overwrote the first for no user-visible reason. Cancelling here
+    // makes the newest rebalance win, whichever path asked for it.
+    if (dueDateRebalanceTimeoutRef.current) {
+      clearTimeout(dueDateRebalanceTimeoutRef.current);
+      dueDateRebalanceTimeoutRef.current = null;
+    }
     // commitAndGet, not commit (see useHistoryState's own doc comments) —
     // this can be invoked from a debounced timer (queueDueDateRebalance) that
     // may fire in the same tick as another commit (a second addTask/
@@ -1462,10 +1483,10 @@ export function SchedulerProvider({ children }) {
     runRebalanceRef.current = runRebalance;
   }, [runRebalance]);
 
-  // Debounce ref for the due-date-triggered auto-rebalance below — several
-  // updateTask calls can land in the same tick/burst, and this collapses
-  // them into a single runRebalance() call instead of one per change.
-  const dueDateRebalanceTimeoutRef = useRef(null);
+  // Debounces the due-date-triggered auto-rebalance — several updateTask
+  // calls can land in the same tick/burst, and this collapses them into a
+  // single runRebalance() call instead of one per change. (Its timeout ref is
+  // declared above runRebalance, which also cancels a pending run.)
   const queueDueDateRebalance = useCallback(() => {
     if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
     dueDateRebalanceTimeoutRef.current = setTimeout(() => {

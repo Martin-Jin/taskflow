@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '5.3.1',
+    date: '2026-08-15',
+    title: 'Restored calendar events re-sync on their own, and less cloud traffic',
+    changes: [
+      'Calendar events restored from a backup now upload themselves back to Google Calendar automatically, within a minute. Previously they only went up if you happened to open and edit each one by hand: the background sync worked out that an event needed re-uploading, but the step that actually uploads it was still looking at the event as it stood a moment earlier, so it skipped it every time — for as long as the app stayed open.',
+      'Fixed the knock-on effects of that. A restored event stuck in that state made TaskFlow re-check and re-save your schedule every minute, which is what was behind occasional "failed to create cloud backup" errors and re-balances that seemed to need a second click to stick.',
+      'Clicking "Re-balance schedule" now reliably wins over any automatic re-balance queued in the background, instead of the two both running and the later one quietly replacing your result.',
+      'Manually pushing your data to the cloud now waits for any automatic save already underway rather than running alongside it, so the two can no longer collide.',
+    ],
+  },
+  {
     version: '5.3.0',
     date: '2026-08-15',
     title: 'Scheduled tasks stay in TaskFlow instead of being pushed to Google Calendar',
