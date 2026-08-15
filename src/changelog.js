@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '5.3.3',
+    date: '2026-08-16',
+    title: 'Cross-device sync no longer waits for the other device to reopen',
+    changes: [
+      'Switching to a device that\'s been sitting in the background for a while now pulls your latest tasks and settings as soon as you return to it, instead of showing stale data until the OTHER device happened to be reopened. The live sync connection can go stale after a long time in the background; TaskFlow now also re-checks with the cloud whenever the app becomes visible or focused again, the same way Google Calendar sync already did.',
+      'The "Google Calendar disconnected" notification now has a Reconnect button right on it, so you can restore the connection with one click instead of having to go find the button in Settings yourself.',
+    ],
+  },
+  {
     version: '5.3.2',
     date: '2026-08-15',
     title: 'Fixed cloud backups failing after a Google Calendar sync',

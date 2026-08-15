@@ -366,6 +366,26 @@ export function useGoogleCalendarSync({
   const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
   const [isPullingGoogleEvents, setIsPullingGoogleEvents] = useState(false);
 
+  // Shared by every call site that confirms Google's grant is actually
+  // revoked/expired (mount-time silent re-auth, periodic poll, on-demand
+  // range fetch) — same state flip and message repeated at all three, so
+  // it's factored into one function rather than left copy-pasted. The
+  // notification's action button re-triggers connectGoogleCalendar directly
+  // via connectGoogleCalendarRef (see that ref's own doc comment for why a
+  // ref indirection is needed here) — clicking it IS the user gesture Google
+  // requires to show the re-consent popup, so this closes the loop without
+  // the user needing to go find the button in Settings themselves.
+  const notifyGoogleCalendarDisconnected = useCallback(() => {
+    setGoogleConnected(false);
+    setGoogleNeedsReconnect(true);
+    setNotification({
+      type: 'warning',
+      message: 'Google Calendar disconnected — reconnect to resume syncing.',
+      actionLabel: 'Reconnect',
+      onAction: () => connectGoogleCalendarRef.current(),
+    });
+  }, [setGoogleConnected, setGoogleNeedsReconnect, setNotification]);
+
   // ---- Sync health -----------------------------------------------------------
   // `googleSyncStale` is true when the most recent fetch attempt (mount silent
   // re-auth, periodic poll, or on-demand range fetch) ultimately failed after
@@ -465,6 +485,15 @@ export function useGoogleCalendarSync({
   // only depends on googleConnected) can call the latest version without
   // needing to be redefined whenever state changes.
   const pushUnsyncedItemsRef = useRef(async () => ({ events: 0 }));
+
+  // Populated below (near "connectGoogleCalendar") once that callback exists —
+  // every "disconnected" warning notification fires from an effect defined
+  // BEFORE connectGoogleCalendar in this file, so they can't close over it
+  // directly. Same "declare the ref early, assign .current once the real
+  // function exists" pattern as pollGoogleEventsRef/pushUnsyncedItemsRef
+  // above, used here so those warnings can offer a one-click "Reconnect"
+  // action instead of just telling the user to go find it in Settings.
+  const connectGoogleCalendarRef = useRef(() => {});
 
   // googleEventId -> timestamp this app instance issued a delete for it.
   // Consulted (and pruned of expired entries) by every mergePulledGoogleEvents
@@ -783,9 +812,7 @@ export function useGoogleCalendarSync({
             // out of the ladder now rather than after the remaining attempts.
             if (shouldTreatAsReconnectNeeded(err)) {
               console.warn('[useGoogleCalendarSync] Silent re-auth confirmed not-connected/revoked, falling back to disconnected.', err);
-              setGoogleConnected(false);
-              setGoogleNeedsReconnect(true);
-              setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+              notifyGoogleCalendarDisconnected();
               return;
             }
             const isLastAttempt = attempt === SILENT_REAUTH_MAX_ATTEMPTS - 1;
@@ -875,9 +902,7 @@ export function useGoogleCalendarSync({
             // call above (needsReconnect) — see this function's own comment.
             if (err?.isGoogleAuthError || shouldTreatAsReconnectNeeded(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
-              setGoogleConnected(false);
-              setGoogleNeedsReconnect(true);
-              setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+              notifyGoogleCalendarDisconnected();
               return;
             }
             if (attempt < MAX_ATTEMPTS - 1) {
@@ -1153,9 +1178,7 @@ export function useGoogleCalendarSync({
           } catch (err) {
             if (err?.isGoogleAuthError || shouldTreatAsReconnectNeeded(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
-              setGoogleConnected(false);
-              setGoogleNeedsReconnect(true);
-              setNotification({ type: 'warning', message: 'Google Calendar disconnected — reconnect in Settings to resume syncing.' });
+              notifyGoogleCalendarDisconnected();
               return;
             }
             if (attempt < MAX_ATTEMPTS - 1) {
