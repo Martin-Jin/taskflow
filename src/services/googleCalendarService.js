@@ -129,6 +129,29 @@ export function shouldTreatAsReconnectNeeded(err) {
 }
 
 /**
+ * True for EITHER shape of "this call is doomed until the user reconnects" —
+ * a confirmed Worker-side "needs reconnect" (`shouldTreatAsReconnectNeeded`,
+ * above) OR a live gapi 401 caught and marked by `throwAuthExpired` (the
+ * `isGoogleAuthError` flag). Every fetch/push/poll path in this file and
+ * useGoogleCalendarSync.js that decides "keep silently retrying" vs.
+ * "disconnect and prompt reconnect" needs to check both shapes — they arrive
+ * from different call sites (a token refresh vs. a live API call hitting a
+ * dead token) but mean the same thing to every caller. Extracted as one pure
+ * function (rather than the `a || b` repeated at each call site) so the
+ * combined decision itself is unit-testable and can't drift out of sync
+ * between call sites — e.g. `runTodaysTaskBlockPushNow`'s today's-block push
+ * (see its own doc comment for why treating this as a soft, retry-on-next-
+ * trigger failure — its normal policy — would otherwise leave a Google
+ * Calendar entry stale forever once the in-memory access token expires, since
+ * nothing else in that call path ever revalidates it).
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isConfirmedGoogleAuthFailure(err) {
+  return err?.isGoogleAuthError === true || shouldTreatAsReconnectNeeded(err);
+}
+
+/**
  * Drop both the in-memory and cached access token, forcing the next
  * `requestAccessToken` call to actually talk to GIS again instead of
  * re-serving a token Google has already rejected — otherwise a
@@ -1312,6 +1335,24 @@ export function planTodaysBlockPush(authoritativeBlocks, googleEventsToday) {
  * to an empty Google-side list (mock/offline mode) rather than throwing, so a
  * disconnected session's trigger effect just no-ops safely.
  *
+ * A genuinely expired/revoked token (401) is NOT folded into that same silent
+ * "mock mode" fallback, unlike the `!accessToken` case above — the in-memory
+ * `accessToken` module var only ever gets nulled by an explicit
+ * `invalidateAccessToken()` call (see its own doc comment), so a token that
+ * silently expired mid-session (Google's access tokens last ~1hr) would
+ * otherwise stay truthy forever and this function would keep calling the real
+ * API with a dead token, get a 401 every single time, and — since nothing
+ * upstream of this function was catching or classifying that error —
+ * fail the SAME way on every subsequent trigger (the debounced effect, and
+ * the periodic poll's own direct call), forever, with no toast and only a
+ * console.warn to notice by. Every other fetch path in this file
+ * (fetchEvents, pushEventToCalendar/deleteCalendarEvent) already calls
+ * `throwAuthExpired()` on a confirmed 401 so the token gets invalidated (next
+ * `requestAccessToken` call actually refreshes it) and the error is marked
+ * `isGoogleAuthError` so the caller can disconnect/prompt reconnect instead of
+ * retrying against the same dead token — this function, and the batch
+ * delete/insert calls in `executeBatch` below, are given the same treatment.
+ *
  * @param {Array<{block: Object, task: Object}>} authoritativeBlocks
  * @param {string} todayIso - "YYYY-MM-DD", local date
  * @returns {Promise<{ toDelete: string[], toInsert: Array<{block: Object, task: Object}> }>}
@@ -1325,18 +1366,23 @@ export async function computeTodaysBlockPushPlan(authoritativeBlocks, todayIso) 
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const items = [];
   let pageToken;
-  do {
-    const resp = await window.gapi.client.calendar.events.list({
-      calendarId: 'primary',
-      timeMin,
-      timeMax,
-      timeZone: localTimeZone,
-      singleEvents: false,
-      ...(pageToken ? { pageToken } : {}),
-    });
-    items.push(...(resp.result.items || []));
-    pageToken = resp.result.nextPageToken;
-  } while (pageToken);
+  try {
+    do {
+      const resp = await window.gapi.client.calendar.events.list({
+        calendarId: 'primary',
+        timeMin,
+        timeMax,
+        timeZone: localTimeZone,
+        singleEvents: false,
+        ...(pageToken ? { pageToken } : {}),
+      });
+      items.push(...(resp.result.items || []));
+      pageToken = resp.result.nextPageToken;
+    } while (pageToken);
+  } catch (err) {
+    if (isAuthError(err)) throwAuthExpired();
+    throw err;
+  }
   // Cancelled tombstones are excluded for the same reason
   // computeCalendarRewritePlan excludes them: already gone, deleting again is
   // just a wasted, noisily-failing call.
@@ -1443,14 +1489,26 @@ function isBatchDeleteAlreadyGone(status) {
  *
  * Rejects only if the batch call ITSELF fails (network/auth/429 on the batch
  * endpoint) — per-sub-request failures come back in the map, see the module
- * note above.
+ * note above. A whole-batch 401 (the access token itself is dead, as opposed
+ * to one sub-request failing) is classified and invalidated the same way
+ * `computeTodaysBlockPushPlan`'s own fetch is (see its doc comment) — without
+ * this, a batch call made after the in-memory token silently expired would
+ * reject with a raw 401 that nothing here ever invalidates or marks, so every
+ * later call (this batch's own rate-limit retry, and every future batch) would
+ * keep hitting the same dead token forever.
  */
 async function executeBatch(entries) {
   const batch = window.gapi.client.newBatch();
   for (const { id, request } of entries) {
     batch.add(request, { id });
   }
-  const response = await batch;
+  let response;
+  try {
+    response = await batch;
+  } catch (err) {
+    if (isAuthError(err)) throwAuthExpired();
+    throw err;
+  }
   const byId = response?.result || {};
   const out = new Map();
   for (const { id } of entries) {

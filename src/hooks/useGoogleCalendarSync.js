@@ -47,6 +47,7 @@ import {
   requestAccessToken,
   disconnectGoogleCalendar as disconnectGoogleCalendarService,
   shouldTreatAsReconnectNeeded,
+  isConfirmedGoogleAuthFailure,
   computeCalendarRewritePlan,
   computeTodaysBlockPushPlan,
   isRateLimitError,
@@ -422,10 +423,21 @@ async function runBatchesWithRetry(items, runBatch, keyOf, onBatchDone) {
         }
       }
     } catch (err) {
-      // The whole batch call failed (network/auth, or a 429 that survived the
-      // retry above) — mark every item in it as failed so the per-item
-      // success/failure totals stay accurate rather than silently dropping
-      // this chunk.
+      // A CONFIRMED auth expiry (see executeBatch/computeTodaysBlockPushPlan's
+      // own doc comments) is not "this one batch/chunk failed" — it means
+      // every remaining chunk in this loop, and every future call until the
+      // user reconnects, would fail identically against the same dead token.
+      // Recording it as a per-item failure and continuing would silently burn
+      // through the rest of `items` making the same doomed call over and
+      // over, and — worse, for the silent block-push feature this also drives
+      // — leave the caller with no signal beyond a per-item {ok:false} to
+      // notice that it's actually disconnected. Abort the whole run and let
+      // it propagate so the caller can disconnect/prompt reconnect instead.
+      if (isConfirmedGoogleAuthFailure(err)) throw err;
+      // Otherwise the whole batch call failed for a non-auth reason (network,
+      // or a 429 that survived the retry above) — mark every item in it as
+      // failed so the per-item success/failure totals stay accurate rather
+      // than silently dropping this chunk.
       console.warn('[useGoogleCalendarSync] Rewrite: batch call failed', err);
       const message = err?.message || String(err);
       for (const item of chunk) {
@@ -1036,7 +1048,7 @@ export function useGoogleCalendarSync({
             // Covers both a live gapi 401 (isGoogleAuthError) and a confirmed
             // revoked/not-connected refresh token from the requestAccessToken
             // call above (needsReconnect) — see this function's own comment.
-            if (err?.isGoogleAuthError || shouldTreatAsReconnectNeeded(err)) {
+            if (isConfirmedGoogleAuthFailure(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during poll, disconnecting.', err);
               notifyGoogleCalendarDisconnected();
               return;
@@ -1318,7 +1330,7 @@ export function useGoogleCalendarSync({
             markGoogleSyncSucceeded();
             return;
           } catch (err) {
-            if (err?.isGoogleAuthError || shouldTreatAsReconnectNeeded(err)) {
+            if (isConfirmedGoogleAuthFailure(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
               notifyGoogleCalendarDisconnected();
               return;
@@ -1503,11 +1515,30 @@ export function useGoogleCalendarSync({
       // googleEventId (see this file's module doc) — the next push's
       // tag-filtered fetch is what finds these again, not any id kept here.
     } catch (err) {
-      // Best-effort and silent by design (no manual button, no toast) — the
-      // next trigger (another block change, a poll tick, or a visibility
-      // refresh) simply retries against then-current state. Logged so a
-      // persistent failure is still visible in the console.
-      console.warn('[useGoogleCalendarSync] Push today\'s task blocks to Google Calendar failed; will retry on next trigger.', err);
+      // A CONFIRMED auth expiry (see computeTodaysBlockPushPlan/executeBatch's
+      // own doc comments, and runBatchesWithRetry's matching check above) is
+      // NOT a transient failure this feature's own silent-retry-on-next-
+      // trigger design can shrug off: the in-memory access token stays dead
+      // until something explicitly invalidates it, and nothing else in this
+      // feature's own call path (unlike the poll/mount/on-demand fetches)
+      // ever called requestAccessToken to refresh it first. Left uncaught
+      // here, EVERY future trigger — the debounced effect on every later
+      // edit, AND the periodic poll's own direct call — would keep hitting
+      // the same dead token and silently no-op forever with nothing but a
+      // console.warn, which is exactly the "stale Google Calendar entry that
+      // never catches up" bug this handles: disconnect and prompt reconnect,
+      // the same reaction every other fetch path in this hook already has for
+      // this exact error shape.
+      if (isConfirmedGoogleAuthFailure(err)) {
+        console.warn('[useGoogleCalendarSync] Auth expired during today\'s task-block push, disconnecting.', err);
+        notifyGoogleCalendarDisconnected();
+      } else {
+        // Best-effort and silent by design otherwise (no manual button, no
+        // toast) — the next trigger (another block change, a poll tick, or a
+        // visibility refresh) simply retries against then-current state.
+        // Logged so a persistent non-auth failure is still visible in the console.
+        console.warn('[useGoogleCalendarSync] Push today\'s task blocks to Google Calendar failed; will retry on next trigger.', err);
+      }
     } finally {
       blockPushInFlightRef.current = false;
       if (blockPushQueuedRef.current) {
@@ -1515,7 +1546,7 @@ export function useGoogleCalendarSync({
         runBlockPushNowRef.current?.();
       }
     }
-  }, [googleConnected]);
+  }, [googleConnected, notifyGoogleCalendarDisconnected]);
   runBlockPushNowRef.current = runTodaysTaskBlockPushNow;
   blockPushTriggerRef.current = runTodaysTaskBlockPushNow;
 
@@ -1847,6 +1878,17 @@ export function useGoogleCalendarSync({
       }
       return { succeeded, failed };
     } catch (err) {
+      // A confirmed auth expiry now propagates up through runBatchesWithRetry
+      // (see its own doc comment) instead of being absorbed into a pile of
+      // generic per-item failures — react to it the same way every other
+      // fetch path in this hook does: invalidate the connection and prompt
+      // reconnect, rather than just a generic error toast the user has no
+      // clear next step for.
+      if (isConfirmedGoogleAuthFailure(err)) {
+        console.warn('[useGoogleCalendarSync] Auth expired during rewrite, disconnecting.', err);
+        notifyGoogleCalendarDisconnected();
+        return { succeeded: [], failed: [{ type: 'fatal', error: err?.message || String(err) }] };
+      }
       console.error('[useGoogleCalendarSync] Rewrite Google Calendar failed', err);
       setNotification({ type: 'error', message: `Rewrite Google Calendar failed: ${err.message || err}` });
       return { succeeded: [], failed: [{ type: 'fatal', error: err?.message || String(err) }] };
@@ -1856,7 +1898,7 @@ export function useGoogleCalendarSync({
       pollPausedRef.current = false;
       googleFetchInFlightRef.current = false;
     }
-  }, [events, setEvents, setNotification]);
+  }, [events, setEvents, setNotification, notifyGoogleCalendarDisconnected]);
 
   // ---- Disconnect Google Calendar (user-initiated) -------------------------
   const disconnectGoogleCalendar = useCallback(async () => {
