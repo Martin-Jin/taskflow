@@ -419,3 +419,65 @@ describe('computeEffectivePurgeBoundary — capping retention at a rolling maxRe
   });
 });
 
+
+describe('mergePulledGoogleEvents — block-mirror suppression during ORDINARY pulls', () => {
+  // The gap that let duplicates come back between rewrites. Every ScheduledBlock
+  // TaskFlow pushes returns on the very next poll as an ordinary
+  // `source: 'google'` event carrying TaskFlow's own private extended property
+  // (surfaced as `taskflowBlockId`). The rewrite path filtered those mirror rows
+  // out from the start; the ordinary merge did not — so ~60 seconds after any
+  // push, local `events` held both the block and a mirror row of it. That row
+  // renders on top of its own block and, once its googleEventId is cleared (a
+  // rewrite nulls every id by construction), becomes a live push candidate that
+  // inserts a REAL duplicate on the user's calendar.
+
+  const mirror = (overrides = {}) =>
+    googleEvent({ googleEventId: 'g_mirror', taskflowBlockId: 'blk_t1_2026-08-05_09:00', title: '📋 Piano', ...overrides });
+
+  it('CRITICAL: does not add a pulled block mirror to local events', () => {
+    const merged = mergePulledGoogleEvents([], [mirror()], '2026-08-01', '2026-08-31');
+    expect(merged).toEqual([]);
+  });
+
+  it('recognizes a legacy mirror by its title prefix when the marker is absent', () => {
+    // Events pushed before the extended-property marker existed carry only the
+    // "📋 " prefix this app has always written.
+    const legacy = googleEvent({ googleEventId: 'g_legacy', title: '📋 Write report' });
+    const merged = mergePulledGoogleEvents([], [legacy], '2026-08-01', '2026-08-31');
+    expect(merged).toEqual([]);
+  });
+
+  it('drops a mirror row an older build already merged into local state', () => {
+    // Without this, existing users stay broken: the row is already in `events`,
+    // and suppressing only the incoming pull would leave it there indefinitely.
+    const existing = [mirror()];
+    const merged = mergePulledGoogleEvents(existing, [mirror()], '2026-08-01', '2026-08-31');
+    expect(merged).toEqual([]);
+  });
+
+  it('still merges ordinary Google events normally alongside a mirror', () => {
+    const real = googleEvent({ id: 'e_real', googleEventId: 'g_real', title: 'Dentist' });
+    const merged = mergePulledGoogleEvents([], [mirror(), real], '2026-08-01', '2026-08-31');
+    expect(merged.map((e) => e.googleEventId)).toEqual(['g_real']);
+  });
+
+  it('never mistakes an ordinary user event for a mirror', () => {
+    const userEvent = googleEvent({ googleEventId: 'g_user', title: 'Piano' });
+    const merged = mergePulledGoogleEvents([], [userEvent], '2026-08-01', '2026-08-31');
+    expect(merged.map((e) => e.googleEventId)).toEqual(['g_user']);
+  });
+
+  it('leaves manual (never-pushed) events untouched', () => {
+    const manual = { id: 'm1', source: 'manual', googleEventId: null, date: '2026-08-05', title: 'Lunch' };
+    const merged = mergePulledGoogleEvents([manual], [mirror()], '2026-08-01', '2026-08-31');
+    expect(merged).toEqual([manual]);
+  });
+});
+
+describe('hardResetEventsFromGoogle — mirror suppression', () => {
+  it('excludes block mirrors from the rebuilt event set', () => {
+    const real = googleEvent({ googleEventId: 'g_real', title: 'Dentist' });
+    const mirrorRow = googleEvent({ googleEventId: 'g_mirror', taskflowBlockId: 'blk_1' });
+    expect(hardResetEventsFromGoogle([real, mirrorRow]).map((e) => e.googleEventId)).toEqual(['g_real']);
+  });
+});
