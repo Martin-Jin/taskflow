@@ -407,10 +407,13 @@ to check.
 
 ## AI Quick Add
 
-The **AI Quick Add** button (a sparkle icon next to "Add task" in Tasks list
-and Board view) lets you type a free-form description — or attach up to 5
-screenshots and/or PDFs — and have an AI propose a set of changes across your whole
-workspace, instead of filling in forms field by field or one item at a time.
+The **AI Quick Add** button (a sparkle icon) lets you type a free-form
+description — or attach up to 5 screenshots and/or PDFs — and have an AI
+propose a set of changes across your workspace, instead of filling in forms
+field by field or one item at a time. It's reachable from every tab: it's
+one of the mini-FABs next to "Add task" in Tasks list/Board view and next to
+"New event" in Calendar, and a standalone floating button in the same corner
+on Dashboard, Projects, Stats, and Settings (which have no FAB of their own).
 It can create tasks and events, break a task into subtasks, set up
 dependencies ("do X after Y"), move tasks between projects/sections, and
 create/rename/delete projects, sections, and labels — essentially anything
@@ -423,6 +426,15 @@ like an appointment or meeting. You choose the provider (Claude/Anthropic or
 Gemini/Google) and a specific model per request; your last choice is
 remembered on that device, and picking a provider you haven't added an API
 key for yet is disabled.
+
+Each request sends a snapshot of your workspace so the AI knows what already
+exists — a **context scope** picker lets you control how much: **Full
+context** (the default) sends everything; **No context** sends none of it
+(the AI can still create new tasks/events/projects, it just can't reference
+anything existing by id); **Custom** lets you independently restrict to one
+project and/or narrow the calendar events sent to a date range, useful for
+keeping a request smaller/cheaper or more focused. Your last scope choice is
+remembered on that device, same as the provider/model choice.
 
 This is **bring-your-own-key (BYOK)**, the same model as the Todoist
 integration above: each person using the app pastes their own Anthropic

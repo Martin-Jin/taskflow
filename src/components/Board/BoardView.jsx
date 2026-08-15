@@ -136,7 +136,7 @@ const COLUMN_DRAG_TYPE = 'application/x-taskflow-column';
 // first time anyone ever switched to the Board view.
 let lastHandledBoardAIQuickAddSignal = 0;
 
-export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal, onSelectTaskRef }) {
+export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal, onSelectTaskRef, onProjectCreated }) {
   const {
     tasks,
     sections,
@@ -718,7 +718,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
           onClose={() => setAddingToSectionId(undefined)}
         />
       )}
-      {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} />}
+      {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
       {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
     </div>
   );

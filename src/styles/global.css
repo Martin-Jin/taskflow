@@ -527,6 +527,25 @@ select:focus-visible,
   z-index: 120;
 }
 
+/* Standalone AI Quick Add FAB (App.jsx) — shown on Dashboard/Projects/Stats/
+   Settings, the tabs with no FAB group of their own. Unlike
+   .mobile-search-fab-standalone above, this renders on desktop too, so its
+   bottom offset follows .add-task-fab-group's pattern instead: plain
+   --space-4 here, with --bottom-bar-height only added back in the mobile
+   media query below (BottomTabBar is mobile-only). */
+.ai-quickadd-standalone-fab {
+  position: fixed;
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  z-index: 120;
+}
+
+@media (max-width: 639px) {
+  .ai-quickadd-standalone-fab {
+    bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
+  }
+}
+
 .topbar .brand {
   margin-bottom: 0;
   padding: 0;

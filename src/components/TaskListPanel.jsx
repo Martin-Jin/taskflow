@@ -137,6 +137,7 @@ export default function TaskListPanel({
   onOpenSettings,
   onOpenSearch,
   onShareProject,
+  onProjectCreated,
 }) {
   const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
   const { requestComplete } = useCompleteTask();
@@ -678,6 +679,7 @@ export default function TaskListPanel({
           onOpenSearch={isMobile ? onOpenSearch : undefined}
           openAIQuickAddSignal={openAIQuickAddSignal}
           onSelectTaskRef={boardSelectTaskRef}
+          onProjectCreated={onProjectCreated}
         />
       )}
       {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}
@@ -717,7 +719,7 @@ export default function TaskListPanel({
           {showAddModal && (
             <AddTaskModal onClose={() => setShowAddModal(false)} initialProjectId={activeProject ? activeProject.id : ''} />
           )}
-          {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} />}
+          {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
           {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
         </>
       )}

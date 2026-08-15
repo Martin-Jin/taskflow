@@ -275,6 +275,83 @@ test.describe('AI Quick Add', () => {
     expectNoErrors(errors);
   });
 
+  test('context-scope picker: switching to Custom reveals project + date-range sub-filters', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+
+    const mainToggle = page.locator('[data-tour="add-task"]');
+    await mainToggle.click();
+    await page.waitForTimeout(200);
+
+    const aiFab = page.getByRole('button', { name: 'AI Quick Add', exact: true });
+    const aiConfigured = await aiFab.isVisible({ timeout: 1000 }).catch(() => false);
+    test.skip(!aiConfigured, 'AI Quick Add is not configured locally (VITE_AI_QUICKADD_WORKER_URL unset) — entry point is intentionally hidden.');
+
+    await page.evaluate((key) => {
+      window.localStorage.setItem(key, JSON.stringify('e2e-fake-test-key'));
+    }, AI_KEY_LOCALSTORAGE.gemini);
+    await aiFab.click();
+    await page.waitForTimeout(300);
+
+    const modal = page.getByRole('dialog', { name: 'AI Quick Add', exact: true });
+    await expect(modal).toBeVisible();
+
+    // Defaults to "Full context" — no project/date-range sub-filters shown.
+    const scopeMenu = modal.getByRole('button', { name: 'Workspace context sent to the AI' });
+    await expect(scopeMenu).toContainText('Full context');
+    await expect(modal.getByRole('button', { name: 'Restrict to one project' })).toHaveCount(0);
+
+    // "No context" — still no sub-filters (nothing to restrict when nothing is sent).
+    await scopeMenu.click();
+    await page.waitForTimeout(150);
+    await page.getByRole('option', { name: 'No context', exact: true }).click();
+    await page.waitForTimeout(150);
+    await expect(modal.getByRole('button', { name: 'Restrict to one project' })).toHaveCount(0);
+    await expect(modal).toContainText(/can still create new tasks\/events\/projects/i);
+
+    // "Custom" reveals both sub-filters: a project picker and an event date range.
+    await scopeMenu.click();
+    await page.waitForTimeout(150);
+    await page.getByRole('option', { name: 'Custom', exact: true }).click();
+    await page.waitForTimeout(150);
+    const projectMenu = modal.getByRole('button', { name: 'Restrict to one project' });
+    await expect(projectMenu).toBeVisible();
+    await expect(projectMenu).toContainText('All projects');
+    await expect(page.locator('#ai-quickadd-event-start')).toBeVisible();
+    await expect(page.locator('#ai-quickadd-event-end')).toBeVisible();
+
+    // Picking a real project narrows the picker's label to that project's name.
+    await projectMenu.click();
+    await page.waitForTimeout(150);
+    const projectOptions = page.locator('.select-menu-dropdown[aria-label="Restrict to one project"] .select-menu-option');
+    const optionCount = await projectOptions.count();
+    if (optionCount > 1) {
+      const secondOptionLabel = await projectOptions.nth(1).innerText();
+      await projectOptions.nth(1).click();
+      await page.waitForTimeout(150);
+      await expect(projectMenu).toContainText(secondOptionLabel);
+    }
+
+    // The scope choice persists across a remount (device-local preference,
+    // same pattern as provider/model — see CONTEXT_SCOPE_STORAGE_KEY).
+    // Cancel collapses the mini-FAB speed-dial, so re-expand it via the main
+    // toggle before reopening the modal.
+    await modal.getByRole('button', { name: 'Cancel' }).click();
+    await page.waitForTimeout(200);
+    await mainToggle.click();
+    await page.waitForTimeout(200);
+    await aiFab.click();
+    await page.waitForTimeout(300);
+    const reopenedModal = page.getByRole('dialog', { name: 'AI Quick Add', exact: true });
+    await expect(reopenedModal.getByRole('button', { name: 'Workspace context sent to the AI' })).toContainText('Custom');
+
+    await reopenedModal.getByRole('button', { name: 'Cancel' }).click();
+    await page.waitForTimeout(200);
+
+    expectNoErrors(errors);
+  });
+
   // AIPlanConfirmModal (services/aiPlanService.js's resolvePlan output) only
   // ever mounts after AIQuickAddModal's handleSubmit() successfully returns
   // real `operations` from requestAIPlan() — i.e. after a live round-trip to

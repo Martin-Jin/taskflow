@@ -22,7 +22,7 @@ const GROUPS = [
   { key: 'delete', label: 'Delete', match: (op) => op.startsWith('delete_') },
 ];
 
-export default function AIPlanConfirmModal({ plan, onClose, onApplied }) {
+export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProjectCreated }) {
   const scheduler = useScheduler();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
@@ -71,6 +71,14 @@ export default function AIPlanConfirmModal({ plan, onClose, onApplied }) {
           failed.map((f) => `${plan.entries[f.index].humanDescription}: ${f.error}`)
         );
       } else {
+        // Navigate to the first project the plan actually created, so a new
+        // project doesn't silently exist with no visible confirmation (see
+        // this change's PR description) — only the first if several were
+        // created, not a multi-project switcher.
+        const firstCreatedProject = results.find(
+          (r) => r.ok && r.createdId && plan.entries[r.index].operation.op === 'create_project'
+        );
+        if (firstCreatedProject) onProjectCreated?.(firstCreatedProject.createdId);
         onApplied?.(results);
         requestClose();
       }

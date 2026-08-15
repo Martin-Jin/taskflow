@@ -65,7 +65,8 @@ import {
   Search,
   Sparkles,
 } from 'lucide-react';
-import { isAIQuickAddConfigured, getStoredApiKey } from './services/aiQuickAddService';
+import { useAIQuickAddGate } from './hooks/useAIQuickAddGate';
+import AIQuickAddModal from './components/Modals/AIQuickAddModal';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch). Six
@@ -136,8 +137,15 @@ function AppShell() {
   // addTaskSignal/settingsSectionRequest's requestId pattern so CalendarPage
   // can react even when the request repeats the same date.
   const [calendarDayRequest, setCalendarDayRequest] = useState(null);
+  // Standalone AI Quick Add modal, opened from the standalone FAB rendered on
+  // tabs with no FAB group of their own (Dashboard/Projects/Stats/Settings —
+  // see the fixed button below). Tasks/Board and Calendar each open the same
+  // modal from their own local state instead (AddTaskFabGroup/CalendarPage),
+  // since those already have a FAB group to host the entry point.
+  const [showStandaloneAIQuickAdd, setShowStandaloneAIQuickAdd] = useState(false);
   const isMobile = useIsMobile();
   const { toggleTheme } = useTheme();
+  const { aiConfigured, requestOpen: requestAIQuickAddOpen } = useAIQuickAddGate();
   const {
     undo,
     redo,
@@ -338,7 +346,7 @@ function AppShell() {
     // — no worker URL set = feature hidden entirely), rather than always listing it
     // and letting the modal itself reject; both TaskListPanel's List and Board
     // sub-views react to this signal, so it works from either one.
-    ...(isAIQuickAddConfigured()
+    ...(aiConfigured
       ? [
           {
             id: 'aiQuickAdd',
@@ -347,18 +355,10 @@ function AppShell() {
             run: () => {
               // Mirrors AddTaskFabGroup's handleAIQuickAdd key check — the palette
               // entry point must not open the modal when no provider key is saved.
-              const hasKey = !!getStoredApiKey('anthropic') || !!getStoredApiKey('gemini');
-              if (!hasKey) {
-                setNotification({
-                  type: 'error',
-                  message: 'Add an Anthropic or Gemini API key in Settings → Integrations first.',
-                  actionLabel: 'Open Settings',
-                  onAction: () => requestSettingsSection('integrations'),
-                });
-                return;
-              }
-              setTab('tasks');
-              setAiQuickAddSignal((n) => n + 1);
+              requestAIQuickAddOpen(() => {
+                setTab('tasks');
+                setAiQuickAddSignal((n) => n + 1);
+              });
             },
           },
         ]
@@ -423,6 +423,7 @@ function AppShell() {
               dayJumpRequest={calendarDayRequest}
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
               onShareProject={handleShareProject}
+              onProjectCreated={selectProject}
             />
           )}
           {tab === 'tasks' && (
@@ -438,6 +439,7 @@ function AppShell() {
               onOpenSettings={() => setTab('settings')}
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
               onShareProject={handleShareProject}
+              onProjectCreated={selectProject}
             />
           )}
           {tab === 'projects' && (
@@ -471,6 +473,27 @@ function AppShell() {
           title="Search / commands"
         >
           <Search size={22} />
+        </button>
+      )}
+
+      {/* Standalone AI Quick Add entry point for the four tabs with no FAB
+          group of their own (Dashboard/Projects/Stats/Settings — Tasks
+          list/Board and Calendar already have one, see AddTaskFabGroup/
+          CalendarPage's own AI mini-FAB). Shown on desktop AND mobile (unlike
+          mobile-search-fab-standalone above, which is mobile-only) since the
+          whole point of this change is making AI Quick Add reachable from
+          every screen, not just ones that already had a FAB. Reuses
+          .add-task-btn's shell/size for visual consistency with the other
+          FABs rather than inventing new styling. */}
+      {aiConfigured && (tab === 'dashboard' || tab === 'projects' || tab === 'stats' || tab === 'settings') && (
+        <button
+          className="btn btn-primary add-task-btn ai-quickadd-standalone-fab"
+          onClick={() => requestAIQuickAddOpen(() => setShowStandaloneAIQuickAdd(true))}
+          aria-label="AI Quick Add"
+          title="AI Quick Add"
+        >
+          <Sparkles size={14} />
+          <span className="add-task-btn-label">AI Quick Add</span>
         </button>
       )}
 
@@ -541,6 +564,9 @@ function AppShell() {
         />
       )}
       {paletteTask && <TaskDetailModal task={paletteTask} onClose={() => setPaletteTaskId(null)} />}
+      {showStandaloneAIQuickAdd && (
+        <AIQuickAddModal onClose={() => setShowStandaloneAIQuickAdd(false)} onProjectCreated={selectProject} />
+      )}
       {schedulingConflictsModalOpen && (
         <SchedulingConflictsModal
           conflicts={schedulingConflicts}

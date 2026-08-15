@@ -2091,6 +2091,7 @@
 
 .ai-quickadd-provider-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 4px;
   /* Compensates for .select-menu-trigger's own 8px left padding, so the
@@ -2104,6 +2105,37 @@
    a visible box here fights the -8px margin above (the box edge would hang
    left of the surrounding paragraph text instead of the text itself lining
    up), and every other SelectMenu in the app already looks like this. */
+
+/* Custom context scope's event date-range sub-filter (AIQuickAddModal) —
+   plain native date inputs (this app has no reusable date-range picker
+   component to reach for instead, see aiContextService's DEFAULT_EVENT_RANGE_DAYS
+   for the default window these fall back to). Wraps on narrow widths rather
+   than clipping/overflowing the modal. */
+.ai-quickadd-daterange-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.ai-quickadd-daterange-row input[type='date'] {
+  width: auto;
+  flex: 1 1 130px;
+  min-width: 0;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.ai-quickadd-daterange-row input[type='date']:focus {
+  border-color: var(--color-accent-border);
+  outline: none;
+}
 
 .ai-quickadd-help-btn {
   border-color: transparent;

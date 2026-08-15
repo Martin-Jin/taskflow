@@ -490,7 +490,12 @@ function contentFields(op, excludeKeys) {
  * @param {{ entries: Array, applyOrder: number[] }} plan - resolvePlan's output.
  * @param {Set<number>} checkedIndices - entry indices the user left checked on the confirm screen.
  * @param {Object} mutators - { addTask, updateTask, deleteTask, addManualEvent, updateEvent, deleteEvent, addProject, renameProject, deleteProject, addSection, renameSection, deleteSection, getOrCreateLabelIds } from useScheduler().
- * @returns {Array<{ index: number, ok: boolean, error?: string }>}
+ * @returns {Array<{ index: number, ok: boolean, error?: string, createdId?: string }>}
+ *   `createdId` is set (to the real, resolved id) whenever the operation is one
+ *   of the `creates`-kind ops (create_task/event/project/section/label) and it
+ *   applied successfully — callers that need to know what a plan actually
+ *   created (e.g. navigating to a newly-created project) can read this instead
+ *   of re-deriving their own id resolution.
  */
 export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
   const idMap = new Map();
@@ -507,17 +512,19 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
     if (!checkedIndices.has(i)) continue;
     const entry = entries[i];
     if (entry.operation.op === 'create_label') {
-      results.push({ index: i, ok: true });
+      results.push({ index: i, ok: true, createdId: idMap.get(entry.operation.localId) });
       continue;
     }
     try {
       const resolved = resolveRefs(entry.operation, idMap);
+      let createdId;
       switch (resolved.op) {
         case 'create_task': {
           const fields = contentFields(resolved, new Set(['op', 'localId']));
           if (fields.estimatedHours === undefined) fields.estimatedHours = DEFAULT_ESTIMATED_HOURS;
           const created = mutators.addTask(fields);
           idMap.set(resolved.localId, created.id);
+          createdId = created.id;
           break;
         }
         case 'update_task':
@@ -529,6 +536,7 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
         case 'create_event': {
           const created = mutators.addManualEvent(contentFields(resolved, new Set(['op', 'localId'])));
           idMap.set(resolved.localId, created.id);
+          createdId = created.id;
           break;
         }
         case 'update_event':
@@ -540,6 +548,7 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
         case 'create_project': {
           const created = mutators.addProject(resolved.name);
           idMap.set(resolved.localId, created.id);
+          createdId = created.id;
           break;
         }
         case 'rename_project':
@@ -551,6 +560,7 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
         case 'create_section': {
           const created = mutators.addSection(resolved.projectId, resolved.name);
           idMap.set(resolved.localId, created.id);
+          createdId = created.id;
           break;
         }
         case 'rename_section':
@@ -562,7 +572,7 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
         default:
           throw new Error(`Unhandled operation "${resolved.op}".`);
       }
-      results.push({ index: i, ok: true });
+      results.push({ index: i, ok: true, createdId });
     } catch (err) {
       results.push({ index: i, ok: false, error: err.message });
     }
