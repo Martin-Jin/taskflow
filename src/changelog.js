@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.3.2',
+    date: '2026-08-15',
+    title: 'Fixed cloud backups failing after a Google Calendar sync',
+    changes: [
+      'Fixed "Failed to create cloud backup" errors that could follow a Google Calendar push or edit. Google\'s API sometimes leaves out a timestamp TaskFlow expected on its reply, which was slipping through as an invalid value the cloud database flatly rejects. Downloading a backup to a file was unaffected — only the cloud-backup path was hit.',
+    ],
+  },
+  {
     version: '5.3.1',
     date: '2026-08-15',
     title: 'Restored calendar events re-sync on their own, and less cloud traffic',

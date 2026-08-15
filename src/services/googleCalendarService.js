@@ -847,7 +847,13 @@ export async function pushEventToCalendar(event) {
     ? await window.gapi.client.calendar.events.update({ calendarId, eventId: event.googleEventId, resource })
     : await window.gapi.client.calendar.events.insert({ calendarId, resource });
 
-  return { id: resp.result.id, updated: resp.result.updated };
+  // `updated` must never come back as `undefined` — Firestore's addDoc/setDoc
+  // reject any field holding it outright, and this return value gets spread
+  // straight into a CalendarEvent that can later land in a backup payload
+  // (see every call site of this function). Google's API omits `updated` in
+  // some response shapes, which without this normalization silently poisoned
+  // local state with an `undefined` field until the next cloud backup failed.
+  return { id: resp.result.id, updated: resp.result.updated ?? null };
 }
 
 /**
@@ -1011,7 +1017,9 @@ export async function pushEventInstanceUpdate(master, occurrenceDateIso, fields)
   };
 
   const resp = await window.gapi.client.calendar.events.patch({ calendarId, eventId: instanceId, resource });
-  return { id: resp.result.id, updated: resp.result.updated };
+  // See pushEventToCalendar's identical normalization above for why `?? null`
+  // is required here.
+  return { id: resp.result.id, updated: resp.result.updated ?? null };
 }
 
 /**
