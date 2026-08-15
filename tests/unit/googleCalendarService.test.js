@@ -58,6 +58,11 @@ import {
   chunkForBatch,
   classifyBatchSubResponse,
   MAX_BATCH_SIZE,
+  buildBlockEventResource,
+  planTodaysBlockPush,
+  isBlockSourcedEvent,
+  TASKFLOW_BLOCK_PROPERTY_KEY,
+  priorityToColorId,
 } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
@@ -305,6 +310,104 @@ describe('planCalendarRewrite — delete-all rewrite', () => {
     const { toDelete, toInsert } = planCalendarRewrite(local, []);
     expect(toDelete).toEqual([]);
     expect(toInsert).toHaveLength(2);
+  });
+});
+
+describe('buildBlockEventResource — the Google event shape for a pushed ScheduledBlock', () => {
+  // Same shape the earlier, removed block-push feature used (title prefix,
+  // extended-property tag, priority colorId) — only the id-preserving
+  // identity tracking built on top of it was ever the problem (see this
+  // function's own doc comment).
+  const task = { id: 't1', title: 'Write report', notes: 'Chapter 3', priority: 'high' };
+  const block = { id: 'blk_t1_2026-08-16_0900', date: '2026-08-16', startTime: '09:00', endTime: '10:30' };
+
+  it('prefixes the title with the 📋 marker so isBlockSourcedEvent recognizes it even without the tag', () => {
+    const resource = buildBlockEventResource(block, task);
+    expect(resource.summary).toBe('📋 Write report');
+    expect(isBlockSourcedEvent({ title: resource.summary, source: 'google' })).toBe(true);
+  });
+
+  it('uses the task notes as description, falling back to an auto-generated one', () => {
+    expect(buildBlockEventResource(block, task).description).toBe('Chapter 3');
+    const noNotesTask = { ...task, notes: '' };
+    expect(buildBlockEventResource(block, noNotesTask).description).toContain('Auto-scheduled by TaskFlow');
+    expect(buildBlockEventResource(block, noNotesTask).description).toContain('high');
+  });
+
+  it('maps start/end from the block, not the task', () => {
+    const resource = buildBlockEventResource(block, task);
+    expect(resource.start.dateTime).toBe('2026-08-16T09:00:00');
+    expect(resource.end.dateTime).toBe('2026-08-16T10:30:00');
+  });
+
+  it('sets colorId from the task priority', () => {
+    expect(buildBlockEventResource(block, task).colorId).toBe(priorityToColorId('high'));
+  });
+
+  it('tags the resource with TASKFLOW_BLOCK_PROPERTY_KEY, keyed by the block id', () => {
+    const resource = buildBlockEventResource(block, task);
+    expect(resource.extendedProperties.private[TASKFLOW_BLOCK_PROPERTY_KEY]).toBe(block.id);
+  });
+
+  it('never includes a googleEventId field — delete-all-then-recreate tracks no identity across a push', () => {
+    const resource = buildBlockEventResource(block, task);
+    expect(resource).not.toHaveProperty('googleEventId');
+  });
+});
+
+describe('planTodaysBlockPush — delete-all push of today\'s scheduled task blocks', () => {
+  // Same delete-all-then-recreate shape as planCalendarRewrite above, but
+  // scoped by the TASKFLOW_BLOCK_PROPERTY_KEY tag rather than by "everything
+  // in range on the primary calendar" — see this function's own doc comment
+  // for why the tag is the sole safety boundary here.
+  const authoritativeBlock = { block: { id: 'blk_1' }, task: { id: 't1', title: 'X' } };
+
+  it('deletes every Google event tagged as TaskFlow block-sourced for today, unconditionally', () => {
+    const googleEventsToday = [
+      { id: 'gcal_tagged_1', extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: 'blk_old_1' } } },
+      { id: 'gcal_tagged_2', extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: 'blk_old_2' } } },
+    ];
+    const { toDelete } = planTodaysBlockPush([authoritativeBlock], googleEventsToday);
+    expect([...toDelete].sort()).toEqual(['gcal_tagged_1', 'gcal_tagged_2']);
+  });
+
+  it('CRITICAL SAFETY: never deletes an untagged event, even one that happens to fall on today', () => {
+    // A user's own real meeting, or an ordinary synced CalendarEvent, must
+    // never be swept up just because it's on today's date.
+    const googleEventsToday = [
+      { id: 'gcal_users_own_meeting', summary: 'Dentist' },
+      { id: 'gcal_synced_calendar_event', summary: 'Standup' },
+    ];
+    const { toDelete } = planTodaysBlockPush([authoritativeBlock], googleEventsToday);
+    expect(toDelete).toEqual([]);
+  });
+
+  it('plans every authoritative block as a fresh insert regardless of Google state', () => {
+    const { toInsert } = planTodaysBlockPush([authoritativeBlock], []);
+    expect(toInsert).toEqual([authoritativeBlock]);
+  });
+
+  it('does NOT match a tagged Google event against an authoritative block by id — pure delete-all, no diffing', () => {
+    // The exact bug class this feature must never reintroduce: even if a
+    // tagged Google event's marker value happens to equal a CURRENT block's
+    // id, it is still deleted (and the block still fresh-inserted), never
+    // "matched and spared".
+    const block = { id: 'blk_1' };
+    const googleEventsToday = [{ id: 'gcal_1', extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: 'blk_1' } } }];
+    const { toDelete, toInsert } = planTodaysBlockPush([{ block, task: { id: 't1' } }], googleEventsToday);
+    expect(toDelete).toEqual(['gcal_1']);
+    expect(toInsert).toHaveLength(1);
+  });
+
+  it('an empty authoritative set still deletes every tagged event (all of today\'s blocks were completed/removed)', () => {
+    const googleEventsToday = [{ id: 'gcal_stale', extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: 'blk_x' } } }];
+    const { toDelete, toInsert } = planTodaysBlockPush([], googleEventsToday);
+    expect(toDelete).toEqual(['gcal_stale']);
+    expect(toInsert).toEqual([]);
+  });
+
+  it('no Google events and no authoritative blocks plans nothing', () => {
+    expect(planTodaysBlockPush([], [])).toEqual({ toDelete: [], toInsert: [] });
   });
 });
 

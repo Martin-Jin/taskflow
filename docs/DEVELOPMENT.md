@@ -755,7 +755,7 @@ src/
 │   └── migrateRecurrenceState.js       # One-time migration adopting utils/recurrenceState.js's convergent completedOccurrences/skippedThrough model on existing recurring tasks — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
-│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull; events only, never scheduled blocks) + planCalendarRewrite/computeCalendarRewritePlan (opt-in reverse-direction "make Google match TaskFlow" planning, primary-calendar-only)
+│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull) + planCalendarRewrite/computeCalendarRewritePlan (opt-in reverse-direction "make Google match TaskFlow" event rewrite, primary-calendar-only) + planTodaysBlockPush/computeTodaysBlockPushPlan (today's ScheduledBlocks, one-way, delete-all-then-recreate)
 │   ├── eventSyncService.js       # Google-wins merge/reconcile logic for pulled events
 │   ├── firestoreSync.js          # Pull/push/live-subscribe to a signed-in user's synced data
 │   ├── mockData.js               # Zero-config sample data
@@ -838,25 +838,46 @@ never run automatically) that flips the direction for one run, making
 TaskFlow's current local **calendar events** authoritative and reconciling
 Google's calendar to match.
 
-**ScheduledBlocks are never synced to Google Calendar.** TaskFlow used to
-push each scheduled block to Google as an event, with a persisted per-device
+**ScheduledBlocks are pushed to Google Calendar one-way, today-only, via
+delete-all-then-recreate — never diffed/matched by id.** TaskFlow originally
+pushed each scheduled block to Google as an event, with a persisted per-device
 record of what had been pushed, orphan-record matching to recognize a block a
 rebalance had re-minted under a new id, and update/delete passes to keep the
-two in step. That whole mechanism was removed. A block's id encodes its
-placement (`blk_${taskId}_${date}_${startTime}`), so the scheduler re-mints
-ids freely during a rebalance — and no amount of matching on top of that
-reliably distinguished "this block moved" from "this block is new", which kept
-manufacturing duplicate and missing events on users' real calendars. Blocks
-now live only in TaskFlow's own calendar views. Nothing creates, updates,
-deletes, or reads a Google event for a block, and `ScheduledBlock` no longer
-carries a `googleEventId` field at all.
+two in step. That whole mechanism was removed (v5.3.0): a block's id encodes
+its placement (`blk_${taskId}_${date}_${startTime}`), so the scheduler
+re-mints ids freely during a rebalance — and no amount of matching on top of
+that reliably distinguished "this block moved" from "this block is new",
+which kept manufacturing duplicate and missing events on users' real
+calendars.
 
-Block events pushed by older builds may still sit on a user's Google Calendar.
-Those are deliberately **left alone** — they're the user's own calendar data to
-keep or delete as they see fit — but they are still recognized on pull
-(`isBlockSourcedEvent`, via the `TASKFLOW_BLOCK_PROPERTY_KEY` extended
-property with a legacy "📋 " title-prefix fallback) so they're never imported
-as phantom local events and never re-pushed.
+Block-push came back on a fundamentally different model
+(`pushTodaysTasksToCalendar` in `useGoogleCalendarSync.js`): only **today's**
+blocks are ever pushed, one-way (TaskFlow -> Google, never read back), and
+every run **deletes every Google event tagged as TaskFlow's own** (via
+`TASKFLOW_BLOCK_PROPERTY_KEY`) for today, unconditionally, then re-inserts
+fresh from whatever's currently scheduled — the same delete-all fix already
+proven for `planCalendarRewrite` above, applied to a second feature. No
+`googleEventId` is ever stored on a `ScheduledBlock`, and no old Google event
+is ever matched against a specific block by id. A debounced effect
+(`computeTodaysBlockPushSignature`) watches today's blocks + the task fields
+that affect what's pushed (title/priority/completion) and re-triggers the
+push automatically — completing a task removes its block from Google on the
+next run, and a rebalance/edit is reflected the same way. A
+single-flight-plus-queue-one-follow-up guard (`computePushSingleFlightDecision`,
+shared with `useCloudSync.js`'s cloud push) prevents two delete-all-then-
+recreate runs from ever overlapping. Day rollover falls out for free: the
+push always recomputes "today" fresh, and the periodic poll / visibility-
+focus refresh both re-trigger it, so a tab left open (or backgrounded)
+across midnight still cleans up yesterday's tagged events on its next tick.
+
+Block events pushed by an OLDER build (before this rework, or from the
+original pre-v5.3.0 feature) may still sit on a user's Google Calendar from a
+day this feature never revisits. Those are deliberately **left alone** —
+they're the user's own calendar data to keep or delete as they see fit — but
+they are still recognized on pull (`isBlockSourcedEvent`, via the
+`TASKFLOW_BLOCK_PROPERTY_KEY` extended property with a legacy "📋 "
+title-prefix fallback) so they're never imported as phantom local events and
+never re-pushed as a fresh CalendarEvent.
 
 **Ongoing reconciliation for events.** `pushUnsyncedItemsToCalendar`
 (`useGoogleCalendarSync.js`) sweeps every `CalendarEvent` still lacking a

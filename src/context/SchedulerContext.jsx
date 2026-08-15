@@ -1003,6 +1003,8 @@ export function SchedulerProvider({ children }) {
   } = useGoogleCalendarSync({
     events,
     setEvents,
+    tasks,
+    blocks,
     setNotification,
     authLoading,
     onEventsChanged: triggerDueDateRebalance,

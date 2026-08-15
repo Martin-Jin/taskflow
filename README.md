@@ -359,9 +359,16 @@ worth knowing:
    client-side poll), so a change made directly in Google Calendar can take
    up to about a minute to show up here rather than being instant. If the
    same event changed on both sides since the last sync, **Google
-   Calendar's version always wins**. Note this covers calendar *events*
-   only — the time blocks TaskFlow schedules for your tasks stay in
-   TaskFlow and are never written to your Google Calendar.
+   Calendar's version always wins**. This two-way sync covers calendar
+   *events* only. Separately, **today's scheduled task blocks are also
+   pushed to Google Calendar, one-way** (TaskFlow → Google only — Google is
+   never the source of truth for these, and nothing is ever read back from
+   them): as your schedule changes throughout the day, TaskFlow keeps a
+   mirror of today's still-active task blocks on your Google Calendar,
+   completely automatically, with no button to click. Completing a task
+   removes its entry; a rebalance, edit, or drag-drop updates it. Only
+   *today's* blocks are ever kept in sync this way — a task block for any
+   other day is TaskFlow-only, same as before.
 
 While the project is in Testing publishing status (the default), only
 accounts you've explicitly added as test users can complete the OAuth flow:
@@ -770,6 +777,12 @@ restrictions, if using Google Calendar sync from that hostname.
   stays on Google Calendar itself, only the local mirror is pruned); a
   recurring event's own occurrences roll in and out of view as the window
   advances day by day.
+- Today's scheduled task blocks are pushed to Google Calendar one-way only
+  (TaskFlow → Google) and only for *today* — a task block for any other day
+  is TaskFlow-only. Google is never a source of truth for these entries and
+  TaskFlow never reads them back, so editing or deleting one directly in
+  Google Calendar has no effect in TaskFlow; the next automatic sync simply
+  overwrites it back to match TaskFlow's current schedule.
 - Todoist is a one-time import, not a sync — completing, editing, or
   deleting a Todoist-imported task in TaskFlow never writes back to
   Todoist. Re-importing later pulls in anything new/changed on Todoist's
