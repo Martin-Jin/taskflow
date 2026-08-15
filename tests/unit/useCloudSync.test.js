@@ -65,6 +65,8 @@ import {
   shouldRestoreEventsFromBackup,
   hasNewCompletion,
   detectGoogleCalendarStatusMismatch,
+  shouldTriggerVisibilityRefresh,
+  VISIBILITY_PULL_THROTTLE_MS,
 } from '../../src/hooks/useCloudSync.js';
 
 describe('isValidFieldValue', () => {
@@ -1005,6 +1007,37 @@ describe('shouldRestoreEventsFromBackup', () => {
   it('treats an omitted googleSyncStale as not-stale (back-compat with callers that predate it)', () => {
     expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: true })).toBe(false);
     expect(shouldRestoreEventsFromBackup({ events: [], googleConnected: false })).toBe(true);
+  });
+});
+
+describe('shouldTriggerVisibilityRefresh', () => {
+  // Backs the visibility/focus-triggered pull that fixes cross-device sync
+  // requiring both devices "on" at once: a phone tab backgrounded for hours
+  // can have its Firestore realtime connection go stale, so coming back to
+  // the foreground needs its own one-off pull rather than relying solely on
+  // the live onSnapshot listener. Mirrors useGoogleCalendarSync.js's own
+  // REFRESH_THROTTLE_MS-gated refreshIfDue logic.
+
+  it('fires the very first time (no prior refresh recorded)', () => {
+    expect(shouldTriggerVisibilityRefresh(null, 1000)).toBe(true);
+    expect(shouldTriggerVisibilityRefresh(undefined, 1000)).toBe(true);
+  });
+
+  it('does not fire again before the throttle window has elapsed', () => {
+    const lastRefreshAt = 1000;
+    const now = lastRefreshAt + VISIBILITY_PULL_THROTTLE_MS - 1;
+    expect(shouldTriggerVisibilityRefresh(lastRefreshAt, now)).toBe(false);
+  });
+
+  it('fires again once the throttle window has fully elapsed', () => {
+    const lastRefreshAt = 1000;
+    const now = lastRefreshAt + VISIBILITY_PULL_THROTTLE_MS;
+    expect(shouldTriggerVisibilityRefresh(lastRefreshAt, now)).toBe(true);
+  });
+
+  it('respects a custom throttle window when one is passed explicitly', () => {
+    expect(shouldTriggerVisibilityRefresh(1000, 1500, 1000)).toBe(false);
+    expect(shouldTriggerVisibilityRefresh(1000, 2000, 1000)).toBe(true);
   });
 });
 

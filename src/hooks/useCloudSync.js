@@ -224,6 +224,26 @@ export function hasLocalEditRaced(baselineActionId, currentActionId) {
   return baselineActionId !== currentActionId;
 }
 
+// How long the visibility/focus-triggered pull (see the effect below) stays
+// throttled after firing, so rapid tab/window switching can't cause a
+// refresh storm — mirrors useGoogleCalendarSync.js's own REFRESH_THROTTLE_MS
+// pattern/magnitude for consistency between the two "came back to the
+// foreground" refresh paths.
+export const VISIBILITY_PULL_THROTTLE_MS = 20 * 1000;
+
+/**
+ * Pure decision for the visibility/focus-triggered pull: has enough time
+ * passed since the last such refresh (`lastRefreshAt`, epoch ms; null/undefined
+ * if none has ever fired) that a new one is due? Extracted so the throttle
+ * math is unit-testable without driving the hook — same precedent as this
+ * file's other pure decisions (computeFingerprint, isRemoteWriteStale,
+ * hasLocalEditRaced, etc).
+ */
+export function shouldTriggerVisibilityRefresh(lastRefreshAt, now, throttleMs = VISIBILITY_PULL_THROTTLE_MS) {
+  if (lastRefreshAt == null) return true;
+  return now - lastRefreshAt >= throttleMs;
+}
+
 /**
  * Cross-device staleness gate (distinct from, and orthogonal to,
  * isStaleOwnEcho/hasLocalEditRaced below, which both guard against a
@@ -1286,48 +1306,100 @@ export function useCloudSync({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, cloudSynced]);
 
-  // ---- Initial pull on mount (when user is available) ----------------------
-  useEffect(() => {
-    if (!user || !cloudSynced) return;
-
-    let cancelled = false;
-    // Baseline local action as of the moment this pull starts — if a
-    // genuinely new local commit lands (e.g. the user edits a task, deletes
-    // or shares a project) before this Firestore round-trip resolves, the
-    // fetched snapshot is stale relative to that edit. Applying ANY of it
-    // via overwritePresent/setState would silently discard the newer local
-    // edit, so the whole plan is skipped in that case (see applyRemoteData's
-    // skipAll) — the debounced push effect already fires on any state
-    // change, so the newer local edit still reaches Firestore on its own;
-    // nothing is lost either way.
-    const actionIdAtStart = currentActionIdRef.current;
-    (async () => {
+  // ---- Shared one-shot pull-and-apply, used by both the mount-time initial
+  // pull and the visibility/focus refresh below (see that effect's comment
+  // for why a second trigger for the same pull exists). Factored out so both
+  // call sites run IDENTICAL logic rather than two copies drifting apart —
+  // same "extract the shared step into one named function" pattern this file
+  // already follows for recordObservedWriteAt/isRemoteWriteStale/etc.
+  //
+  // Baseline local action as of the moment this pull starts — if a genuinely
+  // new local commit lands (e.g. the user edits a task, deletes or shares a
+  // project) before this Firestore round-trip resolves, the fetched snapshot
+  // is stale relative to that edit. Applying ANY of it via overwritePresent/
+  // setState would silently discard the newer local edit, so the whole plan
+  // is skipped in that case (see applyRemoteData's skipAll) — the debounced
+  // push effect already fires on any state change, so the newer local edit
+  // still reaches Firestore on its own; nothing is lost either way.
+  //
+  // Every caller passes its OWN `cancelled` getter/setter pair (a per-effect
+  // closure variable) so each effect's cleanup can independently mark its own
+  // in-flight call moot without the two effects' cancellation states
+  // interfering with each other.
+  const pullAndApplyRemoteData = useCallback(
+    async (isCancelled) => {
+      const actionIdAtStart = currentActionIdRef.current;
       setIsPullingCloud(true);
       try {
         const remoteData = await pullUserData(user.uid);
-        if (!cancelled && remoteData) {
+        if (!isCancelled() && remoteData) {
           // Record the server-confirmed `lastWriteAt` this pull observed —
-          // same bookkeeping as the live listener, done BEFORE the
-          // staleness check inside isRemoteWriteStale (called via
-          // applyRemoteData's skipAll below) so this pull's own timestamp
-          // never gates itself. At this point in a fresh session
-          // lastKnownWriteAtMillisRef is still null, so isRemoteWriteStale
-          // can never flag THIS pull as stale — there's nothing yet to
-          // compare it against (see its doc comment) — but subsequent live
-          // snapshots this session will compare against what's recorded here.
+          // same bookkeeping as the live listener, done BEFORE the staleness
+          // check inside isRemoteWriteStale (called via applyRemoteData's
+          // skipAll below) so this pull's own timestamp never gates itself.
           recordObservedWriteAt(remoteData.lastWriteAt);
           const localEditLandedDuringPull = hasLocalEditRaced(actionIdAtStart, currentActionIdRef.current);
           applyRemoteData(remoteData, { skipAll: localEditLandedDuringPull });
         }
       } catch (err) {
-        console.warn('[useCloudSync] Initial pull failed', err);
+        console.warn('[useCloudSync] Pull failed', err);
       } finally {
-        if (!cancelled) setIsPullingCloud(false);
+        if (!isCancelled()) setIsPullingCloud(false);
       }
-    })();
+    },
+    [user, recordObservedWriteAt, currentActionIdRef, applyRemoteData]
+  );
+
+  // ---- Initial pull on mount (when user is available) ----------------------
+  useEffect(() => {
+    if (!user || !cloudSynced) return;
+    let cancelled = false;
+    pullAndApplyRemoteData(() => cancelled);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, cloudSynced]);
+
+  // ---- Visibility/focus refresh (personal cross-device sync only) ----------
+  // Fixes a real gap: the live onSnapshot listener above and the mount-time
+  // pull are both keyed only on [user, cloudSynced], so neither re-runs when
+  // this tab/app comes back to the foreground after being backgrounded for a
+  // long time. A phone browser tab backgrounded for hours can have its
+  // Firestore realtime connection go stale/suspended by the OS — e.g. edit on
+  // a laptop, close it, then much later switch to an already-open phone tab:
+  // without this, the phone never learns about the laptop's changes until it
+  // reloads. Mirrors useGoogleCalendarSync.js's own visibility/focus refresh
+  // effect (same pattern: visibilitychange + focus, throttled via a
+  // last-fired ref) so the two "came back to the foreground" paths behave
+  // consistently.
+  //
+  // Deliberately just an extra trigger for the SAME pullAndApplyRemoteData
+  // used on mount — not a new sync path, and does not touch the live
+  // onSnapshot listener's subscribe/unsubscribe lifecycle at all (that
+  // listener's own race guards — isStaleOwnEcho/isFirstSnapshot bookkeeping —
+  // are untouched by this effect).
+  useEffect(() => {
+    if (!user || !cloudSynced) return undefined;
+
+    let cancelled = false;
+    const lastVisibilityPullAtRef = { current: 0 };
+    const refreshIfDue = () => {
+      const now = Date.now();
+      if (!shouldTriggerVisibilityRefresh(lastVisibilityPullAtRef.current || null, now)) return;
+      lastVisibilityPullAtRef.current = now;
+      pullAndApplyRemoteData(() => cancelled);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshIfDue();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', refreshIfDue);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', refreshIfDue);
+    };
+  }, [user, cloudSynced, pullAndApplyRemoteData]);
 
   // ---- Fallback: restore events from the latest backup if there's nothing
   // to show and no WORKING live Google Calendar source to repopulate them ---
