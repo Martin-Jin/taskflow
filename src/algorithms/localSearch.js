@@ -43,12 +43,10 @@ import { getTaskWindow } from './allocator';
 // in normal operation. Fixed count + fixed RNG seed = the same inputs always
 // produce the same placements, which matters well beyond scheduling quality:
 // a block's id is derived from its placement (`blk_${taskId}_${date}_
-// ${startTime}`, see allocator.js), and preserveGoogleEventIds
-// (rebalanceEngine.js) carries a block's googleEventId forward by matching
-// that id exactly. If an identical rebalance could land a block one minute
-// elsewhere, its id would change, the match would miss, the block would look
-// brand new and unsynced, and the auto-push-on-poll would create a DUPLICATE
-// Google Calendar event — permanently, and again on every future run.
+// ${startTime}`, see allocator.js), so a stable result means a block that
+// didn't really move keeps its identity across runs — which is what lets
+// per-block UI state, locks, and completion status survive a rebalance
+// instead of silently attaching to a different block.
 export const MAX_ITERATIONS = 2000;
 
 // Time-box: a pathological-case safety valve ONLY — not a normal-operation

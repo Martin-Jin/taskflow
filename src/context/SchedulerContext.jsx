@@ -1004,11 +1004,6 @@ export function SchedulerProvider({ children }) {
     events,
     setEvents,
     setNotification,
-    blocks,
-    tasks,
-    commit,
-    stateRef,
-    pushActionToast,
     authLoading,
     onEventsChanged: triggerDueDateRebalance,
   });
@@ -1330,31 +1325,6 @@ export function SchedulerProvider({ children }) {
   );
 
   /**
-   * Regenerate blocks across the scheduler's full horizon (same engine call
-   * runRebalance makes) and return the fresh blocks array, WITHOUT any of
-   * runRebalance's own toast/notification side effects — this is an internal
-   * step of a bigger atomic action (see restoreCloudBackupAndRewriteCalendar
-   * below), not a user-facing "re-balance schedule" click, so it must stay
-   * silent. Uses commitAndGet (same reasoning as runRebalance's own doc
-   * comment: the engine must run against `current`, the truly-latest tasks/
-   * blocks rather than a possibly-stale closure, AND the resulting blocks
-   * must be readable synchronously here) so the returned blocks are
-   * guaranteed fresh and defined even though stateRef.current itself won't
-   * reflect them until React flushes the effect that mirrors state into it.
-   * Both callers below are async (`await`ed restore/import), so a plain
-   * commit()'s deferred updater would have returned undefined here.
-   */
-  const silentRebalanceForRewrite = useCallback(() => {
-    return commitAndGet(
-      (current) => {
-        const result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
-        return { next: { tasks: current.tasks, blocks: result.blocks }, value: result.blocks };
-      },
-      'Re-balanced schedule'
-    );
-  }, [routines, events, rules, commitAndGet]);
-
-  /**
    * One atomic "restore, then make Google Calendar match" action — replaces
    * the earlier design of restoring and then separately OFFERING a rewrite
    * follow-up via a toast action button. That gap between "restore lands"
@@ -1369,22 +1339,9 @@ export function SchedulerProvider({ children }) {
    * (googleFetchInFlightRef + pollPausedRef — see useGoogleCalendarSync.js)
    * keep the poll paused for this whole sequence, not just the rewrite half.
    *
-   * Runs a SILENT rebalance right after the restore lands, before the
-   * rewrite — a restored backup's own `blocks` snapshot only contains
-   * whatever had already been materialized at backup time, which can fall
-   * short of the scheduler's full horizonWeeks (recurring tasks' blocks for
-   * a future week may not have existed yet then). Without this, the
-   * rewrite's own date range (computed from whatever blocks/events happen to
-   * be in authoritativeItems — see rewriteGoogleCalendarFromTaskflow) would
-   * silently stop short of that horizon too, leaving old/duplicate Google
-   * events for the un-materialized weeks completely unreconciled — the
-   * rewrite would report success while real leftover events sat untouched
-   * just outside its fetch window. The freshly-rebalanced blocks are passed
-   * straight into rewriteGoogleCalendarFromTaskflow's blocksOverride rather
-   * than relying on it to re-read stateRef.current afterward, since stateRef
-   * only refreshes via a useEffect and can still be one render behind this
-   * function's own commit() at the moment rewriteGoogleCalendarFromTaskflow
-   * runs (see blocksOverride's own doc comment in useGoogleCalendarSync.js).
+   * The rewrite covers the restored CalendarEvents only — ScheduledBlocks
+   * have no Google Calendar presence (see useGoogleCalendarSync.js's module
+   * doc), so no pre-rewrite rebalance is needed to materialize them first.
    *
    * Only runs the rewrite if the restore actually applied AND Google Calendar
    * is connected (nothing to rewrite otherwise) — returns the restore's own
@@ -1395,12 +1352,11 @@ export function SchedulerProvider({ children }) {
     async (backupId) => {
       const restored = await restoreCloudBackup(backupId);
       if (restored && googleConnected) {
-        const freshBlocks = silentRebalanceForRewrite();
-        await rewriteGoogleCalendarFromTaskflow({ blocksOverride: freshBlocks });
+        await rewriteGoogleCalendarFromTaskflow();
       }
       return restored;
     },
-    [restoreCloudBackup, googleConnected, silentRebalanceForRewrite, rewriteGoogleCalendarFromTaskflow]
+    [restoreCloudBackup, googleConnected, rewriteGoogleCalendarFromTaskflow]
   );
 
   /** Settings' "Restore from file" action — matches old importBackupFromFile's name. */
@@ -1408,20 +1364,18 @@ export function SchedulerProvider({ children }) {
 
   /**
    * File-restore counterpart to restoreCloudBackupAndRewriteCalendar above —
-   * same reasoning, same no-gap chaining, same silent-rebalance-before-
-   * rewrite step. importBackupFromFile already returns whether the restore
+   * same reasoning, same no-gap chaining. importBackupFromFile already returns whether the restore
    * applied (see importBackup/applyBackupPayload).
    */
   const importBackupFromFileAndRewriteCalendar = useCallback(
     async (file) => {
       const restored = await importBackupFromFile(file);
       if (restored && googleConnected) {
-        const freshBlocks = silentRebalanceForRewrite();
-        await rewriteGoogleCalendarFromTaskflow({ blocksOverride: freshBlocks });
+        await rewriteGoogleCalendarFromTaskflow();
       }
       return restored;
     },
-    [importBackupFromFile, googleConnected, silentRebalanceForRewrite, rewriteGoogleCalendarFromTaskflow]
+    [importBackupFromFile, googleConnected, rewriteGoogleCalendarFromTaskflow]
   );
 
   /** Settings' cloud-backups picker open action — matches old refreshCloudBackups' name. */
@@ -1453,9 +1407,6 @@ export function SchedulerProvider({ children }) {
     let result;
     commitAndGet(
       (current) => {
-        // rebalance() itself now preserves googleEventId across the run for
-        // any block whose exact placement survives unchanged — see
-        // rebalanceEngine.js's own doc comment on preserveGoogleEventIds.
         result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
         return { next: { tasks: current.tasks, blocks: result.blocks }, value: result };
       },
@@ -1821,23 +1772,10 @@ export function SchedulerProvider({ children }) {
             if (c.attachment) deleteCommentAttachment(c.attachment.path);
           });
       }
-      // Blocks belonging to a deleted task are dropped from local state
-      // below, but any block already pushed to Google Calendar carries a
-      // googleEventId that would otherwise be orphaned on Google's side —
-      // and resurrected locally by the next poll/pull, since only
-      // deleteEvent's suppression (markGoogleEventDeleted) prevents that.
-      // Mirrors deleteEvent's cleanup (see below).
-      if (googleConnected) {
-        blocks
-          .filter((b) => idsToDelete.has(b.taskId) && b.googleEventId)
-          .forEach((b) => {
-            markGoogleEventDeleted(b.googleEventId);
-            deleteCalendarEvent(b.googleEventId, b.calendarId).catch((err) => {
-              console.error('[SchedulerContext] Failed to delete task block from Google Calendar', err);
-              unmarkGoogleEventDeleted(b.googleEventId);
-            });
-          });
-      }
+      // Blocks belonging to a deleted task are simply dropped from local state
+      // below — they have no Google Calendar presence to clean up (see
+      // useGoogleCalendarSync.js's module doc on why blocks aren't synced).
+      //
       // Function form — see addTask's comment above. The actual array
       // transform runs against `current`, not the closed-over `tasks`/
       // `blocks`, so this is safe even when several deletes/creates happen
@@ -2086,8 +2024,6 @@ export function SchedulerProvider({ children }) {
    */
   const rebalanceTodayOnly = useCallback(
     (currentTasks, currentBlocks) => {
-      // rebalance() itself preserves googleEventId across the run — see
-      // runRebalance's identical call and rebalanceEngine.js's own comment.
       const result = rebalance({ tasks: currentTasks, existingBlocks: currentBlocks, routines, events, rules, todayOnly: true });
       return { tasks: currentTasks, blocks: result.blocks };
     },

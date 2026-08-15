@@ -763,7 +763,6 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
       isLocked: false,
       isAutoScheduled: true,
       status: 'scheduled',
-      googleEventId: null,
       isPassive: !!task.isPassive,
     });
   }

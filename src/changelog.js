@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '5.3.0',
+    date: '2026-08-15',
+    title: 'Scheduled tasks stay in TaskFlow instead of being pushed to Google Calendar',
+    changes: [
+      'TaskFlow no longer copies your scheduled task blocks onto Google Calendar. Keeping them in step there was the source of a long run of duplicate and missing calendar entries: because a block\'s identity is tied to exactly when it sits, every re-balance that nudged a task could make TaskFlow lose track of which Google entry belonged to which block, leaving a stray copy behind and creating a fresh one alongside it. Your scheduled tasks are still fully visible in TaskFlow\'s own calendar and week views — they just no longer show up on your Google Calendar.',
+      'Calendar events are unaffected and sync exactly as before, in both directions: events you create in TaskFlow are still uploaded, events from Google still appear here, and edits, moves and deletions still travel both ways. "Rewrite Google Calendar to match TaskFlow" now rewrites only your calendar events, and events restored from a backup are still re-uploaded to Google as needed.',
+      'Task blocks that were already pushed to Google by an earlier version are left on your calendar untouched — TaskFlow will not delete them, so you can remove any you no longer want yourself. They will not reappear in TaskFlow as duplicate events.',
+    ],
+  },
+  {
     version: '5.2.4',
     date: '2026-08-15',
     title: 'Fixed an intermittent crash when rescheduling',

@@ -359,7 +359,9 @@ worth knowing:
    client-side poll), so a change made directly in Google Calendar can take
    up to about a minute to show up here rather than being instant. If the
    same event changed on both sides since the last sync, **Google
-   Calendar's version always wins**.
+   Calendar's version always wins**. Note this covers calendar *events*
+   only — the time blocks TaskFlow schedules for your tasks stay in
+   TaskFlow and are never written to your Google Calendar.
 
 While the project is in Testing publishing status (the default), only
 accounts you've explicitly added as test users can complete the OAuth flow:

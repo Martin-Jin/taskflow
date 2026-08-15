@@ -147,11 +147,10 @@ search over single-chunk relocate moves, trying to reduce total cost. It is
 bounded primarily by a fixed `MAX_ITERATIONS` (2000) with a fixed RNG seed,
 which makes it **deterministic: identical inputs always produce identical
 placements**. That's load-bearing beyond scheduling quality — a block's id is
-derived from its placement (`blk_${taskId}_${date}_${startTime}`), and
-`preserveGoogleEventIds` carries a synced block's `googleEventId` forward by
-matching that id exactly, so a placement that drifted by a minute between two
-otherwise-identical runs would look like a brand-new unsynced block and get
-pushed to Google as a duplicate. `SEARCH_TIME_BUDGET_MS` (1000ms) is a
+derived from its placement (`blk_${taskId}_${date}_${startTime}`), so a
+placement that drifted by a minute between two otherwise-identical runs would
+mint a new id and look like a brand-new block, detaching whatever per-block
+state (locks, completion, UI selection) was keyed to it. `SEARCH_TIME_BUDGET_MS` (1000ms) is a
 pathological-case safety valve only, deliberately set well above real cost (a
 realistic workload finishes all 2000 iterations in well under 100ms, and
 converges to stable placements after ~100) so it effectively never fires —
@@ -756,7 +755,7 @@ src/
 │   └── migrateRecurrenceState.js       # One-time migration adopting utils/recurrenceState.js's convergent completedOccurrences/skippedThrough model on existing recurring tasks — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
-│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull) + planCalendarRewrite/computeCalendarRewritePlan (opt-in reverse-direction "make Google match TaskFlow" planning, primary-calendar-only)
+│   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull; events only, never scheduled blocks) + planCalendarRewrite/computeCalendarRewritePlan (opt-in reverse-direction "make Google match TaskFlow" planning, primary-calendar-only)
 │   ├── eventSyncService.js       # Google-wins merge/reconcile logic for pulled events
 │   ├── firestoreSync.js          # Pull/push/live-subscribe to a signed-in user's synced data
 │   ├── mockData.js               # Zero-config sample data
@@ -836,48 +835,49 @@ event always replaces the local copy, never the other way around. This
 feature is the one deliberate exception: an explicit, opt-in action
 (Settings → Integrations, and an optional post-restore follow-up prompt —
 never run automatically) that flips the direction for one run, making
-TaskFlow's current local blocks/events authoritative and reconciling
+TaskFlow's current local **calendar events** authoritative and reconciling
 Google's calendar to match.
 
-**Ongoing reconciliation is the more important half.** The rewrite cleans up
-accumulated drift; `pushUnsyncedItemsToCalendar` (`useGoogleCalendarSync.js`)
-is what stops drift accumulating between rewrites. It runs on every periodic
-poll tick and behind the manual "Push to Google Calendar" button.
+**ScheduledBlocks are never synced to Google Calendar.** TaskFlow used to
+push each scheduled block to Google as an event, with a persisted per-device
+record of what had been pushed, orphan-record matching to recognize a block a
+rebalance had re-minted under a new id, and update/delete passes to keep the
+two in step. That whole mechanism was removed. A block's id encodes its
+placement (`blk_${taskId}_${date}_${startTime}`), so the scheduler re-mints
+ids freely during a rebalance — and no amount of matching on top of that
+reliably distinguished "this block moved" from "this block is new", which kept
+manufacturing duplicate and missing events on users' real calendars. Blocks
+now live only in TaskFlow's own calendar views. Nothing creates, updates,
+deletes, or reads a Google event for a block, and `ScheduledBlock` no longer
+carries a `googleEventId` field at all.
 
-It used to only push blocks with **no** `googleEventId`, which left three
-silent leaks during ordinary use. A block that was already synced and then
-moved — dragged/resized in WeekView, edited in `BlockDetailModal`, or
-re-placed by a rebalance — kept its id, looked "already synced", and was
-never pushed again, so its Google event stayed at the old time indefinitely.
-A block that disappeared (`deleteBlock`, or a rebalance dropping it) left its
-Google event orphaned with nothing referencing it. And relocation was worst
-of all: a block's id encodes its placement
-(`blk_${taskId}_${date}_${startTime}`), so a rebalance that moves it mints a
-new id, `preserveGoogleEventIds`' exact-id match finds no predecessor and
-doesn't carry the `googleEventId` over — the block looks brand new (push → a
-duplicate) while the original event is orphaned. That's one duplicate plus
-one orphan per moved recurring block, on every rebalance.
+Block events pushed by older builds may still sit on a user's Google Calendar.
+Those are deliberately **left alone** — they're the user's own calendar data to
+keep or delete as they see fit — but they are still recognized on pull
+(`isBlockSourcedEvent`, via the `TASKFLOW_BLOCK_PROPERTY_KEY` extended
+property with a legacy "📋 " title-prefix fallback) so they're never imported
+as phantom local events and never re-pushed.
 
-`planOngoingCalendarSync` (pure, heavily unit-tested) now returns
-`{ toCreate, toUpdate, toDelete }` against a persisted, device-local record
-(`googleLastSyncedBlocks`: blockId → `{ googleEventId, signature, taskId }`)
-of what each block was last pushed as. `blockSyncSignature` covers exactly
-the fields written into the Google event resource (date/start/end/title), so
-an unchanged block produces no API call and the steady state stays silent.
-A relocated block whose id was re-minted inherits the `googleEventId` from an
-unclaimed record for the same task, so it's recognized as a **move** (one
-in-place update) rather than a delete+create pair — and each relocated block
-claims a *distinct* event, so a recurring task with several re-minted blocks
-can't collapse them all onto one. The rewrite path rebuilds this record from
-its own results, since delete-all invalidates every id it held.
+**Ongoing reconciliation for events.** `pushUnsyncedItemsToCalendar`
+(`useGoogleCalendarSync.js`) sweeps every `CalendarEvent` still lacking a
+`googleEventId` and pushes it. It runs on every periodic poll tick and behind
+the manual "Push to Google Calendar" button. Without it, an event whose one
+best-effort push from `addManualEvent`/`updateEvent` failed (offline, not yet
+connected, tab closed mid-flight) would be stranded unsynced forever.
+`isUnsyncedPushableEvent` (pure, unit-tested) decides eligibility: never a
+subscribed/foreign-calendar event (pushing a copy onto the user's own primary
+calendar would duplicate someone else's event), never a legacy block-mirror
+row, never one already in the past, and never one missing date/time.
 
-The same sweep also retries **events**, not just blocks — previously they had
-no retry path at all, so an event whose one best-effort push from
-`addManualEvent`/`updateEvent` failed (offline, not yet connected, tab closed
-mid-flight) was stranded unsynced forever. `isUnsyncedPushableEvent` (pure,
-unit-tested) decides eligibility: never a subscribed/foreign-calendar event
-(pushing a copy onto the user's own primary calendar would duplicate someone
-else's event), never a block-mirror row, and never one missing date/time.
+This sweep is also what makes **restore-then-push** work. A backup restored
+onto a calendar that has since been cleared brings back events whose stored
+`googleEventId` no longer exists on Google. `mergePulledGoogleEvents` doesn't
+delete those: an in-scope event absent from a pull is only treated as a
+genuine Google-side delete if this app instance has actually seen that id live
+since load (`confirmedGoogleEventIdsRef` → `isGoogleConfirmed`). An
+unconfirmed one is instead demoted back to unsynced (`googleEventId: null`,
+`source: 'manual'`), which makes it eligible for this sweep, which re-creates
+it on Google with a fresh id.
 
 - **Planning** (`planCalendarRewrite`/`computeCalendarRewritePlan` in
   `googleCalendarService.js`, pure and unit-tested) produces
@@ -896,8 +896,7 @@ else's event), never a block-mirror row, and never one missing date/time.
   kept event is recreated with a new id.
 - **Safety boundary (the one thing that must never regress):** everything
   here operates ONLY on `calendarId: 'primary'` — the only calendar this
-  app's own writes (`pushBlockToCalendar`/`pushEventToCalendar`) have ever
-  targeted. `computeCalendarRewritePlan` is the only place that fetches
+  app's own writes (`pushEventToCalendar`) have ever targeted. `computeCalendarRewritePlan` is the only place that fetches
   Google's events for this feature, and it fetches (and thus can only ever
   delete) `calendarId === 'primary'` events — a subscribed/shared calendar
   the user doesn't own is never even in the candidate set, so it's
@@ -909,20 +908,13 @@ else's event), never a block-mirror row, and never one missing date/time.
   `CalendarEvent` sourced from a non-primary Google calendar is excluded
   from the authoritative set entirely (never re-created on primary as a
   duplicate).
-- **Block-mirror events (the push-side duplicate cause).** A block pushed to
-  Google comes back on the next poll as an ordinary `source: 'google'`
-  CalendarEvent, so local state holds BOTH the block and a mirror event of
-  it. Since the rewrite treats blocks and events as authoritative, it pushed
-  both — manufacturing a second real Google event for every synced block on
-  every run, which is why duplicates appeared during the PUSH phase even
-  after the delete phase had correctly cleared the calendar. Block pushes now
-  carry a private `extendedProperties` marker
-  (`TASKFLOW_BLOCK_PROPERTY_KEY`); `isBlockSourcedEvent` reads it back (with
-  a legacy "📋 " title-prefix fallback) so mirror rows are dropped from the
-  authoritative set and removed from local state, leaving the block as the
-  single source of truth. `dedupeAuthoritativeItems` is a final backstop that
-  collapses anything that would still push two identical events, logging a
-  warning since that indicates genuinely duplicated local rows.
+- **Legacy block-mirror events.** Local rows mirroring a block pushed by an
+  older build are dropped from the authoritative set (`isBlockSourcedEvent`)
+  rather than re-pushed — re-creating one would put a TaskFlow-shaped event
+  back on a calendar this app no longer manages blocks for.
+  `dedupeAuthoritativeItems` is a final backstop that collapses anything that
+  would still push two identical events, logging a warning since that
+  indicates genuinely duplicated local rows.
 - **Execution** (`rewriteGoogleCalendarFromTaskflow`) is the only place in
   this codebase that issues more than a handful of Calendar API calls, so
   it's also the only place with real batching precautions. Deletes and
@@ -953,10 +945,8 @@ preference rather than data a user would be sad to lose on a device switch:
 dashboard widget visibility, calendar zoom level, the Tasks page's
 per-view status filter (`taskflow_tasks_filter_by_view_v1`), the
 Calendar's filter menu (`taskflow_calendar_filter_v1`), and the Google
-Calendar sync record (`googleLastSyncedBlocks` — a description of what THIS
-device has pushed; each device's sweep converges on the same Google state
-independently, and mirroring it across devices would let a stale snapshot
-delete events another device had legitimately just created). Use a versioned key
+Calendar synced-range bounds (`googleSyncedRangeBounds` — how far out THIS
+device has fetched). Use a versioned key
 for these so a shape change can't strand users on a stale persisted value,
 and merge the loaded value over the defaults defensively rather than
 trusting it.
