@@ -155,16 +155,14 @@ describe('runLocalSearch: dependency ordering is never violated', () => {
   });
 });
 
-describe('runLocalSearch: determinism (Google Calendar duplicate prevention)', () => {
+describe('runLocalSearch: determinism (stable block identity across rebalances)', () => {
   // Determinism here is not just an algorithmic nicety — it's load-bearing for
-  // Google Calendar sync. A block's id is derived from its placement
-  // (`blk_${taskId}_${date}_${startTime}`, see allocator.js), and
-  // preserveGoogleEventIds (rebalanceEngine.js) carries a synced block's
-  // googleEventId forward by matching that id EXACTLY. If two rebalances over
-  // identical inputs could place a block even one minute apart, its id would
-  // change, the id match would miss, the block would look brand new and
-  // unsynced, and the auto-push-on-poll would create a duplicate Google
-  // Calendar event — every time, forever, silently.
+  // block IDENTITY. A block's id is derived from its placement
+  // (`blk_${taskId}_${date}_${startTime}`, see allocator.js). If two rebalances
+  // over identical inputs could place a block even one minute apart, its id
+  // would change and the block would look brand new — silently detaching
+  // whatever state is keyed to it (locks, completion status, per-block UI
+  // selection) on a run that didn't actually reschedule anything.
   //
   // The search is seeded with a fixed RNG and bounded primarily by a fixed
   // MAX_ITERATIONS. SEARCH_TIME_BUDGET_MS exists only as a pathological-case

@@ -651,7 +651,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>
           {googleNeedsReconnect
             ? "Google's sign-in expires periodically and can't always silently renew itself in the background — reconnecting takes one click and doesn't lose anything."
-            : 'Connect Google Calendar to push scheduled blocks to it with one click — it asks Google directly for permission, TaskFlow never sees your Google password.'}
+            : 'Connect Google Calendar to keep your calendar events in sync both ways with one click — it asks Google directly for permission, TaskFlow never sees your Google password. Scheduled tasks stay in TaskFlow and are never written to your Google Calendar.'}
           {googleConnected && googleSyncStale && (
             <>
               {' '}

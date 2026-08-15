@@ -520,7 +520,6 @@
  * @property {boolean} isLocked              - User has manually pinned this block; engine must not move it.
  * @property {boolean} isAutoScheduled       - True if placed by the engine (vs. manually dragged in).
  * @property {'scheduled'|'in-progress'|'done'} status
- * @property {string|null} googleEventId     - Linked Google Calendar event id, once pushed.
  * @property {boolean} [isPassive]           - Denormalized from Task.isPassive at placement time. True if this
  *                                              block is allowed to overlap other blocks in time (e.g. laundry
  *                                              running alongside other scheduled work) — calendar views should lay

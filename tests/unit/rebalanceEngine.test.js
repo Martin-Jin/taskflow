@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rebalance, preserveGoogleEventIds } from '../../src/algorithms/rebalanceEngine';
+import { rebalance } from '../../src/algorithms/rebalanceEngine';
 import { allocateTasks } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
 
@@ -369,36 +369,6 @@ describe('rebalance', () => {
     ];
     const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
     expect(result.blocks.some((b) => b.id === 'b-deleted2')).toBe(false);
-  });
-
-  // Regression coverage for a real bug: rebalance() always stamps a freshly
-  // (re)placed block's googleEventId as null, since the scheduling engine has
-  // no concept of Google Calendar. Any caller that auto-pushes blocks lacking
-  // a googleEventId (useGoogleCalendarSync) would treat every rebalance as
-  // producing all-new blocks otherwise, creating a duplicate Google Calendar
-  // event on every run — this bit two separate call sites (SchedulerContext's
-  // runRebalance and rebalanceTodayOnly) before rebalance() itself was fixed
-  // to call preserveGoogleEventIds internally, so every caller (current and
-  // future) gets this guarantee automatically rather than relying on each one
-  // remembering to call preserveGoogleEventIds separately.
-  it("carries a block's googleEventId forward across a rebalance run when its exact placement (id) survives unchanged", () => {
-    const tasks = [
-      { id: 'trec-gcal', title: 'Daily routine-like task', isRecurring: true, recurrenceString: 'every day', estimatedHours: 1, dueDate: today },
-    ];
-    const first = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
-    const firstBlock = first.blocks.find((b) => b.taskId === 'trec-gcal' && b.date === today);
-    expect(firstBlock).toBeTruthy();
-
-    // Simulate the block having been pushed to Google Calendar since the
-    // first rebalance (exactly what useGoogleCalendarSync's auto-push does).
-    const blocksWithGoogleId = first.blocks.map((b) => (b.id === firstBlock.id ? { ...b, googleEventId: 'gcal-existing-id' } : b));
-
-    // A second rebalance run (e.g. triggered by an unrelated task change)
-    // re-places this same recurring occurrence at the identical id.
-    const second = rebalance({ tasks, existingBlocks: blocksWithGoogleId, routines: [], events: [], rules: baseRules, fromDate: today });
-    const secondBlock = second.blocks.find((b) => b.id === firstBlock.id);
-    expect(secondBlock).toBeTruthy();
-    expect(secondBlock.googleEventId).toBe('gcal-existing-id');
   });
 });
 
@@ -884,49 +854,5 @@ describe('rebalance: per-occurrence remainingHoursOverride', () => {
     const tomorrowBlock = result.blocks.find((b) => b.taskId === 'trec3' && b.date === tomorrow);
     expect(todayBlock.durationHours).toBe(0.25);
     expect(tomorrowBlock.durationHours).toBe(2);
-  });
-});
-
-describe('preserveGoogleEventIds', () => {
-  it('carries a googleEventId forward onto a new block with the same id', () => {
-    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-abc' }];
-    const newBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null }];
-    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
-    expect(result[0].googleEventId).toBe('gcal-abc');
-  });
-
-  it('leaves a genuinely new block (no matching old id) unsynced', () => {
-    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-abc' }];
-    const newBlocks = [{ id: 'blk_t1_2026-07-02_540', taskId: 't1', googleEventId: null }];
-    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
-    expect(result[0].googleEventId).toBeNull();
-  });
-
-  it("doesn't overwrite a new block that already has its own googleEventId", () => {
-    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-old' }];
-    const newBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-new' }];
-    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
-    expect(result[0].googleEventId).toBe('gcal-new');
-  });
-
-  it('ignores an old block that was never synced (null/undefined googleEventId)', () => {
-    const oldBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null }];
-    const newBlocks = [{ id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null }];
-    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
-    expect(result[0].googleEventId).toBeNull();
-  });
-
-  it('handles multiple blocks independently by id', () => {
-    const oldBlocks = [
-      { id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: 'gcal-1' },
-      { id: 'blk_t2_2026-07-01_600', taskId: 't2', googleEventId: 'gcal-2' },
-    ];
-    const newBlocks = [
-      { id: 'blk_t1_2026-07-01_540', taskId: 't1', googleEventId: null },
-      { id: 'blk_t2_2026-07-02_600', taskId: 't2', googleEventId: null }, // moved to a new date -> new id
-    ];
-    const result = preserveGoogleEventIds(newBlocks, oldBlocks);
-    expect(result.find((b) => b.id === 'blk_t1_2026-07-01_540').googleEventId).toBe('gcal-1');
-    expect(result.find((b) => b.id === 'blk_t2_2026-07-02_600').googleEventId).toBeNull();
   });
 });

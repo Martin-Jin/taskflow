@@ -777,35 +777,31 @@ function withSyntheticSeries(events) {
  * Google's private extended properties (visible only to this app, never shown
  * to the user or synced to other clients).
  *
- * Why it exists: TaskFlow pushes a block to Google, and the very next poll
- * pulls that same event straight back as an ordinary `source: 'google'`
- * CalendarEvent — nothing distinguished it from an event the user created by
- * hand. So local state ends up holding BOTH the ScheduledBlock and a mirror
- * CalendarEvent of it. Normal sync tolerates that (the mirror just renders on
- * top of its own block), but "Rewrite Google Calendar to match TaskFlow"
- * treats blocks AND events as authoritative and pushes both — creating a
- * second, real Google event for every synced block on every single run. That
- * is the duplicate-on-rewrite bug users kept seeing ("Piano" twice, "Charge"
- * twice), and it reproduced no matter how the DELETE half was written, since
- * it's the PUSH half that manufactures the duplicates.
+ * LEGACY ONLY. TaskFlow used to push each ScheduledBlock to Google Calendar as
+ * an event, tagged with this private extended property (and, in older builds
+ * still, only a "📋 " title prefix). That was removed — blocks are TaskFlow-only
+ * now and nothing writes this marker anymore (see useGoogleCalendarSync.js's
+ * module doc for why block-push was dropped).
  *
- * `isBlockSourcedEvent` below reads this back so the rewrite can drop mirror
- * rows from its authoritative set and let the block itself be the single
- * source of truth for that event.
+ * The marker is still READ, because block-events pushed by those older builds
+ * can still be sitting on a user's real Google Calendar. `isBlockSourcedEvent`
+ * below recognizes them so the sync never re-pushes one as a fresh event and
+ * the rewrite never re-creates one. They are deliberately NOT deleted from
+ * Google — they're the user's own calendar data to clean up (or keep) as they
+ * see fit.
  */
 export const TASKFLOW_BLOCK_PROPERTY_KEY = 'taskflowBlockId';
 
 /**
- * True if a pulled event is TaskFlow's own mirror of a ScheduledBlock (see
- * TASKFLOW_BLOCK_PROPERTY_KEY). Pure/exported for unit testing.
+ * True if an event is a leftover from when TaskFlow pushed ScheduledBlocks
+ * (see TASKFLOW_BLOCK_PROPERTY_KEY). Pure/exported for unit testing.
  *
- * Also matches the legacy shape: events pushed before this marker existed
- * carry no extended property at all, so they're identified by the "📋 " title
- * prefix this app has always written. That fallback is deliberately narrow
- * (prefix only) and only ever used to SKIP re-pushing a mirror row — never to
- * delete anything — so a user's own event that happens to start with the same
- * emoji is at worst not re-created from its mirror row, while the block it
- * shadows still pushes normally.
+ * Matches both the tagged shape and the older one: events pushed before the
+ * marker existed carry no extended property at all, so they're identified by
+ * the "📋 " title prefix this app used to write. That fallback is deliberately
+ * narrow (prefix only) and only ever used to SKIP pushing — never to delete
+ * anything — so a user's own event that happens to start with the same emoji
+ * is at worst left alone rather than harmed.
  */
 export function isBlockSourcedEvent(event) {
   if (!event) return false;
@@ -814,28 +810,10 @@ export function isBlockSourcedEvent(event) {
 }
 
 /**
- * The Google Calendar event resource for a ScheduledBlock. Split out from
- * `pushBlockToCalendar` below so the batched rewrite path
+ * The Google Calendar event resource for a CalendarEvent. Split out from
+ * `pushEventToCalendar` below so the batched rewrite path
  * (`batchInsertCalendarEvents`) builds byte-identical resources instead of
  * maintaining a second, drift-prone copy of this mapping.
- */
-export function buildBlockEventResource(block, task) {
-  return {
-    summary: `📋 ${task.title}`,
-    description: task.notes || `Auto-scheduled by TaskFlow · Priority: ${task.priority}`,
-    start: { dateTime: `${block.date}T${block.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    end: { dateTime: `${block.date}T${block.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    colorId: priorityToColorId(task.priority),
-    // Tag it as block-sourced so a later pull can recognize its own mirror —
-    // see TASKFLOW_BLOCK_PROPERTY_KEY.
-    extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: String(block.id) } },
-  };
-}
-
-/**
- * The Google Calendar event resource for a CalendarEvent — the manual/event
- * counterpart to `buildBlockEventResource` above, split out for the same
- * reason (shared with the batched rewrite path).
  */
 export function buildCalendarEventResource(event) {
   return {
@@ -846,25 +824,6 @@ export function buildCalendarEventResource(event) {
     end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
     recurrence: event.recurrenceRule ? [`RRULE:${event.recurrenceRule}`] : undefined,
   };
-}
-
-/**
- * Push a single ScheduledBlock to Google Calendar as an event. Returns the
- * created event's id (to store on the block for future updates/deletes).
- */
-export async function pushBlockToCalendar(block, task) {
-  if (!gapiInited || !accessToken) {
-    console.info('[googleCalendarService] Not authorized — skipping push (mock mode).');
-    return null;
-  }
-
-  const event = buildBlockEventResource(block, task);
-
-  const resp = block.googleEventId
-    ? await window.gapi.client.calendar.events.update({ calendarId: 'primary', eventId: block.googleEventId, resource: event })
-    : await window.gapi.client.calendar.events.insert({ calendarId: 'primary', resource: event });
-
-  return resp.result.id;
 }
 
 /**
@@ -1103,7 +1062,7 @@ export async function deleteCalendarEventInstance(master, occurrenceDateIso) {
  * conservative and load-bearing:
  *
  * SAFETY BOUNDARY — PRIMARY CALENDAR ONLY, NEVER A SUBSCRIBED/FOREIGN ONE.
- * This app's own writes (pushBlockToCalendar/pushEventToCalendar for the
+ * This app's own writes (pushEventToCalendar for the
  * common case) only ever target `calendarId: 'primary'` — TaskFlow has never
  * written to any other calendar the user can see (e.g. a subscribed lecture
  * timetable, or a shared team calendar they merely have writer/reader access

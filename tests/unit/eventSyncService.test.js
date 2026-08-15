@@ -495,16 +495,15 @@ describe('computeEffectivePurgeBoundary — capping retention at a rolling maxRe
 });
 
 
-describe('mergePulledGoogleEvents — block-mirror suppression during ORDINARY pulls', () => {
-  // The gap that let duplicates come back between rewrites. Every ScheduledBlock
-  // TaskFlow pushes returns on the very next poll as an ordinary
-  // `source: 'google'` event carrying TaskFlow's own private extended property
-  // (surfaced as `taskflowBlockId`). The rewrite path filtered those mirror rows
-  // out from the start; the ordinary merge did not — so ~60 seconds after any
-  // push, local `events` held both the block and a mirror row of it. That row
-  // renders on top of its own block and, once its googleEventId is cleared (a
-  // rewrite nulls every id by construction), becomes a live push candidate that
-  // inserts a REAL duplicate on the user's calendar.
+describe('mergePulledGoogleEvents — LEGACY block-mirror suppression during pulls', () => {
+  // TaskFlow no longer pushes ScheduledBlocks to Google, so nothing creates
+  // these anymore — but block events pushed by older builds can still be
+  // sitting on a user's real calendar (deliberately left there rather than
+  // mass-deleted). They carry TaskFlow's own private extended property
+  // (surfaced as `taskflowBlockId`) or, for the oldest ones, just the "📋 "
+  // title prefix. Folding one back into local `events` would import a phantom
+  // TaskFlow-shaped event duplicating a block still visible in TaskFlow's own
+  // views, and would make it a live candidate for being re-pushed.
 
   const mirror = (overrides = {}) =>
     googleEvent({ googleEventId: 'g_mirror', taskflowBlockId: 'blk_t1_2026-08-05_09:00', title: '📋 Piano', ...overrides });
@@ -549,8 +548,8 @@ describe('mergePulledGoogleEvents — block-mirror suppression during ORDINARY p
   });
 });
 
-describe('hardResetEventsFromGoogle — mirror suppression', () => {
-  it('excludes block mirrors from the rebuilt event set', () => {
+describe('hardResetEventsFromGoogle — legacy mirror suppression', () => {
+  it('excludes legacy block mirrors from the rebuilt event set', () => {
     const real = googleEvent({ googleEventId: 'g_real', title: 'Dentist' });
     const mirrorRow = googleEvent({ googleEventId: 'g_mirror', taskflowBlockId: 'blk_1' });
     expect(hardResetEventsFromGoogle([real, mirrorRow]).map((e) => e.googleEventId)).toEqual(['g_real']);
