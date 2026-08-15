@@ -32,6 +32,7 @@ import {
   getSilentReauthRetryDelay,
   SILENT_REAUTH_MAX_ATTEMPTS,
   isUnsyncedPushableEvent,
+  isPastCalendarItem,
   dedupeAuthoritativeItems,
   planOngoingCalendarSync,
   blockSyncSignature,
@@ -538,5 +539,112 @@ describe('blockSyncSignature', () => {
     const t = { id: 't1', title: 'A' };
     const base = { date: '2026-08-20', startTime: '09:00', endTime: '10:00' };
     expect(blockSyncSignature(base, t)).toBe(blockSyncSignature({ ...base }, { ...t }));
+  });
+});
+
+describe('past items are frozen out of every outbound Google write', () => {
+  // Product decision (explicit): once an item's day is over, TaskFlow stops
+  // writing it to Google entirely — no create, no update, no delete. The bug
+  // this fixes: past events were still being pushed/rewritten onto the user's
+  // real calendar even though TaskFlow's own forward-looking views never
+  // showed them, so the two sides visibly disagreed.
+  //
+  // Dates are relative to today so these keep testing "past vs future" rather
+  // than silently becoming meaningless as the hardcoded dates above age.
+  const iso = (offsetDays) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDays);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const YESTERDAY = iso(-1);
+  const TODAY = iso(0);
+  const TOMORROW = iso(1);
+
+  describe('isPastCalendarItem', () => {
+    it('treats yesterday as past but today and tomorrow as live', () => {
+      expect(isPastCalendarItem({ date: YESTERDAY })).toBe(true);
+      expect(isPastCalendarItem({ date: TODAY })).toBe(false);
+      expect(isPastCalendarItem({ date: TOMORROW })).toBe(false);
+    });
+
+    it('never treats a recurring master as past — its date is only the series DTSTART', () => {
+      expect(isPastCalendarItem({ date: iso(-400), recurrenceRule: 'FREQ=WEEKLY' })).toBe(false);
+    });
+
+    it('treats a missing date as not-past rather than throwing', () => {
+      expect(isPastCalendarItem({})).toBe(false);
+      expect(isPastCalendarItem(null)).toBe(false);
+    });
+  });
+
+  describe('isUnsyncedPushableEvent', () => {
+    const base = { id: 'e1', title: 'Coffee', startTime: '09:00', endTime: '10:00', source: 'manual', googleEventId: null };
+
+    it('does NOT push an unsynced event whose day has already passed', () => {
+      expect(isUnsyncedPushableEvent({ ...base, date: YESTERDAY })).toBe(false);
+    });
+
+    it('still pushes an event today or in the future, unaffected by the freeze', () => {
+      expect(isUnsyncedPushableEvent({ ...base, date: TODAY })).toBe(true);
+      expect(isUnsyncedPushableEvent({ ...base, date: TOMORROW })).toBe(true);
+    });
+
+    it('still pushes a recurring series whose DTSTART is in the past', () => {
+      expect(isUnsyncedPushableEvent({ ...base, date: iso(-30), recurrenceRule: 'FREQ=WEEKLY' })).toBe(true);
+    });
+  });
+
+  describe('planOngoingCalendarSync', () => {
+    const task = (id, title) => ({ id, title });
+    const block = (id, taskId, date, startTime, endTime, googleEventId = null) => ({
+      id, taskId, date, startTime, endTime, googleEventId,
+    });
+
+    it('never creates a Google event for an unsynced past block', () => {
+      const plan = planOngoingCalendarSync([block('b1', 't1', YESTERDAY, '09:00', '10:00')], [task('t1', 'Report')], {});
+      expect(plan.toCreate).toHaveLength(0);
+      expect(plan.toUpdate).toHaveLength(0);
+      expect(plan.toDelete).toHaveLength(0);
+    });
+
+    it('never updates a past block on Google even when it changed in TaskFlow', () => {
+      const b = block('b1', 't1', YESTERDAY, '09:00', '10:00', 'gcal_1');
+      const t = task('t1', 'Renamed since');
+      // Record holds a DIFFERENT signature, i.e. the block genuinely changed.
+      const record = { b1: { googleEventId: 'gcal_1', signature: `${YESTERDAY}|09:00|10:00|Old name` } };
+      const plan = planOngoingCalendarSync([b], [t], record);
+      expect(plan.toUpdate).toHaveLength(0);
+      expect(plan.toDelete).toHaveLength(0);
+    });
+
+    it('never deletes the Google event of a past block that was removed in TaskFlow', () => {
+      // Deleting yesterday's block in TaskFlow must not erase the user's
+      // calendar history for a day that already happened.
+      const record = { b1: { googleEventId: 'gcal_1', signature: `${YESTERDAY}|09:00|10:00|Report`, taskId: 't1' } };
+      const plan = planOngoingCalendarSync([], [task('t1', 'Report')], record);
+      expect(plan.toDelete).toHaveLength(0);
+    });
+
+    it('still deletes the orphaned Google event of a FUTURE block removed in TaskFlow', () => {
+      const record = { b1: { googleEventId: 'gcal_1', signature: `${TOMORROW}|09:00|10:00|Report`, taskId: 't1' } };
+      const plan = planOngoingCalendarSync([], [task('t1', 'Report')], record);
+      expect(plan.toDelete).toEqual([{ blockId: 'b1', googleEventId: 'gcal_1' }]);
+    });
+
+    it('syncs a block today or in the future completely normally', () => {
+      const today = block('b1', 't1', TODAY, '09:00', '10:00');
+      const future = block('b2', 't1', TOMORROW, '11:00', '12:00');
+      const plan = planOngoingCalendarSync([today, future], [task('t1', 'Report')], {});
+      expect(plan.toCreate.map((c) => c.block.id).sort()).toEqual(['b1', 'b2']);
+    });
+
+    it('does not delete a past block\'s event just because a live future block exists', () => {
+      // Regression guard: the past block must still register its googleEventId
+      // as "live", or the orphan pass would delete the event it points at.
+      const past = block('b1', 't1', YESTERDAY, '09:00', '10:00', 'gcal_past');
+      const record = { b1: { googleEventId: 'gcal_past', signature: `${YESTERDAY}|09:00|10:00|Report`, taskId: 't1' } };
+      const plan = planOngoingCalendarSync([past], [task('t1', 'Report')], record);
+      expect(plan.toDelete).toHaveLength(0);
+    });
   });
 });

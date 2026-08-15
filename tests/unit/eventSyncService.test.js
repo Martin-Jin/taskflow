@@ -86,6 +86,81 @@ describe('mergePulledGoogleEvents — base merge policy (no suppression)', () =>
   });
 });
 
+describe('mergePulledGoogleEvents — restored/unconfirmed events are re-pushed, not deleted', () => {
+  // The bug: restoring a backup taken before the user cleared their Google
+  // Calendar brings back events whose `source: 'google'` + `googleEventId`
+  // describe a calendar state that no longer exists. The very next pull can't
+  // echo those ids back (Google has never heard of them), so the "in scope but
+  // absent -> Google deleted it" rule silently wiped the entire restore.
+  // `confirmedGoogleEventIds` — the ids this instance has actually seen live —
+  // separates that case from a real Google-side delete.
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('keeps a restored in-scope event whose id was never confirmed live, clearing the stale id so it gets pushed', () => {
+    const restored = googleEvent({
+      id: 'local1',
+      googleEventId: 'stale-from-backup',
+      date: '2026-08-20',
+      title: 'Shopping',
+      googleUpdatedAt: '2026-07-01T00:00:00Z',
+    });
+    const result = mergePulledGoogleEvents([restored], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set(['some-other-live-id']));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Shopping');
+    // Cleared, which is what makes isUnsyncedPushableEvent pick it up.
+    expect(result[0].googleEventId).toBeNull();
+    expect(result[0].googleUpdatedAt).toBeUndefined();
+    // Still google-sourced, so it re-pushes to the calendar it came from.
+    expect(result[0].source).toBe('google');
+  });
+
+  it('still deletes a genuinely Google-deleted event — one whose id WAS confirmed live and is now absent', () => {
+    const live = googleEvent({ id: 'local1', googleEventId: 'was-live', date: '2026-08-20' });
+    const result = mergePulledGoogleEvents([live], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set(['was-live']));
+    expect(result).toEqual([]);
+  });
+
+  it('leaves an unconfirmed event that is OUT of scope completely untouched (the pull says nothing about it)', () => {
+    const restored = googleEvent({ id: 'local1', googleEventId: 'stale', date: '2026-09-15' });
+    const result = mergePulledGoogleEvents([restored], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set(['other']));
+    expect(result).toEqual([restored]);
+  });
+
+  it('still purges an unconfirmed event that has aged out of the retention window entirely', () => {
+    // Retention beats the re-push rule — an event too old to keep should not be
+    // resurrected onto Google just because it was never confirmed.
+    const ancient = googleEvent({ id: 'local1', googleEventId: 'stale', date: '2026-07-20' });
+    const result = mergePulledGoogleEvents([ancient], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set(['other']));
+    expect(result).toEqual([]);
+  });
+
+  it('confirms an id the pull itself returned, so it is replaced rather than demoted', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old' });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New' });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set(['g1']));
+    expect(result).toEqual([pulled]);
+  });
+
+  it('falls back to the original trust-the-pull policy when no confirmation set is supplied at all', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'gone', date: '2026-08-10' });
+    expect(mergePulledGoogleEvents([local], [], rangeStart, rangeEnd)).toEqual([]);
+    expect(mergePulledGoogleEvents([local], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, null)).toEqual([]);
+  });
+
+  it('treats an EMPTY confirmation set as "nothing confirmed yet", not as "no tracking" — the first pull after a restore', () => {
+    // The highest-stakes case: the user restores a backup and the very first
+    // sync of the session runs with nothing confirmed yet. Treating an empty
+    // set as "trust the pull" would delete the entire restore on that first
+    // tick, which is the exact bug being fixed.
+    const restored = googleEvent({ id: 'local1', googleEventId: 'stale-from-backup', date: '2026-08-20' });
+    const result = mergePulledGoogleEvents([restored], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(1);
+    expect(result[0].googleEventId).toBeNull();
+  });
+});
+
 describe('mergePulledGoogleEvents — preserving the local-only "ignore from scheduler" flag across a sync', () => {
   const rangeStart = '2026-08-01';
   const rangeEnd = '2026-08-31';
