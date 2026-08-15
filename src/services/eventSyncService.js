@@ -85,6 +85,52 @@ function isTooOldToRetain(event, purgeBoundaryIso) {
 }
 
 /**
+ * True if a local Google-sourced event's absence from a pull can be trusted
+ * as "Google deleted it" rather than "TaskFlow was never actually confirmed
+ * to exist there".
+ *
+ * The distinction exists because `source: 'google'` + a `googleEventId` is
+ * only a CLAIM about Google's state, and a restored backup carries that claim
+ * forward from whenever the backup was taken. If the user cleared/disconnected
+ * their Google Calendar in between, every restored event describes an id
+ * Google has never heard of — so the very next pull "proves" all of them
+ * deleted and silently wipes the restore. `confirmedGoogleEventIds` is the set
+ * of ids THIS app instance has actually seen come back from a real pull (or
+ * stamped from its own successful push) since load, so only those have a live
+ * round-trip backing the deletion inference. Anything else is treated as
+ * local-only and handed to the push sweep instead — see
+ * `demoteToUnsyncedLocalEvent` below.
+ *
+ * A null/absent set means "this caller does no confirmation tracking" and falls
+ * back to the original trust-the-pull behavior, so existing callers/tests that
+ * don't pass one keep the pre-existing policy. An EMPTY set is NOT the same
+ * thing — it means tracking is active and nothing has been confirmed yet, which
+ * is precisely the first pull of a fresh session, i.e. exactly when a
+ * just-restored backup is most at risk of being wiped.
+ */
+function isGoogleConfirmed(event, confirmedGoogleEventIds) {
+  if (!confirmedGoogleEventIds) return true;
+  return confirmedGoogleEventIds.has(event.googleEventId);
+}
+
+/**
+ * Converts a local Google-sourced event that turned out NOT to exist on Google
+ * into one the push sweep will re-create there: clearing `googleEventId` is
+ * what makes `isUnsyncedPushableEvent` (useGoogleCalendarSync.js) pick it up,
+ * and dropping `googleUpdatedAt` stops a stale timestamp describing an event
+ * that no longer exists. `source` stays 'google' so it keeps its calendar
+ * association and is re-pushed to the same place it came from.
+ *
+ * Product decision (explicit): for an event that only exists in TaskFlow,
+ * TaskFlow is authoritative — push it to Google rather than deleting it
+ * locally to match Google's absence.
+ */
+function demoteToUnsyncedLocalEvent(event) {
+  const { googleUpdatedAt, ...rest } = event;
+  return { ...rest, googleEventId: null };
+}
+
+/**
  * How long a locally-deleted Google event id is suppressed from being
  * resurrected by a pull, after this app instance calls Google's delete API
  * for it. Sized to comfortably outlast realistic Google Calendar API
@@ -201,7 +247,13 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
  *     in the freshly pulled set, but whose `date` falls within
  *     [rangeStartIso, rangeEndIso] (i.e. it WAS in scope for this pull and
  *     is simply gone now), is treated as deleted on Google's side and
- *     dropped from the merged result.
+ *     dropped from the merged result — but ONLY if its id was ever actually
+ *     confirmed live on Google by this app instance. An in-scope event whose
+ *     id was never confirmed (typically restored from a backup taken before
+ *     the user cleared their Google Calendar) has its stale googleEventId
+ *     cleared and is KEPT, so the push sweep re-creates it on Google instead
+ *     of the pull silently deleting the user's restored data. See
+ *     isGoogleConfirmed / demoteToUnsyncedLocalEvent.
  *   - A local Google-sourced event whose `date` falls OUTSIDE the queried
  *     range is left untouched (this pull says nothing about it either way) —
  *     EXCEPT a non-recurring event older than `rangeStartIso` (the trailing
@@ -256,6 +308,7 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
  * @param {Map<string, number>} [recentlyDeletedGoogleEventInstances] - `${masterGoogleEventId}::${occurrenceDateIso}` -> delete-issued timestamp (ms); defaults to empty (no suppression)
  * @param {number} [nowMs] - defaults to Date.now(); overridable for testing
  * @param {string} [purgeBoundaryIso] - trailing edge of the UNION of every range ever synced (see expandSyncedBounds); defaults to rangeStartIso when the caller has no wider union to offer
+ * @param {Set<string>} [confirmedGoogleEventIds] - googleEventIds this app instance has actually seen live on Google since load; an in-scope event NOT in this set is re-pushed rather than deleted (see isGoogleConfirmed). Empty/absent disables the distinction.
  * @returns {import('../types').CalendarEvent[]}
  */
 export function mergePulledGoogleEvents(
@@ -266,7 +319,8 @@ export function mergePulledGoogleEvents(
   recentlyDeletedGoogleEventIds = new Map(),
   recentlyDeletedGoogleEventInstances = new Map(),
   nowMs = Date.now(),
-  purgeBoundaryIso = rangeStartIso
+  purgeBoundaryIso = rangeStartIso,
+  confirmedGoogleEventIds = null
 ) {
   const manualOwnedGoogleEventIds = new Set(
     existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
@@ -293,26 +347,40 @@ export function mergePulledGoogleEvents(
 
   const pulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
 
-  const survivingLocal = existingEvents.filter((e) => {
-    if (e.source !== 'google') return true; // manual events are never touched by a Google pull
+  const survivingLocal = [];
+  for (const e of existingEvents) {
+    if (e.source !== 'google') {
+      survivingLocal.push(e); // manual events are never touched by a Google pull
+      continue;
+    }
 
     // A mirror row already in local state (added by a build from before mirrors
     // were suppressed on pull) is dropped rather than kept — its ScheduledBlock
     // is the single source of truth for that event, and leaving the row behind
     // is what let it later be re-pushed as a duplicate. See the doc note above.
-    if (isBlockSourcedEvent(e)) return false;
+    if (isBlockSourcedEvent(e)) continue;
 
-    if (pulledByGoogleEventId.has(e.googleEventId)) return false; // superseded below by the pulled version
+    if (pulledByGoogleEventId.has(e.googleEventId)) continue; // superseded below by the pulled version
 
     // Aged out of the retention window entirely — purge it, don't just leave
     // it untouched (see isTooOldToRetain's own doc comment for why this is
     // NOT the same as the generic "out of scope, leave alone" case below).
-    if (isTooOldToRetain(e, purgeBoundaryIso)) return false;
+    if (isTooOldToRetain(e, purgeBoundaryIso)) continue;
 
-    // Not in the pulled set — either out of scope for this pull (leave
-    // alone) or in scope and gone (Google-side delete, drop it).
-    return !isInScopeForPull(e, rangeStartIso, rangeEndIso);
-  });
+    // Out of scope for this pull — it says nothing about this event either way.
+    if (!isInScopeForPull(e, rangeStartIso, rangeEndIso)) {
+      survivingLocal.push(e);
+      continue;
+    }
+
+    // In scope and absent from the pull. If this instance ever saw the id live
+    // on Google, that's a genuine Google-side delete and Google wins (drop it).
+    // Otherwise the event only ever existed in TaskFlow — e.g. restored from a
+    // backup whose googleEventId predates the user clearing their calendar — so
+    // it's re-pushed rather than deleted. See isGoogleConfirmed.
+    if (isGoogleConfirmed(e, confirmedGoogleEventIds)) continue;
+    survivingLocal.push(demoteToUnsyncedLocalEvent(e));
+  }
 
   return [...survivingLocal, ...freshPulled];
 }

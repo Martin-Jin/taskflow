@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '5.2.3',
+    date: '2026-08-15',
+    title: 'Restored calendar events no longer vanish, and past events are left alone',
+    changes: [
+      'Fixed calendar events disappearing from TaskFlow after restoring a backup and syncing. If you had cleared or reconnected your Google Calendar since the backup was taken, the restored events pointed at calendar entries that no longer existed — so the next sync assumed you had deleted them and quietly removed them from TaskFlow too. Events that only exist in TaskFlow are now uploaded to Google Calendar instead of being deleted. Events you genuinely delete in Google Calendar are still removed from TaskFlow as before.',
+      'TaskFlow no longer changes anything on your Google Calendar for days that have already passed. Previously, past events and finished task blocks could still be uploaded, rewritten or removed on Google — including by "Rewrite Google Calendar to match TaskFlow" — even though TaskFlow is forward-looking and does not schedule into the past. Your calendar history is now left exactly as it is, and only today onwards is kept in sync.',
+    ],
+  },
+  {
     version: '5.2.2',
     date: '2026-08-15',
     title: 'Fixed Google Calendar events duplicating after rescheduling',

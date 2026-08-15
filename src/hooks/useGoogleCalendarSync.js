@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePersistedState } from './usePersistedState';
-import { toISODate, addDays, timeToMinutes, minutesToTime } from '../utils/dateUtils';
+import { toISODate, addDays, timeToMinutes, minutesToTime, isPast } from '../utils/dateUtils';
 import { RETENTION_DAYS_CALENDAR_EVENTS } from '../services/dataRetention';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
 import {
@@ -177,6 +177,32 @@ async function withRateLimitRetry(callFn) {
 }
 
 /**
+ * True if a block or event is far enough in the past that TaskFlow should stop
+ * writing it to Google Calendar entirely — no create, no update, no delete.
+ *
+ * Product decision (explicit): once an item's day is over it's history, and
+ * history is frozen. TaskFlow is a forward-looking scheduler, so re-pushing or
+ * rewriting yesterday's events is never something the user asked for — it just
+ * churns their real calendar's past with edits (or duplicates) they can't see
+ * in TaskFlow's own forward-looking views. This only gates OUTBOUND writes;
+ * pulling past events in for display, and the separate retention/purge policy
+ * for how long they're kept (see eventSyncService.js), are untouched.
+ *
+ * Compared by local CALENDAR DAY, not exact time-of-day (isPast) — an event
+ * earlier today is still part of today and stays syncable, which avoids a
+ * running clock silently changing sync eligibility mid-session.
+ *
+ * A recurring master is never past: its stored `date` is only the series'
+ * DTSTART, which can be arbitrarily old while the series itself is still
+ * active (same reasoning as eventSyncService's isTooOldToRetain).
+ */
+export function isPastCalendarItem(item) {
+  if (!item?.date) return false;
+  if (item.recurrenceRule) return false;
+  return isPast(item.date);
+}
+
+/**
  * True if a local CalendarEvent still needs pushing to Google — i.e. it has
  * no googleEventId yet AND it's one this app is allowed to create there.
  *
@@ -189,6 +215,9 @@ async function withRateLimitRetry(callFn) {
  *   - block-mirror rows (see isBlockSourcedEvent): the ScheduledBlock is what
  *     gets pushed for those; pushing the mirror too would create a duplicate.
  *   - anything without a date/start/end, which can't build a valid resource.
+ *   - anything already in the PAST (see isPastCalendarItem): once a day is
+ *     over, TaskFlow stops writing it to Google at all — history is frozen,
+ *     not part of the live sync loop.
  *
  * Pure and exported so the "which events are still unsynced" decision — the
  * gap that let a failed one-shot push strand an event forever — is unit
@@ -198,6 +227,7 @@ export function isUnsyncedPushableEvent(event) {
   if (!event || event.googleEventId) return false;
   if (event.source === 'google' && event.calendarId !== 'primary') return false;
   if (isBlockSourcedEvent(event)) return false;
+  if (isPastCalendarItem(event)) return false;
   return !!(event.date && event.startTime && event.endTime);
 }
 
@@ -347,6 +377,9 @@ function assignOrphanedRecords(blocksNeedingRecord, orphanRecords) {
  * MOVE (update the existing Google event in place) rather than as a
  * delete + create pair.
  *
+ * Blocks (and sync records) whose day has already passed are excluded from all
+ * three lists — see isPastCalendarItem for why past items are frozen.
+ *
  * @param {Array} blocks - current ScheduledBlocks
  * @param {Array} tasks - current tasks (for titles / orphan detection)
  * @param {Object<string, {googleEventId: string, signature: string}>} lastSyncedById
@@ -409,6 +442,16 @@ export function planOngoingCalendarSync(blocks, tasks, lastSyncedById = {}) {
   for (const block of blocks) {
     const task = taskById.get(block.taskId);
     if (!task) continue; // orphaned block; the task-delete path handles its Google cleanup
+
+    // A block whose day is over is frozen — never created, moved, or deleted on
+    // Google (see isPastCalendarItem). Its googleEventId still counts as live so
+    // the orphan pass below doesn't delete the event it points at.
+    if (isPastCalendarItem(block)) {
+      const pastId = block.googleEventId || lastSyncedById[block.id]?.googleEventId;
+      if (pastId) liveGoogleEventIds.add(pastId);
+      continue;
+    }
+
     const signature = blockSyncSignature(block, task);
 
     // Prefer the block's own googleEventId, then whatever this block id was
@@ -447,6 +490,11 @@ export function planOngoingCalendarSync(blocks, tasks, lastSyncedById = {}) {
     if (!record?.googleEventId) continue;
     if (liveGoogleEventIds.has(record.googleEventId)) continue;
     if (seenForDelete.has(record.googleEventId)) continue;
+    // The record describes a placement whose day is already over — leave the
+    // Google event alone (see isPastCalendarItem). Deleting a block in TaskFlow
+    // today must not erase yesterday's calendar history.
+    const recordedDate = (record.signature || '').split('|')[0];
+    if (recordedDate && isPast(recordedDate)) continue;
     seenForDelete.add(record.googleEventId);
     toDelete.push({ blockId, googleEventId: record.googleEventId });
   }
@@ -730,6 +778,22 @@ export function useGoogleCalendarSync({
   // eventSyncService.mergePulledGoogleEvents and SchedulerContext.deleteEvent).
   const recentlyDeletedGoogleEventIdsRef = useRef(new Map());
 
+  // googleEventIds this app instance has actually seen live on Google since
+  // load — every id a pull returned, plus every id one of our own pushes was
+  // given back. Consulted by mergePulledGoogleEvents to tell a genuine
+  // Google-side delete (id was confirmed live, now gone -> Google wins, drop
+  // it) from an event that was never really on Google at all (id restored from
+  // a backup taken before the user cleared their calendar -> TaskFlow wins,
+  // re-push it). Without this, restoring a backup and syncing silently deleted
+  // every restored event, since no pull could ever echo back ids Google had
+  // never heard of.
+  //
+  // Session-scoped by design, NOT a persisted field on the event: the whole
+  // point is that it records what THIS instance verified against the live API,
+  // and a flag stored on the event would be restored from the backup right
+  // alongside the stale googleEventId it's supposed to distrust.
+  const confirmedGoogleEventIdsRef = useRef(new Set());
+
   // `${masterGoogleEventId}::${occurrenceDateIso}` -> timestamp this app
   // instance issued a deleteCalendarEventInstance call for that single
   // occurrence (SchedulerContext.deleteEvent's scope 'this'). Parallel to
@@ -795,6 +859,12 @@ export function useGoogleCalendarSync({
       // back the synced-bounds union reaches — see computeEffectivePurgeBoundary's
       // own doc comment.
       const purgeBoundaryIso = computeEffectivePurgeBoundary(expandedBounds.startIso, RETENTION_DAYS_CALENDAR_EVENTS);
+      // Everything this pull returned is now confirmed to exist on Google, so
+      // a LATER pull finding one of these ids missing is a real Google-side
+      // delete — see confirmedGoogleEventIdsRef's own doc comment.
+      for (const e of fetchedEvents) {
+        if (e.googleEventId) confirmedGoogleEventIdsRef.current.add(e.googleEventId);
+      }
       eventsChangedRef.current = false;
       setEvents((prev) => {
         const next = didHardReset
@@ -807,7 +877,8 @@ export function useGoogleCalendarSync({
               recentlyDeletedGoogleEventIdsRef.current,
               recentlyDeletedGoogleEventInstancesRef.current,
               Date.now(),
-              purgeBoundaryIso
+              purgeBoundaryIso,
+              confirmedGoogleEventIdsRef.current
             );
         // Most poll ticks pull back the exact same events unchanged — only
         // worth queuing an auto-rebalance when the merge actually altered
@@ -1492,7 +1563,14 @@ export function useGoogleCalendarSync({
     for (const event of toPushEvents) {
       try {
         const result = await pushEventToCalendar(event);
-        if (result?.id) pushedByEventId.set(event.id, result);
+        if (result?.id) {
+          pushedByEventId.set(event.id, result);
+          // Google just handed us this id, so it's confirmed live even before
+          // any pull echoes it back — otherwise the very next pull (which can
+          // land before Google's own indexing catches up) would treat the
+          // freshly-pushed event as unconfirmed and push it a second time.
+          confirmedGoogleEventIdsRef.current.add(result.id);
+        }
       } catch (err) {
         console.warn('[useGoogleCalendarSync] Failed to push event to Google Calendar; will retry next sync.', event.id, err);
       }
@@ -1620,6 +1698,10 @@ export function useGoogleCalendarSync({
     // pushes once it's underway.
     googleFetchInFlightRef.current = true;
     pollPausedRef.current = true;
+    // A rewrite deletes every event in range and re-inserts under fresh ids, so
+    // every previously-confirmed id is about to become stale. Clearing here
+    // means the set only ever holds ids the rewrite's own inserts confirm.
+    confirmedGoogleEventIdsRef.current = new Set();
     setIsRewritingCalendar(true);
     try {
       const latestTasks = stateRef.current.tasks;
@@ -1648,6 +1730,11 @@ export function useGoogleCalendarSync({
       // so the plan's `toInsert` entries carry these same rich objects
       // straight through.
       const blockItems = latestBlocks
+        // Past blocks are frozen (see isPastCalendarItem) — excluded from the
+        // authoritative set so the rewrite neither re-creates them nor, via the
+        // date range derived from it below, deletes what's already on Google
+        // for days that are over.
+        .filter((block) => !isPastCalendarItem(block))
         .map((block) => ({ kind: 'block', block, task: latestTasks.find((t) => t.id === block.taskId), googleEventId: block.googleEventId }))
         .filter((item) => item.task); // an orphaned block with no owning task can't be pushed (mirrors pushUnsyncedItemsToCalendar's own skip)
       // Events sourced from a calendar the user doesn't own (a subscribed
@@ -1658,7 +1745,11 @@ export function useGoogleCalendarSync({
       // on the user's primary calendar just because it's absent there. Only
       // a manual event or one already sourced from the user's OWN primary
       // calendar belongs in TaskFlow's notion of "what should be on primary".
-      const primaryEvents = latestEvents.filter((e) => e.source !== 'google' || e.calendarId === 'primary');
+      // Past events are frozen too (same rule as blockItems above) — a rewrite
+      // must leave already-elapsed days on Google exactly as they are.
+      const primaryEvents = latestEvents.filter(
+        (e) => (e.source !== 'google' || e.calendarId === 'primary') && !isPastCalendarItem(e)
+      );
 
       // THE push-side duplicate fix. Every block TaskFlow pushes comes back on
       // the next poll as an ordinary `source: 'google'` CalendarEvent, so
@@ -1789,6 +1880,9 @@ export function useGoogleCalendarSync({
           if (res.googleEventId) {
             if (source.kind === 'block') stampedGoogleEventIdsByBlockId.set(source.block.id, res.googleEventId);
             else stampedGoogleEventIdsByEventId.set(source.event.id, res.googleEventId);
+            // Confirmed live the moment Google returns the id — see
+            // confirmedGoogleEventIdsRef's doc comment.
+            confirmedGoogleEventIdsRef.current.add(res.googleEventId);
           }
           succeeded.push({ type: 'insert', kind: source.kind, id: source.kind === 'block' ? source.block.id : source.event.id });
         } else {
@@ -1819,6 +1913,10 @@ export function useGoogleCalendarSync({
       // would silently never reappear on the calendar. Nulling it instead
       // makes the very next poll's auto-push pick it up and recreate it.
       const updatedBlocks = stateRef.current.blocks.map((b) => {
+        // A past block was never part of this rewrite (see isPastCalendarItem),
+        // so its Google event still exists and its id is still valid — nulling
+        // it would strand that event as an un-cleanable orphan.
+        if (isPastCalendarItem(b)) return b;
         const fresh = stampedGoogleEventIdsByBlockId.get(b.id) ?? null;
         return b.googleEventId === fresh ? b : { ...b, googleEventId: fresh };
       });
@@ -1859,6 +1957,10 @@ export function useGoogleCalendarSync({
           .filter((e) => !((e.source !== 'google' || e.calendarId === 'primary') && isBlockSourcedEvent(e)))
           .map((e) => {
             if (e.source === 'google' && e.calendarId !== 'primary') return e;
+            // Past events were excluded from the rewrite, so their Google
+            // copies survive untouched and their ids stay valid — same
+            // reasoning as updatedBlocks above.
+            if (isPastCalendarItem(e)) return e;
             const fresh = stampedGoogleEventIdsByEventId.get(e.id) ?? null;
             return e.googleEventId === fresh ? e : { ...e, googleEventId: fresh };
           })
