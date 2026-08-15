@@ -13,7 +13,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X, Search, Sparkles } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -21,12 +21,14 @@ import CalendarFilterMenu from './CalendarFilterMenu';
 import BlockDetailModal from '../Modals/BlockDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
+import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
 import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
+import { useAIQuickAddGate } from '../../hooks/useAIQuickAddGate';
 import { DEFAULT_CALENDAR_FILTER, filterCalendarItems, isCalendarFilterActive, normalizeCalendarFilter } from '../../utils/calendarFilter';
 import { isBlockTaskCompleted } from '../../utils/missedTasks';
 import HelpTooltip from '../Common/HelpTooltip';
@@ -57,7 +59,7 @@ const VIEWS = [
   { key: 'month', label: 'Month' },
 ];
 
-export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
+export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCreated } = {}) {
   const [anchorDate, setAnchorDate] = useState(toISODate(new Date()));
   const isMobile = useIsMobile();
   const [view, setView] = useState(() => (isMobile ? 'day' : 'week'));
@@ -71,6 +73,9 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
   // expands into mini-FABs instead of the FAB's single always-visible
   // action: Re-balance schedule + New event.
   const [fabExpanded, setFabExpanded] = useState(false);
+  const [showAIQuickAdd, setShowAIQuickAdd] = useState(false);
+  const [aiFabShake, setAiFabShake] = useState(false);
+  const { aiConfigured, requestOpen: requestAIQuickAddOpen } = useAIQuickAddGate();
   const dateTitleBtnRef = useRef(null);
   const viewMenuTriggerRef = useRef(null);
   const fabGroupRef = useRef(null);
@@ -726,6 +731,30 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
                 </button>
               </>
             )}
+            {/* Gated the same way AddTaskFabGroup's own AI mini-FAB is
+                (isAIQuickAddConfigured, via useAIQuickAddGate) — shown
+                whenever the feature is configured, on both mobile and
+                desktop, regardless of whether a provider key is saved yet;
+                tapping without one shows a toast instead of opening the
+                modal (see requestAIQuickAddOpen). */}
+            {aiConfigured && (
+              <button
+                className={`btn btn-icon fab-mini ${aiFabShake ? 'shake-error' : ''}`}
+                data-tour="ai-quick-add"
+                onClick={() => {
+                  const opened = requestAIQuickAddOpen(() => {
+                    setFabExpanded(false);
+                    setShowAIQuickAdd(true);
+                  });
+                  if (!opened) setAiFabShake(true);
+                }}
+                onAnimationEnd={() => setAiFabShake(false)}
+                aria-label="AI Quick Add"
+                title="AI Quick Add"
+              >
+                <Sparkles size={16} />
+              </button>
+            )}
             <button
               className="btn btn-primary fab-mini"
               data-tour="new-event"
@@ -768,6 +797,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch } = {}) {
       )}
       {creatingEvent && <EventDetailModal event={null} initial={creatingEvent} onClose={() => setCreatingEvent(null)} />}
       {selectedTask && <TaskDetailModal task={selectedTask} onClose={() => setSelectedTaskId(null)} />}
+      {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
     </div>
   );
 }

@@ -27,9 +27,9 @@ import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { loadPersisted, savePersisted } from '../../utils/persistence';
-import { toISODate } from '../../utils/dateUtils';
+import { toISODate, addDays } from '../../utils/dateUtils';
 import { requestAIPlan, getStoredApiKey, ALLOWED_ATTACHMENT_TYPES } from '../../services/aiQuickAddService';
-import { buildAIContext, estimateTokens } from '../../services/aiContextService';
+import { buildAIContext, estimateTokens, filterContextData, DEFAULT_EVENT_RANGE_DAYS } from '../../services/aiContextService';
 import { resolvePlan } from '../../services/aiPlanService';
 import { MODEL_CATALOG, getDefaultModelId, isValidModelId } from '../../services/aiModels';
 import SelectMenu from '../Common/SelectMenu';
@@ -40,6 +40,10 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_ATTACHMENTS = 5;
 const PROVIDER_STORAGE_KEY = 'aiQuickAddProvider';
 const MODEL_STORAGE_KEY = 'aiQuickAddModelByProvider';
+// Device-local, same reasoning as PROVIDER_STORAGE_KEY/MODEL_STORAGE_KEY
+// above — a per-device AI-request preference, not user data worth backing
+// up (deliberately outside SchedulerContext/BACKUP_FIELDS).
+const CONTEXT_SCOPE_STORAGE_KEY = 'aiQuickAddContextScope';
 const PROVIDER_LABEL = { anthropic: 'Claude', gemini: 'Gemini' };
 const OTHER_PROVIDER = { anthropic: 'gemini', gemini: 'anthropic' };
 // error `kind`s (see aiQuickAddService.AIRequestError) where offering an
@@ -47,7 +51,15 @@ const OTHER_PROVIDER = { anthropic: 'gemini', gemini: 'anthropic' };
 // switching provider wouldn't fix anything (bad request, network, etc).
 const SWITCHABLE_ERROR_KINDS = new Set(['quota_exhausted', 'rate_limit']);
 
-export default function AIQuickAddModal({ onClose }) {
+const CONTEXT_SCOPE_OPTIONS = [
+  { value: 'full', label: 'Full context' },
+  { value: 'none', label: 'No context' },
+  { value: 'custom', label: 'Custom' },
+];
+
+const DEFAULT_CONTEXT_SCOPE = { mode: 'full', projectId: '', eventStart: '', eventEnd: '' };
+
+export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   const scheduler = useScheduler();
   const { tasks, projects, sections, labels, events } = scheduler;
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
@@ -68,6 +80,51 @@ export default function AIQuickAddModal({ onClose }) {
   });
   const model = modelByProvider[provider];
   const hasKey = { anthropic: !!getStoredApiKey('anthropic'), gemini: !!getStoredApiKey('gemini') };
+  // Context-scope preference (Full/No context/Custom project+date-range
+  // sub-filters) — same device-local persistence pattern as provider/model
+  // above. Persisting the "custom" sub-filter selections too (rather than
+  // resetting them each open) so switching back to Custom after closing the
+  // modal doesn't lose a project/date-range pick the user just made.
+  const [contextScope, setContextScope] = useState(() => ({
+    ...DEFAULT_CONTEXT_SCOPE,
+    ...loadPersisted(CONTEXT_SCOPE_STORAGE_KEY, {}),
+  }));
+  const todayIso = toISODate(new Date());
+
+  function updateContextScope(patch) {
+    setContextScope((prev) => {
+      const next = { ...prev, ...patch };
+      savePersisted(CONTEXT_SCOPE_STORAGE_KEY, next);
+      return next;
+    });
+  }
+
+  // Custom mode's event date-range sub-filter defaults to a rolling ~30 day
+  // window starting today (DEFAULT_EVENT_RANGE_DAYS) whenever the user
+  // hasn't picked their own start/end — computed fresh from `todayIso` each
+  // render rather than baked into the persisted default, so it stays
+  // "today-relative" across sessions instead of freezing to whatever day the
+  // pref was first saved. Only meaningful in 'custom' mode — 'full' sends
+  // every event unfiltered and 'none' sends none, so this is passed through
+  // to filterContextData as-is only when scope.mode === 'custom' (see
+  // effectiveScope below).
+  const defaultEventStart = todayIso;
+  const defaultEventEnd = addDays(todayIso, DEFAULT_EVENT_RANGE_DAYS);
+  // A persisted projectId from a project that's since been deleted/left
+  // falls back to "All projects" (no restriction) rather than filtering
+  // everything out silently — same "stale pref is safely ignored" handling
+  // as MODEL_STORAGE_KEY's isValidModelId re-check above.
+  const projectStillExists = projects.some((p) => p.id === contextScope.projectId);
+  const effectiveScope =
+    contextScope.mode === 'custom'
+      ? {
+          mode: 'custom',
+          projectId: projectStillExists ? contextScope.projectId : undefined,
+          eventStart: contextScope.eventStart || defaultEventStart,
+          eventEnd: contextScope.eventEnd || defaultEventEnd,
+        }
+      : { mode: contextScope.mode };
+
   const [text, setText] = useState('');
   const textareaRef = useRef(null);
   useAutosizeTextarea(textareaRef, text, { maxLines: 4 });
@@ -82,12 +139,24 @@ export default function AIQuickAddModal({ onClose }) {
   const [plan, setPlan] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Only rebuilds when the workspace itself changes, not on every keystroke —
-  // context.md's bulk is the workspace snapshot, which is unrelated to what
-  // the user is currently typing (see aiContextService.buildAIContext).
+  // Filtered once per (workspace, scope) change and reused for both the
+  // token-estimate memo below AND the actual submit call (see handleSubmit)
+  // — keeping both derived from the same filtered arrays is what guarantees
+  // the displayed estimate never diverges from what's actually sent.
+  const filteredContextData = useMemo(
+    () => filterContextData({ tasks, projects, sections, labels, events }, effectiveScope),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tasks, projects, sections, labels, events, contextScope]
+  );
+
+  // Only rebuilds when the workspace or scope changes, not on every
+  // keystroke — context.md's bulk is the workspace snapshot, which is
+  // unrelated to what the user is currently typing (see
+  // aiContextService.buildAIContext).
   const contextTokens = useMemo(
-    () => buildAIContext({ tasks, projects, sections, labels, events, today: toISODate(new Date()) }).approxTokens,
-    [tasks, projects, sections, labels, events]
+    () => buildAIContext({ ...filteredContextData, today: toISODate(new Date()), scope: effectiveScope }).approxTokens,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredContextData, contextScope]
   );
   const approxTotalTokens = contextTokens + estimateTokens(text);
 
@@ -193,7 +262,12 @@ export default function AIQuickAddModal({ onClose }) {
     setError('');
     setErrorKind('');
     try {
-      const { markdown } = buildAIContext({ tasks, projects, sections, labels, events, today: toISODate(new Date()) });
+      // Reuses the same filteredContextData the token estimate above was
+      // computed from — the plan is then resolved (ids checked, new: locals
+      // assigned) against that identical filtered set too, so a reduced-
+      // context request can never validate a reference the AI wasn't
+      // actually shown.
+      const { markdown } = buildAIContext({ ...filteredContextData, today: toISODate(new Date()), scope: effectiveScope });
       const { operations } = await requestAIPlan({
         provider,
         model,
@@ -201,7 +275,7 @@ export default function AIQuickAddModal({ onClose }) {
         attachmentFiles: attachments.map((a) => a.file),
         contextMarkdown: markdown,
       });
-      setPlan(resolvePlan(operations, { tasks, projects, sections, labels, events }));
+      setPlan(resolvePlan(operations, filteredContextData));
     } catch (err) {
       setError(err.message || 'Something went wrong — please try again.');
       setErrorKind(err.kind || '');
@@ -211,7 +285,14 @@ export default function AIQuickAddModal({ onClose }) {
   }
 
   if (plan) {
-    return <AIPlanConfirmModal plan={plan} onClose={() => setPlan(null)} onApplied={requestClose} />;
+    return (
+      <AIPlanConfirmModal
+        plan={plan}
+        onClose={() => setPlan(null)}
+        onApplied={requestClose}
+        onProjectCreated={onProjectCreated}
+      />
+    );
   }
 
   return (
@@ -279,6 +360,53 @@ export default function AIQuickAddModal({ onClose }) {
         </div>
         <p className="form-hint" style={{ marginTop: -6, marginBottom: 12 }}>
           {MODEL_CATALOG[provider].find((m) => m.id === model)?.hint}
+        </p>
+
+        <div className="ai-quickadd-provider-row">
+          <SelectMenu
+            ariaLabel="Workspace context sent to the AI"
+            value={contextScope.mode}
+            onChange={(mode) => updateContextScope({ mode })}
+            options={CONTEXT_SCOPE_OPTIONS}
+          />
+          {contextScope.mode === 'custom' && (
+            <SelectMenu
+              ariaLabel="Restrict to one project"
+              value={projectStillExists ? contextScope.projectId : ''}
+              onChange={(projectId) => updateContextScope({ projectId })}
+              options={[{ value: '', label: 'All projects' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
+            />
+          )}
+        </div>
+        {contextScope.mode === 'custom' && (
+          <div className="ai-quickadd-daterange-row">
+            <label className="form-hint" htmlFor="ai-quickadd-event-start">
+              Events from
+            </label>
+            <input
+              id="ai-quickadd-event-start"
+              type="date"
+              value={contextScope.eventStart || defaultEventStart}
+              onChange={(e) => updateContextScope({ eventStart: e.target.value })}
+            />
+            <label className="form-hint" htmlFor="ai-quickadd-event-end">
+              to
+            </label>
+            <input
+              id="ai-quickadd-event-end"
+              type="date"
+              value={contextScope.eventEnd || defaultEventEnd}
+              onChange={(e) => updateContextScope({ eventEnd: e.target.value })}
+            />
+          </div>
+        )}
+        <p className="form-hint" style={{ marginTop: contextScope.mode === 'custom' ? 4 : -6, marginBottom: 12 }}>
+          {contextScope.mode === 'full' &&
+            'Sends your full workspace (all projects, tasks, and calendar events) so the AI can reference anything by id.'}
+          {contextScope.mode === 'none' &&
+            "Sends none of your existing workspace — the AI can still create new tasks/events/projects, it just can't reference anything existing."}
+          {contextScope.mode === 'custom' &&
+            'Restrict what the AI can see: pick one project and/or narrow the calendar events sent, leaving either at its default to not restrict it.'}
         </p>
 
         <div className="form-row">

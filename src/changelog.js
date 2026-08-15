@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.0',
+    date: '2026-08-16',
+    title: 'AI Quick Add is now available everywhere, with a new context-scope picker and smarter defaults',
+    changes: [
+      'AI Quick Add now has an entry point on every tab, not just Tasks/Board: a new mini-FAB next to "New event" in Calendar, and a standalone floating button on Dashboard, Projects, Stats, and Settings.',
+      'AI Quick Add\'s panel has a new context-scope picker: choose "Full context" (as before), "No context" (nothing about your existing workspace is sent — the AI can still create new tasks/events/projects), or "Custom" (restrict to one project and/or a calendar event date range). Useful for a smaller/cheaper request or to keep the AI focused on one part of your workspace. Your last choice is remembered on that device.',
+      'AI Quick Add now picks a more realistic time estimate for tasks it creates when you don\'t state one yourself, instead of defaulting to a near-zero placeholder — and it will suggest grouping a batch of related new tasks into board sections (e.g. "Venue", "Food", "Invitations" for a party) when that makes organizational sense.',
+      'Applying an AI Quick Add plan that creates a new project now takes you straight to it, instead of leaving you on whatever tab you started from wondering if it worked.',
+    ],
+  },
+  {
     version: '5.4.0',
     date: '2026-08-16',
     title: "Today's scheduled tasks now show up on Google Calendar",

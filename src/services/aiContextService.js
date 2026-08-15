@@ -88,9 +88,48 @@ Critical rules — follow these exactly, mistakes here are not auto-corrected:
 6. **Dates.** Resolve every relative date/time mention ("tomorrow", "next
    Friday", "in 2 weeks") against the reference date given below. Always
    emit ISO \`YYYY-MM-DD\` dates and 24-hour \`HH:MM\` times.
-7. **Don't touch what wasn't asked.** Only propose operations that serve the
+7. **Estimate durations.** When a task you're creating has no explicit
+   duration stated by the user, set \`estimatedHours\` yourself to a
+   realistic value for that task's nature and complexity (e.g. a few minutes
+   for a quick errand, several hours for a substantial project task) — don't
+   leave it unset expecting the client to fill in something sensible.
+8. **Group related tasks into sections.** When creating a batch of related
+   tasks for a new or existing project, propose \`create_section\` operations
+   to group them by theme/phase (e.g. "plan a birthday party" → "Venue",
+   "Food", "Invitations") whenever there's a sensible grouping. Don't force
+   sections onto a single task or a small handful of unrelated asks just
+   because the capability exists.
+9. **Don't touch what wasn't asked.** Only propose operations that serve the
    user's actual request — do not "clean up" or reorganize unrelated tasks
    the user didn't mention, even if you notice something that looks messy.
+`;
+
+// Addendum appended to INSTRUCTIONS whenever the user has chosen a reduced
+// context scope (see buildAIContext's `scope` param / AIQuickAddModal's
+// context-scope picker) — explains what's been deliberately left out and how
+// to behave without it, since the base INSTRUCTIONS above assume a full
+// workspace snapshot is always present. Kept as one shared paragraph (not
+// per-scope variants) since the guidance is identical whether nothing was
+// sent or a project/date-range subset was: you can only reference what's
+// actually listed below.
+const REDUCED_CONTEXT_ADDENDUM = `
+## Limited context
+
+Some or all of the existing workspace (projects, sections, labels, tasks,
+and/or calendar events) was deliberately left out of this request by the
+user's own choice, so anything omitted below does NOT mean it doesn't
+exist — it means you cannot see it and must not assume it. Concretely:
+
+- Only reference an existing project/section/label/task/event id if it
+  actually appears in a list below — never invent or guess one just because
+  the request implies something should already exist.
+- If the user's own request text names a project by name (e.g. "add this to
+  my Work project") and no matching project id appears below, you have no
+  way to resolve that name to an id — create a NEW project with that exact
+  name instead (a \`create_project\` operation with a \`new:<n>\` local id),
+  the same as if a genuinely new project were being requested.
+- A new task's \`projectId\` may be omitted entirely if the request doesn't
+  name a project — the app defaults it to the user's Inbox.
 `;
 
 function tasksSection(tasks) {
@@ -158,15 +197,74 @@ function labelsSection(labels) {
   return `## Existing labels (${rows.length} total)\n\n\`\`\`json\n${JSON.stringify(rows, null, 2)}\n\`\`\`\n`;
 }
 
+// Default event date-range window for "Custom" scope when the user hasn't
+// picked their own start/end — "this month" isn't quite what's implemented
+// (a fixed calendar month would shrink to almost nothing sent on the last
+// day of a month); instead this is a rolling ~30 day window starting today,
+// which stays a similarly-sized, useful lookahead no matter what day it is.
+export const DEFAULT_EVENT_RANGE_DAYS = 30;
+
+/**
+ * Filters the raw workspace arrays down to what a given context `scope`
+ * should include, before handing them to buildAIContext. Kept as a separate
+ * step (rather than baked into buildAIContext itself) so callers — right now
+ * just AIQuickAddModal — can filter once and reuse the identical filtered
+ * arrays for both the token-estimate memo and the actual submit call,
+ * guaranteeing those two never diverge.
+ *
+ * @param {{ tasks, projects, sections, labels, events }} data - raw workspace arrays.
+ * @param {{ mode: 'full'|'none'|'custom', projectId?: string, eventStart?: string, eventEnd?: string }} [scope]
+ *   - mode 'full' (default when omitted): no filtering, identical to today's behavior.
+ *   - mode 'none': every array below is emptied out (labels included — see
+ *     the spec this implements: "no context" means none of the snapshot).
+ *   - mode 'custom': independent optional sub-filters —
+ *     `projectId` restricts tasks/sections to that one project (plus that
+ *     project itself; labels stay global/unfiltered since they're shared
+ *     across projects and cheap to include). `eventStart`/`eventEnd`
+ *     (inclusive ISO dates) restrict which events are included; if neither
+ *     is set, events are left unfiltered (same as 'full'). Leaving both
+ *     sub-filters unset behaves identically to 'full'.
+ * @returns {{ tasks, projects, sections, labels, events }}
+ */
+export function filterContextData({ tasks, projects, sections, labels, events }, scope) {
+  const mode = scope?.mode || 'full';
+  if (mode === 'full') return { tasks, projects, sections, labels, events };
+  if (mode === 'none') return { tasks: [], projects: [], sections: [], labels: [], events: [] };
+
+  // mode === 'custom'
+  let filteredProjects = projects;
+  let filteredSections = sections;
+  let filteredTasks = tasks;
+  if (scope.projectId) {
+    filteredProjects = (projects || []).filter((p) => p.id === scope.projectId);
+    filteredSections = (sections || []).filter((s) => s.projectId === scope.projectId);
+    filteredTasks = (tasks || []).filter((t) => t.projectId === scope.projectId);
+  }
+  let filteredEvents = events;
+  // Calendar events have no projectId (see file header note in callers) — a
+  // project filter never touches events, only a date range does.
+  if (scope.eventStart || scope.eventEnd) {
+    filteredEvents = (events || []).filter((e) => (!scope.eventStart || e.date >= scope.eventStart) && (!scope.eventEnd || e.date <= scope.eventEnd));
+  }
+  return { tasks: filteredTasks, projects: filteredProjects, sections: filteredSections, labels, events: filteredEvents };
+}
+
 /**
  * Assembles the full `context.md` sent with every AI Assistant request.
- * @param {{ tasks: Array, projects: Array, sections: Array, labels: Array, events: Array, today: string }} state
+ * @param {{ tasks: Array, projects: Array, sections: Array, labels: Array, events: Array, today: string, scope: Object }} state
+ *   `scope` (optional, defaults to full context) is the same shape filterContextData
+ *   takes — pass it here to also append the reduced-context instructions addendum
+ *   whenever scope.mode isn't 'full'; when a caller has already filtered the
+ *   arrays itself (see AIQuickAddModal), pass the same `scope` through anyway so
+ *   the addendum stays in sync with what was actually filtered.
  * @returns {{ markdown: string, approxTokens: number, activeTaskCount: number }}
  */
-export function buildAIContext({ tasks, projects, sections, labels, events, today }) {
+export function buildAIContext({ tasks, projects, sections, labels, events, today, scope }) {
   const referenceDate = today || new Date().toISOString().slice(0, 10);
+  const mode = scope?.mode || 'full';
   const parts = [
     INSTRUCTIONS,
+    mode !== 'full' ? REDUCED_CONTEXT_ADDENDUM : '',
     `\n# Reference date\n\nToday's date is ${referenceDate}.\n`,
     `\n${projectsSection(projects)}`,
     `\n${sectionsSection(sections)}`,

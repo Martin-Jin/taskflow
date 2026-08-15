@@ -32,12 +32,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Search, Sparkles, X } from 'lucide-react';
-import { isAIQuickAddConfigured, getStoredApiKey } from '../../services/aiQuickAddService';
-import { useScheduler } from '../../context/SchedulerContext';
+import { useAIQuickAddGate } from '../../hooks/useAIQuickAddGate';
 
 export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch, addTaskDisabled = false }) {
-  const { setNotification, requestSettingsSection } = useScheduler();
-  const aiConfigured = isAIQuickAddConfigured();
+  const { aiConfigured, requestOpen } = useAIQuickAddGate();
   // With "Add task" hidden (viewer-only project), only keep the speed-dial
   // shape if AI Quick Add is both configured AND still has something to show
   // — otherwise the single remaining action should just be the main FAB
@@ -80,19 +78,11 @@ export default function AddTaskFabGroup({ onAddTask, onAIQuickAdd, onOpenSearch,
     // rather than the entry point silently disappearing. Checked before
     // collapsing the mobile speed-dial (not after) so the mini-FAB is still
     // on screen to actually shake — collapsing first would unmount it.
-    const hasKey = !!getStoredApiKey('anthropic') || !!getStoredApiKey('gemini');
-    if (!hasKey) {
-      setNotification({
-        type: 'error',
-        message: 'Add an Anthropic or Gemini API key in Settings → Integrations first.',
-        actionLabel: 'Open Settings',
-        onAction: () => requestSettingsSection('integrations'),
-      });
-      setAiShake(true);
-      return;
-    }
-    setExpanded(false);
-    onAIQuickAdd();
+    const opened = requestOpen(() => {
+      setExpanded(false);
+      onAIQuickAdd();
+    });
+    if (!opened) setAiShake(true);
   }
 
   return (
