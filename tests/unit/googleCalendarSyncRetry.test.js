@@ -314,6 +314,109 @@ describe('planOngoingCalendarSync — keeping Google in step during ORDINARY use
     expect(plan.toDelete).toHaveLength(0);
   });
 
+  it('CRITICAL: pairs each relocated block with its OWN previous event, not whichever record comes first', () => {
+    // The duplicate-manufacturing bug. Records are keyed by a block id that no
+    // longer exists and iterated in persisted-JSON order, so "first unclaimed
+    // record wins" handed Monday's block whatever came out of the object first
+    // — quite possibly Thursday's record. Both consequences are user-visible:
+    // Thursday's Google event gets MOVED onto Monday, and Thursday's own block
+    // finds nothing left, falls through to toCreate, and inserts a duplicate.
+    //
+    // The record object is deliberately built in REVERSE date order here, which
+    // is exactly what defeated the old first-available matching.
+    const t = task('t1', 'Piano');
+    const record = {
+      'blk_t1_2026-08-27_09:00': { googleEventId: 'gcal_thursday', signature: '2026-08-27|09:00|10:00|Piano', taskId: 't1' },
+      'blk_t1_2026-08-24_09:00': { googleEventId: 'gcal_monday', signature: '2026-08-24|09:00|10:00|Piano', taskId: 't1' },
+    };
+    // Both nudged a few hours later on their own days by a rebalance.
+    const monday = block('blk_t1_2026-08-24_14:00', 't1', '2026-08-24', '14:00', '15:00', null);
+    const thursday = block('blk_t1_2026-08-27_14:00', 't1', '2026-08-27', '14:00', '15:00', null);
+
+    const plan = planOngoingCalendarSync([monday, thursday], [t], record);
+
+    expect(plan.toCreate).toHaveLength(0); // no duplicate inserted
+    expect(plan.toDelete).toHaveLength(0); // no event orphaned
+    expect(plan.toUpdate).toHaveLength(2);
+    const byBlockId = new Map(plan.toUpdate.map((u) => [u.block.id, u]));
+    // Each block moves the event that was actually ITS OWN, so neither event
+    // jumps across days.
+    expect(byBlockId.get(monday.id).googleEventId).toBe('gcal_monday');
+    expect(byBlockId.get(thursday.id).googleEventId).toBe('gcal_thursday');
+    // And each retires the correct old record, so the next tick doesn't sweep
+    // a still-live event as an orphan.
+    expect(byBlockId.get(monday.id).inheritedFromBlockId).toBe('blk_t1_2026-08-24_09:00');
+    expect(byBlockId.get(thursday.id).inheritedFromBlockId).toBe('blk_t1_2026-08-27_09:00');
+  });
+
+  it('pairs correctly across three relocated blocks regardless of record ordering', () => {
+    // Same rule with more blocks in flight — a weekly recurring task having its
+    // whole week re-placed at once is the realistic version of this.
+    const t = task('t1', 'Research');
+    const record = {
+      'blk_t1_2026-09-02_08:00': { googleEventId: 'gcal_wed', signature: '2026-09-02|08:00|09:00|Research', taskId: 't1' },
+      'blk_t1_2026-08-31_08:00': { googleEventId: 'gcal_mon', signature: '2026-08-31|08:00|09:00|Research', taskId: 't1' },
+      'blk_t1_2026-09-04_08:00': { googleEventId: 'gcal_fri', signature: '2026-09-04|08:00|09:00|Research', taskId: 't1' },
+    };
+    const mon = block('blk_t1_2026-08-31_16:00', 't1', '2026-08-31', '16:00', '17:00', null);
+    const wed = block('blk_t1_2026-09-02_16:00', 't1', '2026-09-02', '16:00', '17:00', null);
+    const fri = block('blk_t1_2026-09-04_16:00', 't1', '2026-09-04', '16:00', '17:00', null);
+
+    const plan = planOngoingCalendarSync([wed, fri, mon], [t], record);
+
+    expect(plan.toCreate).toHaveLength(0);
+    expect(plan.toDelete).toHaveLength(0);
+    const byBlockId = new Map(plan.toUpdate.map((u) => [u.block.id, u.googleEventId]));
+    expect(byBlockId.get(mon.id)).toBe('gcal_mon');
+    expect(byBlockId.get(wed.id)).toBe('gcal_wed');
+    expect(byBlockId.get(fri.id)).toBe('gcal_fri');
+  });
+
+  it('is deterministic — the same relocation produces the same pairing every run', () => {
+    // Pairing must not depend on object iteration order or array order, or two
+    // devices sweeping the same state would move each other's events back and
+    // forth forever.
+    const t = task('t1', 'Piano');
+    const record = {
+      'blk_t1_2026-08-24_09:00': { googleEventId: 'gcal_a', signature: '2026-08-24|09:00|10:00|Piano', taskId: 't1' },
+      'blk_t1_2026-08-27_09:00': { googleEventId: 'gcal_b', signature: '2026-08-27|09:00|10:00|Piano', taskId: 't1' },
+    };
+    const a = block('blk_t1_2026-08-24_14:00', 't1', '2026-08-24', '14:00', '15:00', null);
+    const b = block('blk_t1_2026-08-27_14:00', 't1', '2026-08-27', '14:00', '15:00', null);
+
+    const forward = planOngoingCalendarSync([a, b], [t], record);
+    const reversed = planOngoingCalendarSync([b, a], [t], record);
+    const pairsOf = (plan) => plan.toUpdate.map((u) => `${u.block.id}->${u.googleEventId}`).sort();
+    expect(pairsOf(forward)).toEqual(pairsOf(reversed));
+  });
+
+  it('still recovers a legacy record whose placement cannot be derived', () => {
+    // A record written by an older build stores an opaque signature and its
+    // block id may not parse — it must remain claimable, or the block would
+    // duplicate instead of moving.
+    const t = task('t1', 'Piano');
+    const record = { legacyKey: { googleEventId: 'gcal_legacy', signature: 's', taskId: 't1' } };
+    const relocated = block('blk_t1_2026-08-24_14:00', 't1', '2026-08-24', '14:00', '15:00', null);
+    const plan = planOngoingCalendarSync([relocated], [t], record);
+    expect(plan.toUpdate).toHaveLength(1);
+    expect(plan.toUpdate[0].googleEventId).toBe('gcal_legacy');
+    expect(plan.toCreate).toHaveLength(0);
+  });
+
+  it('never lets one task claim another task\'s orphaned event', () => {
+    const t1 = task('t1', 'Piano');
+    const t2 = task('t2', 'Research');
+    const record = {
+      'blk_t2_2026-08-24_09:00': { googleEventId: 'gcal_research', signature: '2026-08-24|09:00|10:00|Research', taskId: 't2' },
+    };
+    // A brand-new block for a DIFFERENT task, at the very same time.
+    const pianoBlock = block('blk_t1_2026-08-24_09:00', 't1', '2026-08-24', '09:00', '10:00', null);
+    const plan = planOngoingCalendarSync([pianoBlock], [t1, t2], record);
+    expect(plan.toCreate).toHaveLength(1); // gets its own new event
+    expect(plan.toUpdate).toHaveLength(0);
+    expect(plan.toDelete).toEqual([{ blockId: 'blk_t2_2026-08-24_09:00', googleEventId: 'gcal_research' }]);
+  });
+
   it('deletes only the surplus event when a task drops from two blocks to one', () => {
     // One relocated block inherits one event; the leftover record has no live
     // block to claim it, so it is correctly swept as an orphan.

@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '5.2.2',
+    date: '2026-08-15',
+    title: 'Fixed Google Calendar events duplicating after rescheduling',
+    changes: [
+      'Fixed duplicate calendar events appearing after a re-balance moved a recurring task around — overlapping copies of the same block at the same time slot. When several of a task\'s blocks moved at once, TaskFlow could mix up which existing Google event belonged to which block, dragging one event onto the wrong day and creating a fresh duplicate for the one it lost track of. Each moved block now reliably updates its own event instead.',
+      'Fixed TaskFlow\'s own scheduled blocks being pulled back in from Google Calendar as separate, redundant calendar entries a minute after being pushed. Those shadow copies stacked on top of the blocks they came from and could later be re-uploaded as real duplicates. Existing ones are cleaned up automatically on the next sync.',
+    ],
+  },
+  {
     version: '5.2.1',
     date: '2026-08-15',
     title: 'Fixed "Restore & overwrite Google Calendar" refusing to run',

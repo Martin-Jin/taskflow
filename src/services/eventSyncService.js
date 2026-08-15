@@ -40,6 +40,7 @@
  */
 
 import { toISODate } from '../utils/dateUtils';
+import { isBlockSourcedEvent } from './googleCalendarService';
 import { computeEffectivePurgeBoundary as centralized_computeEffectivePurgeBoundary } from './dataRetention';
 
 /**
@@ -225,6 +226,20 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
  *     immediately, but a poll/pull landing before Google's own delete has
  *     propagated still reports the event as live, which would otherwise
  *     silently re-add ("resurrect") the just-deleted event.
+ *   - MIRROR ROWS ARE NEVER MERGED IN. Every ScheduledBlock TaskFlow pushes
+ *     comes straight back on the next poll as an ordinary `source: 'google'`
+ *     event (tagged with TaskFlow's own private extended property — see
+ *     isBlockSourcedEvent). Folding those back into local `events` gave every
+ *     synced block a redundant second local row: the block AND a mirror of it.
+ *     That row renders on top of its own block, and — worse — is a live
+ *     candidate for being pushed BACK to Google as a brand-new event whenever
+ *     it loses its googleEventId (a rewrite nulls every id by construction),
+ *     manufacturing a real duplicate on the user's calendar. The block is the
+ *     single source of truth for its own event, so mirrors are dropped from
+ *     the pulled batch, and any mirror row an older build already merged into
+ *     local state is dropped from the surviving-local set too. The rewrite
+ *     path had this suppression from the start; the ordinary poll did not,
+ *     which is why duplicates kept reappearing between rewrites.
  *   - A second, narrower version of that same race: deleting a SINGLE
  *     occurrence of a recurring master (scope 'this') doesn't remove the
  *     master's googleEventId at all, so the whole-event suppression above
@@ -265,7 +280,10 @@ export function mergePulledGoogleEvents(
     .filter(
       (e) =>
         !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs) &&
-        !manualOwnedGoogleEventIds.has(e.googleEventId)
+        !manualOwnedGoogleEventIds.has(e.googleEventId) &&
+        // TaskFlow's own mirror of a ScheduledBlock — never folded back into
+        // local `events`. See the mirror-row note in this function's doc.
+        !isBlockSourcedEvent(e)
     )
     .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs))
     .map((e) => {
@@ -277,6 +295,12 @@ export function mergePulledGoogleEvents(
 
   const survivingLocal = existingEvents.filter((e) => {
     if (e.source !== 'google') return true; // manual events are never touched by a Google pull
+
+    // A mirror row already in local state (added by a build from before mirrors
+    // were suppressed on pull) is dropped rather than kept — its ScheduledBlock
+    // is the single source of truth for that event, and leaving the row behind
+    // is what let it later be re-pushed as a duplicate. See the doc note above.
+    if (isBlockSourcedEvent(e)) return false;
 
     if (pulledByGoogleEventId.has(e.googleEventId)) return false; // superseded below by the pulled version
 
@@ -320,7 +344,13 @@ export function hardResetEventsFromGoogle(
   nowMs = Date.now()
 ) {
   return pulledGoogleEvents
-    .filter((e) => !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs))
+    .filter(
+      (e) =>
+        !isRecentlyDeletedLocally(e.googleEventId, recentlyDeletedGoogleEventIds, nowMs) &&
+        // Same rule as the incremental merge: a block's own mirror never
+        // becomes a local event row (see mergePulledGoogleEvents' doc).
+        !isBlockSourcedEvent(e)
+    )
     .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs));
 }
 

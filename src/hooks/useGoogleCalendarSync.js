@@ -216,6 +216,108 @@ export function blockSyncSignature(block, task) {
 }
 
 /**
+ * Absolute minutes since epoch-ish for a `YYYY-MM-DD` + `HH:MM` pair — a
+ * single comparable scalar for "how far apart are these two placements". Only
+ * used for relative distance, so the arbitrary date origin doesn't matter.
+ * Returns null when either part is missing/malformed, which callers read as
+ * "no usable placement to measure against".
+ */
+function placementMinutes(dateIso, startTime) {
+  if (typeof dateIso !== 'string' || typeof startTime !== 'string') return null;
+  const [y, m, d] = dateIso.split('-').map(Number);
+  const [hh, mm] = startTime.split(':').map(Number);
+  if ([y, m, d, hh, mm].some((n) => !Number.isFinite(n))) return null;
+  return Math.floor(Date.UTC(y, m - 1, d) / 60000) + hh * 60 + mm;
+}
+
+/**
+ * The placement a sync record was last pushed at, recovered from the record's
+ * own signature (`date|startTime|endTime|title`, see blockSyncSignature) and
+ * falling back to the block id it's filed under (`blk_${taskId}_${date}_
+ * ${startTime}`, see allocator.js) for legacy records written before
+ * signatures were stored in this shape.
+ */
+function recordPlacementMinutes(blockId, signature) {
+  if (typeof signature === 'string') {
+    const [date, startTime] = signature.split('|');
+    const fromSignature = placementMinutes(date, startTime);
+    if (fromSignature !== null) return fromSignature;
+  }
+  if (typeof blockId === 'string' && blockId.startsWith('blk_')) {
+    const parts = blockId.split('_');
+    // blk_<taskId>_<date>_<startTime>
+    const fromId = placementMinutes(parts[2], parts[3]);
+    if (fromId !== null) return fromId;
+  }
+  return null;
+}
+
+/**
+ * Pairs each rebalance-relocated block with the orphaned sync record it most
+ * likely came from, for ONE task's worth of blocks and records.
+ *
+ * Why this can't just be "first unclaimed record wins": a recurring task
+ * (Piano, a weekly review) typically has several blocks relocated in the SAME
+ * rebalance, and the records are keyed by a block id that no longer exists,
+ * iterated in whatever order the persisted JSON object happens to hold. So
+ * first-available matching would hand Monday's new block whichever record came
+ * out of the object first — quite possibly Thursday's. The consequences are
+ * both visible on the user's real calendar: Thursday's Google event gets MOVED
+ * onto Monday's slot, and Thursday's own new block finds no record left, falls
+ * through to `toCreate`, and inserts a brand-new duplicate event. That is the
+ * "overlapping chips at the same time slot right after rescheduling" symptom.
+ *
+ * Matching by nearest placement instead makes the pairing deterministic and
+ * intuitively correct: a rebalance nudges a block by hours, not weeks, so the
+ * record closest in date/time to a block's new placement is overwhelmingly the
+ * one that block actually came from. Ties (and records with no recoverable
+ * placement) fall back to a stable ordering so the result never depends on
+ * object iteration order.
+ *
+ * Greedy over globally-sorted (block, record) pairs — with at most a handful
+ * of blocks per task this is well under the complexity a proper assignment
+ * algorithm would justify, and it produces the same answer for every realistic
+ * case (see the unit tests' multi-block relocation scenarios).
+ *
+ * @returns {Map<string, string>} new block id -> orphaned record's block id
+ */
+function assignOrphanedRecords(blocksNeedingRecord, orphanRecords) {
+  const pairs = [];
+  for (const block of blocksNeedingRecord) {
+    const blockAt = placementMinutes(block.date, block.startTime);
+    for (const record of orphanRecords) {
+      const recordAt = recordPlacementMinutes(record.blockId, record.signature);
+      pairs.push({
+        blockId: block.id,
+        recordBlockId: record.blockId,
+        // Unmeasurable placement on either side sorts last (Infinity) but is
+        // still eligible — a legacy record with no recoverable placement must
+        // remain claimable, or its block would duplicate rather than move.
+        distance: blockAt === null || recordAt === null ? Infinity : Math.abs(blockAt - recordAt),
+      });
+    }
+  }
+
+  // Stable tiebreak on ids so equidistant candidates resolve identically on
+  // every device and every run, rather than by insertion order.
+  pairs.sort(
+    (a, b) =>
+      a.distance - b.distance ||
+      (a.blockId < b.blockId ? -1 : a.blockId > b.blockId ? 1 : 0) ||
+      (a.recordBlockId < b.recordBlockId ? -1 : a.recordBlockId > b.recordBlockId ? 1 : 0)
+  );
+
+  const assignment = new Map();
+  const claimedRecords = new Set();
+  for (const pair of pairs) {
+    if (assignment.has(pair.blockId) || claimedRecords.has(pair.recordBlockId)) continue;
+    assignment.set(pair.blockId, pair.recordBlockId);
+    claimedRecords.add(pair.recordBlockId);
+  }
+  return assignment;
+}
+
+/**
  * Decides what the ongoing (non-rewrite) reconciliation sweep must send to
  * Google so the calendar keeps matching TaskFlow during ORDINARY use — the
  * everyday counterpart to the one-off "Rewrite Google Calendar" action.
@@ -279,7 +381,30 @@ export function planOngoingCalendarSync(blocks, tasks, lastSyncedById = {}) {
     if (!orphanedRecordsByTask.has(taskId)) orphanedRecordsByTask.set(taskId, []);
     orphanedRecordsByTask.get(taskId).push({ blockId, ...record });
   }
-  const claimedOrphanBlockIds = new Set();
+
+  // Which blocks actually need an orphaned record, grouped by task — computed
+  // in a FIRST pass over all blocks so the pairing below can consider every
+  // competing block at once. Matching one block at a time (first unclaimed
+  // record wins) let an early block claim a later block's record purely by
+  // iteration order — see assignOrphanedRecords for why that manufactured
+  // both misplaced and duplicate Google events.
+  const blocksNeedingRecordByTask = new Map();
+  for (const block of blocks) {
+    if (!taskById.has(block.taskId)) continue;
+    if (block.googleEventId || lastSyncedById[block.id]?.googleEventId) continue;
+    if (!orphanedRecordsByTask.has(block.taskId)) continue;
+    if (!blocksNeedingRecordByTask.has(block.taskId)) blocksNeedingRecordByTask.set(block.taskId, []);
+    blocksNeedingRecordByTask.get(block.taskId).push(block);
+  }
+  const inheritedRecordByBlockId = new Map();
+  for (const [taskId, needy] of blocksNeedingRecordByTask) {
+    const assignment = assignOrphanedRecords(needy, orphanedRecordsByTask.get(taskId));
+    for (const [blockId, recordBlockId] of assignment) inheritedRecordByBlockId.set(blockId, recordBlockId);
+  }
+  const orphanRecordByBlockId = new Map();
+  for (const records of orphanedRecordsByTask.values()) {
+    for (const record of records) orphanRecordByBlockId.set(record.blockId, record);
+  }
 
   for (const block of blocks) {
     const task = taskById.get(block.taskId);
@@ -288,17 +413,16 @@ export function planOngoingCalendarSync(blocks, tasks, lastSyncedById = {}) {
 
     // Prefer the block's own googleEventId, then whatever this block id was
     // last synced as, then — for a block a rebalance just re-minted under a
-    // new id — an unclaimed record from the same task (see above).
+    // new id — the orphaned record it was paired with above.
     const record = lastSyncedById[block.id];
     let googleEventId = block.googleEventId || record?.googleEventId || null;
     let inheritedFromBlockId = null;
     if (!googleEventId) {
-      const candidates = orphanedRecordsByTask.get(block.taskId) || [];
-      const inherited = candidates.find((c) => !claimedOrphanBlockIds.has(c.blockId));
+      const inheritedBlockId = inheritedRecordByBlockId.get(block.id);
+      const inherited = inheritedBlockId ? orphanRecordByBlockId.get(inheritedBlockId) : null;
       if (inherited) {
         googleEventId = inherited.googleEventId;
         inheritedFromBlockId = inherited.blockId;
-        claimedOrphanBlockIds.add(inherited.blockId);
       }
     }
 
@@ -1333,9 +1457,20 @@ export function useGoogleCalendarSync({
 
     // Drop records for block ids that no longer exist, so the record can't
     // grow without bound as blocks are re-minted across rebalances.
-    const liveBlockIds = new Set(latestBlocks.map((b) => b.id));
+    //
+    // Pruned against the blocks live NOW (re-read at commit time), not the
+    // snapshot this sweep started from: the awaits above take real time, and a
+    // rebalance landing mid-sweep re-mints block ids. Pruning against the stale
+    // snapshot would delete the record for a block that still exists under its
+    // new id, so the next tick would see no record and no googleEventId and
+    // CREATE a duplicate instead of moving the existing event — the same class
+    // of duplicate this whole sync record exists to prevent. Records written by
+    // this sweep are kept regardless, since their Google events definitely
+    // exist and dropping them would strand those events as un-cleanable orphans.
+    const liveBlockIds = new Set((stateRef.current.blocks || []).map((b) => b.id));
+    const writtenThisSweep = new Set([...pushedEventIdsByBlockId.keys(), ...toCreate.map(({ block }) => block.id), ...toUpdate.map(({ block }) => block.id)]);
     for (const blockId of Object.keys(syncRecord)) {
-      if (!liveBlockIds.has(blockId)) delete syncRecord[blockId];
+      if (!liveBlockIds.has(blockId) && !writtenThisSweep.has(blockId)) delete syncRecord[blockId];
     }
     lastSyncedBlocksRef.current = syncRecord;
     setLastSyncedBlocks(syncRecord);
