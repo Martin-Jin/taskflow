@@ -335,3 +335,169 @@ describe('restore-then-push: a backup-restored Google event reaches Google again
     expect(isUnsyncedPushableEvent(foreign)).toBe(false);
   });
 });
+
+describe('poll tick handoff: the demotion and the push sweep must agree WITHIN one tick', () => {
+  // The regression that made the restore-then-push fix above look correct in
+  // tests while still failing for real, twice over.
+  //
+  // The tests above prove each half in isolation: the merge demotes a restored
+  // event (googleEventId -> null), and a demoted event is pushable. What they
+  // never modelled is WHEN the poll's push sweep gets to see that demotion.
+  // In the hook, the merge result reaches component state through setEvents,
+  // whose updater React does NOT run synchronously — it's queued until the
+  // next commit. The push sweep runs in the SAME synchronous tick, immediately
+  // after, and used to read `eventsRef.current`, which is assigned in the
+  // render body and therefore still held the LAST COMMITTED events: the
+  // restored event with its stale, dead googleEventId intact. So
+  // isUnsyncedPushableEvent's first check (`if (event.googleEventId) return
+  // false`) skipped the very event the merge had just demoted — every tick,
+  // indefinitely. Only a manual edit ever pushed it, because
+  // SchedulerContext's edit path pushes unconditionally without consulting
+  // googleEventId.
+  //
+  // These tests model that deferred commit explicitly (a `committed` array
+  // that setEvents only updates on an explicit flush), so the "reads a
+  // render-stale list" failure mode is reproducible here rather than only in
+  // the browser.
+  const futureDate = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 5);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
+  const restoredShopping = {
+    id: 'local_restored',
+    source: 'google',
+    calendarId: 'primary',
+    googleEventId: 'id-from-an-old-backup',
+    date: futureDate,
+    startTime: '09:00',
+    endTime: '10:00',
+    title: 'Shopping',
+  };
+
+  // A miniature of the hook's own state plumbing: `committed` stands in for
+  // React state, `eventsRef` for the ref assigned during render (so it only
+  // catches up on a commit), and `runPollTick` for the poll's
+  // merge-then-push sequence.
+  function makeHarness(initialEvents) {
+    let committed = initialEvents;
+    let pending = null;
+    const harness = {
+      eventsRef: { current: initialEvents },
+      pushed: [],
+      setEvents(next) {
+        pending = next; // queued, NOT applied — same as React
+      },
+      commit() {
+        if (pending) committed = pending;
+        pending = null;
+        harness.eventsRef.current = committed; // render body re-assigns the ref
+      },
+      get committed() {
+        return committed;
+      },
+    };
+    return harness;
+  }
+
+  // Mirrors the fixed applyPulledEvents: merge synchronously, hand the SAME
+  // array to setEvents, keep eventsRef in step, and return it to the caller.
+  function applyPulled(harness, fetchedEvents, rangeStart, rangeEnd, confirmedIds) {
+    const merged = mergePulledGoogleEvents(
+      harness.eventsRef.current,
+      fetchedEvents,
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      confirmedIds
+    );
+    harness.eventsRef.current = merged;
+    harness.setEvents(merged);
+    return { events: merged };
+  }
+
+  // Mirrors pushUnsyncedItemsToCalendar's override parameter.
+  function pushSweep(harness, eventsOverride) {
+    const toPush = (eventsOverride || harness.eventsRef.current).filter(isUnsyncedPushableEvent);
+    for (const e of toPush) harness.pushed.push(e.title);
+    return toPush.length;
+  }
+
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('pushes the restored event on the SAME tick that demotes it, before any re-render', () => {
+    const harness = makeHarness([restoredShopping]);
+    // One poll tick: Google returns nothing for this id, and this instance has
+    // never seen it live, so the merge demotes rather than deletes.
+    const { events: merged } = applyPulled(harness, [], rangeStart, rangeEnd, new Set(['some-other-live-id']));
+    const pushedCount = pushSweep(harness, merged);
+
+    // The whole point: no commit/re-render happened between the two calls.
+    expect(pushedCount).toBe(1);
+    expect(harness.pushed).toEqual(['Shopping']);
+  });
+
+  it('regression: a sweep reading render-stale state pushes nothing (the original bug)', () => {
+    // Same tick, but the sweep reads a ref frozen at the last commit — what
+    // the code did before the fix. Proves the test above is actually testing
+    // the handoff and not passing for some incidental reason.
+    const harness = makeHarness([restoredShopping]);
+    const staleView = harness.eventsRef.current; // captured pre-merge, as the render body had it
+    applyPulled(harness, [], rangeStart, rangeEnd, new Set(['some-other-live-id']));
+    expect(pushSweep(harness, staleView)).toBe(0);
+    expect(harness.pushed).toEqual([]);
+  });
+
+  it('does not push the same event twice if a second tick lands before the commit', () => {
+    // The sweep stamps the new googleEventId onto eventsRef as well as state,
+    // so an overlapping tick can't see the event as unsynced again and mint a
+    // duplicate on the user's real calendar.
+    const harness = makeHarness([restoredShopping]);
+    const { events: merged } = applyPulled(harness, [], rangeStart, rangeEnd, new Set(['some-other-live-id']));
+    pushSweep(harness, merged);
+    // Push succeeded -> stamp the fresh id, exactly as the hook does.
+    harness.eventsRef.current = harness.eventsRef.current.map((e) =>
+      e.title === 'Shopping' ? { ...e, googleEventId: 'fresh-google-id', source: 'google' } : e
+    );
+    // A second tick starting before React committed anything.
+    expect(pushSweep(harness)).toBe(0);
+    expect(harness.pushed).toEqual(['Shopping']); // still exactly one push
+  });
+
+  it('leaves an event Google really deleted alone across the same handoff', () => {
+    // Guards against "fix it by pushing everything": an id this instance
+    // confirmed live and that Google no longer returns is a genuine remote
+    // delete, so the merge drops it and there is nothing to push.
+    const harness = makeHarness([restoredShopping]);
+    const { events: merged } = applyPulled(
+      harness,
+      [],
+      rangeStart,
+      rangeEnd,
+      new Set([restoredShopping.googleEventId])
+    );
+    expect(merged).toEqual([]);
+    expect(pushSweep(harness, merged)).toBe(0);
+  });
+
+  it('a plain restore is picked up by the next natural poll tick', () => {
+    // A plain restoreCloudBackup (not "restore & overwrite") triggers no pull
+    // or rewrite of its own — it relies entirely on the next 60s poll. That is
+    // fine now that the tick above actually works, but it is the reason the
+    // bug looked like "restores never sync": the one mechanism meant to catch
+    // them was the one that was broken.
+    const harness = makeHarness([]); // nothing yet
+    harness.setEvents([restoredShopping]); // restore applies backup state
+    harness.commit(); // ...and it renders
+    expect(harness.committed).toHaveLength(1);
+
+    const { events: merged } = applyPulled(harness, [], rangeStart, rangeEnd, new Set(['unrelated-live-id']));
+    expect(pushSweep(harness, merged)).toBe(1);
+    expect(harness.pushed).toEqual(['Shopping']);
+  });
+});

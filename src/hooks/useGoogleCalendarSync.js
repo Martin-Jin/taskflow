@@ -540,8 +540,29 @@ export function useGoogleCalendarSync({
   // poll, connect, manual pull) — applies the one-time hard reset instead of
   // the normal incremental merge for exactly the first pull after this fix
   // ships, then flips the flag so every subsequent call uses the normal
-  // merge. Returns whether this call was the reset pass, so callers can let
-  // the user know their calendar was just wiped and rebuilt.
+  // merge.
+  //
+  // Returns `{ didHardReset, events }`: whether this call was the reset pass
+  // (so callers can tell the user their calendar was just wiped and rebuilt),
+  // and — importantly — the MERGED event array itself, computed synchronously
+  // rather than only inside the setEvents updater.
+  //
+  // Why the merge is computed out here instead of inside the updater: the
+  // merge is what DEMOTES an event restored from a backup whose stored
+  // googleEventId no longer exists on Google back to unsynced
+  // (googleEventId: null), and the poll's push sweep immediately afterwards is
+  // what re-creates it on Google. A setEvents updater doesn't run
+  // synchronously — React queues it and only applies it on the next commit —
+  // so a same-tick push sweep reading `eventsRef.current` (assigned in the
+  // render body, i.e. the LAST COMMITTED render) still saw the event with its
+  // stale, dead googleEventId intact, and isUnsyncedPushableEvent's first
+  // check skipped it. The demotion and the push decision disagreed by exactly
+  // one render, every tick, forever: the event was never pushed until the user
+  // manually edited it (SchedulerContext's edit path pushes unconditionally,
+  // without consulting googleEventId — which is why a manual edit always
+  // worked and a passive poll never did). Returning the merged array lets the
+  // poll hand the FRESH list straight to the push sweep, so the same tick that
+  // demotes an event also pushes it.
   const applyPulledEvents = useCallback(
     (fetchedEvents, rangeStartIso, rangeEndIso) => {
       const didHardReset = !googleEventsHardResetDoneRef.current;
@@ -560,9 +581,11 @@ export function useGoogleCalendarSync({
       for (const e of fetchedEvents) {
         if (e.googleEventId) confirmedGoogleEventIdsRef.current.add(e.googleEventId);
       }
-      eventsChangedRef.current = false;
-      setEvents((prev) => {
-        const next = didHardReset
+      // The merge itself: a pure function of (previous events, fetched
+      // events), so it can be run eagerly here AND again inside the updater
+      // below without the two disagreeing.
+      const mergeAgainst = (prev) =>
+        didHardReset
           ? hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
           : mergePulledGoogleEvents(
               prev,
@@ -575,15 +598,32 @@ export function useGoogleCalendarSync({
               purgeBoundaryIso,
               confirmedGoogleEventIdsRef.current
             );
-        // Most poll ticks pull back the exact same events unchanged — only
-        // worth queuing an auto-rebalance when the merge actually altered
-        // something a task's scheduled block could conflict with (an event
-        // added/removed/moved in time), not on every 60s poll or tab-focus
-        // refresh regardless of whether anything changed. See
-        // eventsSignature's own doc comment for what counts as "changed".
-        if (eventsSignature(prev) !== eventsSignature(next)) eventsChangedRef.current = true;
-        return next;
-      });
+
+      // Merge once, eagerly, against the latest events this component has been
+      // given (eventsRef.current is assigned in the render body). Doing it here
+      // rather than only inside the setEvents updater is the whole fix: it
+      // makes the result available to this same synchronous tick, instead of a
+      // render behind it — see this callback's doc comment above.
+      const prevEvents = eventsRef.current || [];
+      const mergedEvents = mergeAgainst(prevEvents);
+      // Most poll ticks pull back the exact same events unchanged — only
+      // worth queuing an auto-rebalance when the merge actually altered
+      // something a task's scheduled block could conflict with (an event
+      // added/removed/moved in time), not on every 60s poll or tab-focus
+      // refresh regardless of whether anything changed. See
+      // eventsSignature's own doc comment for what counts as "changed".
+      eventsChangedRef.current = eventsSignature(prevEvents) !== eventsSignature(mergedEvents);
+      // Keep eventsRef in step immediately: the push sweep below (and any
+      // other same-tick reader) must not see the pre-merge list again before
+      // React commits this update.
+      eventsRef.current = mergedEvents;
+      // Still a FUNCTIONAL update, even though the merged value is already
+      // known: reuse it when `prev` is what we merged against (the normal
+      // case), and otherwise re-merge against whatever React actually holds.
+      // A plain setEvents(mergedEvents) would silently discard any other
+      // setEvents that landed in between — the poll awaits between fetch and
+      // merge, so that window is real, if narrow.
+      setEvents((prev) => (prev === prevEvents ? mergedEvents : mergeAgainst(prev)));
       // A hard reset wipes and replaces `events` wholesale — anything
       // outside THIS fetch's own range is gone regardless of what was synced
       // before, so the bounds reset to exactly this fetch's range rather than
@@ -603,7 +643,7 @@ export function useGoogleCalendarSync({
       // against meaningfully — see hardResetEventsFromGoogle's own doc for
       // why that's a one-time full replace).
       if (didHardReset || eventsChangedRef.current) onEventsChanged?.();
-      return didHardReset;
+      return { didHardReset, events: mergedEvents };
     },
     [setEvents, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, onEventsChanged]
   );
@@ -806,7 +846,7 @@ export function useGoogleCalendarSync({
             await requestAccessToken(true);
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
             const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
-            applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+            const { events: mergedEvents } = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
             markGoogleSyncSucceeded();
             // Also push any event still unsynced since the last tick — one
             // whose one-shot push at create/edit time failed, or one restored
@@ -814,11 +854,15 @@ export function useGoogleCalendarSync({
             // (see pushUnsyncedItemsToCalendar's doc comment; the other push
             // sites are the manual "Push to Google Calendar" button and
             // addManualEvent/updateEvent's own immediate pushes, none of which
-            // retry). Failures here are non-fatal to the poll itself — the
+            // retry). The merged list is passed in explicitly rather than left
+            // to be re-read from eventsRef: the demotion that makes a restored
+            // event pushable happened microseconds ago in the call above, and
+            // React hasn't committed it yet — see applyPulledEvents' doc
+            // comment. Failures here are non-fatal to the poll itself — the
             // next tick just retries whatever is still unsynced, so they're
             // logged rather than flagged stale/disconnected.
             try {
-              await pushUnsyncedItemsRef.current();
+              await pushUnsyncedItemsRef.current(mergedEvents);
             } catch (pushErr) {
               console.warn('[useGoogleCalendarSync] Auto-push of unsynced events failed; will retry next poll.', pushErr);
             }
@@ -1148,13 +1192,22 @@ export function useGoogleCalendarSync({
   //
   // ScheduledBlocks are deliberately NOT part of this (or any other) push
   // path: they are TaskFlow-only and have no Google Calendar presence at all.
-  const pushUnsyncedItemsToCalendar = useCallback(async () => {
+  //
+  // `eventsOverride` lets a caller that JUST computed a fresh merged event
+  // list pass it in directly instead of having this sweep re-read
+  // eventsRef.current. The poll does exactly that: its applyPulledEvents call
+  // is what demotes a restored-but-not-really-on-Google event back to
+  // unsynced, and without the override this sweep would run against the list
+  // as it stood BEFORE that demotion (see applyPulledEvents' doc comment for
+  // the full render-lag explanation). Callers with no fresher list to offer
+  // (the manual "Push to Google Calendar" button) omit it and get the ref.
+  const pushUnsyncedItemsToCalendar = useCallback(async (eventsOverride) => {
     // Events eligible to push: never one sourced from a subscribed/foreign
     // calendar (pushing that would create a duplicate copy of someone else's
     // event on the user's own primary calendar — the same rule the rewrite's
     // authoritative set uses), and never a legacy block-mirror row left over
     // from when blocks were still pushed (see isBlockSourcedEvent).
-    const toPushEvents = (eventsRef.current || []).filter(isUnsyncedPushableEvent);
+    const toPushEvents = (eventsOverride || eventsRef.current || []).filter(isUnsyncedPushableEvent);
     const pushedByEventId = new Map();
     // Per-item try/catch so one failure never aborts the sweep — the next tick
     // simply retries whatever is still out of sync.
@@ -1178,12 +1231,19 @@ export function useGoogleCalendarSync({
       // push, including flipping source to 'google' — a row left at 'manual'
       // after it exists on Google is permanently exempt from pull-driven
       // updates and deletion detection (see addManualEvent's own comment).
-      setEvents((prev) =>
-        prev.map((e) => {
+      const stampPushedIds = (list) =>
+        list.map((e) => {
           const result = pushedByEventId.get(e.id);
           return result ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e;
-        })
-      );
+        });
+      setEvents((prev) => stampPushedIds(prev));
+      // Mirror the stamp onto eventsRef immediately, for the same reason
+      // applyPulledEvents does: this sweep is async (a push per event), so
+      // another poll tick can start before React commits the update above. If
+      // eventsRef still held the pre-stamp list, that tick's sweep would see
+      // these events as unsynced again and push a SECOND copy of each to the
+      // user's real calendar — a duplicate that survives every later sync.
+      eventsRef.current = stampPushedIds(eventsRef.current || []);
     }
 
     // Reflects what actually succeeded, not what was attempted — a failed push
