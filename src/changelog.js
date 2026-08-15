@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.2.4',
+    date: '2026-08-15',
+    title: 'Fixed an intermittent crash when rescheduling',
+    changes: [
+      'Fixed an intermittent crash when re-balancing your schedule that sometimes meant clicking "Re-balance" more than once for it to actually go through. The schedule itself was usually still updated, but the crash cut the action short before the summary toast and the "couldn\'t be fully scheduled" details appeared, making it look like nothing had happened. It was most likely to strike when a reschedule was triggered automatically — for example just after editing a due date, or right after restoring a backup.',
+    ],
+  },
+  {
     version: '5.2.3',
     date: '2026-08-15',
     title: 'Restored calendar events no longer vanish, and past events are left alone',

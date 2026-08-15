@@ -19,7 +19,7 @@
  * ============================================================================
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 const MAX_HISTORY = 50; // Cap memory usage; oldest entries are dropped beyond this.
 
@@ -91,6 +91,31 @@ export function overwritePresentReducer(h, newTasksAndBlocksOrUpdater) {
 }
 
 /**
+ * Pure reducer behind `commitAndGet()` — extracted for the same reason as
+ * `commitReducer`/`overwritePresentReducer` above (the hook can't be rendered
+ * in this repo's node-environment unit suite), and tested alongside them.
+ *
+ * Runs `compute(current)` against the passed-in history, expecting it to
+ * return `{ next, value }`, and returns BOTH the new history and the caller's
+ * `value` — so a caller can read a value computed inside the updater without
+ * depending on when React chooses to run that updater. See `commitAndGet`
+ * below for the full rationale and the crash this fixed.
+ */
+export function commitAndGetReducer(h, compute, actionLabelOrFn) {
+  let value;
+  const history = commitReducer(
+    h,
+    (current) => {
+      const computed = compute(current);
+      value = computed.value;
+      return computed.next;
+    },
+    actionLabelOrFn
+  );
+  return { history, value };
+}
+
+/**
  * @param {{tasks: import('../types').Task[], blocks: import('../types').ScheduledBlock[]}} initialState
  */
 export function useHistoryState(initialState) {
@@ -107,6 +132,29 @@ export function useHistoryState(initialState) {
   }));
 
   /**
+   * Mirrors the LATEST QUEUED history — not the latest RENDERED one (that's
+   * `history` above, and `state` below). Every mutator here reduces against
+   * this ref eagerly and then hands the already-reduced result to
+   * `setHistory`, rather than reducing lazily inside a `setHistory(h => ...)`
+   * updater.
+   *
+   * This is what makes `commitAndGet` (and `commit`'s return value) able to
+   * report what a commit resolved to on the very next line, while keeping the
+   * same-tick batching guarantee the updater form was introduced for: several
+   * commits in one tick still each build on the previous one's result, since
+   * they all chain through this ref in call order — exactly what React does
+   * with queued updaters. Refs are written synchronously during the call, so
+   * unlike `stateRef` (refreshed in an effect, one render behind) this is
+   * never stale, and unlike a `setState` updater it isn't deferred.
+   *
+   * MUST be kept in lockstep by every mutator below (commit, commitAndGet,
+   * overwritePresent, undo, redo) — a mutator that updates `setHistory`
+   * without updating this ref would let the two diverge, and the next commit
+   * would silently reduce against a snapshot that no longer matches state.
+   */
+  const queuedHistoryRef = useRef(history);
+
+  /**
    * `newTasksAndBlocksOrUpdater` is normally a precomputed `{tasks, blocks}`
    * object — fine for the common case of one commit() per user action. But
    * when several commit() calls happen synchronously in the same tick with
@@ -117,37 +165,76 @@ export function useHistoryState(initialState) {
    * overwrote the previous one's addition instead of building on it — only
    * the last call in the batch would actually survive. Passing a function
    * `(current) => ({tasks, blocks})` instead lets the caller compute off
-   * `current`, which this always derives from the latest queued `h.present`
-   * (React processes queued setState updaters in order), fixing that for
-   * any same-tick sequence of commits, not just this one call site.
+   * `current`, which this always derives from the latest queued history (see
+   * `queuedHistoryRef`), fixing that for any same-tick sequence of commits,
+   * not just this one call site.
+   *
+   * Returns the resolved `{tasks, blocks}` — see `commitAndGet` below for
+   * callers that also need a value computed *inside* the updater.
    */
   const commit = useCallback((newTasksAndBlocksOrUpdater, actionLabelOrFn) => {
-    setHistory((h) => commitReducer(h, newTasksAndBlocksOrUpdater, actionLabelOrFn));
+    queuedHistoryRef.current = commitReducer(queuedHistoryRef.current, newTasksAndBlocksOrUpdater, actionLabelOrFn);
+    const resolved = queuedHistoryRef.current;
+    setHistory(() => resolved);
+    return { tasks: resolved.present.tasksSnapshot, blocks: resolved.present.blocksSnapshot };
+  }, []);
+
+  /**
+   * `commit()` variant for callers that must READ something computed inside
+   * the updater, synchronously, on the very next line — e.g.
+   * SchedulerContext's runRebalance, which needs the engine's
+   * `overflow`/`timeShifted`/`stats` to raise its toast and populate the
+   * conflicts modal.
+   *
+   * Why this exists: React does NOT promise a `setState` updater runs before
+   * `setState` returns. Under automatic batching — which is exactly what
+   * happens when the caller is a debounced `setTimeout` (queueDueDateRebalance)
+   * or an awaited promise continuation rather than a direct DOM event handler
+   * — the updater can be deferred to the next render pass. Callers that used
+   * to assign an engine result to an outer `let` inside the updater and read
+   * it straight after `commit()` therefore hit `undefined` intermittently
+   * (the real crash: "can't access property 'overflow', e is undefined").
+   *
+   * `compute` receives the same freshest-queued `{tasks, blocks}` a
+   * `commit()` updater would, and returns `{ next, value }`: `next` is the
+   * `{tasks, blocks}` to commit, `value` is whatever the caller needs back.
+   * The commit is still queued through `setHistory` exactly as before, so
+   * same-tick batching semantics are unchanged — the only difference is that
+   * the reducer runs eagerly against `queuedHistoryRef` instead of lazily
+   * inside the updater, so `value` is guaranteed populated on return.
+   */
+  const commitAndGet = useCallback((compute, actionLabelOrFn) => {
+    const { history: resolved, value } = commitAndGetReducer(queuedHistoryRef.current, compute, actionLabelOrFn);
+    queuedHistoryRef.current = resolved;
+    setHistory(() => resolved);
+    return value;
   }, []);
 
 
   // See overwritePresentReducer above for what this does and why it takes an
   // updater form as well as a plain object.
   const overwritePresent = useCallback((newTasksAndBlocksOrUpdater) => {
-    setHistory((h) => overwritePresentReducer(h, newTasksAndBlocksOrUpdater));
+    queuedHistoryRef.current = overwritePresentReducer(queuedHistoryRef.current, newTasksAndBlocksOrUpdater);
+    const resolved = queuedHistoryRef.current;
+    setHistory(() => resolved);
   }, []);
 
   const undo = useCallback(() => {
-    setHistory((h) => {
-      if (h.past.length === 0) return h;
-      const previous = h.past[h.past.length - 1];
-      const newPast = h.past.slice(0, -1);
-      return { past: newPast, present: previous, future: [h.present, ...h.future] };
-    });
+    const h = queuedHistoryRef.current;
+    if (h.past.length === 0) return;
+    const previous = h.past[h.past.length - 1];
+    const resolved = { past: h.past.slice(0, -1), present: previous, future: [h.present, ...h.future] };
+    queuedHistoryRef.current = resolved;
+    setHistory(() => resolved);
   }, []);
 
   const redo = useCallback(() => {
-    setHistory((h) => {
-      if (h.future.length === 0) return h;
-      const next = h.future[0];
-      const newFuture = h.future.slice(1);
-      return { past: [...h.past, h.present], present: next, future: newFuture };
-    });
+    const h = queuedHistoryRef.current;
+    if (h.future.length === 0) return;
+    const next = h.future[0];
+    const resolved = { past: [...h.past, h.present], present: next, future: h.future.slice(1) };
+    queuedHistoryRef.current = resolved;
+    setHistory(() => resolved);
   }, []);
 
   const canUndo = history.past.length > 0;
@@ -161,6 +248,7 @@ export function useHistoryState(initialState) {
   return {
     state,
     commit,
+    commitAndGet,
     overwritePresent,
     undo,
     redo,
