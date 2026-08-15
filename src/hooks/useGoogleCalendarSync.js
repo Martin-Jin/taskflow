@@ -6,15 +6,23 @@
  * Owns all Google Calendar connection state, silent re-auth, periodic polling,
  * visibility-change refresh, and event push/patch/delete orchestration.
  *
- * SCOPE: CalendarEvents only. ScheduledBlocks (TaskFlow's own scheduled task
- * work) are deliberately NOT synced to Google Calendar in any direction — no
- * create, update, delete, or orphan cleanup. Pushing blocks was tried and
- * removed: a block's id encodes its placement, so TaskFlow's scheduler
- * re-mints ids freely during a rebalance, and no amount of orphan-record
- * matching on top of that reliably told "this block moved" from "this block is
- * new", which kept manufacturing duplicate and missing Google events. Blocks
- * live in TaskFlow's own calendar views instead. Events created directly in
- * Google (or in TaskFlow) still sync both ways exactly as before.
+ * SCOPE: CalendarEvents sync both ways, exactly as before (unaffected by
+ * anything below). ScheduledBlocks (TaskFlow's own scheduled task work) are
+ * pushed ONE-WAY (TaskFlow -> Google, never read back) via
+ * `pushTodaysTasksToCalendar` below — but ONLY today's blocks, and only via
+ * DELETE-ALL-THEN-RECREATE, never by matching an old Google event to a
+ * specific block. A full identity-tracked version of this (persisted
+ * `googleEventId` per block, preserved across rebalances) was tried and
+ * removed (see 499783d): a block's id encodes its placement and is re-minted
+ * on every rebalance that moves it, so id-based matching could never reliably
+ * tell "this block moved" from "this is a new block", which manufactured
+ * duplicate/orphaned Google events across several rounds of attempted fixes.
+ * `pushTodaysTasksToCalendar` sidesteps that class of bug entirely by never
+ * tracking identity across a push at all — every run deletes everything it
+ * (or an earlier run) tagged for today and reinserts fresh from current
+ * state, the same fix already proven for `rewriteGoogleCalendarFromTaskflow`'s
+ * CalendarEvent rewrite (see computeCalendarRewritePlan's doc comment in
+ * googleCalendarService.js).
  *
  * Returns the Google-specific state and callbacks that SchedulerContext merges
  * into its own context value — nothing here talks to Firestore or manages
@@ -25,8 +33,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePersistedState } from './usePersistedState';
 import { toISODate, addDays, timeToMinutes, minutesToTime, isPast } from '../utils/dateUtils';
-import { RETENTION_DAYS_CALENDAR_EVENTS } from '../services/dataRetention';
+import { RETENTION_DAYS_CALENDAR_EVENTS, CLOUD_SYNC_DEBOUNCE_MS } from '../services/dataRetention';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
+import { isBlockTaskCompleted } from '../utils/missedTasks';
+import { computePushSingleFlightDecision } from './useCloudSync';
 import {
   fetchEvents as fetchGoogleEvents,
   pushEventToCalendar,
@@ -38,11 +48,13 @@ import {
   disconnectGoogleCalendar as disconnectGoogleCalendarService,
   shouldTreatAsReconnectNeeded,
   computeCalendarRewritePlan,
+  computeTodaysBlockPushPlan,
   isRateLimitError,
   chunkForBatch,
   batchDeleteCalendarEvents,
   batchInsertCalendarEvents,
   buildCalendarEventResource,
+  buildBlockEventResource,
   isBlockSourcedEvent,
 } from '../services/googleCalendarService';
 import {
@@ -140,6 +152,16 @@ const TRANSIENT_RETRY_DELAY_MS = 2000;
 const STALE_SYNC_WARNING_THRESHOLD_MS = 15 * 60 * 1000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Debounce for pushTodaysTasksToCalendar's trigger effect (see below). A
+// rebalance, a completion, or a cloud-merge can each touch several blocks in
+// one commit, and each is its own React state update — without debouncing,
+// the effect would fire (and the delete-all-then-recreate push run) once per
+// intermediate update instead of once for the settled result. Reuses
+// CLOUD_SYNC_DEBOUNCE_MS's own value rather than inventing a new constant:
+// this push is, like that one, "settle a burst of local edits, then do one
+// network round-trip" — no reason for a different wait here.
+const BLOCK_PUSH_DEBOUNCE_MS = CLOUD_SYNC_DEBOUNCE_MS;
 
 // ---- "Rewrite Google Calendar to match TaskFlow" pacing/retry -------------
 // A rewrite is by far the heaviest burst of Google API traffic this app ever
@@ -239,6 +261,78 @@ export function isUnsyncedPushableEvent(event) {
   if (isBlockSourcedEvent(event)) return false;
   if (isPastCalendarItem(event)) return false;
   return !!(event.date && event.startTime && event.endTime);
+}
+
+/**
+ * ============================================================================
+ * "Push today's scheduled task blocks to Google Calendar" — pure decisions
+ * ============================================================================
+ * See pushTodaysTasksToCalendar below for the full feature. These three pure
+ * functions compute WHAT belongs in today's push without touching any API or
+ * hook state, so they're unit-testable on their own.
+ * ============================================================================
+ */
+
+/**
+ * True if `block` (joined with its owning `task`) belongs in today's
+ * authoritative Google Calendar push.
+ *
+ * Excluded:
+ *   - `block.date !== todayIso`: only TODAY's blocks are ever pushed — this
+ *     feature has no notion of a wider sync window the way CalendarEvents do.
+ *   - no owning task found (a dangling block — shouldn't happen, but nothing
+ *     to build a resource from).
+ *   - `isBlockTaskCompleted(block, task)`: reuses the SAME completion check
+ *     TodayAgenda/DashboardStats already use (see missedTasks.js) to decide
+ *     whether a block is a live, still-scheduled item or a completed
+ *     historical record. This matters most for a RECURRING task: completing
+ *     today's occurrence advances the task to its NEXT due date and flips
+ *     `isCompleted` back to false (see SchedulerContext.completeTask), but
+ *     deliberately keeps today's block around, crossed out, as a completed
+ *     record for the calendar/agenda views — `task.completedDates` (not
+ *     `task.isCompleted`) is what actually marks THIS occurrence done, which
+ *     is exactly what isBlockTaskCompleted checks. Without reusing it here, a
+ *     completed recurring task's block would still read as "not completed"
+ *     (isCompleted is already false again) and get pushed to Google right
+ *     after the user just finished it — the opposite of what completing a
+ *     task should do to its calendar entry.
+ */
+export function isBlockEligibleForTodaysPush(block, task, todayIso) {
+  if (!block || block.date !== todayIso) return false;
+  if (!task) return false;
+  if (isBlockTaskCompleted(block, task)) return false;
+  return true;
+}
+
+/**
+ * Every `{ block, task }` pair that belongs in today's push — the
+ * authoritative set `computeTodaysBlockPushPlan`'s `toInsert` half is built
+ * from. Pure join + filter, exported so it (and the filter it applies) is
+ * unit-testable without needing the hook or a fetch.
+ */
+export function computeTodaysAuthoritativeBlocks(blocks, tasks, todayIso) {
+  const taskById = new Map((tasks || []).map((t) => [t.id, t]));
+  return (blocks || [])
+    .map((block) => ({ block, task: taskById.get(block.taskId) }))
+    .filter(({ block, task }) => isBlockEligibleForTodaysPush(block, task, todayIso));
+}
+
+/**
+ * Cheap signature of "everything that could change what today's push should
+ * look like" — the trigger effect below watches this instead of raw
+ * blocks/tasks arrays, so a change to an unrelated field (e.g. a task's
+ * description, or a block for a DIFFERENT day) never fires an unnecessary
+ * push. Mirrors eventsSignature's own reasoning above: order-independent
+ * (sorted) since a differently-ordered but otherwise-identical set isn't a
+ * real change, and deliberately narrow — only the fields that actually
+ * surface on the pushed Google event (title/priority/time) or gate
+ * eligibility (completion) are included.
+ */
+export function computeTodaysBlockPushSignature(blocks, tasks, todayIso) {
+  return computeTodaysAuthoritativeBlocks(blocks, tasks, todayIso)
+    .map(({ block, task }) => `${block.id}|${block.date}|${block.startTime}|${block.endTime}|${task.title}|${task.priority}`)
+    .sort()
+    .join('\n');
 }
 
 /**
@@ -350,6 +444,11 @@ async function runBatchesWithRetry(items, runBatch, keyOf, onBatchDone) {
  * @param {Object} deps
  * @param {Array} deps.events - Current events array (from useState in SchedulerContext)
  * @param {Function} deps.setEvents - Setter for events
+ * @param {Array} deps.tasks - Current tasks array — read-only here, only to
+ *   join against `blocks` for pushTodaysTasksToCalendar's authoritative set.
+ * @param {Array} deps.blocks - Current ScheduledBlocks array — same read-only
+ *   use as `tasks`. Neither is ever written back to; this hook has no other
+ *   reason to know about tasks/blocks at all (see this file's module doc).
  * @param {Function} deps.setNotification - Toast notification setter
  * @param {boolean} deps.authLoading - True while Firebase is still restoring auth state
  * @param {Function} deps.onEventsChanged - Called when a pull changed something schedule-relevant
@@ -358,6 +457,8 @@ async function runBatchesWithRetry(items, runBatch, keyOf, onBatchDone) {
 export function useGoogleCalendarSync({
   events,
   setEvents,
+  tasks,
+  blocks,
   setNotification,
   authLoading,
   onEventsChanged,
@@ -479,12 +580,30 @@ export function useGoogleCalendarSync({
   const eventsRef = useRef(events);
   eventsRef.current = events;
 
+  // Latest tasks/blocks, mirrored the same way as eventsRef above — read only
+  // by pushTodaysTasksToCalendar's trigger effect and the function itself, so
+  // a debounced/queued push always computes against CURRENT state rather than
+  // whatever was closed over when it was scheduled.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
+
   // Populated below (near "Push events to Google Calendar") with a function
   // that pushes every CalendarEvent lacking a googleEventId — kept in a ref,
   // same reasoning as pollGoogleEventsRef, so the periodic-poll effect (which
   // only depends on googleConnected) can call the latest version without
   // needing to be redefined whenever state changes.
   const pushUnsyncedItemsRef = useRef(async () => ({ events: 0 }));
+
+  // Populated below (near "Push today's scheduled task blocks to Google
+  // Calendar") with runTodaysTaskBlockPushNow — same ref-indirection reasoning
+  // as pushUnsyncedItemsRef above. Called directly (not debounced) by the
+  // periodic poll and the visibility/focus refresh below: those are already
+  // throttled by their own interval/REFRESH_THROTTLE_MS, and an immediate call
+  // (rather than routing through the debounced scheduleTodaysTaskBlockPush) is
+  // what makes day-rollover reliable — see this ref's call sites for why.
+  const blockPushTriggerRef = useRef(async () => {});
 
   // Populated below (near "connectGoogleCalendar") once that callback exists —
   // every "disconnected" warning notification fires from an effect defined
@@ -893,6 +1012,23 @@ export function useGoogleCalendarSync({
             } catch (pushErr) {
               console.warn('[useGoogleCalendarSync] Auto-push of unsynced events failed; will retry next poll.', pushErr);
             }
+            // Also re-run today's task-block push on every poll tick — this is
+            // what makes day rollover work even if the tab has been sitting
+            // open/backgrounded across midnight and no local block/task change
+            // ever fires the debounced trigger effect on its own:
+            // runTodaysTaskBlockPushNow always recomputes `todayIso` fresh, so
+            // a tick that lands after midnight naturally deletes yesterday's
+            // now-stale tagged events and pushes today's. Goes through the
+            // SAME single-flight guard as every other trigger, so this can
+            // never overlap the debounced effect's own run — it just no-ops
+            // (and queues a follow-up) if one is already in flight. Failures
+            // are logged, not surfaced — same "next tick retries" reasoning as
+            // the unsynced-events push just above.
+            try {
+              await blockPushTriggerRef.current();
+            } catch (blockPushErr) {
+              console.warn('[useGoogleCalendarSync] Auto-push of today\'s task blocks failed; will retry next poll.', blockPushErr);
+            }
             return;
           } catch (err) {
             // Confirmed auth failure — fail fast, no retry benefit, and its
@@ -972,6 +1108,12 @@ export function useGoogleCalendarSync({
   // switching back to this browser tab (visibilitychange) and clicking back
   // into this window when it was merely unfocused rather than hidden, e.g.
   // two windows side by side (focus) — either alone can miss the other case.
+  // `refreshIfDue` below calls the SAME `poll` function the periodic-poll
+  // effect defines (via pollGoogleEventsRef), which now also re-runs today's
+  // task-block push on every call — so this refresh is what makes day
+  // rollover reliable for a tab that was backgrounded/asleep across midnight
+  // and only comes back to the foreground well after the 60s poll would have
+  // caught it on its own; no separate wiring needed here.
   useEffect(() => {
     if (!googleConnected) return undefined;
 
@@ -1213,8 +1355,11 @@ export function useGoogleCalendarSync({
   // sweep is what then re-creates them on Google — see
   // confirmedGoogleEventIdsRef and eventSyncService's isGoogleConfirmed.
   //
-  // ScheduledBlocks are deliberately NOT part of this (or any other) push
-  // path: they are TaskFlow-only and have no Google Calendar presence at all.
+  // ScheduledBlocks are NOT part of this sweep — they have their own separate,
+  // one-way, delete-all-then-recreate push (pushTodaysTasksToCalendar below),
+  // which follows a fundamentally different policy (today-only, no
+  // per-item retry-if-unsynced state) and must not be conflated with this
+  // CalendarEvent sweep.
   //
   // `eventsOverride` lets a caller that JUST computed a fresh merged event
   // list pass it in directly instead of having this sweep re-read
@@ -1293,6 +1438,134 @@ export function useGoogleCalendarSync({
       setIsPullingGoogleEvents(false);
     }
   }, [pushUnsyncedItemsToCalendar, setNotification]);
+
+  // ---- Push today's scheduled task blocks to Google Calendar ---------------
+  // One-way (TaskFlow -> Google, never read back), automatic, silent — no
+  // manual button, per explicit product decision. See this file's module doc
+  // for why this is DELETE-ALL-THEN-RECREATE rather than the id-tracked
+  // version that was removed: a block's id is re-minted on every rebalance
+  // that moves it, so nothing here ever tries to match an old Google event to
+  // a specific block. Every run deletes every Google event on the primary
+  // calendar, for TODAY, tagged with TASKFLOW_BLOCK_PROPERTY_KEY (whether
+  // created by this run's predecessor or an earlier one), then re-inserts
+  // fresh from whatever `computeTodaysAuthoritativeBlocks` currently says
+  // belongs there. Recomputing `todayIso` fresh on every call (rather than
+  // once at mount) is also what makes day rollover work for free — see the
+  // trigger effect and the visibility/poll hookups below for what actually
+  // re-invokes this AFTER midnight while the tab is sitting open.
+  //
+  // SINGLE-FLIGHT + QUEUE-ONE-FOLLOW-UP, structurally identical to
+  // useCloudSync's runPushNow/computePushSingleFlightDecision (imported
+  // directly rather than re-implemented — same decision, same shape: "is a
+  // push already on the wire?"). This is the ONLY trigger path for this
+  // feature (the debounced effect below), but the guard still matters: the
+  // effect can fire again (a fresh block change) while a previous push's
+  // several batched delete/insert calls are still in flight, and without
+  // this guard two concurrent delete-all-then-recreate runs could interleave
+  // their phases (e.g. run B's delete phase removing events run A's insert
+  // phase just created moments before, or both runs inserting their own copy
+  // of the same block) — exactly the "duplicate/orphan" failure class this
+  // whole feature exists to avoid. Coalescing into exactly one guaranteed
+  // follow-up (rather than dropping a skipped call) is what avoids the
+  // "have to trigger twice for it to stick" risk: the follow-up re-reads
+  // tasksRef/blocksRef fresh, so it necessarily reflects every change made
+  // while the wire was busy.
+  const blockPushInFlightRef = useRef(false);
+  const blockPushQueuedRef = useRef(false);
+  const runBlockPushNowRef = useRef(null);
+  const blockPushDebounceTimeoutRef = useRef(null);
+
+  const runTodaysTaskBlockPushNow = useCallback(async () => {
+    if (!googleConnected) return;
+    const { proceed, queue } = computePushSingleFlightDecision(blockPushInFlightRef.current);
+    if (!proceed) {
+      if (queue) blockPushQueuedRef.current = true;
+      return;
+    }
+    blockPushInFlightRef.current = true;
+    try {
+      const todayIso = toISODate(new Date());
+      const authoritativeBlocks = computeTodaysAuthoritativeBlocks(blocksRef.current || [], tasksRef.current || [], todayIso);
+      const { toDelete, toInsert } = await computeTodaysBlockPushPlan(authoritativeBlocks, todayIso);
+
+      if (toDelete.length === 0 && toInsert.length === 0) return; // nothing on Google, nothing to push — common case
+
+      // Same batched delete/insert primitives the CalendarEvent rewrite uses
+      // (see runBatchesWithRetry above) — no reason to reimplement pacing/
+      // retry/chunking for a second delete-all-then-recreate feature.
+      await runBatchesWithRetry(toDelete, (chunk) => batchDeleteCalendarEvents(chunk), (googleEventId) => googleEventId, () => {});
+
+      const insertEntries = toInsert
+        .map(({ block, task }) => ({ id: `block:${block.id}`, resource: buildBlockEventResource(block, task) }))
+        .filter((entry) => entry.resource.start?.dateTime && entry.resource.end?.dateTime);
+      await runBatchesWithRetry(insertEntries, (chunk) => batchInsertCalendarEvents(chunk), (entry) => entry.id, () => {});
+      // No local state to stamp: ScheduledBlocks deliberately carry no
+      // googleEventId (see this file's module doc) — the next push's
+      // tag-filtered fetch is what finds these again, not any id kept here.
+    } catch (err) {
+      // Best-effort and silent by design (no manual button, no toast) — the
+      // next trigger (another block change, a poll tick, or a visibility
+      // refresh) simply retries against then-current state. Logged so a
+      // persistent failure is still visible in the console.
+      console.warn('[useGoogleCalendarSync] Push today\'s task blocks to Google Calendar failed; will retry on next trigger.', err);
+    } finally {
+      blockPushInFlightRef.current = false;
+      if (blockPushQueuedRef.current) {
+        blockPushQueuedRef.current = false;
+        runBlockPushNowRef.current?.();
+      }
+    }
+  }, [googleConnected]);
+  runBlockPushNowRef.current = runTodaysTaskBlockPushNow;
+  blockPushTriggerRef.current = runTodaysTaskBlockPushNow;
+
+  // Debounced entry point — see BLOCK_PUSH_DEBOUNCE_MS's own comment. Exposed
+  // via a ref (pollGoogleEventsRef's own pattern) so the periodic poll and the
+  // visibility/focus refresh below can trigger an immediate (non-debounced)
+  // run for day-rollover, while the signature-watching effect below uses the
+  // debounced path for ordinary same-day edits.
+  const scheduleTodaysTaskBlockPush = useCallback(() => {
+    if (blockPushDebounceTimeoutRef.current) clearTimeout(blockPushDebounceTimeoutRef.current);
+    blockPushDebounceTimeoutRef.current = setTimeout(() => {
+      blockPushDebounceTimeoutRef.current = null;
+      runTodaysTaskBlockPushNow();
+    }, BLOCK_PUSH_DEBOUNCE_MS);
+  }, [runTodaysTaskBlockPushNow]);
+
+  // Trigger: watches a cheap signature of "today's blocks + the task fields
+  // that affect what's pushed" (see computeTodaysBlockPushSignature) instead
+  // of needing to be called from every individual mutation site (rebalance,
+  // completion, cloud-merge, drag-drop, manual edit all naturally change this
+  // signature on their own). Recomputed on every render — cheap relative to
+  // the network call it may schedule — and only actually schedules a push
+  // when the signature changed, via the ref-compare below (mirrors
+  // eventsSignature's own "only queue when something changed" reasoning).
+  const lastBlockPushSignatureRef = useRef(null);
+  useEffect(() => {
+    if (!googleConnected) return;
+    const todayIso = toISODate(new Date());
+    const signature = computeTodaysBlockPushSignature(blocks || [], tasks || [], todayIso);
+    if (signature === lastBlockPushSignatureRef.current) return;
+    lastBlockPushSignatureRef.current = signature;
+    scheduleTodaysTaskBlockPush();
+  }, [googleConnected, blocks, tasks, scheduleTodaysTaskBlockPush]);
+
+  // Cancel any pending debounced push the moment Google Calendar disconnects
+  // (runTodaysTaskBlockPushNow's own `if (!googleConnected) return` guard
+  // would otherwise still let an already-scheduled timer fire and no-op late,
+  // which is harmless but pointless), and unconditionally on unmount so a
+  // stray timer never fires after the component using this hook is gone.
+  useEffect(() => {
+    if (!googleConnected && blockPushDebounceTimeoutRef.current) {
+      clearTimeout(blockPushDebounceTimeoutRef.current);
+      blockPushDebounceTimeoutRef.current = null;
+    }
+  }, [googleConnected]);
+  useEffect(() => {
+    return () => {
+      if (blockPushDebounceTimeoutRef.current) clearTimeout(blockPushDebounceTimeoutRef.current);
+    };
+  }, []);
 
   const [isRewritingCalendar, setIsRewritingCalendar] = useState(false);
   // { done, total } | null — live progress through the rewrite's delete+insert

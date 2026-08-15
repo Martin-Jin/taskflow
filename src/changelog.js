@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '5.4.0',
+    date: '2026-08-16',
+    title: "Today's scheduled tasks now show up on Google Calendar",
+    changes: [
+      "Tasks scheduled for today now appear on your Google Calendar automatically, alongside your regular calendar events — no button to click. Google Calendar always mirrors what TaskFlow currently has scheduled for today: complete a task and its entry disappears, rebalance or edit your schedule and it updates to match. Only today's tasks are synced this way; anything scheduled for another day stays in TaskFlow only, exactly as before. This sync is one-way (TaskFlow to Google) — Google Calendar is never the source of truth for these and editing one there directly won't change anything in TaskFlow.",
+      "This is a different (and more careful) design than an earlier version of this feature that was removed a few versions back for creating duplicate and missing calendar entries. Rather than trying to track each task's Google Calendar entry individually across schedule changes, TaskFlow now simply replaces the full set each time something changes, which avoids that whole class of bug.",
+    ],
+  },
+  {
     version: '5.3.3',
     date: '2026-08-16',
     title: 'Cross-device sync no longer waits for the other device to reopen',

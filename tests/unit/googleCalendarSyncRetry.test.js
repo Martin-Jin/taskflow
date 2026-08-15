@@ -25,6 +25,13 @@
  *     inserting two identical Google events in one run.
  *   - `isPastCalendarItem` — the "history is frozen" rule gating every
  *     outbound write.
+ *   - `isBlockEligibleForTodaysPush` / `computeTodaysAuthoritativeBlocks` /
+ *     `computeTodaysBlockPushSignature` — the pure decisions behind
+ *     pushTodaysTasksToCalendar (see this file's module doc), the one-way,
+ *     delete-all-then-recreate push of today's ScheduledBlocks. These decide
+ *     WHAT belongs in a push and WHEN the trigger effect should schedule one;
+ *     the actual delete/insert plan (planTodaysBlockPush) is covered in
+ *     googleCalendarService.test.js alongside its sibling planCalendarRewrite.
  * ============================================================================
  */
 
@@ -35,6 +42,9 @@ import {
   isUnsyncedPushableEvent,
   isPastCalendarItem,
   dedupeAuthoritativeItems,
+  isBlockEligibleForTodaysPush,
+  computeTodaysAuthoritativeBlocks,
+  computeTodaysBlockPushSignature,
 } from '../../src/hooks/useGoogleCalendarSync.js';
 import { isBlockSourcedEvent } from '../../src/services/googleCalendarService.js';
 import { mergePulledGoogleEvents } from '../../src/services/eventSyncService.js';
@@ -499,5 +509,142 @@ describe('poll tick handoff: the demotion and the push sweep must agree WITHIN o
     const { events: merged } = applyPulled(harness, [], rangeStart, rangeEnd, new Set(['unrelated-live-id']));
     expect(pushSweep(harness, merged)).toBe(1);
     expect(harness.pushed).toEqual(['Shopping']);
+  });
+});
+
+describe('isBlockEligibleForTodaysPush — what belongs in the today\'s-blocks push', () => {
+  const todayIso = '2026-08-16';
+  const task = { id: 't1', title: 'Write report', priority: 'high', isCompleted: false };
+  const block = { id: 'blk_1', taskId: 't1', date: todayIso, startTime: '09:00', endTime: '10:00' };
+
+  it('is eligible: a plain, not-yet-completed task scheduled for today', () => {
+    expect(isBlockEligibleForTodaysPush(block, task, todayIso)).toBe(true);
+  });
+
+  it('excludes a block for a different day than today', () => {
+    expect(isBlockEligibleForTodaysPush({ ...block, date: '2026-08-15' }, task, todayIso)).toBe(false);
+    expect(isBlockEligibleForTodaysPush({ ...block, date: '2026-08-17' }, task, todayIso)).toBe(false);
+  });
+
+  it('excludes a block whose task is completed (non-recurring)', () => {
+    expect(isBlockEligibleForTodaysPush(block, { ...task, isCompleted: true }, todayIso)).toBe(false);
+  });
+
+  it('excludes a dangling block with no owning task', () => {
+    expect(isBlockEligibleForTodaysPush(block, null, todayIso)).toBe(false);
+    expect(isBlockEligibleForTodaysPush(block, undefined, todayIso)).toBe(false);
+  });
+
+  it('handles a missing/null block gracefully', () => {
+    expect(isBlockEligibleForTodaysPush(null, task, todayIso)).toBe(false);
+  });
+
+  describe('recurring tasks: today\'s occurrence must be excluded once completed, even though isCompleted has already flipped back to false', () => {
+    // SchedulerContext.completeTask advances a recurring task to its NEXT due
+    // date and flips isCompleted back to false immediately on completion —
+    // but deliberately KEEPS today's block around as a crossed-out historical
+    // record (see completeTask's own comment). isBlockTaskCompleted answers
+    // "was THIS block's occurrence completed" via completedDates instead of
+    // the task's current isCompleted, and this eligibility check must defer
+    // to it — otherwise a just-completed recurring task's block would read as
+    // "not completed" and get pushed right back to Google.
+    const recurringTask = { id: 't2', title: 'Water plants', priority: 'low', isRecurring: true, isCompleted: false, completedDates: [todayIso] };
+    const recurringBlock = { id: 'blk_2', taskId: 't2', date: todayIso, startTime: '08:00', endTime: '08:15' };
+
+    it('excludes today\'s block once its occurrence is in completedDates', () => {
+      expect(isBlockEligibleForTodaysPush(recurringBlock, recurringTask, todayIso)).toBe(false);
+    });
+
+    it('still includes a recurring task\'s block whose occurrence is NOT yet completed', () => {
+      const notYetDone = { ...recurringTask, completedDates: [] };
+      expect(isBlockEligibleForTodaysPush(recurringBlock, notYetDone, todayIso)).toBe(true);
+    });
+
+    it('does not exclude based on a DIFFERENT day\'s completedDates entry', () => {
+      const completedYesterday = { ...recurringTask, completedDates: ['2026-08-15'] };
+      expect(isBlockEligibleForTodaysPush(recurringBlock, completedYesterday, todayIso)).toBe(true);
+    });
+  });
+});
+
+describe('computeTodaysAuthoritativeBlocks — joining blocks to tasks for the push', () => {
+  const todayIso = '2026-08-16';
+  const tasks = [
+    { id: 't1', title: 'Write report', priority: 'high', isCompleted: false },
+    { id: 't2', title: 'Done already', priority: 'low', isCompleted: true },
+  ];
+  const blocks = [
+    { id: 'blk_1', taskId: 't1', date: todayIso, startTime: '09:00', endTime: '10:00' },
+    { id: 'blk_2', taskId: 't2', date: todayIso, startTime: '11:00', endTime: '11:30' }, // completed task's block
+    { id: 'blk_3', taskId: 't1', date: '2026-08-17', startTime: '09:00', endTime: '10:00' }, // tomorrow
+  ];
+
+  it('includes only today\'s block for a not-yet-completed task', () => {
+    const result = computeTodaysAuthoritativeBlocks(blocks, tasks, todayIso);
+    expect(result).toHaveLength(1);
+    expect(result[0].block.id).toBe('blk_1');
+    expect(result[0].task.id).toBe('t1');
+  });
+
+  it('excludes a dangling block whose taskId matches nothing', () => {
+    const danglingBlocks = [{ id: 'blk_x', taskId: 'ghost', date: todayIso, startTime: '09:00', endTime: '10:00' }];
+    expect(computeTodaysAuthoritativeBlocks(danglingBlocks, tasks, todayIso)).toEqual([]);
+  });
+
+  it('handles empty/missing inputs without throwing', () => {
+    expect(computeTodaysAuthoritativeBlocks([], [], todayIso)).toEqual([]);
+    expect(computeTodaysAuthoritativeBlocks(null, null, todayIso)).toEqual([]);
+    expect(computeTodaysAuthoritativeBlocks(undefined, undefined, todayIso)).toEqual([]);
+  });
+});
+
+describe('computeTodaysBlockPushSignature — the trigger effect\'s change signal', () => {
+  const todayIso = '2026-08-16';
+  const tasks = [{ id: 't1', title: 'Write report', priority: 'high', isCompleted: false }];
+  const blocks = [{ id: 'blk_1', taskId: 't1', date: todayIso, startTime: '09:00', endTime: '10:00' }];
+
+  it('is stable across calls when nothing changed', () => {
+    expect(computeTodaysBlockPushSignature(blocks, tasks, todayIso)).toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
+  });
+
+  it('is order-independent — reordering the same blocks/tasks is not a real change', () => {
+    const tasksReordered = [...tasks].reverse();
+    const blocksReordered = [...blocks].reverse();
+    expect(computeTodaysBlockPushSignature(blocks, tasks, todayIso)).toBe(
+      computeTodaysBlockPushSignature(blocksReordered, tasksReordered, todayIso)
+    );
+  });
+
+  it('changes when a block\'s time changes', () => {
+    const moved = [{ ...blocks[0], startTime: '10:00', endTime: '11:00' }];
+    expect(computeTodaysBlockPushSignature(moved, tasks, todayIso)).not.toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
+  });
+
+  it('changes when a task\'s title changes', () => {
+    const renamed = [{ ...tasks[0], title: 'Write final report' }];
+    expect(computeTodaysBlockPushSignature(blocks, renamed, todayIso)).not.toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
+  });
+
+  it('changes when a task\'s priority changes', () => {
+    const reprioritized = [{ ...tasks[0], priority: 'urgent' }];
+    expect(computeTodaysBlockPushSignature(blocks, reprioritized, todayIso)).not.toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
+  });
+
+  it('changes when a task is completed (its block drops out of the authoritative set)', () => {
+    const completed = [{ ...tasks[0], isCompleted: true }];
+    expect(computeTodaysBlockPushSignature(blocks, completed, todayIso)).not.toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
+  });
+
+  it('is unaffected by a change to a block on a DIFFERENT day', () => {
+    const withTomorrow = [...blocks, { id: 'blk_2', taskId: 't1', date: '2026-08-17', startTime: '09:00', endTime: '10:00' }];
+    expect(computeTodaysBlockPushSignature(withTomorrow, tasks, todayIso)).toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
+  });
+
+  it('rolls over on day change even with identical blocks/tasks — a new day means a new authoritative set', () => {
+    // Not literally true today (todayIso is baked into the block dates), but
+    // documents the property computeTodaysAuthoritativeBlocks relies on: a
+    // signature computed against a DIFFERENT todayIso for the SAME blocks
+    // array (none of which are dated for that other day) is empty/distinct.
+    expect(computeTodaysBlockPushSignature(blocks, tasks, '2026-08-17')).not.toBe(computeTodaysBlockPushSignature(blocks, tasks, todayIso));
   });
 });

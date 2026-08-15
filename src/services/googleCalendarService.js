@@ -777,31 +777,45 @@ function withSyntheticSeries(events) {
  * Google's private extended properties (visible only to this app, never shown
  * to the user or synced to other clients).
  *
- * LEGACY ONLY. TaskFlow used to push each ScheduledBlock to Google Calendar as
- * an event, tagged with this private extended property (and, in older builds
- * still, only a "📋 " title prefix). That was removed — blocks are TaskFlow-only
- * now and nothing writes this marker anymore (see useGoogleCalendarSync.js's
- * module doc for why block-push was dropped).
+ * HISTORY: TaskFlow originally pushed every ScheduledBlock to Google Calendar,
+ * tracking each one's identity via a persisted `googleEventId` preserved
+ * across rebalances. That was removed (see 499783d, "Stop pushing scheduled
+ * task blocks to Google Calendar") because a block's id encodes its placement
+ * and is re-minted on every rebalance, so id-based identity tracking could
+ * never reliably tell "this block moved" from "this is a new block" —
+ * manufacturing duplicate and orphaned Google events across several rounds of
+ * attempted fixes.
  *
- * The marker is still READ, because block-events pushed by those older builds
- * can still be sitting on a user's real Google Calendar. `isBlockSourcedEvent`
- * below recognizes them so the sync never re-pushes one as a fresh event and
- * the rewrite never re-creates one. They are deliberately NOT deleted from
- * Google — they're the user's own calendar data to clean up (or keep) as they
- * see fit.
+ * Block-push is back (see pushTodaysTasksToCalendar in
+ * useGoogleCalendarSync.js), but on a fundamentally different model: DELETE-
+ * ALL-THEN-RECREATE, never id-matching (same fix already proven for
+ * `computeCalendarRewritePlan` below). Every push cycle re-tags every event it
+ * creates with this marker and, on its NEXT run, deletes every currently-
+ * tagged-for-today event unconditionally before re-inserting fresh — so this
+ * marker is both written (on every insert) and read (to find what to delete),
+ * never used to match an old event to a specific block.
+ *
+ * `isBlockSourcedEvent` below also still recognizes the OLDER "📋 " title-only
+ * prefix (from builds that predate this marker, or the older removed feature)
+ * purely so a leftover from that era is never re-imported as a phantom local
+ * event — those legacy rows are untagged for a specific date's push and are
+ * left alone by the delete phase, which only targets events matching THIS
+ * push's own extended-property tag for today.
  */
 export const TASKFLOW_BLOCK_PROPERTY_KEY = 'taskflowBlockId';
 
 /**
- * True if an event is a leftover from when TaskFlow pushed ScheduledBlocks
- * (see TASKFLOW_BLOCK_PROPERTY_KEY). Pure/exported for unit testing.
+ * True if an event is TaskFlow's own mirror of a ScheduledBlock (see
+ * TASKFLOW_BLOCK_PROPERTY_KEY) — whether created by the current delete-all
+ * push or left over from an older build. Pure/exported for unit testing.
  *
- * Matches both the tagged shape and the older one: events pushed before the
- * marker existed carry no extended property at all, so they're identified by
- * the "📋 " title prefix this app used to write. That fallback is deliberately
- * narrow (prefix only) and only ever used to SKIP pushing — never to delete
- * anything — so a user's own event that happens to start with the same emoji
- * is at worst left alone rather than harmed.
+ * Matches both the tagged shape and the older, marker-less one: events pushed
+ * before the marker existed carry no extended property at all, so they're
+ * identified by the "📋 " title prefix this app has always written. That
+ * fallback is deliberately narrow (prefix only) and only ever used to SKIP
+ * pushing/importing — never to delete anything — so a user's own event that
+ * happens to start with the same emoji is at worst left alone rather than
+ * harmed.
  */
 export function isBlockSourcedEvent(event) {
   if (!event) return false;
@@ -823,6 +837,34 @@ export function buildCalendarEventResource(event) {
     start: { dateTime: `${event.date}T${event.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
     end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
     recurrence: event.recurrenceRule ? [`RRULE:${event.recurrenceRule}`] : undefined,
+  };
+}
+
+/**
+ * The Google Calendar event resource for a ScheduledBlock (today's-tasks push
+ * — see pushTodaysTasksToCalendar in useGoogleCalendarSync.js). Same shape the
+ * old, removed block-push feature used (title prefix, extended-property tag,
+ * priority colorId) — that mapping itself was never the problem; only the
+ * id-preserving identity tracking built on top of it was (see this feature's
+ * module doc in useGoogleCalendarSync.js). Deliberately carries NO
+ * `googleEventId` field anywhere: the new push is delete-all-then-recreate, so
+ * there is nothing to preserve an identity for.
+ */
+export function buildBlockEventResource(block, task) {
+  return {
+    summary: `📋 ${task.title}`,
+    description: task.notes || `Auto-scheduled by TaskFlow · Priority: ${task.priority}`,
+    start: { dateTime: `${block.date}T${block.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { dateTime: `${block.date}T${block.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    colorId: priorityToColorId(task.priority),
+    // Tag it as block-sourced so the next push's tag-filtered fetch (and any
+    // future pull) recognizes it as TaskFlow's own mirror — see
+    // TASKFLOW_BLOCK_PROPERTY_KEY. Keyed by the block's CURRENT id, purely as
+    // a human-inspectable label (e.g. via Google's own UI/API explorer) — it
+    // is never read back to match identity across a push; the next push's
+    // delete phase removes every tagged event unconditionally regardless of
+    // what this value is.
+    extendedProperties: { private: { [TASKFLOW_BLOCK_PROPERTY_KEY]: String(block.id) } },
   };
 }
 
@@ -1211,6 +1253,99 @@ export async function computeCalendarRewritePlan(authoritativeItems, startIso, e
 }
 
 /**
+ * ============================================================================
+ * "Push today's scheduled task blocks to Google Calendar" — planning
+ * ============================================================================
+ * See useGoogleCalendarSync.js's pushTodaysTasksToCalendar for the full
+ * feature (trigger, debounce, single-flight guard). This is its planning
+ * step, following the EXACT SAME delete-all-then-recreate shape as
+ * `computeCalendarRewritePlan`/`planCalendarRewrite` above — no per-block
+ * identity is ever matched between the fetched Google events and the
+ * authoritative blocks, for the same reason the rewrite abandoned that (see
+ * planCalendarRewrite's own doc comment): a block's id is re-minted on every
+ * rebalance that moves it, so nothing here could ever reliably tell "this
+ * block moved" from "this is a new block".
+ *
+ * SAFETY BOUNDARY, narrower than the rewrite's: only events on the PRIMARY
+ * calendar, in TODAY's date range, AND carrying TASKFLOW_BLOCK_PROPERTY_KEY
+ * are ever candidates for deletion — the tag check is what keeps this from
+ * ever touching a user's own real Google Calendar event or an ordinary synced
+ * CalendarEvent that merely happens to fall on today. `toDelete` is every
+ * such tagged event found; `toInsert` is every one of today's current
+ * authoritative blocks. Neither list is filtered against the other.
+ * ============================================================================
+ */
+
+/**
+ * Pure planning step (mirrors `planCalendarRewrite` above): given today's
+ * authoritative `{ block, task }` pairs and Google's OWN raw `events.list`
+ * items for today (already scoped to the primary calendar by the caller),
+ * compute what to delete and what to insert.
+ *
+ * `toDelete` is every item carrying TASKFLOW_BLOCK_PROPERTY_KEY, unconditional
+ * — the tag is the ONLY safety boundary (see module doc above), and no
+ * per-block identity is consulted to spare anything. `toInsert` is every
+ * authoritative block, untouched. Extracted as its own pure function (rather
+ * than inlined in computeTodaysBlockPushPlan below) purely so this decision is
+ * unit-testable without mocking `window.gapi` — same split as
+ * planCalendarRewrite/computeCalendarRewritePlan.
+ *
+ * @param {Array<{block: Object, task: Object}>} authoritativeBlocks
+ * @param {Array<Object>} googleEventsToday - raw events.list items for today,
+ *   PRIMARY calendar only (caller's responsibility, same as
+ *   planCalendarRewrite's `googleEventsInRange`).
+ * @returns {{ toDelete: string[], toInsert: Array<{block: Object, task: Object}> }}
+ */
+export function planTodaysBlockPush(authoritativeBlocks, googleEventsToday) {
+  const toDelete = googleEventsToday
+    .filter((e) => e.extendedProperties?.private?.[TASKFLOW_BLOCK_PROPERTY_KEY])
+    .map((e) => e.id);
+  return { toDelete, toInsert: authoritativeBlocks };
+}
+
+/**
+ * Fetch Google's current PRIMARY-calendar events for `todayIso` and compute a
+ * delete-all-then-recreate plan against `authoritativeBlocks` (today's
+ * still-active `{ block, task }` pairs — see
+ * isBlockEligibleForTodaysPush/computeTodaysAuthoritativeBlocks in
+ * useGoogleCalendarSync.js for how the caller builds this list). Falls back
+ * to an empty Google-side list (mock/offline mode) rather than throwing, so a
+ * disconnected session's trigger effect just no-ops safely.
+ *
+ * @param {Array<{block: Object, task: Object}>} authoritativeBlocks
+ * @param {string} todayIso - "YYYY-MM-DD", local date
+ * @returns {Promise<{ toDelete: string[], toInsert: Array<{block: Object, task: Object}> }>}
+ */
+export async function computeTodaysBlockPushPlan(authoritativeBlocks, todayIso) {
+  if (!gapiInited || !accessToken) {
+    return planTodaysBlockPush(authoritativeBlocks, []);
+  }
+
+  const { timeMin, timeMax } = computeFetchTimeRange(todayIso, todayIso);
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const items = [];
+  let pageToken;
+  do {
+    const resp = await window.gapi.client.calendar.events.list({
+      calendarId: 'primary',
+      timeMin,
+      timeMax,
+      timeZone: localTimeZone,
+      singleEvents: false,
+      ...(pageToken ? { pageToken } : {}),
+    });
+    items.push(...(resp.result.items || []));
+    pageToken = resp.result.nextPageToken;
+  } while (pageToken);
+  // Cancelled tombstones are excluded for the same reason
+  // computeCalendarRewritePlan excludes them: already gone, deleting again is
+  // just a wasted, noisily-failing call.
+  const liveItems = items.filter((e) => e.status !== 'cancelled');
+
+  return planTodaysBlockPush(authoritativeBlocks, liveItems);
+}
+
+/**
  * True if a gapi client error is a rate-limit (429) response — Google's
  * Calendar API returns this under sustained bursts (exactly what a rewrite's
  * batch of deletes+upserts can produce, unlike any existing single-item push
@@ -1383,7 +1518,7 @@ export async function batchInsertCalendarEvents(inserts) {
   return out;
 }
 
-function priorityToColorId(priority) {
+export function priorityToColorId(priority) {
   // Google Calendar colorId palette (1-11). Chosen for intuitive severity mapping.
   switch (priority) {
     case 'urgent':
