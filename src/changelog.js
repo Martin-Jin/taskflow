@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.6.0',
+    date: '2026-08-17',
+    title: 'Calendar event descriptions show much more text before scrolling',
+    changes: [
+      'The description box in a calendar event\'s detail view (e.g. a synced Google Calendar event) used to scroll after only about 3 lines. It now grows up to about 20 lines before scrolling kicks in, so a longer synced description (class details, meeting notes, etc.) is visible without extra scrolling.',
+    ],
+  },
+  {
     version: '5.5.7',
     date: '2026-08-17',
     title: 'Fixed the Board view "Add section" button size',
