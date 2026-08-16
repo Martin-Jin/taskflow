@@ -497,15 +497,19 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   const overdueCheckbox = page.locator('#notifOverdue');
   const dueTodayCheckbox = page.locator('#notifDueToday');
 
+  // #notifEmail is permanently disabled for every account except the one
+  // fixed uid the self-hosted notify-worker sends to (see SettingsPanel.jsx's
+  // EMAIL_NOTIFICATIONS_OWNER_UID / canUseEmailNotifications) — a guest E2E
+  // session can never toggle it, so it's excluded from this test.
+  await expect(emailCheckbox).toBeDisabled();
+
   const initialInApp = await inAppCheckbox.isChecked();
-  const initialEmail = await emailCheckbox.isChecked();
   const initialStartingSoon = await startingSoonCheckbox.isChecked();
   const initialOverdue = await overdueCheckbox.isChecked();
   const initialDueToday = await dueTodayCheckbox.isChecked();
 
   // Flip every toggle.
   await inAppCheckbox.setChecked(!initialInApp);
-  await emailCheckbox.setChecked(!initialEmail);
   await startingSoonCheckbox.setChecked(!initialStartingSoon);
   await overdueCheckbox.setChecked(!initialOverdue);
   await dueTodayCheckbox.setChecked(!initialDueToday);
@@ -516,7 +520,6 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   await gotoTab(page, 'Settings');
 
   await expect(page.locator('#notifInApp')).toHaveJSProperty('checked', !initialInApp);
-  await expect(page.locator('#notifEmail')).toHaveJSProperty('checked', !initialEmail);
   await expect(page.locator('#notifStartingSoon')).toHaveJSProperty('checked', !initialStartingSoon);
   await expect(page.locator('#notifOverdue')).toHaveJSProperty('checked', !initialOverdue);
   await expect(page.locator('#notifDueToday')).toHaveJSProperty('checked', !initialDueToday);
@@ -524,7 +527,6 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   // Restore original settings so this test is idempotent across reruns and
   // doesn't leave other specs with unexpected notification state.
   await page.locator('#notifInApp').setChecked(initialInApp);
-  await page.locator('#notifEmail').setChecked(initialEmail);
   await page.locator('#notifStartingSoon').setChecked(initialStartingSoon);
   await page.locator('#notifOverdue').setChecked(initialOverdue);
   await page.locator('#notifDueToday').setChecked(initialDueToday);

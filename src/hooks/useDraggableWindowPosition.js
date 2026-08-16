@@ -54,7 +54,7 @@ function getDefaultPosition() {
   };
 }
 
-export default function useDraggableWindowPosition({ onClick }) {
+export default function useDraggableWindowPosition({ onClick, contentSizeKey }) {
   const containerRef = useRef(null);
   const [position, setPosition] = useState(() => loadPersisted(STORAGE_KEY, null) ?? getDefaultPosition());
   const dragState = useRef(null); // { startX, startY, originX, originY, moved }
@@ -68,6 +68,16 @@ export default function useDraggableWindowPosition({ onClick }) {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Re-clamp whenever the caller's content changes size (e.g. TimerWidget
+  // gaining/losing rows as timers start/stop) — position only tracks the
+  // viewport by default, so a window anchored near the bottom edge could
+  // otherwise grow taller than the remaining space below it and push its own
+  // controls off-screen.
+  useEffect(() => {
+    if (contentSizeKey === undefined) return;
+    setPosition((prev) => clampPosition(prev, containerRef.current));
+  }, [contentSizeKey]);
 
   useEffect(() => {
     savePersisted(STORAGE_KEY, position);

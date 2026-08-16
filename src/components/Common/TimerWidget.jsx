@@ -42,7 +42,12 @@ export default function TimerWidget() {
   const { tasks, updateTask } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const [collapsed, setCollapsed] = useState(false);
-  const { style, handlers, headerRef } = useDraggableWindowPosition({ onClick: () => setCollapsed((v) => !v) });
+  const { style, handlers, headerRef } = useDraggableWindowPosition({
+    onClick: () => setCollapsed((v) => !v),
+    // Re-clamp position whenever the row count or collapsed state changes
+    // the widget's height (see the hook's own doc comment).
+    contentSizeKey: `${activeTimers.length}:${collapsed}`,
+  });
 
   // A task can be deleted while its timer is still running/paused — drop
   // that timer rather than leaving an orphaned row pointing at nothing.

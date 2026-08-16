@@ -54,6 +54,11 @@ test.describe('Timer widget / TimerContext', () => {
 
     await openTaskDetail(page, title);
 
+    // Timer controls live behind the header's "Timer" toggle button, which
+    // opens a popover hosting TaskTimerControl (see TaskDetailModal.jsx).
+    await page.getByRole('dialog').getByRole('button', { name: 'Timer', exact: true }).click();
+    await page.waitForTimeout(200);
+
     // No timer yet -> a "Start timer (MM:SS)" button (TaskTimerControl).
     const startBtn = page.getByRole('button', { name: /start timer/i });
     await expect(startBtn).toBeVisible();
@@ -91,6 +96,8 @@ test.describe('Timer widget / TimerContext', () => {
     // Re-opening the task's detail view should show "Start timer" again (no
     // timer entry left behind for this task).
     await openTaskDetail(page, title);
+    await page.getByRole('dialog').getByRole('button', { name: 'Timer', exact: true }).click();
+    await page.waitForTimeout(200);
     await expect(page.getByRole('button', { name: /start timer/i })).toBeVisible();
     await closeAnyModal(page);
 
@@ -109,6 +116,8 @@ test.describe('Timer widget / TimerContext', () => {
 
     // Start A's timer.
     await openTaskDetail(page, titleA);
+    await page.getByRole('dialog').getByRole('button', { name: 'Timer', exact: true }).click();
+    await page.waitForTimeout(200);
     await page.getByRole('button', { name: /start timer/i }).click();
     await page.waitForTimeout(300);
     await closeAnyModal(page);
@@ -117,6 +126,8 @@ test.describe('Timer widget / TimerContext', () => {
     // Start B's timer — TimerContext keys timers by taskId, so this should
     // add a second concurrent timer rather than replacing/blocking A's.
     await openTaskDetail(page, titleB);
+    await page.getByRole('dialog').getByRole('button', { name: 'Timer', exact: true }).click();
+    await page.waitForTimeout(200);
     await page.getByRole('button', { name: /start timer/i }).click();
     await page.waitForTimeout(300);
     await closeAnyModal(page);
