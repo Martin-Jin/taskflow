@@ -31,8 +31,11 @@
  * ============================================================================
  */
 
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
+
+/** Firestore caps a batch at 500 operations; chunk anything larger. */
+const MAX_BATCH_OPS = 500;
 
 /** One-time fetch of the user's synced data — see subscribeUserData below for live, ongoing updates. 
  * @returns {Promise<object|null>} the user's synced data, or null if they've never synced before. */
@@ -260,4 +263,25 @@ export async function getBackup(uid, backupId) {
 /** Deletes one backup by id. */
 export async function deleteBackup(uid, backupId) {
   await deleteDoc(doc(db, 'users', uid, 'backups', backupId));
+}
+
+/**
+ * Deletes several backups by id as batched writes rather than one `deleteDoc`
+ * call per id fired concurrently — a pool that's ballooned past its normal
+ * retention count (e.g. after pruning silently failed for a while) could
+ * otherwise burst dozens of simultaneous individual writes and exhaust
+ * Firestore's client-side write-stream queue (resource-exhausted), which
+ * then throttles every OTHER pending write in the app (including the main
+ * user-doc push) behind the same backoff. Batches are atomic per chunk, not
+ * across chunks — fine here since pruning is best-effort cleanup, not a
+ * transactional requirement.
+ */
+export async function deleteBackups(uid, backupIds) {
+  for (let i = 0; i < backupIds.length; i += MAX_BATCH_OPS) {
+    const batch = writeBatch(db);
+    for (const id of backupIds.slice(i, i + MAX_BATCH_OPS)) {
+      batch.delete(doc(db, 'users', uid, 'backups', id));
+    }
+    await batch.commit();
+  }
 }

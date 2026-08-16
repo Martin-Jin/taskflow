@@ -26,6 +26,7 @@ import {
   listManualBackups,
   getBackup,
   deleteBackup,
+  deleteBackups,
   pushGoogleCalendarStatus,
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
@@ -1621,13 +1622,12 @@ export function useCloudSync({
       const backups = await lister(user.uid);
       const idsToDelete = planAutoBackupPrune(backups, retentionCount, isAutomatic);
       if (idsToDelete.length === 0) return;
-      await Promise.all(
-        idsToDelete.map((id) =>
-          deleteBackup(user.uid, id).catch((err) => {
-            console.warn(`[useCloudSync] Failed to prune old ${label} backup`, id, err);
-          })
-        )
-      );
+      try {
+        await deleteBackups(user.uid, idsToDelete);
+      } catch (err) {
+        console.warn(`[useCloudSync] Failed to prune old ${label} backups`, err);
+        return;
+      }
       setCloudBackups((prev) => prev.filter((b) => !idsToDelete.includes(b.id)));
     },
     [user]
