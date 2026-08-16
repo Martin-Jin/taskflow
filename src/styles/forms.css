@@ -951,6 +951,15 @@
   color: var(--color-text-primary);
 }
 
+/* Calendar events' own description field grows much taller before
+   scrolling than the shared 3-line default above (matches the
+   maxLines:20 passed to useAutosizeTextarea in EventDetailModal) — a
+   synced event's Google Calendar description is often a long block of
+   class/meeting details worth seeing in full without extra scrolling. */
+.event-detail-notes-textarea {
+  max-height: calc(20 * 1.4em + 12px);
+}
+
 .detail-notes-textarea:hover {
   background: var(--color-bg-surface-hover);
 }

@@ -238,7 +238,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   }
 
   const descriptionRef = useRef(null);
-  useAutosizeTextarea(descriptionRef, description, { maxLines: 4.5 });
+  useAutosizeTextarea(descriptionRef, description, { maxLines: 20 });
 
   function handleSave() {
     if (!isReadOnly) {
@@ -421,7 +421,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
               <DetailField icon={AlignLeft} label="Description">
                 <textarea
                   ref={descriptionRef}
-                  className="detail-notes-textarea"
+                  className="detail-notes-textarea event-detail-notes-textarea"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Description"
