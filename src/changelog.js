@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.2',
+    date: '2026-08-16',
+    title: 'Fixed a race that could revert a just-dragged scheduled task, needing a retry to stick',
+    changes: [
+      "Fixed a timing bug where dragging a scheduled task to a new day/time could sometimes visibly snap into place and then immediately revert back to its old position, needing a second (or third) attempt before it actually stuck. A piece of internal bookkeeping cloud sync uses to detect \"did a local edit just happen while I was waiting on the network\" was only updating after React had already moved on to the next step, instead of immediately — during that gap, a cloud sync response arriving from the network could look like it was safe to apply, wrongly overwrite the drag you'd just made, and get reverted a moment later. Most noticeable while signed in with cloud sync active, since more background activity there made the gap more likely to be hit.",
+    ],
+  },
+  {
     version: '5.5.1',
     date: '2026-08-16',
     title: "Fixed today's Google Calendar sync sometimes getting permanently stuck at an old time",

@@ -469,10 +469,21 @@ export function SchedulerProvider({ children }) {
   // new local commit land while I was waiting on the network" from inside
   // an async callback/closure, where the `currentActionId` render value
   // would otherwise be stale.
+  //
+  // Assigned directly in the render body (NOT inside a useEffect) — same
+  // "assign in render, not effect" pattern useGoogleCalendarSync.js already
+  // uses for eventsRef/tasksRef/blocksRef, and for the same reason: a
+  // useEffect only flushes AFTER commit, leaving a real (if normally narrow)
+  // window where an async callback racing a fresh commit() could read the
+  // PRE-commit action id and wrongly conclude "no local edit landed" — the
+  // exact failure mode hasLocalEditRaced exists to catch. That window widens
+  // under load (many concurrent effects/timers deferring when a passive
+  // effect actually flushes — exactly the conditions a signed-in, cloud-sync
+  // session with several polling/debounced effects running at once
+  // produces), so a plain useEffect here was never actually safe, just
+  // usually fast enough not to be noticed.
   const currentActionIdRef = useRef(currentActionId);
-  useEffect(() => {
-    currentActionIdRef.current = currentActionId;
-  }, [currentActionId]);
+  currentActionIdRef.current = currentActionId;
 
   // Bottom-corner "Task added"/"Event saved"-style toasts with an inline
   // Undo, replacing the old always-on topbar text label. A small queue
