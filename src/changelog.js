@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.4',
+    date: '2026-08-16',
+    title: 'Calendar cluster chips now show more titles on taller chips',
+    changes: [
+      'A calendar cluster chip (the "N more" style chip standing in for several small events/tasks squeezed together) now stacks each item\'s title on its own line, and shows as many titles as fit the chip\'s actual height instead of always cramming everything onto one truncated line — with a "+N more" line for anything that still doesn\'t fit.',
+    ],
+  },
+  {
     version: '5.5.3',
     date: '2026-08-16',
     title: 'Fixed the timer widget growing off-screen with multiple timers running',

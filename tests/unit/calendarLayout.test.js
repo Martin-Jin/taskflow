@@ -506,46 +506,83 @@ describe('packLane', () => {
   });
 });
 
-describe('cluster label (real event titles instead of a generic summary)', () => {
-  // clusterLabel itself lives in WeekView.jsx (it's pure DOM-label
-  // formatting, not layout math), so these tests exercise the same
-  // truncation contract via a local copy of its logic to keep this file
-  // focused on layout — see WeekView.jsx's own clusterLabel for the
-  // authoritative implementation and tests/e2e for the rendered result.
-  function clusterLabel(items, budget = 42) {
+describe('cluster label (vertical stack of real event titles instead of a generic summary)', () => {
+  // clusterLabel/clusterMaxTitleLines themselves live in WeekView.jsx (pure
+  // DOM-label formatting, not layout math), so these tests exercise the same
+  // contract via a local copy of the logic to keep this file focused on
+  // layout — see WeekView.jsx's own implementations for the authoritative
+  // version and tests/e2e for the rendered result. Titles now stack one per
+  // line (an array of lines) rather than a single comma-joined string, sized
+  // to however many lines the chip's own pixel height has room for.
+  const LINE_CHAR_BUDGET = 22;
+  const LINE_HEIGHT_PX = 15;
+  const VERTICAL_CHROME_PX = 10;
+
+  function clusterLabel(items, maxLines) {
     const titles = items.map((it) => it.data.title || 'Untitled');
-    let out = '';
-    for (let i = 0; i < titles.length; i++) {
-      const candidate = out ? `${out}, ${titles[i]}` : titles[i];
-      if (candidate.length > budget && out) return `${out}, …`;
-      out = candidate;
-    }
-    return out;
+    const truncate = (t) => (t.length > LINE_CHAR_BUDGET ? `${t.slice(0, LINE_CHAR_BUDGET - 1)}…` : t);
+    if (titles.length <= maxLines) return titles.map(truncate);
+    if (maxLines <= 1) return [`${titles.length} tasks`];
+    const shown = titles.slice(0, maxLines - 1).map(truncate);
+    return [...shown, `+${titles.length - shown.length} more`];
   }
 
-  it('lists every title when they all fit', () => {
+  function clusterMaxTitleLines(chipHeightPx, hasTimeLine) {
+    const timeLineReserve = hasTimeLine ? LINE_HEIGHT_PX : 0;
+    const available = chipHeightPx - VERTICAL_CHROME_PX - timeLineReserve;
+    return Math.max(1, Math.floor(available / LINE_HEIGHT_PX));
+  }
+
+  it('lists every title on its own line when they all fit within the available lines', () => {
     const items = [
       { data: { title: 'Standup' } },
       { data: { title: 'Review' } },
     ];
-    expect(clusterLabel(items)).toBe('Standup, Review');
+    expect(clusterLabel(items, 5)).toEqual(['Standup', 'Review']);
   });
 
-  it('truncates with an ellipsis after whole titles once space runs out, never mid-title', () => {
+  it('never cuts a title in half — a too-long title truncates with a trailing ellipsis on its own line', () => {
+    const items = [{ data: { title: 'Quarterly planning review meeting' } }];
+    const lines = clusterLabel(items, 5);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].endsWith('…')).toBe(true);
+    expect(lines[0].length).toBeLessThanOrEqual(LINE_CHAR_BUDGET);
+  });
+
+  it('folds whatever does not fit into a trailing "+N more" summary line instead of dropping it silently', () => {
     const items = [
       { data: { title: 'Standup' } },
       { data: { title: '1:1 with Sam' } },
       { data: { title: 'Quarterly planning review meeting' } },
       { data: { title: 'Retro' } },
     ];
-    const label = clusterLabel(items, 30);
-    expect(label.endsWith('…')).toBe(true);
-    // Never cuts a title in half — the text before "…" is always a
-    // comma-joined prefix of complete titles.
-    const withoutEllipsis = label.slice(0, -('…'.length + 2));
-    const includedTitles = withoutEllipsis.split(', ');
-    for (const t of includedTitles) {
-      expect(items.some((it) => it.data.title === t)).toBe(true);
-    }
+    const lines = clusterLabel(items, 3);
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe('+2 more');
+    expect(lines[0]).toBe('Standup');
+    expect(lines[1]).toBe('1:1 with Sam');
+  });
+
+  it('falls back to a single summary line when there is only room for one line total', () => {
+    const items = [{ data: { title: 'Standup' } }, { data: { title: 'Review' } }, { data: { title: 'Retro' } }];
+    expect(clusterLabel(items, 1)).toEqual(['3 tasks']);
+  });
+
+  describe('clusterMaxTitleLines', () => {
+    it('always allows at least one line even for a very short chip', () => {
+      expect(clusterMaxTitleLines(5, false)).toBe(1);
+    });
+
+    it('grows the number of available lines as the chip gets taller', () => {
+      const short = clusterMaxTitleLines(20, false);
+      const tall = clusterMaxTitleLines(80, false);
+      expect(tall).toBeGreaterThan(short);
+    });
+
+    it('reserves room for the time-range line when shown, reducing available title lines', () => {
+      const withoutTimeLine = clusterMaxTitleLines(50, false);
+      const withTimeLine = clusterMaxTitleLines(50, true);
+      expect(withTimeLine).toBeLessThan(withoutTimeLine);
+    });
   });
 });
