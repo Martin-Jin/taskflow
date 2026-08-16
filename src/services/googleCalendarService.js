@@ -1353,6 +1353,20 @@ export function planTodaysBlockPush(authoritativeBlocks, googleEventsToday) {
  * retrying against the same dead token — this function, and the batch
  * delete/insert calls in `executeBatch` below, are given the same treatment.
  *
+ * Widens the delete side's own fetch window backward by this many days
+ * behind `todayIso` (never forward — inserted-but-not-yet-today blocks are
+ * a different day's problem to clean up on ITS OWN day) so a leftover
+ * tagged event from a day this push didn't run on (app closed overnight,
+ * a failed/skipped run, etc.) still gets swept up rather than becoming
+ * permanently orphaned on the user's real calendar — a single-day window
+ * can only ever clean up an event created that same day, so day rollover
+ * without this would silently leave every prior day's push stuck forever.
+ * Bounded (not "since forever") so the query itself stays cheap and can't
+ * balloon into fetching a growing chunk of calendar history.
+ */
+const BLOCK_PUSH_CLEANUP_LOOKBACK_DAYS = 3;
+
+/**
  * @param {Array<{block: Object, task: Object}>} authoritativeBlocks
  * @param {string} todayIso - "YYYY-MM-DD", local date
  * @returns {Promise<{ toDelete: string[], toInsert: Array<{block: Object, task: Object}> }>}
@@ -1362,7 +1376,14 @@ export async function computeTodaysBlockPushPlan(authoritativeBlocks, todayIso) 
     return planTodaysBlockPush(authoritativeBlocks, []);
   }
 
-  const { timeMin, timeMax } = computeFetchTimeRange(todayIso, todayIso);
+  // Delete side looks back BLOCK_PUSH_CLEANUP_LOOKBACK_DAYS to catch stale
+  // tagged events from a day this push never got to run on; insert side is
+  // still only ever built from TODAY's authoritative blocks (unaffected by
+  // this widening), so the net effect is purely "clean up more of the past",
+  // never "show more than today" — the calendar still only ever displays
+  // today's tagged block events once this run finishes.
+  const lookbackStartIso = addDays(todayIso, -BLOCK_PUSH_CLEANUP_LOOKBACK_DAYS);
+  const { timeMin, timeMax } = computeFetchTimeRange(lookbackStartIso, todayIso);
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const items = [];
   let pageToken;
