@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.5',
+    date: '2026-08-17',
+    title: 'Fixed sync errors and edits needing a second try to stick',
+    changes: [
+      'Cloud backup cleanup was deleting old backups one at a time in a burst instead of in batches, which could exhaust Firestore\'s write queue on accounts with a lot of backups piled up — surfacing as "resource-exhausted" sync errors and other edits (like renaming a Board section) silently failing on the first try and only sticking on a retry. Backup cleanup is now batched so it can no longer crowd out other pending writes.',
+    ],
+  },
+  {
     version: '5.5.4',
     date: '2026-08-16',
     title: 'Calendar cluster chips now show more titles on taller chips',
