@@ -201,9 +201,10 @@ test.describe('Scheduling conflict details', () => {
     // of the blocker's title.
     await expect(modal.getByText(new RegExp(`depends on.*${blockerTitle}`, 'i'))).toBeVisible();
 
-    // Both tasks are due today, so they should be grouped under one "Today"
-    // section header rather than opening a task edit modal when clicked.
-    await expect(modal.getByText('Today', { exact: true })).toBeVisible();
+    // Both tasks are due tomorrow (dueDate = tomorrowIso(), see above), so
+    // they should be grouped under one "Tomorrow" section header rather than
+    // opening a task edit modal when clicked.
+    await expect(modal.getByText('Tomorrow', { exact: true })).toBeVisible();
     await modal.getByText(waiterTitle).click();
     await expect(modal).not.toBeVisible();
     await expect(page.getByRole('dialog', { name: /^E2E Conflict/ })).toHaveCount(0);

@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.3',
+    date: '2026-08-16',
+    title: 'Fixed the timer widget growing off-screen with multiple timers running',
+    changes: [
+      'The floating timer widget could grow past the bottom of the screen once a second (or later) timer started, hiding its controls — it now repositions itself to stay fully on-screen whenever it changes size.',
+    ],
+  },
+  {
     version: '5.5.2',
     date: '2026-08-16',
     title: 'Fixed a race that could revert a just-dragged scheduled task, needing a retry to stick',
