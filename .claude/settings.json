@@ -22,7 +22,9 @@
       "WebFetch(domain:developers.google.com)",
       "PowerShell(npm run build 2>&1)",
       "PowerShell(npm run test:unit 2>&1)",
-      "PowerShell(Get-Process node -ErrorAction SilentlyContinue)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }
