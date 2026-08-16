@@ -21,9 +21,12 @@
 
 export const CHANGELOG = [
   {
-    version: '5.6.0',
+    version: '5.6.1',
     date: '2026-08-17',
-    title: 'Calendar event descriptions show much more text before scrolling',
+    title: 'Fixed leftover scheduled-task entries lingering on Google Calendar',
+    changes: [
+      'Task blocks pushed to Google Calendar for a given day could get stuck there permanently if the app wasn\'t open to clean them up right at midnight (e.g. closed overnight) — since the cleanup only ever looked at the current day, yesterday\'s pushed entries were never revisited. It now also sweeps up a few days of stale entries on every push, so leftovers from a missed day get cleaned up instead of lingering forever.',
+    ],
     changes: [
       'The description box in a calendar event\'s detail view (e.g. a synced Google Calendar event) used to scroll after only about 3 lines. It now grows up to about 20 lines before scrolling kicks in, so a longer synced description (class details, meeting notes, etc.) is visible without extra scrolling.',
     ],
