@@ -63,17 +63,31 @@ const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range lin
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
-// Character budget for a cluster chip's title-list label (see clusterLabel
-// below) — an approximation of "how much text fits" rather than a true pixel
-// measurement, since a chip's actual rendered width isn't known at render
-// time (day columns are fluid `1fr` grid tracks — see calendar.css). This is
-// deliberately conservative (a single-lane chip at typical day-column widths
-// comfortably fits well more than this many characters), so the JS-built
-// truncation almost always kicks in before CSS's own `text-overflow:
-// ellipsis` on .cal-block-title would ever need to (that CSS rule stays as a
-// backstop for the rare narrower case — e.g. a multi-lane chip sharing the
-// column with another item, or a very narrow phone screen).
-const CLUSTER_LABEL_CHAR_BUDGET = 42;
+// Character budget for a single title LINE within a cluster chip's stacked
+// label (see clusterLabel below) — an approximation of "how much text fits
+// on one line" rather than a true pixel measurement, since a chip's actual
+// rendered width isn't known at render time (day columns are fluid `1fr`
+// grid tracks — see calendar.css). Deliberately conservative (a single-lane
+// chip at typical day-column widths comfortably fits well more than this
+// many characters), so CSS's own `text-overflow: ellipsis` on each line
+// (see .cal-cluster-title-line) stays a backstop for the rare narrower case
+// rather than the primary truncation mechanism.
+const CLUSTER_LABEL_LINE_CHAR_BUDGET = 22;
+
+// Pixel height one title line + the chip's own vertical padding takes up —
+// used to estimate how many whole title lines can stack before a cluster
+// chip's own fixed height (from computeDayPositions) runs out, so titles
+// fill available vertical room rather than a hardcoded line count. Matches
+// .cal-block's 11.5px font-size at ~1.3 line-height, rounded up slightly for
+// safety. Not pixel-perfect (real text metrics vary slightly by browser/
+// font), which is fine — CSS's own overflow:hidden on the chip is the hard
+// backstop if this estimate is ever a line too generous.
+const CLUSTER_TITLE_LINE_HEIGHT_PX = 15;
+// Padding/chrome (chip's own padding, plus room for the time-range line when
+// shown) subtracted from a chip's total height before dividing by line
+// height — mirrors .cal-block's padding: 4px 7px (8px vertical) plus a
+// little extra so the last line doesn't look flush against the edge.
+const CLUSTER_TITLE_VERTICAL_CHROME_PX = 10;
 
 /**
  * A cluster item's own `data` is either a CalendarEvent (which carries its
@@ -89,27 +103,52 @@ function clusterItemTitle(it, taskById) {
 }
 
 /**
- * Builds a cluster chip's label as a truncated list of its actual contained
- * event/task titles (e.g. "Standup, 1:1 with Sam, Review, …") rather than a
- * generic "N events" summary — the whole point of a cluster chip is that it's
- * standing in for items too small to show individually, so the user should
- * still be able to tell AT A GLANCE what's inside without opening its popover.
- * Titles are added whole (never cut mid-title) until the running length would
- * exceed CLUSTER_LABEL_CHAR_BUDGET, then "…" is appended — so the result
- * always ends either with every title spelled out, or with an ellipsis after
- * a whole number of complete titles, never a half-title fragment.
+ * Builds a cluster chip's label as a VERTICAL STACK of its actual contained
+ * event/task titles (one per line) rather than a single comma-joined line or
+ * a generic "N events" summary — the whole point of a cluster chip is that
+ * it's standing in for items too small to show individually, so the user
+ * should still be able to tell AT A GLANCE what's inside without opening its
+ * popover. Returns an array of line strings, each already truncated to
+ * CLUSTER_LABEL_LINE_CHAR_BUDGET (CSS's own text-overflow:ellipsis on
+ * .cal-cluster-title-line is the backstop for the rare case a line still
+ * doesn't fit the chip's actual rendered width).
+ *
+ * How many whole titles get their own line is capped by `maxLines` (the
+ * chip's own available vertical room — see CLUSTER_TITLE_LINE_HEIGHT_PX at
+ * this file's top) rather than a fixed count, so a taller chip (more overlap,
+ * lower zoom) shows more titles before falling back to a final "…" line
+ * summarizing however many didn't fit. Never renders a half-title fragment —
+ * a title either gets its own whole (possibly char-truncated) line, or is
+ * folded into the trailing "+N more" line.
  */
-function clusterLabel(items, taskById) {
+function clusterLabel(items, taskById, maxLines) {
   const titles = items.map((it) => clusterItemTitle(it, taskById));
-  let out = '';
-  for (let i = 0; i < titles.length; i++) {
-    const candidate = out ? `${out}, ${titles[i]}` : titles[i];
-    if (candidate.length > CLUSTER_LABEL_CHAR_BUDGET && out) {
-      return `${out}, …`;
-    }
-    out = candidate;
-  }
-  return out;
+  const truncate = (t) => (t.length > CLUSTER_LABEL_LINE_CHAR_BUDGET ? `${t.slice(0, CLUSTER_LABEL_LINE_CHAR_BUDGET - 1)}…` : t);
+
+  if (titles.length <= maxLines) return titles.map(truncate);
+
+  // maxLines - 1 whole titles get their own line, leaving the last line for
+  // a "+N more" summary of everything else — unless maxLines is 1, in which
+  // case there's no room for even one whole title alongside the summary, so
+  // the summary alone becomes the only line.
+  if (maxLines <= 1) return [`${titles.length} tasks`];
+  const shown = titles.slice(0, maxLines - 1).map(truncate);
+  const remaining = titles.length - shown.length;
+  return [...shown, `+${remaining} more`];
+}
+
+/**
+ * How many title lines a cluster chip's own pixel height has room for,
+ * always at least 1 (even a very short chip shows something) — see
+ * CLUSTER_TITLE_LINE_HEIGHT_PX/CLUSTER_TITLE_VERTICAL_CHROME_PX doc comments.
+ * `hasTimeLine` reserves room for the time-range line rendered below the
+ * title stack (see showTimeLine in the cluster's own render) so titles never
+ * visually collide with it.
+ */
+function clusterMaxTitleLines(chipHeightPx, hasTimeLine) {
+  const timeLineReserve = hasTimeLine ? CLUSTER_TITLE_LINE_HEIGHT_PX : 0;
+  const available = chipHeightPx - CLUSTER_TITLE_VERTICAL_CHROME_PX - timeLineReserve;
+  return Math.max(1, Math.floor(available / CLUSTER_TITLE_LINE_HEIGHT_PX));
 }
 
 // Fixed viewport coordinates for a cluster's popover, anchored to the
@@ -952,7 +991,7 @@ export default function WeekView({
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
                 const hasEvent = item.items.some((it) => it.type === 'event');
-                const label = clusterLabel(item.items, taskById);
+                const titleLines = clusterLabel(item.items, taskById, clusterMaxTitleLines(height, showTimeLine));
                 const fullTitleList = item.items.map((it) => clusterItemTitle(it, taskById)).join(', ');
                 const totalMinutes = item.items
                   .filter((it) => it.type === 'block')
@@ -979,7 +1018,13 @@ export default function WeekView({
                     }}
                     title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
-                    <div className="cal-block-title">{label}</div>
+                    <div className="cal-cluster-title-stack">
+                      {titleLines.map((line, i) => (
+                        <div className="cal-cluster-title-line" key={i}>
+                          {line}
+                        </div>
+                      ))}
+                    </div>
                     {showTimeLine && (
                       <div className="cal-block-time">
                         {minutesToTime(item.start)}–{minutesToTime(item.end)}
