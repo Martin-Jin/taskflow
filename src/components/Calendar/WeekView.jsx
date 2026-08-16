@@ -61,6 +61,15 @@ export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
 
+// tightGap (see foldSequentialItems) is meant to degrade a box that's ALSO
+// still short enough for a two-line render to look cramped next to its close
+// neighbour — not any box a close neighbour happens to sit next to. Without
+// this ceiling, a genuinely tall box (e.g. a cluster chip floored to
+// MIN_BLOCK_HEIGHT_PX, or one simply not tightly packed) would lose its time
+// line just because a neighbour starts/ends within TIGHT_GAP_PX of it, even
+// though it has plenty of its own visible room to spare.
+const TIGHT_GAP_HEIGHT_CEILING = 60;
+
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
 // Character budget for a single title LINE within a cluster chip's stacked
@@ -807,15 +816,18 @@ export default function WeekView({
       // way to it there, the same trade-off renderGhost makes.
       liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
       // Normally a two-line render (title + time) is purely a function of
-      // this box's own height (TWO_LINE_MIN_HEIGHT). But a box tagged
-      // `tightGap` (see foldSequentialItems) is tall enough on its own, yet
-      // sits close enough to its neighbour at this zoom that a full two-line
-      // render would still look cramped/collide-adjacent — so it degrades to
-      // single-line (title only) regardless of height, same as a genuinely
-      // short box would. A live resize always overrides this (the user is
-      // actively looking at this one box, and neighbours aren't repacked
+      // this box's own height (TWO_LINE_MIN_HEIGHT). A box tagged `tightGap`
+      // (see foldSequentialItems) sits close enough to its neighbour at this
+      // zoom that a full two-line render would look cramped/collide-adjacent
+      // — but that degrade only makes sense while this box is ALSO still
+      // short (below TIGHT_GAP_HEIGHT_CEILING); a box tall enough to have
+      // its own visible room to spare should keep its time line regardless
+      // of a close neighbour. A live resize always overrides this (the user
+      // is actively looking at this one box, and neighbours aren't repacked
       // until the resize commits — see this function's own doc comment).
-      showTimeLine: isResizing ? true : height >= TWO_LINE_MIN_HEIGHT && !item.tightGap,
+      showTimeLine: isResizing
+        ? true
+        : height >= TWO_LINE_MIN_HEIGHT && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
     };
   }
 

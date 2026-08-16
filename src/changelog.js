@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.6',
+    date: '2026-08-17',
+    title: 'Fixed calendar boxes losing their time label next to a close neighbor',
+    changes: [
+      'A calendar block or event tall enough to comfortably show its time range (e.g. "08:00-08:50") was hiding it anyway whenever a neighboring item started or ended close by in time — even with plenty of empty space left in the box. It now only hides the time label when the box itself is actually short enough to need the room.',
+    ],
+  },
+  {
     version: '5.5.5',
     date: '2026-08-17',
     title: 'Fixed sync errors and edits needing a second try to stick',
