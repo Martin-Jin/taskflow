@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.5.7',
+    date: '2026-08-17',
+    title: 'Fixed the Board view "Add section" button size',
+    changes: [
+      'The "Add" button in the Board view\'s add-section form was stretched much wider than the "Cancel" button next to it. Both now size to their content, matching.',
+    ],
+  },
+  {
     version: '5.5.6',
     date: '2026-08-17',
     title: 'Fixed calendar boxes losing their time label next to a close neighbor',

@@ -548,7 +548,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                   }}
                 />
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAddSection}>
+                  <button className="btn btn-primary" onClick={handleAddSection}>
                     Add
                   </button>
                   <button
@@ -686,7 +686,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                   }}
                 />
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAddSection}>
+                  <button className="btn btn-primary" onClick={handleAddSection}>
                     Add
                   </button>
                   <button
