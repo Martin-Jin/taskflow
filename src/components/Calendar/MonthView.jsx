@@ -23,6 +23,8 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { addDays, dateRange, dayOfWeek, timeToMinutes, toISODate } from '../../utils/dateUtils';
 import { priorityColor } from '../../utils/priorityColor';
 import { SHORT_BLOCK_MAX_MIN, groupItemsByDay } from '../../utils/calendarGrouping';
+import { makeSelectionKey } from '../../hooks/useMultiSelect';
+import { useLongPressSelect } from '../../hooks/useLongPressSelect';
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MAX_VISIBLE_ITEMS = 3; // per day cell before collapsing into "+N more"
@@ -40,12 +42,27 @@ export default function MonthView({
   unfilteredEvents,
   filterIsActive = false,
   onClearFilter,
+  // Bulk multi-select (see hooks/useMultiSelect.js, lifted into CalendarPage
+  // since Week/Month share one selection). Unlike WeekView, MonthView's
+  // chips have no competing drag gesture at all (clicking one either opens
+  // its detail modal or drills into Day view — see the module doc comment),
+  // so long-press-to-select has nothing to conflict with here and is wired
+  // up normally (see onLongPressSelect below).
+  selectionMode = false,
+  selectedKeys,
+  onToggleSelectKey,
+  onSelectManyKeys,
+  onLongPressSelect,
 }) {
   const { tasks, blocks: contextBlocks, events: contextEvents } = useScheduler();
   const blocks = blocksProp ?? contextBlocks;
   const events = eventsProp ?? contextEvents;
   const todayIso = toISODate(new Date());
   const taskById = useMemo(() => Object.fromEntries(tasks.map((t) => [t.id, t])), [tasks]);
+  const longPressSelect = useLongPressSelect({
+    disabled: selectionMode,
+    onLongPress: (key) => onLongPressSelect?.(key),
+  });
 
   const gridStart = useMemo(() => addDays(monthStart, -dayOfWeek(monthStart)), [monthStart]);
   const days = useMemo(() => dateRange(gridStart, 42), [gridStart]);
@@ -108,6 +125,17 @@ export default function MonthView({
         const visible = items.slice(0, MAX_VISIBLE_ITEMS);
         const hiddenCount = items.length - visible.length;
 
+        // Every key this day cell's chips collectively represent — used by
+        // the overflow "+N more" chip below to select everything hidden
+        // behind it (see selectManyKeys usage). Deliberately every item
+        // (visible + hidden), not just the hidden ones, matching the
+        // cluster's own "selects ALL items it represents" behavior.
+        const allDayKeys = items.flatMap((item) =>
+          item.kind === 'cluster'
+            ? item.data.map((b) => makeSelectionKey('block', b.id))
+            : [makeSelectionKey(item.kind, item.data.id)]
+        );
+
         return (
           <div key={day} className={`month-cell ${inMonth ? '' : 'is-outside'} ${day === todayIso ? 'today' : ''}`}>
             <button className="month-cell-daynum" onClick={() => onSelectDay?.(day)}>
@@ -117,25 +145,36 @@ export default function MonthView({
               {visible.map((item, i) => {
                 if (item.kind === 'event') {
                   const evt = item.data;
+                  const key = makeSelectionKey('event', evt.id);
+                  const isSelected = selectionMode && !!selectedKeys?.has(key);
                   return (
                     <div
                       key={`evt_${evt.id}`}
-                      className={`month-chip month-chip-event ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''}`}
-                      onClick={() => onSelectEvent?.(evt)}
+                      className={`month-chip month-chip-event ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isSelected ? 'is-selected' : ''}`}
+                      onClick={() => (selectionMode ? onToggleSelectKey?.(key) : onSelectEvent?.(evt))}
+                      onTouchStart={selectionMode ? undefined : (e) => longPressSelect.onTouchStart(e, key)}
                       title={evt.title}
                     >
+                      {selectionMode && <input type="checkbox" className="bulk-select-checkbox" checked={isSelected} readOnly />}
                       {evt.title}
                     </div>
                   );
                 }
                 if (item.kind === 'cluster') {
+                  // "N short tasks" cluster — clicking it in selection mode
+                  // selects every underlying block at once (see this
+                  // feature's cluster/overflow-chip note), not the chip
+                  // itself (there's no chip-level entity to select).
+                  const clusterKeys = item.data.map((b) => makeSelectionKey('block', b.id));
+                  const allSelected = selectionMode && clusterKeys.every((k) => selectedKeys?.has(k));
                   return (
                     <div
                       key={`cluster_${i}`}
-                      className="month-chip month-chip-cluster"
-                      onClick={() => onSelectDay?.(day)}
+                      className={`month-chip month-chip-cluster ${allSelected ? 'is-selected' : ''}`}
+                      onClick={() => (selectionMode ? onSelectManyKeys?.(clusterKeys) : onSelectDay?.(day))}
                       title={`${item.data.length} short tasks`}
                     >
+                      {selectionMode && <input type="checkbox" className="bulk-select-checkbox" checked={allSelected} readOnly />}
                       {item.data.length} short tasks
                     </div>
                   );
@@ -149,20 +188,31 @@ export default function MonthView({
                 // BlockDetailModal) — see WeekView for the same treatment.
                 const parentTask = task.parentId ? taskById[task.parentId] : null;
                 const displayTitle = parentTask?.title || task.title;
+                const key = makeSelectionKey('block', block.id);
+                const isSelected = selectionMode && !!selectedKeys?.has(key);
                 return (
                   <div
                     key={`blk_${block.id}`}
-                    className="month-chip"
+                    className={`month-chip ${isSelected ? 'is-selected' : ''}`}
                     style={{ borderLeftColor: priorityColor(task.priority) }}
-                    onClick={() => onSelectBlock?.(block)}
+                    onClick={() => (selectionMode ? onToggleSelectKey?.(key) : onSelectBlock?.(block))}
+                    onTouchStart={selectionMode ? undefined : (e) => longPressSelect.onTouchStart(e, key)}
                     title={`${displayTitle} · ${block.startTime}–${block.endTime}`}
                   >
+                    {selectionMode && <input type="checkbox" className="bulk-select-checkbox" checked={isSelected} readOnly />}
                     {displayTitle}
                   </div>
                 );
               })}
               {hiddenCount > 0 && (
-                <button className="month-chip month-chip-more" onClick={() => onSelectDay?.(day)}>
+                <button
+                  className="month-chip month-chip-more"
+                  // "+N more" represents EVERY item in this day cell (visible
+                  // + hidden) — clicking it in selection mode selects all of
+                  // them at once, same "represents several underlying items"
+                  // treatment as the short-task cluster chip above.
+                  onClick={() => (selectionMode ? onSelectManyKeys?.(allDayKeys) : onSelectDay?.(day))}
+                >
                   +{hiddenCount} more
                 </button>
               )}

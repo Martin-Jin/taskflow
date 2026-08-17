@@ -13,7 +13,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X, Search, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Menu, Plus, Zap, RefreshCw, PenSquare, X, Search, Sparkles, CheckSquare } from 'lucide-react';
 import WeekView, { ZOOM_LEVELS_PX_PER_MIN, DEFAULT_ZOOM_INDEX } from './WeekView';
 import MonthView from './MonthView';
 import CalendarDatePickerDropdown from './CalendarDatePickerDropdown';
@@ -22,6 +22,7 @@ import BlockDetailModal from '../Modals/BlockDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
+import BulkActionBar from '../Common/BulkActionBar';
 import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
 import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -29,6 +30,10 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useAIQuickAddGate } from '../../hooks/useAIQuickAddGate';
+import { useMultiSelect, makeSelectionKey, parseSelectionKey } from '../../hooks/useMultiSelect';
+import { useConfirm } from '../../context/ConfirmContext';
+import { computeBulkEditableFields, applyBulkEdit, formatBulkEditSummary } from '../../utils/bulkEditEngine';
+import { buildRecurrenceString } from '../../utils/recurrence';
 import { DEFAULT_CALENDAR_FILTER, filterCalendarItems, isCalendarFilterActive, normalizeCalendarFilter } from '../../utils/calendarFilter';
 import { isBlockTaskCompleted } from '../../utils/missedTasks';
 import HelpTooltip from '../Common/HelpTooltip';
@@ -84,13 +89,180 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
     blocks,
     events,
     tasks,
+    projects,
+    labels,
     runRebalance,
     isLoading,
     googleConnected,
     syncNow,
     isSyncing,
     ensureGoogleRangeSynced,
+    updateTask,
+    deleteTask,
+    updateEvent,
+    deleteEvent,
+    setNotification,
   } = useScheduler();
+  const confirm = useConfirm();
+
+  // Bulk multi-select (see hooks/useMultiSelect.js) — ONE instance shared by
+  // both WeekView and MonthView (switching Day/3 Day/Week/Month keeps the
+  // same selection, rather than each view mode getting its own — there's one
+  // "Select" toggle for the whole Calendar tab per this feature's design, not
+  // one per view-mode). Selection keys disambiguate ScheduledBlock vs.
+  // CalendarEvent via makeSelectionKey('block'|'event', id) — see that
+  // function's doc comment for why a bare id isn't enough here, unlike List/
+  // Board where every selectable item is a Task.
+  const bulkSelect = useMultiSelect();
+
+  // Resolves every selected key back into a live entity, tagged with its
+  // `kind` for utils/bulkEditEngine.js's computeBulkEditableFields/
+  // applyBulkEdit. A block resolves to its underlying Task (bulk-editing a
+  // block edits the task it's backed by, per this feature's design table);
+  // an event resolves to itself. Missing entities (deleted elsewhere while
+  // selected) are silently dropped rather than surfaced as an error.
+  const bulkSelectedItems = useMemo(() => {
+    const taskById = new Map(tasks.map((t) => [t.id, t]));
+    const items = [];
+    for (const key of bulkSelect.selectedKeys) {
+      const { kind, id } = parseSelectionKey(key);
+      if (kind === 'block') {
+        const block = blocks.find((b) => b.id === id);
+        const task = block ? taskById.get(block.taskId) : null;
+        if (block && task) items.push({ kind: 'block', id, task, block });
+      } else if (kind === 'event') {
+        const { masterId, occurrenceDate, isVirtual } = resolveEventId(id);
+        const master = events.find((e) => e.id === masterId);
+        if (!master) continue;
+        const resolved = isVirtual ? expandRecurringEvent(master, occurrenceDate, occurrenceDate)[0] : master;
+        if (resolved) items.push({ kind: 'event', id, event: resolved });
+      }
+    }
+    return items;
+  }, [bulkSelect.selectedKeys, tasks, blocks, events]);
+
+  const bulkEditableFields = useMemo(
+    () => computeBulkEditableFields(bulkSelectedItems.map((it) => ({ kind: it.kind }))),
+    [bulkSelectedItems]
+  );
+
+  // Mobile long-press entry point (see WeekView/MonthView's useLongPressSelect
+  // usage) — enters selection mode AND selects the pressed item in one step,
+  // same as List/Board's own long-press handlers.
+  function handleCalendarLongPressSelect(key) {
+    bulkSelect.setSelectionMode(true);
+    bulkSelect.toggle(key);
+  }
+
+  // 'project'/'priority'/'labels' only ever reach here for a Task/block-only
+  // selection (computeBulkEditableFields hides them the moment an Event is
+  // part of the mix), so those three only need the task-item branch below.
+  // 'dueDate' and 'recurrence' are offered for a MIXED Task+Event selection
+  // too (see FIELD_SUPPORT in bulkEditEngine.js) and so need a branch for
+  // each entity kind — see the per-field comments below for what each one
+  // means for an Event, which has no "due date"/word-recurrence concept of
+  // its own.
+  function bulkApplyField(field, value) {
+    const taskById = new Map(tasks.map((t) => [t.id, t]));
+    const taskItems = bulkSelectedItems.filter((it) => it.kind === 'task' || it.kind === 'block');
+    const eventItems = bulkSelectedItems.filter((it) => it.kind === 'event');
+    let appliedCount = 0;
+    let skipped = [];
+
+    function runTaskBatch(updates) {
+      const result = applyBulkEdit({
+        items: taskItems,
+        updates,
+        tasksById: taskById,
+        updateTask,
+        updateEvent: () => {},
+        deleteTask: () => {},
+        deleteEvent: () => {},
+      });
+      appliedCount += result.appliedCount;
+      skipped = skipped.concat(result.skipped);
+    }
+
+    if (field === 'project') {
+      runTaskBatch({ projectId: value || null, sectionId: null, sectionName: null });
+    } else if (field === 'priority') {
+      runTaskBatch({ priority: value });
+    } else if (field === 'labels') {
+      taskItems.forEach((it) => {
+        if (!it.task.labelIds?.includes(value)) {
+          updateTask(it.task.id, { labelIds: [...(it.task.labelIds || []), value] });
+          appliedCount++;
+        }
+      });
+    } else if (field === 'dueDate') {
+      // Task/block: the underlying task's deadline (validated the normal
+      // way — ancestor cap, recurring-needs-a-date, etc.).
+      if (taskItems.length > 0) runTaskBatch({ dueDate: value || null });
+      // Event: a plain date shift, keeping its existing start/end TIME —
+      // this bottom bar's date field only collects a date, not a full
+      // date+time. Default scope 'this' (see updateEvent's own scope
+      // param) — a bulk date shift is simplest read as "move just this
+      // occurrence", the same default a single drag-to-reschedule uses.
+      eventItems.forEach((it) => {
+        updateEvent(it.id, { date: value }, 'this');
+        appliedCount++;
+      });
+    } else if (field === 'recurrence') {
+      if (taskItems.length > 0) {
+        runTaskBatch(
+          value === null
+            ? { isRecurring: false }
+            : { isRecurring: true, recurrenceString: buildRecurrenceString(value.count, value.unit) }
+        );
+      }
+      eventItems.forEach((it) => {
+        // Turning recurrence OFF is a safe, unambiguous edit for an event
+        // (just drops its RRULE) — turning it ON would need a real RRULE
+        // (FREQ/BYDAY), which this bottom bar's simple count+unit popover
+        // can't express (that's the Task word-recurrence shape, a different
+        // system — see utils/recurrence.js vs. utils/recurrenceExpansion.js),
+        // so that direction is skipped per-item with an explanation rather
+        // than silently misapplying the wrong rule format.
+        if (value === null) {
+          updateEvent(it.id, { isRecurring: false, recurrenceRule: null }, 'all');
+          appliedCount++;
+        } else {
+          skipped.push({ title: it.event.title, reason: "Recurrence editing isn't supported for calendar events yet." });
+        }
+      });
+    }
+
+    setNotification({
+      type: skipped.length > 0 ? 'warning' : 'success',
+      message: formatBulkEditSummary(appliedCount, bulkSelectedItems.length, skipped),
+    });
+  }
+
+  function bulkMarkComplete() {
+    // Calendar's editable-field table has no "status" for either entity kind
+    // (a ScheduledBlock's completion is really its Task's — same requestComplete
+    // path List/Board use — and a standalone Event has no completion concept
+    // at all), so this is unreachable from the bottom bar today; kept as a
+    // no-op stub for symmetry with the other surfaces' action set shape.
+  }
+  function bulkMarkIncomplete() {}
+
+  async function bulkHandleDelete() {
+    const count = bulkSelectedItems.length;
+    if (count === 0) return;
+    if (!(await confirm(`Delete ${count} item${count === 1 ? '' : 's'}? This can't be undone.`, { confirmLabel: 'Delete' }))) return;
+    const deletedTaskIds = new Set();
+    bulkSelectedItems.forEach((it) => {
+      if (it.kind === 'block' || it.kind === 'task') {
+        if (deletedTaskIds.has(it.task.id)) return;
+        deleteTask(it.task.id);
+        deletedTaskIds.add(it.task.id);
+      } else {
+        deleteEvent(it.id, 'this');
+      }
+    });
+    bulkSelect.exitSelectionMode();
+  }
 
   // Calendar filter (show mode + project/tag multi-select) — device-local,
   // like Tasks' own filterByView, so not part of BACKUP_FIELDS/cloud sync
@@ -311,6 +483,11 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
           onSelectBlock={(block) => setSelectedBlockId(block.id)}
           onSelectEvent={(evt) => setSelectedEventId(evt.id)}
           onSelectDay={jumpToDay}
+          selectionMode={bulkSelect.selectionMode}
+          selectedKeys={bulkSelect.selectedKeys}
+          onToggleSelectKey={bulkSelect.toggle}
+          onSelectManyKeys={bulkSelect.selectMany}
+          onLongPressSelect={handleCalendarLongPressSelect}
         />
       );
     }
@@ -331,6 +508,15 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
         onSelectEvent={(evt) => setSelectedEventId(evt.id)}
         onCreateEvent={(date, startTime, endTime) => setCreatingEvent({ date, startTime, endTime })}
         onSelectDay={jumpToDay}
+        selectionMode={bulkSelect.selectionMode}
+        selectedKeys={bulkSelect.selectedKeys}
+        onToggleSelectKey={bulkSelect.toggle}
+        onSelectManyKeys={bulkSelect.selectMany}
+        // No onLongPressSelect here — unlike MonthView (whose chips have no
+        // competing drag gesture), WeekView's touch-drag-to-reschedule is a
+        // core existing interaction that long-press already drives; entering
+        // selection mode on Week/Day/3-Day view is via the toolbar button
+        // only (see WeekView's own comment on this judgment call).
       />
     );
   }
@@ -348,10 +534,30 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
   // callbacks it closes over from the dep list — they only ever call stable
   // setState setters, so a stale closure reference behaves identically to a
   // fresh one and isn't worth invalidating the memo over.
+  //
+  // bulkSelect.selectionMode/selectedKeys ARE included, though, despite that
+  // same "closes over a setState setter" reasoning applying to bulkSelect.toggle/
+  // selectMany too (both omitted, same as onSelectBlock etc. above) — those two
+  // VALUES actually change the rendered checkbox/highlight state on every
+  // block/event/chip, so without them here the off-screen prev/next pages
+  // would show stale selection state the moment the user swipes to them mid-
+  // selection (selectedKeys is a new Set identity on every toggle, so this
+  // dep alone is enough to invalidate the memo when it should). Accepting the
+  // perf cost of re-rendering all 3 pages is fine here specifically BECAUSE
+  // it only actually happens while selectionMode is genuinely active — this
+  // memo's normal (selection off) behavior is completely unchanged, since
+  // selectionMode/selectedKeys are stable (false/empty-Set) the rest of the
+  // time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const swipePrevPage = useMemo(() => renderCalendarPage(swipePrevBase), [swipePrevBase, view, dayCount, isMobile, pxPerMin]);
+  const swipePrevPage = useMemo(
+    () => renderCalendarPage(swipePrevBase),
+    [swipePrevBase, view, dayCount, isMobile, pxPerMin, bulkSelect.selectionMode, bulkSelect.selectedKeys]
+  );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const swipeNextPage = useMemo(() => renderCalendarPage(swipeNextBase), [swipeNextBase, view, dayCount, isMobile, pxPerMin]);
+  const swipeNextPage = useMemo(
+    () => renderCalendarPage(swipeNextBase),
+    [swipeNextBase, view, dayCount, isMobile, pxPerMin, bulkSelect.selectionMode, bulkSelect.selectedKeys]
+  );
 
   // Native (non-passive) listeners, same reasoning as WeekView's own touch
   // handlers (see its wheel/touch effects) — React's synthetic onTouchMove is
@@ -625,6 +831,16 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
                   <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
                 </button>
               )}
+              <button
+                type="button"
+                className={`btn btn-icon ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+                onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
+                aria-pressed={bulkSelect.selectionMode}
+                aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
+                title={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
+              >
+                <CheckSquare size={14} />
+              </button>
               <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
             </div>
           )}
@@ -635,6 +851,15 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
           {!isMobile && (
             <>
               <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
+              <button
+                type="button"
+                className={`btn ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+                onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
+                aria-pressed={bulkSelect.selectionMode}
+              >
+                <CheckSquare size={14} />
+                {bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
+              </button>
               <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
                 <Zap size={14} />
                 Re-balance schedule
@@ -700,7 +925,10 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
           New event), since that toolbar button was removed from the mobile
           toolbar above to save vertical space, as a pair of mini-FABs — same
           .fab-mini shell/animation as mobile's, not a dropdown list — mirrors
-          AddTaskFabGroup's expand/collapse pattern throughout. */}
+          AddTaskFabGroup's expand/collapse pattern throughout. Hidden while
+          bulk-select is active — the docked bottom bar (BulkActionBar below)
+          occupies the same screen-corner real estate. */}
+      {!bulkSelect.selectionMode && (
       <div className="calendar-fab-group" ref={fabGroupRef}>
         {onOpenSearch && (
           <button
@@ -784,6 +1012,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
           {fabExpanded ? <X size={22} /> : <PenSquare size={22} />}
         </button>
       </div>
+      )}
 
       {selectedBlock && (
         <BlockDetailModal block={selectedBlock} onClose={() => setSelectedBlockId(null)} onOpenTask={handleOpenTask} />
@@ -798,6 +1027,26 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
       {creatingEvent && <EventDetailModal event={null} initial={creatingEvent} onClose={() => setCreatingEvent(null)} />}
       {selectedTask && <TaskDetailModal task={selectedTask} onClose={() => setSelectedTaskId(null)} />}
       {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
+      {bulkSelect.selectionMode && (
+        <BulkActionBar
+          count={bulkSelect.count}
+          editableFields={bulkEditableFields}
+          projects={projects}
+          labels={labels}
+          onApplyField={bulkApplyField}
+          onMarkComplete={bulkMarkComplete}
+          onMarkIncomplete={bulkMarkIncomplete}
+          onDelete={bulkHandleDelete}
+          onCancel={bulkSelect.exitSelectionMode}
+          // No "Select all" here — unlike List/Board's single scrollable
+          // list, "all visible items" on Calendar spans whichever
+          // day/week/month is currently in view plus (on mobile) two
+          // off-screen carousel pages, which isn't an obvious single set the
+          // way a filtered task list is — so this affordance is intentionally
+          // omitted for Calendar (see this feature's own "use judgement per
+          // view" note).
+        />
+      )}
     </div>
   );
 }

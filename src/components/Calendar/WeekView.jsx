@@ -47,6 +47,7 @@ import { formatHours } from '../../utils/formatHours';
 import { groupItemsByDay } from '../../utils/calendarGrouping';
 import { GRID_START_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
+import { makeSelectionKey } from '../../hooks/useMultiSelect';
 import HoverPreviewCard from './HoverPreviewCard';
 
 const GRID_END_MIN = 24 * 60; // 24:00
@@ -224,6 +225,14 @@ export default function WeekView({
   unfilteredEvents,
   filterIsActive = false,
   onClearFilter,
+  // Bulk multi-select (see hooks/useMultiSelect.js, lifted into CalendarPage
+  // since Week/Month share one selection) — selectedKeys uses composite
+  // `block:<id>`/`event:<id>` keys (see makeSelectionKey) so this component
+  // can tell which entity kind a given item is without a separate lookup.
+  selectionMode = false,
+  selectedKeys,
+  onToggleSelectKey,
+  onSelectManyKeys,
 }) {
   const { tasks, blocks: contextBlocks, events: contextEvents, projects, routines, updateBlock, toggleBlockLock, updateEvent, setNotification } = useScheduler();
   const blocks = blocksProp ?? contextBlocks;
@@ -1009,27 +1018,60 @@ export default function WeekView({
                   .filter((it) => it.type === 'block')
                   .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);
                 const openThisCluster = (rect) => setOpenCluster({ key: clusterKey, rect, items: item.items });
+                // Every underlying item's selection key — clicking a cluster
+                // chip in selection mode selects ALL of them at once (see
+                // this feature's MonthView/cluster note), not just the chip.
+                const clusterKeys = item.items.map((it) => makeSelectionKey(it.type, it.data.id));
+                const clusterAllSelected = selectionMode && clusterKeys.every((k) => selectedKeys?.has(k));
+                // Toggle behavior: if every underlying item is already
+                // selected, clicking again deselects them all; otherwise
+                // selects everything the chip represents in one go (see this
+                // feature's MonthView/cluster note — "clicking a cluster/
+                // overflow chip in selection mode selects ALL items it
+                // represents at once").
+                const toggleClusterSelection = () => {
+                  if (clusterAllSelected) clusterKeys.forEach((k) => onToggleSelectKey?.(k));
+                  else onSelectManyKeys?.(clusterKeys);
+                };
                 return (
                   <div
                     key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''}`}
+                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (selectionMode) {
+                        toggleClusterSelection();
+                        return;
+                      }
                       if (isOpen) setOpenCluster(null);
                       else openThisCluster(e.currentTarget.getBoundingClientRect());
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
+                        if (selectionMode) {
+                          toggleClusterSelection();
+                          return;
+                        }
                         if (isOpen) setOpenCluster(null);
                         else openThisCluster(e.currentTarget.getBoundingClientRect());
                       }
                     }}
                     title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
+                    {selectionMode && (
+                      <input
+                        type="checkbox"
+                        className="bulk-select-checkbox"
+                        checked={clusterAllSelected}
+                        onChange={toggleClusterSelection}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select ${fullTitleList}`}
+                      />
+                    )}
                     <div className="cal-cluster-title-stack">
                       {titleLines.map((line, i) => (
                         <div className="cal-cluster-title-line" key={i}>
@@ -1051,22 +1093,43 @@ export default function WeekView({
                 const evt = item.data;
                 const { top } = item;
                 const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine } = itemLiveState(item);
+                const evtKey = makeSelectionKey('event', evt.id);
+                const evtSelected = selectionMode && !!selectedKeys?.has(evtKey);
+                // Drag AND resize are both suppressed while selection mode is
+                // active — see this feature's DRAG CONFLICT note.
+                const dragSuppressed = isMobile || evt.canEdit === false || selectionMode;
                 return (
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
+                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     // Desktop gets the richer HoverPreviewCard instead (see
                     // below) — mobile has no hover, so it keeps the native
                     // title tooltip (which does nothing there anyway, but
                     // costs nothing to leave as an accessibility fallback).
                     title={isMobile ? (evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title) : undefined}
-                    draggable={!isMobile && evt.canEdit !== false}
-                    onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
-                    onDragEnd={isMobile ? undefined : endDrag}
-                    onTouchStart={(e) => handleItemTouchStart(e, item)}
-                    onClick={() => onSelectEvent?.(evt)}
+                    draggable={!dragSuppressed}
+                    onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
+                    onDragEnd={dragSuppressed ? undefined : endDrag}
+                    // Unlike List/Board (where reparent-drag is a secondary,
+                    // less-central gesture), Calendar's touch-drag-to-
+                    // reschedule is a core existing interaction — long-press
+                    // here keeps driving THAT (unchanged) rather than being
+                    // repurposed to enter selection mode, so entering
+                    // selection mode on Calendar's mobile view is reachable
+                    // only via the explicit Select toolbar button (see this
+                    // feature's report for this judgment call). Suppressed
+                    // entirely once selectionMode is active, same as the
+                    // drag handlers above.
+                    onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
+                    onClick={() => {
+                      if (selectionMode) {
+                        onToggleSelectKey?.(evtKey);
+                        return;
+                      }
+                      onSelectEvent?.(evt);
+                    }}
                     onMouseEnter={
                       isMobile
                         ? undefined
@@ -1082,17 +1145,31 @@ export default function WeekView({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
+                        if (selectionMode) {
+                          onToggleSelectKey?.(evtKey);
+                          return;
+                        }
                         onSelectEvent?.(evt);
                       }
                     }}
                   >
+                    {selectionMode && (
+                      <input
+                        type="checkbox"
+                        className="bulk-select-checkbox"
+                        checked={evtSelected}
+                        onChange={() => onToggleSelectKey?.(evtKey)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select ${evt.title}`}
+                      />
+                    )}
                     {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
                     {showTimeLine && (
                       <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
                         {evt.startTime}–{endTime}
                       </div>
                     )}
-                    {evt.canEdit !== false && (
+                    {evt.canEdit !== false && !selectionMode && (
                       <div
                         className="resize-handle"
                         onMouseDown={(e) => handleResizeStart(e, item)}
@@ -1116,22 +1193,37 @@ export default function WeekView({
               // hover/hint text and the detail modal show.
               const parentTask = task.parentId ? taskById[task.parentId] : null;
               const displayTitle = parentTask?.title || task.title;
+              const blockKey = makeSelectionKey('block', block.id);
+              const blockSelected = selectionMode && !!selectedKeys?.has(blockKey);
+              // Drag AND resize are both suppressed while selection mode is
+              // active — see this feature's DRAG CONFLICT note.
+              const dragSuppressed = isMobile || block.isLocked || selectionMode;
               return (
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''}`}
+                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
                   style={{
                     top,
                     height,
                     borderLeftColor: priorityColor(task.priority),
                     ...laneStyle,
                   }}
-                  draggable={!isMobile && !block.isLocked}
-                  onDragStart={isMobile ? undefined : (e) => handleDragStart(e, item)}
-                  onDragEnd={isMobile ? undefined : endDrag}
-                  onTouchStart={(e) => handleItemTouchStart(e, item)}
-                  onClick={() => onSelectBlock?.(block)}
+                  draggable={!dragSuppressed}
+                  onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
+                  onDragEnd={dragSuppressed ? undefined : endDrag}
+                  // See the event render's matching comment above: Calendar's
+                  // touch-drag-to-reschedule stays the long-press gesture
+                  // here; entering selection mode is via the toolbar button
+                  // only. Suppressed entirely once selectionMode is active.
+                  onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
+                  onClick={() => {
+                    if (selectionMode) {
+                      onToggleSelectKey?.(blockKey);
+                      return;
+                    }
+                    onSelectBlock?.(block);
+                  }}
                   onMouseEnter={
                     isMobile
                       ? undefined
@@ -1150,6 +1242,10 @@ export default function WeekView({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
+                      if (selectionMode) {
+                        onToggleSelectKey?.(blockKey);
+                        return;
+                      }
                       onSelectBlock?.(block);
                     }
                   }}
@@ -1164,16 +1260,27 @@ export default function WeekView({
                       : undefined
                   }
                 >
-                  <button
-                    className="lock-indicator"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleBlockLock(block.id);
-                    }}
-                    title={block.isLocked ? 'Unlock block (allow rebalancing)' : 'Lock block (protect from rebalancing)'}
-                  >
-                    {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
-                  </button>
+                  {selectionMode ? (
+                    <input
+                      type="checkbox"
+                      className="bulk-select-checkbox"
+                      checked={blockSelected}
+                      onChange={() => onToggleSelectKey?.(blockKey)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${displayTitle}`}
+                    />
+                  ) : (
+                    <button
+                      className="lock-indicator"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBlockLock(block.id);
+                      }}
+                      title={block.isLocked ? 'Unlock block (allow rebalancing)' : 'Lock block (protect from rebalancing)'}
+                    >
+                      {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                    </button>
+                  )}
                   {!liveTimeOnly && (
                     <div className="cal-block-title">
                       {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
@@ -1188,7 +1295,7 @@ export default function WeekView({
                       {block.startTime}–{endTime}
                     </div>
                   )}
-                  {!block.isLocked && (
+                  {!block.isLocked && !selectionMode && (
                     <div
                       className="resize-handle"
                       onMouseDown={(e) => handleResizeStart(e, item)}
