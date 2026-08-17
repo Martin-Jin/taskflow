@@ -590,6 +590,22 @@ cached copy.
     instead, with the parent named as a subtitle), bar spans from first
     scheduled block to due date, colored by priority; blocked tasks get a
     hollow dashed marker, passive tasks get a striped overlay.
+- **Bulk select** — a **Select** button in List, Board, Calendar's toolbar,
+  and a task's own sub-task list (in its "⋯"-adjacent header) lets you tap/
+  click several tasks, cards, or calendar blocks/events at once (checkboxes
+  replace the normal open/drag/complete action while it's on) and edit
+  whatever field they share — due date, project, tags, priority, complete/
+  incomplete, or delete — from one docked bar at the bottom of the screen.
+  Editing skips (and reports) any item a field genuinely can't apply to
+  (e.g. a due date past a sub-task's own ancestor deadline) rather than
+  failing the whole batch. Selecting a mix of scheduled tasks and standalone
+  calendar events only offers fields valid for both (a standalone event has
+  no project/tags/priority/completion of its own). On mobile, long-pressing a
+  chip/day-cell item in Calendar's Month view also enters selection mode and
+  selects that item; everywhere else (List, Board, Calendar's Week/Day/3-Day
+  view) long-press keeps its existing drag-to-reparent/drag-to-reschedule
+  meaning, so Select is reachable via the toolbar button instead. Deleting a
+  selection always asks for confirmation first.
 - **Stats** — live Total Hours Left, Scheduled Today/This Week, Free
   Capacity This Week, and an at-risk-of-missing-buffer callout.
 - **Settings** — connect integrations, tune scheduling rules (buffer days,

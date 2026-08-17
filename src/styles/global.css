@@ -2836,6 +2836,19 @@ input[type='checkbox']:checked::after {
   background: var(--color-accent-soft);
 }
 
+/* Bulk-select highlight — shared by List rows, Board cards, and Calendar
+   blocks/events/chips once selected (see BulkActionBar/useMultiSelect). A
+   softer, static tint distinct from the reparent-drag target ring above so
+   the two states (mid-drag target vs. selected-for-bulk-edit) never read as
+   the same thing. */
+.task-row.is-selected,
+.board-card.is-selected,
+.cal-block.is-selected,
+.cal-event.is-selected {
+  box-shadow: inset 0 0 0 2px var(--color-accent-solid-bg);
+  background: var(--color-accent-soft);
+}
+
 /* Overlaid rather than in-flow so arming a target never reflows the list
    under the pointer/finger. Sits just INSIDE the target's top-right corner
    rather than straddling its edge — Board's column body is a clipped scroll
@@ -2882,6 +2895,117 @@ input[type='checkbox']:checked::after {
     max-width: none;
     width: fit-content;
     margin-left: auto;
+  }
+}
+
+/* ============================================================================
+   BULK SELECT — checkbox affordance + the shared docked bottom bar
+   ============================================================================
+   One `.bulk-select-checkbox` styling shared by every selection surface
+   (List rows, Board cards, Calendar blocks/events/chips, TaskDetailModal's
+   sub-task rows) so the affordance reads consistently everywhere it appears,
+   and one `.bulk-action-bar` shared component (Common/BulkActionBar.jsx) —
+   same layout on desktop and mobile, no bottom-sheet split. */
+.bulk-select-checkbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Docked full-width bar, same on every breakpoint. Sits above the mobile
+   .bottom-tab-bar (z-index: 150, nav.css) — while it's showing, the tab bar
+   would otherwise visually compete with it for the same screen edge; each
+   view hides its own FAB(s) while selection mode is active instead of
+   layering z-index tricks against them. */
+.bulk-action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 155;
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border);
+  box-shadow: var(--shadow-elevated);
+  padding: 8px calc(var(--space-4) + env(safe-area-inset-right, 0)) calc(8px + env(safe-area-inset-bottom, 0))
+    calc(var(--space-4) + env(safe-area-inset-left, 0));
+  animation: modal-overlay-in var(--duration-base) var(--ease-standard);
+}
+
+.bulk-action-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-action-bar-count {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.bulk-action-bar-fields {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bulk-action-bar-field {
+  position: relative;
+}
+
+.bulk-action-bar-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+}
+
+.bulk-action-bar-recurrence-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.bulk-action-bar-popover-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.bulk-action-bar-delete {
+  color: var(--color-danger);
+}
+
+.bulk-action-bar-trailing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Narrow screens: let the field cluster wrap onto its own row under the count
+   rather than horizontally scrolling or clipping. */
+@media (max-width: 480px) {
+  .bulk-action-bar-inner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .bulk-action-bar-trailing {
+    margin-left: 0;
+    justify-content: space-between;
   }
 }
 

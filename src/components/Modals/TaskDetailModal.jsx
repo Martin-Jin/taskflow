@@ -133,6 +133,8 @@ import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitl
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useMultiSelect } from '../../hooks/useMultiSelect';
+import { useTaskBulkEditActions } from '../../hooks/useTaskBulkEditActions';
 import DependencyPicker from '../Common/DependencyPicker';
 import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
@@ -141,11 +143,11 @@ import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
 import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
+import BulkActionBar from '../Common/BulkActionBar';
 import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
 import {
   getEffectiveEstimatedHours,
-  findNearestAncestorDueDate,
   getAllDescendants,
   isCompletedForCurrentOccurrence,
   getEffectiveRemainingHoursForOccurrence,
@@ -153,6 +155,12 @@ import {
   isAtMaxSubtaskDepth,
   getIneligibleParentIds,
 } from '../../utils/taskHierarchy';
+import {
+  computeDueDateError,
+  computeDueDateRequiredError,
+  computeFixedTimeError,
+  computeEnforcingAncestor,
+} from '../../utils/taskValidation';
 import SmartParseGuideModal from './SmartParseGuideModal';
 import {
   findActiveMentionSpan,
@@ -828,6 +836,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setPauseLogPrompt(null);
     setMoveToOpen(false);
     setMoveToQuery('');
+    // Sub-task bulk-select is scoped to whichever task's sub-task list is
+    // currently shown — switching to a different task (parent, or a child
+    // navigated into) must not carry over a selection made against the
+    // PREVIOUS task's children.
+    subtaskSelect.setSelectionMode(false);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
     lastSmartEarliestDateRef.current = null;
@@ -975,6 +988,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const childTasks = useMemo(() => tasks.filter((t) => t.parentId === task.id), [tasks, task.id]);
   const visibleChildTasks = hideCompletedSubtasks ? childTasks.filter((c) => !c.isCompleted) : childTasks;
   const completedChildTasks = childTasks.filter((c) => c.isCompleted).length;
+  // Bulk multi-select scoped to JUST this modal's own sub-task list (see
+  // hooks/useMultiSelect.js's module doc) — fully independent of List/
+  // Board/Calendar's own selections, and never shared even if this modal is
+  // opened from one of those pages. Sub-tasks are plain Tasks, so this
+  // reuses the same Task-only action set List/Board's own bulk-edit uses.
+  const subtaskSelect = useMultiSelect();
+  const selectedSubtasks = useMemo(
+    () => [...subtaskSelect.selectedKeys].map((id) => childTasks.find((c) => c.id === id)).filter(Boolean),
+    [subtaskSelect.selectedKeys, childTasks]
+  );
+  const subtaskBulkActions = useTaskBulkEditActions(selectedSubtasks, subtaskSelect.exitSelectionMode);
   // This task's own parent, if any — drives the hierarchy label in the
   // header. Only one level is looked up here; if that parent itself has a
   // parent, navigating to it re-renders this same label against the new
@@ -1515,10 +1539,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     if (appliableSharedDirty) setJustAppliedToAll(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliableSharedDirty]);
+  // These four gates used to be inline `const` expressions computed straight
+  // from this component's own local state — now standalone pure functions in
+  // utils/taskValidation.js (see that file's header comment) so the bulk-edit
+  // engine (utils/bulkEditEngine.js) can run the exact same checks per
+  // selected item, not just against this modal's own form state. Behavior
+  // here is unchanged; only the implementation moved.
+  //
   // Checking "Fixed time" with no time chosen yet is an incomplete edit —
   // block it from silently autosaving (or from the explicit Save button)
   // until a time is actually picked.
-  const fixedTimeError = fixedTimeEnabled && !fixedTime ? 'Pick a time, or turn off "Fixed time".' : '';
+  const fixedTimeError = computeFixedTimeError(fixedTimeEnabled, fixedTime);
   // A sub-task's own due date can never be later than its nearest dated
   // ancestor's — that ancestor's due date is the hard "finish everything
   // toward this goal by this day" deadline (see allocator.js's
@@ -1528,29 +1559,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // an undated parent imposes no ceiling at all (the sub-task is free to use
   // whatever due date it likes, or none).
   const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
-  const ancestorDueDate = useMemo(() => findNearestAncestorDueDate(task, tasksById), [task, tasksById]);
-  const dueDateError = ancestorDueDate && dueDate && dueDate > ancestorDueDate
-    ? `Can't be later than "${tasks.find((t) => t.id === task.parentId)?.title || 'parent task'}"'s due date (${formatDisplayDate(ancestorDueDate)}).`
-    : '';
+  const dueDateError = useMemo(() => computeDueDateError(task, dueDate, tasksById), [task, dueDate, tasksById]);
   // Is this task's enforceDueDate being forced on by an ancestor (see
   // computeEnforceDueDateSyncUpdates)? If so, the checkbox below is disabled
   // rather than letting the user uncheck it only to have it silently snap
-  // back true on the next sync. Walks the parentId chain the same way
-  // findNearestAncestorDueDate does above, just checking a different
-  // condition per ancestor.
-  const enforcingAncestor = useMemo(() => {
-    if (!task.parentId) return null;
-    const visited = new Set([task.id]);
-    let current = task;
-    while (current.parentId) {
-      const parent = tasksById.get(current.parentId);
-      if (!parent || visited.has(parent.id)) return null;
-      if (parent.enforceDueDate && parent.dueDate) return parent;
-      visited.add(parent.id);
-      current = parent;
-    }
-    return null;
-  }, [task, tasksById]);
+  // back true on the next sync.
+  const enforcingAncestor = useMemo(() => computeEnforcingAncestor(task, tasksById), [task, tasksById]);
   // Recurring tasks are scheduled off their due date advancing each
   // occurrence (see completeTask/computeNextDueDate) — a recurring task with
   // no due date has nothing to advance from, so clearing it here would leave
@@ -1558,7 +1572,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // Blocks the clear the same way fixedTimeError/dueDateError block an
   // incomplete edit, rather than silently turning isRecurring off (which is
   // what commitChanges' `isRecurring && !!nextDueDate` used to do).
-  const dueDateRequiredError = isRecurring && !dueDate ? 'Recurring tasks need a due date — pick one, or turn off "Repeats".' : '';
+  const dueDateRequiredError = computeDueDateRequiredError(isRecurring, dueDate);
 
   function handleNotesChange(value) {
     setNotes(value);
@@ -2595,6 +2609,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       sub-task can't have its own sub-tasks).
                     </HelpTooltip>
                   </span>
+                  {!isReadOnlyViewer && childTasks.length > 0 && (
+                    <button
+                      type="button"
+                      className={`subtask-hide-completed ${subtaskSelect.selectionMode ? 'is-active' : ''}`}
+                      onClick={() => subtaskSelect.setSelectionMode(!subtaskSelect.selectionMode)}
+                      aria-pressed={subtaskSelect.selectionMode}
+                    >
+                      {subtaskSelect.selectionMode ? 'Cancel select' : 'Select'}
+                    </button>
+                  )}
                   {completedChildTasks > 0 && (
                     <button type="button" className="subtask-hide-completed" onClick={() => setHideCompletedSubtasks((v) => !v)}>
                       {hideCompletedSubtasks ? 'Show completed' : 'Hide completed'}
@@ -2604,39 +2628,51 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 <div className="subtask-list">
                   {visibleChildTasks.map((child) => {
                     const childDoneForToday = isCompletedForCurrentOccurrence(child, todayIso);
+                    const childSelected = subtaskSelect.isSelected(child.id);
                     return (
-                    <div key={child.id} className="subtask-row">
-                      <input
-                        type="checkbox"
-                        checked={childDoneForToday}
-                        disabled={isReadOnlyViewer}
-                        // Mirrors the header checkbox above: a recurring
-                        // child completed for today shows checked and can
-                        // only be un-completed, rather than re-offering
-                        // "complete" (child.isCompleted stays false for
-                        // recurring tasks — see isCompletedForCurrentOccurrence).
-                        onChange={() => {
-                          if (isReadOnlyViewer) return; // Defense in depth — checkbox is already disabled for viewers.
-                          if (!childDoneForToday) {
-                            requestComplete(child.id);
-                          } else {
-                            uncompleteTask(child.id);
-                            playUncomplete();
-                          }
-                        }}
-                      />
+                    <div key={child.id} className={`subtask-row ${childSelected ? 'is-selected' : ''}`}>
+                      {subtaskSelect.selectionMode ? (
+                        <input
+                          type="checkbox"
+                          className="bulk-select-checkbox"
+                          checked={childSelected}
+                          onChange={() => subtaskSelect.toggle(child.id)}
+                          aria-label={`Select ${child.title}`}
+                        />
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={childDoneForToday}
+                          disabled={isReadOnlyViewer}
+                          // Mirrors the header checkbox above: a recurring
+                          // child completed for today shows checked and can
+                          // only be un-completed, rather than re-offering
+                          // "complete" (child.isCompleted stays false for
+                          // recurring tasks — see isCompletedForCurrentOccurrence).
+                          onChange={() => {
+                            if (isReadOnlyViewer) return; // Defense in depth — checkbox is already disabled for viewers.
+                            if (!childDoneForToday) {
+                              requestComplete(child.id);
+                            } else {
+                              uncompleteTask(child.id);
+                              playUncomplete();
+                            }
+                          }}
+                        />
+                      )}
                       <div
                         role="button"
                         tabIndex={0}
                         className={`subtask-row-title-wrap ${childDoneForToday ? 'completed' : ''}`}
-                        onClick={() => setActiveTaskId(child.id)}
+                        onClick={() => (subtaskSelect.selectionMode ? subtaskSelect.toggle(child.id) : setActiveTaskId(child.id))}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            setActiveTaskId(child.id);
+                            if (subtaskSelect.selectionMode) subtaskSelect.toggle(child.id);
+                            else setActiveTaskId(child.id);
                           }
                         }}
-                        title="Open sub-task"
+                        title={subtaskSelect.selectionMode ? undefined : 'Open sub-task'}
                       >
                         <span className="subtask-row-title">
                           {child.link ? (
@@ -2725,6 +2761,20 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                     </button>
                   )}
                 </div>
+                {subtaskSelect.selectionMode && (
+                  <BulkActionBar
+                    count={subtaskSelect.count}
+                    editableFields={subtaskBulkActions.editableFields}
+                    projects={projects}
+                    labels={labels}
+                    onApplyField={subtaskBulkActions.applyField}
+                    onMarkComplete={subtaskBulkActions.markComplete}
+                    onMarkIncomplete={subtaskBulkActions.markIncomplete}
+                    onDelete={subtaskBulkActions.handleDelete}
+                    onCancel={subtaskSelect.exitSelectionMode}
+                    onSelectAll={() => subtaskSelect.selectAll(visibleChildTasks.map((c) => c.id))}
+                  />
+                )}
               </div>
 
               <div className="form-row comments-section">

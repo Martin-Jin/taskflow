@@ -725,7 +725,7 @@ src/
 │   ├── Nav/                   # Sidebar — desktop/tablet nav + a capped recent-projects strip (pin/rename/delete via ProjectActionsMenu) with a link into Projects/; BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
 │   ├── Projects/               # ProjectsPage — directory/launcher tab: fuzzy project search, Recent/Shared/My-projects columns, size/duration/creation-date sort (stats/sort logic in utils/projectStats.js)
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
-│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator)
+│   ├── Common/                 # SearchBar (also searches/switches projects), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator), BulkActionBar (shared docked bottom bar for bulk multi-select edit/delete — List/Board/Calendar/TaskDetailModal's sub-task list)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── TaskListPanel.jsx
 │   └── SettingsPanel.jsx
@@ -746,7 +746,10 @@ src/
 │   ├── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
 │   ├── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 │   ├── useSharedProjectSync.js    # Live multi-writer Firestore sync for shared projects (Phase 1, Collaborative Projects) — subscriptions, diff-and-push, presence heartbeat
-│   └── useJoinFlow.js             # Drives the `?join=<token>` share-link landing: anonymous sign-in, token resolution, name prompt, membership write (Phase 2)
+│   ├── useJoinFlow.js             # Drives the `?join=<token>` share-link landing: anonymous sign-in, token resolution, name prompt, membership write (Phase 2)
+│   ├── useMultiSelect.js          # Transient (not persisted) per-surface bulk-selection state — List/Board/Calendar/TaskDetailModal's sub-task list each get their own independent instance; makeSelectionKey/parseSelectionKey encode a block:<id>/event:<id> composite key scheme for Calendar's mixed ScheduledBlock+CalendarEvent selections
+│   ├── useLongPressSelect.js      # Mobile long-press-to-enter-selection-mode, modeled on useReparentDrag's own long-press timing/threshold
+│   └── useTaskBulkEditActions.js  # Shared Task-only bulk-edit action set (editable-field computation + apply/complete/delete handlers) reused by List and Board
 ├── migrations/
 │   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
 │   ├── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
@@ -771,6 +774,8 @@ src/
 │   ├── recurrenceState.js    # Convergent completedOccurrences (union)/skippedThrough (max) model a recurring task's dueDate/completedDates/completionHistory are derived from — safe under concurrent shared-project writers
 │   ├── smartParse.js         # Composes the above + priority/dependency detection
 │   ├── dependencyUtils.js    # Cycle detection + transitive dependency/dependent traversal for dependsOn graphs
+│   ├── taskValidation.js     # Standalone extraction of TaskDetailModal's four per-field edit gates (computeDueDateError/computeDueDateRequiredError/computeFixedTimeError/computeEnforcingAncestor) — callable from both the modal's own single-edit path and the bulk-edit engine
+│   ├── bulkEditEngine.js     # Bulk multi-select's editable-field intersection (computeBulkEditableFields) + per-item validate/skip/apply orchestration (applyBulkEdit, using taskValidation.js's gates) + result-summary formatting
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
 │   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
 │   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
@@ -1248,8 +1253,10 @@ npm run test:e2e -- tests/e2e/full-suite       # Playwright, boots its own dev s
 `npm run test:unit` runs [Vitest](https://vitest.dev) over `tests/unit/` —
 pure-logic coverage (date/recurrence math, natural-language parsing,
 backup/restore, dependency-cycle detection, cloud-sync merge/race-guard
-logic). Output (pass/fail counts per file) prints straight to the terminal
-when it finishes.
+logic, the bulk multi-select engine's editable-field intersection and
+per-item validate/skip/apply decisions — see `taskValidation.test.js`,
+`bulkEditEngine.test.js`, `multiSelectKeys.test.js`). Output (pass/fail
+counts per file) prints straight to the terminal when it finishes.
 
 `npm run test:rules` runs the Firestore **security rules** suite
 (`tests/rules/`) against the local Firestore emulator, using
@@ -1271,12 +1278,12 @@ cross-user data, and a mistake there is not visible in the UI.
 
 `npm run test:e2e -- tests/e2e/full-suite` runs the tracked
 [Playwright](https://playwright.dev) suite covering user-facing behavior
-(tasks, views, dashboard, settings/backups, search/shortcuts/undo, timer).
-It works headless against seeded `localStorage` mock data, no login
-required; `playwright.config.js`'s `webServer` block starts the dev server
-automatically (or reuses one already on port 5183). Pass/fail results print
-to the terminal; on failure, Playwright also writes an HTML report you can
-open with `npx playwright show-report`.
+(tasks, views, dashboard, settings/backups, search/shortcuts/undo, timer,
+bulk multi-select). It works headless against seeded `localStorage` mock
+data, no login required; `playwright.config.js`'s `webServer` block starts
+the dev server automatically (or reuses one already on port 5183). Pass/fail
+results print to the terminal; on failure, Playwright also writes an HTML
+report you can open with `npx playwright show-report`.
 
 `npm run test:e2e` (no path) runs everything under `tests/e2e/`, including
 `tests/e2e/todoist-parity.spec.js`, which checks TaskFlow's smart-parse

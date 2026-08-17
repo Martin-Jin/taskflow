@@ -99,12 +99,14 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMotionEnabled } from '../../hooks/useMotionEnabled';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { useReparentDrag } from '../../hooks/useReparentDrag';
+import { useTaskBulkEditActions } from '../../hooks/useTaskBulkEditActions';
 import AddTaskModal from '../Modals/AddTaskModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import { taskMatchesQuery } from '../Common/SearchBar';
 import AddTaskFabGroup from '../Common/AddTaskFabGroup';
 import ReparentDropHint from '../Common/ReparentDropHint';
+import BulkActionBar from '../Common/BulkActionBar';
 import { formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
@@ -136,7 +138,7 @@ const COLUMN_DRAG_TYPE = 'application/x-taskflow-column';
 // first time anyone ever switched to the Board view.
 let lastHandledBoardAIQuickAddSignal = 0;
 
-export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal, onSelectTaskRef, onProjectCreated }) {
+export default function BoardView({ projectId, onProjectChange, filter = 'all', onOpenSearch, openAIQuickAddSignal, onSelectTaskRef, select, onProjectCreated }) {
   const {
     tasks,
     sections,
@@ -260,6 +262,21 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   // other write on a shared project they only have read access to.
   const reparent = useReparentDrag({ tasks, updateTask, disabled: isSectionsReadOnly });
 
+  // Bulk multi-select (see hooks/useMultiSelect.js) — `select` is lifted up
+  // into TaskListPanel (unlike editingTaskId, which stays local to this
+  // component) purely so its "Select" toggle button can render in the
+  // shared toolbar row (see TaskListPanel's boardSelect); it's still a fully
+  // independent instance from List's own selection. Card-only, no column
+  // multi-select (see this feature's "explicitly not in scope" note). While
+  // active, BOTH of Board's native-HTML5-DnD systems (card reparent above,
+  // and the column-to-column move below — see DRAG SEMANTICS) must be
+  // suppressed, not just one — see renderCard/handleColumnDrop below.
+  const selectedTasks = useMemo(
+    () => [...select.selectedKeys].map((id) => tasks.find((t) => t.id === id)).filter(Boolean),
+    [select.selectedKeys, tasks]
+  );
+  const bulkActions = useTaskBulkEditActions(selectedTasks, select.exitSelectionMode);
+
   // Natural (synced) order, then the user's local drag arrangement layered on
   // top — see utils/boardColumnOrder.js.
   const projectSections = useMemo(
@@ -341,6 +358,12 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     setDragOverColumnId(undefined);
     reparent.endDrag();
     if (isSectionsReadOnly) return; // Defense in depth — cards aren't draggable for viewers in the first place.
+    // Both of Board's native-HTML5-DnD systems (card reparent, column-to-
+    // column move) are suppressed while bulk-select is active — cards
+    // already can't start a drag at all then (see renderCard's draggable
+    // prop), but this is defense in depth against a column-reorder drag
+    // that was already in flight when selection mode was toggled on.
+    if (select.selectionMode) return;
     // A column-reorder drag passes over column bodies on its way to its drop
     // target; ignore it here so it can't also be treated as a card drop.
     // Checks the dataTransfer type rather than only `dragColumnId`, so the
@@ -395,6 +418,12 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     // meta line below so the two lines' text shares the same left edge.
     const titleIconOffset = (task.isRecurring ? 17 : 0) + (task.isPassive ? 17 : 0);
     const isReparentTarget = reparent.targetId === task.id;
+    const isSelected = select.isSelected(task.id);
+    // Both of Board's native-HTML5-DnD systems (reparent above, column-move
+    // in handleColumnDrop) are suppressed while selection mode is active —
+    // see this feature's DRAG CONFLICT note. Card-level dragging is already
+    // off on mobile/viewer; selectionMode adds a third reason.
+    const dragSuppressed = isMobile || isSectionsReadOnly || select.selectionMode;
     return (
       <motion.div
         key={task.id}
@@ -403,7 +432,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
         exit={motionEnabled ? CARD_EXIT : undefined}
         className={`board-card ${reparent.draggedId === task.id ? 'is-dragging' : ''} ${
           isReparentTarget ? 'is-reparent-target' : ''
-        }`}
+        } ${isSelected ? 'is-selected' : ''}`}
         style={{ borderLeftColor: priorityColor(task.priority) }}
         role="button"
         tabIndex={0}
@@ -414,40 +443,64 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
         // it gets the long-press touch path instead (see useReparentDrag). A
         // viewer can't move or reparent a card (same rule as the section-edit
         // controls), so both are off for them.
-        draggable={!isMobile && !isSectionsReadOnly}
-        onDragStart={isMobile || isSectionsReadOnly ? undefined : (e) => reparent.handlers.dragStart(e, task.id)}
-        onDragEnd={isMobile || isSectionsReadOnly ? undefined : reparent.endDrag}
+        draggable={!dragSuppressed}
+        onDragStart={dragSuppressed ? undefined : (e) => reparent.handlers.dragStart(e, task.id)}
+        onDragEnd={dragSuppressed ? undefined : reparent.endDrag}
         // Card-level reparent drop zone (desktop). `data-task-id` is what the
         // touch path resolves the card under the finger by.
         data-task-id={task.id}
-        onDragOver={isMobile || isSectionsReadOnly ? undefined : (e) => reparent.handlers.dragOver(e, task.id)}
-        onDragLeave={isMobile || isSectionsReadOnly ? undefined : () => reparent.handlers.dragLeave(task.id)}
-        onDrop={isMobile || isSectionsReadOnly ? undefined : (e) => reparent.handlers.drop(e, task.id)}
-        onTouchStart={isSectionsReadOnly ? undefined : (e) => reparent.handlers.touchStart(e, task.id)}
+        onDragOver={dragSuppressed ? undefined : (e) => reparent.handlers.dragOver(e, task.id)}
+        onDragLeave={dragSuppressed ? undefined : () => reparent.handlers.dragLeave(task.id)}
+        onDrop={dragSuppressed ? undefined : (e) => reparent.handlers.drop(e, task.id)}
+        // Board's touch-drag-to-reparent (useReparentDrag) is mobile's ONLY
+        // drag gesture and an established existing feature (unlike List,
+        // where the equivalent gesture is more secondary) — long-press here
+        // keeps driving that unchanged rather than being repurposed to enter
+        // selection mode, same judgment call as WeekView's touch-drag-to-
+        // reschedule. Entering selection mode on Board's mobile view is
+        // reachable only via the explicit Select toolbar button. Suppressed
+        // entirely once selectionMode is active, same as the drag handlers.
+        onTouchStart={isSectionsReadOnly || select.selectionMode ? undefined : (e) => reparent.handlers.touchStart(e, task.id)}
         onClick={() => {
+          if (select.selectionMode) {
+            select.toggle(task.id);
+            return;
+          }
           if (reparent.handlers.consumeClick()) return; // trailing click of a long-press drag, not a tap
           setEditingTaskId(task.id);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            setEditingTaskId(task.id);
+            if (select.selectionMode) select.toggle(task.id);
+            else setEditingTaskId(task.id);
           }
         }}
       >
         {isReparentTarget && <ReparentDropHint parentTitle={task.title} />}
-        <button
-          className="board-card-check"
-          title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
-          disabled={isSectionsReadOnly}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isSectionsReadOnly) return; // Defense in depth — button is already disabled for viewers.
-            requestComplete(task.id);
-          }}
-        >
-          <Circle size={16} strokeWidth={1.75} />
-        </button>
+        {select.selectionMode ? (
+          <input
+            type="checkbox"
+            className="bulk-select-checkbox board-card-check"
+            checked={isSelected}
+            onChange={() => select.toggle(task.id)}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Select ${task.title}`}
+          />
+        ) : (
+          <button
+            className="board-card-check"
+            title={task.isRecurring ? 'Complete (advances to next occurrence)' : 'Mark complete'}
+            disabled={isSectionsReadOnly}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (isSectionsReadOnly) return; // Defense in depth — button is already disabled for viewers.
+              requestComplete(task.id);
+            }}
+          >
+            <Circle size={16} strokeWidth={1.75} />
+          </button>
+        )}
         <div className="board-card-body">
           <div className="board-card-title">
             {task.isRecurring && (
@@ -509,12 +562,14 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
 
   return (
     <div className="board-page">
-      <AddTaskFabGroup
-        onAddTask={() => setAddingToSectionId('')}
-        onAIQuickAdd={() => setShowAIQuickAdd(true)}
-        onOpenSearch={onOpenSearch}
-        addTaskDisabled={isSectionsReadOnly}
-      />
+      {!select.selectionMode && (
+        <AddTaskFabGroup
+          onAddTask={() => setAddingToSectionId('')}
+          onAIQuickAdd={() => setShowAIQuickAdd(true)}
+          onOpenSearch={onOpenSearch}
+          addTaskDisabled={isSectionsReadOnly}
+        />
+      )}
 
       {!selectedProject ? (
         <div className="board-column-empty" style={{ padding: 30 }}>
@@ -591,9 +646,13 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                     className="board-column-grip"
                     title="Drag to reorder column"
                     aria-hidden="true"
-                    draggable
-                    onDragStart={(e) => handleColumnReorderStart(e, col)}
-                    onDragEnd={handleColumnReorderEnd}
+                    // Suppressed while bulk-select is active — see this
+                    // feature's DRAG CONFLICT note: both of Board's DnD
+                    // systems (card reparent, column reorder) are switched
+                    // off together, not just one.
+                    draggable={!select.selectionMode}
+                    onDragStart={select.selectionMode ? undefined : (e) => handleColumnReorderStart(e, col)}
+                    onDragEnd={select.selectionMode ? undefined : handleColumnReorderEnd}
                   >
                     <GripVertical size={13} />
                   </span>
@@ -720,6 +779,24 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
       )}
       {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
       {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
+      {select.selectionMode && (
+        <BulkActionBar
+          count={select.count}
+          editableFields={bulkActions.editableFields}
+          projects={projects}
+          labels={labels}
+          onApplyField={bulkActions.applyField}
+          onMarkComplete={bulkActions.markComplete}
+          onMarkIncomplete={bulkActions.markIncomplete}
+          onDelete={bulkActions.handleDelete}
+          onCancel={select.exitSelectionMode}
+          // "Select all" selects every card currently visible on the board
+          // (every column's tasks, or the flat list when there are no
+          // sections yet) — matches whatever the active search/filter has
+          // already narrowed down to, same as List view's own affordance.
+          onSelectAll={() => select.selectAll((hasSections ? columns.flatMap((c) => c.tasks) : flatTasks).map((t) => t.id))}
+        />
+      )}
     </div>
   );
 }

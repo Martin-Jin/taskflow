@@ -1622,6 +1622,21 @@
   color: var(--color-text-primary);
 }
 
+/* "Select" toggle for the sub-task list's own bulk-select (see
+   BulkActionBar/useMultiSelect) reuses .subtask-hide-completed's plain-text-
+   button look; .is-active highlights it while selection mode is on, same
+   idea as the page-level Select toggles' btn-primary state. */
+.subtask-hide-completed.is-active {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.subtask-row.is-selected {
+  box-shadow: inset 0 0 0 2px var(--color-accent-solid-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+}
+
 .comment-list {
   display: flex;
   flex-direction: column;

@@ -47,7 +47,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks } from 'lucide-react';
+import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks, CheckSquare } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useConfirm } from '../context/ConfirmContext';
@@ -67,11 +67,14 @@ import SharedProjectBadge from './Common/SharedProjectBadge';
 import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
 import AccountButton from './Nav/AccountButton';
+import BulkActionBar from './Common/BulkActionBar';
 import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useReparentDrag } from '../hooks/useReparentDrag';
+import { useMultiSelect } from '../hooks/useMultiSelect';
+import { useTaskBulkEditActions } from '../hooks/useTaskBulkEditActions';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
@@ -227,6 +230,14 @@ export default function TaskListPanel({
   // into this ref on mount so the one shared SearchBar can reach whichever
   // view's modal state is actually active.
   const boardSelectTaskRef = useRef(null);
+  // Board's bulk-select state is LIFTED here (unlike editingTaskId, which
+  // stays local to BoardView via boardSelectTaskRef above) because the
+  // "Select" toggle button itself needs to render in this shared toolbar row
+  // — Board has no toolbar row of its own (its SearchBar already renders up
+  // here too, see .tasklist-toolbar below). Still a fully independent
+  // instance from List's own `select` (selecting on Board never touches
+  // List's selection) — it's just owned one level higher up the tree.
+  const boardSelect = useMultiSelect();
   // Persisted (device-local view state, not synced/backed up — see CLAUDE.md's
   // Backups section) so the per-view status filter survives a reload. Merged
   // defensively over DEFAULT_FILTER_BY_VIEW rather than trusting the stored
@@ -288,6 +299,19 @@ export default function TaskListPanel({
     }
     return map;
   }, [tasks]);
+
+  // Bulk multi-select (see hooks/useMultiSelect.js) — this List view's own
+  // independent instance; selection keys here are plain task ids (every
+  // selectable row is a Task, unlike Calendar's block/event mix). While
+  // selectionMode is active, TaskRow disables its own draggable attribute
+  // (see reparentHandlers usage below) so a drag-start never fires mid-
+  // selection — see this feature's DRAG CONFLICT note.
+  const select = useMultiSelect();
+  const selectedTasks = useMemo(
+    () => [...select.selectedKeys].map((id) => tasks.find((t) => t.id === id)).filter(Boolean),
+    [select.selectedKeys, tasks]
+  );
+  const bulkActions = useTaskBulkEditActions(selectedTasks, select.exitSelectionMode);
 
   // Stable callback refs (useCallback) so TaskRow's React.memo below actually
   // bails on unrelated re-renders instead of seeing a fresh function prop
@@ -509,6 +533,9 @@ export default function TaskListPanel({
         isReparentTarget={reparent.targetId === task.id}
         reparentHandlers={reparent.handlers}
         onDragEnd={reparent.endDrag}
+        selectionMode={select.selectionMode}
+        isSelected={select.isSelected(task.id)}
+        onToggleSelect={select.toggle}
       />
     );
   }
@@ -651,6 +678,20 @@ export default function TaskListPanel({
               onSelectProject={view === 'list' ? onChangeActiveProject : undefined}
               onSelectTask={view === 'board' ? (id) => boardSelectTaskRef.current?.(id) : setEditingTaskId}
             />
+            {(view === 'list' || view === 'board') && (
+              <button
+                type="button"
+                className={`btn ${(view === 'list' ? select : boardSelect).selectionMode ? 'btn-primary' : ''}`}
+                onClick={() => {
+                  const target = view === 'list' ? select : boardSelect;
+                  target.setSelectionMode(!target.selectionMode);
+                }}
+                aria-pressed={(view === 'list' ? select : boardSelect).selectionMode}
+              >
+                <CheckSquare size={14} />
+                {(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -662,7 +703,7 @@ export default function TaskListPanel({
           descendants, which broke this FAB's "fixed to viewport" corner
           positioning (it would render pinned near the header instead of the
           bottom-right corner, overlapping the view/filter menu). */}
-      {view === 'list' && (
+      {view === 'list' && !select.selectionMode && (
         <AddTaskFabGroup
           onAddTask={() => setShowAddModal(true)}
           onAIQuickAdd={() => setShowAIQuickAdd(true)}
@@ -679,6 +720,7 @@ export default function TaskListPanel({
           onOpenSearch={isMobile ? onOpenSearch : undefined}
           openAIQuickAddSignal={openAIQuickAddSignal}
           onSelectTaskRef={boardSelectTaskRef}
+          select={boardSelect}
           onProjectCreated={onProjectCreated}
         />
       )}
@@ -721,6 +763,24 @@ export default function TaskListPanel({
           )}
           {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
           {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
+          {select.selectionMode && (
+            <BulkActionBar
+              count={select.count}
+              editableFields={bulkActions.editableFields}
+              projects={projects}
+              labels={labels}
+              onApplyField={bulkActions.applyField}
+              onMarkComplete={bulkActions.markComplete}
+              onMarkIncomplete={bulkActions.markIncomplete}
+              onDelete={bulkActions.handleDelete}
+              onCancel={select.exitSelectionMode}
+              // "Select all" selects every currently-visible/filtered row —
+              // the obvious "all visible items" set for List view (matches
+              // whatever the active status filter/search already narrowed
+              // down to), not every task in the project.
+              onSelectAll={() => select.selectAll(visibleTasks.map((t) => t.id))}
+            />
+          )}
         </>
       )}
     </div>
@@ -768,6 +828,9 @@ const TaskRow = React.memo(function TaskRow({
   isReparentTarget,
   reparentHandlers,
   onDragEnd,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
 }) {
   return (
     <motion.div
@@ -776,48 +839,76 @@ const TaskRow = React.memo(function TaskRow({
       exit={motionEnabled ? ROW_EXIT : undefined}
       className={`task-row ${depth === 0 ? 'card' : 'task-row-child'} ${isDragging ? 'is-dragging' : ''} ${
         isReparentTarget ? 'is-reparent-target' : ''
-      }`}
+      } ${isSelected ? 'is-selected' : ''}`}
       style={depth > 0 ? { marginLeft: `calc(var(--space-5) * ${depth})` } : undefined}
       // Drag a row onto another row to make it that row's sub-task (see
       // SUB-TASK DRAG in TaskListPanel's header). framer-motion only forwards
       // onDragStart/onDragEnd to the DOM when `draggable` is set — which it is
       // here — so native HTML5 DnD works through it; touch gets the
-      // long-press path instead, since there's no native touch DnD.
-      draggable={!isReadOnlyViewer}
+      // long-press path instead, there's no native touch DnD. Both the
+      // draggable attribute and every drag handler are switched off while
+      // selectionMode is active (mirrors isReadOnlyViewer's existing gate) so
+      // a drag-start can never fire mid-selection — see this feature's DRAG
+      // CONFLICT note.
+      draggable={!isReadOnlyViewer && !selectionMode}
       data-task-id={task.id}
-      onDragStart={(e) => reparentHandlers.dragStart(e, task.id)}
-      onDragEnd={onDragEnd}
-      onDragOver={(e) => reparentHandlers.dragOver(e, task.id)}
-      onDragLeave={() => reparentHandlers.dragLeave(task.id)}
-      onDrop={(e) => reparentHandlers.drop(e, task.id)}
-      onTouchStart={(e) => reparentHandlers.touchStart(e, task.id)}
+      onDragStart={selectionMode ? undefined : (e) => reparentHandlers.dragStart(e, task.id)}
+      onDragEnd={selectionMode ? undefined : onDragEnd}
+      onDragOver={selectionMode ? undefined : (e) => reparentHandlers.dragOver(e, task.id)}
+      onDragLeave={selectionMode ? undefined : () => reparentHandlers.dragLeave(task.id)}
+      onDrop={selectionMode ? undefined : (e) => reparentHandlers.drop(e, task.id)}
+      // List's touch-drag-to-reparent (useReparentDrag) is an established
+      // existing gesture — long-press here keeps driving that unchanged
+      // rather than being repurposed to enter selection mode (same judgment
+      // call as Board/WeekView's own touch-drag gestures). Entering
+      // selection mode on mobile List is reachable only via the explicit
+      // Select toolbar button. Once selectionMode is already active there's
+      // nothing left for a touch-drag to do here (see the
+      // draggable={...&&!selectionMode} above), so this prop is simply
+      // omitted rather than needing its own branch.
+      onTouchStart={selectionMode ? undefined : (e) => reparentHandlers.touchStart(e, task.id)}
       onClick={() => {
+        if (selectionMode) {
+          onToggleSelect(task.id);
+          return;
+        }
         if (reparentHandlers.consumeClick()) return; // trailing click of a long-press drag, not a tap
         onOpen(task.id);
       }}
     >
       {isReparentTarget && <ReparentDropHint parentTitle={task.title} />}
-      <button
-        className={`task-checkbox ${task.priority} ${isCheckedForDisplay ? 'checked' : ''}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
-          if (!isCheckedForDisplay) onComplete(task.id);
-        }}
-        disabled={isCheckedForDisplay || isReadOnlyViewer}
-        title={
-          isReadOnlyViewer
-            ? "Viewers can't complete tasks"
-            : isCheckedForDisplay
-              ? 'Completed'
-              : task.isRecurring
-                ? 'Complete (advances to next occurrence)'
-                : 'Mark complete'
-        }
-        aria-label={isCheckedForDisplay ? `${task.title} completed` : `Mark ${task.title} complete`}
-      >
-        {isCheckedForDisplay && <Check size={12} aria-hidden="true" />}
-      </button>
+      {selectionMode ? (
+        <input
+          type="checkbox"
+          className="bulk-select-checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(task.id)}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Select ${task.title}`}
+        />
+      ) : (
+        <button
+          className={`task-checkbox ${task.priority} ${isCheckedForDisplay ? 'checked' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
+            if (!isCheckedForDisplay) onComplete(task.id);
+          }}
+          disabled={isCheckedForDisplay || isReadOnlyViewer}
+          title={
+            isReadOnlyViewer
+              ? "Viewers can't complete tasks"
+              : isCheckedForDisplay
+                ? 'Completed'
+                : task.isRecurring
+                  ? 'Complete (advances to next occurrence)'
+                  : 'Mark complete'
+          }
+          aria-label={isCheckedForDisplay ? `${task.title} completed` : `Mark ${task.title} complete`}
+        >
+          {isCheckedForDisplay && <Check size={12} aria-hidden="true" />}
+        </button>
+      )}
       <div className="task-row-main">
         <div style={{ fontWeight: 600, textDecoration: isCheckedForDisplay ? 'line-through' : 'none', opacity: isCheckedForDisplay ? 0.5 : 1 }}>
           {task.link ? (

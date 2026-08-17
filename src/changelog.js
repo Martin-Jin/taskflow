@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '5.7.0',
+    date: '2026-08-18',
+    title: 'Select multiple tasks/cards/calendar items and edit them together',
+    changes: [
+      'List, Board, and Calendar (and a task\'s own sub-task list) now have a "Select" button that lets you tap/click several tasks, cards, or calendar events at once, then bulk-edit whatever field they share (due date, project, tags, priority, complete/incomplete) or delete them all together — deleting asks for confirmation first.',
+      'On mobile, a long-press on a task/card also enters selection mode and selects that first item (Calendar\'s week/day view keeps its existing long-press-to-drag gesture, so there Select is reachable via the toolbar button instead).',
+      'Selecting a mix of scheduled tasks and standalone calendar events only offers the fields that make sense for both — e.g. project and tags are hidden once a standalone event is part of the selection, since events don\'t have those.',
+    ],
+  },
+  {
     version: '5.6.2',
     date: '2026-08-17',
     title: 'Fixed edits sometimes not reaching another device unless you switched back to make it stick',
