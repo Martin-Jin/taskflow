@@ -21,13 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '5.6.2',
+    date: '2026-08-17',
+    title: 'Fixed edits sometimes not reaching another device unless you switched back to make it stick',
+    changes: [
+      "Fixed a bug where an edit (rescheduling a task, checking something off, etc.) could fail to reach your other signed-in devices if you switched away from the tab shortly after making it — the change would only actually sync once you switched back. TaskFlow batches edits for a moment before sending them to the cloud, and browsers can pause a background tab's activity almost immediately after you switch away, cutting that batch off before it ever gets sent. That batching window is now much shorter, so an edit is far more likely to already be on its way to the cloud before you've had a chance to switch tabs.",
+    ],
+  },
+  {
     version: '5.6.1',
     date: '2026-08-17',
     title: 'Fixed leftover scheduled-task entries lingering on Google Calendar',
     changes: [
       'Task blocks pushed to Google Calendar for a given day could get stuck there permanently if the app wasn\'t open to clean them up right at midnight (e.g. closed overnight) — since the cleanup only ever looked at the current day, yesterday\'s pushed entries were never revisited. It now also sweeps up a few days of stale entries on every push, so leftovers from a missed day get cleaned up instead of lingering forever.',
-    ],
-    changes: [
       'The description box in a calendar event\'s detail view (e.g. a synced Google Calendar event) used to scroll after only about 3 lines. It now grows up to about 20 lines before scrolling kicks in, so a longer synced description (class details, meeting notes, etc.) is visible without extra scrolling.',
     ],
   },

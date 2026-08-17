@@ -35,7 +35,7 @@ import { getBrowserTimeZone } from '../utils/dateUtils';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { getDeviceId } from '../utils/deviceIdentity.js';
 import {
-  CLOUD_SYNC_DEBOUNCE_MS,
+  CLOUD_SYNC_EDIT_DEBOUNCE_MS,
   BACKUP_CHECK_INTERVAL_MS,
   BACKUP_RETENTION_COUNT_AUTOMATIC,
   BACKUP_RETENTION_COUNT_MANUAL,
@@ -958,6 +958,29 @@ export function useCloudSync({
   // decision, not the last successful push: a failed push leaves
   // lastPushedFingerprint rolled back but shouldn't make the NEXT unrelated
   // edit re-detect the same completion and skip its debounce again.
+  //
+  // Every OTHER edit still debounces, but only for CLOUD_SYNC_EDIT_DEBOUNCE_MS
+  // (200ms) — a deliberate reduction from the 1.5s this used to wait (see
+  // that constant's own doc comment in dataRetention.js): a background tab
+  // can have its JS execution suspended/throttled shortly after being hidden,
+  // and a debounce timer that's still pending when that happens never fires
+  // at all — the flush-on-hide effect below is a best-effort catch for that,
+  // but per its own doc comment, none of its three events can GUARANTEE an
+  // in-flight write survives teardown either. Shrinking the debounce doesn't
+  // close that gap (nothing at the browser-API level fully can, short of a
+  // sendBeacon-style write path this app doesn't have), but it drastically
+  // shrinks how often a real edit is actually sitting in that vulnerable
+  // window when the user switches away — 200ms is far too short to
+  // realistically catch a deliberate tab switch, while still coalescing a
+  // handful of genuinely-simultaneous edits into one write. This does NOT
+  // increase Firestore write volume or risk overloading it: the single-flight
+  // guard (computePushSingleFlightDecision) still allows only one setDoc on
+  // the wire at a time regardless of how often schedulePush is called, and a
+  // fingerprint is only ever added to inFlightPushFingerprintsRef when a write
+  // actually starts (see runPushNow) — a call that gets coalesced behind an
+  // in-flight push never touches that list at all. A shorter debounce only
+  // changes how soon the FIRST push in a burst starts, not how many pushes
+  // happen overall.
   const schedulePush = useCallback(
     (nextTasks) => {
       const immediate = hasNewCompletion(lastSeenTasksRef.current, nextTasks);
@@ -969,14 +992,14 @@ export function useCloudSync({
         runPushNow();
         return;
       }
-      pushTimerRef.current = setTimeout(runPushNow, CLOUD_SYNC_DEBOUNCE_MS);
+      pushTimerRef.current = setTimeout(runPushNow, CLOUD_SYNC_EDIT_DEBOUNCE_MS);
     },
     [runPushNow]
   );
 
   // Flush a pending debounced push immediately when the tab is about to go
   // away (backgrounded or closed) instead of waiting out the full
-  // CLOUD_SYNC_DEBOUNCE_MS. Without this, an edit made and then quickly followed by
+  // CLOUD_SYNC_EDIT_DEBOUNCE_MS. Without this, an edit made and then quickly followed by
   // switching tabs/closing the browser can lose the write entirely — the
   // debounce timer never fires. Completions no longer depend on this path at
   // all (schedulePush pushes them immediately, see hasNewCompletion), which

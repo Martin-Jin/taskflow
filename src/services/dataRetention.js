@@ -66,6 +66,29 @@ export const PRESENCE_STALE_MS = 90 * MS_PER_SECOND;
 /** Cloud sync debounce: batch changes into one write. */
 export const CLOUD_SYNC_DEBOUNCE_MS = 1500;
 
+// How long a NON-completion edit waits before useCloudSync's schedulePush
+// actually fires the write — much shorter than CLOUD_SYNC_DEBOUNCE_MS
+// (still reused as-is by useGoogleCalendarSync.js's block-push debounce,
+// a different feature with a different risk profile: a missed Google
+// Calendar push just gets retried on the next poll/trigger, so a longer
+// batching window there costs nothing but a slightly later sync).
+// A Firestore push has no such retry-on-next-tick safety net: the debounce
+// timer itself is what's vulnerable — browsers can suspend/throttle a
+// backgrounded tab's JS shortly after it's hidden, and an in-flight fetch
+// initiated right as the tab hides is NOT guaranteed to complete (see
+// useCloudSync.js's flush-on-hide effect's own doc comment). The longer an
+// edit sits in a pending debounce timer, the larger the window during which
+// switching away loses it outright — happening on THIS device's tab, not
+// merely delaying — until the user comes back and refocuses it. Shrinking
+// this window doesn't close that gap (nothing at the browser-API level can,
+// short of routing writes through navigator.sendBeacon/fetch's keepalive
+// option instead of the Firestore SDK, both out of scope for how this app
+// currently talks to Firestore), but it makes it drastically less likely to
+// actually be hit in normal use: still long enough to coalesce a handful of
+// genuinely-simultaneous edits into one write, far too short for a user to
+// realistically switch tabs before it fires.
+export const CLOUD_SYNC_EDIT_DEBOUNCE_MS = 200;
+
 /** Shared project sync debounce: same rationale as cloud sync. */
 export const SHARED_PROJECT_SYNC_DEBOUNCE_MS = 1500;
 

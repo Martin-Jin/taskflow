@@ -1126,6 +1126,21 @@ export function useGoogleCalendarSync({
   // rollover reliable for a tab that was backgrounded/asleep across midnight
   // and only comes back to the foreground well after the 60s poll would have
   // caught it on its own; no separate wiring needed here.
+  //
+  // ALSO listens for `pageshow` — neither `visibilitychange` nor `focus` is
+  // guaranteed to fire at all for an iOS "Add to Home Screen" standalone PWA
+  // returning from the background (a documented WebKit limitation, present in
+  // every iOS browser regardless of engine skin — Firefox/Chrome for iOS are
+  // WebKit under the hood and inherit it too), which left this whole refresh
+  // silently unreachable on that platform: reopening the app looked like
+  // "nothing happened" because none of the three events this effect relied on
+  // ever fired. `pageshow` is the one event iOS reliably fires both on a
+  // genuinely fresh launch AND when restoring a suspended page from the
+  // back/forward cache — covering exactly the gap. Not gated on
+  // `event.persisted` (which would tell "restored from bfcache" apart from
+  // "fresh navigation"): a redundant refresh on a fresh load is harmless and
+  // already absorbed by refreshIfDue's own throttle, so the extra branch
+  // would only add complexity without changing behavior.
   useEffect(() => {
     if (!googleConnected) return undefined;
 
@@ -1144,9 +1159,11 @@ export function useGoogleCalendarSync({
 
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('focus', refreshIfDue);
+    window.addEventListener('pageshow', refreshIfDue);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', refreshIfDue);
+      window.removeEventListener('pageshow', refreshIfDue);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleConnected]);
