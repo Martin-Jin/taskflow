@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.7.1',
+    date: '2026-08-18',
+    title: 'Fixed a busy day\'s "+N more" spilling into the next row in Month view',
+    changes: [
+      'On a busy day with more tasks/events than Month view had room to list, the "+N more" chip (and sometimes the tasks above it) could visually spill down into the next week\'s row instead of staying inside its own day\'s box. Each day now stays contained to its own cell no matter how packed it is, with the "+N more" indicator always visible.',
+    ],
+  },
+  {
     version: '5.7.0',
     date: '2026-08-18',
     title: 'Select multiple tasks/cards/calendar items and edit them together',

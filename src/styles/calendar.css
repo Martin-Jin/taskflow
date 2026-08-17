@@ -1030,6 +1030,15 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /* Grid rows don't clip a child that outgrows them — an overflowing cell
+     bleeds its extra chips down into the row below instead of being
+     contained, since minmax(100px, 1fr) is just a sizing hint, not a cap.
+     min-height: 0 lets this flex column actually shrink to the grid row's
+     size instead of growing past it; overflow: hidden clips whatever still
+     doesn't fit (see .month-cell-items below for how the "+N more" chip
+     stays visible even then). */
+  min-height: 0;
+  overflow: hidden;
 }
 
 .month-cell.is-outside {
@@ -1044,6 +1053,7 @@
 
 .month-cell-daynum {
   align-self: flex-start;
+  flex-shrink: 0;
   background: none;
   border: none;
   font-size: 12.5px;
@@ -1059,6 +1069,13 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  /* The chip list is the part allowed to shrink/clip when a cell is too
+     short to fit MAX_VISIBLE_ITEMS chips + the "+N more" chip (the day
+     number above never shrinks) — see .month-chip-more below for how the
+     overflow indicator itself stays pinned in view even then. */
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .month-chip {
@@ -1114,6 +1131,11 @@
   background: none;
   color: var(--color-text-secondary);
   font-weight: 600;
+  /* Guarantees this overflow indicator always renders at full height even
+     when the cell is too short for everything above it — .month-cell-items
+     (a sibling flex item, not a parent of this button) is the one that
+     shrinks/clips instead. */
+  flex-shrink: 0;
 }
 
 .month-chip-more:hover {
