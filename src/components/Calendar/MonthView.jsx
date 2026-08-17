@@ -204,19 +204,23 @@ export default function MonthView({
                   </div>
                 );
               })}
-              {hiddenCount > 0 && (
-                <button
-                  className="month-chip month-chip-more"
-                  // "+N more" represents EVERY item in this day cell (visible
-                  // + hidden) — clicking it in selection mode selects all of
-                  // them at once, same "represents several underlying items"
-                  // treatment as the short-task cluster chip above.
-                  onClick={() => (selectionMode ? onSelectManyKeys?.(allDayKeys) : onSelectDay?.(day))}
-                >
-                  +{hiddenCount} more
-                </button>
-              )}
             </div>
+            {hiddenCount > 0 && (
+              <button
+                className="month-chip month-chip-more"
+                // "+N more" represents EVERY item in this day cell (visible
+                // + hidden) — clicking it in selection mode selects all of
+                // them at once, same "represents several underlying items"
+                // treatment as the short-task cluster chip above. Rendered
+                // as a sibling of .month-cell-items (not inside it) so it
+                // never competes with the visible chips for the same
+                // clipped flex space — a cramped cell shrinks/clips the
+                // chips above it, never this overflow indicator itself.
+                onClick={() => (selectionMode ? onSelectManyKeys?.(allDayKeys) : onSelectDay?.(day))}
+              >
+                +{hiddenCount} more
+              </button>
+            )}
           </div>
         );
       })}
