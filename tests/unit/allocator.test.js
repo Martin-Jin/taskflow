@@ -469,6 +469,104 @@ describe('allocateTasks: unplaced remainder is pushed to a later day with room, 
   });
 });
 
+// Regression coverage for a "3-minute sliver" bug: maxDailyDeepWorkHours is
+// enforced as a running per-day budget shared across every task placed that
+// day (allocateTasks' dailyBudgetMins), separate from the day's actual free
+// INTERVALS (computeDayCapacity deliberately leaves those uncapped -- see its
+// own comment). Once a higher-scored task has spent most of a day's budget,
+// whatever's left can be a small crumb even though the real calendar gap
+// keeps running for hours afterward. Without a guard, a lower-scored,
+// multi-hour task reaching that day later (via the sweep/overflow/split
+// passes, which -- unlike the weighted-share pass -- have no
+// PACING_SHARE_THRESHOLD_HOURS gate) gets clamped down to that crumb and
+// places a small-but-technically-valid (clears MIN_CHUNK_HOURS) chunk right
+// there, stranding the rest of the day's real free time and fragmenting the
+// task across several subsequent days instead of using a later day's fresh
+// budget for one proper-sized block.
+describe('allocateTasks: daily-budget stranding guard (no sliver when the budget, not the calendar or the task, is the binding constraint)', () => {
+  it('skips a near-exhausted day\'s budget crumb entirely rather than placing a stranding sliver, when the task has ample hours left and a later day is open', () => {
+    // Day 1's actual working-hours INTERVAL is wide open (08:00-22:00, 14h)
+    // -- computeDayCapacity deliberately leaves freeIntervals uncapped -- but
+    // maxDailyDeepWorkHours caps usable BUDGET at 6h total for the day.
+    // taskA (urgent, enforced due today) consumes all but 10 minutes of that
+    // 6h budget. taskB (medium, due later, multi-hour remaining) reaches day
+    // 1 via its sweep pass asking for its full 3h remaining -- which the OLD
+    // code clamped down to the 10-minute budget crumb and placed right
+    // there, even though day 1's calendar interval (after taskA's block)
+    // still runs on for hours (22:00 close), i.e. the BUDGET, not the
+    // calendar, was the binding constraint forcing the tiny chunk.
+    const rules = { ...baseRules, workDayStart: '08:00', workDayEnd: '22:00', maxDailyDeepWorkHours: 6, horizonWeeks: 1, bufferDays: 1 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events: [] });
+
+    const taskA = {
+      id: 'urgent_task', title: 'Ask max about resch...', estimatedHours: 350 / 60, remainingHours: 350 / 60,
+      priority: 'urgent', dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const taskB = {
+      id: 'test_prep', title: 'Test 1 prep', estimatedHours: 3, remainingHours: 3,
+      priority: 'medium', dueDate: '2026-07-06',
+    };
+    const taskById = new Map([[taskA.id, taskA], [taskB.id, taskB]]);
+
+    const { blocks, overflow } = allocateTasks([taskA, taskB], capacityMap, rules, '2026-07-01', taskById);
+
+    expect(overflow).toHaveLength(0);
+    // No sliver on day 1 for taskB -- it skips the near-exhausted day
+    // entirely rather than taking a stranding crumb.
+    const day1TestPrep = blocks.filter((b) => b.taskId === 'test_prep' && b.date === '2026-07-01');
+    expect(day1TestPrep).toHaveLength(0);
+    // All 3 hours still get placed somewhere (never silently dropped).
+    const totalPlaced = blocks.filter((b) => b.taskId === 'test_prep').reduce((s, b) => s + b.durationHours, 0);
+    expect(totalPlaced).toBeCloseTo(3, 5);
+  });
+
+  it('still places a task\'s genuinely tiny final remainder into a same-day budget crumb (the legitimate MIN_CHUNK_HOURS escape hatch is unaffected)', () => {
+    // Same setup, but taskB now genuinely only has 8 minutes of total
+    // remaining work -- there's nothing bigger being stranded, so the guard
+    // must not block this: 8 minutes is ALL this task will ever need,
+    // budget-crumb-sized or not.
+    const rules = { ...baseRules, workDayStart: '09:00', workDayEnd: '17:00', maxDailyDeepWorkHours: 8, horizonWeeks: 1, bufferDays: 0 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events: [] });
+
+    const taskA = {
+      id: 'urgent_task', title: 'Ask max about resch...', estimatedHours: 470 / 60, remainingHours: 470 / 60,
+      priority: 'urgent', dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const tinyTask = {
+      id: 'quick_followup', title: 'Quick follow-up', estimatedHours: 8 / 60, remainingHours: 8 / 60,
+      priority: 'medium', dueDate: '2026-07-06',
+    };
+    const taskById = new Map([[taskA.id, taskA], [tinyTask.id, tinyTask]]);
+
+    const { blocks, overflow } = allocateTasks([taskA, tinyTask], capacityMap, rules, '2026-07-01', taskById);
+
+    expect(overflow).toHaveLength(0);
+    const totalPlaced = blocks.filter((b) => b.taskId === 'quick_followup').reduce((s, b) => s + b.durationHours, 0);
+    expect(totalPlaced).toBeCloseTo(8 / 60, 5);
+  });
+
+  it('fixedTime tasks are exempt from the guard -- a pinned exact time still uses whatever same-day budget remains', () => {
+    const rules = { ...baseRules, workDayStart: '09:00', workDayEnd: '20:00', maxDailyDeepWorkHours: 8, horizonWeeks: 1, bufferDays: 0 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events: [] });
+
+    const taskA = {
+      id: 'urgent_task', title: 'Ask max about resch...', estimatedHours: 475 / 60, remainingHours: 475 / 60,
+      priority: 'urgent', dueDate: '2026-07-01', enforceDueDate: true,
+    };
+    const fixedTask = {
+      id: 'evening_check', title: 'Evening routine check', estimatedHours: 1, remainingHours: 1,
+      priority: 'medium', dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '14:00',
+    };
+    const taskById = new Map([[taskA.id, taskA], [fixedTask.id, fixedTask]]);
+
+    const { blocks } = allocateTasks([fixedTask, taskA], capacityMap, rules, '2026-07-01', taskById);
+
+    const fixedBlock = blocks.find((b) => b.taskId === 'evening_check');
+    expect(fixedBlock).toBeDefined();
+    expect(fixedBlock.startTime).toBe('14:00');
+  });
+});
+
 // Regression coverage for the fixedTime pre-pass: a fixedTime task's pinned
 // slot must always win against a competing task, regardless of the other
 // task's priority/urgency score -- a fixed time commitment is a real-world
