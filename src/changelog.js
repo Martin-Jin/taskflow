@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.7.2',
+    date: '2026-08-18',
+    title: 'Cleaned up the multi-select "Select" button and bulk-edit bar',
+    changes: [
+      'The "Select" button (List, Board, and Calendar toolbars) is now an icon-only button with no border, so it sits more quietly among the other toolbar controls. The bulk-edit bar that appears along the bottom once you\'ve selected something also lost the border around each of its buttons.',
+    ],
+  },
+  {
     version: '5.7.1',
     date: '2026-08-18',
     title: 'Fixed a busy day\'s "+N more" spilling into the next row in Month view',

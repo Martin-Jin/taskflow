@@ -681,15 +681,16 @@ export default function TaskListPanel({
             {(view === 'list' || view === 'board') && (
               <button
                 type="button"
-                className={`btn ${(view === 'list' ? select : boardSelect).selectionMode ? 'btn-primary' : ''}`}
+                className={`btn btn-icon btn-borderless ${(view === 'list' ? select : boardSelect).selectionMode ? 'btn-primary' : ''}`}
                 onClick={() => {
                   const target = view === 'list' ? select : boardSelect;
                   target.setSelectionMode(!target.selectionMode);
                 }}
                 aria-pressed={(view === 'list' ? select : boardSelect).selectionMode}
+                aria-label={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
+                title={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
               >
                 <CheckSquare size={14} />
-                {(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
               </button>
             )}
           </div>
