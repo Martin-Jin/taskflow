@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.5',
+    date: '2026-08-19',
+    title: 'Fixed the scheduler stranding a tiny sliver block',
+    changes: [
+      'Once a day\'s deep-work budget was nearly used up by another task, a later task could still get squeezed into whatever tiny bit of budget remained — a random few-minute block — even though the day\'s calendar still had a much bigger open gap sitting right after it. The scheduler now skips a day like that and waits for a day with real room, instead of stranding a sliver and fragmenting the task across several extra days.',
+    ],
+  },
+  {
     version: '6.0.4',
     date: '2026-08-18',
     title: 'The task description box now actually grows as tall as the event one',

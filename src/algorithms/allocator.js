@@ -518,13 +518,28 @@ function hasLaterFullFitDay(hoursNeeded, currentDate, remainingDates, freeForTas
   return false;
 }
 
+/**
+ * The real per-chunk floor for a task whose true total remaining duration is
+ * `floorHours`: normally MIN_CHUNK_HOURS (5 min), except when the task's
+ * ENTIRE remaining duration is already at or under that floor — then that
+ * shorter total itself becomes the floor, so it can still place as one final
+ * small chunk instead of being permanently unplaceable (see MIN_CHUNK_HOURS
+ * above). Shared by placeHoursInDay/placeFixedTimeInDay (the actual interval
+ * search) AND placeWithinDailyBudget (the daily-deep-work-budget clamp, in
+ * allocateTasks below) so both apply the identical floor — see that
+ * function's own comment for why it needs this too.
+ */
+function effectiveMinChunkFor(floorHours) {
+  return floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
+}
+
 function placeHoursInDay(hours, dayFreeIntervals, maxChunkHours, chunkState, floorHours = hours) {
   let hoursToPlace = Math.min(hours, maxChunkHours);
   // Normally a placed chunk must clear MIN_CHUNK_HOURS. But a task whose
   // ENTIRE remaining duration is already at or under that floor is allowed
   // to place that shorter total as a single chunk rather than being
   // permanently unplaceable (see MIN_CHUNK_HOURS above).
-  const effectiveMinChunk = floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
+  const effectiveMinChunk = effectiveMinChunkFor(floorHours);
   const placements = [];
 
   while (hoursToPlace >= effectiveMinChunk - EPSILON_HOURS && chunkState.used < chunkState.max) {
@@ -645,7 +660,7 @@ function isOutsideWorkingHours(fixedStartMins, workWindow) {
  */
 function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartMins, chunkState, floorHours = hours, dayBusyIntervals, gapMins = 0, workWindow) {
   const hoursToPlace = Math.min(hours, maxChunkHours);
-  const effectiveMinChunk = floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
+  const effectiveMinChunk = effectiveMinChunkFor(floorHours);
   const neededMins = Math.round(effectiveMinChunk * 60);
 
   if (chunkState.used >= chunkState.max) {
@@ -936,9 +951,47 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
     // Clamps `hours` to the day's remaining deep-work budget (passive tasks
     // are exempt — see dailyBudgetMins' own comment), places into `dayIntervals`,
     // then deducts whatever was actually placed back out of that budget.
+    //
+    // BUDGET-STRANDING GUARD: the deep-work budget is a running total shared
+    // across every task placed THIS day (see dailyBudgetMins above) — once an
+    // earlier (higher-scored) task has spent most of it, whatever's left can
+    // be a small crumb even though the day's ACTUAL free INTERVAL still runs
+    // on for hours (the interval math is deliberately uncapped — see
+    // computeDayCapacity's own comment). That crumb often still clears
+    // MIN_CHUNK_HOURS, so without this guard placeHoursInDay happily places a
+    // small-but-technically-valid chunk right there — it has no way to know
+    // the request was budget-capped rather than genuinely being the biggest
+    // chunk available — stranding the rest of the day's real free time and
+    // fragmenting the task across several LATER days instead of using a
+    // fresh day's full budget for a properly-sized block. The tell: the
+    // BUDGET, not the calendar or the task's own remaining hours, is what's
+    // forcing a smaller chunk than would otherwise be placed here. Compare
+    // what this call would have asked for with NO budget constraint (still
+    // clamped to maxChunkHours/remaining/the day's largest qualifying
+    // interval, exactly like placeHoursInDay's own selection) against what
+    // the budget crumb allows — skip this call entirely (leaving `hours`
+    // untouched for a later pass/day to pick up properly) whenever the budget
+    // is the strictly smaller, binding constraint, UNLESS the task's TRUE
+    // total remaining (`task.remainingHours`, not `hours` — which may already
+    // be a shrunk-down leftover) is itself at/under the floor: that's the
+    // legitimate "task is nearly done, place its last small bit" case this
+    // must not interfere with — there, `hours` itself is already this small
+    // regardless of budget, so the comparison below naturally finds no
+    // stranding to guard against. Fixed-time tasks are exempt — their whole
+    // point is landing at an exact pinned time, so a same-day budget crumb
+    // isn't "stranding" anything a later day could use instead; too little
+    // room there already falls through to the normal conflict/no_capacity
+    // reporting inside placeFixedTimeInDay.
     const placeWithinDailyBudget = (date, hours, dayIntervals, idSuffix) => {
       const budget = dailyBudgetMins.get(date);
       const cappedHours = task.isPassive || budget == null ? hours : Math.min(hours, Math.max(0, budget / 60));
+      if (!task.isPassive && !task.fixedTime && budget != null && cappedHours < hours - EPSILON_HOURS) {
+        const maxChunkHours = task.maxChunkHours ?? 4;
+        const uncappedWouldTake = Math.min(hours, maxChunkHours, task.remainingHours);
+        const largestInterval = dayIntervals.reduce((max, iv) => Math.max(max, (iv.end - iv.start) / 60), 0);
+        const wouldPlaceWithoutBudget = Math.min(uncappedWouldTake, largestInterval);
+        if (cappedHours < wouldPlaceWithoutBudget - EPSILON_HOURS) return 0;
+      }
       const placedHours = placeAndRecordBlocks(
         task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
         capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, chunkState, singleDayWindow,
