@@ -141,6 +141,7 @@ export default function TaskListPanel({
   onOpenSearch,
   onShareProject,
   onProjectCreated,
+  onSelectEvent,
 }) {
   const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
   const { requestComplete } = useCompleteTask();
@@ -693,6 +694,7 @@ export default function TaskListPanel({
               placeholder={view === 'board' ? 'Search board…' : undefined}
               onSelectProject={view === 'list' ? onChangeActiveProject : undefined}
               onSelectTask={view === 'board' ? (id) => boardSelectTaskRef.current?.(id) : setEditingTaskId}
+              onSelectEvent={onSelectEvent}
             />
           </div>
         )}

@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.8.0',
+    date: '2026-08-18',
+    title: 'Search now finds Calendar events too',
+    changes: [
+      'The Tasks page\'s search bar now has an "Events" section alongside Tasks, Projects, and Tags — type part of a calendar event\'s title, description, or location and it\'ll show up. Clicking one jumps straight to that day on the Calendar and opens the event.',
+    ],
+  },
+  {
     version: '5.7.3',
     date: '2026-08-18',
     title: 'Moved the List/Board "Select" button up next to the view switcher',

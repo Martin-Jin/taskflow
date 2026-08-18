@@ -338,6 +338,19 @@ function AppShell() {
     setCalendarDayRequest((prev) => ({ date: dateIso, requestId: prev ? prev.requestId + 1 : 1 }));
   }
 
+  // Same day-jump mechanism as goToCalendarDay above, but also auto-opens a
+  // specific event's detail modal once there (used by SearchBar's Events
+  // group) — `eventId` is left undefined for the plain day-jump path above so
+  // that existing caller (SchedulingConflictsModal) keeps its current
+  // behavior of landing on the day without opening anything. Search only
+  // ever matches/passes MASTER events (see SearchBar's doc comment), so
+  // `event.id` here is always a real row id, never a virtual per-occurrence
+  // one — CalendarPage's selectedEvent derivation already handles that case.
+  function goToCalendarEvent(event) {
+    setTab('calendar');
+    setCalendarDayRequest((prev) => ({ date: event.date, requestId: prev ? prev.requestId + 1 : 1, eventId: event.id }));
+  }
+
   const paletteTask = paletteTaskId ? tasks.find((t) => t.id === paletteTaskId) : null;
 
   const paletteActions = [
@@ -440,6 +453,7 @@ function AppShell() {
               onOpenSearch={isMobile ? () => setShowCommandPalette(true) : undefined}
               onShareProject={handleShareProject}
               onProjectCreated={selectProject}
+              onSelectEvent={goToCalendarEvent}
             />
           )}
           {tab === 'projects' && (

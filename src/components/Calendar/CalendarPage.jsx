@@ -461,7 +461,17 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
   // pattern: a bumped requestId (not just the date) so re-requesting the same
   // date still re-triggers the effect below.
   useEffect(() => {
-    if (dayJumpRequest?.requestId) jumpToDay(dayJumpRequest.date);
+    if (!dayJumpRequest?.requestId) return;
+    jumpToDay(dayJumpRequest.date);
+    // Optional companion to the day jump (used by SearchBar's Events group,
+    // via App.jsx's goToCalendarEvent) — opens that event's detail modal
+    // once we've landed on its day. Absent for the plain day-jump path (e.g.
+    // SchedulingConflictsModal), which only wants to land on the day.
+    // `dayJumpRequest.eventId` is always a real master row id here (search
+    // only matches masters, never virtual per-occurrence ids), which
+    // selectedEvent's resolveEventId-based derivation already handles as the
+    // non-virtual case.
+    if (dayJumpRequest.eventId) setSelectedEventId(dayJumpRequest.eventId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dayJumpRequest?.requestId]);
 

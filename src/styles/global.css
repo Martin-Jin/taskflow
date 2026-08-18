@@ -1846,6 +1846,14 @@ input.search-bar-input {
   font-style: italic;
 }
 
+/* Small inline date shown next to an Event result's title — "when" is more
+   central for an event than a task, so it's worth the extra hint even though
+   Task rows show title only. */
+.search-bar-dropdown-item-hint {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
 /* -------------------------------------------------------------------- */
 /* CommandPalette (Ctrl+K) — reuses .modal-stat-list's shell and the     */
 /* .search-bar-dropdown-* row styles above, just without the absolute-   */

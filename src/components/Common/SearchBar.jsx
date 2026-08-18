@@ -12,6 +12,13 @@
  *    matching Tasks, via `taskMatchesQuery` (below) run against the whole
  *    query — clicking one opens that task directly (via `onSelectTask`)
  *    rather than filling the search box, since the intent is to jump to it.
+ *  - The same default mode also lists matching Calendar Events, via
+ *    `eventMatchesQuery` (below) against the whole query. Only MASTER events
+ *    are matched/listed (never per-occurrence virtual instances — see
+ *    recurrenceExpansion.js) so a recurring series surfaces as one result,
+ *    not one per occurrence; clicking one calls `onSelectEvent` with the
+ *    event object itself (not just its id), since the caller needs its
+ *    `date` to know which day to jump to.
  *  - While the last word being typed is non-empty, it also lists matching
  *    Projects (ranked/typo-tolerant via nameSearch.js's rankByNameSearch,
  *    the same matcher used everywhere else project names are searched) and
@@ -36,13 +43,13 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Folder, Tag, CheckSquare } from 'lucide-react';
+import { Search, X, Folder, Tag, CheckSquare, Calendar } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { rankByNameSearch } from '../../utils/nameSearch';
 
-export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask }) {
-  const { searchQuery, setSearchQuery, projects, labels, tasks } = useScheduler();
+export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask, onSelectEvent }) {
+  const { searchQuery, setSearchQuery, projects, labels, tasks, events } = useScheduler();
   const [isFocused, setIsFocused] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const rootRef = useRef(null);
@@ -109,7 +116,21 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
     !showCompleted &&
     inTaskSuggestionMode &&
     tasks.some((t) => t.isCompleted && taskMatchesQuery(t, trimmedQuery, labels));
-  const showDropdown = isFocused && (matchingProjects.length > 0 || matchingLabels.length > 0 || matchingTasks.length > 0 || hasHiddenCompletedMatches);
+  // Master events only — matched the same way Tasks are (whole trimmed query,
+  // same default-suggestion gating), never expanded into per-occurrence
+  // results (see recurrenceExpansion.js's doc comment on expandRecurringEvent)
+  // so a recurring series surfaces as a single result rather than flooding
+  // the dropdown with individual occurrences.
+  const matchingEvents = inTaskSuggestionMode
+    ? events.filter((e) => eventMatchesQuery(e, trimmedQuery)).slice(0, 5)
+    : [];
+  const showDropdown =
+    isFocused &&
+    (matchingProjects.length > 0 ||
+      matchingLabels.length > 0 ||
+      matchingTasks.length > 0 ||
+      matchingEvents.length > 0 ||
+      hasHiddenCompletedMatches);
 
   function removeTagToken(token) {
     setSearchQuery(allTokens.filter((t) => t !== token).join(' '));
@@ -132,20 +153,30 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
     onSelectTask?.(task.id);
   }
 
+  function selectEvent(event) {
+    setSearchQuery('');
+    setIsFocused(false);
+    onSelectEvent?.(event);
+  }
+
   // Flattened, in-display-order list of the dropdown's rows (Tasks group,
-  // then its "Show completed" pseudo-row, then Projects, then Labels) so the
-  // shared keyboard-nav hook can drive one highlighted index across all of
-  // them, same as CommandPalette's grouped-but-flat list. The input itself
-  // stays bound directly to the raw `searchQuery` string throughout — Arrow/
-  // Enter only move/activate the highlighted row, never touch the text.
+  // then its "Show completed" pseudo-row, then Events, then Projects, then
+  // Labels) so the shared keyboard-nav hook can drive one highlighted index
+  // across all of them, same as CommandPalette's grouped-but-flat list. The
+  // input itself stays bound directly to the raw `searchQuery` string
+  // throughout — Arrow/Enter only move/activate the highlighted row, never
+  // touch the text. Events sit right after Tasks (and their "Show completed"
+  // row) since both are "jump to a specific item" results, as opposed to
+  // Projects/Tags which behave more like filters.
   const flatItems = useMemo(() => {
     const items = matchingTasks.map((t) => ({ key: `task-${t.id}`, run: () => selectTask(t) }));
     if (hasHiddenCompletedMatches) items.push({ key: 'show-completed', run: () => setShowCompleted(true) });
+    items.push(...matchingEvents.map((e) => ({ key: `event-${e.id}`, run: () => selectEvent(e) })));
     items.push(...matchingProjects.map((p) => ({ key: `project-${p.id}`, run: () => goToProject(p) })));
     items.push(...matchingLabels.map((l) => ({ key: `label-${l.id}`, run: () => applyTag(l.name) })));
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchingTasks, hasHiddenCompletedMatches, matchingProjects, matchingLabels]);
+  }, [matchingTasks, hasHiddenCompletedMatches, matchingEvents, matchingProjects, matchingLabels]);
 
   const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
     itemCount: showDropdown ? flatItems.length : 0,
@@ -234,6 +265,34 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
                   <span className="search-bar-dropdown-item-label">Show completed tasks</span>
                 </button>
               )}
+            </div>
+          )}
+          {matchingEvents.length > 0 && (
+            <div className="search-bar-dropdown-group">
+              <div className="search-bar-dropdown-label">Events</div>
+              {matchingEvents.map((e) => {
+                const index = flatItems.findIndex((it) => it.key === `event-${e.id}`);
+                return (
+                  <button
+                    key={e.id}
+                    id={`search-bar-option-event-${e.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    data-active={index === activeIndex}
+                    className={`search-bar-dropdown-item ${index === activeIndex ? 'active' : ''}`}
+                    onMouseDown={(e2) => e2.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => selectEvent(e)}
+                  >
+                    <Calendar size={13} />
+                    <span className="search-bar-dropdown-item-label">
+                      {e.title}
+                      <span className="search-bar-dropdown-item-hint"> · {e.date}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
           {matchingProjects.length > 0 && (
@@ -327,5 +386,23 @@ export function taskMatchesQuery(task, query, labels = []) {
   if (task.title?.toLowerCase().includes(q)) return true;
   if (task.notes?.toLowerCase().includes(q)) return true;
   if (task.sectionName?.toLowerCase().includes(q)) return true;
+  return false;
+}
+
+/**
+ * Shared filter predicate: does this CalendarEvent match the given search
+ * query? Simple case-insensitive substring match against title/description/
+ * location — no "@tag" handling like `taskMatchesQuery` above, since events
+ * don't carry Labels. Callers are expected to pass MASTER events only (never
+ * expanded per-occurrence instances — see recurrenceExpansion.js), so a
+ * matching recurring series is represented once here regardless of how many
+ * occurrences it has.
+ */
+export function eventMatchesQuery(event, query) {
+  if (!query || !query.trim()) return true;
+  const q = query.trim().toLowerCase();
+  if (event.title?.toLowerCase().includes(q)) return true;
+  if (event.description?.toLowerCase().includes(q)) return true;
+  if (event.location?.toLowerCase().includes(q)) return true;
   return false;
 }
