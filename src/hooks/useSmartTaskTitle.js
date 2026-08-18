@@ -40,6 +40,7 @@ import {
   Link as LinkIcon,
   Ban,
   CornerUpRight,
+  CornerUpLeft,
   ListFilter,
 } from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
@@ -61,6 +62,7 @@ const SCALAR_FIELD_TYPES = [
   'excludeFromAutoSchedule',
   'dependency',
   'subOf',
+  'unsubtask',
   'project',
   'sectionShorthand',
 ];
@@ -246,6 +248,7 @@ export function buildSmartChips(smartDetected) {
       (smartDetected.subOf.task
         ? { type: 'subOf', icon: CornerUpRight, label: `Sub-task of: ${smartDetected.subOf.task.title}` }
         : { type: 'subOf', icon: HelpCircle, label: `No match for "${smartDetected.subOf.fragment}"` }),
+    smartDetected.unsubtask && { type: 'unsubtask', icon: CornerUpLeft, label: 'Remove from parent task' },
     smartDetected.project &&
       (smartDetected.project.project
         ? {

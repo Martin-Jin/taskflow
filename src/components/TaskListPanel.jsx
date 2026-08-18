@@ -47,7 +47,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks, CheckSquare } from 'lucide-react';
+import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks, CheckSquare, CornerUpLeft } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useConfirm } from '../context/ConfirmContext';
@@ -72,7 +72,7 @@ import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
 import { usePersistedState } from '../hooks/usePersistedState';
-import { useReparentDrag } from '../hooks/useReparentDrag';
+import { useReparentDrag, UNPARENT_TARGET_ID } from '../hooks/useReparentDrag';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useTaskBulkEditActions } from '../hooks/useTaskBulkEditActions';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
@@ -732,7 +732,23 @@ export default function TaskListPanel({
 
       {view === 'list' && (
         <>
-          <div className="tasklist-rows">
+          <div
+            className="tasklist-rows"
+            // Drop a dragged sub-task row anywhere in here that ISN'T another
+            // row (see hooks/useReparentDrag.js's UNPARENT section) to clear
+            // its parentId — the natural inverse of dragging it onto another
+            // row to set one. `data-unparent-drop` is what the touch long-press
+            // path (elementFromPoint) looks for as its background counterpart.
+            data-unparent-drop
+            onDragOver={(e) => reparent.handlers.dragOverRoot(e)}
+            onDrop={(e) => reparent.handlers.dropRoot(e)}
+          >
+            {reparent.targetId === UNPARENT_TARGET_ID && (
+              <div className="unparent-drop-hint" aria-hidden="true">
+                <CornerUpLeft size={13} />
+                Drop here to remove from parent task
+              </div>
+            )}
             {visibleTasks.length === 0 && (
               <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
                 <Inbox size={22} className="empty-state-icon" aria-hidden="true" />

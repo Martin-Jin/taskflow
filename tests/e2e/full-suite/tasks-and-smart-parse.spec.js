@@ -60,6 +60,26 @@ async function rowDnd(page, source, target) {
   await page.waitForTimeout(400);
 }
 
+// Same gesture as rowDnd, but released on the list's own empty background
+// (below the last row) instead of on another row — the "unparent" drop
+// target (see hooks/useReparentDrag.js's UNPARENT section), the inverse of
+// dragging a row onto another row to set its parent.
+async function rowDndToBackground(page, source) {
+  const sourceBox = await source.boundingBox();
+  const rowsBox = await page.locator('.tasklist-rows').boundingBox();
+  // `.tasklist-rows` reserves bottom padding specifically so there's always
+  // some empty background to release on (see its own CSS comment) — aim just
+  // inside that padding, well clear of the last row's own box.
+  const dropY = rowsBox.y + rowsBox.height - 4;
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2 + 12, sourceBox.y + sourceBox.height / 2 + 12, { steps: 5 });
+  await page.mouse.move(rowsBox.x + rowsBox.width / 2, dropY, { steps: 10 });
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+}
+
 test.describe('Task CRUD', () => {
   test('creates a task with full metadata, edits it, then deletes it', async ({ page }) => {
     const errors = trackConsoleErrors(page);
@@ -180,7 +200,7 @@ test.describe('Sub-tasks', () => {
     expectNoErrors(errors);
   });
 
-  test('dragging one list row onto another makes it a sub-task, and dropping it back on itself is a no-op', async ({ page }) => {
+  test('dragging one list row onto another makes it a sub-task, dropping it back on itself is a no-op, and dragging it onto empty background unparents it', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
 
@@ -230,6 +250,21 @@ test.describe('Sub-tasks', () => {
     await expect(page.locator('.task-row-child', { hasText: `${prefix} Child` })).toBeVisible();
     await expect(page.locator('.task-row.is-reparent-target')).toHaveCount(0);
     await expect(page.locator('.task-row', { hasText: `${prefix} Parent` }).first()).not.toHaveClass(/task-row-child/);
+
+    // Dragging the (still nested) child row back out onto the list's own
+    // empty background clears its parent — the inverse gesture (see
+    // hooks/useReparentDrag.js's UNPARENT section).
+    await rowDndToBackground(page, nestedChildRow);
+    await expect(page.locator('.task-row-child', { hasText: `${prefix} Child` })).toHaveCount(0);
+    await expect(parentRow.locator('.task-row-subtask-count')).toHaveCount(0);
+    // Persisted: the child is a plain top-level row now, no parent link left
+    // in its own detail modal's hierarchy label (see TaskDetailModal's
+    // HIERARCHY LABEL note — `.detail-hierarchy-link` only renders when the
+    // open task still has a parent).
+    await page.locator('.task-row', { hasText: `${prefix} Child` }).first().click();
+    await page.waitForTimeout(300);
+    await expect(page.locator('.detail-hierarchy-link')).toHaveCount(0);
+    await closeAnyModal(page);
 
     await clearSearch(page);
     expectNoErrors(errors);
