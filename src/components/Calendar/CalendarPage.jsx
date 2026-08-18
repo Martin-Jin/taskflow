@@ -558,15 +558,23 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
   // memo's normal (selection off) behavior is completely unchanged, since
   // selectionMode/selectedKeys are stable (false/empty-Set) the rest of the
   // time.
+  //
+  // filteredBlocks/filteredEvents/calendarFilterIsActive are included for the
+  // exact same "actually changes what renders" reason — changing the
+  // CalendarFilterMenu's Show-mode/project/tag selections recomputes these
+  // (see the filterCalendarItems useMemo above) without changing
+  // swipePrevBase/swipeNextBase, so without them here the off-screen prev/
+  // next pages would keep showing whatever blocks/events matched the
+  // PREVIOUS filter until the user actually swipes past them and back.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const swipePrevPage = useMemo(
     () => renderCalendarPage(swipePrevBase),
-    [swipePrevBase, view, dayCount, isMobile, pxPerMin, bulkSelect.selectionMode, bulkSelect.selectedKeys]
+    [swipePrevBase, view, dayCount, isMobile, pxPerMin, bulkSelect.selectionMode, bulkSelect.selectedKeys, filteredBlocks, filteredEvents, calendarFilterIsActive]
   );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const swipeNextPage = useMemo(
     () => renderCalendarPage(swipeNextBase),
-    [swipeNextBase, view, dayCount, isMobile, pxPerMin, bulkSelect.selectionMode, bulkSelect.selectedKeys]
+    [swipeNextBase, view, dayCount, isMobile, pxPerMin, bulkSelect.selectionMode, bulkSelect.selectedKeys, filteredBlocks, filteredEvents, calendarFilterIsActive]
   );
 
   // Native (non-passive) listeners, same reasoning as WeekView's own touch

@@ -428,10 +428,32 @@ export function getMockTasks() {
   ];
 }
 
-export function getMockEvents(startIso, endIso) {
+/**
+ * Mock CalendarEvents — standalone (non-task) calendar items, so the
+ * Calendar tab isn't empty on a zero-config first run. `source: 'manual'`
+ * (not `'google'`) since these aren't backed by a real Google account:
+ * eventSyncService.js's Google-wins reconciliation treats `source: 'google'`
+ * as "this came from a real poll, so if Google's poll stops returning it,
+ * it was deleted upstream" — a fake `source: 'google'` event with no real
+ * `googleEventId` would risk exactly that logic silently removing it (or
+ * mismatching it against a real synced event) the first time a user
+ * actually connects Google Calendar. `source: 'manual'` keeps these out of
+ * that reconciliation entirely, same as any other local-only event. A truly
+ * recurring one carries a real `recurrenceRule` (RRULE) — the only field
+ * `expandRecurringEvent`/`expandEventsForRange` (recurrenceExpansion.js)
+ * actually check; `isRecurring` alone (with no rule) renders as a single
+ * one-off occurrence, same as `isRecurring: false`, so it's set consistently
+ * with whichever of the two this data actually is.
+ */
+export function getMockEvents() {
   const base = today();
   return [
     {
+      // "Daily" in the title is the display name a real Google-synced
+      // standup series would carry (Google Calendar's own naming, not this
+      // demo's choice) — the actual rule here recurs weekly (same simple
+      // FREQ=WEEKLY every mock event below uses, recurring on DTSTART's own
+      // weekday with no BYDAY needed), not literally every day.
       id: 'evt_standup',
       title: 'Daily Standup',
       date: base,
@@ -439,8 +461,9 @@ export function getMockEvents(startIso, endIso) {
       endTime: '09:15',
       isFreeTime: false,
       isRecurring: true,
+      recurrenceRule: 'FREQ=WEEKLY',
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
     {
       id: 'evt_lecture',
@@ -450,8 +473,9 @@ export function getMockEvents(startIso, endIso) {
       endTime: '15:30',
       isFreeTime: true, // marked as "ignore" override — schedulable over
       isRecurring: true,
+      recurrenceRule: 'FREQ=WEEKLY',
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
     {
       id: 'evt_1on1',
@@ -461,8 +485,9 @@ export function getMockEvents(startIso, endIso) {
       endTime: '11:30',
       isFreeTime: false,
       isRecurring: true,
+      recurrenceRule: 'FREQ=WEEKLY',
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
     {
       id: 'evt_dentist',
@@ -473,7 +498,7 @@ export function getMockEvents(startIso, endIso) {
       isFreeTime: false,
       isRecurring: false,
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
   ];
 }
