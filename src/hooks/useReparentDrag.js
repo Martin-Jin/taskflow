@@ -35,11 +35,29 @@
  * validation only exists once regardless of device — an ineligible target
  * never arms (`targetId` stays null, so no highlight renders, no drop
  * applies, and the drop falls through to whatever is underneath).
+ *
+ * UNPARENT (the inverse gesture): dropping a sub-task's row onto empty list
+ * background (not onto another row) clears its `parentId` instead of setting
+ * one. This reuses the exact same drag state/machinery — `targetId` can hold
+ * either a real task id (reparent onto that task) or the sentinel
+ * `UNPARENT_TARGET_ID` (clear the parent), and `commit` branches on which.
+ * `handlers.dragOverRoot`/`dropRoot` are the container-level counterpart of
+ * `dragOver`/`drop` — wired onto a view's own background element (e.g.
+ * TaskListPanel's `.tasklist-rows`) rather than a row, so there's no per-row
+ * edge-dead-zone check to make (the whole background counts, not just a
+ * clear "inside" hit) and no `dragLeaveRoot` (see dragOverRoot's own comment
+ * for why). Only List view has anywhere to use this: Board never renders a
+ * sub-task as its own card in the first place (rolled into the parent's
+ * progress badge instead — see BoardView's SUB-TASKS note), so there's
+ * nothing there to drag back out.
  * ============================================================================
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { getIneligibleParentIds } from '../utils/taskHierarchy';
+
+/** Sentinel `targetId` meaning "drop here to clear parentId" (see UNPARENT above). */
+export const UNPARENT_TARGET_ID = '__unparent__';
 
 // Same long-press gesture WeekView's touch drag uses (see its
 // trackTouchDragToColumn) — a short press distinguishes "drag this task onto
@@ -75,7 +93,8 @@ function isClearlyInside(rect, clientY) {
  *   per-task veto, for a view that mixes projects (List's "All Tasks" can show
  *   rows from a viewer-only shared project alongside editable ones). A locked
  *   task can be neither dragged nor dropped onto.
- * @returns {{ draggedId: string|null, targetId: string|null, endDrag: () => void, handlers: object }}
+ * @returns {{ draggedId: string|null, targetId: string|null (a task id, or
+ *   UNPARENT_TARGET_ID — see that export), endDrag: () => void, handlers: object }}
  */
 export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLocked }) {
   const [draggedId, setDraggedId] = useState(null);
@@ -130,12 +149,25 @@ export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLoc
     return !getIneligibleParentIds(sourceId, tasksRef.current).has(candidateId);
   }, [disabled, isLocked]);
 
-  /** Apply the reparent — the single write both input paths end at. */
+  /** Is the task currently being dragged eligible to be unparented (see UNPARENT above)? */
+  const isValidUnparentTarget = useCallback(() => {
+    const sourceId = draggedIdRef.current;
+    if (disabled || !sourceId || isLocked(sourceId)) return false;
+    const source = tasksRef.current.find((t) => t.id === sourceId);
+    return !!source?.parentId;
+  }, [disabled, isLocked]);
+
+  /** Apply the reparent (or unparent) — the single write every input path ends at. */
   const commit = useCallback((candidateId) => {
     const sourceId = draggedIdRef.current;
+    if (candidateId === UNPARENT_TARGET_ID) {
+      if (!isValidUnparentTarget()) return;
+      updateTask(sourceId, { parentId: null });
+      return;
+    }
     if (!isValidTarget(candidateId)) return;
     updateTask(sourceId, { parentId: candidateId });
-  }, [isValidTarget, updateTask]);
+  }, [isValidTarget, isValidUnparentTarget, updateTask]);
 
   const dragStart = useCallback((e, taskId) => {
     if (disabled || isLocked(taskId)) return;
@@ -168,6 +200,39 @@ export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLoc
     e.preventDefault();
     e.stopPropagation(); // ...so this doesn't ALSO register as a column/section move
     commit(taskId);
+    endDrag();
+  }, [commit, endDrag]);
+
+  // --- Container-level "drop on empty background to unparent" (see UNPARENT
+  // above) — the counterpart of dragOver/drop above, wired onto a view's own
+  // background element instead of a row. No edge-dead-zone check here (unlike
+  // isClearlyInside for a row/card): the whole background counts as "on it",
+  // there's no adjacent drop target underneath to disambiguate from within a
+  // plain empty area. There's deliberately no dragLeaveRoot: unlike a single
+  // row (a small, non-nested target), the container has child elements
+  // (rows, section headers) inside it, and the browser fires dragleave on a
+  // parent the instant the pointer crosses onto ANY child — a classic HTML5
+  // DnD quirk that would otherwise disarm this on nearly every move tick.
+  // dragOverRoot already re-evaluates and disarms on its own each time it
+  // fires (including via bubbling from a child that doesn't stopPropagation),
+  // so a separate leave handler isn't needed.
+  const dragOverRoot = useCallback((e) => {
+    // A dragOver on/near an ineligible row bubbles up here too (that row's own
+    // handler only stopPropagation()s once it actually arms) — don't treat
+    // hovering over a row, valid target or not, as "empty background".
+    const overRow = e.target.closest?.('[data-task-id]');
+    if (disabled || !draggedIdRef.current || overRow || !isValidUnparentTarget()) {
+      if (targetIdRef.current === UNPARENT_TARGET_ID) setTarget(null);
+      return;
+    }
+    e.preventDefault();
+    if (targetIdRef.current !== UNPARENT_TARGET_ID) setTarget(UNPARENT_TARGET_ID);
+  }, [disabled, isValidUnparentTarget, setTarget]);
+
+  const dropRoot = useCallback((e) => {
+    if (!draggedIdRef.current || targetIdRef.current !== UNPARENT_TARGET_ID) return;
+    e.preventDefault();
+    commit(UNPARENT_TARGET_ID);
     endDrag();
   }, [commit, endDrag]);
 
@@ -213,12 +278,17 @@ export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLoc
       // Safe to suppress scrolling now that the scroll-vs-drag ambiguity has
       // been resolved in favour of drag (same reasoning as WeekView's).
       if (moveEvent.cancelable) moveEvent.preventDefault();
-      const el = document.elementFromPoint(t.clientX, t.clientY)?.closest('[data-task-id]');
+      const under = document.elementFromPoint(t.clientX, t.clientY);
+      const el = under?.closest('[data-task-id]');
       const candidateId = el?.dataset.taskId ?? null;
-      const armed =
+      let armed =
         candidateId && isClearlyInside(el.getBoundingClientRect(), t.clientY) && isValidTarget(candidateId)
           ? candidateId
           : null;
+      // No row under the finger — check for a view's unparent-drop background
+      // (see UNPARENT above; e.g. TaskListPanel's `.tasklist-section`) so the
+      // long-press touch path can drop-to-unparent too, not just desktop DnD.
+      if (!armed && under?.closest('[data-unparent-drop]') && isValidUnparentTarget()) armed = UNPARENT_TARGET_ID;
       lastTargetId = armed;
       setTarget(armed);
     }
@@ -238,7 +308,7 @@ export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLoc
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onEnd);
     window.addEventListener('touchcancel', onEnd);
-  }, [disabled, isLocked, beginDrag, endDrag, isValidTarget, commit, setTarget]);
+  }, [disabled, isLocked, beginDrag, endDrag, isValidTarget, isValidUnparentTarget, commit, setTarget]);
 
   /**
    * True once (then self-clearing) when the click being handled is really the
@@ -252,8 +322,8 @@ export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLoc
   }, []);
 
   const handlers = useMemo(
-    () => ({ dragStart, dragOver, dragLeave, drop, touchStart, consumeClick }),
-    [dragStart, dragOver, dragLeave, drop, touchStart, consumeClick]
+    () => ({ dragStart, dragOver, dragLeave, drop, dragOverRoot, dropRoot, touchStart, consumeClick }),
+    [dragStart, dragOver, dragLeave, drop, dragOverRoot, dropRoot, touchStart, consumeClick]
   );
 
   return { draggedId, targetId, endDrag, handlers };

@@ -217,6 +217,17 @@ one of these funnels through the same `getIneligibleParentIds`/
 target (the task itself, one of its own descendants, or a task already at
 the 2-level cap) so the depth/cycle rule can't drift between entry points.
 
+The inverse — clearing `parentId` — has its own drag gesture and smart-parse
+trigger too, mirroring the ones above: dragging a nested List row onto the
+list's own empty background (not onto another row) clears its parent (see
+`useReparentDrag.js`'s UNPARENT section — the sentinel `targetId`
+`UNPARENT_TARGET_ID` and its `dragOverRoot`/`dropRoot` handlers), and typing
+the bare word "unsubtask" into a title is smart-parse's inverse of "sub of
+<task>" (`smartParse.js`'s `findUnsubtaskPhrase`; no task name needed since
+there's nothing to match against for a removal). Board has no equivalent
+drag-out gesture — a sub-task never gets its own card there in the first
+place (see BoardView's SUB-TASKS note), so there's nothing to drag out.
+
 Inside TaskDetailModal specifically, `parentId` is tracked as its own local
 state (like every other sidebar field), not read live off the `task` prop at
 commit time. The modal's sidebar fields auto-save via a 500ms debounced

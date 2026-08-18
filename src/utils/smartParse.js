@@ -14,9 +14,10 @@
  * (Todoist's own p1-p4 shorthand only — no "urgent"/"!!" keyword matching),
  * dependency mentions ("after <task>" / "depends on <task>"), a "sub of
  * <task>" / "subtask of <task>" mention (fuzzy-matched against existing
- * tasks the same way, but sets `parentId` instead of `dependsOn`), a
- * "#project" mention (fuzzy-matched against existing Projects, same idea as
- * dependency) optionally followed by "/ section" (Todoist's own
+ * tasks the same way, but sets `parentId` instead of `dependsOn`), its
+ * inverse "unsubtask" (a bare marker, no task name needed, that clears
+ * `parentId`), a "#project" mention (fuzzy-matched against existing
+ * Projects, same idea as dependency) optionally followed by "/ section" (Todoist's own
  * #Project/Section syntax, fuzzy-matched against that project's Sections), a
  * standalone "%section" shorthand (a shorter alternative to "#Project/
  * Section" for when the project doesn't need to be spelled out — searches
@@ -28,7 +29,7 @@
  * Detection runs in sequence — link, "not before <date>"/earliest date, due
  * date, recurrence, priority, duration, "can run unattended", "on the
  * day"/enforce due date, "!noauto" (exclude from auto-schedule), dependency,
- * "sub of", project, section shorthand, then labels — stripping each match
+ * "sub of", "unsubtask", project, section shorthand, then labels — stripping each match
  * out of the working text before the next detector runs. This keeps the
  * dependency/"sub of" fragment (which captures "everything after the trigger
  * word", up to the next "@"/"#" or the end of the string) free of unrelated
@@ -228,6 +229,19 @@ function findSubOfPhrase(text, existingTasks) {
   const fragment = m[1].trim();
   const task = matchFragmentAgainstCandidates(fragment, existingTasks, (t) => t.title);
   return { task, fragment, matchedText: m[0], index: m.index };
+}
+
+/**
+ * "unsubtask" — the inverse of "sub of <task>" above: a bare marker (no task
+ * name to resolve, unlike findSubOfPhrase) meaning "clear this task's
+ * `parentId`". Same shape as findUnattendedPhrase's bare-marker detection.
+ * Matched here rather than as a bare "sub" so a plain word like "sub" typed
+ * elsewhere in a title never accidentally triggers it.
+ */
+function findUnsubtaskPhrase(text) {
+  const m = text.match(/\bunsubtask\b/i);
+  if (!m) return null;
+  return { matchedText: m[0], index: m.index };
 }
 
 function escapeRegExp(str) {
@@ -534,6 +548,12 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (subOfMatch) {
     detected.subOf = subOfMatch;
     working = removeMatch(working, subOfMatch.matchedText);
+  }
+
+  const unsubtaskMatch = findUnsubtaskPhrase(working);
+  if (unsubtaskMatch) {
+    detected.unsubtask = unsubtaskMatch;
+    working = removeMatch(working, unsubtaskMatch.matchedText);
   }
 
   const projectMatch = findProjectPhrase(working, projects, sections);

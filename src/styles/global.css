@@ -2921,6 +2921,36 @@ input[type='checkbox']:checked::after {
   }
 }
 
+/* Container-level unparent drop hint (see hooks/useReparentDrag.js's UNPARENT
+   section and TaskListPanel's `.tasklist-rows`) — a banner spanning the drop
+   target's whole background rather than a per-row overlay. Absolutely
+   positioned (needs `.tasklist-rows` to be a positioning context — see that
+   rule's own `position: relative`), pinned into the bottom padding reserved
+   there specifically for this, rather than inserted in-flow: an in-flow
+   banner would push every row down the instant it appears, which moves
+   whatever row is currently under the pointer/finger — that row's own
+   dragover then re-fires with the drag now reading as "over a row" instead
+   of "over empty background", disarming this hint the moment it shows and
+   flickering it in and out on every tick. */
+.unparent-drop-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1.5px dashed var(--color-accent-solid-bg);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-solid-bg);
+  font-size: 12.5px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 /* ============================================================================
    BULK SELECT — checkbox affordance + the shared docked bottom bar
    ============================================================================

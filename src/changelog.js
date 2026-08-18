@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '5.9.0',
+    date: '2026-08-18',
+    title: 'Drag a sub-task back out to unparent it, plus an "unsubtask" quick-add phrase',
+    changes: [
+      'Dragging a sub-task onto another task already made it a sub-task of that task — now dragging it back out onto empty space in the list clears the link instead, the same way the existing "Remove from parent task" button does.',
+      'Typing "unsubtask" into a task\'s title (quick-add or the task detail view) now removes its parent, mirroring the existing "sub of <task>" phrase that sets one.',
+    ],
+  },
+  {
     version: '5.8.1',
     date: '2026-08-18',
     title: 'Fixed a first-time visit showing an empty Calendar, plus a stale-filter glitch',

@@ -104,6 +104,19 @@ describe('parseTaskText', () => {
     expect(cleanedTitle).toBe('Draft script');
   });
 
+  it('detects a bare "unsubtask" mention', () => {
+    const { detected, cleanedTitle } = parseTaskText('Draft script unsubtask');
+    expect(detected.unsubtask).toEqual({ matchedText: 'unsubtask', index: expect.any(Number) });
+    expect(cleanedTitle).toBe('Draft script');
+  });
+
+  it('does not confuse "unsubtask" with "sub of"/"subtask of"', () => {
+    const existingTasks = [{ id: 't1', title: 'Video Assignment' }];
+    const { detected } = parseTaskText('Draft script subtask of Video Assignment', { existingTasks });
+    expect(detected.unsubtask).toBeUndefined();
+    expect(detected.subOf.task).toEqual(existingTasks[0]);
+  });
+
   it('returns plain text with no detections and an unmodified cleanedTitle when nothing matches', () => {
     const result = parseTaskText('Buy groceries and cook dinner');
     expect(result.detected).toEqual({});

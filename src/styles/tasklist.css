@@ -266,6 +266,15 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+  /* Positioning context for .unparent-drop-hint (see global.css), which is
+     absolutely positioned so it can't reflow rows mid-drag. */
+  position: relative;
+  /* Bottom slack below the last row so there's always some empty background
+     to drop a dragged sub-task row onto for the unparent gesture (see
+     hooks/useReparentDrag.js's UNPARENT section) — without this, a short
+     list (or one that exactly fills its container) would have literally no
+     empty pixel to release on. */
+  padding-bottom: 32px;
 }
 
 .tasklist-section {

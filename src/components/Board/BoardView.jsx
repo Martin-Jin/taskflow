@@ -18,6 +18,10 @@
  * renders sub-tasks as nested rows under their parent), Board keeps this
  * rolled-up-only presentation. Gantt differs: a sub-task gets its own row
  * there (its container parent gets none) — see GanttChart's SUB-TASKS note.
+ * One consequence: Board has no drag-to-UNPARENT counterpart (see
+ * hooks/useReparentDrag.js's UNPARENT section, wired up in TaskListPanel) —
+ * a sub-task never becomes a draggable card here in the first place, so
+ * there's nothing to drag back out onto the column background.
  *
  * If the project has NO sections at all, the board renders as a single flat
  * task list instead of a one-column kanban — a project the user hasn't

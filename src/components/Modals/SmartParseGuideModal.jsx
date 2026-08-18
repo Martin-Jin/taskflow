@@ -64,6 +64,11 @@ const SECTIONS = [
     description: 'Makes this task a sub-task of another, matched by title.',
   },
   {
+    title: 'Unsubtask',
+    examples: ['unsubtask'],
+    description: "Removes this task's parent, if it has one.",
+  },
+  {
     title: 'Project',
     examples: ['#Health', '#Tasks/Errands'],
     description: 'Assigns the task to a project, optionally a section within it.',

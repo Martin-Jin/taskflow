@@ -179,6 +179,12 @@ import { computeEffectiveRole, isSharedProject, resolveOwnerProfile } from '../.
 // points consistent).
 const DEFAULT_SUBTASK_ESTIMATED_HOURS = 5 / 60;
 
+// Sentinel stored in smartParentTaskId by a smart-parsed "unsubtask" mention
+// (see fields.unsubtask below) to mean "clear this task's parentId" — distinct
+// from smartParentTaskId's own null ("no smart-parse draft at all"), since a
+// real parent id is always a Firestore doc id and can never equal this string.
+const UNSUBTASK_DRAFT = 'unsubtask';
+
 // Smart-parsed link phrases (e.g. "check out example.com") get stripped out
 // of notes text on load/save so the raw phrase doesn't linger once it's
 // been turned into a link pill (see notesLinkMatches/notes-link-pill below).
@@ -304,6 +310,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // dependsOn's DependencyPicker has), so unlike most sidebar fields it can't
   // compare against a task.* original to decide "untouched" — null itself IS
   // the untouched state, same idea as fixedTimeEnabled's hasEditedFixedTime.
+  // A smart-parsed "unsubtask" mention (see fields.unsubtask below) stores the
+  // sentinel UNSUBTASK_DRAFT here instead of null, so "clear the parent" is
+  // still distinguishable from "no draft" even though both ultimately resolve
+  // to a null parentId at commit time.
   const [smartParentTaskId, setSmartParentTaskId] = useState(null);
   const [isPassive, setIsPassive] = useState(!!task.isPassive);
   const [earliestDate, setEarliestDate] = useState(task.earliestDate || '');
@@ -1296,6 +1306,20 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         },
         revert: () => setSmartParentTaskId(null),
       },
+      // Inverse of subOf above — a bare "unsubtask" mention (no task name to
+      // resolve, see smartParse.js's findUnsubtaskPhrase) clears the parent
+      // instead of setting one. Only meaningful when this task actually has a
+      // parent to remove (matching the explicit "Remove from parent task"
+      // button, which is itself only shown when task.parentId is set) — with
+      // no parent, treat it as a no-op rather than arming a chip for nothing.
+      unsubtask: {
+        isUntouched: () => smartParentTaskId === null,
+        apply: () => {
+          if (!parentId) return;
+          setSmartParentTaskId(UNSUBTASK_DRAFT);
+        },
+        revert: () => setSmartParentTaskId(null),
+      },
       project: {
         isUntouched: () =>
           projectId === (task.projectId || '') ||
@@ -1713,6 +1737,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
     const nextTitle = buildFinalTitle(title, link ? linkLabel(link) : task.title);
 
+    // Resolve the smart-parse parent draft (if any) — a real matched task id
+    // from "sub of X" applies directly, while the UNSUBTASK_DRAFT sentinel
+    // from a bare "unsubtask" mention resolves to null (see fields.unsubtask
+    // and smartParentTaskId's own doc comment above).
+    const resolvedSmartParentId = smartParentTaskId === UNSUBTASK_DRAFT ? null : smartParentTaskId;
+
     updateTask(task.id, {
       // If the title was nothing but a smart-parsed link, stripping it
       // leaves an empty string — fall back to the link's hostname rather
@@ -1755,7 +1785,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       // doesn't have that problem: both direct-reparent call sites update it
       // synchronously, so whatever this function reads here (however late it
       // actually runs) is always the value the user most recently asked for.
-      parentId: smartParentTaskId !== null ? smartParentTaskId : parentId,
+      parentId: smartParentTaskId !== null ? resolvedSmartParentId : parentId,
       isPassive,
       earliestDate: earliestDate || null,
       // Only meaningful once a due date exists — clear it rather than
@@ -1793,7 +1823,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // "real" tracked field once committed) — then clear the smart-parse draft
     // so isUntouched() goes back to true instead of staying permanently
     // blocked against re-applying a later "sub of" edit.
-    if (smartParentTaskId !== null) setParentId(smartParentTaskId);
+    if (smartParentTaskId !== null) setParentId(resolvedSmartParentId);
     setSmartParentTaskId(null);
     resetSmartState();
 
@@ -1811,7 +1841,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       projectId: projectId || '',
       sectionId: sectionId || '',
       dependsOn,
-      parentId: smartParentTaskId !== null ? smartParentTaskId : parentId,
+      parentId: smartParentTaskId !== null ? resolvedSmartParentId : parentId,
       isPassive,
       earliestDate: earliestDate || '',
       enforceDueDate: enforceDueDate && !!nextDueDate,
