@@ -67,7 +67,16 @@ export default function StatsDashboard() {
       .filter((b) => b.date >= weekStart && b.date <= weekEnd)
       .reduce((sum, b) => sum + b.durationHours, 0);
 
-    const capacityMap = computeHorizonCapacity(weekStart, 7, { routines, events, blocks, rules });
+    // nowClamp so today's contribution to the week's free-capacity total
+    // doesn't count hours that have already passed — without it, checking
+    // this stat at 5pm still counted today as if the full work day were
+    // still open, overstating "Free capacity (week)" by however much of
+    // today has already elapsed. Mirrors rebalanceEngine.js's own nowClamp
+    // construction (the actual scheduler already gets this right; this just
+    // brings the stats display in line with it).
+    const now = new Date();
+    const nowClamp = { date: today, minutes: now.getHours() * 60 + now.getMinutes() };
+    const capacityMap = computeHorizonCapacity(weekStart, 7, { routines, events, blocks, rules, nowClamp });
     const totalWeekCapacity = [...capacityMap.values()].reduce((sum, c) => sum + c.totalAvailableHours, 0);
     const freeCapacityThisWeek = Math.max(0, totalWeekCapacity - scheduledThisWeek);
 
