@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.1',
+    date: '2026-08-18',
+    title: 'Fixed a stuck sharing dialog and a Sleep routine gap',
+    changes: [
+      'Fixed a bug where sharing or joining a shared project could, in a narrow timing window, get silently reverted by a background sync — leaving the project missing from your list, or its Share dialog stuck forever on "Setting up sharing…". The Share dialog also now shows a "Try again" option instead of spinning forever if this (or a slow connection) happens.',
+      'The one-time backfill that added a protected "Sleep" routine only ever ran once per account, so anyone who ended up with none afterward (deleted it, or never had one counted at the time) had no way to get it back. Now checked on every load: if you have no routine named "Sleep", one is added back.',
+    ],
+  },
+  {
     version: '6.0.0',
     date: '2026-08-18',
     title: 'The Ctrl+K command palette can now jump straight to Calendar events',

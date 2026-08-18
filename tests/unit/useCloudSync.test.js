@@ -53,6 +53,7 @@ import { isValidFieldValue, isValidBackupPayload, BACKUP_FIELDS } from '../../sr
 import {
   computeFingerprint,
   hasLocalEditRaced,
+  hasAnyLocalEditRaced,
   isStaleOwnEcho,
   isRemoteWriteStale,
   addInFlightFingerprint,
@@ -265,6 +266,29 @@ describe('hasLocalEditRaced', () => {
   it('treats undefined/null baseline and current consistently (initial mount, no prior action)', () => {
     expect(hasLocalEditRaced(undefined, undefined)).toBe(false);
     expect(hasLocalEditRaced(null, undefined)).toBe(true);
+  });
+});
+
+describe('hasAnyLocalEditRaced', () => {
+  // Covers the shareProject/joinSharedProject race fix: those write
+  // projects/sharedProjectIds via plain setState, never touching
+  // currentActionId, so a race guard keyed on actionId alone would miss them
+  // (the exact bug behind a stuck "Setting up sharing…" modal / a
+  // just-shared or just-joined project reverting mid-sync).
+  it('reports no race when neither counter moved', () => {
+    expect(hasAnyLocalEditRaced({ actionId: 'a1', nonUndoEditId: 0 }, { actionId: 'a1', nonUndoEditId: 0 })).toBe(false);
+  });
+
+  it('reports a race when only the undo-stack action id moved', () => {
+    expect(hasAnyLocalEditRaced({ actionId: 'a1', nonUndoEditId: 0 }, { actionId: 'a2', nonUndoEditId: 0 })).toBe(true);
+  });
+
+  it('reports a race when only the non-undo edit counter moved (share/join, no commit())', () => {
+    expect(hasAnyLocalEditRaced({ actionId: 'a1', nonUndoEditId: 0 }, { actionId: 'a1', nonUndoEditId: 1 })).toBe(true);
+  });
+
+  it('reports a race when both moved', () => {
+    expect(hasAnyLocalEditRaced({ actionId: 'a1', nonUndoEditId: 0 }, { actionId: 'a2', nonUndoEditId: 1 })).toBe(true);
   });
 });
 

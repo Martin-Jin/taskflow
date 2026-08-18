@@ -119,7 +119,7 @@ import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEv
 import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
 import { migrateStaleRecurringRemainingHours } from '../migrations/migrateStaleRecurringRemainingHours';
-import { migrateProtectedSleepRoutine } from '../migrations/migrateProtectedSleepRoutine';
+import { ensureProtectedSleepRoutine } from '../migrations/migrateProtectedSleepRoutine';
 
 const SchedulerContext = createContext(null);
 
@@ -485,6 +485,22 @@ export function SchedulerProvider({ children }) {
   const currentActionIdRef = useRef(currentActionId);
   currentActionIdRef.current = currentActionId;
 
+  // Parallel to currentActionIdRef, but for LOCAL edits to cloud-synced
+  // fields that never go through commit()/overwritePresent at all —
+  // currently just `projects`/`sharedProjectIds` writes in shareProject and
+  // joinSharedProject (plain setProjects/setSharedProjectIds calls, since
+  // they're not undo-stack actions). Those were previously invisible to
+  // useCloudSync's race guard (hasLocalEditRaced), which only watches
+  // currentActionId — so a cloud-sync pull/listener snapshot that happened to
+  // land in the narrow window right after a share/join (before that write's
+  // own debounced push confirms) could wholesale-revert the just-shared/
+  // just-joined project via planRemoteDataMerge's plain pickValid merge,
+  // which has no per-item "is this newer" signal for projects/sharedProjectIds
+  // the way tasks does. Bumped (not set to a fixed value) so two edits in a
+  // row are each individually detectable, mirroring how currentActionId
+  // changing at all (not to what) is what hasLocalEditRaced checks.
+  const localNonUndoEditIdRef = useRef(0);
+
   // Bottom-corner "Task added"/"Event saved"-style toasts with an inline
   // Undo, replacing the old always-on topbar text label. A small queue
   // rather than a single slot, so two toast-producing actions in quick
@@ -635,17 +651,6 @@ export function SchedulerProvider({ children }) {
   // used to stay stuck there forever).
   const [staleRecurringRemainingHoursMigrationDone, setStaleRecurringRemainingHoursMigrationDone] = usePersistedState(
     'staleRecurringRemainingHoursMigrationDone',
-    false
-  );
-
-  // Guards the one-time migrateProtectedSleepRoutine backfill below — see
-  // src/migrations/migrateProtectedSleepRoutine.js (Sleep routines are now
-  // seeded as isProtected: true; this backfills one for a pre-existing user
-  // with zero fixed routines at all, and separately marks any existing
-  // routine labeled exactly "Sleep" as protected, without touching a renamed
-  // or deliberately-deleted one).
-  const [protectedSleepRoutineMigrationDone, setProtectedSleepRoutineMigrationDone] = usePersistedState(
-    'protectedSleepRoutineMigrationDone',
     false
   );
 
@@ -913,15 +918,12 @@ export function SchedulerProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ONE-TIME MIGRATION — see src/migrations/migrateProtectedSleepRoutine.js.
-  // Backfills when routines is completely empty, and marks any existing
-  // "Sleep"-labeled routine as protected. A renamed or deleted Sleep routine
-  // sees no change. Safe to delete this effect once the flag above is true
-  // for all users.
+  // Runs on every load (not a one-time migration — see
+  // src/migrations/migrateProtectedSleepRoutine.js) so a user who ends up
+  // with zero routines labeled "Sleep" — however that happened — always gets
+  // a protected one back, rather than only being backfilled once.
   useEffect(() => {
-    if (protectedSleepRoutineMigrationDone) return;
-    setRoutines((prev) => migrateProtectedSleepRoutine(prev));
-    setProtectedSleepRoutineMigrationDone(true);
+    setRoutines((prev) => ensureProtectedSleepRoutine(prev));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1264,6 +1266,7 @@ export function SchedulerProvider({ children }) {
     state: cloudSyncState,
     stateRef: cloudStateRef,
     currentActionIdRef,
+    localNonUndoEditIdRef,
     setNotification,
     commit: commitGuarded,
     overwritePresent: overwritePresentGuarded,
@@ -2755,6 +2758,12 @@ export function SchedulerProvider({ children }) {
         const uploadedIds = new Set(movingTasks.map((t) => t.id));
         const uploadedSectionIds = new Set(movingSections.map((s) => s.id));
 
+        // Bumped BEFORE the setProjects below so useCloudSync's race guard
+        // (which reads this ref async, after the network round-trip above
+        // has already elapsed) can never observe the pre-share value and
+        // wrongly conclude "no local edit happened" — see this ref's own
+        // doc comment at its declaration.
+        localNonUndoEditIdRef.current += 1;
         setProjects((prev) =>
           prev.map((p) => (p.id === projectId ? { ...p, ownerId: user.uid, sharedProjectId } : p))
         );
@@ -2856,6 +2865,11 @@ export function SchedulerProvider({ children }) {
           isAnonymous: wasAnonymous === undefined ? !!currentUser.isAnonymous : !!wasAnonymous,
         });
 
+        // See localNonUndoEditIdRef's doc comment at its declaration — bumped
+        // before either setState below so useCloudSync's race guard can
+        // detect this join even though neither setter goes through
+        // commit()/overwritePresent.
+        localNonUndoEditIdRef.current += 1;
         setProjects((prev) => {
           const existing = prev.find((p) => p.id === sharedProjectId);
           if (existing) {

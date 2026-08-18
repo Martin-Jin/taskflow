@@ -209,6 +209,23 @@ export default function ShareProjectModal({ project, onClose }) {
   const [linkBusy, setLinkBusy] = useState(null); // 'view' | 'edit' | null
   const [collabBusy, setCollabBusy] = useState(null); // uid currently being mutated, or null
   const [actionError, setActionError] = useState('');
+  // The "Setting up sharing…" branch below assumes the sharedProjects
+  // subscription's first snapshot is always just about to arrive — usually
+  // true, but not guaranteed (e.g. a cloud-sync race reverted this project's
+  // sharedProjectId/membership right as the modal opened — see
+  // useCloudSync.js's localNonUndoEditIdRef). Without a timeout this left the
+  // modal stuck forever with no way out but the X button in the corner.
+  const [setupTimedOut, setSetupTimedOut] = useState(false);
+  // Bumped by the timed-out state's "Try again" button — included in the
+  // effect's deps below purely to force a fresh timer, since isOwner/
+  // shareState.state/sharedProjectId typically haven't changed at retry time.
+  const [setupRetryCount, setSetupRetryCount] = useState(0);
+  useEffect(() => {
+    if (isOwner || shareState.state === 'shared-with-me') return undefined;
+    setSetupTimedOut(false);
+    const timer = setTimeout(() => setSetupTimedOut(true), 8000);
+    return () => clearTimeout(timer);
+  }, [isOwner, shareState.state, sharedProjectId, setupRetryCount]);
 
   useEffect(() => {
     if (!isOwner || !sharedProjectId) return;
@@ -431,13 +448,21 @@ export default function ShareProjectModal({ project, onClose }) {
             </p>
             <p className="share-modal-readonly-note">Only the project owner can manage sharing.</p>
           </section>
+        ) : setupTimedOut ? (
+          // Usually this branch just means the live sharedProjects
+          // subscription's first snapshot hasn't arrived yet (this modal is
+          // normally only opened right after sharing succeeds or on an
+          // already-shared project — see App.jsx's handleShareProject). But
+          // that's not guaranteed — e.g. a cloud-sync race can revert this
+          // project's sharing state right as the modal opens — so after a
+          // timeout, offer a way out instead of spinning forever.
+          <section className="share-modal-section">
+            <p className="share-modal-error">Couldn't load sharing details. This project may no longer be shared, or the connection is slow.</p>
+            <button type="button" className="btn" onClick={() => setSetupRetryCount((n) => n + 1)}>
+              Try again
+            </button>
+          </section>
         ) : (
-          // This modal is only ever opened right after sharing succeeds or on
-          // an already-shared project (see App.jsx's handleShareProject) — so
-          // reaching here always means the live sharedProjects subscription
-          // just hasn't delivered its first snapshot yet, never a genuinely
-          // unshared project. Always show the loading state instead of a
-          // "not shared" message that would be actively wrong.
           <div className="now-empty">Setting up sharing…</div>
         )}
       </div>

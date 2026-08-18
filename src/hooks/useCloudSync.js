@@ -225,6 +225,18 @@ export function hasLocalEditRaced(baselineActionId, currentActionId) {
   return baselineActionId !== currentActionId;
 }
 
+/**
+ * Same shape as hasLocalEditRaced, extended to also catch a local edit that
+ * bypasses the undo stack entirely (currently: shareProject/joinSharedProject's
+ * plain setProjects/setSharedProjectIds calls — see SchedulerContext.jsx's
+ * localNonUndoEditIdRef doc comment). Races on EITHER counter moving: a real
+ * local edit could be a commit(), a non-undo project/membership write, or
+ * both landing in the same async gap.
+ */
+export function hasAnyLocalEditRaced(baseline, current) {
+  return hasLocalEditRaced(baseline.actionId, current.actionId) || hasLocalEditRaced(baseline.nonUndoEditId, current.nonUndoEditId);
+}
+
 // How long the visibility/focus-triggered pull (see the effect below) stays
 // throttled after firing, so rapid tab/window switching can't cause a
 // refresh storm — mirrors useGoogleCalendarSync.js's own REFRESH_THROTTLE_MS
@@ -593,6 +605,11 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  *   effects below to detect a local commit landing during their async gap
  *   (see their own comments) — same "ref so an async callback sees the
  *   latest value" reasoning as stateRef.
+ * @param {React.MutableRefObject} deps.localNonUndoEditIdRef - Counter bumped
+ *   by SchedulerContext's shareProject/joinSharedProject (see that ref's own
+ *   doc comment) for local edits to projects/sharedProjectIds that never go
+ *   through commit()/overwritePresent — checked alongside currentActionIdRef
+ *   by hasAnyLocalEditRaced so those edits are race-guarded too.
  * @param {Function} deps.setNotification - Toast notification setter
  * @param {Function} deps.commit - useHistoryState's commit (tasks/blocks, undoable)
  * @param {Function} deps.overwritePresent - useHistoryState's overwritePresent
@@ -653,6 +670,7 @@ export function useCloudSync({
   state,
   stateRef,
   currentActionIdRef,
+  localNonUndoEditIdRef,
   setNotification,
   commit,
   overwritePresent,
@@ -1242,6 +1260,7 @@ export function useCloudSync({
     // edit made in the real-world gap between mount (localStorage-seeded UI
     // renders immediately) and the first delivery.
     const actionIdAtSubscribe = currentActionIdRef.current;
+    const nonUndoEditIdAtSubscribe = localNonUndoEditIdRef.current;
     let receivedFirstSnapshot = false;
     const unsubscribe = subscribeUserData(user.uid, (remoteData) => {
       if (!remoteData) return;
@@ -1314,7 +1333,12 @@ export function useCloudSync({
         // re-pushing "A") isn't mistaken for a leftover stale echo forever.
         inFlightPushFingerprintsRef.current = retireInFlightFingerprint(inFlightPushFingerprintsRef.current, remoteFingerprint);
       }
-      const localEditLandedFirst = isFirstSnapshot && hasLocalEditRaced(actionIdAtSubscribe, currentActionIdRef.current);
+      const localEditLandedFirst =
+        isFirstSnapshot &&
+        hasAnyLocalEditRaced(
+          { actionId: actionIdAtSubscribe, nonUndoEditId: nonUndoEditIdAtSubscribe },
+          { actionId: currentActionIdRef.current, nonUndoEditId: localNonUndoEditIdRef.current }
+        );
       // Cross-device staleness gate (see isRemoteWriteStale's doc comment) —
       // a DIFFERENT device's write that is provably older than one this
       // device already observed (e.g. a phone that just woke up, pushing a
@@ -1353,6 +1377,7 @@ export function useCloudSync({
   const pullAndApplyRemoteData = useCallback(
     async (isCancelled) => {
       const actionIdAtStart = currentActionIdRef.current;
+      const nonUndoEditIdAtStart = localNonUndoEditIdRef.current;
       setIsPullingCloud(true);
       try {
         const remoteData = await pullUserData(user.uid);
@@ -1362,7 +1387,10 @@ export function useCloudSync({
           // check inside isRemoteWriteStale (called via applyRemoteData's
           // skipAll below) so this pull's own timestamp never gates itself.
           recordObservedWriteAt(remoteData.lastWriteAt);
-          const localEditLandedDuringPull = hasLocalEditRaced(actionIdAtStart, currentActionIdRef.current);
+          const localEditLandedDuringPull = hasAnyLocalEditRaced(
+            { actionId: actionIdAtStart, nonUndoEditId: nonUndoEditIdAtStart },
+            { actionId: currentActionIdRef.current, nonUndoEditId: localNonUndoEditIdRef.current }
+          );
           applyRemoteData(remoteData, { skipAll: localEditLandedDuringPull });
         }
       } catch (err) {
@@ -1371,7 +1399,7 @@ export function useCloudSync({
         if (!isCancelled()) setIsPullingCloud(false);
       }
     },
-    [user, recordObservedWriteAt, currentActionIdRef, applyRemoteData]
+    [user, recordObservedWriteAt, currentActionIdRef, localNonUndoEditIdRef, applyRemoteData]
   );
 
   // ---- Initial pull on mount (when user is available) ----------------------
