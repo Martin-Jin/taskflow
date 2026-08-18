@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.3',
+    date: '2026-08-18',
+    title: 'The task description box now grows as tall as the event one',
+    changes: [
+      'A task\'s description field used to start scrolling after just 3 lines, well before the matching field on Calendar events (20 lines). Both now grow to the same height before scrolling kicks in.',
+    ],
+  },
+  {
     version: '6.0.2',
     date: '2026-08-18',
     title: 'Fixed "Free capacity (week)" overstating today\'s hours',

@@ -421,7 +421,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
               <DetailField icon={AlignLeft} label="Description">
                 <textarea
                   ref={descriptionRef}
-                  className="detail-notes-textarea event-detail-notes-textarea"
+                  className="detail-notes-textarea detail-notes-textarea-tall"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Description"
