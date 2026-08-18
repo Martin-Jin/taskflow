@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.0',
+    date: '2026-08-18',
+    title: 'The Ctrl+K command palette can now jump straight to Calendar events',
+    changes: [
+      'The search bar\'s Tasks page already gained an Events group recently — the Ctrl+K "jump to anything" palette now searches Calendar events too, so you can find and open one from anywhere in the app, not just the Tasks page.',
+      'Fixed the search bar\'s "Clear search" (×) button sitting a couple pixels off from vertically centered.',
+    ],
+  },
+  {
     version: '5.9.0',
     date: '2026-08-18',
     title: 'Drag a sub-task back out to unparent it, plus an "unsubtask" quick-add phrase',
