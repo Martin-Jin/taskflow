@@ -11,6 +11,14 @@ const baseRules = {
   bufferDays: 0,
 };
 
+// Local "HH:MM" -> minutes-since-midnight helper for ordering/adjacency
+// assertions below -- avoids reaching into allocator.js's internals just for
+// test comparisons.
+function timeToMins(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
 // Regression coverage for a "MPC slides"-style bug: placeHoursInDay's
 // last-resort "allowUndersizedChunks" pass (used only once every earlier
 // pass has already failed to fit a task's leftover hours into a continuous
@@ -130,12 +138,14 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
     expect(blocks.length).toBeLessThanOrEqual(2);
   });
 
-  it('places a chunk smaller than 30 minutes (down to the 5-minute floor) as long as the chunk-count cap allows it', () => {
+  it('prefers the wide-open remainder as a single clean chunk over fragmenting in the small 15-minute gap first', () => {
     // A single 15-minute gap, immediately followed by a wide-open remainder
-    // of the day. A 1-hour task's max-chunks budget is 2, so it may place a
-    // sub-30-minute 15-minute chunk here and take the rest (45min) from the
-    // open remainder -- this is exactly the bug scenario described (a 1-hour
-    // "Piano" task should be able to use a real 15-minute leftover slot).
+    // of the day (7.5h). A 1-hour task's max-chunks budget is 2 (so it
+    // COULD use the 15-minute sliver plus the rest, as the old chronological
+    // first-fit greedily did), but the largest-gap-first placement strategy
+    // means the whole 1-hour task fits in the wide-open remainder alone, so
+    // it lands there as ONE continuous block instead of needlessly
+    // fragmenting into the tiny leftover sliver too.
     const events = [
       { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:30' },
     ];
@@ -150,28 +160,27 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
     expect(overflow).toHaveLength(0);
     const total = blocks.reduce((s, b) => s + b.durationHours, 0);
     expect(total).toBeCloseTo(1, 5);
-    // At least one placed chunk should be the small 15-minute leftover slot.
-    expect(blocks.some((b) => Math.abs(b.durationHours - 15 / 60) < 1e-9)).toBe(true);
+    // Single continuous block, not split across the 15-minute sliver too.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].startTime).toBe('09:30');
+    expect(blocks[0].durationHours).toBeCloseTo(1, 5);
   });
 
   // Regression coverage for the "piano" bug: the scheduler's greedy first-fit
   // used to always bite into the EARLIEST free interval first, even a tiny
-  // one, which could burn a task's LAST available chunk on a small partial
-  // placement while leaving genuine unplaced time -- even though a LATER
-  // interval that same day was big enough to hold the whole remainder as one
-  // continuous block. placeHoursInDay now looks ahead: on the task's last
-  // available chunk, if the current interval can't fit the full remainder
-  // but a later one can, it skips ahead to the later interval instead of
-  // fragmenting.
-  it('prefers a later interval that fits the whole remainder over spending the last chunk on a partial slot', () => {
-    // maxChunksFor(1h) = 2. A single early 15-minute gap (09:00-09:15) uses
-    // up chunk #1, leaving 45 minutes remaining on the task's LAST chunk.
-    // Without the lookahead, that last chunk would be forced into the next
-    // gap the front-to-back walk reaches -- 09:30-10:00 (30min), too small
-    // to finish the task, leaving 15 unplaceable minutes even though
-    // 19:00-22:00 is wide open. With the lookahead, the last chunk skips the
-    // undersized 09:30 gap and takes the whole 45-minute remainder from the
-    // 19:00 opening instead, as one continuous block.
+  // one, even though a LATER interval that same day was big enough to hold
+  // the whole task as one continuous block. placeHoursInDay now picks the
+  // LARGEST qualifying interval first for every chunk (not just the last
+  // one) -- so this task never even touches the small early gaps, and lands
+  // entirely in the one big opening instead.
+  it('prefers the single largest interval over any of the smaller earlier gaps, even when the small gaps would technically fit within the chunk budget', () => {
+    // Free intervals: 09:00-09:15 (15min), 09:30-10:00 (30min), 19:00-22:00
+    // (3h, by far the largest). A 1-hour task has a 2-chunk budget -- old
+    // chronological first-fit would have taken the 15-minute sliver as chunk
+    // #1, then been forced into 19:00 for the 45-minute remainder (still 2
+    // chunks). With largest-first, the very first chunk attempt already
+    // picks the 3-hour opening, which alone covers the whole 1-hour task --
+    // so it never touches either small gap at all.
     const events = [
       { id: 'ev1', date: '2026-07-01', startTime: '09:15', endTime: '09:30' },
       { id: 'ev2', date: '2026-07-01', startTime: '10:00', endTime: '19:00' },
@@ -188,10 +197,11 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
     expect(overflow).toHaveLength(0);
     const total = blocks.reduce((s, b) => s + b.durationHours, 0);
     expect(total).toBeCloseTo(1, 5);
-    // The last chunk should be a single continuous 45-minute block starting
-    // at 19:00 (the wide-open remainder), not fragmented further.
-    expect(blocks.some((b) => b.startTime === '19:00' && Math.abs(b.durationHours - 45 / 60) < 1e-9)).toBe(true);
-    expect(blocks).toHaveLength(2);
+    // A single continuous 1-hour block starting at 19:00 (the biggest
+    // opening), not split across the smaller earlier gaps at all.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].startTime).toBe('19:00');
+    expect(blocks[0].durationHours).toBeCloseTo(1, 5);
   });
 
   it('reports no_capacity when only the 15-minute slot exists and no other free time is available', () => {
@@ -238,6 +248,141 @@ describe('allocateTasks: chunk-count cap and 5-minute minimum chunk floor', () =
     const { blocks } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
     expect(blocks).toHaveLength(1);
     expect(blocks[0].durationHours).toBe(2);
+  });
+});
+
+// Regression coverage for the reported "Test 1 prep" bug: a large task (5h
+// estimate, maxChunksFor = round(300/30) = 10 chunks) placed against a day
+// with SEVERAL small/medium qualifying gaps AND one much larger contiguous
+// gap used to get fragmented across all the small gaps first (plain
+// chronological first-fit), even though the large gap alone could have
+// absorbed most or all of the task as far fewer, bigger blocks. This is
+// distinct from the single-gap coverage above (t8) -- the bug specifically
+// requires MULTIPLE qualifying gaps competing for the same chunk, where a
+// worse (smaller, earlier) one used to win over a better (larger) one.
+describe('allocateTasks: largest-gap-first placement (fragmentation fix)', () => {
+  it('fills the one large gap before touching any of several smaller gaps on the same day', () => {
+    // Day free intervals (09:00-20:00 work day): 09:00-09:25 (25m),
+    // 09:35-10:18 (43m), 10:38-11:03 (25m), 11:23-11:41 (18m), then
+    // 12:01-20:00 (7h59m -- by far the largest). A 5-hour task should
+    // consume almost all of the large gap as one chunk, rather than eating
+    // the four small gaps first like chronological first-fit would.
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:25', endTime: '09:35' },
+      { id: 'ev2', date: '2026-07-01', startTime: '10:18', endTime: '10:38' },
+      { id: 'ev3', date: '2026-07-01', startTime: '11:03', endTime: '11:23' },
+      { id: 'ev4', date: '2026-07-01', startTime: '11:41', endTime: '12:01' },
+    ];
+    const rules = { ...baseRules, workDayStart: '09:00', workDayEnd: '20:00', maxDailyDeepWorkHours: 11 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules, events });
+
+    const task = {
+      id: 'big_task', title: 'Test 1 prep', estimatedHours: 5, remainingHours: 5,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(5, 5);
+    // The whole task fits inside the single 7h59m gap alone. maxChunkHours
+    // defaults to 4h, so a 5h task still needs 2 chunks minimum regardless of
+    // gap size -- but both should come from the large gap as one unbroken
+    // 12:01-17:01 span (4h + 1h back-to-back), never touching any of the
+    // four small gaps at all -- the opposite of the reported 10-fragment
+    // behavior.
+    expect(blocks.every((b) => b.date === '2026-07-01')).toBe(true);
+    expect(blocks.every((b) => timeToMins(b.startTime) >= timeToMins('12:01'))).toBe(true);
+    expect(blocks.length).toBeLessThanOrEqual(2);
+    const sorted = [...blocks].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    expect(sorted[0].startTime).toBe('12:01');
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i].startTime).toBe(sorted[i - 1].endTime); // contiguous, no gap between chunks
+    }
+    expect(sorted[sorted.length - 1].endTime).toBe('17:01');
+  });
+
+  it('uses the large gap plus only as many small gaps as genuinely needed, when the task is bigger than the large gap alone', () => {
+    // Same four small gaps (25m + 43m + 25m + 18m = 111m = 1.85h total), but
+    // the large gap is capped to 3.5h (12:01-15:31) -- big enough that it
+    // alone can't finish a 5-hour task (3.5h + 1.85h = 5.35h total capacity,
+    // just enough to cover the task with a little room to spare), so some
+    // small-gap usage is genuinely unavoidable. It should still take the
+    // whole 3.5h from the large gap FIRST as one continuous chunk, then pull
+    // only as much of the remaining 1.5h as needed from the small gaps --
+    // rather than starting with the small gaps and leaving the large gap
+    // fragmented alongside them.
+    const events = [
+      { id: 'ev1', date: '2026-07-01', startTime: '09:25', endTime: '09:35' },
+      { id: 'ev2', date: '2026-07-01', startTime: '10:18', endTime: '10:38' },
+      { id: 'ev3', date: '2026-07-01', startTime: '11:03', endTime: '11:23' },
+      { id: 'ev4', date: '2026-07-01', startTime: '11:41', endTime: '12:01' },
+      { id: 'ev5', date: '2026-07-01', startTime: '15:31', endTime: '20:00' },
+    ];
+    const rules = { ...baseRules, workDayStart: '09:00', workDayEnd: '20:00', maxDailyDeepWorkHours: 11 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules, events });
+
+    const task = {
+      id: 'big_task2', title: 'Test 1 prep', estimatedHours: 5, remainingHours: 5,
+      dueDate: '2026-07-01', enforceDueDate: true,
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(5, 5);
+    // The large 3.5h gap is used as one continuous chunk starting at 12:01.
+    expect(blocks.some((b) => b.startTime === '12:01' && Math.abs(b.durationHours - 3.5) < 1e-9)).toBe(true);
+    // Far fewer fragments than the chunk-count ceiling of 10 -- the large
+    // gap absorbs 3.5h in one piece, leaving only 1.5h to spread across the
+    // remaining small gaps (at most 4 more chunks, for 5 total -- nowhere
+    // near the old bug's reported 10).
+    expect(blocks.length).toBeLessThanOrEqual(5);
+  });
+
+  it('reproduces the reported multi-day shape: a 5-hour task spread over 3 days each with mixed small/large gaps lands in far fewer, bigger chunks than the 10-chunk ceiling', () => {
+    // Three days, each shaped like the single-day case above: several small
+    // gaps plus one large gap. With even pacing (no priority/urgency
+    // reason to front-load), pass 1's per-day ideal share is small
+    // (5h / 3 days ~= 1.67h/day) -- but even so, on each day the placer
+    // should reach for that day's LARGEST gap first for whatever it does
+    // place, not fragment through the small gaps first.
+    const dayEvents = (date) => ([
+      { id: `${date}-ev1`, date, startTime: '09:25', endTime: '09:35' },
+      { id: `${date}-ev2`, date, startTime: '10:18', endTime: '10:38' },
+      { id: `${date}-ev3`, date, startTime: '11:03', endTime: '11:23' },
+      { id: `${date}-ev4`, date, startTime: '11:41', endTime: '12:01' },
+    ]);
+    const events = [
+      ...dayEvents('2026-07-01'),
+      ...dayEvents('2026-07-02'),
+      ...dayEvents('2026-07-03'),
+    ];
+    const rules = { ...baseRules, workDayStart: '09:00', workDayEnd: '20:00', maxDailyDeepWorkHours: 11, horizonWeeks: 1 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 7, { routines: [], blocks: [], rules, events });
+
+    const task = {
+      id: 'multi_day_big', title: 'Test 1 prep', estimatedHours: 5, remainingHours: 5,
+      dueDate: '2026-07-03', enforceDueDate: false,
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const total = blocks.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(5, 5);
+    // The old bug produced 10 fragments (the full chunk-count ceiling,
+    // round(300/30)). The fix should land nowhere near that -- each day's
+    // large gap absorbing most/all of that day's share means well under
+    // half the old fragment count.
+    expect(blocks.length).toBeLessThan(6);
+    // No block should be one of the tiny (<44min) slivers unless the chunk
+    // truly had no better option that day -- spot check that at least one
+    // block is a large (>=1h) contiguous placement, proving the large gap
+    // was actually used rather than only the small ones.
+    expect(blocks.some((b) => b.durationHours >= 1)).toBe(true);
   });
 });
 
