@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '5.7.3',
+    date: '2026-08-18',
+    title: 'Moved the List/Board "Select" button up next to the view switcher',
+    changes: [
+      'The "Select" button on the Tasks page (List/Board) now sits inline with the view switcher and "⋯" menu at the top, instead of its own row below the search bar, and has no background until you hover or turn selection on.',
+    ],
+  },
+  {
     version: '5.7.2',
     date: '2026-08-18',
     title: 'Cleaned up the multi-select "Select" button and bulk-edit bar',

@@ -833,7 +833,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
               )}
               <button
                 type="button"
-                className={`btn btn-icon btn-borderless ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+                className={`btn btn-icon menu-trigger ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
                 onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
                 aria-pressed={bulkSelect.selectionMode}
                 aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
@@ -853,7 +853,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
               <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
               <button
                 type="button"
-                className={`btn btn-icon btn-borderless ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+                className={`btn btn-icon menu-trigger ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
                 onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
                 aria-pressed={bulkSelect.selectionMode}
                 aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}

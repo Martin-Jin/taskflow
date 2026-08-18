@@ -232,11 +232,12 @@ export default function TaskListPanel({
   const boardSelectTaskRef = useRef(null);
   // Board's bulk-select state is LIFTED here (unlike editingTaskId, which
   // stays local to BoardView via boardSelectTaskRef above) because the
-  // "Select" toggle button itself needs to render in this shared toolbar row
-  // — Board has no toolbar row of its own (its SearchBar already renders up
-  // here too, see .tasklist-toolbar below). Still a fully independent
-  // instance from List's own `select` (selecting on Board never touches
-  // List's selection) — it's just owned one level higher up the tree.
+  // "Select" toggle button itself needs to render in this shared header
+  // (.taskpage-view-switch-row) — Board has no header row of its own (its
+  // SearchBar also renders up here, see .tasklist-toolbar below). Still a
+  // fully independent instance from List's own `select` (selecting on Board
+  // never touches List's selection) — it's just owned one level higher up
+  // the tree.
   const boardSelect = useMultiSelect();
   // Persisted (device-local view state, not synced/backed up — see CLAUDE.md's
   // Backups section) so the per-view status filter survives a reload. Merged
@@ -637,6 +638,21 @@ export default function TaskListPanel({
               projectActions={isMobile ? projectActionsProps : undefined}
               onOpenManageProjects={isMobile ? onOpenManageProjects : undefined}
             />
+            {(view === 'list' || view === 'board') && (
+              <button
+                type="button"
+                className={`btn btn-icon menu-trigger ${(view === 'list' ? select : boardSelect).selectionMode ? 'btn-primary' : ''}`}
+                onClick={() => {
+                  const target = view === 'list' ? select : boardSelect;
+                  target.setSelectionMode(!target.selectionMode);
+                }}
+                aria-pressed={(view === 'list' ? select : boardSelect).selectionMode}
+                aria-label={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
+                title={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
+              >
+                <CheckSquare size={14} />
+              </button>
+            )}
             {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
                 doubles as this page's one-tap way to reach account/settings —
                 mirrors the old mobile topbar's AccountButton. */}
@@ -678,21 +694,6 @@ export default function TaskListPanel({
               onSelectProject={view === 'list' ? onChangeActiveProject : undefined}
               onSelectTask={view === 'board' ? (id) => boardSelectTaskRef.current?.(id) : setEditingTaskId}
             />
-            {(view === 'list' || view === 'board') && (
-              <button
-                type="button"
-                className={`btn btn-icon btn-borderless ${(view === 'list' ? select : boardSelect).selectionMode ? 'btn-primary' : ''}`}
-                onClick={() => {
-                  const target = view === 'list' ? select : boardSelect;
-                  target.setSelectionMode(!target.selectionMode);
-                }}
-                aria-pressed={(view === 'list' ? select : boardSelect).selectionMode}
-                aria-label={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
-                title={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
-              >
-                <CheckSquare size={14} />
-              </button>
-            )}
           </div>
         )}
       </div>

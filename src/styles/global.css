@@ -1383,20 +1383,6 @@ select:focus-visible,
   padding: 8px;
 }
 
-/* Same "icon reads fine on its own, no border needed" exception as .btn-x/
-   .dashboard-customize-trigger below — for a .btn that already sits in a
-   toolbar full of other controls (the Select toggle) rather than floating
-   alone, where the border would just be visual noise. Background is kept
-   (unlike .btn-x, which drops that too) so the button still reads as
-   clickable/hoverable without a boundary line. */
-.btn-borderless {
-  border-color: transparent;
-}
-
-.btn-borderless:hover:not(:disabled) {
-  border-color: transparent;
-}
-
 /* Same "icon reads fine on its own" exception as .btn-x — the dashboard's
    customize trigger sits in the widget-grid header, not a bordered toolbar,
    so the filled/bordered .btn look competes with the surrounding cards. */
@@ -1440,6 +1426,21 @@ select:focus-visible,
 .timer-trigger[aria-expanded='true'] {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
+}
+
+/* The Select toggle is both a .menu-trigger (ghost look at rest) AND,
+   while selection mode is active, a .btn-primary (solid accent fill) —
+   same equal-specificity cascade concern as this block's own comment
+   above, but for a combination those single-class rules didn't
+   anticipate: .menu-trigger's plain background:transparent would
+   otherwise win by simply being declared later, hiding .btn-primary's
+   fill entirely while active. */
+.menu-trigger.btn-primary {
+  background: var(--color-accent-solid-bg);
+}
+
+.menu-trigger.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-solid-bg-hover);
 }
 
 /* Same cascade concern as .project-actions-trigger/.menu-trigger above —
