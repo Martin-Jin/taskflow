@@ -177,6 +177,49 @@ test('command palette can jump straight to a matching task', async ({ page }) =>
   expectNoErrors(errors);
 });
 
+test('command palette can jump straight to a matching Calendar event', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  // Same seeding approach as the SearchBar events test above — the app has
+  // no seeded CalendarEvent by default, so write one directly to the
+  // persistence key and reload before the palette can search it.
+  await page.evaluate(() => {
+    window.localStorage.setItem(
+      'taskflow:v1:events',
+      JSON.stringify([
+        {
+          id: 'evt_e2e_dentist',
+          title: 'Dentist Appointment',
+          date: new Date().toISOString().slice(0, 10),
+          startTime: '15:00',
+          endTime: '16:00',
+          isFreeTime: false,
+          isRecurring: false,
+          googleEventId: null,
+          source: 'manual',
+        },
+      ])
+    );
+  });
+  await page.reload();
+  await gotoTab(page, 'Dashboard');
+
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await expect(palette).toBeVisible();
+  await page.getByLabel('Command palette search').fill('dentist');
+  await page.waitForTimeout(300);
+  // Results are role="option" (combobox listbox rows), not "button" — see
+  // CommandPalette's aria wiring.
+  await palette.getByRole('option', { name: /Dentist Appointment/ }).click();
+  await page.waitForTimeout(400);
+
+  await expect(palette).not.toBeVisible();
+  // Clicking navigates to the Calendar tab and opens that event's detail modal.
+  await expect(page.getByRole('dialog', { name: /Dentist Appointment/ })).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
 test('command palette can launch "Quick Add with AI" when configured', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Dashboard');

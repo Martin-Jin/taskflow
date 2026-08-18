@@ -1696,7 +1696,8 @@ input.search-bar-input {
 .search-bar-clear {
   position: absolute;
   right: 2px;
-  top: 2px;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 4px 7px;
   border: none;
   background: transparent;

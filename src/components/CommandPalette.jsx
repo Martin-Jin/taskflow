@@ -1,10 +1,10 @@
 /**
  * CommandPalette — global "jump to anything" (Ctrl+K / Cmd+K, see
  * useKeyboardShortcuts' `commandPalette` entry), Linear/Todoist-style.
- * Fuzzy-searches across four groups — Views (the top-level tabs), Projects,
- * Tasks, and quick Actions (assembled by App.jsx from functions it already
- * has, e.g. runRebalance/toggleTheme) — and lets arrow keys + Enter drive
- * the flattened result list without leaving the keyboard.
+ * Fuzzy-searches across five groups — Views (the top-level tabs), Projects,
+ * Tasks, Calendar Events, and quick Actions (assembled by App.jsx from
+ * functions it already has, e.g. runRebalance/toggleTheme) — and lets arrow
+ * keys + Enter drive the flattened result list without leaving the keyboard.
  *
  * Views/Projects/Actions all rank via nameSearch.js's shared rankByNameSearch
  * (the same typo-tolerant matcher used everywhere else names are searched).
@@ -13,19 +13,24 @@
  * weighted subsequence ranking suits them better than the shared matcher
  * would (see `fuzzyScore`'s doc comment for why).
  *
- * Tasks only search once a query is typed (an unfiltered dump of every task
- * isn't a useful "recent/quick" list the way Views/Projects/Actions are),
- * capped at 8 results so a large task list doesn't turn this into a second
- * full task browser.
+ * Tasks and Events only search once a query is typed (an unfiltered dump of
+ * every task/event isn't a useful "recent/quick" list the way
+ * Views/Projects/Actions are), each capped at 8 results so a large
+ * task/event list doesn't turn this into a second full browser. Events uses
+ * SearchBar's shared `eventMatchesQuery` predicate (master events only,
+ * never per-occurrence instances — see that function's doc comment) rather
+ * than the Tasks group's fuzzy scorer, matching how the Tasks-page search
+ * bar already searches events.
  */
 
 import React, { useMemo, useState } from 'react';
-import { X, Search, Folder, CheckSquare2, Zap } from 'lucide-react';
+import { X, Search, Folder, CheckSquare2, Zap, Calendar } from 'lucide-react';
 import { useAnimatedUnmount } from '../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../utils/projectConstants';
 import { rankByNameSearch } from '../utils/nameSearch';
+import { eventMatchesQuery } from './Common/SearchBar';
 
 /**
  * Small local fuzzy-match scorer, kept only for the Tasks group — task
@@ -77,6 +82,8 @@ function fuzzyFilterTasks(items, query, toText) {
  *   onSelectProject: (id: string) => void,
  *   tasks: Array<{id: string, title: string}>,
  *   onOpenTask: (id: string) => void,
+ *   events: Array<{id: string, title: string, date: string}>,
+ *   onOpenEvent: (event: object) => void,
  *   actions: Array<{id: string, label: string, icon?: any, run: () => void}>,
  *   onClose: () => void,
  * }} props
@@ -89,6 +96,8 @@ export default function CommandPalette({
   onSelectProject,
   tasks,
   onOpenTask,
+  events,
+  onOpenEvent,
   actions,
   onClose,
 }) {
@@ -123,6 +132,13 @@ export default function CommandPalette({
           .map((t) => ({ key: `task-${t.id}`, label: t.title, icon: CheckSquare2, run: () => onOpenTask(t.id) }))
       : [];
 
+    const eventItems = q
+      ? events
+          .filter((e) => eventMatchesQuery(e, q))
+          .slice(0, 8)
+          .map((e) => ({ key: `event-${e.id}`, label: e.title, hint: e.date, icon: Calendar, run: () => onOpenEvent(e) }))
+      : [];
+
     const actionItems = rankByNameSearch(q, actions.map((a) => ({ ...a, label: a.label }))).map((a) => ({
       key: `action-${a.id}`,
       label: a.label,
@@ -135,8 +151,9 @@ export default function CommandPalette({
       { label: 'Views', items: viewItems },
       { label: 'Projects', items: projectItems },
       { label: 'Tasks', items: taskItems },
+      { label: 'Events', items: eventItems },
     ].filter((g) => g.items.length > 0);
-  }, [query, tabs, activeTab, projects, tasks, actions, onSelectTab, onSelectProject, onOpenTask]);
+  }, [query, tabs, activeTab, projects, tasks, events, actions, onSelectTab, onSelectProject, onOpenTask, onOpenEvent]);
 
   const flatItems = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
@@ -213,7 +230,10 @@ export default function CommandPalette({
                       onClick={() => runItem(item)}
                     >
                       <Icon size={14} />
-                      <span className="search-bar-dropdown-item-label">{item.label}</span>
+                      <span className="search-bar-dropdown-item-label">
+                        {item.label}
+                        {item.hint && <span className="search-bar-dropdown-item-hint"> · {item.hint}</span>}
+                      </span>
                     </button>
                   );
                 })}

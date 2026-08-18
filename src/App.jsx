@@ -167,6 +167,7 @@ function AppShell() {
     touchProjectVisited,
     sharedProjects,
     tasks,
+    events,
     runRebalance,
     schedulingConflicts,
     schedulingConflictsModalOpen,
@@ -573,6 +574,8 @@ function AppShell() {
           onSelectProject={selectProject}
           tasks={tasks}
           onOpenTask={openTaskFromPalette}
+          events={events}
+          onOpenEvent={goToCalendarEvent}
           actions={paletteActions}
           onClose={() => setShowCommandPalette(false)}
         />
