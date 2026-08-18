@@ -955,8 +955,16 @@
    (matches the maxLines:20 passed to useAutosizeTextarea in both
    EventDetailModal and TaskDetailModal) — a synced event's Google Calendar
    description, or a task's own notes, is often a long block of text worth
-   seeing in full without extra scrolling. */
-.detail-notes-textarea-tall {
+   seeing in full without extra scrolling.
+   Also repeated as `.smart-notes-wrap .detail-notes-textarea-tall`: plain
+   `.detail-notes-textarea-tall` (specificity 0,1,0) loses to
+   `.smart-notes-wrap .detail-notes-textarea`'s own 3-line max-height
+   (0,2,0, above) when TaskDetailModal's notes field — always wrapped in
+   `.smart-notes-wrap` for its highlighted-mention backdrop — carries both
+   classes; without the higher-specificity pair here, that 3-line cap won
+   regardless of maxLines:20 already being passed to the hook. */
+.detail-notes-textarea-tall,
+.smart-notes-wrap .detail-notes-textarea-tall {
   max-height: calc(20 * 1.4em + 12px);
 }
 
