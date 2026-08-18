@@ -5,7 +5,8 @@
 // Seeded data assumed from src/services/mockData.js: task_3 "Refactor auth
 // module" (top-level, not recurring, no deps) and the "Work" project — see
 // that file if these tests start failing for data reasons rather than code
-// reasons.
+// reasons. (The Calendar-event search test below seeds its own event
+// directly, since the app has no seeded CalendarEvent by default.)
 import { test, expect } from '@playwright/test';
 import { trackConsoleErrors, gotoApp, gotoTab, openAddTask, closeAnyModal, expectNoErrors } from './helpers';
 
@@ -41,6 +42,57 @@ test('search bar filters tasks by partial title and clears back to full list', a
   await expect(searchInput).toHaveValue('');
   const restoredCount = await page.getByRole('button', { name: /^Mark .* complete$/ }).count();
   expect(restoredCount).toBe(fullCount);
+
+  expectNoErrors(errors);
+});
+
+test('search bar surfaces a matching Calendar event and jumps to it on click', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Tasks');
+
+  // The app has no seeded CalendarEvent by default (mock data only seeds
+  // tasks/projects/sections/routines — `events` starts as `[]`, see
+  // SchedulerContext.jsx), so this test seeds one directly via the same
+  // localStorage key the app itself reads on boot (utils/persistence.js's
+  // `taskflow:v1:` prefix) and reloads — done after gotoApp's own beforeEach
+  // navigation/clear (rather than via another addInitScript) so this write
+  // isn't wiped by that clear's own `taskflow:`-prefix sweep.
+  await page.evaluate(() => {
+    window.localStorage.setItem(
+      'taskflow:v1:events',
+      JSON.stringify([
+        {
+          id: 'evt_e2e_dentist',
+          title: 'Dentist Appointment',
+          date: new Date().toISOString().slice(0, 10),
+          startTime: '15:00',
+          endTime: '16:00',
+          isFreeTime: false,
+          isRecurring: false,
+          googleEventId: null,
+          source: 'manual',
+        },
+      ])
+    );
+  });
+  await page.reload();
+  await gotoTab(page, 'Tasks');
+
+  const searchInput = page.getByPlaceholder(/search tasks/i);
+  await searchInput.fill('dentist');
+  await page.waitForTimeout(300);
+
+  // The Events group should list the seeded "Dentist Appointment" event.
+  const eventsGroup = page.locator('.search-bar-dropdown-group', { hasText: 'Events' });
+  await expect(eventsGroup).toBeVisible();
+  const eventOption = eventsGroup.getByRole('option', { name: /Dentist Appointment/ });
+  await expect(eventOption).toBeVisible();
+
+  await eventOption.click();
+  await page.waitForTimeout(400);
+
+  // Clicking navigates to the Calendar tab and opens that event's detail modal.
+  await expect(page.getByRole('dialog', { name: /Dentist Appointment/ })).toBeVisible();
 
   expectNoErrors(errors);
 });
