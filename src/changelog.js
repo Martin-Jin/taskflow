@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.2',
+    date: '2026-08-18',
+    title: 'Fixed "Free capacity (week)" overstating today\'s hours',
+    changes: [
+      'Stats\' "Free capacity (week)" figure used to count all 24 hours of today as available even after some of the day had already passed — checking it at 5pm still showed today\'s full work window as free. It now excludes hours already elapsed today, matching what the scheduler itself would actually be able to place.',
+    ],
+  },
+  {
     version: '6.0.1',
     date: '2026-08-18',
     title: 'Fixed a stuck sharing dialog and a Sleep routine gap',
