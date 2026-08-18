@@ -833,7 +833,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
               )}
               <button
                 type="button"
-                className={`btn btn-icon ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+                className={`btn btn-icon btn-borderless ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
                 onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
                 aria-pressed={bulkSelect.selectionMode}
                 aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
@@ -853,12 +853,13 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
               <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
               <button
                 type="button"
-                className={`btn ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+                className={`btn btn-icon btn-borderless ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
                 onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
                 aria-pressed={bulkSelect.selectionMode}
+                aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
+                title={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
               >
                 <CheckSquare size={14} />
-                {bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
               </button>
               <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
                 <Zap size={14} />

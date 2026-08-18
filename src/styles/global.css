@@ -1383,6 +1383,20 @@ select:focus-visible,
   padding: 8px;
 }
 
+/* Same "icon reads fine on its own, no border needed" exception as .btn-x/
+   .dashboard-customize-trigger below — for a .btn that already sits in a
+   toolbar full of other controls (the Select toggle) rather than floating
+   alone, where the border would just be visual noise. Background is kept
+   (unlike .btn-x, which drops that too) so the button still reads as
+   clickable/hoverable without a boundary line. */
+.btn-borderless {
+  border-color: transparent;
+}
+
+.btn-borderless:hover:not(:disabled) {
+  border-color: transparent;
+}
+
 /* Same "icon reads fine on its own" exception as .btn-x — the dashboard's
    customize trigger sits in the widget-grid header, not a bordered toolbar,
    so the filled/bordered .btn look competes with the surrounding cards. */
@@ -2937,6 +2951,18 @@ input[type='checkbox']:checked::after {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* Every .btn inside the bar (field toggles, Select all, Cancel, and the
+   Apply/Turn off buttons inside a field's popover) drops its border — the
+   bar itself already reads as one bounded surface (border-top + shadow),
+   so a border on every button inside it was redundant visual noise. */
+.bulk-action-bar .btn {
+  border-color: transparent;
+}
+
+.bulk-action-bar .btn:hover:not(:disabled) {
+  border-color: transparent;
 }
 
 .bulk-action-bar-count {
