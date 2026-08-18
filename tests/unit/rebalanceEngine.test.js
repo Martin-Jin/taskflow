@@ -675,15 +675,15 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
   it('prefers a single later continuous block over exhausting the chunk-count cap on small early gaps', () => {
     // Five small/medium gaps this time -- 09:00-09:20 (20m), 09:45-09:55
     // (10m), 10:45-11:15 (30m), 12:15-12:45 (30m), then a wide-open
-    // 13:45-18:00. A 1-hour task's chunk budget is round(60/30) = 2. Plain
-    // front-to-back first-fit would claim the FIRST two gaps it reaches (20m
-    // + 10m = 30m) and then have no chunks left for the remaining 30
-    // minutes, even though the calendar visibly still has plenty of free
-    // time later that day. The scheduler's whole-block lookahead (see
-    // placeHoursInDay in allocator.js) instead recognizes that its last
-    // available chunk should skip the small 09:45 gap and take the entire
-    // 40-minute remainder from the wide-open 13:45 block in one continuous
-    // placement, fully scheduling the task with no overflow.
+    // 13:45-18:00 (4h15m, by far the largest). A 1-hour task's chunk budget
+    // is round(60/30) = 2. Plain front-to-back first-fit would claim the
+    // FIRST two gaps it reaches (20m + 10m = 30m) and then have no chunks
+    // left for the remaining 30 minutes, even though the calendar visibly
+    // still has plenty of free time later that day. The scheduler now picks
+    // the LARGEST qualifying interval first for every chunk (not just the
+    // last one) -- so the very first placement attempt already lands the
+    // whole 1-hour task in the wide-open 13:45 block as one continuous
+    // placement, never touching any of the small early gaps at all.
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, {
       routines: [], blocks: [], rules,
       events: [
@@ -702,7 +702,11 @@ describe('allocateTasks: last-resort splitting when no continuous block fits', (
     const totalHours = blocks.reduce((sum, b) => sum + b.durationHours, 0);
     expect(totalHours).toBeCloseTo(1, 5);
     expect(overflow).toHaveLength(0);
-    expect(blocks.some((b) => b.startTime === '13:45' && Math.abs(b.durationHours - 40 / 60) < 1e-9)).toBe(true);
+    // A single continuous 1-hour block at 13:45 (the biggest opening), not
+    // split across any of the smaller earlier gaps.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].startTime).toBe('13:45');
+    expect(blocks[0].durationHours).toBeCloseTo(1, 5);
   });
 
   it('still prefers a single continuous block when one is available, and does not fragment unnecessarily', () => {

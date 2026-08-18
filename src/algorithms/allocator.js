@@ -118,7 +118,12 @@
  *       greedily consumes whatever capacity that day actually has.
  *     - Clamp to maxChunkHours, the task's remaining chunk budget, and to
  *       remaining day capacity
- *     - Slice from the day's free intervals (first-fit)
+ *     - Slice from the day's free intervals, LARGEST-QUALIFYING-INTERVAL-FIRST
+ *       (see placeHoursInDay) rather than plain chronological first-fit — this
+ *       fills the day's biggest open blocks before resorting to small
+ *       leftover gaps, so a large task doesn't get needlessly shredded into
+ *       many small chunks while a big contiguous block sits unused later the
+ *       same day
  *     - Deduct from both the task's remainingHours and the day's capacity
  *   Continue until remainingHours hits 0 or the window is exhausted (in
  *   which case the task is flagged as "at risk" / overflow for the UI to
@@ -466,19 +471,26 @@ function buildDayWeights(windowStart, windowEnd, frontLoad) {
  * the task's entire remaining duration (`floorHours`) is itself at or under
  * that floor — then that shorter total may be placed as one single chunk.
  *
- * Whole-block lookahead: plain first-fit would always bite into the earliest
- * interval first, even a small one, which can burn the task's LAST available
- * chunk on a partial placement while a later interval that same day is big
- * enough to hold the entire remaining duration as a single continuous block
- * (e.g. a piano task splits into two earlier slivers, then can't fit its
- * final chunk at 09:00 even though 20:00-22:00 is wide open and would've
- * taken the whole thing). So before consuming a chunk on interval `i`, we
- * check: is this the LAST chunk this task gets (`chunkState.used + 1 >=
- * chunkState.max`), does interval `i` fail to cover the FULL remaining
- * `hoursToPlace` on its own, and does some LATER interval in this same day
- * cover it in full? If so, skip ahead and place the whole remainder there
- * instead of fragmenting into a partial chunk here. This only ever changes
- * WHICH interval absorbs the last chunk, never how many chunks get used.
+ * Largest-gap-first selection: rather than always biting into the
+ * chronologically-earliest qualifying interval, each chunk this call places
+ * is carved from whichever REMAINING qualifying interval is currently
+ * largest (re-evaluated after every placement, since consuming from an
+ * interval shrinks it and can change which one is largest next). This is
+ * what a human scheduler would do with a big task and a messy day: fill the
+ * big open blocks first, and only fall back to small leftover gaps for
+ * whatever doesn't fit in them — rather than greedily nibbling every small
+ * gap in chronological order and fragmenting the task into many slivers
+ * while a large contiguous block sits unused later in the day. Concretely,
+ * this also means the task's LAST chunk (previously the only placement that
+ * got any size-preference at all, via a lookahead) now automatically lands
+ * in the biggest remaining interval too, by construction — if the largest
+ * available interval can't cover the full remainder on its own, NO smaller
+ * interval could either, so there is nothing left for a last-chunk lookahead
+ * to usefully skip ahead to (see the removed lookahead this replaced,
+ * formerly here, now folded into this general rule). Takes are still capped
+ * at `maxChunkHours`/remaining task hours as before — using the largest gap
+ * doesn't mean OVER-consuming it, just preferring it as the destination for
+ * this chunk.
  */
 /**
  * Cross-day counterpart to placeHoursInDay's same-day whole-block lookahead
@@ -515,33 +527,31 @@ function placeHoursInDay(hours, dayFreeIntervals, maxChunkHours, chunkState, flo
   const effectiveMinChunk = floorHours <= MIN_CHUNK_HOURS + EPSILON_HOURS ? floorHours : MIN_CHUNK_HOURS;
   const placements = [];
 
-  for (
-    let i = 0;
-    i < dayFreeIntervals.length && hoursToPlace >= effectiveMinChunk - EPSILON_HOURS && chunkState.used < chunkState.max;
-    i++
-  ) {
-    const interval = dayFreeIntervals[i];
-    const availableMins = interval.end - interval.start;
-    const availableHours = availableMins / 60;
-    if (availableHours < effectiveMinChunk) continue;
-
-    // Last-chunk whole-block lookahead (see doc comment above): if taking a
-    // partial bite here would spend the task's final chunk, and this interval
-    // can't cover the full remainder on its own, prefer a later interval that
-    // CAN take the whole thing in one continuous block over fragmenting here.
-    if (chunkState.used + 1 >= chunkState.max && availableHours < hoursToPlace - EPSILON_HOURS) {
-      const laterFullFitIdx = dayFreeIntervals.findIndex(
-        (later, j) => j > i && (later.end - later.start) / 60 >= hoursToPlace - EPSILON_HOURS
-      );
-      if (laterFullFitIdx !== -1) continue; // skip this partial slot; the loop will reach the full-fit interval
+  while (hoursToPlace >= effectiveMinChunk - EPSILON_HOURS && chunkState.used < chunkState.max) {
+    // Find the currently-largest qualifying interval (see doc comment above)
+    // — re-evaluated every iteration since consuming from an interval shrinks
+    // it and can change which one is largest for the NEXT chunk. Ties resolve
+    // to the chronologically-earlier candidate (first one found) so behavior
+    // stays deterministic when two gaps are exactly the same size.
+    let bestIdx = -1;
+    let bestAvailableHours = -1;
+    for (let i = 0; i < dayFreeIntervals.length; i++) {
+      const availableHours = (dayFreeIntervals[i].end - dayFreeIntervals[i].start) / 60;
+      if (availableHours < effectiveMinChunk) continue;
+      if (availableHours > bestAvailableHours) {
+        bestAvailableHours = availableHours;
+        bestIdx = i;
+      }
     }
+    if (bestIdx === -1) break; // no remaining interval clears the minimum floor
 
-    const takeHours = Math.min(hoursToPlace, availableHours);
+    const interval = dayFreeIntervals[bestIdx];
+    const takeHours = Math.min(hoursToPlace, bestAvailableHours);
     const takeMins = Math.round(takeHours * 60);
     // A sub-minute-rounding sliver (e.g. leftover floating-point residue from
     // earlier passes) can round down to 0 minutes here. Skip it rather than
     // pushing a zero-duration block — there's nothing meaningful to place.
-    if (takeMins <= 0) continue;
+    if (takeMins <= 0) break;
     const placementStart = interval.start;
     const placementEnd = interval.start + takeMins;
 
