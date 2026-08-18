@@ -577,7 +577,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   const notesRef = useRef(null);
   const notesBackdropRef = useRef(null);
-  useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
+  useAutosizeTextarea(notesRef, notes, { maxLines: 20 });
 
   // Keep the highlight backdrop's scroll position glued to the textarea's —
   // otherwise scrolling the (max-3-line) textarea leaves the highlighted
@@ -2537,7 +2537,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       )}
                       <textarea
                         id="task-detail-notes"
-                        className="detail-notes-textarea"
+                        className="detail-notes-textarea detail-notes-textarea-tall"
                         ref={notesRef}
                         rows={1}
                         value={notes}
