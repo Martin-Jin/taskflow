@@ -110,7 +110,7 @@ import {
   pushEventInstanceUpdate,
   deleteCalendarEventInstance,
 } from '../services/googleCalendarService';
-import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects } from '../services/mockData';
+import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects, getMockEvents } from '../services/mockData';
 import { toISODate, addDays, timeToMinutes, minutesToTime, getBrowserTimeZone } from '../utils/dateUtils';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
 import { dedupeEventsByOccurrence } from '../utils/eventUtils';
@@ -650,11 +650,13 @@ export function SchedulerProvider({ children }) {
   );
 
   // events: seeded from local storage so a refresh doesn't blank the
-  // calendar grid while the silent Google re-auth (below) is in flight, or
-  // permanently if Google Calendar isn't configured at all (mock events
-  // persist too, which is fine — they're deterministic from `mockData.js`
-  // regardless).
-  const [events, setEvents] = useState(() => dedupeEventsByOccurrence(loadPersisted('events', null) ?? []));
+  // calendar grid while the silent Google re-auth (below) is in flight,
+  // falling back to mock data on a genuine first-ever run (no persisted key
+  // at all) same as tasks/sections/projects above — see AuthContext.jsx's
+  // logout() for why that fallback is deliberately NOT re-triggered on every
+  // sign-out (it persists an empty `events` array there for the same reason
+  // it already does for tasks/blocks).
+  const [events, setEvents] = useState(() => dedupeEventsByOccurrence(loadPersisted('events', null) ?? getMockEvents()));
 
   // sections/projects: same idea as tasks — seeded from local storage, and
   // only ever touched by importFromTodoist's upsert-merge (see below), not

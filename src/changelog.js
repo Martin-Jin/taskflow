@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '5.8.1',
+    date: '2026-08-18',
+    title: 'Fixed a first-time visit showing an empty Calendar, plus a stale-filter glitch',
+    changes: [
+      "A first-ever visit (or after signing out) used to show a completely empty Calendar tab, even though the Tasks page's own demo data always showed a handful of sample tasks — a leftover gap from when the Calendar's own demo events were never actually wired up. A fresh visit now shows a few sample calendar events too, alongside the existing sample tasks.",
+      'Also fixed: changing the Calendar filter (e.g. switching to "Tasks only") could leave a stale event or task showing on the day before/after the one you were viewing until you swiped to it and back.',
+    ],
+  },
+  {
     version: '5.8.0',
     date: '2026-08-18',
     title: 'Search now finds Calendar events too',

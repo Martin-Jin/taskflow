@@ -7,7 +7,11 @@
 // mix of .cal-block items across projects with no setup — but ships with NO
 // labels, so the label-filter test creates one via the "@tag" smart-parse
 // shorthand first (see AddTaskModal/TaskDetailModal's SMART PARSE doc
-// comment) rather than assuming any pre-seeded tag exists.
+// comment) rather than assuming any pre-seeded tag exists. It also seeds a
+// few standalone CalendarEvents (getMockEvents) near "today" — relevant here
+// because Projects/Tags filtering never touches them (only task blocks have
+// a project/tags), so a test that wants "genuinely nothing left" has to
+// narrow the Show mode to "Tasks only" too, not just clear every project.
 import { test, expect } from '@playwright/test';
 import { gotoApp, gotoTab, openAddTask, closeAnyModal, trackConsoleErrors, expectNoErrors } from './helpers';
 
@@ -194,8 +198,16 @@ test.describe('Calendar filter menu', () => {
     await ensureBlocksScheduled(page);
 
     // Narrow the Projects group down to zero selections — guaranteed to hide
-    // every task block regardless of what mock data seeds.
+    // every task block regardless of what mock data seeds. Projects/Tags
+    // filtering never touches standalone Calendar Events (they have neither
+    // — see filterCalendarItems's showMode==='tasks' branch), and mock data
+    // now seeds a few of those (mockData.js's getMockEvents), so the "Show"
+    // mode is also narrowed to "Tasks only" here — otherwise a mock event
+    // would still render and this test's "genuinely nothing left" premise
+    // (and the empty-filter overlay it expects) would no longer hold.
     await openFilterMenu(page);
+    await page.getByRole('menuitemradio', { name: 'Tasks only' }).click();
+    await page.waitForTimeout(150);
     await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
     await page.waitForTimeout(150);
     await page.getByRole('checkbox', { name: 'All projects' }).uncheck();
@@ -211,6 +223,7 @@ test.describe('Calendar filter menu', () => {
     await closeAnyModal(page);
 
     await expect(page.locator('.cal-block')).toHaveCount(0);
+    await expect(page.locator('.cal-event')).toHaveCount(0);
     const overlay = page.locator('.calendar-empty-filter-message');
     // Only shows if the unfiltered range actually had something — mock data
     // guarantees this for the current week.
