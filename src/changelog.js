@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.7',
+    date: '2026-08-19',
+    title: 'Fixed a stale "no duration specified" warning in Add Task',
+    changes: [
+      'The "you haven\'t specified a duration" note kept showing even after smart-parse detected one from the title (e.g. "...8 hours") and an "Est. Nh" chip was clearly applied — it was checking whether you\'d manually edited the field, not whether a duration was actually set. Also made this warning visually distinct from the "Smart parse:" reference line right below it, which used to look identical.',
+    ],
+  },
+  {
     version: '6.0.6',
     date: '2026-08-19',
     title: 'Fixed shared-project presence bursting Firestore writes',
