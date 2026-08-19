@@ -332,7 +332,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const missingFields = [];
   if (!projectId) missingFields.push('a project');
   if (!dueDate) missingFields.push('a due date');
-  if (!hasEditedHours) missingFields.push('a duration');
+  // hasEditedHours alone means "the user manually touched this field" (it's
+  // what gates smart-parse from overwriting a deliberate edit — see
+  // estimatedHours.isUntouched above) — it stays false when smart-parse
+  // itself set the duration via a detected chip, which used to make this
+  // hint claim "no duration" even with an "Est. Nh" chip visibly applied.
+  // A duration counts as specified either way.
+  if (!hasEditedHours && !smartDetected.estimatedHours) missingFields.push('a duration');
 
   function handleNotesBlur() {
     const parsed = parseDurationHours(notes);
@@ -426,7 +432,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         {error && <p className="form-error">{error}</p>}
 
         {hasTypedTitle && missingFields.length > 0 && (
-          <p className="form-hint" style={{ marginTop: -6, paddingLeft: 7 }}>
+          <p className="form-hint-warning" style={{ marginTop: -6, paddingLeft: 7 }}>
             Note: you haven't specified {missingFields.join(', ')}.
           </p>
         )}

@@ -103,6 +103,18 @@
   margin: 4px 0 0;
 }
 
+/* AddTaskModal's "you haven't specified X" callout — a plain .form-hint
+   read as visually identical to the "Smart parse:" reference line right
+   below it, so a real missing-field warning was easy to miss. Distinct
+   color/weight (the same warning token Stats/scheduling conflicts already
+   use) so it reads as something to act on, not just muted help text. */
+.form-hint-warning {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-warning);
+  margin: 4px 0 0;
+}
+
 .form-error {
   font-size: 12.5px;
   color: var(--color-danger);

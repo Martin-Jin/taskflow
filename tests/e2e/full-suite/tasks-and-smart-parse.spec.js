@@ -1260,6 +1260,33 @@ test.describe('Validation edge cases', () => {
     expectNoErrors(errors);
   });
 
+  test('missing-info hint no longer claims "a duration" once smart-parse detects one from the title', async ({ page }) => {
+    // Regression test: the hint used to check `hasEditedHours` (whether the
+    // user MANUALLY touched the duration field) for whether a duration was
+    // "specified" at all — but smart-parse setting a duration via a detected
+    // chip never sets that flag (by design, so a later manual edit can still
+    // override it), so the hint kept claiming "you haven't specified a
+    // duration" even with an "Est. Nh" chip visibly applied underneath.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const hint = page.getByText(/you haven't specified/i);
+    await page.getByPlaceholder('Task name').fill(`E2E Duration Chip ${RUN_ID} next wed 8 hours`);
+    await expect(hint).toBeVisible();
+
+    // The smart-parse chip should appear...
+    await expect(page.getByText(/Est\. 8h/)).toBeVisible();
+    // ...and the hint should not claim a duration is missing, even though
+    // the user never manually edited the duration field — only "a project"
+    // remains unspecified (title's smart-parse also set the due date).
+    await expect(hint).not.toContainText('a duration');
+    await expect(hint).toContainText('a project');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
   test('missing-info hint appears only after typing a title, and clears as fields are filled in', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
