@@ -38,7 +38,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
-import { usePersistedState } from '../hooks/usePersistedState';
+import { usePersistedState, useLocalEditTrackedState } from '../hooks/usePersistedState';
 import { useNotificationChecker } from '../hooks/useNotificationChecker';
 import { useGoogleCalendarSync } from '../hooks/useGoogleCalendarSync';
 import { useCloudSync } from '../hooks/useCloudSync';
@@ -486,19 +486,40 @@ export function SchedulerProvider({ children }) {
   currentActionIdRef.current = currentActionId;
 
   // Parallel to currentActionIdRef, but for LOCAL edits to cloud-synced
-  // fields that never go through commit()/overwritePresent at all —
-  // currently just `projects`/`sharedProjectIds` writes in shareProject and
-  // joinSharedProject (plain setProjects/setSharedProjectIds calls, since
-  // they're not undo-stack actions). Those were previously invisible to
-  // useCloudSync's race guard (hasLocalEditRaced), which only watches
-  // currentActionId — so a cloud-sync pull/listener snapshot that happened to
-  // land in the narrow window right after a share/join (before that write's
-  // own debounced push confirms) could wholesale-revert the just-shared/
-  // just-joined project via planRemoteDataMerge's plain pickValid merge,
-  // which has no per-item "is this newer" signal for projects/sharedProjectIds
-  // the way tasks does. Bumped (not set to a fixed value) so two edits in a
-  // row are each individually detectable, mirroring how currentActionId
-  // changing at all (not to what) is what hasLocalEditRaced checks.
+  // fields that never go through commit()/overwritePresent at all — every
+  // field below EXCEPT tasks/blocks (sections/projects/labels/routines/
+  // rules/soundEnabled/soundVolume/animationsEnabled/notificationSettings/
+  // notes/shortcutBindings/sharedProjectIds), since none of those are
+  // undo-stack actions.
+  //
+  // Bumped automatically by useLocalEditTrackedState (see that hook's doc
+  // comment in usePersistedState.js) — every one of the fields above is
+  // declared through it, so EVERY mutator for EVERY one of them (CRUD
+  // actions, migrations, self-healing effects) bumps this ref for free,
+  // rather than each call site needing to remember to do it manually.
+  //
+  // This started life narrower: a bug was found where sharing/joining a
+  // project (shareProject/joinSharedProject) wrote projects/sharedProjectIds
+  // via plain setState, invisible to useCloudSync's race guard
+  // (hasLocalEditRaced, which only watches currentActionId) — so a cloud-sync
+  // pull/listener snapshot landing in the narrow window right after a
+  // share/join (before that write's own debounced push confirms) could
+  // wholesale-revert the just-shared/just-joined project via
+  // planRemoteDataMerge's plain pickValid merge, which has no per-item "is
+  // this newer" signal the way tasks does. The initial fix bumped this ref
+  // manually inside just those two call sites — but EVERY OTHER mutator for
+  // EVERY one of the fields above had (and, before useLocalEditTrackedState,
+  // would keep having) the exact same gap: e.g. addProject/renameProject/
+  // deleteProject/togglePinProject on an ordinary PERSONAL project (not
+  // shared at all) were just as invisible to this race guard, which is what
+  // let a stale sync silently revert a brand-new project on another device.
+  // useLocalEditTrackedState closes that gap structurally instead of per call
+  // site — see its own doc comment for the tracked-vs-raw setter split that
+  // keeps the sync engine's OWN writes from tripping this same ref.
+  //
+  // Bumped (not set to a fixed value) so two edits in a row are each
+  // individually detectable, mirroring how currentActionId changing at all
+  // (not to what) is what hasLocalEditRaced checks.
   const localNonUndoEditIdRef = useRef(0);
 
   // Bottom-corner "Task added"/"Event saved"-style toasts with an inline
@@ -540,19 +561,40 @@ export function SchedulerProvider({ children }) {
   // equivalent to fall back on, so these must survive a refresh or every
   // setting (work hours, buffer days, routines...) would silently reset
   // each time the app is opened.
-  const [routines, setRoutines] = usePersistedState('routines', getDefaultRoutines);
-  const [rules, setRules] = usePersistedState('rules', getDefaultRules);
+  //
+  // Every field below runs through useLocalEditTrackedState (see its doc
+  // comment) rather than being handed usePersistedState's setter directly:
+  // that gives each field TWO setters — a tracked one (bumps
+  // localNonUndoEditIdRef so useCloudSync's race guard notices a local edit
+  // to it, same as every other setter below) exposed to ordinary app code via
+  // the context value, and the original raw/untracked one (named `*Raw`)
+  // that's passed into useCloudSync so ITS OWN application of remote/backup
+  // data is never mistaken for a local edit racing itself.
+  const [routines, setRoutines, setRoutinesRaw] = useLocalEditTrackedState(
+    usePersistedState('routines', getDefaultRoutines),
+    localNonUndoEditIdRef
+  );
+  const [rules, setRules, setRulesRaw] = useLocalEditTrackedState(usePersistedState('rules', getDefaultRules), localNonUndoEditIdRef);
   // Sound effect settings — synced/backed-up siblings of routines/rules (see
   // BACKUP_FIELDS) rather than SoundContext's own local-only state, so they
   // follow the user across devices and survive a backup restore like every
   // other setting. SoundContext (rendered inside this provider) just reads
   // these via useScheduler() instead of maintaining an independent copy.
-  const [soundEnabled, setSoundEnabled] = usePersistedState('soundEnabled', true);
-  const [soundVolume, setSoundVolume] = usePersistedState('soundVolume', 0.5);
+  const [soundEnabled, setSoundEnabled, setSoundEnabledRaw] = useLocalEditTrackedState(
+    usePersistedState('soundEnabled', true),
+    localNonUndoEditIdRef
+  );
+  const [soundVolume, setSoundVolume, setSoundVolumeRaw] = useLocalEditTrackedState(
+    usePersistedState('soundVolume', 0.5),
+    localNonUndoEditIdRef
+  );
   // Global animation toggle — same synced-setting treatment as sound above.
   // Applied to the DOM via the effect below (mirrors ThemeContext's
   // data-theme attribute) so global.css can key off it.
-  const [animationsEnabled, setAnimationsEnabled] = usePersistedState('animationsEnabled', true);
+  const [animationsEnabled, setAnimationsEnabled, setAnimationsEnabledRaw] = useLocalEditTrackedState(
+    usePersistedState('animationsEnabled', true),
+    localNonUndoEditIdRef
+  );
   // Notification settings (TODO.md #10). In-app firing logic lives in
   // useNotificationChecker (Phase 2); emailEnabled is inert client-side and
   // only takes effect via the self-hosted notify-worker GitHub Actions job
@@ -564,7 +606,10 @@ export function SchedulerProvider({ children }) {
   // the same list of places (useCloudSync's applyRemoteData/applyBackupPayload,
   // its cloud-push payload, and the context value below), plus BACKUP_FIELDS
   // in backupService.js.
-  const [notificationSettings, setNotificationSettings] = usePersistedState('notificationSettings', getDefaultNotificationSettings);
+  const [notificationSettings, setNotificationSettings, setNotificationSettingsRaw] = useLocalEditTrackedState(
+    usePersistedState('notificationSettings', getDefaultNotificationSettings),
+    localNonUndoEditIdRef
+  );
 
   // Keep notificationSettings.timezone resynced to the browser's own IANA
   // timezone on every load — covers both an existing user who predates this
@@ -599,10 +644,13 @@ export function SchedulerProvider({ children }) {
   // old bookmark-style pinned-links shape directly (bypassing usePersistedState,
   // which only reads the *new* 'notes' key) and converts it once; from then
   // on 'notes' exists and this branch is never taken again.
-  const [notes, setNotes] = usePersistedState('notes', () => {
-    const legacy = loadPersisted('pinnedLinks', null);
-    return legacy ? migrateLinksToNotes(legacy) : DEFAULT_NOTES;
-  });
+  const [notes, setNotes, setNotesRaw] = useLocalEditTrackedState(
+    usePersistedState('notes', () => {
+      const legacy = loadPersisted('pinnedLinks', null);
+      return legacy ? migrateLinksToNotes(legacy) : DEFAULT_NOTES;
+    }),
+    localNonUndoEditIdRef
+  );
   // Custom keyboard-shortcut rebindings — the SOURCE OF TRUTH for these still
   // lives in localStorage under this exact same key, written directly by
   // useKeyboardShortcuts.js's setShortcutBinding/resetShortcutBinding (its
@@ -611,7 +659,10 @@ export function SchedulerProvider({ children }) {
   // see that file's doc comment). This is a React-state MIRROR of that same
   // localStorage entry, kept in sync by ShortcutsModal.jsx after every write,
   // purely so it can be pushed/pulled/backed-up like every other setting.
-  const [shortcutBindings, setShortcutBindings] = usePersistedState('shortcutBindings', {});
+  const [shortcutBindings, setShortcutBindings, setShortcutBindingsRaw] = useLocalEditTrackedState(
+    usePersistedState('shortcutBindings', {}),
+    localNonUndoEditIdRef
+  );
   // When the last one-time Todoist import ran, and how many tasks it
   // touched — shown as a status line in Settings so a re-import isn't a
   // total mystery each time ("last imported 3 tasks, 2 days ago").
@@ -666,19 +717,38 @@ export function SchedulerProvider({ children }) {
   // sections/projects: same idea as tasks — seeded from local storage, and
   // only ever touched by importFromTodoist's upsert-merge (see below), not
   // by anything that runs automatically on load.
-  const [sections, setSections] = useState(() => loadPersisted('sections', null) ?? getMockSections());
-  const [projects, setProjects] = useState(() => loadPersisted('projects', null) ?? getMockProjects());
+  //
+  // Same useLocalEditTrackedState treatment as the usePersistedState-backed
+  // settings above (see that hook's doc comment) — these four are plain
+  // useState rather than usePersistedState (their persistence needs its own
+  // effect further down, e.g. to strip shared items before saving), but the
+  // tracked/raw split applies identically regardless of which state hook
+  // backs a field.
+  const [sections, setSections, setSectionsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('sections', null) ?? getMockSections()),
+    localNonUndoEditIdRef
+  );
+  const [projects, setProjects, setProjectsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('projects', null) ?? getMockProjects()),
+    localNonUndoEditIdRef
+  );
   // labels: app-local tags (see types/index.js's Label typedef) — Todoist
   // does have its own label concept, and importFromTodoist maps a task's
   // Todoist labels onto these (creating any that don't exist yet by name),
   // but nothing here is ever pushed back to Todoist.
-  const [labels, setLabels] = useState(() => loadPersisted('labels', null) ?? []);
+  const [labels, setLabels, setLabelsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('labels', null) ?? []),
+    localNonUndoEditIdRef
+  );
   // sharedProjectIds: ids of Collaborative Projects (Firestore
   // `sharedProjects/{projectId}`) this user is a member of — just a pointer
   // list so joined projects re-list on every device and survive a restore;
   // the projects' actual content lives in Firestore, not here (see
   // backupService.js's SHARED PROJECTS doc comment above BACKUP_FIELDS).
-  const [sharedProjectIds, setSharedProjectIds] = useState(() => loadPersisted('sharedProjectIds', null) ?? []);
+  const [sharedProjectIds, setSharedProjectIds, setSharedProjectIdsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('sharedProjectIds', null) ?? []),
+    localNonUndoEditIdRef
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -1057,8 +1127,20 @@ export function SchedulerProvider({ children }) {
     // Remote changes are applied WITHOUT a history entry — they came from
     // someone else, so they must not be undoable by this user (and must not
     // consume a redo slot), exactly like the cloud-sync listener's own writes.
+    //
+    // applyRemoteSections uses the RAW (untracked) setter — see
+    // useLocalEditTrackedState's doc comment. A shared-project collaborator's
+    // edit landing here is remote data being applied, not a local edit, and
+    // must not bump localNonUndoEditIdRef: doing so would make useCloudSync's
+    // (personal, unrelated) race guard spuriously think a local edit just
+    // raced its own pull/listener purely because SOMEONE ELSE changed a
+    // shared project, needlessly delaying that personal sync by a round.
+    // `overwritePresent` (tasks/blocks) doesn't need the same treatment since
+    // it was never wired into the tracked/raw split at all — tasks/blocks
+    // race-detection runs entirely on currentActionId (see
+    // useHistoryState), which overwritePresent deliberately never touches.
     applyRemote: overwritePresent,
-    applyRemoteSections: setSections,
+    applyRemoteSections: setSectionsRaw,
     sharedProjectIds,
     user,
     setNotification,
@@ -1203,14 +1285,20 @@ export function SchedulerProvider({ children }) {
   // nothing about shared sections — re-merges the live shared ones back in
   // afterward, instead of the incoming array silently dropping them until
   // the next shared-project snapshot happens to arrive.
+  //
+  // Wraps setSectionsRAW (untracked), not the tracked setSections exposed to
+  // the rest of the app: this is specifically the setter useCloudSync itself
+  // calls to apply remote/backup data, which must never bump
+  // localNonUndoEditIdRef (see useLocalEditTrackedState's doc comment) or the
+  // sync engine would flag its own writes as racing a local edit.
   const setSectionsGuarded = useCallback(
     (next) => {
-      setSections((prev) => {
+      setSectionsRaw((prev) => {
         const incoming = typeof next === 'function' ? next(prev) : next;
         return preserveSharedSections(incoming, liveSharedSectionsRef.current);
       });
     },
-    [setSections]
+    [setSectionsRaw]
   );
 
   // Wraps overwritePresent/commit so every caller inside useCloudSync
@@ -1270,18 +1358,24 @@ export function SchedulerProvider({ children }) {
     setNotification,
     commit: commitGuarded,
     overwritePresent: overwritePresentGuarded,
+    // Every setter below is the RAW (untracked) one — see
+    // useLocalEditTrackedState's doc comment. useCloudSync only ever calls
+    // these to APPLY remote/backup data (applyRemoteData, applyBackupPayload),
+    // never as a stand-in for a local edit, so they must not bump
+    // localNonUndoEditIdRef — otherwise the sync engine's own writes would
+    // look like a local edit racing themselves and never cleanly apply.
     setSections: setSectionsGuarded,
-    setProjects,
-    setLabels,
-    setRoutines,
-    setRules,
-    setSoundEnabled,
-    setSoundVolume,
-    setAnimationsEnabled,
-    setNotificationSettings,
-    setNotes,
-    setShortcutBindings,
-    setSharedProjectIds,
+    setProjects: setProjectsRaw,
+    setLabels: setLabelsRaw,
+    setRoutines: setRoutinesRaw,
+    setRules: setRulesRaw,
+    setSoundEnabled: setSoundEnabledRaw,
+    setSoundVolume: setSoundVolumeRaw,
+    setAnimationsEnabled: setAnimationsEnabledRaw,
+    setNotificationSettings: setNotificationSettingsRaw,
+    setNotes: setNotesRaw,
+    setShortcutBindings: setShortcutBindingsRaw,
+    setSharedProjectIds: setSharedProjectIdsRaw,
     theme,
     setTheme,
     events,
@@ -2758,12 +2852,13 @@ export function SchedulerProvider({ children }) {
         const uploadedIds = new Set(movingTasks.map((t) => t.id));
         const uploadedSectionIds = new Set(movingSections.map((s) => s.id));
 
-        // Bumped BEFORE the setProjects below so useCloudSync's race guard
-        // (which reads this ref async, after the network round-trip above
-        // has already elapsed) can never observe the pre-share value and
-        // wrongly conclude "no local edit happened" — see this ref's own
-        // doc comment at its declaration.
-        localNonUndoEditIdRef.current += 1;
+        // setProjects here is the TRACKED setter (see useLocalEditTrackedState's
+        // doc comment) — it bumps localNonUndoEditIdRef automatically, so
+        // useCloudSync's race guard can never observe the pre-share value and
+        // wrongly conclude "no local edit happened" during the network
+        // round-trip above. (This used to be a manual `localNonUndoEditIdRef
+        // .current += 1` here — now redundant and removed, since every
+        // tracked setter does this generically.)
         setProjects((prev) =>
           prev.map((p) => (p.id === projectId ? { ...p, ownerId: user.uid, sharedProjectId } : p))
         );
@@ -2865,11 +2960,12 @@ export function SchedulerProvider({ children }) {
           isAnonymous: wasAnonymous === undefined ? !!currentUser.isAnonymous : !!wasAnonymous,
         });
 
-        // See localNonUndoEditIdRef's doc comment at its declaration — bumped
-        // before either setState below so useCloudSync's race guard can
-        // detect this join even though neither setter goes through
-        // commit()/overwritePresent.
-        localNonUndoEditIdRef.current += 1;
+        // setProjects/setSharedProjectIds below are both TRACKED setters (see
+        // useLocalEditTrackedState's doc comment) — each bumps
+        // localNonUndoEditIdRef on its own now, so useCloudSync's race guard
+        // can detect this join without a manual bump here (this used to be
+        // one, now redundant and removed — every tracked setter does this
+        // generically).
         setProjects((prev) => {
           const existing = prev.find((p) => p.id === sharedProjectId);
           if (existing) {
