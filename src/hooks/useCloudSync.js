@@ -606,27 +606,32 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  *   (see their own comments) — same "ref so an async callback sees the
  *   latest value" reasoning as stateRef.
  * @param {React.MutableRefObject} deps.localNonUndoEditIdRef - Counter bumped
- *   by SchedulerContext's shareProject/joinSharedProject (see that ref's own
- *   doc comment) for local edits to projects/sharedProjectIds that never go
- *   through commit()/overwritePresent — checked alongside currentActionIdRef
- *   by hasAnyLocalEditRaced so those edits are race-guarded too.
+ *   automatically by every field below going through SchedulerContext's
+ *   useLocalEditTrackedState (see that hook's own doc comment) for local
+ *   edits that never go through commit()/overwritePresent — checked
+ *   alongside currentActionIdRef by hasAnyLocalEditRaced so those edits are
+ *   race-guarded too. The setters this hook receives are deliberately the
+ *   RAW/untracked ones (see that same doc comment) so this hook's OWN
+ *   application of remote/backup data can never bump this ref itself.
  * @param {Function} deps.setNotification - Toast notification setter
  * @param {Function} deps.commit - useHistoryState's commit (tasks/blocks, undoable)
  * @param {Function} deps.overwritePresent - useHistoryState's overwritePresent
  *   (tasks/blocks, NOT undoable) — used for data arriving from elsewhere
  *   (initial pull, live listener) rather than from a local user action.
- * @param {Function} deps.setSections - Setter for sections
- * @param {Function} deps.setProjects - Setter for projects
- * @param {Function} deps.setLabels - Setter for labels
- * @param {Function} deps.setRoutines - Setter for routines
- * @param {Function} deps.setRules - Setter for rules
- * @param {Function} deps.setSoundEnabled - Setter for soundEnabled
- * @param {Function} deps.setSoundVolume - Setter for soundVolume
- * @param {Function} deps.setAnimationsEnabled - Setter for animationsEnabled
- * @param {Function} deps.setNotificationSettings - Setter for notificationSettings
- * @param {Function} deps.setNotes - Setter for notes
- * @param {Function} deps.setShortcutBindings - Setter for shortcutBindings
- * @param {Function} deps.setSharedProjectIds - Setter for sharedProjectIds
+ * @param {Function} deps.setSections - RAW/untracked setter for sections
+ *   (wrapped as setSectionsGuarded by the caller to also re-merge live shared
+ *   sections — see SchedulerContext.jsx)
+ * @param {Function} deps.setProjects - RAW/untracked setter for projects
+ * @param {Function} deps.setLabels - RAW/untracked setter for labels
+ * @param {Function} deps.setRoutines - RAW/untracked setter for routines
+ * @param {Function} deps.setRules - RAW/untracked setter for rules
+ * @param {Function} deps.setSoundEnabled - RAW/untracked setter for soundEnabled
+ * @param {Function} deps.setSoundVolume - RAW/untracked setter for soundVolume
+ * @param {Function} deps.setAnimationsEnabled - RAW/untracked setter for animationsEnabled
+ * @param {Function} deps.setNotificationSettings - RAW/untracked setter for notificationSettings
+ * @param {Function} deps.setNotes - RAW/untracked setter for notes
+ * @param {Function} deps.setShortcutBindings - RAW/untracked setter for shortcutBindings
+ * @param {Function} deps.setSharedProjectIds - RAW/untracked setter for sharedProjectIds
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.

@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.9',
+    date: '2026-08-20',
+    title: 'Fixed a new project sometimes vanishing after a cross-device sync',
+    changes: [
+      'A brand-new project (or a rename, delete, pin, or settings change) created right before a background cross-device sync landed could occasionally get silently reverted, since sync had no way to tell that edit had just happened. This is the same class of race already fixed for sharing/joining a project — it\'s now fixed structurally for every such field, so a future one added the same way is protected automatically.',
+    ],
+  },
+  {
     version: '6.0.8',
     date: '2026-08-19',
     title: 'Fixed same-time Calendar events rendering illegibly crowded',
