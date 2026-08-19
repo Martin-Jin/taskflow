@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.6',
+    date: '2026-08-19',
+    title: 'Fixed shared-project presence bursting Firestore writes',
+    changes: [
+      'If you had several shared projects open, the every-30-seconds "I\'m still here" presence update fired one separate write per project at once, forever. Enough shared projects (or bad timing against other syncing) could exhaust Firestore\'s write queue and stall other pending syncs, like sharing/joining a project — that\'s the likely cause behind sharing occasionally getting stuck on "Setting up sharing…". Presence updates (and a guest\'s self-rename, which had the same issue) are now sent as a single batched write instead.',
+    ],
+  },
+  {
     version: '6.0.5',
     date: '2026-08-19',
     title: 'Fixed the scheduler stranding a tiny sliver block',

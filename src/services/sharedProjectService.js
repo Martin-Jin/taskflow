@@ -224,21 +224,41 @@ export async function writeSharedSections(projectId, { creates = [], updates = [
 }
 
 /**
- * Record that this user is currently viewing the project. Rules constrain this
- * document to exactly these three fields (see firestore.rules' presence
- * block) — unvalidated, a viewer could write hundreds of KB here, or set a
- * display name impersonating someone else in the avatar strip.
+ * Record that this user is currently viewing every shared project they're
+ * currently in, as ONE batched write rather than one `setDoc` call per
+ * project fired concurrently — see useSharedProjectSync.js's heartbeat
+ * effect, the only caller. A plain per-project loop there used to fire N
+ * simultaneous individual writes every PRESENCE_HEARTBEAT_MS tick (N = shared
+ * project count), forever, for as long as the app stayed open — a standing
+ * background write burst distinct from (and in addition to) the debounced
+ * main-doc push and shared-task/section uploads, which are already batched
+ * for exactly this reason (see writeSharedTasks/writeSharedSections and
+ * firestoreSync.js's deleteBackups, all with the same "Write stream exhausted
+ * maximum allowed queued writes" rationale). A user in several shared
+ * projects could exhaust Firestore's client-side write-stream queue from
+ * heartbeats alone, which then throttles every OTHER pending write
+ * (including the main user-doc push) behind the same backoff.
  *
- * `serverTimestamp()` rather than a client clock: presence is judged by
- * recency, and a client with a skewed clock would otherwise appear
- * permanently present or permanently stale to everyone else.
+ * Rules constrain each presence document to exactly these three fields (see
+ * firestore.rules' presence block) — unvalidated, a viewer could write
+ * hundreds of KB here, or set a display name impersonating someone else in
+ * the avatar strip. `serverTimestamp()` rather than a client clock: presence
+ * is judged by recency, and a client with a skewed clock would otherwise
+ * appear permanently present or permanently stale to everyone else.
  */
-export async function writePresence(projectId, uid, { displayName, photoURL }) {
-  await setDoc(presenceRef(projectId, uid), {
-    displayName: displayName || 'Someone',
-    photoURL: photoURL || null,
-    lastSeenAt: serverTimestamp(),
-  });
+export async function writePresenceForProjects(projectIds, uid, { displayName, photoURL }) {
+  if (projectIds.length === 0) return;
+  for (let i = 0; i < projectIds.length; i += MAX_BATCH_OPS) {
+    const batch = writeBatch(db);
+    for (const projectId of projectIds.slice(i, i + MAX_BATCH_OPS)) {
+      batch.set(presenceRef(projectId, uid), {
+        displayName: displayName || 'Someone',
+        photoURL: photoURL || null,
+        lastSeenAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  }
 }
 
 /** Remove this user's presence document — best-effort on leaving a project. */
@@ -295,21 +315,44 @@ export function subscribePresence(projectId, onPresence, onError) {
 }
 
 /**
- * Any collaborator (viewer or editor, anonymous or real): rename your OWN
- * entry's `displayName`. Deliberately NOT stamping `updatedAt` here, unlike
- * every owner/editor write in this file — firestore.rules' `isRenamingSelf()`
- * requires this write's affected top-level keys to be EXACTLY `['collaborators']`
+ * Renames a guest across every shared project they're in AND refreshes their
+ * presence doc in each, as ONE batched write — replaces calling a
+ * per-project rename + a per-project presence write inside a `Promise.all`
+ * (see SchedulerContext.jsx's `renameAnonymousSelf`, the only caller, which
+ * used to do exactly that). A guest in several shared projects fired 2×N
+ * concurrent individual writes on every rename; batched here for the same
+ * "avoid bursting Firestore's write-stream queue" reason as
+ * `writePresenceForProjects`.
+ *
+ * The rename half is deliberately NOT stamping `updatedAt`, unlike every
+ * owner/editor write in this file — firestore.rules' `isRenamingSelf()`
+ * requires that write's affected top-level keys be EXACTLY `['collaborators']`
  * (a non-owner, non-editor collaborator has no rules-granted path to touch
  * anything else on the document), so adding `updatedAt` would make the whole
  * rename rejected, the same reason `transferSharedProjectOwnership` skips it.
- * @param {string} projectId
+ * Batching this alongside an unrelated presence-doc write is safe: each
+ * `batch.update`/`batch.set` call here still targets its own separate
+ * document, so bundling multiple documents into one network round-trip
+ * doesn't change what fields any single document's write touches, and rules
+ * evaluate each document write independently either way.
+ * @param {string[]} projectIds
  * @param {string} uid - Must be the caller's own uid; rules enforce this.
- * @param {string} displayName
+ * @param {{displayName: string, photoURL: string|null}} profile
  */
-export async function renameSelfAsCollaborator(projectId, uid, displayName) {
-  await updateDoc(projectRef(projectId), {
-    [`collaborators.${uid}.displayName`]: displayName,
-  });
+export async function renameSelfAndPresenceForProjects(projectIds, uid, { displayName, photoURL }) {
+  if (projectIds.length === 0) return;
+  for (let i = 0; i < projectIds.length; i += MAX_BATCH_OPS / 2) {
+    const batch = writeBatch(db);
+    for (const projectId of projectIds.slice(i, i + MAX_BATCH_OPS / 2)) {
+      batch.update(projectRef(projectId), { [`collaborators.${uid}.displayName`]: displayName });
+      batch.set(presenceRef(projectId, uid), {
+        displayName: displayName || 'Someone',
+        photoURL: photoURL || null,
+        lastSeenAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  }
 }
 
 /**
