@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.0.8',
+    date: '2026-08-19',
+    title: 'Fixed same-time Calendar events rendering illegibly crowded',
+    changes: [
+      'When 3 or more events genuinely overlapped in time in the Week view (e.g. two identically-timed classes bridged by other nearby events into one crowded moment), each got squeezed into its own side-by-side column — fine for 2, but a 3rd made every column too narrow to read, looking like a jumbled, merged mess. Now caps side-by-side columns at 2 and groups anything beyond that into a tappable "N events" chip instead, the same way an already-too-short event does.',
+    ],
+  },
+  {
     version: '6.0.7',
     date: '2026-08-19',
     title: 'Fixed a stale "no duration specified" warning in Add Task',

@@ -8,6 +8,7 @@ import {
   MIN_BLOCK_HEIGHT_PX,
   GRID_START_MIN,
   EXCESSIVE_PUSHDOWN_PX,
+  MAX_SIDE_BY_SIDE_LANES,
 } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
@@ -155,27 +156,80 @@ describe('layoutDayItems + computeDayPositions (lane packing)', () => {
     expect(a.lane).not.toBe(b.lane);
   });
 
-  it('gives several short overlapping events their own proportional lane/column when there is enough pixel room, instead of clustering them', () => {
-    // Three 12-minute events, each overlapping the next by a few minutes.
-    // At max zoom (1.25px/min), 12 min = 15px — under MIN_BLOCK_HEIGHT_PX
-    // (26px), so individually still "too short to be legible"... but if we
-    // zoom out to where the SAME real duration renders taller relative to a
-    // lower bar, that's not how pxPerMin works (higher pxPerMin = taller).
-    // Use a duration that clears the legibility floor at max zoom instead:
-    // 25 minutes each (25 * 1.25 = 31.25px >= 26px) overlapping in a stagger.
-    const items = [block('Standup', 540, 565), block('Review', 550, 575), block('Sync', 560, 585)];
+  it('gives two overlapping legible events their own proportional lane/column, instead of clustering them', () => {
+    // Two 25-minute events overlapping by a few minutes — legible alone at
+    // max zoom (25 * 1.25 = 31.25px >= 26px MIN_BLOCK_HEIGHT_PX) and, at just
+    // two concurrent items, still within MAX_SIDE_BY_SIDE_LANES, so both keep
+    // a real side-by-side lane rather than folding.
+    const items = [block('Standup', 540, 565), block('Review', 550, 575)];
     const laidOut = layoutDayItems(items, 1.25);
-    // No cluster should have been produced — every item is legible alone.
     expect(laidOut.every((i) => i.kind !== 'cluster')).toBe(true);
-    expect(laidOut).toHaveLength(3);
-    // All three mutually overlap in a staggered chain, so they need 3 lanes.
+    expect(laidOut).toHaveLength(2);
     const lanes = new Set(laidOut.map((i) => i.lane));
-    expect(lanes.size).toBe(3);
+    expect(lanes.size).toBe(2);
 
     const positioned = computeDayPositions(laidOut, 1.25);
     for (const p of positioned) {
       // Individual items get their TRUE proportional height — no floor.
       expect(p.height).toBeCloseTo((p.end - p.start) * 1.25, 0);
+    }
+  });
+
+  it('folds a 3rd+ concurrently-overlapping legible item into a cluster instead of forcing a 3rd side-by-side lane (MAX_SIDE_BY_SIDE_LANES)', () => {
+    // Three 25-minute events, each overlapping the next in a staggered chain
+    // (all individually legible per isLegibleAlone — this is NOT a height
+    // problem). isLegibleAlone only ever judges height, so unlike the old
+    // behavior (each concurrent legible item always got its own lane,
+    // however many), a peak of 3 concurrent items must now fold the 3rd into
+    // a cluster — 3 side-by-side lanes in a real 7-day week view squeezes
+    // each to an illegibly narrow WIDTH, which isLegibleAlone can't see (see
+    // packLanesCapped/MAX_SIDE_BY_SIDE_LANES doc comments — regression for
+    // the real "two same-time MECHENG lectures look merged" report).
+    const items = [block('Standup', 540, 565), block('Review', 550, 575), block('Sync', 560, 585)];
+    const laidOut = layoutDayItems(items, 1.25);
+    const clusters = laidOut.filter((i) => i.kind === 'cluster');
+    expect(clusters).toHaveLength(1);
+    // The overflow cluster holds whichever item needed the 3rd lane — the
+    // exact member folded in is an implementation detail of the greedy
+    // simulation, so just check total item count is preserved (2 kept singles + 1 folded).
+    const singleCount = laidOut.filter((i) => i.kind !== 'cluster').length;
+    expect(singleCount + clusters[0].items.length).toBe(3);
+    const lanes = new Set(laidOut.map((i) => i.lane));
+    expect(lanes.size).toBe(2); // capped at MAX_SIDE_BY_SIDE_LANES
+
+    const positioned = computeDayPositions(laidOut, 1.25);
+    for (const p of positioned) {
+      if (p.kind !== 'cluster') expect(p.height).toBeCloseTo((p.end - p.start) * 1.25, 0);
+    }
+  });
+
+  it('reproduces the real bug report: two identically-timed legible events plus two bridging items never render as a single merged chip', () => {
+    // "Start stop Piano" 14:41-15:51, two same-time 2hr lecture-style events
+    // 15:00-17:00, "Test prep" 16:01-17:10 — the exact reported shape. Piano
+    // and Test prep don't overlap each other, but both bridge the two 2hr
+    // events into one 4-item overlap group needing 3 concurrent lanes at
+    // peak (15:00-15:51). Both 2hr events are always legible alone at every
+    // zoom (2hr * even the lowest pxPerMin comfortably clears
+    // MIN_BLOCK_HEIGHT_PX) — the old behavior gave all 4 real lanes, 3-wide
+    // in a 7-day view, which rendered illegibly (verified against the actual
+    // DOM/screenshot during investigation). The fix must cap real lanes at
+    // MAX_SIDE_BY_SIDE_LANES and fold the peak's 3rd concurrent item into a
+    // cluster, at every zoom level.
+    const items = [
+      event('Piano', 14 * 60 + 41, 15 * 60 + 51),
+      event('MECHENG 211', 15 * 60, 17 * 60),
+      event('MECHENG 222', 15 * 60, 17 * 60),
+      event('Test prep', 16 * 60 + 1, 17 * 60 + 10),
+    ];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const laidOut = layoutDayItems(items, pxPerMin);
+      const lanes = new Set(laidOut.map((i) => i.lane));
+      expect(lanes.size).toBeLessThanOrEqual(MAX_SIDE_BY_SIDE_LANES);
+      // Every one of the 4 original items must still be represented exactly
+      // once (either as its own single, or inside the overflow cluster) —
+      // the fold must never silently drop an item.
+      const total = laidOut.reduce((sum, i) => sum + (i.kind === 'cluster' ? i.items.length : 1), 0);
+      expect(total).toBe(4);
     }
   });
 

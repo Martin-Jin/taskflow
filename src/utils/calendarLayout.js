@@ -96,6 +96,30 @@ export const COLLISION_GAP_PX = 8;
 // chip would hide a substantial, easily-legible block for no real gain.
 export const CHIP_EXEMPT_MIN = 60;
 
+// Widest side-by-side split any overlap group is ever allowed to grow to,
+// however individually legible (per isLegibleAlone) each item's own HEIGHT
+// is. isLegibleAlone only ever asks "is this box tall enough" — it has no
+// concept of the box's WIDTH, which for a lane depends on totalLanes AND the
+// day column's own rendered width (itself a function of dayCount, sidebar
+// state, and window size — genuinely unknown to this pure module, unlike
+// pxPerMin). Left unchecked, 3+ mutually-overlapping legible items in a 7-day
+// week view each get squeezed to roughly a third of an already-narrow day
+// column: too thin for .cal-block-title's ellipsis to show more than a
+// single truncated letter, and too thin for .cal-block-time's un-wrapped
+// "HH:MM–HH:MM" to fit on one line, so it wraps across 2-3 lines — the
+// result reads as a jumbled/merged mess indistinguishable from a real
+// `kind: 'cluster'` chip in a screenshot, even though every item is
+// correctly positioned in its own separate, non-overlapping lane. Verified
+// against the real rendered DOM: 2 concurrent legible items at typical
+// 7-day-view width still render a legible truncated title + single-line time
+// (fine); 3 does not (see this constant's own regression test). Once an
+// overlap group would need more than this many real lanes, whichever item
+// would have needed the first beyond-the-cap lane is folded into the last
+// allowed lane's current occupant instead, growing (or starting) a `kind:
+// 'cluster'` chip there rather than forcing an ever-thinner lane — see
+// layoutDayItems' own packLanesCapped.
+export const MAX_SIDE_BY_SIDE_LANES = 2;
+
 /**
  * Fold a day's sequential (non-overlapping-in-time) items into "N tasks"
  * chips using ONE zoom-scaled rule, so the amount of clustering changes
@@ -252,7 +276,7 @@ export function foldSequentialItems(items, pxPerMin) {
  * beforehand.
  *
  * Every item that CAN render as its own legible box does — side-by-side lane
- * assignment (packLanes below) is the default outcome, matching Google
+ * assignment (packLanesCapped below) is the default outcome, matching Google
  * Calendar's own "every event gets a proportional column" layout. Only items
  * whose own true proportional height at this zoom would fall under
  * MIN_BLOCK_HEIGHT_PX (see isLegibleAlone) are cluster-candidates: within
@@ -270,9 +294,17 @@ export function foldSequentialItems(items, pxPerMin) {
  * another legible-alone item — this is what keeps a real event visible in
  * its own box side-by-side with a chip of short items it genuinely overlaps,
  * rather than the two merging together. Legible items and chips are then
- * lane-packed together in one pass (sorted by start) so a chip that overlaps
- * a legible item in time still gets a distinct lane rather than visually
- * colliding with it.
+ * lane-packed together in one pass (sorted by start), capped at
+ * MAX_SIDE_BY_SIDE_LANES real lanes (see packLanesCapped below):
+ * isLegibleAlone alone only judges an item's HEIGHT, so 3+ genuinely
+ * legible-alone items that all mutually overlap (a real, if less common,
+ * shape — e.g. two identically-timed university lecture blocks with a third
+ * item bridging both into one overlap group) would otherwise still each get
+ * squeezed into an illegibly narrow WIDTH-wise lane in a 7-day week view,
+ * reading as a jumbled mess indistinguishable from a real cluster chip even
+ * though every item is technically in its own non-overlapping lane — see
+ * packLanesCapped's own doc comment and git history for the real report
+ * this fixes.
  */
 export function layoutDayItems(dayItems, pxPerMin) {
   const items = [...dayItems].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -282,25 +314,6 @@ export function layoutDayItems(dayItems, pxPerMin) {
   let overlapGroup = [];
   let groupEnd = -Infinity;
   let groupId = 0;
-
-  function packLanes(laneItems) {
-    const laneEnds = []; // end minute of the last item placed in each lane
-    for (const item of laneItems) {
-      let lane = laneEnds.findIndex((end) => end <= item.start);
-      if (lane === -1) {
-        lane = laneEnds.length;
-        laneEnds.push(item.end);
-      } else {
-        laneEnds[lane] = item.end;
-      }
-      // `lane` is only unique within this overlap group — two unrelated,
-      // non-overlapping-in-time groups can both produce a "lane 0". Tag with
-      // groupId too so computeDayPositions doesn't chain-stack them together.
-      results.push({ ...item, lane, groupId });
-    }
-    const totalLanes = laneEnds.length;
-    for (let i = results.length - laneItems.length; i < results.length; i++) results[i].totalLanes = totalLanes;
-  }
 
   function flushGroup() {
     if (overlapGroup.length === 0) return;
@@ -341,9 +354,89 @@ export function layoutDayItems(dayItems, pxPerMin) {
     flushShortRun();
 
     laneItems.sort((a, b) => a.start - b.start);
-    packLanes(laneItems);
+    packLanesCapped(laneItems);
     overlapGroup = [];
     groupId += 1;
+  }
+
+  /**
+   * Greedy interval-graph-coloring lane assignment (an item takes the first
+   * lane whose last-placed occupant has already ended, else opens a new
+   * one), same idea a naive "give every overlapping item its own lane"
+   * packer would use — but capped at MAX_SIDE_BY_SIDE_LANES real
+   * side-by-side lanes. Uncapped, a peak of 3+ concurrent legible-alone
+   * items (each individually tall enough per isLegibleAlone, which only
+   * ever checks HEIGHT) still squeezes every lane to an illegibly thin
+   * sliver of the day column's WIDTH in a 7-day week view, which
+   * isLegibleAlone has no way to see (regression for the real "two same-time
+   * lecture events look merged" report — see MAX_SIDE_BY_SIDE_LANES' own doc
+   * comment).
+   *
+   * Whenever the greedy pass would need a genuinely new lane beyond the cap,
+   * the item is instead MERGED IN PLACE into whichever item currently
+   * occupies the last allowed lane (index MAX_SIDE_BY_SIDE_LANES - 1),
+   * turning that lane's occupant into (or growing its existing) `kind:
+   * 'cluster'`. This has to happen as ONE pass, not "simulate the cap
+   * separately, wrap whatever overflowed in a cluster, then hand the
+   * combined list to an uncapped packer" — that two-pass shape looks
+   * reasonable but is subtly wrong: the merged cluster's own (possibly
+   * wider, min-to-max) span can still fail to fit into any of the other
+   * lanes when the uncapped packer re-simulates from scratch, handing it a
+   * 3rd lane anyway — a cluster occupies a lane exactly like any single
+   * item, so wrapping something in one doesn't by itself make it stop
+   * needing a lane. Growing the last lane's occupant in place, right where
+   * the overflow is first detected, is what actually keeps the final lane
+   * count at the cap: every subsequent item that could only ever have
+   * overlapped the ORIGINAL (now-merged) occupant continues to correctly
+   * see that lane as busy until the cluster's own (possibly extended) end.
+   */
+  function packLanesCapped(laneItems) {
+    const laneEnds = []; // end minute of the last item/cluster placed in each lane
+    // Index into `results` of the most recently placed entry in each lane —
+    // NOT the same as "the item currently in that lane" the way laneEnds'
+    // parallel array works in the uncapped case: a lane can be reused
+    // sequentially by several non-overlapping items over the course of the
+    // day (see below), each getting its OWN results entry, so this only
+    // ever needs to track the LATEST one — which is exactly the one an
+    // overflow needs to merge into, and exactly the one whose totalLanes
+    // gets backfilled once this group's own lane count is final.
+    const lastResultIndexInLane = [];
+    const firstResultIndex = results.length;
+
+    for (const item of laneItems) {
+      let lane = laneEnds.findIndex((end) => end <= item.start);
+      if (lane === -1) lane = laneEnds.length;
+
+      if (lane >= MAX_SIDE_BY_SIDE_LANES) {
+        // No free lane within the cap — fold into the last allowed lane's
+        // CURRENT occupant (its most recent results entry) rather than
+        // opening a new one. That occupant may already be a cluster from an
+        // earlier overflow onto this same lane; either way, always
+        // read/write through `.items` (a cluster has no top-level
+        // type/data of its own — see packLane's own matching note).
+        const capLane = MAX_SIDE_BY_SIDE_LANES - 1;
+        const prev = results[lastResultIndexInLane[capLane]];
+        const prevItems = prev.kind === 'cluster' ? prev.items : [{ type: prev.type, data: prev.data }];
+        const itemItems = item.kind === 'cluster' ? item.items : [{ type: item.type, data: item.data }];
+        const merged = {
+          ...prev,
+          kind: 'cluster',
+          items: [...prevItems, ...itemItems],
+          start: Math.min(prev.start, item.start),
+          end: Math.max(prev.end, item.end),
+        };
+        results[lastResultIndexInLane[capLane]] = merged;
+        laneEnds[capLane] = merged.end;
+        continue;
+      }
+
+      laneEnds[lane] = item.end;
+      lastResultIndexInLane[lane] = results.length;
+      results.push({ ...item, lane, groupId });
+    }
+
+    const totalLanes = laneEnds.length;
+    for (let i = firstResultIndex; i < results.length; i++) results[i].totalLanes = totalLanes;
   }
 
   for (const item of folded) {
