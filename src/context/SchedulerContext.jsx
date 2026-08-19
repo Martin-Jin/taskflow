@@ -78,7 +78,7 @@ import {
 } from '../utils/recurrenceState';
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
-import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAsCollaborator, writePresence } from '../services/sharedProjectService';
+import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAndPresenceForProjects } from '../services/sharedProjectService';
 import { RETENTION_DAYS_COMPLETED_TASKS, RETENTION_DAYS_DELETED_TASKS, computeCutoffMs } from '../services/dataRetention';
 import { tombstoneTasks, isStaleTombstone } from '../utils/taskTombstones';
 import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
@@ -2938,10 +2938,13 @@ export function SchedulerProvider({ children }) {
 
       const projectIds = user ? planSelfRename(user.uid, trimmed, sharedProjects) : [];
       try {
-        await Promise.all([
-          ...projectIds.map((projectId) => renameSelfAsCollaborator(projectId, user.uid, trimmed)),
-          ...projectIds.map((projectId) => writePresence(projectId, user.uid, { displayName: trimmed, photoURL: user.photoURL || null })),
-        ]);
+        // One batched write per project (rename + presence together) rather
+        // than 2×N concurrent individual writes — see
+        // renameSelfAndPresenceForProjects' doc comment.
+        await renameSelfAndPresenceForProjects(projectIds, user.uid, {
+          displayName: trimmed,
+          photoURL: user.photoURL || null,
+        });
         setGuestDisplayName(trimmed);
         return { ok: true };
       } catch (err) {

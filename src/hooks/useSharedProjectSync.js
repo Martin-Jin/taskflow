@@ -39,7 +39,7 @@ import {
   subscribeSharedProject,
   subscribeSharedSections,
   subscribeSharedTasks,
-  writePresence,
+  writePresenceForProjects,
   writeSharedSections,
   writeSharedTasks,
 } from '../services/sharedProjectService';
@@ -542,15 +542,17 @@ export function useSharedProjectSync({ tasks, sections, stateRef, sectionsRef, a
 
     const beat = () => {
       const displayName = resolveMyDisplayName();
-      for (const projectId of ids) {
-        writePresence(projectId, user.uid, {
-          displayName,
-          photoURL: user.photoURL || null,
-        }).catch(() => {
-          // Presence is decorative — a failed heartbeat just means this user's
-          // avatar ages out for others. Never surface it as an error.
-        });
-      }
+      // One batched write for every joined project, not one setDoc per
+      // project fired concurrently — see writePresenceForProjects' doc
+      // comment for why a plain per-project loop here could burst
+      // Firestore's write-stream queue every heartbeat tick.
+      writePresenceForProjects(ids, user.uid, {
+        displayName,
+        photoURL: user.photoURL || null,
+      }).catch(() => {
+        // Presence is decorative — a failed heartbeat just means this user's
+        // avatar ages out for others. Never surface it as an error.
+      });
     };
 
     beat();
