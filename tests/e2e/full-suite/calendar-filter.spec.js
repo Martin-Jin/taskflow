@@ -282,17 +282,23 @@ test.describe('Calendar filter menu — Projects search', () => {
   // render at all unless there are enough projects. Unlike labels (which
   // smart-parse's "@tag" shorthand can create on the fly, see this file's
   // own tag test), a "#Project" mention only ever resolves against EXISTING
-  // projects — so these have to be created for real via the "Manage
-  // projects" modal's own "Add project" form (reached from the Projects tab).
+  // projects — so these have to be created for real via the dedicated
+  // AddProjectModal (reached from the "Manage projects" modal's own "Add
+  // project" button, from the Projects tab).
   async function seedExtraProjects(page, runId) {
     const names = [`E2eSearchAlpha${runId}`, `E2eSearchBeta${runId}`];
     await gotoTab(page, 'Projects');
     await page.getByRole('button', { name: 'Manage projects', exact: true }).click();
     await page.waitForTimeout(300);
+    // Scoped to the "Manage projects" dialog: the Projects page's own FAB
+    // renders its own "Add project" button at the same time, so an unscoped
+    // getByRole would match both.
+    const manageDialog = page.getByRole('dialog', { name: 'Manage projects' });
     for (const name of names) {
-      await page.getByRole('button', { name: 'Add project' }).click();
-      await page.getByPlaceholder('Project name…').fill(name);
-      await page.getByRole('button', { name: 'Add', exact: true }).click();
+      await manageDialog.getByRole('button', { name: 'Add project' }).click();
+      const addProjectDialog = page.getByRole('dialog', { name: 'Add project' });
+      await addProjectDialog.getByPlaceholder('Project name').fill(name);
+      await addProjectDialog.getByRole('button', { name: 'Add project', exact: true }).click();
       await page.waitForTimeout(300);
     }
     await closeAnyModal(page);

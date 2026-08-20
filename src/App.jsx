@@ -39,6 +39,7 @@ import ActionToast from './components/Common/ActionToast';
 import InstallAppBanner from './components/Common/InstallAppBanner';
 import BottomTabBar from './components/Nav/BottomTabBar';
 import ManageProjectsModal from './components/Modals/ManageProjectsModal';
+import AddProjectModal from './components/Modals/AddProjectModal';
 import ChangelogModal from './components/Modals/ChangelogModal';
 import JoinProjectModal from './components/Modals/JoinProjectModal';
 import ShareProjectModal from './components/Modals/ShareProjectModal';
@@ -121,7 +122,7 @@ function AppShell() {
   const [sharingProjectId, setSharingProjectId] = useState(null);
   const [showChangelog, setShowChangelog] = useState(false);
   const [lastSeenChangelogVersion, setLastSeenChangelogVersion] = usePersistedState('lastSeenChangelogVersion', null);
-  const [manageProjectsAutoAdd, setManageProjectsAutoAdd] = useState(false);
+  const [showAddProjectModal, setShowAddProjectModal] = useState(false);
   // Bumped by the "new task" shortcut below to signal TaskListPanel (which
   // owns "Add task" modal state locally) to open it, even when the shortcut
   // is pressed from a different tab — see the effect on this prop in
@@ -276,11 +277,15 @@ function AppShell() {
 
   // Mobile has no sidebar to add/browse projects from — the topbar's "⋯"
   // menu and the Tasks page's project SelectMenu both open this same modal
-  // (see ManageProjectsModal), autoAdd just decides whether it lands on the
-  // add-project form or the plain list+search.
-  function openManageProjects(autoAdd = false) {
-    setManageProjectsAutoAdd(autoAdd);
+  // (see ManageProjectsModal) onto its plain list+search. "Add project" is a
+  // separate dedicated modal (AddProjectModal) opened directly, not a mode
+  // of this one — see openAddProject below.
+  function openManageProjects() {
     setShowManageProjects(true);
+  }
+
+  function openAddProject() {
+    setShowAddProjectModal(true);
   }
 
   function handleDeleteProject(id) {
@@ -465,7 +470,7 @@ function AppShell() {
               uid={user?.uid}
               onSelectProject={selectProject}
               onOpenManageProjects={openManageProjects}
-              onAddProject={() => openManageProjects(true)}
+              onAddProject={openAddProject}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
@@ -539,15 +544,15 @@ function AppShell() {
           projects={projects}
           activeProjectId={activeProjectId}
           onSelectProject={selectProject}
-          onAddProject={addProject}
+          onAddProject={openAddProject}
           onRenameProject={renameProject}
           onTogglePinProject={togglePinProject}
           onShareProject={handleShareProject}
           onDeleteProject={handleDeleteProject}
-          autoShowAdd={manageProjectsAutoAdd}
           onClose={() => setShowManageProjects(false)}
         />
       )}
+      {showAddProjectModal && <AddProjectModal onAddProject={addProject} onClose={() => setShowAddProjectModal(false)} />}
       {showTour && (
         <GuidedTour currentTab={tab} tabs={TABS} onTabChange={setTab} onViewChange={setTaskView} onFinish={closeTour} />
       )}

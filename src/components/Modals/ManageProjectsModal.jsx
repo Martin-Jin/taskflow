@@ -2,11 +2,12 @@
  * ManageProjectsModal — mobile-friendly "see all projects" popup, since
  * mobile has no Sidebar (see Sidebar.jsx's own doc comment) to browse/manage
  * projects from. Mirrors Sidebar's search + list + Rename/Pin/Delete
- * (ProjectActionsMenu) + "Add project" form, just inside a modal shell
- * instead of a persistent rail. Reachable two ways: the mobile topbar's
- * "⋯" menu ("Add project", opens straight into the add form via
- * `autoShowAdd`) and the Tasks page's project SelectMenu footer ("See /
- * manage all projects", opens onto the plain list+search).
+ * (ProjectActionsMenu), just inside a modal shell instead of a persistent
+ * rail. Its own "Add project" button opens the shared dedicated
+ * AddProjectModal (see App.jsx) rather than an inline form, so there's one
+ * "add project" UI across the app instead of two. Reachable two ways: the
+ * mobile topbar's "⋯" menu and the Tasks page's project SelectMenu footer
+ * ("See / manage all projects").
  */
 
 import React, { useState } from 'react';
@@ -37,7 +38,6 @@ export default function ManageProjectsModal({
   onTogglePinProject,
   onShareProject,
   onDeleteProject,
-  autoShowAdd = false,
   onClose,
 }) {
   // Read from context rather than adding props: `projects` is passed in (this
@@ -50,9 +50,6 @@ export default function ManageProjectsModal({
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
   const [query, setQuery] = useState('');
-  const [isAdding, setIsAdding] = useState(autoShowAdd);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
@@ -109,21 +106,6 @@ export default function ManageProjectsModal({
     }
   }
 
-  async function handleAddProject() {
-    const trimmed = newProjectName.trim();
-    if (!trimmed || isCreating) return;
-    setIsCreating(true);
-    try {
-      const result = await onAddProject(trimmed);
-      if (result?.ok) {
-        setNewProjectName('');
-        setIsAdding(false);
-      }
-    } finally {
-      setIsCreating(false);
-    }
-  }
-
   return (
     <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
@@ -145,7 +127,7 @@ export default function ManageProjectsModal({
         <div className="sidebar-project-search">
           <Search size={13} className="sidebar-project-search-icon" />
           <input
-            autoFocus={!autoShowAdd}
+            autoFocus
             type="text"
             role="combobox"
             aria-expanded={isSearching}
@@ -236,47 +218,10 @@ export default function ManageProjectsModal({
           {visibleProjects.length === 0 && <div className="sidebar-project-empty">No projects match.</div>}
         </div>
 
-        {isAdding ? (
-          <div className="sidebar-add-project-form">
-            <input
-              autoFocus
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="Project name…"
-              disabled={isCreating}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleAddProject();
-                }
-                if (e.key === 'Escape') {
-                  setIsAdding(false);
-                  setNewProjectName('');
-                }
-              }}
-            />
-            <div className="sidebar-add-project-actions">
-              <button className="btn btn-primary" onClick={handleAddProject} disabled={isCreating || !newProjectName.trim()}>
-                {isCreating ? '…' : 'Add'}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setIsAdding(false);
-                  setNewProjectName('');
-                }}
-                disabled={isCreating}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button className="nav-item sidebar-add-project-btn" onClick={() => setIsAdding(true)}>
-            <Plus size={14} />
-            Add project
-          </button>
-        )}
+        <button className="nav-item sidebar-add-project-btn" onClick={onAddProject}>
+          <Plus size={14} />
+          Add project
+        </button>
       </div>
     </div>
   );

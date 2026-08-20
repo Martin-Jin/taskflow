@@ -983,34 +983,12 @@ select:focus-visible,
   margin-top: 4px;
 }
 
-.sidebar-add-project-form {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 2px;
-}
-
-.sidebar-add-project-form input {
-  background: var(--color-bg-page);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 7px 9px;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--color-text-primary);
-}
-
-.sidebar-add-project-actions {
-  display: flex;
-  justify-content: flex-start;
-  gap: 6px;
-}
-
 /* ----------------------------------------------------------------------
-   ManageProjectsModal — reuses the .sidebar-project-* / .sidebar-add-
-   project-* rows/classes above (they're standalone, not scoped under
-   .sidebar) inside a modal shell for mobile, which has no persistent
-   sidebar to browse projects from.
+   ManageProjectsModal — reuses the .sidebar-project- / .sidebar-add-project-
+   btn rows/classes above (they're standalone, not scoped under .sidebar)
+   inside a modal shell for mobile, which has no persistent sidebar to
+   browse projects from. Its "Add project" button opens the dedicated
+   AddProjectModal rather than an inline form.
    ---------------------------------------------------------------------- */
 .modal-manage-projects {
   display: flex;

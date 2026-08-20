@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.2.0',
+    date: '2026-08-20',
+    title: 'Adding a project now opens its own dedicated dialog',
+    changes: [
+      '"Add project" (on the Projects page and in the "Manage projects" dialog) now opens a small dedicated dialog styled to match "Add task", instead of an inline form buried in the projects list — same look and feel across both add-task and add-project.',
+    ],
+  },
+  {
     version: '6.1.0',
     date: '2026-08-20',
     title: 'The Projects page now has an "Add project" button',

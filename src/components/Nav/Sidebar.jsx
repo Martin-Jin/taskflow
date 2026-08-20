@@ -10,7 +10,8 @@
  * ProjectActionsMenu), and a "See all projects" link to the dedicated
  * Projects tab. Full project search/browsing, and the "Manage projects"
  * entry point (ManageProjectsModal, which also has its own "Add project"
- * form), now live on the Projects page itself rather than duplicated here.
+ * button opening the dedicated AddProjectModal), now live on the Projects
+ * page itself rather than duplicated here.
  *
  * Extracted out of App.jsx once the Projects group made the inline JSX too
  * large to keep readable there. Only rendered on desktop — mobile has no
