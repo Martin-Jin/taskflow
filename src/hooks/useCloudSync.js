@@ -177,6 +177,57 @@ export function computeFingerprint(source) {
   return JSON.stringify(relevant);
 }
 
+// TEMPORARY DIAGNOSTIC — logs a CONCISE summary of what actually changed
+// between two computeFingerprint() strings, instead of the whole (often huge)
+// blob, so a live repro doesn't require eyeballing/pasting multi-KB JSON. Only
+// ever called from console.log call sites tagged [SYNC-DEBUG]; safe to delete
+// wholesale once the cause of the reported "cloud sync only works with both
+// tabs focused" bug is confirmed.
+function diffSyncFingerprintFields(oldFp, newFp) {
+  if (!oldFp) return { firstPush: true };
+  let oldObj, newObj;
+  try {
+    oldObj = JSON.parse(oldFp);
+    newObj = JSON.parse(newFp);
+  } catch (err) {
+    return { parseError: String(err) };
+  }
+  const changedTopLevelKeys = [];
+  const arrayDiffs = {};
+  const allKeys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)]);
+  for (const key of allKeys) {
+    const oldVal = oldObj[key];
+    const newVal = newObj[key];
+    if (JSON.stringify(oldVal) === JSON.stringify(newVal)) continue;
+    changedTopLevelKeys.push(key);
+    if (Array.isArray(oldVal) && Array.isArray(newVal)) {
+      const oldById = new Map(oldVal.map((item) => [item?.id, item]));
+      const newById = new Map(newVal.map((item) => [item?.id, item]));
+      const added = [...newById.keys()].filter((id) => !oldById.has(id));
+      const removed = [...oldById.keys()].filter((id) => !newById.has(id));
+      const changedItems = [];
+      for (const [id, newItem] of newById) {
+        const oldItem = oldById.get(id);
+        if (!oldItem) continue;
+        const fieldDiffs = {};
+        const itemKeys = new Set([...Object.keys(oldItem || {}), ...Object.keys(newItem || {})]);
+        for (const fieldKey of itemKeys) {
+          const a = JSON.stringify(oldItem?.[fieldKey]);
+          const b = JSON.stringify(newItem?.[fieldKey]);
+          if (a !== b) fieldDiffs[fieldKey] = { from: oldItem?.[fieldKey], to: newItem?.[fieldKey] };
+        }
+        if (Object.keys(fieldDiffs).length > 0) changedItems.push({ id, title: newItem?.title, fieldDiffs });
+      }
+      arrayDiffs[key] = { added, removed, changedItems };
+    }
+  }
+  return { changedTopLevelKeys, arrayDiffs };
+}
+
+function logSyncDebugFingerprintDiff(oldFp, newFp) {
+  console.log('[SYNC-DEBUG] fingerprint diff vs last push:', diffSyncFingerprintFields(oldFp, newFp));
+}
+
 /** Ids of every task currently marked completed, as a Set for cheap diffing. */
 function completedTaskIds(tasks) {
   const ids = new Set();
@@ -912,7 +963,8 @@ export function useCloudSync({
       console.log('[SYNC-DEBUG] runPushNow: no-op, state unchanged since last push');
       return; // no change
     }
-    console.log('[SYNC-DEBUG] runPushNow: starting write', { fingerprint: plan.fingerprint, visibilityState: document.visibilityState });
+    console.log('[SYNC-DEBUG] runPushNow: starting write', { visibilityState: document.visibilityState });
+    logSyncDebugFingerprintDiff(lastPushedFingerprintRef.current, plan.fingerprint);
     pushInFlightRef.current = true;
     setIsPushingCloud(true);
     try {
@@ -928,7 +980,7 @@ export function useCloudSync({
       // isn't enough.
       inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       await pushUserData(user.uid, currentState);
-      console.log('[SYNC-DEBUG] runPushNow: write CONFIRMED by Firestore', { fingerprint: plan.fingerprint });
+      console.log('[SYNC-DEBUG] runPushNow: write CONFIRMED by Firestore');
       // Only persist to localStorage once Firestore has actually confirmed
       // this write (i.e. after the await, never before) — this is the
       // durable record that survives a tab kill/reload, unlike the in-memory
@@ -1340,6 +1392,8 @@ export function useCloudSync({
         console.log('[SYNC-DEBUG] live listener: SKIPPED — fingerprint matches local state already (echo, no-op)');
         return; // echo of our own push, local state unchanged since
       }
+      console.log('[SYNC-DEBUG] live listener: fingerprint DIFFERS from local state, diffing:');
+      logSyncDebugFingerprintDiff(fingerprint, remoteFingerprint);
       const isFirstSnapshot = !receivedFirstSnapshot;
       receivedFirstSnapshot = true;
       // Two independent ways this snapshot can be stale, checked on EVERY
