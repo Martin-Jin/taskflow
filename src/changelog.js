@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.4.1',
+    date: '2026-08-20',
+    title: 'Fix back-to-back calendar blocks sometimes merging into a chip',
+    changes: [
+      'Fixed a week/day calendar view bug where three or more back-to-back scheduled blocks or events (e.g. 9:00-10:00, 10:00-11:00, 11:00-12:00, with zero gap and zero overlap) could randomly render merged into a single "N tasks" chip instead of as separate boxes, even though each one had plenty of room to display on its own.',
+    ],
+  },
+  {
     version: '6.4.0',
     date: '2026-08-20',
     title: 'Assign shared tasks to a collaborator for auto-scheduling',
