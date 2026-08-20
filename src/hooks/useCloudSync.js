@@ -903,11 +903,16 @@ export function useCloudSync({
     const { proceed, queue } = computePushSingleFlightDecision(pushInFlightRef.current);
     if (!proceed) {
       if (queue) pushQueuedRef.current = true;
+      console.log('[SYNC-DEBUG] runPushNow: coalesced behind an in-flight push, queued follow-up');
       return;
     }
     const currentState = stateRef.current;
     const plan = computePushStampPlan(currentState, lastPushedFingerprintRef.current);
-    if (!plan.shouldPush) return; // no change
+    if (!plan.shouldPush) {
+      console.log('[SYNC-DEBUG] runPushNow: no-op, state unchanged since last push');
+      return; // no change
+    }
+    console.log('[SYNC-DEBUG] runPushNow: starting write', { fingerprint: plan.fingerprint, visibilityState: document.visibilityState });
     pushInFlightRef.current = true;
     setIsPushingCloud(true);
     try {
@@ -923,6 +928,7 @@ export function useCloudSync({
       // isn't enough.
       inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       await pushUserData(user.uid, currentState);
+      console.log('[SYNC-DEBUG] runPushNow: write CONFIRMED by Firestore', { fingerprint: plan.fingerprint });
       // Only persist to localStorage once Firestore has actually confirmed
       // this write (i.e. after the await, never before) — this is the
       // durable record that survives a tab kill/reload, unlike the in-memory
@@ -934,6 +940,7 @@ export function useCloudSync({
       // silently treating this edit as already synced forever.
       savePersisted('lastPushedFingerprint', plan.fingerprint);
     } catch (err) {
+      console.warn('[SYNC-DEBUG] runPushNow: write FAILED', err);
       console.warn('[useCloudSync] Push failed', err);
       // Roll back the optimistic stamp — otherwise this fingerprint looks
       // "already pushed" even though the write never landed, so if the
@@ -1012,9 +1019,11 @@ export function useCloudSync({
       if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
       if (immediate) {
         pushTimerRef.current = null;
+        console.log('[SYNC-DEBUG] schedulePush: immediate (completion detected)');
         runPushNow();
         return;
       }
+      console.log('[SYNC-DEBUG] schedulePush: debouncing', CLOUD_SYNC_EDIT_DEBOUNCE_MS, 'ms');
       pushTimerRef.current = setTimeout(runPushNow, CLOUD_SYNC_EDIT_DEBOUNCE_MS);
     },
     [runPushNow]
@@ -1049,12 +1058,16 @@ export function useCloudSync({
     // completions bypass the debounce entirely.
     const flush = () => {
       if (pushTimerRef.current) {
+        console.log('[SYNC-DEBUG] flush-on-hide: pending push timer found, flushing now');
         clearTimeout(pushTimerRef.current);
         pushTimerRef.current = null;
         runPushNow();
+      } else {
+        console.log('[SYNC-DEBUG] flush-on-hide: fired, but no pending push timer (nothing to flush)');
       }
     };
     const onVisibilityChange = () => {
+      console.log('[SYNC-DEBUG] visibilitychange (push-flush side):', document.visibilityState);
       if (document.visibilityState === 'hidden') flush();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -1279,6 +1292,11 @@ export function useCloudSync({
       // (subscribeUserData already filtered out the pre-ack optimistic
       // event), so every path should widen the freshness baseline.
       recordObservedWriteAt(remoteData.lastWriteAt);
+      console.log('[SYNC-DEBUG] live listener: snapshot DELIVERED', {
+        lastWriteAt: remoteData.lastWriteAt,
+        visibilityState: document.visibilityState,
+        hasFocus: document.hasFocus(),
+      });
 
       // Cross-device Google Calendar status check — deliberately BEFORE the
       // fingerprint-equality early return just below, since that fingerprint
@@ -1318,7 +1336,10 @@ export function useCloudSync({
 
       const fingerprint = computeFingerprint(stateRef.current);
       const remoteFingerprint = computeFingerprint(remoteData);
-      if (fingerprint === remoteFingerprint) return; // echo of our own push, local state unchanged since
+      if (fingerprint === remoteFingerprint) {
+        console.log('[SYNC-DEBUG] live listener: SKIPPED — fingerprint matches local state already (echo, no-op)');
+        return; // echo of our own push, local state unchanged since
+      }
       const isFirstSnapshot = !receivedFirstSnapshot;
       receivedFirstSnapshot = true;
       // Two independent ways this snapshot can be stale, checked on EVERY
@@ -1352,7 +1373,15 @@ export function useCloudSync({
       // THIS device's own in-flight pushes, this one is about another
       // device's write arriving out of order.
       const isCrossDeviceStale = isRemoteWriteStale(remoteData.lastWriteAt, lastKnownWriteAtMillisRef.current);
-      applyRemoteData(remoteData, { skipAll: isStaleEcho || localEditLandedFirst || isCrossDeviceStale });
+      const skipAll = isStaleEcho || localEditLandedFirst || isCrossDeviceStale;
+      console.log('[SYNC-DEBUG] live listener: DECISION', {
+        isStaleEcho,
+        localEditLandedFirst,
+        isCrossDeviceStale,
+        skipAll,
+        willApply: !skipAll,
+      });
+      applyRemoteData(remoteData, { skipAll });
     });
     unsubscribeRef.current = unsubscribe;
     return () => unsubscribe();
@@ -1383,9 +1412,11 @@ export function useCloudSync({
     async (isCancelled) => {
       const actionIdAtStart = currentActionIdRef.current;
       const nonUndoEditIdAtStart = localNonUndoEditIdRef.current;
+      console.log('[SYNC-DEBUG] pullAndApplyRemoteData: START', { visibilityState: document.visibilityState, hasFocus: document.hasFocus() });
       setIsPullingCloud(true);
       try {
         const remoteData = await pullUserData(user.uid);
+        console.log('[SYNC-DEBUG] pullAndApplyRemoteData: fetch resolved', { hasData: !!remoteData, lastWriteAt: remoteData?.lastWriteAt, cancelled: isCancelled() });
         if (!isCancelled() && remoteData) {
           // Record the server-confirmed `lastWriteAt` this pull observed —
           // same bookkeeping as the live listener, done BEFORE the staleness
@@ -1396,9 +1427,11 @@ export function useCloudSync({
             { actionId: actionIdAtStart, nonUndoEditId: nonUndoEditIdAtStart },
             { actionId: currentActionIdRef.current, nonUndoEditId: localNonUndoEditIdRef.current }
           );
+          console.log('[SYNC-DEBUG] pullAndApplyRemoteData: DECISION', { localEditLandedDuringPull, willApply: !localEditLandedDuringPull });
           applyRemoteData(remoteData, { skipAll: localEditLandedDuringPull });
         }
       } catch (err) {
+        console.warn('[SYNC-DEBUG] pullAndApplyRemoteData: FAILED', err);
         console.warn('[useCloudSync] Pull failed', err);
       } finally {
         if (!isCancelled()) setIsPullingCloud(false);
@@ -1434,27 +1467,46 @@ export function useCloudSync({
   // onSnapshot listener's subscribe/unsubscribe lifecycle at all (that
   // listener's own race guards — isStaleOwnEcho/isFirstSnapshot bookkeeping —
   // are untouched by this effect).
+  //
+  // ALSO listens for `pageshow` (mirroring useGoogleCalendarSync.js's own
+  // identical addition) — neither `visibilitychange` nor `focus` is
+  // guaranteed to fire at all for an iOS "Add to Home Screen" standalone PWA
+  // returning from the background (a WebKit limitation every iOS browser
+  // inherits regardless of engine skin), which left THIS refresh — the one
+  // that actually matters for personal task/schedule sync — silently
+  // unreachable on that platform even after the Google Calendar hook got the
+  // same fix. `pageshow` is the one event iOS reliably fires both on a fresh
+  // launch and when restoring a suspended page from the back/forward cache.
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
 
     let cancelled = false;
     const lastVisibilityPullAtRef = { current: 0 };
-    const refreshIfDue = () => {
+    const refreshIfDue = (source) => {
       const now = Date.now();
-      if (!shouldTriggerVisibilityRefresh(lastVisibilityPullAtRef.current || null, now)) return;
+      console.log('[SYNC-DEBUG] visibility-refresh: triggered by', source, { visibilityState: document.visibilityState, hasFocus: document.hasFocus() });
+      if (!shouldTriggerVisibilityRefresh(lastVisibilityPullAtRef.current || null, now)) {
+        console.log('[SYNC-DEBUG] visibility-refresh: throttled, skipping (fired too recently)');
+        return;
+      }
       lastVisibilityPullAtRef.current = now;
       pullAndApplyRemoteData(() => cancelled);
     };
     const onVisibilityChange = () => {
+      console.log('[SYNC-DEBUG] visibilitychange (pull side) fired:', document.visibilityState);
       if (document.visibilityState !== 'visible') return;
-      refreshIfDue();
+      refreshIfDue('visibilitychange');
     };
+    const onFocus = () => refreshIfDue('focus');
+    const onPageshow = () => refreshIfDue('pageshow');
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('focus', refreshIfDue);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('pageshow', onPageshow);
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('focus', refreshIfDue);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('pageshow', onPageshow);
     };
   }, [user, cloudSynced, pullAndApplyRemoteData]);
 
