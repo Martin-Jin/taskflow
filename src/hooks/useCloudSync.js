@@ -219,57 +219,6 @@ export function computeFingerprint(source) {
   return canonicalStringify(relevant);
 }
 
-// TEMPORARY DIAGNOSTIC — logs a CONCISE summary of what actually changed
-// between two computeFingerprint() strings, instead of the whole (often huge)
-// blob, so a live repro doesn't require eyeballing/pasting multi-KB JSON. Only
-// ever called from console.log call sites tagged [SYNC-DEBUG]; safe to delete
-// wholesale once the cause of the reported "cloud sync only works with both
-// tabs focused" bug is confirmed.
-function diffSyncFingerprintFields(oldFp, newFp) {
-  if (!oldFp) return { firstPush: true };
-  let oldObj, newObj;
-  try {
-    oldObj = JSON.parse(oldFp);
-    newObj = JSON.parse(newFp);
-  } catch (err) {
-    return { parseError: String(err) };
-  }
-  const changedTopLevelKeys = [];
-  const arrayDiffs = {};
-  const allKeys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)]);
-  for (const key of allKeys) {
-    const oldVal = oldObj[key];
-    const newVal = newObj[key];
-    if (canonicalStringify(oldVal) === canonicalStringify(newVal)) continue;
-    changedTopLevelKeys.push(key);
-    if (Array.isArray(oldVal) && Array.isArray(newVal)) {
-      const oldById = new Map(oldVal.map((item) => [item?.id, item]));
-      const newById = new Map(newVal.map((item) => [item?.id, item]));
-      const added = [...newById.keys()].filter((id) => !oldById.has(id));
-      const removed = [...oldById.keys()].filter((id) => !newById.has(id));
-      const changedItems = [];
-      for (const [id, newItem] of newById) {
-        const oldItem = oldById.get(id);
-        if (!oldItem) continue;
-        const fieldDiffs = {};
-        const itemKeys = new Set([...Object.keys(oldItem || {}), ...Object.keys(newItem || {})]);
-        for (const fieldKey of itemKeys) {
-          const a = canonicalStringify(oldItem?.[fieldKey]);
-          const b = canonicalStringify(newItem?.[fieldKey]);
-          if (a !== b) fieldDiffs[fieldKey] = { from: oldItem?.[fieldKey], to: newItem?.[fieldKey] };
-        }
-        if (Object.keys(fieldDiffs).length > 0) changedItems.push({ id, title: newItem?.title, fieldDiffs });
-      }
-      arrayDiffs[key] = { added, removed, changedItems };
-    }
-  }
-  return { changedTopLevelKeys, arrayDiffs };
-}
-
-function logSyncDebugFingerprintDiff(oldFp, newFp) {
-  console.log('[SYNC-DEBUG] fingerprint diff vs last push:', diffSyncFingerprintFields(oldFp, newFp));
-}
-
 /** Ids of every task currently marked completed, as a Set for cheap diffing. */
 function completedTaskIds(tasks) {
   const ids = new Set();
@@ -560,38 +509,6 @@ export function computePushSingleFlightDecision(pushInFlight) {
   return { proceed: true, queue: false };
 }
 
-// TEMPORARY DIAGNOSTIC — logs exactly which task(s) mergeTasksByUpdatedAt
-// disagreed on between local and remote, which side's `updatedAt` won, and
-// what the raw timestamps were (to catch a clock-skew scenario: a genuinely
-// later real-world edit carrying an EARLIER wall-clock updatedAt because the
-// device that made it has a lagging system clock). Only logs tasks whose
-// CONTENT actually differs between local/remote — a task both sides already
-// agree on produces no noise. Safe to delete once the current "completing a
-// task on one device doesn't stick on another" repro is understood.
-function logSyncDebugPerTaskMergeDecision(localTasks, remoteTasks, mergedTasks) {
-  const localById = new Map((localTasks || []).map((t) => [t.id, t]));
-  const remoteById = new Map((remoteTasks || []).map((t) => [t.id, t]));
-  const mergedById = new Map((mergedTasks || []).map((t) => [t.id, t]));
-  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
-  for (const id of ids) {
-    const local = localById.get(id);
-    const remote = remoteById.get(id);
-    if (!local || !remote) continue; // only-on-one-side isn't a merge conflict
-    if (canonicalStringify(local) === canonicalStringify(remote)) continue; // already agree
-    const merged = mergedById.get(id);
-    const winner = merged === local ? 'local' : merged === remote ? 'remote' : 'unknown';
-    console.log('[SYNC-DEBUG] per-task merge decision', {
-      id,
-      title: merged?.title,
-      localUpdatedAt: local.updatedAt,
-      remoteUpdatedAt: remote.updatedAt,
-      localIsCompleted: local.isCompleted,
-      remoteIsCompleted: remote.isCompleted,
-      winner,
-    });
-  }
-}
-
 /**
  * Pure merge-decision for applyRemoteData: given remote data, the current
  * local state (used as per-field fallback via pickValid), and whether the
@@ -636,10 +553,8 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
     // merged tasks, superseding whatever's picked here as a throwaway value.
     const validRemoteTasks = pickValid('tasks', remoteData.tasks, null);
     const tasksMerged = validRemoteTasks !== null;
-    const mergedTasks = tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks;
-    if (tasksMerged) logSyncDebugPerTaskMergeDecision(localState.tasks, validRemoteTasks, mergedTasks);
     plan.tasksBlocks = {
-      tasks: mergedTasks,
+      tasks: tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks,
       blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
     };
     // Whether a real per-task merge ran (remote tasks were shape-valid), as
@@ -1035,17 +950,11 @@ export function useCloudSync({
     const { proceed, queue } = computePushSingleFlightDecision(pushInFlightRef.current);
     if (!proceed) {
       if (queue) pushQueuedRef.current = true;
-      console.log('[SYNC-DEBUG] runPushNow: coalesced behind an in-flight push, queued follow-up');
       return;
     }
     const currentState = stateRef.current;
     const plan = computePushStampPlan(currentState, lastPushedFingerprintRef.current);
-    if (!plan.shouldPush) {
-      console.log('[SYNC-DEBUG] runPushNow: no-op, state unchanged since last push');
-      return; // no change
-    }
-    console.log('[SYNC-DEBUG] runPushNow: starting write', { visibilityState: document.visibilityState });
-    logSyncDebugFingerprintDiff(lastPushedFingerprintRef.current, plan.fingerprint);
+    if (!plan.shouldPush) return; // no change
     pushInFlightRef.current = true;
     setIsPushingCloud(true);
     try {
@@ -1061,7 +970,6 @@ export function useCloudSync({
       // isn't enough.
       inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       await pushUserData(user.uid, currentState);
-      console.log('[SYNC-DEBUG] runPushNow: write CONFIRMED by Firestore');
       // Only persist to localStorage once Firestore has actually confirmed
       // this write (i.e. after the await, never before) — this is the
       // durable record that survives a tab kill/reload, unlike the in-memory
@@ -1073,7 +981,6 @@ export function useCloudSync({
       // silently treating this edit as already synced forever.
       savePersisted('lastPushedFingerprint', plan.fingerprint);
     } catch (err) {
-      console.warn('[SYNC-DEBUG] runPushNow: write FAILED', err);
       console.warn('[useCloudSync] Push failed', err);
       // Roll back the optimistic stamp — otherwise this fingerprint looks
       // "already pushed" even though the write never landed, so if the
@@ -1152,11 +1059,9 @@ export function useCloudSync({
       if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
       if (immediate) {
         pushTimerRef.current = null;
-        console.log('[SYNC-DEBUG] schedulePush: immediate (completion detected)');
         runPushNow();
         return;
       }
-      console.log('[SYNC-DEBUG] schedulePush: debouncing', CLOUD_SYNC_EDIT_DEBOUNCE_MS, 'ms');
       pushTimerRef.current = setTimeout(runPushNow, CLOUD_SYNC_EDIT_DEBOUNCE_MS);
     },
     [runPushNow]
@@ -1178,6 +1083,22 @@ export function useCloudSync({
   // close cases the other two occasionally miss. None of these guarantee the
   // write lands before teardown (the fetch can still be aborted mid-flight) —
   // this narrows the race, it doesn't close it.
+  //
+  // KNOWN, DELIBERATELY ACCEPTED LIMITATION (investigated and confirmed via a
+  // live multi-device repro): closing a tab/window within seconds of an edit
+  // can still occasionally lose that edit, because the underlying Firestore
+  // SDK write is an ordinary network request with no guarantee of surviving
+  // page teardown once it's already in flight. The one browser mechanism that
+  // DOES guarantee delivery through teardown is `navigator.sendBeacon`/
+  // `fetch(..., {keepalive: true})` — but neither is usable with the
+  // Firestore SDK's own authenticated writes; closing this gap for real would
+  // mean bypassing the SDK and hand-encoding Firestore's REST wire format for
+  // a parallel write path used only at teardown. Deliberately not built: the
+  // added complexity/maintenance cost wasn't judged worth it for how narrow
+  // the window already is after the fixes in this file (a 200ms debounce
+  // instead of 1.5s, and completions bypassing the debounce entirely). If
+  // this becomes a recurring complaint, that REST+keepalive fallback is the
+  // correct next step, not another tweak to the timing here.
   useEffect(() => {
     if (!user || !cloudSynced) return undefined;
     // Goes through runPushNow's single-flight guard like every other caller:
@@ -1191,16 +1112,12 @@ export function useCloudSync({
     // completions bypass the debounce entirely.
     const flush = () => {
       if (pushTimerRef.current) {
-        console.log('[SYNC-DEBUG] flush-on-hide: pending push timer found, flushing now');
         clearTimeout(pushTimerRef.current);
         pushTimerRef.current = null;
         runPushNow();
-      } else {
-        console.log('[SYNC-DEBUG] flush-on-hide: fired, but no pending push timer (nothing to flush)');
       }
     };
     const onVisibilityChange = () => {
-      console.log('[SYNC-DEBUG] visibilitychange (push-flush side):', document.visibilityState);
       if (document.visibilityState === 'hidden') flush();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -1425,11 +1342,6 @@ export function useCloudSync({
       // (subscribeUserData already filtered out the pre-ack optimistic
       // event), so every path should widen the freshness baseline.
       recordObservedWriteAt(remoteData.lastWriteAt);
-      console.log('[SYNC-DEBUG] live listener: snapshot DELIVERED', {
-        lastWriteAt: remoteData.lastWriteAt,
-        visibilityState: document.visibilityState,
-        hasFocus: document.hasFocus(),
-      });
 
       // Cross-device Google Calendar status check — deliberately BEFORE the
       // fingerprint-equality early return just below, since that fingerprint
@@ -1469,12 +1381,7 @@ export function useCloudSync({
 
       const fingerprint = computeFingerprint(stateRef.current);
       const remoteFingerprint = computeFingerprint(remoteData);
-      if (fingerprint === remoteFingerprint) {
-        console.log('[SYNC-DEBUG] live listener: SKIPPED — fingerprint matches local state already (echo, no-op)');
-        return; // echo of our own push, local state unchanged since
-      }
-      console.log('[SYNC-DEBUG] live listener: fingerprint DIFFERS from local state, diffing:');
-      logSyncDebugFingerprintDiff(fingerprint, remoteFingerprint);
+      if (fingerprint === remoteFingerprint) return; // echo of our own push, local state unchanged since
       const isFirstSnapshot = !receivedFirstSnapshot;
       receivedFirstSnapshot = true;
       // Two independent ways this snapshot can be stale, checked on EVERY
@@ -1508,15 +1415,7 @@ export function useCloudSync({
       // THIS device's own in-flight pushes, this one is about another
       // device's write arriving out of order.
       const isCrossDeviceStale = isRemoteWriteStale(remoteData.lastWriteAt, lastKnownWriteAtMillisRef.current);
-      const skipAll = isStaleEcho || localEditLandedFirst || isCrossDeviceStale;
-      console.log('[SYNC-DEBUG] live listener: DECISION', {
-        isStaleEcho,
-        localEditLandedFirst,
-        isCrossDeviceStale,
-        skipAll,
-        willApply: !skipAll,
-      });
-      applyRemoteData(remoteData, { skipAll });
+      applyRemoteData(remoteData, { skipAll: isStaleEcho || localEditLandedFirst || isCrossDeviceStale });
     });
     unsubscribeRef.current = unsubscribe;
     return () => unsubscribe();
@@ -1547,11 +1446,9 @@ export function useCloudSync({
     async (isCancelled) => {
       const actionIdAtStart = currentActionIdRef.current;
       const nonUndoEditIdAtStart = localNonUndoEditIdRef.current;
-      console.log('[SYNC-DEBUG] pullAndApplyRemoteData: START', { visibilityState: document.visibilityState, hasFocus: document.hasFocus() });
       setIsPullingCloud(true);
       try {
         const remoteData = await pullUserData(user.uid);
-        console.log('[SYNC-DEBUG] pullAndApplyRemoteData: fetch resolved', { hasData: !!remoteData, lastWriteAt: remoteData?.lastWriteAt, cancelled: isCancelled() });
         if (!isCancelled() && remoteData) {
           // Record the server-confirmed `lastWriteAt` this pull observed —
           // same bookkeeping as the live listener, done BEFORE the staleness
@@ -1562,11 +1459,9 @@ export function useCloudSync({
             { actionId: actionIdAtStart, nonUndoEditId: nonUndoEditIdAtStart },
             { actionId: currentActionIdRef.current, nonUndoEditId: localNonUndoEditIdRef.current }
           );
-          console.log('[SYNC-DEBUG] pullAndApplyRemoteData: DECISION', { localEditLandedDuringPull, willApply: !localEditLandedDuringPull });
           applyRemoteData(remoteData, { skipAll: localEditLandedDuringPull });
         }
       } catch (err) {
-        console.warn('[SYNC-DEBUG] pullAndApplyRemoteData: FAILED', err);
         console.warn('[useCloudSync] Pull failed', err);
       } finally {
         if (!isCancelled()) setIsPullingCloud(false);
@@ -1617,23 +1512,18 @@ export function useCloudSync({
 
     let cancelled = false;
     const lastVisibilityPullAtRef = { current: 0 };
-    const refreshIfDue = (source) => {
+    const refreshIfDue = () => {
       const now = Date.now();
-      console.log('[SYNC-DEBUG] visibility-refresh: triggered by', source, { visibilityState: document.visibilityState, hasFocus: document.hasFocus() });
-      if (!shouldTriggerVisibilityRefresh(lastVisibilityPullAtRef.current || null, now)) {
-        console.log('[SYNC-DEBUG] visibility-refresh: throttled, skipping (fired too recently)');
-        return;
-      }
+      if (!shouldTriggerVisibilityRefresh(lastVisibilityPullAtRef.current || null, now)) return;
       lastVisibilityPullAtRef.current = now;
       pullAndApplyRemoteData(() => cancelled);
     };
     const onVisibilityChange = () => {
-      console.log('[SYNC-DEBUG] visibilitychange (pull side) fired:', document.visibilityState);
       if (document.visibilityState !== 'visible') return;
-      refreshIfDue('visibilitychange');
+      refreshIfDue();
     };
-    const onFocus = () => refreshIfDue('focus');
-    const onPageshow = () => refreshIfDue('pageshow');
+    const onFocus = () => refreshIfDue();
+    const onPageshow = () => refreshIfDue();
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('focus', onFocus);
     window.addEventListener('pageshow', onPageshow);
