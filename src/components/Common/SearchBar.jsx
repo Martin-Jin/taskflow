@@ -47,6 +47,7 @@ import { Search, X, Folder, Tag, CheckSquare, Calendar } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { rankByNameSearch } from '../../utils/nameSearch';
+import Badge from './Badge';
 
 export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask, onSelectEvent }) {
   const { searchQuery, setSearchQuery, projects, labels, tasks, events } = useScheduler();
@@ -189,12 +190,12 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
       {appliedTagTokens.length > 0 && (
         <div className="search-bar-tag-pills">
           {appliedTagTokens.map((token) => (
-            <span key={token} className="badge tag-pill search-bar-tag-pill">
+            <Badge key={token} pill className="search-bar-tag-pill">
               {token}
               <button type="button" onClick={() => removeTagToken(token)} title={`Remove ${token}`} aria-label={`Remove ${token}`}>
                 <X size={11} />
               </button>
-            </span>
+            </Badge>
           ))}
         </div>
       )}

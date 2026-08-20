@@ -33,8 +33,7 @@
 import React, { useRef, useState } from 'react';
 import { X, CalendarClock, Clock, Type as TitleIcon, ListTree, Ban, AlignLeft, MapPin, Repeat, CheckSquare } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import Modal from '../Common/Modal';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { timeToMinutes } from '../../utils/dateUtils';
 import { buildRRuleString, parseRRule } from '../../utils/recurrenceExpansion';
@@ -78,8 +77,11 @@ function formatRepeatText(interval, freq, byDay) {
 
 export default function EventDetailModal({ event, initial, onClose, onDeleted }) {
   const { tasks, addManualEvent, scheduleTaskAt, updateEvent, deleteEvent, setEventIgnored, setNotification } = useScheduler();
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
+  // handleSave/handleDelete are defined well above the JSX return, so they
+  // can't destructure requestClose from Modal's render-prop directly — it's
+  // captured into this ref during render instead (ref mutation during
+  // render is safe, unlike setState in render).
+  const requestCloseRef = useRef(() => {});
 
   const isCreate = !event;
   // Only an explicit `canEdit === false` counts as read-only — a manual event
@@ -262,7 +264,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
     setError('');
     if (isCreate && createMode === 'task') {
       scheduleTaskAt(selectedTaskId, date, startTime, endTime);
-      requestClose();
+      requestCloseRef.current();
       return;
     }
     if (isCreate) {
@@ -327,7 +329,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
         setEventIgnored(event, ignored, scope);
       }
     }
-    requestClose();
+    requestCloseRef.current();
   }
 
   function handleDelete() {
@@ -349,276 +351,274 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
     // that track a selected-event id should pass onDeleted to clear it here,
     // synchronously, regardless of which unmount path ends up winning.
     onDeleted?.();
-    requestClose();
+    requestCloseRef.current();
   }
 
-  return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal modal-detail"
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: 560 }}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="event-detail-title"
-        tabIndex={-1}
-      >
-        <div className="detail-header">
-          <h3 id="event-detail-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', flex: 1 }}>
-            {isCreate ? (createMode === 'task' ? 'Schedule task' : 'New event') : event.title || 'Untitled event'}
-          </h3>
-          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
-            <X size={16} />
-          </button>
-        </div>
+  const modalTitle = isCreate ? (createMode === 'task' ? 'Schedule task' : 'New event') : event.title || 'Untitled event';
 
-        {isCreate && (
-          <div className="segmented-toggle" role="tablist" aria-label="Create event or schedule task">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={createMode === 'event'}
-              className={`segmented-toggle-option ${createMode === 'event' ? 'is-active' : ''}`}
-              onClick={() => setCreateMode('event')}
-            >
-              Event
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={createMode === 'task'}
-              className={`segmented-toggle-option ${createMode === 'task' ? 'is-active' : ''}`}
-              onClick={() => setCreateMode('task')}
-            >
-              Task
+  return (
+    <Modal onClose={onClose} ariaLabel={modalTitle} size="lg" variantClassName="modal-detail">
+      {({ requestClose }) => {
+        requestCloseRef.current = requestClose;
+        return (
+          <>
+          <div className="detail-header">
+            <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', flex: 1 }}>
+              {modalTitle}
+            </h3>
+            <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+              <X size={16} />
             </button>
           </div>
-        )}
 
-        {error && <p className="form-error">{error}</p>}
-
-        {!isCreate && event.calendarName && event.calendarName !== 'primary' && (
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>Synced from {event.calendarName}</p>
-        )}
-        {isReadOnly && (
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>
-            View only — you don't have edit access to this calendar on Google Calendar.
-          </p>
-        )}
-
-        <div className="detail-sidebar detail-sidebar--full">
-          {(!isCreate || createMode === 'event') && (
-            <>
-              <DetailField icon={TitleIcon} label="Title">
-                <input
-                  value={title}
-                  onChange={(e) => (isCreate ? handleTitleChange(e.target.value) : setTitle(e.target.value))}
-                  placeholder={isCreate ? 'e.g. Team standup every Monday' : 'e.g. Team standup'}
-                  disabled={isReadOnly}
-                />
-              </DetailField>
-              <DetailField icon={AlignLeft} label="Description">
-                <textarea
-                  ref={descriptionRef}
-                  className="detail-notes-textarea detail-notes-textarea-tall"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Description"
-                  disabled={isReadOnly}
-                />
-              </DetailField>
-              <DetailField icon={MapPin} label="Location">
-                <input
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="e.g. Conference room"
-                  disabled={isReadOnly}
-                />
-              </DetailField>
-            </>
+          {isCreate && (
+            <div className="segmented-toggle" role="tablist" aria-label="Create event or schedule task">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={createMode === 'event'}
+                className={`segmented-toggle-option ${createMode === 'event' ? 'is-active' : ''}`}
+                onClick={() => setCreateMode('event')}
+              >
+                Event
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={createMode === 'task'}
+                className={`segmented-toggle-option ${createMode === 'task' ? 'is-active' : ''}`}
+                onClick={() => setCreateMode('task')}
+              >
+                Task
+              </button>
+            </div>
           )}
-          {isCreate && createMode === 'task' && (
-            <DetailField icon={CheckSquare} label="Task">
-              {tasksDueToday.length > 0 ? (
-                <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
-                  <option value="" disabled>
-                    Choose a task…
-                  </option>
-                  {tasksDueToday.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title}
+
+          {error && <p className="form-error">{error}</p>}
+
+          {!isCreate && event.calendarName && event.calendarName !== 'primary' && (
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>Synced from {event.calendarName}</p>
+          )}
+          {isReadOnly && (
+            <p style={{ color: 'var(--color-text-secondary)', fontSize: 13 }}>
+              View only — you don't have edit access to this calendar on Google Calendar.
+            </p>
+          )}
+
+          <div className="detail-sidebar detail-sidebar--full">
+            {(!isCreate || createMode === 'event') && (
+              <>
+                <DetailField icon={TitleIcon} label="Title">
+                  <input
+                    value={title}
+                    onChange={(e) => (isCreate ? handleTitleChange(e.target.value) : setTitle(e.target.value))}
+                    placeholder={isCreate ? 'e.g. Team standup every Monday' : 'e.g. Team standup'}
+                    disabled={isReadOnly}
+                  />
+                </DetailField>
+                <DetailField icon={AlignLeft} label="Description">
+                  <textarea
+                    ref={descriptionRef}
+                    className="detail-notes-textarea detail-notes-textarea-tall"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Description"
+                    disabled={isReadOnly}
+                  />
+                </DetailField>
+                <DetailField icon={MapPin} label="Location">
+                  <input
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="e.g. Conference room"
+                    disabled={isReadOnly}
+                  />
+                </DetailField>
+              </>
+            )}
+            {isCreate && createMode === 'task' && (
+              <DetailField icon={CheckSquare} label="Task">
+                {tasksDueToday.length > 0 ? (
+                  <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
+                    <option value="" disabled>
+                      Choose a task…
+                    </option>
+                    {tasksDueToday.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="form-hint" style={{ margin: 0 }}>
+                    No tasks due today.
+                  </p>
+                )}
+              </DetailField>
+            )}
+            <DetailField icon={CalendarClock} label="Date">
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                disabled={isReadOnly || (!isCreate && !!event.seriesId && scope !== 'this')}
+              />
+              {!isCreate && event.seriesId && scope !== 'this' && (
+                <p className="form-hint">Moving the date only applies to a single occurrence — set "Apply to" to "This event" first.</p>
+              )}
+            </DetailField>
+            <DetailField icon={Clock} label="Start time">
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={isReadOnly} />
+            </DetailField>
+            <DetailField icon={Clock} label="End time">
+              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
+            </DetailField>
+            {!isCreate && event.seriesId && (
+              <DetailField icon={ListTree} label="Apply to">
+                <select value={scope} onChange={(e) => setScope(e.target.value)}>
+                  {SCOPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
                     </option>
                   ))}
                 </select>
-              ) : (
-                <p className="form-hint" style={{ margin: 0 }}>
-                  No tasks due today.
-                </p>
-              )}
-            </DetailField>
-          )}
-          <DetailField icon={CalendarClock} label="Date">
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              disabled={isReadOnly || (!isCreate && !!event.seriesId && scope !== 'this')}
-            />
-            {!isCreate && event.seriesId && scope !== 'this' && (
-              <p className="form-hint">Moving the date only applies to a single occurrence — set "Apply to" to "This event" first.</p>
+                <p className="form-hint">This is a recurring event — choose how far Save and Ignore should apply.</p>
+              </DetailField>
             )}
-          </DetailField>
-          <DetailField icon={Clock} label="Start time">
-            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={isReadOnly} />
-          </DetailField>
-          <DetailField icon={Clock} label="End time">
-            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
-          </DetailField>
-          {!isCreate && event.seriesId && (
-            <DetailField icon={ListTree} label="Apply to">
-              <select value={scope} onChange={(e) => setScope(e.target.value)}>
-                {SCOPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <p className="form-hint">This is a recurring event — choose how far Save and Ignore should apply.</p>
-            </DetailField>
-          )}
-          {repeatFieldVisible && (
-            <DetailField
-              icon={Repeat}
-              label="Repeat"
-              labelExtra={
-                <HelpTooltip label="Recurrence syntax help">
-                  The text field accepts free-text recurrence phrases like "every 2 weeks", "every mon and wed", or
-                  "every other friday".
-                </HelpTooltip>
-              }
-            >
-              <label
-                className="form-checkbox-row"
-                style={{ cursor: repeatControlsApply ? 'pointer' : 'not-allowed' }}
-                onClick={() => {
-                  if (!isReadOnly && !repeatControlsApply) notifyRepeatLocked();
-                }}
+            {repeatFieldVisible && (
+              <DetailField
+                icon={Repeat}
+                label="Repeat"
+                labelExtra={
+                  <HelpTooltip label="Recurrence syntax help">
+                    The text field accepts free-text recurrence phrases like "every 2 weeks", "every mon and wed", or
+                    "every other friday".
+                  </HelpTooltip>
+                }
               >
-                <input
-                  type="checkbox"
-                  checked={repeats}
-                  disabled={isReadOnly || !repeatControlsApply}
-                  onChange={(e) => {
-                    markRepeatEdited();
-                    setRepeats(e.target.checked);
+                <label
+                  className="form-checkbox-row"
+                  style={{ cursor: repeatControlsApply ? 'pointer' : 'not-allowed' }}
+                  onClick={() => {
+                    if (!isReadOnly && !repeatControlsApply) notifyRepeatLocked();
                   }}
-                />
-                Repeats
-              </label>
-              {repeats && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6, position: 'relative' }}>
-                  {!isReadOnly && !repeatControlsApply && (
-                    <div
-                      onClick={notifyRepeatLocked}
-                      style={{ position: 'absolute', inset: 0, cursor: 'not-allowed', zIndex: 1 }}
-                      aria-hidden="true"
-                    />
-                  )}
-                  <SmartRecurrenceInput
-                    value={repeatText}
+                >
+                  <input
+                    type="checkbox"
+                    checked={repeats}
                     disabled={isReadOnly || !repeatControlsApply}
                     onChange={(e) => {
                       markRepeatEdited();
-                      setRepeatText(e.target.value);
-                    }}
-                    onBlur={commitRepeatText}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.currentTarget.blur();
-                      if (e.key === 'Escape') setRepeatText(formatRepeatText(repeatInterval, repeatFreq, repeatByDay));
+                      setRepeats(e.target.checked);
                     }}
                   />
-                  <div className="detail-field-inline">
-                    Ends
-                    <select
-                      value={repeatEndType}
+                  Repeats
+                </label>
+                {repeats && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6, position: 'relative' }}>
+                    {!isReadOnly && !repeatControlsApply && (
+                      <div
+                        onClick={notifyRepeatLocked}
+                        style={{ position: 'absolute', inset: 0, cursor: 'not-allowed', zIndex: 1 }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <SmartRecurrenceInput
+                      value={repeatText}
                       disabled={isReadOnly || !repeatControlsApply}
                       onChange={(e) => {
                         markRepeatEdited();
-                        setRepeatEndType(e.target.value);
+                        setRepeatText(e.target.value);
                       }}
-                      style={{ flex: 1 }}
-                    >
-                      <option value="never">Never</option>
-                      <option value="count">After</option>
-                      <option value="until">On date</option>
-                    </select>
-                    {repeatEndType === 'count' && (
-                      <input
-                        type="number"
-                        min="1"
-                        max="730"
-                        step="1"
-                        value={repeatCount}
+                      onBlur={commitRepeatText}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur();
+                        if (e.key === 'Escape') setRepeatText(formatRepeatText(repeatInterval, repeatFreq, repeatByDay));
+                      }}
+                    />
+                    <div className="detail-field-inline">
+                      Ends
+                      <select
+                        value={repeatEndType}
                         disabled={isReadOnly || !repeatControlsApply}
                         onChange={(e) => {
                           markRepeatEdited();
-                          setRepeatCount(Math.max(1, Number(e.target.value) || 1));
+                          setRepeatEndType(e.target.value);
                         }}
-                        style={{ width: 56 }}
-                      />
-                    )}
-                    {repeatEndType === 'until' && (
-                      <input
-                        type="date"
-                        value={repeatUntil}
-                        min={date}
-                        disabled={isReadOnly || !repeatControlsApply}
-                        onChange={(e) => {
-                          markRepeatEdited();
-                          setRepeatUntil(e.target.value);
-                        }}
-                      />
-                    )}
-                    {repeatEndType === 'count' && 'occurrences'}
+                        style={{ flex: 1 }}
+                      >
+                        <option value="never">Never</option>
+                        <option value="count">After</option>
+                        <option value="until">On date</option>
+                      </select>
+                      {repeatEndType === 'count' && (
+                        <input
+                          type="number"
+                          min="1"
+                          max="730"
+                          step="1"
+                          value={repeatCount}
+                          disabled={isReadOnly || !repeatControlsApply}
+                          onChange={(e) => {
+                            markRepeatEdited();
+                            setRepeatCount(Math.max(1, Number(e.target.value) || 1));
+                          }}
+                          style={{ width: 56 }}
+                        />
+                      )}
+                      {repeatEndType === 'until' && (
+                        <input
+                          type="date"
+                          value={repeatUntil}
+                          min={date}
+                          disabled={isReadOnly || !repeatControlsApply}
+                          onChange={(e) => {
+                            markRepeatEdited();
+                            setRepeatUntil(e.target.value);
+                          }}
+                        />
+                      )}
+                      {repeatEndType === 'count' && 'occurrences'}
+                    </div>
                   </div>
-                </div>
-              )}
-              {!repeatControlsApply && (
+                )}
+                {!repeatControlsApply && (
+                  <p className="form-hint">
+                    Set "Apply to" above to "All events in the series" to edit the repeat pattern.
+                  </p>
+                )}
+              </DetailField>
+            )}
+            {!isCreate && (
+              <DetailField icon={Ban} label="Ignore">
+                <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                  <input type="checkbox" checked={ignored} onChange={(e) => setIgnored(e.target.checked)} />
+                  Ignore this event (let the scheduler use this time)
+                </label>
                 <p className="form-hint">
-                  Set "Apply to" above to "All events in the series" to edit the repeat pattern.
+                  Equivalent to this time not being blocked out at all — TaskFlow will schedule tasks right over it.
+                  This doesn't change anything in Google Calendar itself.
                 </p>
-              )}
-            </DetailField>
-          )}
-          {!isCreate && (
-            <DetailField icon={Ban} label="Ignore">
-              <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={ignored} onChange={(e) => setIgnored(e.target.checked)} />
-                Ignore this event (let the scheduler use this time)
-              </label>
-              <p className="form-hint">
-                Equivalent to this time not being blocked out at all — TaskFlow will schedule tasks right over it.
-                This doesn't change anything in Google Calendar itself.
-              </p>
-            </DetailField>
-          )}
-        </div>
+              </DetailField>
+            )}
+          </div>
 
-        <div className="modal-actions" style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
-          {!isCreate && !isReadOnly && (
-            <button className="btn" onClick={handleDelete} style={{ color: 'var(--color-danger)', marginRight: 'auto' }}>
-              Delete
+          <div className="modal-actions" style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
+            {!isCreate && !isReadOnly && (
+              <button className="btn" onClick={handleDelete} style={{ color: 'var(--color-danger)', marginRight: 'auto' }}>
+                Delete
+              </button>
+            )}
+            <button className="btn" onClick={requestClose}>
+              Cancel
             </button>
-          )}
-          <button className="btn" onClick={requestClose}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" onClick={handleSave}>
-            {isCreate ? (createMode === 'task' ? 'Schedule task' : 'Add event') : 'Save'}
-          </button>
-        </div>
-      </div>
-    </div>
+            <button className="btn btn-primary" onClick={handleSave}>
+              {isCreate ? (createMode === 'task' ? 'Schedule task' : 'Add event') : 'Save'}
+            </button>
+          </div>
+          </>
+        );
+      }}
+    </Modal>
   );
 }

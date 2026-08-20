@@ -10,6 +10,7 @@ import { useScheduler } from '../../../context/SchedulerContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { getStoredApiKey } from '../../../services/aiQuickAddService';
 import { savePersisted } from '../../../utils/persistence';
+import Badge from '../../Common/Badge';
 
 export default function IntegrationsSection({ sectionRef }) {
   const {
@@ -204,16 +205,7 @@ export default function IntegrationsSection({ sectionRef }) {
       <div className="settings-subgroup">
         <h4 className="settings-subgroup-title">Todoist</h4>
         <div className="settings-actions">
-          <span
-            className="badge"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 5,
-              background: lastTodoistImport ? 'rgba(79, 191, 139, 0.15)' : 'var(--color-bg-surface-hover)',
-              color: lastTodoistImport ? 'var(--color-success)' : 'var(--color-text-secondary)',
-            }}
-          >
+          <Badge variant={lastTodoistImport ? 'success' : 'neutral'}>
             {lastTodoistImport ? (
               <>
                 <Check size={12} /> Imported {lastTodoistImport.totalCount} task{lastTodoistImport.totalCount === 1 ? '' : 's'} from
@@ -226,7 +218,7 @@ export default function IntegrationsSection({ sectionRef }) {
             ) : (
               <>Standalone mode (local sample tasks)</>
             )}
-          </span>
+          </Badge>
         </div>
         <p className="settings-hint">
           Todoist is a ONE-TIME IMPORT, not a live sync: pulling in tasks/boards/sections never happens
@@ -325,16 +317,7 @@ export default function IntegrationsSection({ sectionRef }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <div className="settings-actions">
-              <span
-                className="badge"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  background: anthropicKey ? 'rgba(79, 191, 139, 0.15)' : 'var(--color-bg-surface-hover)',
-                  color: anthropicKey ? 'var(--color-success)' : 'var(--color-text-secondary)',
-                }}
-              >
+              <Badge variant={anthropicKey ? 'success' : 'neutral'}>
                 {anthropicKey ? (
                   <>
                     <KeyRound size={12} /> Claude (Anthropic) key connected
@@ -342,7 +325,7 @@ export default function IntegrationsSection({ sectionRef }) {
                 ) : (
                   <>Claude (Anthropic) key not set</>
                 )}
-              </span>
+              </Badge>
             </div>
             {anthropicKey ? (
               <div className="settings-actions">
@@ -385,16 +368,7 @@ export default function IntegrationsSection({ sectionRef }) {
 
           <div>
             <div className="settings-actions">
-              <span
-                className="badge"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  background: geminiKey ? 'rgba(79, 191, 139, 0.15)' : 'var(--color-bg-surface-hover)',
-                  color: geminiKey ? 'var(--color-success)' : 'var(--color-text-secondary)',
-                }}
-              >
+              <Badge variant={geminiKey ? 'success' : 'neutral'}>
                 {geminiKey ? (
                   <>
                     <KeyRound size={12} /> Gemini key connected
@@ -402,7 +376,7 @@ export default function IntegrationsSection({ sectionRef }) {
                 ) : (
                   <>Gemini key not set</>
                 )}
-              </span>
+              </Badge>
             </div>
             {geminiKey ? (
               <div className="settings-actions">

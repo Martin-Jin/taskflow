@@ -31,6 +31,7 @@ import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../utils/projectConstants';
 import { rankByNameSearch } from '../utils/nameSearch';
 import { eventMatchesQuery } from './Common/SearchBar';
+import EmptyState from './Common/EmptyState';
 
 /**
  * Small local fuzzy-match scorer, kept only for the Tasks group — task
@@ -207,7 +208,7 @@ export default function CommandPalette({
         </div>
 
         {flatItems.length === 0 ? (
-          <div className="now-empty">Nothing matches "{query}".</div>
+          <EmptyState>Nothing matches "{query}".</EmptyState>
         ) : (
           <div className="command-palette-list" ref={listRef} id="command-palette-listbox" role="listbox">
             {groups.map((group) => (

@@ -66,6 +66,7 @@ import PresenceAvatars from './Common/PresenceAvatars';
 import SharedProjectBadge from './Common/SharedProjectBadge';
 import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
+import Badge from './Common/Badge';
 import AccountButton from './Nav/AccountButton';
 import BulkActionBar from './Common/BulkActionBar';
 import { useAuth } from '../context/AuthContext';
@@ -999,14 +1000,14 @@ const TaskRow = React.memo(function TaskRow({
           )}
         </div>
         <div className="task-row-badges">
-          <span className={`badge ${task.priority}`}>{task.priority}</span>
+          <Badge variant={task.priority}>{task.priority}</Badge>
           {(task.labelIds || []).map((labelId) => {
             const label = labelById.get(labelId);
             if (!label) return null;
             return (
-              <span key={label.id} className="badge tag-pill" style={{ background: `${label.color}22`, color: label.color }}>
+              <Badge key={label.id} pill style={{ background: `${label.color}22`, color: label.color }}>
                 {label.name}
-              </span>
+              </Badge>
             );
           })}
         </div>

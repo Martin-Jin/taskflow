@@ -2219,9 +2219,7 @@
    Reuses .modal/.form-row/.form-hint/.form-error/.addtask-footer from
    elsewhere in this file rather than duplicating the modal shell.
    ---------------------------------------------------------------------- */
-.modal-ai-quickadd {
-  width: 480px;
-}
+/* Width now comes from Modal.jsx's default size="md" (also 480px). */
 
 .modal-ai-quickadd textarea {
   resize: none; /* height auto-grows via useAutosizeTextarea; no manual drag handle */
@@ -2355,19 +2353,15 @@
   color: #fff;
 }
 
-@media (max-width: 639px) {
-  .modal-ai-quickadd {
-    width: 100%;
-  }
-}
-
 /* ----------------------------------------------------------------------
    AIPlanConfirmModal — per-operation accept/reject checklist shown before
    any AI Assistant change is applied. Reuses the same modal shell classes
    as AIQuickAddModal above.
    ---------------------------------------------------------------------- */
+/* Width now comes from Modal.jsx's size="lg" (modal-size-lg, also 560px);
+   max-width loosened past the base .modal's 92vw cap for narrow desktop
+   windows where 92vw would otherwise clip this modal's fixed width. */
 .modal-ai-plan-confirm {
-  width: 560px;
   max-width: 100%;
 }
 
@@ -2467,8 +2461,3 @@
   color: var(--color-danger);
 }
 
-@media (max-width: 639px) {
-  .modal-ai-plan-confirm {
-    width: 100%;
-  }
-}

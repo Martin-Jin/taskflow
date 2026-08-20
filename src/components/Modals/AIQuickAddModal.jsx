@@ -24,7 +24,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, X, ImagePlus, FileText, Loader2, HelpCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import Modal from '../Common/Modal';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { loadPersisted, savePersisted } from '../../utils/persistence';
 import { toISODate, addDays } from '../../utils/dateUtils';
@@ -62,8 +62,16 @@ const DEFAULT_CONTEXT_SCOPE = { mode: 'full', projectId: '', eventStart: '', eve
 export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   const scheduler = useScheduler();
   const { tasks, projects, sections, labels, events } = scheduler;
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
+  // This component swaps its ENTIRE rendered tree between its own <Modal>
+  // (the form) and <AIPlanConfirmModal> (a separately migrated <Modal> of
+  // its own) once a plan exists — so when `plan` is set, no <Modal> of this
+  // component's own is on screen to provide a requestClose via render-prop.
+  // A standalone useAnimatedUnmount(onClose) call (no global side effects —
+  // just local isClosing/timeout state, safe to have two independent
+  // instances) keeps a "close the whole AI Quick Add flow" callback
+  // available for the `onApplied` handoff below regardless of which branch
+  // is rendering.
+  const { requestClose: closeWholeFlow } = useAnimatedUnmount(onClose);
 
   // Device-local UI preference, not user data — deliberately outside
   // SchedulerContext/backups (see this repo's CLAUDE.md backup rules).
@@ -289,23 +297,19 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
       <AIPlanConfirmModal
         plan={plan}
         onClose={() => setPlan(null)}
-        onApplied={requestClose}
+        onApplied={closeWholeFlow}
         onProjectCreated={onProjectCreated}
       />
     );
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal modal-ai-quickadd"
-        onClick={(e) => e.stopPropagation()}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="AI Quick Add"
-        tabIndex={-1}
-      >
+    <>
+    <Modal
+      onClose={onClose}
+      ariaLabel="AI Quick Add"
+      variantClassName="modal-ai-quickadd"
+      header={({ requestClose }) => (
         <div className="stat-list-modal-header">
           <h3 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <Sparkles size={16} aria-hidden="true" /> AI Quick Add
@@ -324,7 +328,10 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
             </button>
           </div>
         </div>
-
+      )}
+    >
+      {({ requestClose }) => (
+        <>
         <p className="form-hint" style={{ marginTop: -4, marginBottom: 12 }}>
           Describe what you want in your own words, or paste/attach screenshots or PDFs — add/edit/move tasks and
           events, break a task into subtasks, set up dependencies, reorganize projects — you'll review every change
@@ -523,8 +530,10 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
             </button>
           </div>
         </div>
-      </div>
-      {showGuide && <AIQuickAddGuideModal onClose={() => setShowGuide(false)} />}
-    </div>
+        </>
+      )}
+    </Modal>
+    {showGuide && <AIQuickAddGuideModal onClose={() => setShowGuide(false)} />}
+    </>
   );
 }

@@ -906,12 +906,11 @@
   justify-content: flex-end;
 }
 
+/* Font-size/color/padding/text-align now come from EmptyState's own
+   .now-empty base class (identical values — --space-2 is exactly 8px) —
+   this only needs to add the notes grid's own span-all-columns behavior. */
 .notes-empty {
   grid-column: 1 / -1;
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-  padding: 8px 0;
-  text-align: center;
 }
 
 .notes-search {
@@ -1139,15 +1138,13 @@
 /* styling above for both lists, see StatListModal.jsx.                 */
 /* -------------------------------------------------------------------- */
 
-/* Narrower than the default .modal width (480px) since these are short
-   single-column lists — only applied above the mobile breakpoint so the
-   shared .modal-overlay/.modal media query (global.css) still governs the
-   full-width, top-anchored mobile layout unopposed. */
-@media (min-width: 640px) {
-  .modal-stat-list {
-    width: 420px;
-  }
-}
+/* .modal-stat-list used to carry its own 420px width override here. It's
+   gone: Modal.jsx's `size` scale (see its `modal-size-*` classes in
+   global.css) now owns width for every modal, migrated or not — the base
+   .modal rule's 480px ("md", global.css) is what a modal-stat-list-classed
+   dialog gets today, a small deliberate consolidation rather than an
+   oversight. Do not re-add a width rule here; add/adjust a `modal-size-*`
+   step in global.css instead if a genuinely different width is needed. */
 
 .stat-list-modal-header {
   display: flex;
@@ -1319,13 +1316,10 @@
 /* ShortcutsModal (Settings → Keyboard shortcuts)                        */
 /* -------------------------------------------------------------------- */
 
-/* Wider than the default .modal-stat-list (420px) — rows need room for
-   the label/description column plus an inline combo + edit controls. */
-@media (min-width: 640px) {
-  .modal-shortcuts {
-    width: 520px;
-  }
-}
+/* Width used to be overridden here (520px, for the label/description
+   column plus an inline combo + edit controls) — now expressed as
+   Modal.jsx's `size="lg"` (560px, see global.css's modal-size-lg) instead
+   of a bespoke rule. */
 
 .shortcut-kbd {
   font-family: var(--font-mono, monospace);

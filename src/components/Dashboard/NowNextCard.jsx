@@ -5,6 +5,7 @@ import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { timeToMinutes, toISODate, formatTime12h as formatTime } from '../../utils/dateUtils';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
+import EmptyState from '../Common/EmptyState';
 
 /** A task's `link` field (see utils/smartParse.js) makes its title a click-through to that URL instead of plain text. */
 function ItemTitle({ item, className }) {
@@ -93,10 +94,7 @@ export default function NowNextCard() {
           </div>
         </div>
       ) : (
-        <div className="now-empty">
-          <Coffee size={20} className="empty-state-icon" aria-hidden="true" />
-          Nothing scheduled right now — enjoy the gap.
-        </div>
+        <EmptyState icon={Coffee}>Nothing scheduled right now — enjoy the gap.</EmptyState>
       )}
 
       {next && (

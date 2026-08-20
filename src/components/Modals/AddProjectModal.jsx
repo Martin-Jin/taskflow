@@ -13,17 +13,14 @@
 
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import Modal from '../Common/Modal';
 
 export default function AddProjectModal({ onAddProject, onClose }) {
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
   const [name, setName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
 
-  async function handleSubmit(e) {
+  async function handleSubmit(e, { requestClose }) {
     e?.preventDefault();
     const trimmed = name.trim();
     if (!trimmed || isCreating) return;
@@ -42,36 +39,32 @@ export default function AddProjectModal({ onAddProject, onClose }) {
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal modal-detail"
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: 420 }}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Add project"
-        tabIndex={-1}
-      >
-        <form onSubmit={handleSubmit}>
-          <div className="detail-header">
-            <div className="detail-title-wrap">
-              <input
-                autoFocus
-                className="smart-title-input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Project name"
-                maxLength={200}
-              />
-            </div>
-            <button type="button" className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
-              <X size={16} />
-            </button>
+    <Modal
+      onClose={onClose}
+      ariaLabel="Add project"
+      variantClassName="modal-detail"
+      as="form"
+      onSubmit={handleSubmit}
+      header={({ requestClose }) => (
+        <div className="detail-header">
+          <div className="detail-title-wrap">
+            <input
+              autoFocus
+              className="smart-title-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Project name"
+              maxLength={200}
+            />
           </div>
-
+          <button type="button" className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      footer={({ requestClose }) => (
+        <>
           {error && <p className="form-error">{error}</p>}
-
           <div className="modal-actions" style={{ justifyContent: 'flex-end' }}>
             <button type="button" className="btn" onClick={requestClose} disabled={isCreating}>
               Cancel
@@ -80,8 +73,8 @@ export default function AddProjectModal({ onAddProject, onClose }) {
               {isCreating ? '…' : 'Add project'}
             </button>
           </div>
-        </form>
-      </div>
-    </div>
+        </>
+      )}
+    />
   );
 }

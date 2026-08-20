@@ -26,6 +26,7 @@ import { INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../../utils/projectConsta
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import AddTaskFabGroup from '../Common/AddTaskFabGroup';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
+import EmptyState from '../Common/EmptyState';
 
 /** Tasteful, non-gimmicky rotating subtitles, split by time of day (same three-way split as DashboardPage's greetingForHour). One is picked once per mount below — never re-randomized on re-render. */
 const GREETINGS_BY_PERIOD = {
@@ -337,7 +338,7 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
           {isSearching && (
             <div className="search-bar-dropdown" id="projects-page-search-listbox" role="listbox" ref={listRef}>
               {searchResults.length === 0 ? (
-                <div className="now-empty">Nothing matches "{query}".</div>
+                <EmptyState>Nothing matches "{query}".</EmptyState>
               ) : (
                 searchResults.map((p, index) => (
                   <button

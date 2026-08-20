@@ -8,6 +8,7 @@ import { expandEventsForRange, expandRecurringEvent, resolveEventId } from '../.
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import MarqueeText from '../Common/MarqueeText';
+import EmptyState from '../Common/EmptyState';
 
 export default function TodayAgenda() {
   const { tasks, blocks, events } = useScheduler();
@@ -86,7 +87,7 @@ export default function TodayAgenda() {
         <div className="dashboard-card-header">
           <h3>Today's agenda</h3>
         </div>
-        <div className="now-empty">Nothing on the calendar today.</div>
+        <EmptyState>Nothing on the calendar today.</EmptyState>
       </div>
     );
   }

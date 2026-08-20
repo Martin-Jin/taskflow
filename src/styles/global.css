@@ -1560,6 +1560,7 @@ select:focus-visible,
 .badge {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   padding: 2px 8px;
   border-radius: 100px;
   font-size: 11px;
@@ -1582,6 +1583,18 @@ select:focus-visible,
 .badge.low {
   background: color-mix(in srgb, var(--color-priority-low) 15%, transparent);
   color: var(--color-priority-low);
+}
+/* Connection-status pill (IntegrationsSection: Todoist import status,
+   Anthropic/Gemini key presence) — was 3x copy-pasted inline style with a
+   hardcoded, theme-invariant green literal; token-based now so it actually
+   adapts across light/dark like every other badge tone. */
+.badge.success {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+.badge.neutral {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
 }
 
 /* Tag/Label pill on a task row — reuses .badge's shape, colored per-Label
@@ -1988,6 +2001,29 @@ input.search-bar-input {
   animation: modal-out var(--duration-fast) var(--ease-accelerate) forwards;
 }
 
+/* Modal.jsx's `size` scale — sm/lg/xl only; the base .modal rule above is
+   already the "md" width (480px), so that step needs no override. Same
+   "only above the mobile breakpoint" scoping as .modal-stat-list
+   (dashboard.css) and for the same reason: below 640px the mobile block
+   further down this file sets `.modal { width: 100% }`, and that must keep
+   winning unopposed. This is exactly why these are real CSS classes and not
+   an inline `style={{ width }}` — an inline style would beat that mobile
+   rule regardless of media query, breaking every migrated modal's mobile
+   layout the same way a first draft of Modal.jsx almost did. */
+@media (min-width: 640px) {
+  .modal-size-sm {
+    width: 380px;
+  }
+
+  .modal-size-lg {
+    width: 560px;
+  }
+
+  .modal-size-xl {
+    width: 760px;
+  }
+}
+
 @keyframes modal-overlay-in {
   from {
     opacity: 0;
@@ -2085,10 +2121,7 @@ input.search-bar-input {
 /* ConfirmModal — the in-app window.confirm() replacement (see
    ConfirmContext.jsx). Deliberately small/narrow next to the default 480px
    .modal, since its content is never more than a short message + two
-   buttons. */
-.modal-confirm {
-  width: 380px;
-}
+   buttons — width now comes from Modal.jsx's size="sm" (modal-size-sm). */
 
 .confirm-modal-icon {
   color: var(--color-danger);
@@ -2738,9 +2771,7 @@ input[type='checkbox']:checked::after {
    collaborator row (avatar + name + role select + two icon buttons) both
    need more horizontal room than a typical form modal.
    ---------------------------------------------------------------------- */
-.share-project-modal {
-  width: 560px;
-}
+/* Width now comes from Modal.jsx's size="lg" (modal-size-lg, also 560px). */
 
 .share-modal-section {
   margin-top: var(--space-4);
@@ -2960,10 +2991,6 @@ input[type='checkbox']:checked::after {
 }
 
 @media (max-width: 639px) {
-  .share-project-modal {
-    width: 100%;
-  }
-
   .share-collaborator-row {
     flex-wrap: wrap;
   }

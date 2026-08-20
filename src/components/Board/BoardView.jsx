@@ -111,6 +111,7 @@ import { taskMatchesQuery } from '../Common/SearchBar';
 import AddTaskFabGroup from '../Common/AddTaskFabGroup';
 import ReparentDropHint from '../Common/ReparentDropHint';
 import BulkActionBar from '../Common/BulkActionBar';
+import Badge from '../Common/Badge';
 import { formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
@@ -557,7 +558,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
             )}
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
-            <span className={`badge ${task.priority}`}>{task.priority}</span>
+            <Badge variant={task.priority}>{task.priority}</Badge>
           </div>
         </div>
       </motion.div>
