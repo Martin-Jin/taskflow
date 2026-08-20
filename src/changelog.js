@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.6.0',
+    date: '2026-08-21',
+    title: 'Redesigned Settings navigation',
+    changes: [
+      'Settings is now a two-pane layout on desktop/tablet, with a sticky section rail on the left that highlights whichever section you\'re currently scrolled to — no more scrolling past a dozen unrelated cards to find one setting.',
+      'Cleaned up a lot of inconsistent spacing and one-off styling throughout Settings so every section now looks and behaves the same way.',
+    ],
+  },
+  {
     version: '6.5.0',
     date: '2026-08-20',
     title: 'Search-based "Assign to" picker, now including guests',
