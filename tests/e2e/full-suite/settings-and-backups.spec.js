@@ -1,6 +1,8 @@
-// Full-suite regression coverage for the Settings tab (SettingsPanel.jsx) and
-// its modals: Labels, Manage Projects, Backups, Shortcuts, Changelog, theme
-// toggle, notification settings, and the guided tour restart entry point.
+// Full-suite regression coverage for the Settings tab (SettingsPanel.jsx and
+// its 13 extracted Settings/sections/*.jsx components) and its modals:
+// Labels, Manage Projects, Backups, Shortcuts, Changelog, theme toggle,
+// notification settings, the desktop section rail, and the guided tour
+// restart entry point.
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import os from 'node:os';
@@ -536,6 +538,54 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   await page.locator('#notifOverdue').setChecked(initialOverdue);
   await page.locator('#notifDueToday').setChecked(initialDueToday);
   await page.waitForTimeout(200);
+
+  expectNoErrors(errors);
+});
+
+test('Settings desktop rail: lists every section, click-to-scroll and scroll-tracking both work, hidden on mobile', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  // All 13 sections (SETTINGS_SECTIONS in SettingsPanel.jsx) are present in
+  // the rail, each backed by its own extracted <Name>Section component under
+  // Settings/sections/ — this is the one thing that would silently drop a
+  // whole section if that extraction ever went wrong.
+  const rail = page.locator('.settings-rail-link');
+  await expect(rail).toHaveCount(13);
+  await expect(rail).toHaveText([
+    'Account & sync',
+    'Integrations',
+    'Scheduling rules',
+    'Fixed routines',
+    'Appearance',
+    'Tags',
+    'Notifications',
+    'Install app',
+    'Help',
+    'Keyboard shortcuts',
+    'Versions',
+    'Backups',
+    'Danger zone',
+  ]);
+
+  // Clicking a rail link scrolls its section into view (goToSection) and the
+  // IntersectionObserver picks it up as current — proves both the click path
+  // and the scroll-tracking path survived being split across 13 files.
+  await rail.filter({ hasText: 'Danger zone' }).click();
+  await expect(page.locator('[data-tour="danger-zone-card"]')).toBeInViewport();
+  await expect(rail.filter({ hasText: 'Danger zone' })).toHaveClass(/is-current/);
+
+  await rail.filter({ hasText: 'Account & sync' }).click();
+  await expect(page.locator('[data-tour="account-card"]')).toBeInViewport();
+  await expect(rail.filter({ hasText: 'Account & sync' })).toHaveClass(/is-current/);
+  await expect(rail.filter({ hasText: 'Danger zone' })).not.toHaveClass(/is-current/);
+
+  // Below the tablet breakpoint the rail is hidden entirely (see global.css's
+  // `@media (max-width: 1023px) { .settings-rail { display: none; } }`) —
+  // the sticky search bar is the only way to jump sections there.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.settings-rail')).toBeHidden();
+  await expect(page.locator('.settings-search-bar')).toBeVisible();
 
   expectNoErrors(errors);
 });

@@ -2155,6 +2155,192 @@ input.search-bar-input {
   padding: 8px 0;
 }
 
+/* ----------------------------------------------------------------------
+   SettingsPanel layout + shared section utilities.
+
+   The panel used to be one flat 720px-wide column of 14 `.card` sections
+   with every heading/hint/row spacing declared as an inline `style={{}}`
+   (155 of them). These classes replace that: the utilities below cover the
+   handful of patterns those inline styles actually clustered into, and
+   .settings-layout adds a sticky section rail so a setting is one click
+   away instead of a scroll-hunt through fourteen stacked cards.
+
+   The PAGE stays the scroll container and the rail is `position: sticky`
+   within it — deliberately NOT making .settings-content its own scroller,
+   which would break goToSection's scrollIntoView, the edge-to-edge sticky
+   blur backdrop (.settings-search-bar-backdrop above), and the mobile
+   single-column layout, all for no visible gain.
+   ---------------------------------------------------------------------- */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 720px);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.settings-rail {
+  position: sticky;
+  /* Clears .settings-search-bar-wrap (sticky at top: 0, ~44px tall plus its
+     own margin) so the rail's first item never sits under the search bar. */
+  top: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-rail-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.settings-rail-link:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Current section, tracked by IntersectionObserver in SettingsPanel. */
+.settings-rail-link.is-current {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* Replaces the 14 separate `<h3 style={{ marginTop: 0 }}>` declarations —
+   a card's title never needs leading space above it. */
+.settings-card > h3:first-child,
+.settings-card > h4:first-child {
+  margin-top: 0;
+}
+
+/* The "explanatory line under a heading" pattern: 23 inline styles across
+   three near-identical variants (11px/12.5px, assorted margins, all
+   text-secondary). One treatment now. */
+.settings-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-3);
+  max-width: 62ch;
+}
+
+/* Tightens a hint sitting directly beneath its own heading, replacing the
+   negative-marginTop trick the inline styles used to pull it up. */
+h3 + .settings-hint,
+h4 + .settings-hint {
+  margin-top: calc(var(--space-1) * -1);
+}
+
+/* `display: inline-flex; align-items: center; gap: 6px` — 15 inline uses,
+   almost all of them an icon beside a label. */
+.settings-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A wrapping row of buttons/controls — 8 inline uses. */
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.settings-danger {
+  color: var(--color-danger);
+}
+
+/* A checkbox (or radio) sitting inline with its own label — 10 inline uses,
+   all of them re-declaring `flexDirection: row` to override .form-row's
+   default column stacking, plus a `margin: 0` on the label to cancel its
+   inherited block margin. Both belong in one named row instead. */
+.settings-toggle-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-toggle-row > label {
+  margin: 0;
+}
+
+/* Vertical rhythm between consecutive toggle rows, replacing the assorted
+   inline marginTop values (10px/12px) those rows carried individually. */
+.settings-toggle-row + .settings-toggle-row,
+.settings-hint + .settings-toggle-row {
+  margin-top: var(--space-3);
+}
+
+/* A toggle row whose controls are disabled-looking because the feature it
+   configures is switched off — replaces inline
+   `opacity: <state> ? 1 : 0.5` on the row's individual children. */
+.settings-toggle-row.is-muted > *:not(input) {
+  opacity: 0.5;
+}
+
+/* A labelled sub-group within a settings card (e.g. "Anthropic" and "Gemini"
+   inside Integrations, or the sync detail inside Backups). These used to be
+   separated by an inline `borderTop: 1px solid` rule; per the UI direction,
+   space carries the separation instead of a line, since the group already has
+   its own uppercase heading doing the work of announcing a boundary. */
+.settings-subgroup {
+  margin-top: var(--space-5);
+}
+
+/* Small uppercase heading for a .settings-subgroup — replaces the inline
+   `margin: '0 0 10px', fontSize: 12, letterSpacing…` this always carried. */
+.settings-subgroup-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* The "Change token/key" + "Disconnect/Remove" button pair repeated for
+   Todoist, Anthropic, and Gemini in Integrations — a smaller .btn than the
+   page default, the second one tinted for the destructive action. Replaces
+   `style={{ fontSize: 12 }}` / `style={{ fontSize: 12, color:
+   'var(--color-danger)' }}` at all three sites. */
+.settings-btn-sm {
+  font-size: var(--text-sm);
+}
+
+.settings-btn-sm.settings-danger {
+  color: var(--color-danger);
+}
+
+@media (max-width: 1023px) {
+  /* Rail needs horizontal room to stay readable; below desktop the panel
+     falls back to the original single scrolling column, where the existing
+     .settings-search-bar is already the way to jump between sections. */
+  .settings-layout {
+    grid-template-columns: minmax(0, 720px);
+  }
+
+  .settings-rail {
+    display: none;
+  }
+}
+
 @media (max-width: 639px) {
   /* Anchored near the top (not a bottom sheet) so the title field always
      lands above where an on-screen keyboard covers the viewport — a bottom
