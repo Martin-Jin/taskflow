@@ -34,7 +34,7 @@ import { ChevronDown } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import MarqueeText from './MarqueeText';
 
-export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, marquee = false }) {
+export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, marquee = false, disabled = false }) {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(() => Math.max(0, options.findIndex((o) => o.value === value)));
   const rootRef = useRef(null);
@@ -106,6 +106,7 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label={ariaLabel}
+        disabled={disabled}
         onClick={() => (isOpen ? setIsOpen(false) : open())}
         onKeyDown={handleKeyDown}
       >

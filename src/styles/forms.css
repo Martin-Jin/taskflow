@@ -1184,6 +1184,15 @@
   border-color: var(--color-border);
 }
 
+.select-menu-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.select-menu-trigger:disabled:hover {
+  background: transparent;
+}
+
 .select-menu-value {
   color: var(--color-text-primary);
 }
@@ -1438,6 +1447,26 @@
 .detail-field-value input:not([type='checkbox']):hover,
 .detail-field-value .detail-recurrence-toggle:hover {
   background: var(--color-bg-surface-hover);
+}
+
+/* SelectMenu used in place of a native <select> (e.g. the Project field —
+   see TaskDetailModal.jsx) needs its own override rather than matching the
+   ".detail-field-value select" rule above, since its markup is a <div><button>
+   pair, not a real <select> — otherwise it'd keep SelectMenu's own smaller,
+   inline "chip" look instead of matching this sidebar's other full-width,
+   ghost-background rows. */
+.detail-field-value .select-menu {
+  display: flex;
+  width: calc(100% + 12px);
+  margin: -4px -6px;
+}
+
+.detail-field-value .select-menu-trigger {
+  width: 100%;
+  justify-content: space-between;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: var(--color-text-primary);
 }
 
 .detail-field-value select:focus,

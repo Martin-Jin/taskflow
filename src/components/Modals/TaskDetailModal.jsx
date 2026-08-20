@@ -140,6 +140,7 @@ import DependencyPicker from '../Common/DependencyPicker';
 import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
+import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
 import SmartDurationInput from '../Common/SmartDurationInput';
@@ -3084,20 +3085,22 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
             <div className="detail-sidebar">
               <DetailField icon={Folder} label="Project">
-                <select value={projectId} onChange={(e) => handleProjectChange(e.target.value)} disabled={isReadOnlyViewer}>
-                  <option value="">No project</option>
-                  {projects.filter((p) => !isSharedProject(p) || p.id === task.projectId).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                  {/* Synthetic destination, not a real Project record (see
-                      projectConstants.js) — grouped separately so it reads as
-                      distinct from the real project list above it. */}
-                  <optgroup label="Other">
-                    <option value={NO_SCHEDULE_PROJECT_ID}>{NO_SCHEDULE_PROJECT_LABEL}</option>
-                  </optgroup>
-                </select>
+                <SelectMenu
+                  ariaLabel="Project"
+                  value={projectId}
+                  onChange={handleProjectChange}
+                  options={[
+                    { value: '', label: 'No project' },
+                    ...projects
+                      .filter((p) => !isSharedProject(p) || p.id === task.projectId)
+                      .map((p) => ({ value: p.id, label: p.name })),
+                    // A synthetic destination, not a real Project record (see
+                    // projectConstants.js) — set apart with a separator since
+                    // it isn't part of the real project list above it.
+                    { value: NO_SCHEDULE_PROJECT_ID, label: NO_SCHEDULE_PROJECT_LABEL, separatorBefore: true },
+                  ]}
+                  disabled={isReadOnlyViewer}
+                />
               </DetailField>
 
               <DetailField icon={Layers} label="Section">
