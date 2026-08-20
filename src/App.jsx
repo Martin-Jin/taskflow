@@ -465,6 +465,7 @@ function AppShell() {
               uid={user?.uid}
               onSelectProject={selectProject}
               onOpenManageProjects={openManageProjects}
+              onAddProject={() => openManageProjects(true)}
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
@@ -491,16 +492,18 @@ function AppShell() {
         </button>
       )}
 
-      {/* Standalone AI Quick Add entry point for the four tabs with no FAB
-          group of their own (Dashboard/Projects/Stats/Settings — Tasks
-          list/Board and Calendar already have one, see AddTaskFabGroup/
-          CalendarPage's own AI mini-FAB). Shown on desktop AND mobile (unlike
+      {/* Standalone AI Quick Add entry point for the three tabs with no FAB
+          group of their own (Dashboard/Stats/Settings — Tasks list/Board and
+          Calendar already have one via AddTaskFabGroup/CalendarPage's own AI
+          mini-FAB, and Projects now has its own AddTaskFabGroup instance too
+          — see ProjectsPage.jsx — since "Add project" is a real main action
+          there, unlike these three). Shown on desktop AND mobile (unlike
           mobile-search-fab-standalone above, which is mobile-only) since the
           whole point of this change is making AI Quick Add reachable from
           every screen, not just ones that already had a FAB. Reuses
           .add-task-btn's shell/size for visual consistency with the other
           FABs rather than inventing new styling. */}
-      {aiConfigured && (tab === 'dashboard' || tab === 'projects' || tab === 'stats' || tab === 'settings') && (
+      {aiConfigured && (tab === 'dashboard' || tab === 'stats' || tab === 'settings') && (
         <button
           className="btn btn-primary add-task-btn ai-quickadd-standalone-fab"
           onClick={() => requestAIQuickAddOpen(() => setShowStandaloneAIQuickAdd(true))}
