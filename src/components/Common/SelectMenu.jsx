@@ -20,6 +20,12 @@
  * room and isn't width-constrained) is unaffected. The Tasks page's project
  * switcher passes it since long project names get a fixed max-width there
  * (see tasklist.css's `.taskpage-project-header .select-menu-value`).
+ *
+ * An option may set `separatorBefore: true` to get a thin rule drawn above it
+ * — used to set a synthetic/pseudo option (e.g. AddTaskModal's "Do Not
+ * Auto-Schedule" bucket) visually apart from the real list above it, without
+ * making it a separate non-selectable list item (which would need its own
+ * keyboard-nav skip logic).
  */
 
 import React, { useRef, useState } from 'react';
@@ -130,7 +136,7 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
                     aria-disabled={o.disabled || undefined}
                     disabled={o.disabled}
                     title={o.disabledReason}
-                    className={`select-menu-option ${i === highlightedIndex ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''} ${o.disabled ? 'is-disabled' : ''}`}
+                    className={`select-menu-option ${i === highlightedIndex ? 'highlighted' : ''} ${o.value === value ? 'selected' : ''} ${o.disabled ? 'is-disabled' : ''} ${o.separatorBefore ? 'has-separator-before' : ''}`}
                     onMouseEnter={() => !o.disabled && setHighlightedIndex(i)}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => choose(o.value)}

@@ -1240,6 +1240,12 @@
   background: transparent;
 }
 
+.select-menu-option.has-separator-before {
+  margin-top: 5px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
 /* ----------------------------------------------------------------------
    MentionDropdown — the live "@"/"#" popup shown while typing in
    SmartTitleInput. Same portaled-to-body treatment as .select-menu-dropdown

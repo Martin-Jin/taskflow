@@ -169,6 +169,7 @@ import {
   insertMention,
   parseCommentBody,
 } from '../../utils/commentMentions';
+import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { computeEffectiveRole, isSharedProject, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
 
 // Default estimated hours for a quick-added sub-task — matches
@@ -3027,6 +3028,12 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                       {p.name}
                     </option>
                   ))}
+                  {/* Synthetic destination, not a real Project record (see
+                      projectConstants.js) — grouped separately so it reads as
+                      distinct from the real project list above it. */}
+                  <optgroup label="Other">
+                    <option value={NO_SCHEDULE_PROJECT_ID}>{NO_SCHEDULE_PROJECT_LABEL}</option>
+                  </optgroup>
                 </select>
               </DetailField>
 

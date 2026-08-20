@@ -16,6 +16,22 @@ export const INBOX_PROJECT_ID = '__inbox__';
 export const INBOX_PROJECT_LABEL = 'Inbox';
 
 /**
+ * Unlike ALL_TASKS/INBOX above, this one is NOT a pure filter — it's a real,
+ * user-assignable bucket. A task can genuinely have
+ * `projectId === NO_SCHEDULE_PROJECT_ID`, and that's the only thing that
+ * means "this task is excluded from auto-scheduling" for it (see
+ * rebalanceEngine.js's eligibleTasks filter). It exists as a sentinel id
+ * rather than a real Project record for the same reason ALL_TASKS/INBOX do:
+ * it's not renameable/deletable/shareable, and it should never appear in the
+ * sidebar's project list — but unlike them, it IS offered as a destination in
+ * project-picker dropdowns, since moving a task into it is how a user
+ * actually opts a task out this way (as an alternative to the equivalent
+ * per-task `excludeFromAutoSchedule` flag).
+ */
+export const NO_SCHEDULE_PROJECT_ID = '__no_schedule__';
+export const NO_SCHEDULE_PROJECT_LABEL = 'Do Not Auto-Schedule';
+
+/**
  * Tasks belonging to `projectId`, treating ALL_TASKS_PROJECT_ID as "every
  * task" and INBOX_PROJECT_ID as "no project assigned" — the one place these
  * sentinel checks live, instead of each of List/Board view re-deriving them
