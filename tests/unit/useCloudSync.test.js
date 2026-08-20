@@ -52,6 +52,7 @@ import { describe, it, expect } from 'vitest';
 import { isValidFieldValue, isValidBackupPayload, BACKUP_FIELDS } from '../../src/services/backupService.js';
 import {
   computeFingerprint,
+  canonicalStringify,
   hasLocalEditRaced,
   hasAnyLocalEditRaced,
   isStaleOwnEcho,
@@ -241,6 +242,83 @@ describe('computeFingerprint', () => {
     // ...and the legacy fingerprint simply omits the key rather than encoding null.
     expect(computeFingerprint(legacyRemote)).not.toContain('sharedProjectIds');
     expect(computeFingerprint(currentLocal)).toContain('"sharedProjectIds":[]');
+  });
+
+  // Regression coverage for a real production bug: Firestore's SDK does not
+  // guarantee preserving a nested object/map field's own key insertion order
+  // on a round-trip (array element order IS preserved — this is specifically
+  // about keys WITHIN an object). A fingerprint built from plain
+  // JSON.stringify treated every echo of this device's own push as fresh
+  // remote data purely because a task's nested `recurrenceRule`/`subtasks`
+  // entries came back with reshuffled keys, with the SAME values — driving a
+  // permanent push -> echo -> reapply -> push loop with zero real data ever
+  // changing. computeFingerprint must be insensitive to this.
+  it('is unaffected by a nested object field having its keys in a different order (Firestore round-trip)', () => {
+    const withOrderA = {
+      ...baseState,
+      tasks: [{ id: 't1', title: 'Repeats', recurrenceRule: { unit: 'week', days: [0, 1, 3], count: 1 } }],
+    };
+    const withOrderB = {
+      ...baseState,
+      tasks: [{ id: 't1', title: 'Repeats', recurrenceRule: { days: [0, 1, 3], count: 1, unit: 'week' } }],
+    };
+    expect(computeFingerprint(withOrderA)).toBe(computeFingerprint(withOrderB));
+  });
+
+  it('is unaffected by a task object itself having its top-level keys in a different order', () => {
+    const withOrderA = { ...baseState, tasks: [{ id: 't1', title: 'A', isCompleted: false }] };
+    const withOrderB = { ...baseState, tasks: [{ isCompleted: false, title: 'A', id: 't1' }] };
+    expect(computeFingerprint(withOrderA)).toBe(computeFingerprint(withOrderB));
+  });
+
+  it('still detects a REAL value change inside a nested object, not just its key order', () => {
+    const before = { ...baseState, tasks: [{ id: 't1', recurrenceRule: { unit: 'week', count: 1 } }] };
+    const after = { ...baseState, tasks: [{ id: 't1', recurrenceRule: { unit: 'week', count: 2 } }] };
+    expect(computeFingerprint(before)).not.toBe(computeFingerprint(after));
+  });
+
+  it('still treats a reordered ARRAY as different — only object key order is insignificant, not element order', () => {
+    const before = { ...baseState, tasks: [{ id: 't1' }, { id: 't2' }] };
+    const after = { ...baseState, tasks: [{ id: 't2' }, { id: 't1' }] };
+    expect(computeFingerprint(before)).not.toBe(computeFingerprint(after));
+  });
+});
+
+describe('canonicalStringify', () => {
+  it('produces identical output for objects with the same data but different key order', () => {
+    expect(canonicalStringify({ a: 1, b: 2 })).toBe(canonicalStringify({ b: 2, a: 1 }));
+  });
+
+  it('recurses into nested objects, ignoring their key order too', () => {
+    const a = { outer: { x: 1, y: { p: 'a', q: 'b' } } };
+    const b = { outer: { y: { q: 'b', p: 'a' }, x: 1 } };
+    expect(canonicalStringify(a)).toBe(canonicalStringify(b));
+  });
+
+  it('preserves array element order (arrays are never sorted)', () => {
+    expect(canonicalStringify([1, 2, 3])).not.toBe(canonicalStringify([3, 2, 1]));
+  });
+
+  it('recurses into objects nested inside arrays', () => {
+    const a = [{ x: 1, y: 2 }];
+    const b = [{ y: 2, x: 1 }];
+    expect(canonicalStringify(a)).toBe(canonicalStringify(b));
+  });
+
+  it("omits undefined values, matching JSON.stringify's own behavior", () => {
+    expect(canonicalStringify({ a: 1, b: undefined })).toBe(canonicalStringify({ a: 1 }));
+  });
+
+  it('handles primitives, null, and empty structures the same as JSON.stringify', () => {
+    expect(canonicalStringify(null)).toBe('null');
+    expect(canonicalStringify(5)).toBe('5');
+    expect(canonicalStringify('x')).toBe('"x"');
+    expect(canonicalStringify([])).toBe('[]');
+    expect(canonicalStringify({})).toBe('{}');
+  });
+
+  it('still distinguishes genuinely different data, not just reordered data', () => {
+    expect(canonicalStringify({ a: 1 })).not.toBe(canonicalStringify({ a: 2 }));
   });
 });
 
@@ -662,6 +740,16 @@ describe('didTaskMergeChangeAnything', () => {
     const localTasksBefore = [{ id: 't1', title: 'local', updatedAt: '2026-08-10T00:00:00.000Z' }];
     const remoteData = { tasks: [{ id: 't1', title: 'stale remote copy', updatedAt: '2026-08-01T00:00:00.000Z' }] };
     const plan = planRemoteDataMerge(remoteData, { tasks: localTasksBefore }, { skipAll: false });
+    expect(didTaskMergeChangeAnything(plan, localTasksBefore)).toBe(false);
+  });
+
+  // Same key-order regression as computeFingerprint's own coverage above —
+  // this comparison independently used plain JSON.stringify and needed the
+  // identical canonicalStringify fix.
+  it('is not fooled by a merged task having its (or a nested object\'s) keys in a different order than before', () => {
+    const localTasksBefore = [{ id: 't1', title: 'same', recurrenceRule: { unit: 'week', count: 1 } }];
+    const mergedSameButReordered = [{ recurrenceRule: { count: 1, unit: 'week' }, title: 'same', id: 't1' }];
+    const plan = { tasksMerged: true, tasksBlocks: { tasks: mergedSameButReordered, blocks: [] } };
     expect(didTaskMergeChangeAnything(plan, localTasksBefore)).toBe(false);
   });
 });

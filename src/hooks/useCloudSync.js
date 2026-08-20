@@ -148,6 +148,43 @@ export function detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId
 }
 
 /**
+ * A JSON.stringify substitute whose output depends only on DATA, never on an
+ * object's own key insertion order — plain `JSON.stringify` follows whatever
+ * order the object's keys happen to have been set in, and Firestore's SDK
+ * does NOT guarantee preserving that order for nested map fields on a
+ * round-trip (arrays keep their element order; it's specifically each
+ * object/map's OWN key order that can come back reshuffled). Two logically
+ * identical objects that merely differ in key order must fingerprint
+ * IDENTICALLY, or every echo of this device's own push looks like new remote
+ * data forever — see this function's own discovery: a real production
+ * account's sync got stuck in a permanent push -> echo -> reapply -> push
+ * loop, purely from a task's nested `recurrenceRule`/`subtasks` objects
+ * coming back from Firestore with reordered keys (never a real value
+ * difference), which none of computeFingerprint's/applyRemoteData's
+ * consumers could tell apart from a genuine edit.
+ *
+ * Recursively sorts each plain object's keys before stringifying; arrays are
+ * walked element-by-element in their EXISTING order (array order is
+ * semantically meaningful — e.g. subtask ordering — and was confirmed stable
+ * across the Firestore round-trip that exposed this bug, unlike object key
+ * order). `null`/primitives/Dates pass through JSON.stringify's own handling
+ * unchanged.
+ */
+export function canonicalStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalStringify(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const sortedKeys = Object.keys(value).sort();
+    const entries = sortedKeys
+      .filter((key) => value[key] !== undefined) // matches JSON.stringify's own "drop undefined values" behavior
+      .map((key) => `${JSON.stringify(key)}:${canonicalStringify(value[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
  * Hashes/serializes the syncable subset of state so callers can detect "is
  * this remote update just an echo of what I just pushed" by string equality.
  * Pure and stateless — hoisted out of the hook (it never closed over
@@ -156,6 +193,11 @@ export function detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId
  * Deliberately excludes `events` — see backupService.js's BACKUP_FIELDS doc
  * comment for why CalendarEvents are device-local (Google Calendar-sourced)
  * now rather than round-tripped through Firestore.
+ *
+ * Uses canonicalStringify, NOT plain JSON.stringify — see that function's own
+ * doc comment for why: a fingerprint that's sensitive to key order treats
+ * Firestore's own echo of an unchanged nested object as a fresh remote
+ * change, forever.
  */
 export function computeFingerprint(source) {
   const relevant = {
@@ -174,7 +216,7 @@ export function computeFingerprint(source) {
     shortcutBindings: source.shortcutBindings,
     sharedProjectIds: source.sharedProjectIds,
   };
-  return JSON.stringify(relevant);
+  return canonicalStringify(relevant);
 }
 
 // TEMPORARY DIAGNOSTIC — logs a CONCISE summary of what actually changed
@@ -198,7 +240,7 @@ function diffSyncFingerprintFields(oldFp, newFp) {
   for (const key of allKeys) {
     const oldVal = oldObj[key];
     const newVal = newObj[key];
-    if (JSON.stringify(oldVal) === JSON.stringify(newVal)) continue;
+    if (canonicalStringify(oldVal) === canonicalStringify(newVal)) continue;
     changedTopLevelKeys.push(key);
     if (Array.isArray(oldVal) && Array.isArray(newVal)) {
       const oldById = new Map(oldVal.map((item) => [item?.id, item]));
@@ -212,8 +254,8 @@ function diffSyncFingerprintFields(oldFp, newFp) {
         const fieldDiffs = {};
         const itemKeys = new Set([...Object.keys(oldItem || {}), ...Object.keys(newItem || {})]);
         for (const fieldKey of itemKeys) {
-          const a = JSON.stringify(oldItem?.[fieldKey]);
-          const b = JSON.stringify(newItem?.[fieldKey]);
+          const a = canonicalStringify(oldItem?.[fieldKey]);
+          const b = canonicalStringify(newItem?.[fieldKey]);
           if (a !== b) fieldDiffs[fieldKey] = { from: oldItem?.[fieldKey], to: newItem?.[fieldKey] };
         }
         if (Object.keys(fieldDiffs).length > 0) changedItems.push({ id, title: newItem?.title, fieldDiffs });
@@ -636,7 +678,12 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
  */
 export function didTaskMergeChangeAnything(plan, localTasksBefore) {
   if (!plan.tasksMerged || !plan.tasksBlocks) return false;
-  return JSON.stringify(plan.tasksBlocks.tasks) !== JSON.stringify(localTasksBefore);
+  // canonicalStringify, not plain JSON.stringify — see that function's own
+  // doc comment (computeFingerprint's neighbor above) for why: a merge that
+  // reconstructs task objects via spreads can produce a different key order
+  // than what was local before even when no field actually changed, and a
+  // plain JSON.stringify comparison would misreport that as a real change.
+  return canonicalStringify(plan.tasksBlocks.tasks) !== canonicalStringify(localTasksBefore);
 }
 
 /**
