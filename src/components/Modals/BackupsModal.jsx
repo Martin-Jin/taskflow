@@ -1,7 +1,7 @@
 import React from 'react';
-import { X, RotateCcw, RefreshCw, Trash2 } from 'lucide-react';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react';
+import Modal from '../Common/Modal';
+import EmptyState from '../Common/EmptyState';
 import { useConfirm } from '../../context/ConfirmContext';
 
 /**
@@ -28,8 +28,6 @@ import { useConfirm } from '../../context/ConfirmContext';
  * worse than not showing it.
  */
 export default function BackupsModal({ backups, isBusy, isGoogleConnected, onRestore, onRestoreAndRewrite, onDelete, onClose }) {
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
   const confirm = useConfirm();
 
   function formatWhen(backup) {
@@ -39,24 +37,9 @@ export default function BackupsModal({ backups, isBusy, isGoogleConnected, onRes
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Cloud backups"
-        tabIndex={-1}
-      >
-        <div className="stat-list-modal-header">
-          <h3>Cloud backups</h3>
-          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
-            <X size={16} />
-          </button>
-        </div>
+    <Modal onClose={onClose} ariaLabel="Cloud backups" title="Cloud backups">
         {backups.length === 0 ? (
-          <div className="now-empty">No cloud backups yet — use "Back up now" to create one.</div>
+          <EmptyState>No cloud backups yet — use "Back up now" to create one.</EmptyState>
         ) : (
           <div style={{ maxHeight: 360, overflowY: 'auto' }}>
             {backups.map((backup) => (
@@ -139,7 +122,6 @@ export default function BackupsModal({ backups, isBusy, isGoogleConnected, onRes
             ))}
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

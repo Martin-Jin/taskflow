@@ -5,6 +5,7 @@ import { linkify, containsLink } from '../../utils/linkify';
 import { nextLabelColor } from '../../utils/labelColor';
 import Linkified from '../Common/Linkified';
 import NoteViewModal from '../Modals/NoteViewModal';
+import EmptyState from '../Common/EmptyState';
 import {
   DEFAULT_FOLDER_ID,
   faviconUrl,
@@ -372,10 +373,9 @@ export default function NotesCard() {
         )}
 
         {filteredNotes.length === 0 && !isAdding && (
-          <div className="notes-empty">
-            <StickyNote size={20} className="empty-state-icon" aria-hidden="true" />
+          <EmptyState icon={StickyNote} className="notes-empty">
             {noteQuery ? 'No notes match your search.' : 'Jot down anything — paste a link to keep it clickable.'}
-          </div>
+          </EmptyState>
         )}
       </div>
 

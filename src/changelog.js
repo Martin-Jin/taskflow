@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.7.0',
+    date: '2026-08-21',
+    title: 'Consistent modal design across the app',
+    changes: [
+      'Every dialog in the app — Add Project, Manage Projects, Share Project, task/event/block details, AI Quick Add and its plan review, and more — now opens with the same consistent sizing, spacing, and animation instead of each having its own slightly different look.',
+      'Fixed the Todoist and AI-key "connected" status badges (Settings → Integrations) showing the wrong shade of green in light mode.',
+      'Cleaned up inconsistent priority/label pill and empty-state styling throughout the app.',
+    ],
+  },
+  {
     version: '6.6.0',
     date: '2026-08-21',
     title: 'Redesigned Settings navigation',

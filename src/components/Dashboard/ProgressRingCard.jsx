@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatHours } from '../../utils/formatHours';
+import EmptyState from '../Common/EmptyState';
 
 const RADIUS = 42;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -47,7 +48,7 @@ export default function ProgressRingCard({ title, percent, completedHours, total
           </div>
         </div>
       ) : (
-        <div className="now-empty">{emptyMessage}</div>
+        <EmptyState>{emptyMessage}</EmptyState>
       )}
     </div>
   );

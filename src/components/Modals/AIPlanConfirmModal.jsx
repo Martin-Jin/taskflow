@@ -9,11 +9,10 @@
  * written to the workspace before Apply is clicked.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Sparkles, X, AlertTriangle, Loader2, CheckSquare, Square } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import Modal from '../Common/Modal';
 import { applyPlan } from '../../services/aiPlanService';
 
 const GROUPS = [
@@ -24,8 +23,11 @@ const GROUPS = [
 
 export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProjectCreated }) {
   const scheduler = useScheduler();
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
+  // handleApply is defined above the JSX return, so it captures requestClose
+  // via this ref (set during render, from Modal's render-prop) instead of
+  // destructuring it directly — ref mutation during render is safe, unlike
+  // setState in render.
+  const requestCloseRef = useRef(() => {});
 
   const [checkedIndices, setCheckedIndices] = useState(
     () => new Set(plan.entries.filter((e) => e.valid).map((e) => e.index))
@@ -80,7 +82,7 @@ export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProject
         );
         if (firstCreatedProject) onProjectCreated?.(firstCreatedProject.createdId);
         onApplied?.(results);
-        requestClose();
+        requestCloseRef.current();
       }
     } finally {
       setIsApplying(false);
@@ -88,16 +90,11 @@ export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProject
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal modal-ai-plan-confirm"
-        onClick={(e) => e.stopPropagation()}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Review AI Assistant changes"
-        tabIndex={-1}
-      >
+    <Modal
+      onClose={onClose}
+      ariaLabel="Review AI Assistant changes"
+      variantClassName="modal-ai-plan-confirm"
+      header={({ requestClose }) => (
         <div className="stat-list-modal-header">
           <h3 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <Sparkles size={16} aria-hidden="true" /> Review changes
@@ -106,7 +103,12 @@ export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProject
             <X size={16} />
           </button>
         </div>
-
+      )}
+    >
+      {({ requestClose }) => {
+        requestCloseRef.current = requestClose;
+        return (
+          <>
         <p className="form-hint" style={{ marginTop: -4, marginBottom: 8 }}>
           Nothing has been applied yet — review each change below, uncheck anything you don't want, then Apply.
         </p>
@@ -180,7 +182,9 @@ export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProject
             </button>
           </div>
         </div>
-      </div>
-    </div>
+          </>
+        );
+      }}
+    </Modal>
   );
 }

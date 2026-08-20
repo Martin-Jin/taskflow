@@ -14,8 +14,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Timer } from 'lucide-react';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import Modal from './Modal';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { formatTimerDuration } from '../../context/TimerContext';
 
@@ -26,8 +25,6 @@ export default function CompleteTaskConfirmModal() {
 }
 
 function ConfirmModalInner({ pending, onConfirm, onCancel }) {
-  const { isClosing, requestClose } = useAnimatedUnmount(onCancel);
-  const modalRef = useModalA11y(requestClose);
   const [hours, setHours] = useState(roundHours(pending.elapsedHours));
 
   // A fresh pending completion (different task, or the same one re-opened
@@ -44,47 +41,47 @@ function ConfirmModalInner({ pending, onConfirm, onCancel }) {
   }
 
   return (
-    <div className={`modal-overlay complete-confirm-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal"
-        style={{ width: 360 }}
-        onClick={(e) => e.stopPropagation()}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Log time spent"
-        tabIndex={-1}
-      >
+    <Modal
+      onClose={onCancel}
+      ariaLabel="Log time spent"
+      size="sm"
+      overlayClassName="complete-confirm-overlay"
+      header={
         <h3 style={{ marginTop: 0, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-display)', fontSize: 16 }}>
           <Timer size={16} aria-hidden="true" />
           Log time spent?
         </h3>
-        <p style={{ fontSize: 13.5, color: 'var(--color-text-secondary)', marginTop: 0 }}>
-          You tracked <strong>{formatTimerDuration(pending.elapsedHours * 3600)}</strong> on "{pending.taskTitle}" — log this as time
-          spent?
-        </p>
-        <div className="form-row">
-          <label htmlFor="complete-confirm-hours">Hours spent</label>
-          <input
-            id="complete-confirm-hours"
-            type="number"
-            min="0"
-            step="0.1"
-            autoFocus
-            value={hours}
-            onChange={(e) => setHours(e.target.value)}
-          />
-        </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-          <button type="button" className="btn" onClick={requestClose}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn-primary" onClick={handleConfirm}>
-            Complete task
-          </button>
-        </div>
-      </div>
-    </div>
+      }
+    >
+      {({ requestClose }) => (
+        <>
+          <p style={{ fontSize: 13.5, color: 'var(--color-text-secondary)', marginTop: 0 }}>
+            You tracked <strong>{formatTimerDuration(pending.elapsedHours * 3600)}</strong> on "{pending.taskTitle}" — log this as time
+            spent?
+          </p>
+          <div className="form-row">
+            <label htmlFor="complete-confirm-hours">Hours spent</label>
+            <input
+              id="complete-confirm-hours"
+              type="number"
+              min="0"
+              step="0.1"
+              autoFocus
+              value={hours}
+              onChange={(e) => setHours(e.target.value)}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button type="button" className="btn" onClick={requestClose}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-primary" onClick={handleConfirm}>
+              Complete task
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 

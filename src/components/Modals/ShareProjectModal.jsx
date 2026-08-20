@@ -23,9 +23,9 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { X, Copy, Check, RotateCcw, Trash2, Ban, Link as LinkIcon, Crown, UserMinus } from 'lucide-react';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import { Copy, Check, RotateCcw, Trash2, Ban, Link as LinkIcon, Crown, UserMinus } from 'lucide-react';
+import Modal from '../Common/Modal';
+import EmptyState from '../Common/EmptyState';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
@@ -186,8 +186,6 @@ function LinkRow({ label, linkType, link, busy, onAction }) {
 }
 
 export default function ShareProjectModal({ project, onClose }) {
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
   const { sharedProjects } = useScheduler();
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -333,139 +331,122 @@ export default function ShareProjectModal({ project, onClose }) {
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-      <div
-        className="modal share-project-modal"
-        onClick={(e) => e.stopPropagation()}
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Share project"
-        tabIndex={-1}
-      >
-        <div className="stat-list-modal-header">
-          <h3>Share “{project?.name}”</h3>
-          <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
-            <X size={16} />
+    <Modal onClose={onClose} ariaLabel="Share project" size="lg" variantClassName="share-project-modal" title={`Share “${project?.name}”`}>
+      {actionError && <p className="share-modal-error">{actionError}</p>}
+
+      {isOwner ? (
+        <>
+          <section className="share-modal-section">
+            <h4>Links</h4>
+            {isLoadingLinks ? (
+              <EmptyState>Loading share links…</EmptyState>
+            ) : loadError ? (
+              <p className="share-modal-error">{loadError}</p>
+            ) : (
+              <>
+                <LinkRow
+                  label="View link"
+                  linkType="view"
+                  link={links?.view}
+                  busy={linkBusy === 'view'}
+                  onAction={(action, expiresAt) => handleLinkAction('view', action, expiresAt)}
+                />
+                <LinkRow
+                  label="Edit link"
+                  linkType="edit"
+                  link={links?.edit}
+                  busy={linkBusy === 'edit'}
+                  onAction={(action, expiresAt) => handleLinkAction('edit', action, expiresAt)}
+                />
+              </>
+            )}
+          </section>
+
+          <section className="share-modal-section">
+            <h4>Collaborators</h4>
+            {!sharedProject ? (
+              <EmptyState>Loading collaborators…</EmptyState>
+            ) : (shareState.collaborators?.length ?? 0) === 0 ? (
+              <EmptyState>No collaborators yet — share a link above to invite people.</EmptyState>
+            ) : (
+              <ul className="share-collaborator-list">
+                {shareState.collaborators?.map((c) => {
+                  const entry = sharedProject?.collaborators?.[c.uid];
+                  const isAnonymous = !!entry?.isAnonymous;
+                  const busy = collabBusy === c.uid;
+                  return (
+                    <li key={c.uid} className="share-collaborator-row">
+                      <span className="presence-avatar" aria-hidden="true">
+                        {isSafePhotoURL(c.photoURL) ? (
+                          <img src={c.photoURL} alt="" className="presence-avatar-img" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span className="presence-avatar-initials">{initialsOf(c.displayName)}</span>
+                        )}
+                      </span>
+                      <span className="share-collaborator-name">
+                        {c.displayName}
+                        {isAnonymous && <span className="share-collaborator-anon">Anonymous</span>}
+                      </span>
+                      <select
+                        value={c.role}
+                        disabled={busy}
+                        aria-label={`Role for ${c.displayName}`}
+                        onChange={(e) => handleRoleChange(c.uid, e.target.value)}
+                      >
+                        <option value={SHARE_ROLES.VIEWER}>Viewer</option>
+                        <option value={SHARE_ROLES.EDITOR}>Editor</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn btn-icon"
+                        disabled={busy || isAnonymous}
+                        title={isAnonymous ? undefined : 'Make owner'}
+                        aria-label={`Make ${c.displayName} the owner`}
+                        onClick={() => handleTransfer(c.uid, c.displayName, c.photoURL)}
+                      >
+                        <Crown size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-icon"
+                        disabled={busy}
+                        style={{ color: 'var(--color-danger)' }}
+                        aria-label={`Remove ${c.displayName}`}
+                        onClick={() => handleRemove(c.uid, c.displayName)}
+                      >
+                        <UserMinus size={14} />
+                      </button>
+                    </li>
+                  );
+                }) ?? []}
+              </ul>
+            )}
+          </section>
+        </>
+      ) : shareState.state === 'shared-with-me' ? (
+        <section className="share-modal-section">
+          <p>
+            This project is shared with you. Your role: <strong>{shareState.role === 'editor' ? 'Editor' : 'Viewer'}</strong>
+          </p>
+          <p className="share-modal-readonly-note">Only the project owner can manage sharing.</p>
+        </section>
+      ) : setupTimedOut ? (
+        // Usually this branch just means the live sharedProjects
+        // subscription's first snapshot hasn't arrived yet (this modal is
+        // normally only opened right after sharing succeeds or on an
+        // already-shared project — see App.jsx's handleShareProject). But
+        // that's not guaranteed — e.g. a cloud-sync race can revert this
+        // project's sharing state right as the modal opens — so after a
+        // timeout, offer a way out instead of spinning forever.
+        <section className="share-modal-section">
+          <p className="share-modal-error">Couldn't load sharing details. This project may no longer be shared, or the connection is slow.</p>
+          <button type="button" className="btn" onClick={() => setSetupRetryCount((n) => n + 1)}>
+            Try again
           </button>
-        </div>
-
-        {actionError && <p className="share-modal-error">{actionError}</p>}
-
-        {isOwner ? (
-          <>
-            <section className="share-modal-section">
-              <h4>Links</h4>
-              {isLoadingLinks ? (
-                <div className="now-empty">Loading share links…</div>
-              ) : loadError ? (
-                <p className="share-modal-error">{loadError}</p>
-              ) : (
-                <>
-                  <LinkRow
-                    label="View link"
-                    linkType="view"
-                    link={links?.view}
-                    busy={linkBusy === 'view'}
-                    onAction={(action, expiresAt) => handleLinkAction('view', action, expiresAt)}
-                  />
-                  <LinkRow
-                    label="Edit link"
-                    linkType="edit"
-                    link={links?.edit}
-                    busy={linkBusy === 'edit'}
-                    onAction={(action, expiresAt) => handleLinkAction('edit', action, expiresAt)}
-                  />
-                </>
-              )}
-            </section>
-
-            <section className="share-modal-section">
-              <h4>Collaborators</h4>
-              {!sharedProject ? (
-                <div className="now-empty">Loading collaborators…</div>
-              ) : (shareState.collaborators?.length ?? 0) === 0 ? (
-                <div className="now-empty">No collaborators yet — share a link above to invite people.</div>
-              ) : (
-                <ul className="share-collaborator-list">
-                  {shareState.collaborators?.map((c) => {
-                    const entry = sharedProject?.collaborators?.[c.uid];
-                    const isAnonymous = !!entry?.isAnonymous;
-                    const busy = collabBusy === c.uid;
-                    return (
-                      <li key={c.uid} className="share-collaborator-row">
-                        <span className="presence-avatar" aria-hidden="true">
-                          {isSafePhotoURL(c.photoURL) ? (
-                            <img src={c.photoURL} alt="" className="presence-avatar-img" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span className="presence-avatar-initials">{initialsOf(c.displayName)}</span>
-                          )}
-                        </span>
-                        <span className="share-collaborator-name">
-                          {c.displayName}
-                          {isAnonymous && <span className="share-collaborator-anon">Anonymous</span>}
-                        </span>
-                        <select
-                          value={c.role}
-                          disabled={busy}
-                          aria-label={`Role for ${c.displayName}`}
-                          onChange={(e) => handleRoleChange(c.uid, e.target.value)}
-                        >
-                          <option value={SHARE_ROLES.VIEWER}>Viewer</option>
-                          <option value={SHARE_ROLES.EDITOR}>Editor</option>
-                        </select>
-                        <button
-                          type="button"
-                          className="btn btn-icon"
-                          disabled={busy || isAnonymous}
-                          title={isAnonymous ? undefined : 'Make owner'}
-                          aria-label={`Make ${c.displayName} the owner`}
-                          onClick={() => handleTransfer(c.uid, c.displayName, c.photoURL)}
-                        >
-                          <Crown size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-icon"
-                          disabled={busy}
-                          style={{ color: 'var(--color-danger)' }}
-                          aria-label={`Remove ${c.displayName}`}
-                          onClick={() => handleRemove(c.uid, c.displayName)}
-                        >
-                          <UserMinus size={14} />
-                        </button>
-                      </li>
-                    );
-                  }) ?? []}
-                </ul>
-              )}
-            </section>
-          </>
-        ) : shareState.state === 'shared-with-me' ? (
-          <section className="share-modal-section">
-            <p>
-              This project is shared with you. Your role: <strong>{shareState.role === 'editor' ? 'Editor' : 'Viewer'}</strong>
-            </p>
-            <p className="share-modal-readonly-note">Only the project owner can manage sharing.</p>
-          </section>
-        ) : setupTimedOut ? (
-          // Usually this branch just means the live sharedProjects
-          // subscription's first snapshot hasn't arrived yet (this modal is
-          // normally only opened right after sharing succeeds or on an
-          // already-shared project — see App.jsx's handleShareProject). But
-          // that's not guaranteed — e.g. a cloud-sync race can revert this
-          // project's sharing state right as the modal opens — so after a
-          // timeout, offer a way out instead of spinning forever.
-          <section className="share-modal-section">
-            <p className="share-modal-error">Couldn't load sharing details. This project may no longer be shared, or the connection is slow.</p>
-            <button type="button" className="btn" onClick={() => setSetupRetryCount((n) => n + 1)}>
-              Try again
-            </button>
-          </section>
-        ) : (
-          <div className="now-empty">Setting up sharing…</div>
-        )}
-      </div>
-    </div>
+        </section>
+      ) : (
+        <EmptyState>Setting up sharing…</EmptyState>
+      )}
+    </Modal>
   );
 }
