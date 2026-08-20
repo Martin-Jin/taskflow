@@ -1094,8 +1094,9 @@ test.describe('Smart parse', () => {
     await expect(projectsDialog).toBeVisible();
     for (const name of [projectA, projectB]) {
       await projectsDialog.getByRole('button', { name: /^add project$/i }).click();
-      await projectsDialog.getByPlaceholder('Project name…').fill(name);
-      await projectsDialog.getByRole('button', { name: /^add$/i }).click();
+      const addProjectDialog = page.getByRole('dialog', { name: 'Add project' });
+      await addProjectDialog.getByPlaceholder('Project name').fill(name);
+      await addProjectDialog.getByRole('button', { name: /^add project$/i }).click();
       await page.waitForTimeout(300);
     }
     await closeAnyModal(page);

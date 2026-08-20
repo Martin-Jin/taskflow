@@ -65,8 +65,9 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   await expect(dialog).toBeVisible();
 
   await dialog.getByRole('button', { name: /^add project$/i }).click();
-  await dialog.getByPlaceholder('Project name…').fill(projectName);
-  await dialog.getByRole('button', { name: /^add$/i }).click();
+  const addProjectDialog1 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog1.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog1.getByRole('button', { name: /^add project$/i }).click();
   await page.waitForTimeout(400);
   await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
 
@@ -130,8 +131,9 @@ test('Manage Projects modal search is typo-tolerant (same ranker as the Sidebar 
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: /^add project$/i }).click();
-  await dialog.getByPlaceholder('Project name…').fill(projectName);
-  await dialog.getByRole('button', { name: /^add$/i }).click();
+  const addProjectDialog2 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog2.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog2.getByRole('button', { name: /^add project$/i }).click();
   await page.waitForTimeout(400);
   await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
 
@@ -164,8 +166,9 @@ test('Manage Projects modal search: Arrow keys move the highlighted row and Ente
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
-  await dialog.getByPlaceholder('Project name…').fill(projectName);
-  await dialog.getByRole('button', { name: /^add$/i }).click();
+  const addProjectDialog3 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog3.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog3.getByRole('button', { name: /^add project$/i }).click();
   await page.waitForTimeout(400);
   await closeAnyModal(page);
   await page.waitForTimeout(200);
@@ -222,8 +225,9 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
-  await dialog.getByPlaceholder('Project name…').fill(projectName);
-  await dialog.getByRole('button', { name: /^add$/i }).click();
+  const addProjectDialog4 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog4.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog4.getByRole('button', { name: /^add project$/i }).click();
   await page.waitForTimeout(400);
   await closeAnyModal(page);
   await page.waitForTimeout(200);
@@ -300,8 +304,9 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   const manageDialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(manageDialog).toBeVisible();
   await manageDialog.getByRole('button', { name: /^add project$/i }).click();
-  await manageDialog.getByPlaceholder('Project name…').fill(projectName);
-  await manageDialog.getByRole('button', { name: /^add$/i }).click();
+  const addProjectDialog5 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog5.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog5.getByRole('button', { name: /^add project$/i }).click();
   await page.waitForTimeout(400);
   await closeAnyModal(page);
   await page.waitForTimeout(200);

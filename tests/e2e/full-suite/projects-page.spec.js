@@ -215,7 +215,9 @@ test.describe('Projects page', () => {
   // ProjectsPage now renders its own instance instead of relying on App.jsx's
   // AI-only standalone FAB, so "Add project" is reachable the same way "Add
   // task" already is elsewhere.
-  test('FAB group: expands into "Add project" and AI Quick Add, and "Add project" opens the add-project form', async ({ page }) => {
+  test('FAB group: expands into "Add project" and AI Quick Add, and "Add project" opens the dedicated add-project modal', async ({
+    page,
+  }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
     await gotoTab(page, 'Projects');
@@ -228,9 +230,11 @@ test.describe('Projects page', () => {
     await addProjectMini.click();
     await page.waitForTimeout(400);
 
-    // Lands straight on the add-project form (autoShowAdd), not the plain
-    // list+search — same modal the mobile topbar's "⋯ → Add project" opens.
-    await expect(page.getByPlaceholder('Project name…')).toBeVisible();
+    // Opens the dedicated AddProjectModal (styled like AddTaskModal), the
+    // same modal ManageProjectsModal's own "Add project" button now opens too.
+    const dialog = page.getByRole('dialog', { name: 'Add project' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByPlaceholder('Project name')).toBeVisible();
 
     expectNoErrors(errors);
   });
