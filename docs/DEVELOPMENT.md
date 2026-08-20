@@ -593,11 +593,18 @@ must leave it alone:
   undoing user never touched. `undo`/`redo` are thin wrappers that re-apply the
   live shared tasks afterwards (`preserveSharedTasks`), so every consumer still
   calls them unchanged.
-- **Excluded from the auto-scheduler.** `rebalanceEngine` computes against one
-  person's routines, hours and calendar, so a shared task has no single owner's
-  capacity to consume. Manual scheduling still works — Board drag-and-drop, and
-  `scheduleTaskAt` (used by `EventDetailModal`'s create-flow Task-mode toggle)
-  — and produces a block in that one user's own, unshared `blocks`.
+- **Excluded from the auto-scheduler, with one deliberate exception.**
+  `rebalanceEngine` computes against one person's routines, hours and
+  calendar, so a shared task has no single owner's capacity to consume by
+  default — UNLESS it's explicitly `assignedTo` (see `Task.assignedTo` in
+  `types/index.js`) the current device's own signed-in uid, in which case
+  `rebalanceEngine.js`'s `eligibleTasks` filter lets it through and schedules
+  it against that one assignee's own capacity, same as a personal task. An
+  unassigned shared task, or one assigned to someone else, stays excluded as
+  before. Manual scheduling always works regardless of assignment — Board
+  drag-and-drop, and `scheduleTaskAt` (used by `EventDetailModal`'s
+  create-flow Task-mode toggle) — and produces a block in that one user's
+  own, unshared `blocks`.
 - **Excluded from the 30-day completed sweep**, which would otherwise delete
   other people's tasks on one user's local clock and retention preference.
 
@@ -738,6 +745,7 @@ src/
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
 │   ├── Common/                 # SearchBar (also searches/switches projects and jumps to matching Calendar events), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator), BulkActionBar (shared docked bottom bar for bulk multi-select edit/delete — List/Board/Calendar/TaskDetailModal's sub-task list)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
+│   ├── CommandPalette.jsx      # Ctrl+K "jump to anything" — fuzzy-searches Views/Projects/Tasks/Calendar Events/quick Actions
 │   ├── TaskListPanel.jsx
 │   └── SettingsPanel.jsx
 ├── context/
@@ -757,6 +765,8 @@ src/
 │   ├── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
 │   ├── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 │   ├── useSharedProjectSync.js    # Live multi-writer Firestore sync for shared projects (Phase 1, Collaborative Projects) — subscriptions, diff-and-push, presence heartbeat
+│   ├── useCloudSync.js            # Cross-device Firestore sync (fingerprint/merge/race-guard logic, auto/manual backups) — see "Persistence"
+│   ├── useGoogleCalendarSync.js   # Google Calendar OAuth + poll-based two-way event sync, today's-blocks push — see "Persistence"
 │   ├── useJoinFlow.js             # Drives the `?join=<token>` share-link landing: anonymous sign-in, token resolution, name prompt, membership write (Phase 2)
 │   ├── useMultiSelect.js          # Transient (not persisted) per-surface bulk-selection state — List/Board/Calendar/TaskDetailModal's sub-task list each get their own independent instance; makeSelectionKey/parseSelectionKey encode a block:<id>/event:<id> composite key scheme for Calendar's mixed ScheduledBlock+CalendarEvent selections
 │   ├── useLongPressSelect.js      # Mobile long-press-to-enter-selection-mode, modeled on useReparentDrag's own long-press timing/threshold
@@ -774,7 +784,12 @@ src/
 │   ├── firestoreSync.js          # Pull/push/live-subscribe to a signed-in user's synced data
 │   ├── mockData.js               # Zero-config sample data
 │   ├── sharedProjectService.js   # Firestore I/O for collaborative projects (per-task documents, presence, sections) — decisions live in utils/sharedTaskSync.js and utils/sharedProjectAccess.js
-│   └── shareLinkService.js       # Client wrapper around the Cloudflare Worker's `/share/*` endpoints (link create/rotate/revoke, token resolve, guest migration)
+│   ├── shareLinkService.js       # Client wrapper around the Cloudflare Worker's `/share/*` endpoints (link create/rotate/revoke, token resolve, guest migration)
+│   ├── aiQuickAddService.js      # Client wrapper around the AI Quick Add Cloudflare Worker (Claude/Gemini request relay)
+│   ├── aiContextService.js       # Builds the workspace-snapshot markdown context sent with an AI Quick Add request
+│   ├── aiPlanService.js          # Turns an AI Quick Add response into a reviewable, per-item-toggleable plan of changes
+│   ├── aiModels.js               # Provider/model catalog for the AI Quick Add picker
+│   └── dataRetention.js          # Centralized retention-duration constants/helpers — see "Data retention policies"
 ├── utils/
 │   ├── dateUtils.js          # ISO date / "HH:MM" arithmetic
 │   ├── intervalUtils.js      # Interval merge/subtract math
@@ -792,7 +807,7 @@ src/
 │   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
 │   ├── nameSearch.js         # Single shared typo-tolerant/relevance-ranked name matcher (rankByNameSearch/scoreNameMatch) — the one source of truth for searching projects (and reused for Views/Actions) in Sidebar, ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette, and CalendarFilterMenu; don't add another ad-hoc `.includes()` matcher for names elsewhere
 │   ├── calendarFilter.js     # Calendar show-mode/project/tag filter predicates (CalendarFilterMenu's logic) — project search itself now lives in nameSearch.js
-│   ├── projectConstants.js   # "All Tasks"/"Inbox" pseudo-project sentinels + sidebar project ordering
+│   ├── projectConstants.js   # "All Tasks"/"Inbox" pseudo-project sentinels + sidebar project ordering + the NO_SCHEDULE_PROJECT_ID bulk-exclusion pseudo-project (drop tasks here to keep them out of Re-balance schedule without toggling excludeFromAutoSchedule per task)
 │   ├── projectStats.js       # Read-only per-project stats/sort for the Projects page: task count, top-level-only effective-hours total (avoids double-counting a parent's rolled-up subtask hours), sortProjectsBy(size|duration|created)
 │   ├── sharedTaskSync.js     # Pure decision logic for shared-task Firestore sync: which fields merge vs. last-write-wins, presence staleness, in-flight write race guards (Phase 1)
 │   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0)
@@ -1236,7 +1251,7 @@ user-visible effect (internal refactors, migration code).
 
 ## Tech stack
 
-- **React 18**, function components + hooks only.
+- **React 19**, function components + hooks only.
 - **Vite** for dev/build tooling.
 - No external state library — `useHistoryState` + React Context is enough
   at this scope and keeps the undo/redo model transparent and debuggable.

@@ -234,8 +234,12 @@ A few deliberate limits worth knowing:
   A viewer-role collaborator can look at a shared project's board but can't
   add, rename, or delete its columns.
 - **Scheduled time blocks are never shared.** Dragging a shared task onto your
-  calendar schedules it for *you* only, and shared tasks are left out of the
-  automatic scheduler, since capacity is a per-person thing.
+  calendar schedules it for *you* only, and by default shared tasks are left
+  out of the automatic scheduler, since capacity is a per-person thing. The
+  one exception: a task's "⋯" menu lets an editor **assign it to a specific
+  collaborator** (or unassign it), and a task assigned to *you* is scheduled
+  by Re-balance schedule against your own capacity like any other task — an
+  unassigned task, or one assigned to someone else, still stays out of it.
 - **If two people edit the same task at once, the last write wins** — there's no
   field-by-field merge. Editing different tasks never conflicts. The one
   exception is recurring-task completion, which merges properly rather than
@@ -622,6 +626,10 @@ cached copy.
   atomic, undoable action, triggered via keyboard shortcut (`Ctrl+Z` /
   `Ctrl+Shift+Z` by default, rebindable from Settings) rather than a topbar
   button — see `useKeyboardShortcuts.js`.
+- **Command palette** — `Ctrl+K` (rebindable from Settings) opens a Linear/
+  Todoist-style "jump to anything" search across Views, Projects, Tasks,
+  Calendar events, and quick actions (like Re-balance schedule or toggling
+  the theme); Arrow keys + Enter pick a result without touching the mouse.
 
 ### Smart task titles
 
