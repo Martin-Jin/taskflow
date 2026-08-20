@@ -64,6 +64,7 @@ import { getTransitiveDependencyIds } from '../utils/dependencyUtils';
 import { expandTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
 import { expandEventsForRange } from '../utils/recurrenceExpansion';
 import { isBlockTaskCompleted } from '../utils/missedTasks';
+import { NO_SCHEDULE_PROJECT_ID } from '../utils/projectConstants';
 
 /**
  * A recurring task is only eligible for the per-occurrence expansion below if
@@ -491,6 +492,12 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       // typedef's excludeFromAutoSchedule doc comment) — it can still be
       // scheduled manually by dragging it onto the calendar.
       !t.excludeFromAutoSchedule &&
+      // Same exclusion as excludeFromAutoSchedule above, but bulk/organizational
+      // rather than per-task: a user who'd rather move tasks into a dedicated
+      // bucket than toggle a flag on each one can drop them into the
+      // NO_SCHEDULE_PROJECT_ID pseudo-project (see projectConstants.js) for
+      // the same effect.
+      t.projectId !== NO_SCHEDULE_PROJECT_ID &&
       // Tombstoned (deleted) tasks stay in `tasks` for a while rather than
       // being removed outright (see SchedulerContext.deleteTask/utils/
       // taskTombstones.js), so this engine — which is handed the RAW array,

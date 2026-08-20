@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { rebalance } from '../../src/algorithms/rebalanceEngine';
 import { allocateTasks } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
+import { NO_SCHEDULE_PROJECT_ID } from '../../src/utils/projectConstants';
 
 const baseRules = {
   workDayStart: '09:00',
@@ -346,6 +347,26 @@ describe('rebalance', () => {
     ];
     const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
     expect(result.blocks.some((b) => b.id === 'b-noauto2')).toBe(false);
+  });
+
+  // A task filed into the NO_SCHEDULE_PROJECT_ID pseudo-project (see
+  // projectConstants.js) is a second, bulk way to get the same exclusion as
+  // excludeFromAutoSchedule above — for a user who'd rather organize by
+  // moving tasks into a bucket than toggle a flag per task.
+  it('never schedules a task filed into the NO_SCHEDULE_PROJECT_ID pseudo-project', () => {
+    const tasks = [
+      { id: 'noauto3', title: 'Parked task', projectId: NO_SCHEDULE_PROJECT_ID, estimatedHours: 1, dueDate: today },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'noauto3')).toBe(false);
+  });
+
+  it('still schedules a normal task with a real (non-pseudo) projectId', () => {
+    const tasks = [
+      { id: 'normal1', title: 'Regular task', projectId: 'real-project-1', estimatedHours: 1, dueDate: today },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: { ...baseRules, bufferDays: 0 }, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'normal1')).toBe(true);
   });
 
   // Tombstoned tasks (SchedulerContext.deleteTask/utils/taskTombstones.js)

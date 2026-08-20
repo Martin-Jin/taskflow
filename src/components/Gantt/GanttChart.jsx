@@ -48,7 +48,12 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { hasChildTasks } from '../../utils/taskHierarchy';
 import { priorityColor } from '../../utils/priorityColor';
-import { filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
+import {
+  filterTasksByProject,
+  filterTasksByStatus,
+  NO_SCHEDULE_PROJECT_ID,
+  NO_SCHEDULE_PROJECT_LABEL,
+} from '../../utils/projectConstants';
 import HoverPreviewCard from '../Calendar/HoverPreviewCard';
 
 const HORIZON_DAYS = 28;
@@ -203,7 +208,10 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
                         scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
                           title: task.title,
                           priority: task.priority,
-                          projectName: projectById[task.projectId]?.name,
+                          projectName:
+                            task.projectId === NO_SCHEDULE_PROJECT_ID
+                              ? NO_SCHEDULE_PROJECT_LABEL
+                              : projectById[task.projectId]?.name,
                           parentTitle: parentTask?.title,
                           isPassive: task.isPassive,
                           timeText: waitingLabel ? `Waiting on: ${waitingLabel}` : undefined,

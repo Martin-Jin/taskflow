@@ -60,6 +60,7 @@ import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
+import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { isAtMaxSubtaskDepth } from '../../utils/taskHierarchy';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -790,6 +791,10 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 // cover that case instead.
                 .filter((p) => p.name.trim().toLowerCase() !== 'inbox' && (p.id === projectId || !isViewerOnlyProject(p.id)))
                 .map((p) => ({ value: p.id, label: p.name })),
+              // A synthetic, always-available destination (never a real Project
+              // record — see projectConstants.js) — visually set apart from the
+              // real project list above since it isn't one.
+              { value: NO_SCHEDULE_PROJECT_ID, label: NO_SCHEDULE_PROJECT_LABEL, separatorBefore: true },
             ]}
           />
 

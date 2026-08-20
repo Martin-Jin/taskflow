@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.3.0',
+    date: '2026-08-20',
+    title: 'A "Do Not Auto-Schedule" bucket for parking tasks',
+    changes: [
+      'Added a new "Do Not Auto-Schedule" option in the project picker (when adding or editing a task, or bulk-moving several at once) — moving a task into it keeps that task out of Re-balance/Reschedule entirely, as a bulk alternative to toggling the per-task "Excluded from auto-schedule" setting one at a time. It doesn\'t appear in the sidebar as a real project, since it isn\'t one.',
+    ],
+  },
+  {
     version: '6.2.1',
     date: '2026-08-20',
     title: 'Fixed cloud sync getting stuck in a permanent, self-inflicted update loop',

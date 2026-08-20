@@ -47,6 +47,7 @@ import { formatHours } from '../../utils/formatHours';
 import { groupItemsByDay } from '../../utils/calendarGrouping';
 import { GRID_START_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
+import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { makeSelectionKey } from '../../hooks/useMultiSelect';
 import HoverPreviewCard from './HoverPreviewCard';
 
@@ -1232,7 +1233,10 @@ export default function WeekView({
                             title: displayTitle,
                             timeText: `${block.startTime}–${block.endTime}`,
                             priority: task.priority,
-                            projectName: projectById[task.projectId]?.name,
+                            projectName:
+                              task.projectId === NO_SCHEDULE_PROJECT_ID
+                                ? NO_SCHEDULE_PROJECT_LABEL
+                                : projectById[task.projectId]?.name,
                             isPassive: block.isPassive,
                           })
                   }

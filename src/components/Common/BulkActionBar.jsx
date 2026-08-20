@@ -26,6 +26,7 @@ import React, { useState } from 'react';
 import { X, Trash2, CheckSquare, Square, Calendar, Repeat, Folder, Tag, Flag } from 'lucide-react';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { RECURRENCE_UNITS } from '../../utils/recurrence';
+import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 
 /**
  * @param {object} props
@@ -148,6 +149,12 @@ export default function BulkActionBar({
                         {p.name}
                       </option>
                     ))}
+                    {/* Synthetic destination, not a real Project record (see
+                        projectConstants.js) — grouped separately so it reads
+                        as distinct from the real project list above it. */}
+                    <optgroup label="Other">
+                      <option value={NO_SCHEDULE_PROJECT_ID}>{NO_SCHEDULE_PROJECT_LABEL}</option>
+                    </optgroup>
                   </select>
                 </div>
               )}
