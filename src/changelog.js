@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.4.3',
+    date: '2026-08-20',
+    title: 'Polish for a few rough UI edges',
+    changes: [
+      'The task detail project picker no longer shows a jarring, unstyled "Other" group label above the "Do Not Auto-Schedule" option — it now uses the app\'s own themed dropdown styling throughout.',
+      'The "Select" (multi-select) button is now disabled when the current list view has no tasks to select.',
+      'Cleaned up the Share dialog, which had accumulated too many competing button/section borders — secondary actions (copy, rotate, disable, delete, set/clear expiry) now use a lighter touch, and the link-expiry date field now matches the app\'s dark theme instead of rendering with unstyled browser-default chrome.',
+    ],
+  },
+  {
     version: '6.4.2',
     date: '2026-08-20',
     title: 'Fix a broken guided-tour step and stale tour copy',

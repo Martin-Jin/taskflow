@@ -2663,6 +2663,30 @@ input[type='checkbox']:checked::after {
   flex-shrink: 0;
 }
 
+/* Bare input[type='date'] isn't covered by the app's generic dark-theme
+   input styling (that list only covers text/password/search/email/url —
+   see global.css's own input rules above), so without this it rendered with
+   plain browser-default (light) chrome, clashing with the rest of the
+   modal's dark theme — same fix as .ai-quickadd-daterange-row's own
+   input[type='date'] override. */
+.share-link-expiry-row input[type='date'] {
+  width: auto;
+  flex: 1 1 130px;
+  min-width: 0;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.share-link-expiry-row input[type='date']:focus {
+  border-color: var(--color-accent-border);
+  outline: none;
+}
+
 .share-link-actions {
   display: flex;
   gap: 6px;
@@ -2674,6 +2698,29 @@ input[type='checkbox']:checked::after {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Secondary actions inside an already-bordered .share-link-row (copy, the
+   expiry Set/Clear button, Rotate/Disable/Delete) use a ghost look instead
+   of .btn's default strong border — same idea as .menu-trigger/
+   .help-tooltip-trigger elsewhere. With the row's own card border plus the
+   URL input's border plus every one of these buttons ALSO carrying .btn's
+   full WCAG-contrast border, this section read as a jumble of competing
+   boxes. "Create link" (the one action in an otherwise-empty row, before a
+   link exists) deliberately keeps the default bordered look, since there's
+   nothing else in that row for it to compete with. */
+.share-link-url-row .btn,
+.share-link-expiry-row .btn,
+.share-link-actions .btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.share-link-url-row .btn:hover:not(:disabled),
+.share-link-expiry-row .btn:hover:not(:disabled),
+.share-link-actions .btn:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
 }
 
 .share-collaborator-list {

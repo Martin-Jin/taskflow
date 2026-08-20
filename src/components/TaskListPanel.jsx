@@ -643,13 +643,24 @@ export default function TaskListPanel({
               <button
                 type="button"
                 className={`btn btn-icon menu-trigger ${(view === 'list' ? select : boardSelect).selectionMode ? 'btn-primary' : ''}`}
+                // Nothing to select with an empty list — only gated for List
+                // view, since visibleTasks is List's own filtered set (Board
+                // resolves its own project/filter internally and isn't
+                // necessarily in sync with it).
+                disabled={view === 'list' && visibleTasks.length === 0}
                 onClick={() => {
                   const target = view === 'list' ? select : boardSelect;
                   target.setSelectionMode(!target.selectionMode);
                 }}
                 aria-pressed={(view === 'list' ? select : boardSelect).selectionMode}
                 aria-label={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
-                title={(view === 'list' ? select : boardSelect).selectionMode ? 'Cancel select' : 'Select'}
+                title={
+                  view === 'list' && visibleTasks.length === 0
+                    ? 'No tasks to select'
+                    : (view === 'list' ? select : boardSelect).selectionMode
+                      ? 'Cancel select'
+                      : 'Select'
+                }
               >
                 <CheckSquare size={14} />
               </button>
