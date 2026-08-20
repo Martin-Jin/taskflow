@@ -62,11 +62,16 @@ export const GUIDED_TOUR_STEPS = [
     body: 'Type naturally: "Call dentist tomorrow p2 every month" auto-detects a due date, priority, and recurrence as dismissible chips.',
   },
   {
+    // The real `[data-tour="ai-quick-add"]` mini-FAB only mounts once the
+    // "Add task" button's speed-dial is expanded (see AddTaskFabGroup) — it
+    // doesn't exist in the DOM otherwise, so pointing this step at it would
+    // silently time out and fall back to a spotlight-less tooltip on every
+    // run. Target the always-present main button instead.
     tab: 'tasks',
-    selector: '[data-tour="ai-quick-add"]',
+    selector: '[data-tour="add-task"]',
     placement: 'bottom',
     title: 'AI Quick Add',
-    body: 'Type — or paste a screenshot of an email, text, or flyer — and let AI propose changes across your tasks, events, projects, and subtasks/dependencies: creating, editing, moving, or deleting them. You review and approve each change before anything is applied. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
+    body: 'Tap this button to expand a small "AI Quick Add" option next to it. Type — or paste a screenshot or PDF of an email, text, or flyer — and let AI propose changes across your tasks, events, projects, and subtasks/dependencies: creating, editing, moving, or deleting them. You review and approve each change before anything is applied. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
   },
   {
     tab: 'tasks',
@@ -122,6 +127,6 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="danger-zone-card"]',
     placement: 'top',
     title: 'Fresh start any time',
-    body: 'Clear the sample tasks and boards, or fully reset TaskFlow, whenever you want a clean slate — and replay this tour again from here.',
+    body: 'Clear the sample tasks and boards, or fully reset TaskFlow, whenever you want a clean slate. Look for "Replay guided tour" under Settings → Help whenever you want to see this tour again.',
   },
 ];

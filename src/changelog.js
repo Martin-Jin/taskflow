@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.4.2',
+    date: '2026-08-20',
+    title: 'Fix a broken guided-tour step and stale tour copy',
+    changes: [
+      'Fixed the guided tour\'s "AI Quick Add" step, which pointed at an element that only exists once the Add-task button\'s speed-dial is expanded — it now points at the always-visible Add-task button instead, so the tour no longer silently loses its spotlight on that step.',
+      'Fixed the tour\'s last step claiming "Replay guided tour" lives in the Danger Zone card it was spotlighting — it actually lives under Settings → Help.',
+    ],
+  },
+  {
     version: '6.4.1',
     date: '2026-08-20',
     title: 'Fix back-to-back calendar blocks sometimes merging into a chip',
