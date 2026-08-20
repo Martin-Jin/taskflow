@@ -651,6 +651,35 @@ export function resolveOwnerProfile(sharedProject, viewers, ownerId) {
 }
 
 /**
+ * Everyone with real (non-anonymous) access to a shared project, for
+ * populating a task's "Assign to…" list (TaskDetailModal) — the owner plus
+ * every non-anonymous collaborator. Deliberately mirrors
+ * utils/commentMentions.js's getMentionCandidates almost exactly (same
+ * owner-profile-fallback and anonymous-exclusion reasoning — an anonymous
+ * link visitor has no durable identity across sessions for an assignment to
+ * keep meaning something to on a later visit), but does NOT exclude the
+ * current viewer: assigning a task to yourself is the normal case this
+ * feature exists for, unlike @-mentioning yourself in a comment.
+ * @param {object} params
+ * @param {string} params.ownerId
+ * @param {Record<string, {role?: string, displayName?: string, photoURL?: string|null, isAnonymous?: boolean}>} [params.collaborators]
+ * @param {string} [params.ownerDisplayName] - falls back to 'Project owner'
+ * @param {string|null} [params.ownerPhotoURL]
+ * @returns {Array<{uid: string, displayName: string, photoURL: string|null}>}
+ */
+export function getAssignableCollaborators({ ownerId, collaborators, ownerDisplayName, ownerPhotoURL }) {
+  const out = [];
+  if (ownerId) {
+    out.push({ uid: ownerId, displayName: ownerDisplayName || 'Project owner', photoURL: ownerPhotoURL || null });
+  }
+  for (const [uid, entry] of Object.entries(collaborators || {})) {
+    if (!uid || entry?.isAnonymous) continue;
+    out.push({ uid, displayName: entry?.displayName || 'Someone', photoURL: entry?.photoURL || null });
+  }
+  return out;
+}
+
+/**
  * Plan which shared projects need a self-rename write, given a user renaming
  * themselves from Settings (see SettingsPanel's account section). Pure so the
  * "which of my several memberships actually need touching" logic is testable

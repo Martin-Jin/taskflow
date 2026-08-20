@@ -281,6 +281,24 @@
  *                                              yet — so without a tombstone a deleted comment would reappear on
  *                                              the next sync. Set only on shared tasks; personal tasks have a
  *                                              single writer and just drop the comment from `comments`.
+ * @property {string|null} [assignedTo]      - Firebase uid of the collaborator a SHARED task (task.sharedProjectId
+ *                                              set — see Project typedef's own `sharedProjectId` and
+ *                                              utils/sharedTaskSync.js's isSharedTask) is assigned to, or null/absent
+ *                                              for unassigned. Meaningless on a personal (non-shared) task, which has
+ *                                              only one possible "owner" — the signed-in user — so it stays
+ *                                              absent there, same convention as `authorUid`/`deletedCommentIds` above.
+ *                                              The ONLY thing this field does: rebalanceEngine.js's `eligibleTasks`
+ *                                              filter carves out a shared task assigned to the CURRENT device's
+ *                                              signed-in uid as schedulable by that user's own auto-scheduler (their
+ *                                              own routines/capacity/calendar), the one deliberate hole in that
+ *                                              filter's otherwise-unconditional shared-task exclusion — see its own
+ *                                              comment for why every other shared task still can't be. A plain field
+ *                                              like any other on the task document, so it merges through the normal
+ *                                              last-write-wins policy (utils/sharedTaskSync.js's mergeSharedTask) with
+ *                                              no special-casing, and needs no BACKUP_FIELDS/computeFingerprint entry
+ *                                              since shared-task content is already entirely out of scope for
+ *                                              personal backups/live cloud sync (see backupService.js's BACKUP_FIELDS
+ *                                              doc comment on shared-project content).
  */
 
 /**
