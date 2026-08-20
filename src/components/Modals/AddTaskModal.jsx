@@ -35,7 +35,7 @@
  * to reliably parse it back later.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Repeat,
   Wind,
@@ -59,7 +59,7 @@ import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/da
 import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
+import { computeEffectiveRole, getAssignableCollaborators, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { isAtMaxSubtaskDepth } from '../../utils/taskHierarchy';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
@@ -114,6 +114,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   // task has no "move to" picker of its own), so null just means "not set"
   // rather than needing a separate hasEdited flag like the fields above.
   const [parentTaskId, setParentTaskId] = useState(null);
+  // Draft assignee from a smart-parsed "assign to <name>"/"for <name>" title
+  // mention (see the collaborators-gated `assignTo` field below) — like
+  // parentTaskId above, there's no manual widget for this in AddTaskModal, so
+  // null just means "not set" rather than needing a separate hasEdited flag.
+  const [assignedTo, setAssignedTo] = useState(null);
   const [isPassive, setIsPassive] = useState(false);
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
   const [enforceDueDate, setEnforceDueDate] = useState(false);
@@ -168,11 +173,40 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   }
   const isSelectedProjectViewerOnly = !!projectId && isViewerOnlyProject(projectId);
 
+  // Collaborators to offer for a smart-parsed "assign to"/"for" mention (see
+  // the `assignTo` field below) — only meaningful once the selected project
+  // actually resolves to a shared one the user can create tasks in at all
+  // (a viewer can't add tasks here regardless — see isSelectedProjectViewerOnly
+  // above — so there's no point detecting an assignment that could never be
+  // saved). `null` for the live-presence param (unlike TaskDetailModal, this
+  // modal doesn't subscribe to viewersByProject) just falls through
+  // resolveOwnerProfile's own fallback chain to the project doc's denormalized
+  // owner name, or a generic label — never a crash.
+  const selectedProject = projects.find((p) => p.id === projectId);
+  const selectedSharedProject = selectedProject?.sharedProjectId ? sharedProjects[selectedProject.sharedProjectId] : null;
+  const assignableCollaborators = useMemo(() => {
+    if (!selectedSharedProject || isSelectedProjectViewerOnly) return [];
+    const ownerProfile = resolveOwnerProfile(selectedSharedProject, null, selectedSharedProject.ownerId);
+    return getAssignableCollaborators({
+      ownerId: selectedSharedProject.ownerId,
+      collaborators: selectedSharedProject.collaborators,
+      ownerDisplayName: ownerProfile.displayName,
+      ownerPhotoURL: ownerProfile.photoURL,
+    });
+  }, [selectedSharedProject, isSelectedProjectViewerOnly]);
+
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);
     if (sectionId && !sections.find((s) => s.id === sectionId && s.projectId === newProjectId)) {
       setSectionId('');
     }
+    // A previously smart-parse-detected assignment only makes sense for the
+    // project it was detected against (a different/personal project's
+    // collaborator list has no relation to this uid) — drop it here rather
+    // than risk carrying a stale uid over to an unrelated project. There's no
+    // manual "Assign to" widget in this modal to re-set it from, unlike
+    // TaskDetailModal, so this is the only place it needs clearing.
+    if (assignedTo) setAssignedTo(null);
   }
 
   const {
@@ -185,6 +219,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     tasks,
     projects,
     sections,
+    collaborators: assignableCollaborators,
     fields: {
       link: {
         isUntouched: () => true,
@@ -282,6 +317,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           setParentTaskId(match.task.id);
         },
         revert: () => setParentTaskId(null),
+      },
+      assignTo: {
+        isUntouched: () => assignedTo === null,
+        apply: (match) => {
+          if (match.collaborator) setAssignedTo(match.collaborator.uid);
+        },
+        revert: () => setAssignedTo(null),
       },
       project: {
         isUntouched: () => !hasEditedProject,
@@ -393,6 +435,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       fixedTime: fixedTimeEnabled && fixedTime ? fixedTime : null,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
+      // Omitted entirely (rather than set to null) unless smart-parse actually
+      // detected one against THIS project's own collaborators — see
+      // types/index.js's Task.assignedTo doc comment on why it stays absent
+      // on a personal (non-shared) task.
+      ...(assignedTo ? { assignedTo } : {}),
     });
     requestClose();
   }

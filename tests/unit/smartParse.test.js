@@ -199,6 +199,75 @@ describe('parseTaskText', () => {
   });
 });
 
+describe('parseTaskText — "assign to"/"for" (assignTo)', () => {
+  const collaborators = [
+    { uid: 'u1', displayName: 'Alex' },
+    { uid: 'u2', displayName: 'Ann' },
+  ];
+
+  it('resolves an exact "assign to <name>" match', () => {
+    const result = parseTaskText('Design homepage assign to Alex', { collaborators });
+    expect(result.detected.assignTo.collaborator).toEqual(collaborators[0]);
+    expect(result.detected.assignTo.matchedText).toBe('assign to Alex');
+    expect(result.cleanedTitle).toBe('Design homepage');
+  });
+
+  it('also accepts "assigned to <name>"', () => {
+    const result = parseTaskText('Design homepage assigned to Alex', { collaborators });
+    expect(result.detected.assignTo.collaborator).toEqual(collaborators[0]);
+    expect(result.cleanedTitle).toBe('Design homepage');
+  });
+
+  it('resolves an unambiguous substring match for "assign to <partial name>"', () => {
+    const result = parseTaskText('Design homepage assign to Al', { collaborators });
+    expect(result.detected.assignTo.collaborator).toEqual(collaborators[0]);
+  });
+
+  it('still surfaces a "no match" detection (collaborator: null) when "assign to <name>" resolves nobody', () => {
+    // Mirrors findDependencyPhrase/findSubOfPhrase: an explicit trigger with an
+    // unresolved name is still worth a "no match" chip, unlike the bare "for" branch below.
+    const result = parseTaskText('Design homepage assign to Nobody', { collaborators });
+    expect(result.detected.assignTo.collaborator).toBeNull();
+    expect(result.detected.assignTo.fragment).toBe('Nobody');
+    expect(result.cleanedTitle).toBe('Design homepage');
+  });
+
+  it('leaves a trailing "#project"/"@label" mention alone for an "assign to" fragment bounded at the trigger', () => {
+    const result = parseTaskText('Ship release assign to Alex #Writing', {
+      collaborators,
+      projects: [{ id: 'p1', name: 'Writing' }],
+    });
+    expect(result.detected.assignTo.collaborator).toEqual(collaborators[0]);
+    expect(result.detected.project.project).toEqual({ id: 'p1', name: 'Writing' });
+    expect(result.cleanedTitle).toBe('Ship release');
+  });
+
+  it('resolves a bare "for <name>" only on an EXACT (not substring) name match', () => {
+    const result = parseTaskText('Buy gift for Alex', { collaborators });
+    expect(result.detected.assignTo.collaborator).toEqual(collaborators[0]);
+    expect(result.cleanedTitle).toBe('Buy gift');
+  });
+
+  it('does not treat an ordinary "for <phrase>" as an assignment when it is not an exact collaborator name', () => {
+    const result = parseTaskText('Buy milk for the party', { collaborators });
+    expect(result.detected.assignTo).toBeUndefined();
+    expect(result.cleanedTitle).toBe('Buy milk for the party');
+  });
+
+  it('does not let a short collaborator name substring-match an unrelated "for <phrase>"', () => {
+    // "Ann" must not match "Announcement prep" via "for" — only "assign to"/"assigned to" allow substring matching.
+    const result = parseTaskText('Draft agenda for Announcement prep', { collaborators });
+    expect(result.detected.assignTo).toBeUndefined();
+    expect(result.cleanedTitle).toBe('Draft agenda for Announcement prep');
+  });
+
+  it('never detects assignTo when no collaborators are passed (personal/non-shared task)', () => {
+    const result = parseTaskText('Design homepage assign to Alex');
+    expect(result.detected.assignTo).toBeUndefined();
+    expect(result.cleanedTitle).toBe('Design homepage assign to Alex');
+  });
+});
+
 describe('parseTaskText — "%section" shorthand', () => {
   it('resolves a unique exact-name match across all projects, with the owning project attached', () => {
     const projects = [{ id: 'p1', name: 'Home' }, { id: 'p2', name: 'Work' }];

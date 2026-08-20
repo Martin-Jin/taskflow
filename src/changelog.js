@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.5.0',
+    date: '2026-08-20',
+    title: 'Search-based "Assign to" picker, now including guests',
+    changes: [
+      'A shared task\'s "Assign to" menu (three-dot menu) is now a type-to-search box with a live-filtered dropdown instead of a plain list — much easier to use once a shared project has more than a handful of collaborators.',
+      'Anonymous (guest/share-link) collaborators can now be assigned tasks too, the same as signed-in collaborators.',
+      'Typing "assign to <name>" or "for <name>" into a shared task\'s title now smart-parses it as an assignment, the same way "#project" or "after <task>" already work.',
+    ],
+  },
+  {
     version: '6.4.3',
     date: '2026-08-20',
     title: 'Polish for a few rough UI edges',

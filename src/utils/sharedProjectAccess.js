@@ -651,15 +651,26 @@ export function resolveOwnerProfile(sharedProject, viewers, ownerId) {
 }
 
 /**
- * Everyone with real (non-anonymous) access to a shared project, for
- * populating a task's "Assign to…" list (TaskDetailModal) — the owner plus
- * every non-anonymous collaborator. Deliberately mirrors
- * utils/commentMentions.js's getMentionCandidates almost exactly (same
- * owner-profile-fallback and anonymous-exclusion reasoning — an anonymous
- * link visitor has no durable identity across sessions for an assignment to
- * keep meaning something to on a later visit), but does NOT exclude the
- * current viewer: assigning a task to yourself is the normal case this
- * feature exists for, unlike @-mentioning yourself in a comment.
+ * Everyone with access to a shared project, for populating a task's
+ * "Assign to…" list (TaskDetailModal) — the owner plus every collaborator,
+ * INCLUDING anonymous ones. Shares its owner-profile-fallback shape with
+ * utils/commentMentions.js's getMentionCandidates, and like that function
+ * does NOT exclude the current viewer: assigning a task to yourself is the
+ * normal case this feature exists for, unlike @-mentioning yourself in a
+ * comment.
+ *
+ * DELIBERATELY DIVERGES from getMentionCandidates on anonymous collaborators
+ * (that function still excludes them — do not "fix" this back to match it).
+ * A comment @-mention is stored as a denormalized, permanent token baked
+ * into the comment body (`@[Name](uid)` — see commentMentions.js) and will
+ * eventually drive Phase 4's notification fan-out, so a mention needs a
+ * durable identity to keep meaning something to on a later visit. An
+ * assignment is nothing like that: `assignedTo` is read LIVE off the
+ * project's current collaborator list on every render, not stored as a
+ * standalone artifact. If an anonymous assignee's session later expires (or
+ * they simply never come back), the task doesn't end up with a dangling
+ * reference to nobody — it just reads as "assigned to someone not currently
+ * around," a normal, recoverable state, not a broken permanent record.
  * @param {object} params
  * @param {string} params.ownerId
  * @param {Record<string, {role?: string, displayName?: string, photoURL?: string|null, isAnonymous?: boolean}>} [params.collaborators]
@@ -673,7 +684,7 @@ export function getAssignableCollaborators({ ownerId, collaborators, ownerDispla
     out.push({ uid: ownerId, displayName: ownerDisplayName || 'Project owner', photoURL: ownerPhotoURL || null });
   }
   for (const [uid, entry] of Object.entries(collaborators || {})) {
-    if (!uid || entry?.isAnonymous) continue;
+    if (!uid) continue;
     out.push({ uid, displayName: entry?.displayName || 'Someone', photoURL: entry?.photoURL || null });
   }
   return out;

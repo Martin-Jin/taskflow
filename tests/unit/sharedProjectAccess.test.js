@@ -14,6 +14,7 @@ import {
   getProjectShareState,
   generateShareToken,
   resolveOwnerProfile,
+  getAssignableCollaborators,
   planSelfRename,
   planGuestMigration,
   isGuestUser,
@@ -748,6 +749,64 @@ describe('resolveOwnerProfile', () => {
       displayName: 'Project owner',
       photoURL: null,
     });
+  });
+});
+
+describe('getAssignableCollaborators', () => {
+  it('includes the owner plus every collaborator, anonymous ones included', () => {
+    const result = getAssignableCollaborators({
+      ownerId: 'owner-1',
+      ownerDisplayName: 'Alice',
+      ownerPhotoURL: 'https://x/alice.png',
+      collaborators: {
+        'real-1': { role: 'editor', displayName: 'Bob', photoURL: 'https://x/bob.png' },
+        'guest-1': { role: 'viewer', displayName: 'Guest 1234', photoURL: null, isAnonymous: true },
+      },
+    });
+    expect(result).toEqual([
+      { uid: 'owner-1', displayName: 'Alice', photoURL: 'https://x/alice.png' },
+      { uid: 'real-1', displayName: 'Bob', photoURL: 'https://x/bob.png' },
+      { uid: 'guest-1', displayName: 'Guest 1234', photoURL: null },
+    ]);
+  });
+
+  it('does not exclude anonymous collaborators (deliberate divergence from getMentionCandidates)', () => {
+    const result = getAssignableCollaborators({
+      ownerId: 'owner-1',
+      collaborators: { 'guest-1': { role: 'viewer', displayName: 'Guest', isAnonymous: true } },
+    });
+    expect(result.map((c) => c.uid)).toContain('guest-1');
+  });
+
+  it('does not exclude the current viewer (unlike getMentionCandidates, which has no currentUid param at all)', () => {
+    const result = getAssignableCollaborators({
+      ownerId: 'owner-1',
+      collaborators: { 'real-1': { role: 'editor', displayName: 'Bob' } },
+    });
+    expect(result.map((c) => c.uid)).toEqual(['owner-1', 'real-1']);
+  });
+
+  it('falls back to generic labels/nulls when displayName/photoURL are missing', () => {
+    const result = getAssignableCollaborators({
+      ownerId: 'owner-1',
+      collaborators: { 'real-1': { role: 'editor' } },
+    });
+    expect(result).toEqual([
+      { uid: 'owner-1', displayName: 'Project owner', photoURL: null },
+      { uid: 'real-1', displayName: 'Someone', photoURL: null },
+    ]);
+  });
+
+  it('returns an empty list when there is no ownerId and no collaborators', () => {
+    expect(getAssignableCollaborators({})).toEqual([]);
+  });
+
+  it('skips a malformed entry with an empty-string uid', () => {
+    const result = getAssignableCollaborators({
+      ownerId: 'owner-1',
+      collaborators: { '': { role: 'editor', displayName: 'Nobody' } },
+    });
+    expect(result).toEqual([{ uid: 'owner-1', displayName: 'Project owner', photoURL: null }]);
   });
 });
 

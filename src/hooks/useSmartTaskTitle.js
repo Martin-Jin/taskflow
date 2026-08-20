@@ -42,6 +42,7 @@ import {
   CornerUpRight,
   CornerUpLeft,
   ListFilter,
+  UserPlus,
 } from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
 import { formatDisplayDate, formatTime12h } from '../utils/dateUtils';
@@ -63,16 +64,17 @@ const SCALAR_FIELD_TYPES = [
   'dependency',
   'subOf',
   'unsubtask',
+  'assignTo',
   'project',
   'sectionShorthand',
 ];
 
-export function useSmartTaskTitle({ tasks, projects = [], sections = [], fields }) {
+export function useSmartTaskTitle({ tasks, projects = [], sections = [], collaborators = [], fields }) {
   const [smartDetected, setSmartDetected] = useState({});
   const [dismissedKeys, setDismissedKeys] = useState(() => new Set());
 
   function handleTitleChange(value) {
-    const { detected } = parseTaskText(value, { existingTasks: tasks, projects, sections });
+    const { detected } = parseTaskText(value, { existingTasks: tasks, projects, sections, collaborators });
     const nextVisible = {};
     const nextDismissed = new Set(dismissedKeys);
 
@@ -249,6 +251,10 @@ export function buildSmartChips(smartDetected) {
         ? { type: 'subOf', icon: CornerUpRight, label: `Sub-task of: ${smartDetected.subOf.task.title}` }
         : { type: 'subOf', icon: HelpCircle, label: `No match for "${smartDetected.subOf.fragment}"` }),
     smartDetected.unsubtask && { type: 'unsubtask', icon: CornerUpLeft, label: 'Remove from parent task' },
+    smartDetected.assignTo &&
+      (smartDetected.assignTo.collaborator
+        ? { type: 'assignTo', icon: UserPlus, label: `Assign to: ${smartDetected.assignTo.collaborator.displayName}` }
+        : { type: 'assignTo', icon: HelpCircle, label: `No match for "${smartDetected.assignTo.fragment}"` }),
     smartDetected.project &&
       (smartDetected.project.project
         ? {
