@@ -237,9 +237,12 @@ A few deliberate limits worth knowing:
   calendar schedules it for *you* only, and by default shared tasks are left
   out of the automatic scheduler, since capacity is a per-person thing. The
   one exception: a task's "⋯" menu lets an editor **assign it to a specific
-  collaborator** (or unassign it), and a task assigned to *you* is scheduled
-  by Re-balance schedule against your own capacity like any other task — an
-  unassigned task, or one assigned to someone else, still stays out of it.
+  collaborator** via a type-to-search box (including guests, not just
+  signed-in accounts) or unassign it, and a task assigned to *you* is
+  scheduled by Re-balance schedule against your own capacity like any other
+  task — an unassigned task, or one assigned to someone else, still stays out
+  of it. Typing "assign to Alex" or "for Alex" into a shared task's title
+  smart-parses the assignment too, same as `#project` or `after <task>`.
 - **If two people edit the same task at once, the last write wins** — there's no
   field-by-field merge. Editing different tasks never conflicts. The one
   exception is recurring-task completion, which merges properly rather than
@@ -640,8 +643,10 @@ every month after Book appointment"* — auto-detects a due date, Todoist's
 schedulable date (`"not before Friday"`, `"don't start until tomorrow"`,
 `"can't start before March 3"`), `!noauto` / `!manual` to exclude the task
 from Re-balance schedule, a plain URL, a dependency, a `sub of`/`subtask of`
-mention that makes the task a sub-task of another, a `#project` mention, a
-standalone `%section` shorthand, and one or more `@label` mentions,
+mention that makes the task a sub-task of another, an `assign to <name>` /
+`for <name>` mention that assigns a shared task to a collaborator (including
+guests), a `#project` mention, a standalone `%section` shorthand, and one or
+more `@label` mentions,
 surfacing each as a dismissible chip rather than applying anything
 silently. Dismissing a chip blocks that exact phrase from re-triggering
 until you edit it. A chip that matched more than one thing ambiguously

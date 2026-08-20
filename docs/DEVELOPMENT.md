@@ -810,8 +810,8 @@ src/
 │   ├── projectConstants.js   # "All Tasks"/"Inbox" pseudo-project sentinels + sidebar project ordering + the NO_SCHEDULE_PROJECT_ID bulk-exclusion pseudo-project (drop tasks here to keep them out of Re-balance schedule without toggling excludeFromAutoSchedule per task)
 │   ├── projectStats.js       # Read-only per-project stats/sort for the Projects page: task count, top-level-only effective-hours total (avoids double-counting a parent's rolled-up subtask hours), sortProjectsBy(size|duration|created)
 │   ├── sharedTaskSync.js     # Pure decision logic for shared-task Firestore sync: which fields merge vs. last-write-wins, presence staleness, in-flight write race guards (Phase 1)
-│   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0)
-│   ├── commentMentions.js    # Parses/renders `@[Name](uid)` mentions in a shared task's comment thread (Phase 3)
+│   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0). Also `getAssignableCollaborators`, the candidate list for a task's "Assign to" — deliberately INCLUDES anonymous collaborators, unlike commentMentions.js's getMentionCandidates below, since an assignment is read live off current project state rather than stored as a permanent denormalized artifact
+│   ├── commentMentions.js    # Parses/renders `@[Name](uid)` mentions in a shared task's comment thread (Phase 3) — mention candidates exclude anonymous collaborators (no durable identity for Phase 4's future notification fan-out to reach)
 │   ├── joinFlow.js           # Pure sequencing decisions behind useJoinFlow.js (token caching, per-link display-name storage) (Phase 2)
 │   └── avatarDisplay.js      # Shared avatar helpers (safe photoURL check, initials fallback) used by PresenceAvatars/SharedProjectBadge/ShareProjectModal
 ├── types/
