@@ -100,6 +100,7 @@ import {
   CornerUpLeft,
   FolderInput,
   UserPlus,
+  Search,
 } from 'lucide-react';
 import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -367,6 +368,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [subtaskIsPassive, setSubtaskIsPassive] = useState(false);
   const [subtaskEnforceDueDate, setSubtaskEnforceDueDate] = useState(false);
   const [subtaskDependsOn, setSubtaskDependsOn] = useState([]);
+  const [subtaskAssignedTo, setSubtaskAssignedTo] = useState(null);
   const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   // "Move to" popover (breadcrumb button next to the hierarchy label) — lets
@@ -417,6 +419,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [mentionSpan, setMentionSpan] = useState(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
 
+  // "Assign to…" search (three-dot menu) — a type-to-filter input over
+  // `assignableCollaborators` below, replacing what used to be a flat button
+  // list. Reset whenever the three-dot menu itself closes (see the effect
+  // near menuOpen) so reopening it always starts from a blank search rather
+  // than the previous session's leftover query/highlight.
+  const [assignSearchQuery, setAssignSearchQuery] = useState('');
+  const [assignHighlight, setAssignHighlight] = useState(0);
+
   // The owner has no entry in `collaborators` (see SharedProject typedef) —
   // resolveOwnerProfile prefers the denormalized ownerDisplayName/
   // ownerPhotoURL on the project doc (durable, works while the owner's
@@ -466,6 +476,31 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       ownerPhotoURL: ownerProfile?.photoURL,
     });
   }, [sharedProject, ownerProfile]);
+
+  // Re-filters assignableCollaborators as the user types — reuses the same
+  // case-insensitive substring filter the comment @-mention dropdown already
+  // uses (an empty query returns every candidate, matching the old flat
+  // list's default of showing everyone).
+  const assignSearchMatches = useMemo(
+    () => filterMentionCandidates(assignSearchQuery, assignableCollaborators),
+    [assignSearchQuery, assignableCollaborators]
+  );
+
+  // Reset the search box the moment the three-dot menu closes (however it
+  // closes — Escape, outside click, or picking an assignee), so it never
+  // reopens showing a stale query from a previous visit.
+  useEffect(() => {
+    if (!menuOpen) {
+      setAssignSearchQuery('');
+      setAssignHighlight(0);
+    }
+  }, [menuOpen]);
+
+  /** Applies `assignedTo` (null for the synthetic "Unassigned" entry) and closes the menu. */
+  function chooseAssignee(candidate) {
+    updateTask(task.id, { assignedTo: candidate?.uid ?? null });
+    setMenuOpen(false);
+  }
 
   /** Re-derive the active "@query" span from the input's current caret position. */
   function refreshMentionSpan(nextText) {
@@ -1151,6 +1186,15 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const lastSmartEarliestDateRef = useRef(null);
   const lastSmartProjectRef = useRef(null);
   const lastSmartDependencyIdRef = useRef(null);
+  // { appliedUid, previousUid } | null — unlike the other refs above (which
+  // just remember "the last value smart-parse itself set"), assignedTo has no
+  // local draft state to compare against (it's written straight to Firestore
+  // via updateTask, same as the three-dot "Assign to" menu — see that menu's
+  // own chooseAssignee), so revert() needs the PRIOR value too, not just null,
+  // to avoid clobbering a pre-existing assignment that had nothing to do with
+  // smart-parse (mirrors how the dependency field's revert only removes the
+  // one id it added, never resets the whole list).
+  const lastSmartAssignedToRef = useRef(null);
   const {
     smartDetected,
     handleTitleChange: handleSmartTitleChange,
@@ -1162,6 +1206,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     tasks,
     projects,
     sections,
+    // Only a shared task has anyone to assign to — an empty list here means
+    // findAssignToPhrase (smartParse.js) never even attempts a match, same
+    // gating every other "is this task shared" surface in this file uses.
+    collaborators: isSharedTask ? assignableCollaborators : [],
     fields: {
       link: {
         isUntouched: () =>
@@ -1338,6 +1386,31 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
         },
         revert: () => setSmartParentTaskId(null),
       },
+      // Unlike every other field here, this writes straight to Firestore via
+      // updateTask (same as the three-dot "Assign to" menu) rather than local
+      // draft state committed on Save — assignedTo was never part of this
+      // modal's draft/autosave lifecycle to begin with (see that menu's own
+      // chooseAssignee), and folding it in now would mean touching the
+      // fragile isDirty/initialSnapshotRef machinery below for a field that
+      // already has its own, simpler, immediate-write precedent.
+      assignTo: {
+        isUntouched: () =>
+          lastSmartAssignedToRef.current === null || task.assignedTo === lastSmartAssignedToRef.current.appliedUid,
+        apply: (match) => {
+          // Defense in depth — the three-dot menu's own Assign-to buttons are
+          // disabled the same way; a viewer has no write access to the task
+          // document at all, so this would just fail against firestore.rules.
+          if (isReadOnlyViewer || !match.collaborator || match.collaborator.uid === (task.assignedTo || null)) return;
+          lastSmartAssignedToRef.current = { appliedUid: match.collaborator.uid, previousUid: task.assignedTo || null };
+          updateTask(task.id, { assignedTo: match.collaborator.uid });
+        },
+        revert: () => {
+          if (lastSmartAssignedToRef.current) {
+            updateTask(task.id, { assignedTo: lastSmartAssignedToRef.current.previousUid });
+            lastSmartAssignedToRef.current = null;
+          }
+        },
+      },
       project: {
         isUntouched: () =>
           projectId === (task.projectId || '') ||
@@ -1404,6 +1477,11 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     tasks,
     projects,
     sections,
+    // Only offered while the draft still inherits its parent's (shared)
+    // project by default — see the assignedTo-omission comment in
+    // handleAddSubtask below for why a detection stops being meaningful once
+    // the draft's own project field is touched.
+    collaborators: isSharedTask && !subtaskHasEditedProject ? assignableCollaborators : [],
     fields: {
       link: {
         isUntouched: () => true,
@@ -1462,6 +1540,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           if (!subtaskDueDate && !detected.dueDate) setSubtaskDueDate(toISODate(new Date()));
         },
         revert: () => setSubtaskEnforceDueDate(false),
+      },
+      assignTo: {
+        isUntouched: () => true,
+        apply: (match) => {
+          if (match.collaborator) setSubtaskAssignedTo(match.collaborator.uid);
+        },
+        revert: () => setSubtaskAssignedTo(null),
       },
       dependency: {
         isUntouched: () => true,
@@ -1683,6 +1768,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setSubtaskIsPassive(false);
     setSubtaskEnforceDueDate(false);
     setSubtaskDependsOn([]);
+    setSubtaskAssignedTo(null);
     resetSubtaskSmartState();
   }
 
@@ -1723,6 +1809,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       isPassive: subtaskIsPassive,
       enforceDueDate: subtaskEnforceDueDate && !!subtaskDueDate,
       fixedTime: subtaskFixedTimeEnabled && subtaskFixedTime ? subtaskFixedTime : null,
+      // Only meaningful while the sub-task still inherits its parent's
+      // (shared) project by default — the `collaborators` list passed to
+      // useSmartTaskTitle above is scoped to that same shared project, so a
+      // detected assignment here would be meaningless once the draft's own
+      // project field has been changed away from that default. Omitted
+      // entirely rather than set to null on a personal task (see
+      // types/index.js's Task.assignedTo doc comment).
+      ...(isSharedTask && !subtaskHasEditedProject && subtaskAssignedTo ? { assignedTo: subtaskAssignedTo } : {}),
     });
     resetSubtaskDraft();
   }
@@ -2305,15 +2399,60 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                             <UserPlus size={12} aria-hidden="true" />
                             Assign to
                           </li>
+                          {/* Type-to-search replaces what used to be a flat button per
+                              collaborator — that doesn't scale once a shared project's
+                              member list grows. Mirrors the comment @-mention autocomplete's
+                              filtering (filterMentionCandidates) and arrow-key/Enter
+                              conventions, but renders as a plain in-flow list rather than a
+                              floating popup: this already lives inside the "..." menu's own
+                              portaled, scrollable dropdown, so a second nested popup would
+                              just add positioning complexity for no benefit. */}
+                          <li role="none" className="assign-to-search-row">
+                            <div className="assign-to-search">
+                              <Search size={13} aria-hidden="true" className="assign-to-search-icon" />
+                              <input
+                                type="text"
+                                className="assign-to-search-input"
+                                placeholder="Search collaborators…"
+                                value={assignSearchQuery}
+                                disabled={isReadOnlyViewer}
+                                onChange={(e) => {
+                                  setAssignSearchQuery(e.target.value);
+                                  setAssignHighlight(0);
+                                }}
+                                onKeyDown={(e) => {
+                                  // +1 to account for the synthetic "Unassigned" row pinned at index 0.
+                                  const optionCount = assignSearchMatches.length + 1;
+                                  if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    setAssignHighlight((i) => Math.min(i + 1, optionCount - 1));
+                                  } else if (e.key === 'ArrowUp') {
+                                    e.preventDefault();
+                                    setAssignHighlight((i) => Math.max(i - 1, 0));
+                                  } else if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    if (assignHighlight === 0) chooseAssignee(null);
+                                    else chooseAssignee(assignSearchMatches[assignHighlight - 1]);
+                                  } else if (e.key === 'Escape' && assignSearchQuery) {
+                                    // Clear the search first; a second Escape (query already
+                                    // empty) falls through to useMenuPosition's own listener
+                                    // and closes the whole "..." menu.
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setAssignSearchQuery('');
+                                    setAssignHighlight(0);
+                                  }
+                                }}
+                              />
+                            </div>
+                          </li>
                           <li role="none">
                             <button
                               type="button"
                               role="menuitem"
-                              className="detail-menu-item"
-                              onClick={() => {
-                                updateTask(task.id, { assignedTo: null });
-                                setMenuOpen(false);
-                              }}
+                              className={`detail-menu-item ${assignHighlight === 0 ? 'highlighted' : ''}`}
+                              onClick={() => chooseAssignee(null)}
+                              onMouseEnter={() => setAssignHighlight(0)}
                               disabled={isReadOnlyViewer}
                               title={isReadOnlyViewer ? "Viewers can't reassign tasks" : undefined}
                             >
@@ -2321,28 +2460,30 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                               Unassigned
                             </button>
                           </li>
-                          {assignableCollaborators.map((c) => (
-                            <li role="none" key={c.uid}>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="detail-menu-item"
-                                onClick={() => {
-                                  updateTask(task.id, { assignedTo: c.uid });
-                                  setMenuOpen(false);
-                                }}
-                                disabled={isReadOnlyViewer}
-                                title={isReadOnlyViewer ? "Viewers can't reassign tasks" : undefined}
-                              >
-                                <Check
-                                  size={14}
-                                  aria-hidden="true"
-                                  style={{ visibility: task.assignedTo === c.uid ? 'visible' : 'hidden' }}
-                                />
-                                {c.uid === user?.uid ? `${c.displayName} (you)` : c.displayName}
-                              </button>
-                            </li>
-                          ))}
+                          {assignSearchMatches.length === 0 ? (
+                            <li role="none" className="assign-to-empty">No collaborators match "{assignSearchQuery}"</li>
+                          ) : (
+                            assignSearchMatches.map((c, i) => (
+                              <li role="none" key={c.uid}>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className={`detail-menu-item ${assignHighlight === i + 1 ? 'highlighted' : ''}`}
+                                  onClick={() => chooseAssignee(c)}
+                                  onMouseEnter={() => setAssignHighlight(i + 1)}
+                                  disabled={isReadOnlyViewer}
+                                  title={isReadOnlyViewer ? "Viewers can't reassign tasks" : undefined}
+                                >
+                                  <Check
+                                    size={14}
+                                    aria-hidden="true"
+                                    style={{ visibility: task.assignedTo === c.uid ? 'visible' : 'hidden' }}
+                                  />
+                                  {c.uid === user?.uid ? `${c.displayName} (you)` : c.displayName}
+                                </button>
+                              </li>
+                            ))
+                          )}
                         </>
                       )}
                       {task.parentId && (

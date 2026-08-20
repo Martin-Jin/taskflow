@@ -22,23 +22,32 @@
  * standalone "%section" shorthand (a shorter alternative to "#Project/
  * Section" for when the project doesn't need to be spelled out — searches
  * every section across every project and can return several ambiguous
- * candidates instead of resolving to one), and "@label" mentions (one or
+ * candidates instead of resolving to one), "@label" mentions (one or
  * more — unlike the other detectors these don't need to resolve against
- * anything that already exists, since a new tag is just created on save).
+ * anything that already exists, since a new tag is just created on save),
+ * and "assign to <name>"/"for <name>" (fuzzy-matched against a SHARED task's
+ * collaborators, setting `assignedTo` — see findAssignToPhrase's own doc
+ * comment for why the bare "for" trigger needs a much stricter match than
+ * the others here).
  *
  * Detection runs in sequence — link, "not before <date>"/earliest date, due
  * date, recurrence, priority, duration, "can run unattended", "on the
  * day"/enforce due date, "!noauto" (exclude from auto-schedule), dependency,
- * "sub of", "unsubtask", project, section shorthand, then labels — stripping each match
- * out of the working text before the next detector runs. This keeps the
- * dependency/"sub of" fragment (which captures "everything after the trigger
- * word", up to the next "@"/"#" or the end of the string) free of unrelated
- * phrases typed after it, e.g. "after Design review tomorrow p2" leaves a
- * clean "Design review" fragment to match against existing task titles once
- * "tomorrow" and "p2" have already been pulled out — and the same "@"/"#"
- * boundary means a trailing "#project"/"@label" mention (e.g. "after Design
- * review #Writing") is left alone for the detectors that run after it,
- * rather than being swallowed into the dependency/"sub of" match. The
+ * "sub of", "unsubtask", "assign to"/"for", project, section shorthand, then
+ * labels — stripping each match out of the working text before the next
+ * detector runs. This keeps the dependency/"sub of"/"assign to" fragment
+ * (which captures "everything after the trigger word", up to the next "@"/
+ * "#" or the end of the string) free of unrelated phrases typed after it,
+ * e.g. "after Design review tomorrow p2" leaves a clean "Design review"
+ * fragment to match against existing task titles once "tomorrow" and "p2"
+ * have already been pulled out — and the same "@"/"#" boundary means a
+ * trailing "#project"/"@label" mention (e.g. "after Design review #Writing")
+ * is left alone for the detectors that run after it, rather than being
+ * swallowed into the dependency/"sub of"/"assign to" match. (The same
+ * bounded-capture tradeoff means two of these trigger phrases typed back to
+ * back with nothing else between them can still swallow one another — e.g.
+ * "assign to Alex after Design review" — a pre-existing characteristic of
+ * this style of detector, not something unique to "assign to".) The
  * section-shorthand detector runs after "#project" for the same reason: an
  * explicit "#Project/Section" mention already consumed its own text by the
  * time "%section" runs, so a "%" appearing only as part of that already-
@@ -244,6 +253,66 @@ function findUnsubtaskPhrase(text) {
   return { matchedText: m[0], index: m.index };
 }
 
+/**
+ * "assign to <name>" (also accepts "assigned to <name>") or a bare "for
+ * <name>" — sets a SHARED task's `assignedTo` to the matched collaborator's
+ * uid. Only ever invoked with a non-empty `collaborators` list by the caller
+ * (see useSmartTaskTitle.js) when the task's project is actually shared;
+ * there's no one to assign to on a personal task.
+ *
+ * "assign to <name>" is bounded the same way as findDependencyPhrase/
+ * findSubOfPhrase above (capture up to the next "@"/"#" or end of string,
+ * fuzzy-matched via matchFragmentAgainstCandidates) — safe to match loosely
+ * because the trigger phrase itself is unambiguous.
+ *
+ * "for <name>" is a different story: "for" is one of the most common words
+ * in an ordinary English title ("buy milk for the party", "gift for mom's
+ * birthday"), so matching it as loosely as the trigger phrases above would
+ * false-positive constantly (findProjectPhrase drew this same line by
+ * requiring its own bare-word fallback to be introduced by an explicit "#"
+ * sigil — "for" has no such sigil to lean on). Instead this requires the
+ * bounded fragment to be an EXACT, case-insensitive match for one
+ * collaborator's full display name, with substring matching turned off
+ * entirely — otherwise a short name like "Ann" would spuriously match a
+ * fragment like "Annual planning" (matchFragmentAgainstCandidates' substring
+ * check would call that a partial match). An ordinary title ending in "for
+ * <unrelated noun phrase>" therefore never matches unless that phrase
+ * happens to be a collaborator's name verbatim.
+ *
+ * ASYMMETRIC "no match" behavior between the two triggers, unlike
+ * findDependencyPhrase/findSubOfPhrase (which always return a `{task: null,
+ * ...}` detection once their trigger word matches, so the UI can show a "no
+ * match for X" chip): "assign to"/"assigned to" does the same — an
+ * unresolved name after an explicit trigger is still worth surfacing as "no
+ * match", since the user unambiguously meant to assign someone. A bare "for"
+ * with no exact match returns null OUTRIGHT (no detection object at all) —
+ * surfacing "no match" there would mean every ordinary title ending in "for
+ * <anything>" pops a "no match" chip, exactly the noise this stricter branch
+ * exists to avoid.
+ */
+function findAssignToPhrase(text, collaborators) {
+  if (!collaborators || collaborators.length === 0) return null;
+
+  const explicit = text.match(/\bassign(?:ed)? to\s+([^@#]+?)(?=\s*[@#]|$)/i);
+  if (explicit && explicit[1].trim()) {
+    const fragment = explicit[1].trim();
+    const collaborator = matchFragmentAgainstCandidates(fragment, collaborators, (c) => c.displayName);
+    return { collaborator, fragment, matchedText: explicit[0], index: explicit.index };
+  }
+
+  const forMatch = text.match(/\bfor\s+([^@#]+?)(?=\s*[@#]|$)/i);
+  if (forMatch && forMatch[1].trim()) {
+    const fragment = forMatch[1].trim();
+    const f = fragment.toLowerCase();
+    const exactMatches = collaborators.filter((c) => (c.displayName || '').trim().toLowerCase() === f);
+    if (exactMatches.length === 1) {
+      return { collaborator: exactMatches[0], fragment, matchedText: forMatch[0], index: forMatch.index };
+    }
+  }
+
+  return null;
+}
+
 function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -437,7 +506,7 @@ function findLabelPhrases(text) {
  * dependency mentions.
  *
  * @param {string} text
- * @param {{existingTasks?: Array<{id: string, title: string}>, projects?: Array<{id: string, name: string}>, sections?: Array<{id: string, name: string, projectId: string}>}} [options]
+ * @param {{existingTasks?: Array<{id: string, title: string}>, projects?: Array<{id: string, name: string}>, sections?: Array<{id: string, name: string, projectId: string}>, collaborators?: Array<{uid: string, displayName: string}>}} [options]
  * @returns {{
  *   cleanedTitle: string,
  *   detected: {
@@ -451,13 +520,14 @@ function findLabelPhrases(text) {
  *     excludeFromAutoSchedule?: {matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
  *     subOf?: {task: object|null, fragment: string, matchedText: string},
+ *     assignTo?: {collaborator: {uid: string, displayName: string}|null, fragment: string, matchedText: string},
  *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
  *     sectionShorthand?: {project: object|null, section: object|null, fragment: string, matchedText: string, candidates: Array<{project: object|null, section: object}>},
  *     labels?: Array<{name: string, matchedText: string}>,
  *   }
  * }}
  */
-export function parseTaskText(text, { existingTasks = [], projects = [], sections = [] } = {}) {
+export function parseTaskText(text, { existingTasks = [], projects = [], sections = [], collaborators = [] } = {}) {
   if (!text || !text.trim()) return { cleanedTitle: text || '', detected: {} };
 
   let working = text;
@@ -554,6 +624,12 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (unsubtaskMatch) {
     detected.unsubtask = unsubtaskMatch;
     working = removeMatch(working, unsubtaskMatch.matchedText);
+  }
+
+  const assignToMatch = findAssignToPhrase(working, collaborators);
+  if (assignToMatch) {
+    detected.assignTo = assignToMatch;
+    working = removeMatch(working, assignToMatch.matchedText);
   }
 
   const projectMatch = findProjectPhrase(working, projects, sections);

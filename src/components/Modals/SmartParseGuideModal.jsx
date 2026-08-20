@@ -69,6 +69,12 @@ const SECTIONS = [
     description: "Removes this task's parent, if it has one.",
   },
   {
+    title: 'Assign to',
+    examples: ['assign to Alex', 'for Alex'],
+    description:
+      'On a shared task, assigns it to a collaborator by name (including guests) — only available while the task is in a shared project.',
+  },
+  {
     title: 'Project',
     examples: ['#Health', '#Tasks/Errands'],
     description: 'Assigns the task to a project, optionally a section within it.',

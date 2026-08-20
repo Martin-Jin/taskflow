@@ -713,12 +713,56 @@
   cursor: pointer;
 }
 
-.detail-menu-item:hover {
+.detail-menu-item:hover,
+.detail-menu-item.highlighted {
   background: var(--color-bg-surface-hover);
 }
 
 .detail-menu-item-danger {
   color: var(--color-danger);
+}
+
+/* "Assign to…" search box (see TaskDetailModal) — an ordinary in-flow row
+   inside .detail-menu-dropdown, not a floating popup: the dropdown is
+   already portaled/scrollable, so the filtered collaborator list below this
+   input just renders as plain .detail-menu-item rows underneath it. */
+.assign-to-search-row {
+  padding: 2px 8px 4px;
+}
+
+.assign-to-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+}
+
+.assign-to-search-icon {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.assign-to-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.assign-to-search-input:focus {
+  outline: none;
+}
+
+.assign-to-empty {
+  padding: 7px 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 /* AddTaskModal's header — title input + close button on one row, close
