@@ -560,6 +560,38 @@ export function computePushSingleFlightDecision(pushInFlight) {
   return { proceed: true, queue: false };
 }
 
+// TEMPORARY DIAGNOSTIC — logs exactly which task(s) mergeTasksByUpdatedAt
+// disagreed on between local and remote, which side's `updatedAt` won, and
+// what the raw timestamps were (to catch a clock-skew scenario: a genuinely
+// later real-world edit carrying an EARLIER wall-clock updatedAt because the
+// device that made it has a lagging system clock). Only logs tasks whose
+// CONTENT actually differs between local/remote — a task both sides already
+// agree on produces no noise. Safe to delete once the current "completing a
+// task on one device doesn't stick on another" repro is understood.
+function logSyncDebugPerTaskMergeDecision(localTasks, remoteTasks, mergedTasks) {
+  const localById = new Map((localTasks || []).map((t) => [t.id, t]));
+  const remoteById = new Map((remoteTasks || []).map((t) => [t.id, t]));
+  const mergedById = new Map((mergedTasks || []).map((t) => [t.id, t]));
+  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
+  for (const id of ids) {
+    const local = localById.get(id);
+    const remote = remoteById.get(id);
+    if (!local || !remote) continue; // only-on-one-side isn't a merge conflict
+    if (canonicalStringify(local) === canonicalStringify(remote)) continue; // already agree
+    const merged = mergedById.get(id);
+    const winner = merged === local ? 'local' : merged === remote ? 'remote' : 'unknown';
+    console.log('[SYNC-DEBUG] per-task merge decision', {
+      id,
+      title: merged?.title,
+      localUpdatedAt: local.updatedAt,
+      remoteUpdatedAt: remote.updatedAt,
+      localIsCompleted: local.isCompleted,
+      remoteIsCompleted: remote.isCompleted,
+      winner,
+    });
+  }
+}
+
 /**
  * Pure merge-decision for applyRemoteData: given remote data, the current
  * local state (used as per-field fallback via pickValid), and whether the
@@ -604,8 +636,10 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
     // merged tasks, superseding whatever's picked here as a throwaway value.
     const validRemoteTasks = pickValid('tasks', remoteData.tasks, null);
     const tasksMerged = validRemoteTasks !== null;
+    const mergedTasks = tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks;
+    if (tasksMerged) logSyncDebugPerTaskMergeDecision(localState.tasks, validRemoteTasks, mergedTasks);
     plan.tasksBlocks = {
-      tasks: tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks,
+      tasks: mergedTasks,
       blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
     };
     // Whether a real per-task merge ran (remote tasks were shape-valid), as
