@@ -454,22 +454,28 @@ export function layoutDayItems(dayItems, pxPerMin) {
   return results;
 }
 
-// Maximum pushdown (in pixels) a single item is allowed to inherit from its
-// predecessor(s) in the same lane before it's folded into a chip instead of
-// stacked — see packLane. This is a NEAR-ZERO tolerance, not a "how much
-// crowding is acceptable" budget: any pushdown beyond a couple of pixels of
-// rounding slack means the box no longer sits at its own honest position, so
-// it folds rather than silently drift. Several earlier, more permissive
-// versions of this check (a flat pixel budget, a real-minute budget, a
-// fraction of the hour-row height — see git history) each independently
-// turned out to still tolerate real, user-visible misalignment at some zoom
-// level or item shape, because "how much drift is tolerable" is inherently
-// an unstable question to tune — different zoom levels and item durations
-// keep finding the edge of whatever budget was chosen. A near-zero tolerance
-// sidesteps that entirely: there is nothing left to tune, and the rule is
-// simple to reason about — an item either sits at its own real position
-// (give or take rounding) or it's folded into a chip that's honest about
-// spanning multiple items.
+// Maximum GENUINE pushdown (in pixels) a single item is allowed to inherit
+// from its predecessor(s) in the same lane before it's folded into a chip
+// instead of stacked — see packLane. This is a NEAR-ZERO tolerance, not a
+// "how much crowding is acceptable" budget: any pushdown beyond a couple of
+// pixels of rounding slack means the box no longer sits at its own honest
+// position, so it folds rather than silently drift. Several earlier, more
+// permissive versions of this check (a flat pixel budget, a real-minute
+// budget, a fraction of the hour-row height — see git history) each
+// independently turned out to still tolerate real, user-visible
+// misalignment at some zoom level or item shape, because "how much drift is
+// tolerable" is inherently an unstable question to tune — different zoom
+// levels and item durations keep finding the edge of whatever budget was
+// chosen. A near-zero tolerance sidesteps that entirely: there is nothing
+// left to tune, and the rule is simple to reason about — an item either sits
+// at its own real position (give or take rounding) or it's folded into a
+// chip that's honest about spanning multiple items.
+//
+// "GENUINE" is doing real work in that first sentence — see packLane's own
+// doc comment for why this must be measured against a running cosmetic
+// BLOCK_GAP_PX baseline rather than a flat zero, and git history (the
+// "N tasks" cluster regression for 3+ back-to-back full-hour blocks/events)
+// for the bug that shipped when it wasn't.
 export const EXCESSIVE_PUSHDOWN_PX = 2;
 
 /**
@@ -504,26 +510,61 @@ export const EXCESSIVE_PUSHDOWN_PX = 2;
  * still drags the BOTTOM (top + height) past it — the top-only check misses
  * exactly the multi-predecessor chain that causes the worst overflow. So
  * before accepting a pushed position, check how far the pushdown itself
- * (pushedTop - naturalTop, in pixels) exceeds EXCESSIVE_PUSHDOWN_PX (see its
- * own doc comment for why this is a near-zero tolerance rather than a
- * tunable budget). If it does, don't render the pair stacked at all — fold
- * the pushed-down item
- * into the previous box as a `kind: 'cluster'` chip instead (same shape
- * foldSequentialItems/layoutDayItems already produce), sized to its own
- * honest natural span rather than a further-pushed one. The merged cluster
- * then becomes the new "previous" item, so a third item that would also
- * collide with it goes through the same check and can keep growing the same
- * chip — mirroring foldSequentialItems' own "chain into one growing chip"
- * behaviour for 3+ mutually-close items.
+ * (pushedTop - naturalTop, in pixels) exceeds a threshold based on
+ * EXCESSIVE_PUSHDOWN_PX (see its own doc comment for why that's a near-zero
+ * tolerance rather than a tunable budget). If it does, don't render the pair
+ * stacked at all — fold the pushed-down item into the previous box as a
+ * `kind: 'cluster'` chip instead (same shape foldSequentialItems/
+ * layoutDayItems already produce), sized to its own honest natural span
+ * rather than a further-pushed one. The merged cluster then becomes the new
+ * "previous" item, so a third item that would also collide with it goes
+ * through the same check and can keep growing the same chip — mirroring
+ * foldSequentialItems' own "chain into one growing chip" behaviour for 3+
+ * mutually-close items.
+ *
+ * That threshold is NOT simply EXCESSIVE_PUSHDOWN_PX in isolation, though —
+ * see the `requiresStrictCheck`/`chainBaseline` logic below. BLOCK_GAP_PX is
+ * unconditionally added after every placed item (see prevBottom), which is
+ * correct and deliberate for genuine visual separation, but means a run of
+ * items that are exactly flush in real time (zero actual gap, e.g. 9-10,
+ * 10-11, 11-12) inherits another full BLOCK_GAP_PX of "pushdown" at EVERY
+ * step even though nothing is actually crowded — after only 2 such steps
+ * that alone already exceeds a flat EXCESSIVE_PUSHDOWN_PX(2px) check,
+ * incorrectly folding the 3rd perfectly legible item into the 2nd's box
+ * (real regression: three back-to-back full-hour blocks/events randomly
+ * clustering). The fix distinguishes GENUINE crowding — an item (or its
+ * predecessor) was actually stretched past its own true duration by the
+ * grow-into-idle-space step above, a predecessor is already a `cluster`
+ * (always deliberately floored), or there's a real negative time gap
+ * (an actual overlap) — from the merely-cosmetic, unboundedly-chainable
+ * BLOCK_GAP_PX baseline every flush run accumulates by design. Only genuine
+ * crowding is held to the near-zero EXCESSIVE_PUSHDOWN_PX tolerance; a run
+ * with none of it may keep accumulating pushdown baseline indefinitely
+ * (still checked against EXCESSIVE_PUSHDOWN_PX worth of tolerance ON TOP of
+ * that running baseline, so a genuinely unexplained jump is still caught).
  */
 export function packLane(items, pxPerMin) {
   const sorted = [...items].sort((a, b) => a.start - b.start);
   const out = [];
   let prevBottom = -Infinity;
+  // Running total of pushdown so far that's fully explained by legitimate,
+  // purely-cosmetic BLOCK_GAP_PX chaining (see this function's own doc
+  // comment) — reset to 0 whenever a fold happens or the chain breaks.
+  // Carried forward so an arbitrarily long run of genuinely flush, never-
+  // stretched items can keep chaining without ever looking "excessive".
+  let chainBaseline = 0;
+  // Whether the most recently placed item was itself GENUINELY crowded
+  // (stretched past its own true duration, or a cluster) rather than merely
+  // carrying forward cosmetic chain baseline — a genuinely crowded
+  // predecessor means the NEXT item's own pushdown must be held to the
+  // strict near-zero tolerance too, since its baseline is no longer purely
+  // cosmetic.
+  let prevGenuinelyCrowded = false;
 
   for (let i = 0; i < sorted.length; i++) {
     const item = sorted[i];
     const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
+    const trueHeight = (item.end - item.start) * pxPerMin;
     // Only a `kind: 'cluster'` box is floored to MIN_BLOCK_HEIGHT_PX — it's
     // already a stand-in for 2+ items layoutDayItems/foldSequentialItems
     // decided couldn't render individually, so it must stay legible. A plain
@@ -533,9 +574,7 @@ export function packLane(items, pxPerMin) {
     // legible-enough-to-be-here-at-all) events. This is what keeps pushdown
     // (below) a genuinely rare event now: two real back-to-back items with
     // zero gap naturally sit flush with no floor-induced false collision.
-    let naturalHeight = item.kind === 'cluster'
-      ? Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin)
-      : (item.end - item.start) * pxPerMin;
+    let naturalHeight = item.kind === 'cluster' ? Math.max(MIN_BLOCK_HEIGHT_PX, trueHeight) : trueHeight;
 
     // A too-short single item that has genuinely free room below it (the
     // next lane-mate's natural top is well past this item's own natural
@@ -562,7 +601,40 @@ export function packLane(items, pxPerMin) {
     const pushdownPx = pushedTop - naturalTop;
 
     const prevPacked = out[out.length - 1];
-    if (prevPacked && pushdownPx > EXCESSIVE_PUSHDOWN_PX) {
+
+    // GENUINE crowding for this item: it was itself stretched past its own
+    // true duration by the grow-into-idle-space step above; OR it couldn't
+    // stand on its own even at its true (unstretched) duration in the first
+    // place (per isLegibleAlone — the same "is this box tall enough to be
+    // trusted alone" test the rest of this file already uses); OR it's a
+    // `kind: 'cluster'` (always deliberately floored, per this function's
+    // own doc comment); OR the real time gap to its predecessor is negative
+    // (an actual overlap, not mere back-to-back adjacency). That middle
+    // condition matters because an ILLEGIBLE item accepted via the loose
+    // (chain-tolerant) path below can still accumulate a large baseline of
+    // its own — one that's fine while the chain stays all-illegible, but
+    // becomes a problem the moment a later genuinely-crowded item folds
+    // INTO it, since the merge inherits whatever position the predecessor
+    // already had (see the merge branch's own doc comment on why it can
+    // never render earlier than prevPacked.top). Gating on isLegibleAlone
+    // keeps the generous, unbounded-chain treatment restricted to items that
+    // could legitimately anchor a merge without smuggling in stale drift —
+    // exactly the items real usage would hand packLane as un-folded singles
+    // in the first place (see layoutDayItems' own legible/short split).
+    //
+    // Combined with prevGenuinelyCrowded (whether the PREDECESSOR was itself
+    // genuinely crowded, which would make ITS position untrustworthy as a
+    // baseline too), this decides whether the near-zero EXCESSIVE_PUSHDOWN_PX
+    // tolerance applies as-is, or on top of the legitimately-accumulated
+    // cosmetic chainBaseline — see the doc comment above packLane for why
+    // these are different.
+    const naturalGapToPrev = prevPacked ? item.start - prevPacked.end : Infinity;
+    const itemGenuinelyCrowded =
+      item.kind === 'cluster' || naturalHeight > trueHeight + 0.01 || !isLegibleAlone(item.end - item.start, pxPerMin);
+    const requiresStrictCheck = prevGenuinelyCrowded || itemGenuinelyCrowded || naturalGapToPrev < 0;
+    const excessiveThreshold = requiresStrictCheck ? EXCESSIVE_PUSHDOWN_PX : chainBaseline + EXCESSIVE_PUSHDOWN_PX;
+
+    if (prevPacked && pushdownPx > excessiveThreshold) {
       // Fold into (or grow) a cluster instead of accepting a position that
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged
@@ -600,6 +672,12 @@ export function packLane(items, pxPerMin) {
       };
       out[out.length - 1] = cluster;
       prevBottom = cluster.top + cluster.height + BLOCK_GAP_PX;
+      // The merged box is a cluster — always genuinely crowded going
+      // forward (see itemGenuinelyCrowded above), and its own baseline is
+      // fresh (it was just validated against the strict tolerance, not
+      // inherited from further back).
+      chainBaseline = 0;
+      prevGenuinelyCrowded = true;
       continue;
     }
 
@@ -610,6 +688,16 @@ export function packLane(items, pxPerMin) {
     const top = Math.round(pushedTop);
     const height = Math.round(naturalHeight);
     prevBottom = top + height + BLOCK_GAP_PX;
+    // How far AHEAD of this item's own true natural end prevBottom now sits
+    // — always at least BLOCK_GAP_PX (added unconditionally above, even for
+    // a first/unpushed item), plus this item's own top/height rounding
+    // noise. This, not pushdownPx itself, is what the NEXT item inherits as
+    // its baseline: pushdownPx is 0 for a first item with no predecessor,
+    // but prevBottom for the item AFTER it still starts one BLOCK_GAP_PX
+    // ahead regardless — using pushdownPx here would under-count that and
+    // let a 2-item rounding-noise case slip past the strict tolerance.
+    chainBaseline = prevBottom - (naturalTop + naturalHeight);
+    prevGenuinelyCrowded = itemGenuinelyCrowded;
     out.push({ ...item, top, height });
   }
 

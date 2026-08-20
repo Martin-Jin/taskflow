@@ -517,6 +517,60 @@ describe('packLane', () => {
     expect(allIds).toHaveLength(5);
   });
 
+  it('BUG REPRO: never folds 3+ genuinely back-to-back, individually legible full-hour items into a cluster purely from BLOCK_GAP_PX baseline compounding', () => {
+    // The user-reported bug: three back-to-back 1-hour blocks (9-10, 10-11,
+    // 11-12), zero real gap, zero overlap, each individually WAY above
+    // MIN_BLOCK_HEIGHT_PX (75px at max zoom) — should never be a cluster.
+    // Root cause (confirmed by hand-tracing packLane): prevBottom always
+    // adds BLOCK_GAP_PX after every placed item, and since these items are
+    // exactly flush (each one's naturalTop equals the previous one's
+    // naturalBottom), that cosmetic gap compounds every single step: item 2
+    // inherits 1*BLOCK_GAP_PX (2px) of pushdown, item 3 inherits 2*GAP (4px)
+    // — which already exceeds the old flat EXCESSIVE_PUSHDOWN_PX(2) check,
+    // folding item 3 into item 2's box even though nothing is actually
+    // crowded. This reproduces with plain integer pxPerMin (1.0, from
+    // ZOOM_LEVELS_PX_PER_MIN) and hour-aligned times — i.e. it is NOT merely
+    // floating-point rounding noise, it is the baseline itself compounding.
+    const items = [block('A', 9 * 60, 10 * 60), block('B', 10 * 60, 11 * 60), block('C', 11 * 60, 12 * 60)];
+    const pxPerMin = 1.0;
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const positioned = computeDayPositions(laidOut, pxPerMin);
+    expect(positioned.filter((p) => p.kind === 'cluster')).toHaveLength(0);
+    expect(positioned).toHaveLength(3);
+  });
+
+  it('BUG REPRO: a longer run (5) of back-to-back full-hour items never clusters purely from chained BLOCK_GAP_PX compounding, at max zoom', () => {
+    // Same mechanism as above, pushed further (5 items instead of 3) and at
+    // the highest zoom level, to confirm the fold-avoidance isn't a fluke of
+    // one particular chain length — a genuinely flush chain of legible items
+    // must never fold no matter how long it runs.
+    const items = [
+      block('A', 9 * 60, 10 * 60),
+      block('B', 10 * 60, 11 * 60),
+      block('C', 11 * 60, 12 * 60),
+      block('D', 12 * 60, 13 * 60),
+      block('E', 13 * 60, 14 * 60),
+    ];
+    const pxPerMin = 1.25;
+    const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+    expect(positioned.filter((p) => p.kind === 'cluster')).toHaveLength(0);
+    expect(positioned).toHaveLength(5);
+  });
+
+  it('BUG REPRO: rounding noise from a non-integer zoom level plus non-hour-aligned start times must not fold two legible back-to-back items either', () => {
+    // Isolates the ROUNDING-noise mechanism from the compounding one: only
+    // 2 items (so no multi-step baseline growth involved), but a non-"nice"
+    // pxPerMin (0.65, from ZOOM_LEVELS_PX_PER_MIN) and non-hour-aligned start
+    // times (9:07) mean naturalTop/naturalHeight don't land on exact pixel
+    // boundaries — Math.round'ing each one individually can, by itself, tip
+    // pushdownPx just past the old flat EXCESSIVE_PUSHDOWN_PX(2) threshold.
+    const items = [block('A', 9 * 60 + 7, 10 * 60 + 7), block('B', 10 * 60 + 7, 11 * 60 + 7)];
+    const pxPerMin = 0.65;
+    const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+    expect(positioned.filter((p) => p.kind === 'cluster')).toHaveLength(0);
+    expect(positioned).toHaveLength(2);
+  });
+
   it('never lets any packed item inherit more than EXCESSIVE_PUSHDOWN_PX of pushdown from its predecessor(s), at any zoom level', () => {
     // The hard invariant itself, directly: for every packed item with a
     // predecessor, (pushedTop - naturalTop) must never exceed
