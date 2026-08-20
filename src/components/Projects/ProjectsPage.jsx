@@ -16,7 +16,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Folder, Inbox, SlidersHorizontal, Check, ChevronDown, FolderKanban } from 'lucide-react';
+import { Search, Folder, FolderPlus, Inbox, SlidersHorizontal, Check, ChevronDown, FolderKanban } from 'lucide-react';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { rankByNameSearch } from '../../utils/nameSearch';
@@ -24,6 +24,8 @@ import { getProjectShareState } from '../../utils/sharedProjectAccess';
 import { getProjectTaskCount, getProjectTotalHours, sortProjectsBy, PROJECT_SORT_KEYS } from '../../utils/projectStats';
 import { INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../../utils/projectConstants';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
+import AddTaskFabGroup from '../Common/AddTaskFabGroup';
+import AIQuickAddModal from '../Modals/AIQuickAddModal';
 
 /** Tasteful, non-gimmicky rotating subtitles, split by time of day (same three-way split as DashboardPage's greetingForHour). One is picked once per mount below — never re-randomized on re-render. */
 const GREETINGS_BY_PERIOD = {
@@ -209,7 +211,7 @@ function ProjectSortMenu({ sortKey, ascending, onChange }) {
   );
 }
 
-export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onSelectProject, onOpenManageProjects }) {
+export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onSelectProject, onOpenManageProjects, onAddProject }) {
   // Picked once per mount, not re-randomized on re-render/re-typing.
   const [greeting] = useState(() => {
     const pool = GREETINGS_BY_PERIOD[periodForHour(new Date().getHours())];
@@ -219,6 +221,11 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState('size');
   const [ascending, setAscending] = useState(false);
+  // Self-contained AI Quick Add modal, same pattern as TaskListPanel/BoardView
+  // — this page owns the FAB group AND the modal it opens, rather than App.jsx
+  // rendering a shared standalone AI-only FAB the way it still does for
+  // Dashboard/Stats/Settings (which have no "add X" concept of their own).
+  const [showAIQuickAdd, setShowAIQuickAdd] = useState(false);
 
   // Drives the floating quick-jump dropdown (ranked across all projects,
   // independent of which column a match happens to live in).
@@ -385,6 +392,16 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
           headerExtra={<ProjectSortMenu sortKey={sortKey} ascending={ascending} onChange={(k, a) => { setSortKey(k); setAscending(a); }} />}
         />
       </div>
+
+      {onAddProject && (
+        <AddTaskFabGroup
+          onAddTask={onAddProject}
+          onAIQuickAdd={() => setShowAIQuickAdd(true)}
+          mainLabel="Add project"
+          mainIcon={FolderPlus}
+        />
+      )}
+      {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onSelectProject} />}
     </div>
   );
 }

@@ -209,6 +209,53 @@ test.describe('Projects page', () => {
 
     expectNoErrors(errors);
   });
+
+  // Same AddTaskFabGroup speed-dial pattern as the Tasks list/Board FABs (see
+  // search-shortcuts-undo.spec.js's command-palette AI Quick Add test) —
+  // ProjectsPage now renders its own instance instead of relying on App.jsx's
+  // AI-only standalone FAB, so "Add project" is reachable the same way "Add
+  // task" already is elsewhere.
+  test('FAB group: expands into "Add project" and AI Quick Add, and "Add project" opens the add-project form', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Projects');
+
+    await page.locator('.add-task-btn').last().click();
+    await page.waitForTimeout(300);
+
+    const addProjectMini = page.locator('.fab-mini[aria-label="Add project"]');
+    await expect(addProjectMini).toBeVisible();
+    await addProjectMini.click();
+    await page.waitForTimeout(400);
+
+    // Lands straight on the add-project form (autoShowAdd), not the plain
+    // list+search — same modal the mobile topbar's "⋯ → Add project" opens.
+    await expect(page.getByPlaceholder('Project name…')).toBeVisible();
+
+    expectNoErrors(errors);
+  });
+
+  test('FAB group: AI Quick Add mini-FAB opens the AI Quick Add modal (with a key configured)', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    // Same fake-key seeding as search-shortcuts-undo.spec.js's command-palette
+    // AI Quick Add test — isAIQuickAddConfigured (build-time gate) shows the
+    // entry point regardless, but opening the modal itself also needs a
+    // stored provider key (see useAIQuickAddGate's requestOpen).
+    await page.evaluate(() => {
+      window.localStorage.setItem('taskflow:v1:aiGeminiApiKey', JSON.stringify('e2e-fake-test-key'));
+    });
+    await gotoTab(page, 'Projects');
+
+    await page.locator('.add-task-btn').last().click();
+    await page.waitForTimeout(300);
+    await page.locator('.fab-mini[aria-label="AI Quick Add"]').click();
+    await page.waitForTimeout(400);
+
+    await expect(page.getByRole('dialog', { name: /AI Quick Add/i })).toBeVisible();
+
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Projects page — mobile viewport', () => {

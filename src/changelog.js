@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.1.0',
+    date: '2026-08-20',
+    title: 'The Projects page now has an "Add project" button',
+    changes: [
+      'Previously the Projects page only had a floating AI Quick Add button — there was no direct way to add a plain project from there. It now has the same speed-dial FAB as the Tasks page: tap it to expand into "Add project" and AI Quick Add.',
+    ],
+  },
+  {
     version: '6.0.9',
     date: '2026-08-20',
     title: 'Fixed a new project sometimes vanishing after a cross-device sync',
