@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.2.1',
+    date: '2026-08-20',
+    title: 'Fixed cloud sync getting stuck in a permanent, self-inflicted update loop',
+    changes: [
+      "Fixed a serious cloud-sync bug where TaskFlow could get stuck continuously re-sending and re-applying the same data forever, with nothing actually changing. The cloud database doesn't always preserve the exact internal order of a task's nested details (like its repeat settings or subtasks) when handing data back — so even though nothing had truly changed, TaskFlow saw it as \"different\" every single time, sent it right back up, saw its own echo as \"different\" again, and repeated endlessly. Beyond wasting resources, this meant the sync connection was almost never actually idle, which could cause a genuine edit made around the same time to get overwritten by this stale, looping data before it had a chance to properly stick. TaskFlow now compares data based on its actual content, not the order its details happen to be listed in.",
+    ],
+  },
+  {
     version: '6.2.0',
     date: '2026-08-20',
     title: 'Adding a project now opens its own dedicated dialog',
