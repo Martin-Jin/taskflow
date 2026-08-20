@@ -1540,7 +1540,7 @@ export function SchedulerProvider({ children }) {
     let result;
     commitAndGet(
       (current) => {
-        result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules });
+        result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules, currentUserId: user?.uid });
         return { next: { tasks: current.tasks, blocks: result.blocks }, value: result };
       },
       // Function-form label (see useHistoryState's commit) — result.stats
@@ -1584,7 +1584,7 @@ export function SchedulerProvider({ children }) {
       setNotification({ type: 'success', message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
     }
     return result;
-  }, [routines, events, rules, commitAndGet]);
+  }, [routines, events, rules, commitAndGet, user?.uid]);
 
   // Always-current ref to runRebalance so the debounced callback below never
   // fires against a stale tasks/blocks closure captured when it was queued.
@@ -1738,7 +1738,7 @@ export function SchedulerProvider({ children }) {
         }
       }
       const hasUnlockedScheduledBlock = blocks.some((b) => b.taskId === taskId && !b.isLocked);
-      const needsRebalance = needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock);
+      const needsRebalance = needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock, user?.uid);
 
       // Function form — see addTask's comment just above.
       commit(
@@ -2157,10 +2157,18 @@ export function SchedulerProvider({ children }) {
    */
   const rebalanceTodayOnly = useCallback(
     (currentTasks, currentBlocks) => {
-      const result = rebalance({ tasks: currentTasks, existingBlocks: currentBlocks, routines, events, rules, todayOnly: true });
+      const result = rebalance({
+        tasks: currentTasks,
+        existingBlocks: currentBlocks,
+        routines,
+        events,
+        rules,
+        todayOnly: true,
+        currentUserId: user?.uid,
+      });
       return { tasks: currentTasks, blocks: result.blocks };
     },
-    [routines, events, rules]
+    [routines, events, rules, user?.uid]
   );
 
   const completeTask = useCallback(

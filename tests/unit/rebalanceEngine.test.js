@@ -881,3 +881,72 @@ describe('rebalance: per-occurrence remainingHoursOverride', () => {
     expect(tomorrowBlock.durationHours).toBe(2);
   });
 });
+
+// Coverage for the one deliberate hole in the shared-project exclusion (see
+// rebalanceEngine.js's `eligibleTasks` filter comment): a shared task
+// `assignedTo` the CURRENT device's signed-in uid (`currentUserId`, passed
+// into rebalance()) becomes schedulable against that one person's own
+// capacity, same as a personal task — every other shared task stays
+// excluded exactly as before.
+describe('rebalance: shared-project task assignment (assignedTo)', () => {
+  it('schedules a shared task assigned to the current user', () => {
+    const tasks = [
+      { id: 'shared1', title: 'Shared, assigned to me', estimatedHours: 1, dueDate: today, enforceDueDate: true, sharedProjectId: 'proj1', assignedTo: 'user-a' },
+    ];
+    const result = rebalance({
+      tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today, currentUserId: 'user-a',
+    });
+    expect(result.blocks.some((b) => b.taskId === 'shared1')).toBe(true);
+  });
+
+  it('does not schedule a shared task assigned to a DIFFERENT collaborator', () => {
+    const tasks = [
+      { id: 'shared2', title: 'Shared, assigned to someone else', estimatedHours: 1, dueDate: today, sharedProjectId: 'proj1', assignedTo: 'user-b' },
+    ];
+    const result = rebalance({
+      tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today, currentUserId: 'user-a',
+    });
+    expect(result.blocks.some((b) => b.taskId === 'shared2')).toBe(false);
+  });
+
+  it('does not schedule an UNASSIGNED shared task, unchanged from before assignedTo existed', () => {
+    const tasks = [
+      { id: 'shared3', title: 'Shared, unassigned', estimatedHours: 1, dueDate: today, sharedProjectId: 'proj1', assignedTo: null },
+    ];
+    const result = rebalance({
+      tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today, currentUserId: 'user-a',
+    });
+    expect(result.blocks.some((b) => b.taskId === 'shared3')).toBe(false);
+  });
+
+  it('does not schedule a shared task assigned to the current user when currentUserId is not passed at all', () => {
+    // Signed-out, or a caller that doesn't thread currentUserId through —
+    // must fail closed (still excluded), same as before this field existed,
+    // not fail open and schedule every assigned shared task for whoever runs
+    // the rebalance.
+    const tasks = [
+      { id: 'shared4', title: 'Shared, assigned but no currentUserId given', estimatedHours: 1, dueDate: today, sharedProjectId: 'proj1', assignedTo: 'user-a' },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.taskId === 'shared4')).toBe(false);
+  });
+
+  it("a non-shared (personal) task's scheduling is completely unaffected by assignedTo's presence or absence", () => {
+    const tasksWithField = [
+      { id: 'personal1', title: 'Personal, assignedTo present but meaningless', estimatedHours: 1, dueDate: today, enforceDueDate: true, assignedTo: 'user-b' },
+    ];
+    const tasksWithoutField = [
+      { id: 'personal1', title: 'Personal, no assignedTo at all', estimatedHours: 1, dueDate: today, enforceDueDate: true },
+    ];
+    const withField = rebalance({
+      tasks: tasksWithField, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today, currentUserId: 'user-a',
+    });
+    const withoutField = rebalance({
+      tasks: tasksWithoutField, existingBlocks: [], routines: [], events: [], rules: baseRules, fromDate: today, currentUserId: 'user-a',
+    });
+    // Both scheduled — a personal task has no sharedProjectId, so the
+    // assignedTo branch of the filter is never even consulted for it.
+    expect(withField.blocks.some((b) => b.taskId === 'personal1')).toBe(true);
+    expect(withoutField.blocks.some((b) => b.taskId === 'personal1')).toBe(true);
+  });
+});

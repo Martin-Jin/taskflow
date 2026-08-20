@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.4.0',
+    date: '2026-08-20',
+    title: 'Assign shared tasks to a collaborator for auto-scheduling',
+    changes: [
+      'A task in a shared project can now be assigned to a specific collaborator (three-dot menu → "Assign to"). Once assigned to you, that task is scheduled by your own auto-scheduler against your own capacity, the same as any personal task — previously, every shared task was skipped by Re-balance entirely and could only be placed manually.',
+    ],
+  },
+  {
     version: '6.3.0',
     date: '2026-08-20',
     title: 'A "Do Not Auto-Schedule" bucket for parking tasks',

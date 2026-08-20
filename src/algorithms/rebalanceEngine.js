@@ -255,6 +255,11 @@ function stripVirtualIds(newBlocks, overflow, timeShifted) {
  * @param {import('../types').CalendarEvent[]} params.events
  * @param {import('../types').SchedulingRules} params.rules
  * @param {string} [params.fromDate] - Defaults to today; days before this are never touched.
+ * @param {string} [params.currentUserId] - This device's own signed-in uid, if any (e.g. `useAuth().user?.uid`).
+ *   The only thing this is used for: `eligibleTasks` lets a shared-project task through when
+ *   `task.assignedTo === currentUserId` (see that filter's own comment) — every other eligibility rule is unaffected.
+ *   Absent/undefined (signed out, or a caller that doesn't pass it) simply means no shared task can ever match, which
+ *   is the same "shared tasks are never schedulable" behavior this function had before `assignedTo` existed.
  * @param {boolean} [params.todayOnly] - Scope the whole run to a single day (`today`/`fromDate`) instead of the
  *   full `rules.horizonWeeks * 7` horizon. Used by SchedulerContext.completeTask so finishing a task early
  *   re-plans the rest of TODAY into the slot it just freed, without reaching into future days at all — see
@@ -278,7 +283,7 @@ function stripVirtualIds(newBlocks, overflow, timeShifted) {
  * committed to one of those untouched future blocks still has those hours excluded from what's handed to
  * the allocator today (see spentHoursByTask below), so today's run can't double-book the same work.
  */
-export function rebalance({ tasks, existingBlocks, routines, events, rules, fromDate, todayOnly }) {
+export function rebalance({ tasks, existingBlocks, routines, events, rules, fromDate, todayOnly, currentUserId }) {
   const today = fromDate || toISODate(new Date());
 
   // TODAY-ONLY SCOPING: blocks dated after `today` never participate in this
@@ -477,17 +482,30 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
       !t.isCompleted &&
       t.remainingHours > 0 &&
       !parentIds.has(t.id) &&
-      // Shared-project tasks never enter the auto-scheduler. This engine
+      // Shared-project tasks never enter the auto-scheduler UNLESS assigned to
+      // the CURRENT user (see types/index.js's Task.assignedTo). This engine
       // computes against ONE person's routines, work hours and calendar, so a
       // task several people share has no single owner's capacity to consume —
       // whichever collaborator's device happened to run a rebalance would
       // place it against their availability and push the result to everyone.
       // Reconciling capacity across collaborators is explicitly out of scope
       // (see TODO.md), so this is made an explicit exclusion rather than
-      // silently half-supported. Shared tasks can still be scheduled MANUALLY
-      // by dragging them onto a calendar, which produces a block in that one
-      // user's own local, unshared blocks array.
-      !t.sharedProjectId &&
+      // silently half-supported.
+      //
+      // The one deliberate hole: a shared task explicitly `assignedTo` this
+      // device's own signed-in uid (`currentUserId`, threaded in by the
+      // caller — see this function's own param doc) has exactly one person's
+      // capacity to consume, same as any personal task, so it's let through.
+      // Its resulting block still lands in the CALLER's own local `blocks`
+      // array like any other allocateTasks output (this function never writes
+      // anywhere shared) — nothing here pushes a result "to everyone"; only
+      // the assignee's own rebalance run ever schedules it, and only against
+      // their own capacity. Unassigned, or assigned to someone else, stays
+      // excluded exactly as before. Shared tasks can still be scheduled
+      // MANUALLY by dragging them onto a calendar regardless of assignment,
+      // which produces a block in that one user's own local, unshared blocks
+      // array.
+      (!t.sharedProjectId || (!!currentUserId && t.assignedTo === currentUserId)) &&
       // User opted this task out of auto-scheduling entirely (see the Task
       // typedef's excludeFromAutoSchedule doc comment) — it can still be
       // scheduled manually by dragging it onto the calendar.

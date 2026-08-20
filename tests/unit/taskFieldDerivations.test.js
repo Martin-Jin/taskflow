@@ -126,4 +126,40 @@ describe('needsRescheduleOnTaskUpdate', () => {
   it('does not flag excludeFromAutoSchedule already false being redundantly set to false', () => {
     expect(needsRescheduleOnTaskUpdate(baseTask, { excludeFromAutoSchedule: false }, true)).toBe(false);
   });
+
+  // assignedTo: a shared-task-only eligibility switch, same idea as
+  // excludeFromAutoSchedule but relative to currentUserId (see
+  // rebalanceEngine.js's eligibleTasks filter) instead of a plain boolean.
+  describe('assignedTo (shared task)', () => {
+    const sharedTask = { ...baseTask, sharedProjectId: 'proj1', assignedTo: null };
+
+    it('flags assigning a shared task to the current user (newly eligible)', () => {
+      expect(needsRescheduleOnTaskUpdate(sharedTask, { assignedTo: 'user-a' }, false, 'user-a')).toBe(true);
+    });
+
+    it('flags unassigning a shared task that was assigned to the current user (newly ineligible)', () => {
+      const assignedToMe = { ...sharedTask, assignedTo: 'user-a' };
+      expect(needsRescheduleOnTaskUpdate(assignedToMe, { assignedTo: null }, true, 'user-a')).toBe(true);
+    });
+
+    it('flags reassigning a shared task away from the current user to someone else', () => {
+      const assignedToMe = { ...sharedTask, assignedTo: 'user-a' };
+      expect(needsRescheduleOnTaskUpdate(assignedToMe, { assignedTo: 'user-b' }, true, 'user-a')).toBe(true);
+    });
+
+    it('does not flag reassigning a shared task between two OTHER collaborators (never eligible for this device either way)', () => {
+      const assignedToB = { ...sharedTask, assignedTo: 'user-b' };
+      expect(needsRescheduleOnTaskUpdate(assignedToB, { assignedTo: 'user-c' }, false, 'user-a')).toBe(false);
+    });
+
+    it('does not flag assignedTo being redundantly re-set to the same value', () => {
+      const assignedToMe = { ...sharedTask, assignedTo: 'user-a' };
+      expect(needsRescheduleOnTaskUpdate(assignedToMe, { assignedTo: 'user-a' }, true, 'user-a')).toBe(false);
+    });
+
+    it('does not flag an assignedTo change on a non-shared (personal) task', () => {
+      const personalTask = { ...baseTask, assignedTo: null };
+      expect(needsRescheduleOnTaskUpdate(personalTask, { assignedTo: 'user-a' }, false, 'user-a')).toBe(false);
+    });
+  });
 });

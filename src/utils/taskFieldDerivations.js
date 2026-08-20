@@ -50,8 +50,10 @@ function isSameSchedulingValue(a, b) {
  * patch being applied; `hasUnlockedScheduledBlock` reports whether the task
  * currently has an existing, non-locked ScheduledBlock (locked blocks are
  * left untouched by the rebalance engine, so there's nothing to invalidate).
+ * `currentUserId` is this device's own signed-in uid — only consulted for the
+ * `assignedTo` check below, meaningless for every other field.
  */
-export function needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock) {
+export function needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock, currentUserId) {
   if (!prevTask) return false;
 
   const dueDateChanged = 'dueDate' in updates && updates.dueDate !== prevTask.dueDate;
@@ -81,6 +83,20 @@ export function needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedSchedu
   // the engine can place it for the first time, mirroring isLocked above.
   if ('excludeFromAutoSchedule' in updates && updates.excludeFromAutoSchedule !== !!prevTask.excludeFromAutoSchedule) {
     return true;
+  }
+
+  // assignedTo is the same kind of eligibility switch as excludeFromAutoSchedule
+  // above, just scoped to a shared task and relative to the CURRENT user (see
+  // rebalanceEngine.js's `eligibleTasks` filter) rather than a plain boolean:
+  // only a transition INTO or OUT OF "assigned to me" changes whether this
+  // engine will ever touch the task, so only that transition needs a
+  // rebalance — reassigning between two OTHER collaborators (never eligible
+  // either way for this device) is a no-op here, same as any other field edit
+  // on a task this engine was never going to schedule.
+  if (prevTask.sharedProjectId && 'assignedTo' in updates) {
+    const wasEligible = prevTask.assignedTo === currentUserId;
+    const willBeEligible = updates.assignedTo === currentUserId;
+    if (wasEligible !== willBeEligible) return true;
   }
 
   return false;

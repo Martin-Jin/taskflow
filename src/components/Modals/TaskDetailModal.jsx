@@ -99,6 +99,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   FolderInput,
+  UserPlus,
 } from 'lucide-react';
 import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -170,7 +171,7 @@ import {
   parseCommentBody,
 } from '../../utils/commentMentions';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
-import { computeEffectiveRole, isSharedProject, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
+import { computeEffectiveRole, isSharedProject, resolveOwnerProfile, getAssignableCollaborators } from '../../utils/sharedProjectAccess';
 
 // Default estimated hours for a quick-added sub-task — matches
 // AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
@@ -449,6 +450,21 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   }, [sharedProject, user?.uid, ownerProfile]);
   const mentionMatches = mentionSpan ? filterMentionCandidates(mentionSpan.query, mentionCandidates) : [];
   const mentionDropdownOpen = isSharedTask && !!mentionSpan && mentionMatches.length > 0;
+
+  // "Assign to…" menu (three-dot menu below) — every non-anonymous
+  // collaborator plus the owner, for a shared task only. Unlike
+  // mentionCandidates above, this deliberately does NOT exclude the current
+  // viewer — assigning a task to yourself is the normal case (see
+  // getAssignableCollaborators' own doc comment).
+  const assignableCollaborators = useMemo(() => {
+    if (!sharedProject) return [];
+    return getAssignableCollaborators({
+      ownerId: sharedProject.ownerId,
+      collaborators: sharedProject.collaborators,
+      ownerDisplayName: ownerProfile?.displayName,
+      ownerPhotoURL: ownerProfile?.photoURL,
+    });
+  }, [sharedProject, ownerProfile]);
 
   /** Re-derive the active "@query" span from the input's current caret position. */
   function refreshMentionSpan(nextText) {
@@ -2281,6 +2297,53 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                           {task.excludeFromAutoSchedule ? 'Include in auto-schedule' : 'Exclude from auto-schedule'}
                         </button>
                       </li>
+                      {isSharedTask && assignableCollaborators.length > 0 && (
+                        <>
+                          <li role="none" className="detail-menu-divider" />
+                          <li role="none" className="detail-menu-section-label">
+                            <UserPlus size={12} aria-hidden="true" />
+                            Assign to
+                          </li>
+                          <li role="none">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="detail-menu-item"
+                              onClick={() => {
+                                updateTask(task.id, { assignedTo: null });
+                                setMenuOpen(false);
+                              }}
+                              disabled={isReadOnlyViewer}
+                              title={isReadOnlyViewer ? "Viewers can't reassign tasks" : undefined}
+                            >
+                              <Check size={14} aria-hidden="true" style={{ visibility: task.assignedTo ? 'hidden' : 'visible' }} />
+                              Unassigned
+                            </button>
+                          </li>
+                          {assignableCollaborators.map((c) => (
+                            <li role="none" key={c.uid}>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="detail-menu-item"
+                                onClick={() => {
+                                  updateTask(task.id, { assignedTo: c.uid });
+                                  setMenuOpen(false);
+                                }}
+                                disabled={isReadOnlyViewer}
+                                title={isReadOnlyViewer ? "Viewers can't reassign tasks" : undefined}
+                              >
+                                <Check
+                                  size={14}
+                                  aria-hidden="true"
+                                  style={{ visibility: task.assignedTo === c.uid ? 'visible' : 'hidden' }}
+                                />
+                                {c.uid === user?.uid ? `${c.displayName} (you)` : c.displayName}
+                              </button>
+                            </li>
+                          ))}
+                        </>
+                      )}
                       {task.parentId && (
                         <li role="none">
                           <button
