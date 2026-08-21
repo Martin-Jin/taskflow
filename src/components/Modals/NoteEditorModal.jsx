@@ -280,7 +280,7 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
                   <button
                     type="button"
                     ref={menuTriggerRef}
-                    className="btn btn-icon"
+                    className="btn btn-icon menu-trigger"
                     aria-haspopup="menu"
                     aria-expanded={menuOpen}
                     aria-label="Note actions"
