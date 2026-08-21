@@ -381,13 +381,11 @@ select:focus-visible,
   justify-content: space-between;
   padding: 0 20px;
   background: var(--color-bg-surface-raised);
-  border-bottom: 1px solid var(--color-border);
 }
 
 .sidebar {
   grid-area: sidebar;
   background: var(--color-bg-surface);
-  border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
@@ -816,8 +814,7 @@ select:focus-visible,
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border);
+  padding-bottom: var(--space-3);
 }
 
 .projects-page-column-header h2 {
@@ -1060,7 +1057,6 @@ select:focus-visible,
   max-width: 260px;
   z-index: 200;
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 10px 12px;
@@ -1786,9 +1782,7 @@ input.search-bar-input {
 }
 
 .search-bar-dropdown-group + .search-bar-dropdown-group {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-3);
 }
 
 .search-bar-dropdown-label {
@@ -1862,9 +1856,7 @@ input.search-bar-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-3);
 }
 
 .command-palette-search-row input {
@@ -2797,7 +2789,7 @@ input[type='checkbox']:checked::after {
 }
 
 .share-link-row {
-  border: 1px solid var(--color-border);
+  background: var(--color-bg-page);
   border-radius: var(--radius-md);
   padding: 10px 12px;
   display: flex;
@@ -2954,12 +2946,7 @@ input[type='checkbox']:checked::after {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.share-collaborator-row:last-child {
-  border-bottom: none;
+  padding: var(--space-2) 0;
 }
 
 .share-collaborator-name {
@@ -2980,7 +2967,7 @@ input[type='checkbox']:checked::after {
   text-transform: uppercase;
   letter-spacing: 0.3px;
   color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
+  background: var(--color-bg-surface-hover);
   border-radius: 4px;
   padding: 1px 5px;
   flex-shrink: 0;
@@ -3218,7 +3205,6 @@ input[type='checkbox']:checked::after {
   bottom: 0;
   z-index: 155;
   background: var(--color-bg-surface);
-  border-top: 1px solid var(--color-border);
   box-shadow: var(--shadow-elevated);
   padding: 8px calc(var(--space-4) + env(safe-area-inset-right, 0)) calc(8px + env(safe-area-inset-bottom, 0))
     calc(var(--space-4) + env(safe-area-inset-left, 0));
@@ -3266,7 +3252,6 @@ input[type='checkbox']:checked::after {
   bottom: calc(100% + 6px);
   left: 0;
   background: var(--color-bg-surface);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 8px;

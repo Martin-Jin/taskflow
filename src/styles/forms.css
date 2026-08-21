@@ -240,7 +240,6 @@
 .smart-chip {
   background: var(--color-accent-soft);
   color: var(--color-accent);
-  border-color: transparent;
   padding-right: 4px;
 }
 
@@ -279,7 +278,6 @@
   min-width: 180px;
   max-width: min(90vw, 280px);
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 4px;
@@ -397,7 +395,6 @@
    rules only cover the shared shape.
    ---------------------------------------------------------------------- */
 .chip-label {
-  border-color: transparent;
   padding-right: 4px;
   font-weight: 600;
 }
@@ -527,7 +524,6 @@
   width: 260px;
   max-width: min(90vw, 280px);
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 8px;
@@ -575,9 +571,7 @@
 
 .detail-move-to-item-none {
   color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-border);
-  border-radius: 0;
-  margin-bottom: 2px;
+  margin-bottom: var(--space-2);
 }
 
 .detail-move-to-empty {
@@ -599,7 +593,6 @@
   max-height: min(70vh, 520px);
   overflow-y: auto;
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 4px 10px;
@@ -618,7 +611,6 @@
   min-width: 200px;
   max-width: min(90vw, 280px);
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-elevated);
   padding: 10px 12px;
@@ -630,9 +622,7 @@
    min(90vw, 280px) and this needs to fit below TaskTimerControl without
    overflowing on a narrow phone. */
 .detail-timer-pause-prompt {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-3);
 }
 
 .detail-timer-pause-prompt-text {
@@ -1162,7 +1152,6 @@
 
 .addtask-pill-panel {
   background: var(--color-bg-page);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 10px 12px;
   margin-bottom: 10px;
@@ -1182,9 +1171,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-4);
 }
 
 /* ----------------------------------------------------------------------
@@ -1256,7 +1243,6 @@
      that value or the modal renders on top of the popup. */
   z-index: 200;
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-elevated);
   max-height: 220px;
@@ -1309,9 +1295,7 @@
 }
 
 .select-menu-option.has-separator-before {
-  margin-top: 5px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-3);
 }
 
 /* ----------------------------------------------------------------------
@@ -1326,7 +1310,6 @@
   max-width: 280px;
   z-index: 200;
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-elevated);
   max-height: 220px;
@@ -1380,7 +1363,6 @@
   flex-wrap: wrap;
   z-index: 200;
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-elevated);
   padding: 6px 8px;
@@ -1454,14 +1436,9 @@
 
 .detail-field {
   padding: 9px 0;
-  border-bottom: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: 5px;
-}
-
-.detail-field:last-child {
-  border-bottom: none;
 }
 
 .detail-field-label {
@@ -1868,7 +1845,7 @@
   gap: 6px;
   padding: 4px 8px;
   margin-bottom: 6px;
-  border: 1px solid var(--color-border);
+  background: var(--color-bg-page);
   border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--color-text-primary);
@@ -2331,7 +2308,7 @@
   width: 120px;
   height: 120px;
   padding: 8px;
-  border: 1px solid var(--color-border);
+  background: var(--color-bg-page);
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
 }
@@ -2390,7 +2367,7 @@
 .ai-plan-list {
   max-height: 50vh;
   overflow-y: auto;
-  border: 1px solid var(--color-border);
+  background: var(--color-bg-page);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
   margin-bottom: 10px;

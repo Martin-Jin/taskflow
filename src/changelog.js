@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.0',
+    date: '2026-08-21',
+    title: 'Quieter, cleaner look across the app',
+    changes: [
+      'Removed a lot of unnecessary hairline borders and boxes-within-boxes throughout the app — task detail fields, dropdown menus, the sidebar, Settings, sub-menus, and more now separate from each other with spacing instead of lines.',
+      'Dropdown menus, tooltips, and other floating panels now rely on their shadow alone rather than a border, for a cleaner floating look.',
+    ],
+  },
+  {
     version: '6.7.2',
     date: '2026-08-21',
     title: 'Task detail fills the screen properly on mobile',
