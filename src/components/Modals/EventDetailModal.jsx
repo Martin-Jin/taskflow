@@ -82,6 +82,12 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // captured into this ref during render instead (ref mutation during
   // render is safe, unlike setState in render).
   const requestCloseRef = useRef(() => {});
+  // Set right before the explicit "Cancel" button calls requestClose, so
+  // handleModalClose (below) knows to skip auto-saving for this one close —
+  // every other dismissal (X, Escape, backdrop click) should NOT lose an
+  // in-progress edit to an existing event just because the user didn't
+  // specifically hunt down the "Save" button (see handleModalClose).
+  const cancelledRef = useRef(false);
 
   const isCreate = !event;
   // Only an explicit `canEdit === false` counts as read-only — a manual event
@@ -242,6 +248,63 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   const descriptionRef = useRef(null);
   useAutosizeTextarea(descriptionRef, description, { maxLines: 20 });
 
+  // Pushes the current field values for an EXISTING event (never called for
+  // isCreate) — shared by handleSave (the explicit Save button/Enter) and
+  // handleModalClose's auto-save-on-dismiss below, so both paths persist
+  // identically. Doesn't validate — callers decide what to do when the
+  // fields aren't in a savable state (handleSave blocks and shows an error;
+  // handleModalClose just skips the save rather than blocking a dismissal).
+  function persistEditedFields() {
+    // Read-only events (subscribed/shared calendars without write access)
+    // skip updateEvent entirely — its fields are disabled below so they
+    // can't have changed anyway, but more importantly updateEvent also
+    // pushes to Google (see SchedulerContext.updateEvent), which would fail
+    // against a calendar we don't own. The "Ignore" toggle below is
+    // local-only (setEventIgnored never pushes) so it stays available
+    // through this same path regardless of read-only status.
+    if (!isReadOnly) {
+      const fieldUpdates = { title: title.trim() || 'Untitled event', description, location, startTime, endTime };
+      // "Date" only ever means "move just THIS occurrence to a different
+      // day" — for 'following'/'all' scope on a recurring event, the date
+      // field is left out of the pushed updates entirely rather than
+      // overwriting the master's own DTSTART with whatever occurrence
+      // happened to be open (the input is disabled for that scope below,
+      // for the same reason).
+      if (!event.seriesId || scope === 'this') fieldUpdates.date = date;
+      // Repeat: only touched when the editor was actually interactive for
+      // this event/scope (see repeatControlsApply) — a 'this'/'following'
+      // edit on an existing series never carries a cadence change.
+      if (repeatControlsApply) {
+        if (repeats) {
+          fieldUpdates.recurrenceRule = buildRRuleString({
+            freq: repeatFreq,
+            interval: repeatInterval,
+            byDay: repeatByDay,
+            count: repeatEndType === 'count' ? repeatCount : null,
+            until: repeatEndType === 'until' ? repeatUntil : null,
+          });
+          fieldUpdates.isRecurring = true;
+          // A plain event has no seriesId yet — giving it its own id as
+          // seriesId is the same "own id doubles as seriesId when
+          // recurring" convention addManualEvent uses, so the "Apply to"
+          // scope picker and future edits treat it as a real series.
+          if (!isSeriesEvent) fieldUpdates.seriesId = event.id;
+        } else if (isTrueRruleSeries) {
+          // Repeats was unchecked on an existing series — stop recurring
+          // entirely rather than leaving a stale recurrenceRule/seriesId
+          // behind (both were only ever meaningful together here).
+          fieldUpdates.recurrenceRule = null;
+          fieldUpdates.isRecurring = false;
+          fieldUpdates.seriesId = null;
+        }
+      }
+      updateEvent(event.id, fieldUpdates, scope);
+    }
+    if (ignored !== !!event.isFreeTime) {
+      setEventIgnored(event, ignored, scope);
+    }
+  }
+
   function handleSave() {
     if (!isReadOnly) {
       if (!date || !startTime || !endTime) {
@@ -280,56 +343,42 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
       const finalTitle = detectedRecurrenceMatch ? stripMatchedText(title, detectedRecurrenceMatch.matchedText) : title;
       addManualEvent({ title: finalTitle, description, location, date, startTime, endTime, recurrenceRule });
     } else {
-      // Read-only events (subscribed/shared calendars without write access)
-      // skip updateEvent entirely — its fields are disabled below so they
-      // can't have changed anyway, but more importantly updateEvent also
-      // pushes to Google (see SchedulerContext.updateEvent), which would
-      // fail against a calendar we don't own. The "Ignore" toggle below is
-      // local-only (setEventIgnored never pushes) so it stays available
-      // through this same Save action regardless of read-only status.
-      if (!isReadOnly) {
-        const fieldUpdates = { title: title.trim() || 'Untitled event', description, location, startTime, endTime };
-        // "Date" only ever means "move just THIS occurrence to a different
-        // day" — for 'following'/'all' scope on a recurring event, the date
-        // field is left out of the pushed updates entirely rather than
-        // overwriting the master's own DTSTART with whatever occurrence
-        // happened to be open (the input is disabled for that scope below,
-        // for the same reason).
-        if (!event.seriesId || scope === 'this') fieldUpdates.date = date;
-        // Repeat: only touched when the editor was actually interactive for
-        // this event/scope (see repeatControlsApply) — a 'this'/'following'
-        // edit on an existing series never carries a cadence change.
-        if (repeatControlsApply) {
-          if (repeats) {
-            fieldUpdates.recurrenceRule = buildRRuleString({
-              freq: repeatFreq,
-              interval: repeatInterval,
-              byDay: repeatByDay,
-              count: repeatEndType === 'count' ? repeatCount : null,
-              until: repeatEndType === 'until' ? repeatUntil : null,
-            });
-            fieldUpdates.isRecurring = true;
-            // A plain event has no seriesId yet — giving it its own id as
-            // seriesId is the same "own id doubles as seriesId when
-            // recurring" convention addManualEvent uses, so the "Apply to"
-            // scope picker and future edits treat it as a real series.
-            if (!isSeriesEvent) fieldUpdates.seriesId = event.id;
-          } else if (isTrueRruleSeries) {
-            // Repeats was unchecked on an existing series — stop recurring
-            // entirely rather than leaving a stale recurrenceRule/seriesId
-            // behind (both were only ever meaningful together here).
-            fieldUpdates.recurrenceRule = null;
-            fieldUpdates.isRecurring = false;
-            fieldUpdates.seriesId = null;
-          }
-        }
-        updateEvent(event.id, fieldUpdates, scope);
-      }
-      if (ignored !== !!event.isFreeTime) {
-        setEventIgnored(event, ignored, scope);
-      }
+      persistEditedFields();
     }
     requestCloseRef.current();
+  }
+
+  // Passed to <Modal onClose={...}> below instead of this component's own
+  // `onClose` prop directly — X, Escape, and backdrop-click all funnel
+  // through Modal's one `requestClose`, which calls whatever `onClose` it
+  // was given once its exit animation finishes (see useAnimatedUnmount), so
+  // this is the single place that fires for every dismissal except the
+  // explicit "Cancel" button. Editing an EXISTING event should auto-save on
+  // any of those (matching TaskDetailModal's live autosave for tasks —
+  // nothing in this app should require hunting down a specific button just
+  // to not lose an edit), while creating a brand NEW event should still
+  // require the explicit "Add event"/"Schedule task" action — an abandoned
+  // create shouldn't silently leave behind a junk event. Silently skips the
+  // save (rather than blocking the close with an error, like handleSave
+  // does) if the required fields aren't currently valid — a passive
+  // dismissal surfacing a validation error would be more surprising than
+  // just discarding an invalid in-progress edit.
+  // Enter in a single-line field commits the same way clicking Save does —
+  // for the Title/Location inputs specifically, not the Description
+  // textarea, where Enter should insert a newline like any other multi-line
+  // field rather than submit the whole form.
+  function saveOnEnter(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    handleSave();
+  }
+
+  function handleModalClose() {
+    if (!cancelledRef.current && !isCreate && !isReadOnly) {
+      const hasValidTimes = date && startTime && endTime && timeToMinutes(endTime) > timeToMinutes(startTime);
+      if (hasValidTimes) persistEditedFields();
+    }
+    onClose();
   }
 
   function handleDelete() {
@@ -357,7 +406,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   const modalTitle = isCreate ? (createMode === 'task' ? 'Schedule task' : 'New event') : event.title || 'Untitled event';
 
   return (
-    <Modal onClose={onClose} ariaLabel={modalTitle} size="lg" variantClassName="modal-detail">
+    <Modal onClose={handleModalClose} ariaLabel={modalTitle} size="lg" variantClassName="modal-detail">
       {({ requestClose }) => {
         requestCloseRef.current = requestClose;
         return (
@@ -412,6 +461,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                   <input
                     value={title}
                     onChange={(e) => (isCreate ? handleTitleChange(e.target.value) : setTitle(e.target.value))}
+                    onKeyDown={saveOnEnter}
                     placeholder={isCreate ? 'e.g. Team standup every Monday' : 'e.g. Team standup'}
                     disabled={isReadOnly}
                   />
@@ -430,6 +480,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                   <input
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
+                    onKeyDown={saveOnEnter}
                     placeholder="e.g. Conference room"
                     disabled={isReadOnly}
                   />
@@ -609,7 +660,15 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                 Delete
               </button>
             )}
-            <button className="btn" onClick={requestClose}>
+            <button
+              className="btn"
+              onClick={() => {
+                // Discard, not save — see handleModalClose's own comment for
+                // why this is the one dismissal path that has to opt out.
+                cancelledRef.current = true;
+                requestClose();
+              }}
+            >
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleSave}>
