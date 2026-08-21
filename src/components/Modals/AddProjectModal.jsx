@@ -14,16 +14,23 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import Modal from '../Common/Modal';
+import FieldRejectionHint from '../Common/FieldRejectionHint';
+import { useFieldRejection } from '../../hooks/useFieldRejection';
 
 export default function AddProjectModal({ onAddProject, onClose }) {
   const [name, setName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
+  const nameRejection = useFieldRejection();
 
   async function handleSubmit(e, { requestClose }) {
     e?.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed || isCreating) return;
+    if (isCreating) return;
+    if (!trimmed) {
+      nameRejection.reject('Give the project a name first.');
+      return;
+    }
     setIsCreating(true);
     setError('');
     try {
@@ -48,11 +55,16 @@ export default function AddProjectModal({ onAddProject, onClose }) {
       header={({ requestClose }) => (
         <div className="detail-header">
           <div className="detail-title-wrap">
+            <FieldRejectionHint message={nameRejection.message} />
             <input
               autoFocus
-              className="smart-title-input"
+              className={`smart-title-input ${nameRejection.shakeProps.className}`.trim()}
+              onAnimationEnd={nameRejection.shakeProps.onAnimationEnd}
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                nameRejection.clear();
+              }}
               placeholder="Project name"
               maxLength={200}
             />
@@ -69,7 +81,7 @@ export default function AddProjectModal({ onAddProject, onClose }) {
             <button type="button" className="btn" onClick={requestClose} disabled={isCreating}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary" disabled={isCreating || !name.trim()}>
+            <button type="submit" className="btn btn-primary" disabled={isCreating}>
               {isCreating ? '…' : 'Add project'}
             </button>
           </div>

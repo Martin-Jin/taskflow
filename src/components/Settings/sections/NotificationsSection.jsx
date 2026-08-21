@@ -8,6 +8,7 @@ import React from 'react';
 import { useScheduler } from '../../../context/SchedulerContext';
 import { useAuth } from '../../../context/AuthContext';
 import { requestNotificationPermission } from '../../../services/notificationService';
+import NumberField from '../../Common/NumberField';
 
 // Email notifications go to ONE fixed recipient address configured in the
 // notify-worker GitHub Actions secret (see notify-worker/index.js's SENDER
@@ -84,14 +85,14 @@ export default function NotificationsSection({ sectionRef }) {
         <label htmlFor="notifStartingSoonMinutes" style={{ opacity: notificationSettings.taskStartingSoon ? 1 : 0.5 }}>
           "Starting soon" threshold (minutes)
         </label>
-        <input
-          type="number"
+        <NumberField
           id="notifStartingSoonMinutes"
-          min="1"
-          max="180"
+          min={1}
+          max={180}
+          unitLabel="minutes"
           value={notificationSettings.startingSoonMinutes}
           disabled={!notificationSettings.taskStartingSoon}
-          onChange={(e) => setNotificationSettings({ ...notificationSettings, startingSoonMinutes: Number(e.target.value) })}
+          onCommit={(v) => setNotificationSettings({ ...notificationSettings, startingSoonMinutes: v })}
         />
       </div>
       <div className="form-row settings-toggle-row">

@@ -122,6 +122,43 @@
   margin-bottom: 14px;
 }
 
+/* Transient, field-scoped rejection message (see FieldRejectionHint) —
+   boxed and icon-led so it reads as "this input, right now", as opposed to
+   .form-error above, which is an unboxed form-level failure line. Tinted
+   rather than solid so it stays quiet next to the input it points at. */
+.field-rejection-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* No margin of its own — every host either sits it in a gap-spaced flex
+     column (.form-row) or supplies its own spacing (see .note-editor-hint). */
+  margin: 0;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-surface));
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--color-danger);
+  animation: field-rejection-hint-in var(--motion-enter-duration, 140ms) var(--motion-enter-ease, ease-out);
+}
+
+.field-rejection-hint svg {
+  flex-shrink: 0;
+}
+
+@keyframes field-rejection-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .form-warning {
   font-size: 11.5px;
   color: var(--color-danger);

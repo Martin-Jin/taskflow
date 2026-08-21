@@ -614,3 +614,35 @@ test('Guided tour: restart from Settings shows overlay and can be dismissed', as
 
   expectNoErrors(errors);
 });
+
+test('Scheduling rules: an out-of-range number is rejected with a hint instead of silently saved', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const card = page.locator('.settings-card', { hasText: 'Scheduling rules' }).first();
+  // "Max deep-work hours per day" — declared min 1 / max 16.
+  const deepWorkHours = card.locator('input[type=number]').nth(1);
+  const original = await deepWorkHours.inputValue();
+
+  await deepWorkHours.fill('99');
+  await deepWorkHours.blur();
+
+  await expect(page.locator('.field-rejection-hint')).toContainText('between 1 and 16');
+  // The invalid entry is neither accepted nor silently dropped — the field
+  // snaps back to the last value that actually was in range.
+  await expect(deepWorkHours).toHaveValue(original);
+
+  // Clearing the field is invalid too (it used to write 0 through Number('')).
+  await deepWorkHours.fill('');
+  await deepWorkHours.blur();
+  await expect(page.locator('.field-rejection-hint')).toBeVisible();
+  await expect(deepWorkHours).toHaveValue(original);
+
+  // A valid value commits and clears the hint.
+  await deepWorkHours.fill('6');
+  await deepWorkHours.blur();
+  await expect(page.locator('.field-rejection-hint')).toHaveCount(0);
+  await expect(deepWorkHours).toHaveValue('6');
+
+  expectNoErrors(errors);
+});
