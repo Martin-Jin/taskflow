@@ -119,7 +119,7 @@ import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEv
 import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
 import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
 import { migrateStaleRecurringRemainingHours } from '../migrations/migrateStaleRecurringRemainingHours';
-import { ensureProtectedSleepRoutine } from '../migrations/migrateProtectedSleepRoutine';
+import { ensureProtectedSleepRoutine } from '../utils/protectedSleepRoutine';
 
 const SchedulerContext = createContext(null);
 
@@ -989,7 +989,7 @@ export function SchedulerProvider({ children }) {
   }, []);
 
   // Runs on every load (not a one-time migration — see
-  // src/migrations/migrateProtectedSleepRoutine.js) so a user who ends up
+  // src/utils/protectedSleepRoutine.js) so a user who ends up
   // with zero routines labeled "Sleep" — however that happened — always gets
   // a protected one back, rather than only being backfilled once.
   useEffect(() => {

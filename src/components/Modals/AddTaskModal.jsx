@@ -70,6 +70,7 @@ import DependencyPicker from '../Common/DependencyPicker';
 import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
+import NumberField from '../Common/NumberField';
 import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
@@ -642,15 +643,14 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
               </label>
               {isRecurring && !(recurrenceDays && recurrenceDays.length > 0) && (
                 <div className="detail-field-inline" style={{ marginTop: 6 }}>
-                  <input
-                    type="number"
-                    min="1"
+                  <NumberField
+                    min={1}
                     max={MAX_RECURRENCE_COUNT}
                     step="1"
                     value={recurrenceCount}
-                    onChange={(e) => {
+                    onCommit={(v) => {
                       setHasEditedRecurrence(true);
-                      setRecurrenceCount(Math.min(MAX_RECURRENCE_COUNT, Math.max(1, Number(e.target.value) || 1)));
+                      setRecurrenceCount(v);
                       setRecurrenceDays(null);
                     }}
                     style={{ width: 56 }}

@@ -111,6 +111,7 @@ import {
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import Modal from '../Common/Modal';
+import NumberField from '../Common/NumberField';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
@@ -2530,14 +2531,14 @@ function PauseLogPrompt({ suggestedHours, effectiveRemainingHours, onApply, onDi
         Log {formatTimerDuration(suggestedHours * 3600)} and reduce time left?
       </p>
       <div className="detail-timer-pause-prompt-row">
-        <input
-          type="number"
-          min="0"
+        <NumberField
+          min={0}
           max={effectiveRemainingHours}
           step="0.1"
+          unitLabel="hours"
           className="detail-timer-pause-prompt-input"
           value={hours}
-          onChange={(e) => setHours(e.target.value)}
+          onCommit={setHours}
           aria-label="Hours to log"
         />
         <span className="detail-timer-pause-prompt-unit">h</span>
@@ -2549,10 +2550,11 @@ function PauseLogPrompt({ suggestedHours, effectiveRemainingHours, onApply, onDi
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => {
-            const parsed = Number(hours);
-            onApply(Number.isFinite(parsed) && parsed >= 0 ? parsed : suggestedHours);
-          }}
+          /* No fallback needed: NumberField only ever commits a value within
+             0..effectiveRemainingHours. The old guard accepted anything
+             non-negative, so `max` went unenforced and a typo could log more
+             hours than the task had left. */
+          onClick={() => onApply(hours)}
         >
           Apply
         </button>

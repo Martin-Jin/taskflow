@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '7.5.0',
+    date: '2026-08-22',
+    title: 'Every number box now means what it says',
+    changes: [
+      'The six number fields outside Settings no longer rewrite what you type. A recurrence count would clamp itself mid-keystroke — typing "50" in a max-999 box was fine, but clearing it snapped straight back to 1 — and now an out-of-range entry gets the same shake and explanation the Settings fields give.',
+      'Fixed a quieter version of the same bug when logging time. "Log time spent" and the timer’s pause prompt silently swapped an unparseable or negative entry for the tracked time instead, so the number you typed was not the number you logged.',
+      'The pause prompt also ignored its own upper limit, letting you log more hours than the task had left. It is enforced now.',
+    ],
+  },
+  {
     version: '7.4.2',
     date: '2026-08-22',
     title: 'The docs got readable',

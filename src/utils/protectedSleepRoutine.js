@@ -9,6 +9,12 @@
  * times, or label, so a deliberately renamed or deleted Sleep routine is
  * respected — reaching zero "Sleep"-labeled routines just means one gets
  * added back.
+ *
+ * Deliberately NOT in src/migrations/, despite once being written as one:
+ * everything in that directory is one-time code carrying a "SAFE TO DELETE
+ * after <date>" header, and several are due to be removed together. This is a
+ * permanent invariant that must outlive them, so it would be the wrong
+ * casualty of that sweep.
  */
 
 import { getDefaultRoutines } from '../services/mockData';

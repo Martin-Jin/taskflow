@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ensureProtectedSleepRoutine } from '../../src/migrations/migrateProtectedSleepRoutine';
+import { ensureProtectedSleepRoutine } from '../../src/utils/protectedSleepRoutine';
 
 describe('ensureProtectedSleepRoutine', () => {
   it('backfills a protected Sleep routine when the user has zero fixed routines', () => {

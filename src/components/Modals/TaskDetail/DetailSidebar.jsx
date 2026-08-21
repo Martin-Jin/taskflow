@@ -40,6 +40,7 @@ import LabelPicker from '../../Common/LabelPicker';
 import SmartDurationInput from '../../Common/SmartDurationInput';
 import SmartRecurrenceInput from '../../Common/SmartRecurrenceInput';
 import HelpTooltip from '../../Common/HelpTooltip';
+import NumberField from '../../Common/NumberField';
 
 export default function DetailSidebar({
   task,
@@ -266,14 +267,13 @@ export default function DetailSidebar({
         )}
         {isRecurring && !(recurrenceDays && recurrenceDays.length > 0) && (
           <div className="detail-field-inline" style={{ marginTop: 6 }}>
-            <input
-              type="number"
-              min="1"
+            <NumberField
+              min={1}
               max={MAX_RECURRENCE_COUNT}
               step="1"
               value={recurrenceCount}
-              onChange={(e) => {
-                onRecurrenceCountChange(Math.min(MAX_RECURRENCE_COUNT, Math.max(1, Number(e.target.value) || 1)));
+              onCommit={(v) => {
+                onRecurrenceCountChange(v);
                 onRecurrenceDaysChange(null);
               }}
               style={{ width: 56 }}
