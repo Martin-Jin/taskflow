@@ -505,11 +505,13 @@ cached copy.
   overdue, hours scheduled this week), **Right now** (the block currently
   in progress, or what's next, with a live countdown), **Today's agenda**,
   a **this week's progress** ring, and **Notes** — folder-organized sticky
-  notes (a title plus a freeform text body) for jotting anything down; a note
-  that's just a pasted link auto-formats and stays clickable, and a
-  "Recently edited" row surfaces whichever notes you touched last regardless
-  of folder. Bookmark files exported from a browser can still be imported,
-  one note per bookmark.
+  notes (a title plus a markdown body) for jotting anything down. Clicking a
+  note (or "Add note") opens a mini WYSIWYG markdown editor — a toolbar for
+  bold/italic/strikethrough, headings, bullet/numbered/checklist lists,
+  links, and inline/block code — with changes to an existing note saved
+  automatically as you type. A note that's just a pasted link auto-formats
+  and stays clickable, and a "Recently edited" row surfaces whichever notes
+  you touched last regardless of folder.
 - **Calendar** — Month / Week / 3 Day / Day views, picked from the hamburger
   menu next to the date title (tap the date itself to drop down a
   Google-Calendar-style month-strip date picker and jump to any day). A

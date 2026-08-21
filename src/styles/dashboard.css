@@ -624,14 +624,6 @@
   display: none;
 }
 
-.notes-actions {
-  display: flex;
-  justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: var(--space-3);
-}
-
 .note-folder-tab {
   display: inline-flex;
   align-items: center;
@@ -699,27 +691,6 @@
   width: 110px;
 }
 
-.notes-import-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
-  background: transparent;
-  border: 1px solid var(--color-border);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-}
-
-.notes-import-btn:hover {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  border-color: var(--color-accent-border);
-}
-
 .notes-grid {
   display: grid;
   /* Fixed 3 columns rather than auto-fill: at the side column's narrowest
@@ -729,10 +700,10 @@
      guarantees 3 per row regardless of container width. */
   grid-template-columns: repeat(3, minmax(0, 1fr));
   justify-content: start;
-  /* Rows size to their own content — the 76px floor lives on .note-tile
+  /* Rows size to their own content — the height floor lives on .note-tile
      itself, not here, so a full-width row like .notes-empty (a couple lines
-     of text) isn't padded out to 76px of mostly-dead space just because it
-     shares the grid with tiles. */
+     of text) isn't padded out to match tile height just because it shares
+     the grid with tiles. */
   grid-auto-rows: auto;
   align-content: start;
   /* Without this, Grid's default align-items: stretch pads every tile in a
@@ -752,24 +723,23 @@
   display: none;
 }
 
-/* Unlike the old link tiles (a favicon + short label, fine at 3-per-row even
-   narrow), a note tile carries a title plus a 2-line body — 3 fixed columns
-   on a phone leaves too little width per tile to read. Drop to 2 below the
-   app's standard mobile breakpoint (see useIsMobile.js) instead. */
-@media (max-width: 639px) {
-  .notes-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
+/* A note tile is now just a title + one clamped preview line (see
+   .note-tile-body below), so it stays legible at 3-per-row even narrow —
+   unlike the old 2-line-body tiles, which needed to drop to 2 columns
+   below the app's standard mobile breakpoint (see useIsMobile.js). Kept at
+   3 columns throughout instead of adding that breakpoint back. */
 
 .note-tile {
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
-  min-height: 76px;
-  padding: 10px 10px 10px 12px;
+  gap: 2px;
+  /* Shorter than the old 76px floor — a title + one preview line needs much
+     less room, and the tile should read as a compact, glanceable card, not
+     a mini Post-it. */
+  min-height: 52px;
+  padding: 8px 10px 8px 12px;
   border-radius: var(--radius-sm);
   background: var(--color-bg-page);
   /* Colored accent per note (see NotesCard's nextLabelColor assignment) —
@@ -783,6 +753,15 @@
 .note-tile:hover {
   background: var(--color-bg-surface-hover);
   transform: translateY(-1px);
+}
+
+/* .note-tile is a plain styling class shared by two different elements —
+   a real <button> for each note (see .note-tile-clickable) and the
+   dashed-border "Add note" trigger, which was already a <button> before
+   this and needs no extra reset here. */
+.note-tile-clickable {
+  width: 100%;
+  cursor: pointer;
 }
 
 .note-tile-add {
@@ -799,14 +778,6 @@
   background: var(--color-accent-soft);
 }
 
-.note-tile-content {
-  padding-right: 20px; /* leave room for the remove/edit buttons in the top-right corner */
-}
-
-.note-tile-content-clickable {
-  cursor: pointer;
-}
-
 .note-tile-title {
   font-size: var(--text-xs);
   font-weight: 600;
@@ -820,108 +791,25 @@
   display: flex;
   align-items: flex-start;
   gap: 4px;
+  min-width: 0;
 }
 
 .note-tile-body {
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
-  margin-top: 2px;
+  margin-top: 1px;
+  min-width: 0;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  /* One line, not two — see .note-tile's own comment on the smaller tile. */
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
-}
-
-.note-tile-body a {
-  color: var(--color-accent);
 }
 
 .note-favicon {
   border-radius: 3px;
   margin-top: 3px;
   flex-shrink: 0;
-}
-
-.note-tile-remove,
-.note-tile-edit {
-  position: absolute;
-  top: 4px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-primary);
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
-}
-
-.note-tile-remove {
-  right: 4px;
-}
-
-.note-tile-edit {
-  right: 24px;
-}
-
-.note-tile:hover .note-tile-remove,
-.note-tile:hover .note-tile-edit {
-  opacity: 1;
-}
-
-/* Same reasoning as .subtask-row-remove in forms.css — a hover-only reveal
-   is permanently invisible on touch devices, which have no hover state. */
-@media (hover: none) {
-  .note-tile-remove,
-  .note-tile-edit {
-    opacity: 1;
-  }
-}
-
-.note-tile-remove:hover {
-  color: var(--color-danger);
-  border-color: var(--color-danger);
-}
-
-.note-tile-edit:hover {
-  color: var(--color-accent);
-  border-color: var(--color-accent-border);
-}
-
-.note-add-form,
-.note-edit-form {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-page);
-}
-
-.note-add-form input,
-.note-add-form textarea,
-.note-edit-form input,
-.note-edit-form textarea {
-  font-size: var(--text-sm);
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-interactive);
-  background: var(--color-bg-surface);
-  color: var(--color-text-primary);
-  font-family: inherit;
-  resize: vertical;
-}
-
-.note-add-actions,
-.note-edit-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
 }
 
 /* Font-size/color/padding/text-align now come from EmptyState's own
@@ -971,23 +859,207 @@
   color: var(--color-text-primary);
 }
 
-.notes-import-input {
-  /* Hidden but still focusable/reachable via the visible "Import bookmarks"
-     button that triggers it — display:none would also work, but visually
-     hidden keeps it out of layout without pulling it out of the tab order
-     in browsers that skip display:none inputs differently. */
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+/* -------------------------------------------------------------------- */
+/* NoteEditorModal (Modals/NoteEditorModal.jsx) — mini markdown editor    */
+/* -------------------------------------------------------------------- */
+
+.modal-note-editor {
+  width: 640px;
 }
 
-.notes-import-message {
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
+.note-editor-header {
   margin-bottom: var(--space-2);
+}
+
+.note-editor-title-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding: 4px 0;
+}
+
+.note-editor-title-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.note-editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.note-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+
+.note-editor-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.note-editor-toolbar-btn:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.note-editor-toolbar-btn.is-active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* Breathing room between logical button groups (Bold/Italic/Strike |
+   Headings | Lists | Link/Code) — plain spacing, not a divider line, per
+   direction rule 1 (space and tone separate things; borders don't). */
+.note-editor-toolbar-divider {
+  width: 8px;
+  flex-shrink: 0;
+}
+
+.note-editor-content {
+  min-height: 240px;
+  max-height: 55vh;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+}
+
+.note-editor-content .tiptap {
+  outline: none;
+  min-height: 240px;
+}
+
+/* Tiptap's Placeholder extension marks the empty first paragraph with this
+   class + a data-placeholder attribute but injects no CSS of its own —
+   this is the standard pairing their own docs call for. */
+.note-editor-content .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-secondary);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.note-editor-content .tiptap h1,
+.note-editor-content .tiptap h2,
+.note-editor-content .tiptap h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  margin: 14px 0 4px;
+}
+
+.note-editor-content .tiptap h1:first-child,
+.note-editor-content .tiptap h2:first-child,
+.note-editor-content .tiptap h3:first-child {
+  margin-top: 0;
+}
+
+.note-editor-content .tiptap h1 {
+  font-size: var(--text-lg);
+}
+
+.note-editor-content .tiptap h2 {
+  font-size: var(--text-md);
+}
+
+.note-editor-content .tiptap h3 {
+  font-size: var(--text-base);
+}
+
+.note-editor-content .tiptap p {
+  margin: 4px 0;
+}
+
+.note-editor-content .tiptap ul,
+.note-editor-content .tiptap ol {
+  padding-left: 22px;
+  margin: 4px 0;
+}
+
+.note-editor-content .tiptap a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.note-editor-content .tiptap code {
+  background: var(--color-bg-page);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.note-editor-content .tiptap pre {
+  background: var(--color-bg-page);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.note-editor-content .tiptap pre code {
+  background: none;
+  padding: 0;
+}
+
+.note-editor-content .tiptap blockquote {
+  border-left: 2px solid var(--color-border);
+  margin: 4px 0;
+  padding-left: 10px;
+  color: var(--color-text-secondary);
+}
+
+/* Task list (checklist) rows — Tiptap renders each as
+   <li data-type="taskItem"><label><input type=checkbox></label><div>…</div></li>. */
+.note-editor-content .tiptap ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'] {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'] > label {
+  flex-shrink: 0;
+  margin-top: 3px;
+  user-select: none;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'] > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'][data-checked='true'] > div {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+}
+
+.note-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: var(--space-3);
 }
 
 /* -------------------------------------------------------------------- */
@@ -1190,19 +1262,6 @@
   font-size: var(--text-md);
   font-weight: 600;
   margin: 0;
-}
-
-/* NoteViewModal's body — same content as .note-tile-body but unclamped,
-   since the modal exists specifically to show the full text. */
-.note-view-body {
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.note-view-body a {
-  color: var(--color-accent);
 }
 
 /* Overdue rows show a due date instead of a time — wider than the 74px

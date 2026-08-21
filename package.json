@@ -1,7 +1,7 @@
 {
   "name": "taskflow",
   "private": true,
-  "version": "6.9.1",
+  "version": "6.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,11 +12,18 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@tiptap/extension-link": "^3.30.2",
+    "@tiptap/extension-placeholder": "^3.30.2",
+    "@tiptap/extension-task-item": "^3.30.2",
+    "@tiptap/extension-task-list": "^3.30.2",
+    "@tiptap/react": "^3.30.2",
+    "@tiptap/starter-kit": "^3.30.2",
     "firebase": "^12.16.0",
     "framer-motion": "^12.43.0",
     "lucide-react": "^1.28.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "tiptap-markdown": "^0.9.0"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

@@ -1262,6 +1262,9 @@ user-visible effect (internal refactors, migration code).
 - JSDoc typedefs (`src/types/index.js`) give editor-level type safety
   without a TypeScript build step — add `// @ts-check` to any file to get
   live type checking in VS Code today.
+- **Tiptap** (+ `tiptap-markdown`) powers NoteEditorModal's mini WYSIWYG
+  markdown editor — the only rich-text editing surface in the app; a note's
+  `body` field stays a plain markdown string in storage/sync either way.
 
 ## Testing
 

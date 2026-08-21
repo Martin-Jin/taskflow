@@ -3,7 +3,7 @@
 // (src/services/mockData.js) already present in the running app, so "renders
 // without errors" assertions rely on that seed data existing (tasks/blocks/
 // events today and this week) rather than creating fixtures per-test.
-import { test } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { trackConsoleErrors, gotoApp, gotoTab, expectNoErrors } from './helpers';
 
 test.beforeEach(async ({ page }) => {
@@ -46,24 +46,33 @@ test('customize menu toggles a widget on/off the dashboard', async ({ page }) =>
   expectNoErrors(errors);
 });
 
-test('notes card: add a note, edit it, and it persists after reload', async ({ page }) => {
+test('notes card: add a note via NoteEditorModal, edit it (autosave), and it persists after reload', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   const title = `E2E note ${Date.now()}`;
   const editedTitle = `${title} edited`;
 
+  // Create — NoteEditorModal in create mode requires the explicit "Add"
+  // (an abandoned create shouldn't leave a junk note, same rule
+  // EventDetailModal follows for a new event).
   await page.locator('.notes-card').getByRole('button', { name: 'Add note' }).click();
-  await page.locator('.note-add-form input[placeholder="Title"]').fill(title);
-  await page.locator('.note-add-form').getByRole('button', { name: 'Add' }).click();
+  const addDialog = page.getByRole('dialog', { name: 'Add note' });
+  await addDialog.getByPlaceholder('Title').fill(title);
+  await addDialog.locator('.note-editor-content [contenteditable="true"]').click();
+  await page.keyboard.type('some body text');
+  await addDialog.getByRole('button', { name: 'Add', exact: true }).click();
   await page.waitForTimeout(300);
 
   const tile = page.locator('.note-tile', { hasText: title });
   await tile.waitFor({ state: 'visible' });
 
-  // Edit it.
-  await tile.getByRole('button', { name: `Edit "${title}"` }).click();
-  const editForm = page.locator('.note-edit-form');
-  await editForm.locator('input.note-edit-title').fill(editedTitle);
-  await editForm.getByRole('button', { name: 'Save' }).click();
+  // Edit — clicking the tile itself opens the editor directly (no separate
+  // hover-only Edit button); an existing note autosaves (debounced) rather
+  // than needing an explicit Save.
+  await tile.click();
+  const editDialog = page.getByRole('dialog', { name: 'Edit note' });
+  await editDialog.getByPlaceholder('Title').fill(editedTitle);
+  await page.waitForTimeout(700); // let the debounced autosave fire
+  await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
 
   await page.locator('.note-tile', { hasText: editedTitle }).waitFor({ state: 'visible' });
@@ -73,9 +82,48 @@ test('notes card: add a note, edit it, and it persists after reload', async ({ p
   await gotoTab(page, 'Dashboard');
   await page.locator('.note-tile', { hasText: editedTitle }).waitFor({ state: 'visible' });
 
-  // Clean up so repeated runs don't accumulate notes.
-  const persistedTile = page.locator('.note-tile', { hasText: editedTitle });
-  await persistedTile.getByRole('button', { name: 'Remove' }).click();
+  // Clean up via the "⋯" menu's Delete (moved off the tile's own hover
+  // buttons) so repeated runs don't accumulate notes.
+  await page.locator('.note-tile', { hasText: editedTitle }).click();
+  await page.getByRole('button', { name: 'Note actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete' }).click();
+  await page.waitForTimeout(200);
+  await expect(page.locator('.note-tile', { hasText: editedTitle })).toHaveCount(0);
+
+  expectNoErrors(errors);
+});
+
+test('notes card: search is fuzzy (typo-tolerant), and Cancel on a new note creates nothing', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const title = `E2eFuzzySearchNote${Date.now()}`;
+
+  await page.locator('.notes-card').getByRole('button', { name: 'Add note' }).click();
+  const addDialog = page.getByRole('dialog', { name: 'Add note' });
+  await addDialog.getByPlaceholder('Title').fill(title);
+  await addDialog.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.note-tile', { hasText: title }).waitFor({ state: 'visible' });
+
+  // Dropping the trailing digit is a one-edit-distance typo — should still
+  // surface it via the shared nameSearch.js ranker's fuzzy tier, same as
+  // the Manage Projects modal's own typo-tolerant search test.
+  await page.locator('.notes-search-input').fill(title.slice(0, -1));
+  await page.waitForTimeout(200);
+  await expect(page.locator('.note-tile', { hasText: title })).toBeVisible();
+  await page.locator('.notes-search-clear').click();
+
+  // Opening "Add note" and dismissing without clicking "Add" creates nothing.
+  await page.locator('.notes-card').getByRole('button', { name: 'Add note' }).click();
+  const secondDialog = page.getByRole('dialog', { name: 'Add note' });
+  await secondDialog.getByPlaceholder('Title').fill('Should not be created');
+  await secondDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.waitForTimeout(300);
+  await expect(page.locator('.note-tile', { hasText: 'Should not be created' })).toHaveCount(0);
+
+  // Clean up.
+  await page.locator('.note-tile', { hasText: title }).click();
+  await page.getByRole('button', { name: 'Note actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete' }).click();
   await page.waitForTimeout(200);
 
   expectNoErrors(errors);
