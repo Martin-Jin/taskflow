@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '7.2.0',
+    date: '2026-08-21',
+    title: 'AI can write your notes too',
+    changes: [
+      'AI Quick Add can now create, edit and delete dashboard notes alongside tasks, events and projects. Note bodies are Markdown, so it can hand you a formatted checklist or summary rather than a wall of text — and as always, every proposed note shows up on the review screen with its own checkbox first.',
+      'New "Include my notes" tick-box next to the context picker. It is off by default — note bodies are freeform and can be long, so they are only sent when you say so. Left off, the AI can still write new notes; it just cannot read the ones you already have.',
+      'The AI is told explicitly that notes are for reference material and tasks are for things with a deadline, so a "book the dentist" request does not come back filed as a note.',
+      'Note: creating notes via AI needs the companion Cloudflare Worker redeployed (npx wrangler deploy) — the list of things the AI is allowed to propose lives there.',
+    ],
+  },
+  {
     version: '7.1.0',
     date: '2026-08-21',
     title: 'Export notes, and add one from anywhere',

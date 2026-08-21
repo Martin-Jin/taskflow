@@ -40,10 +40,22 @@ const OP_SHAPES = {
   rename_section: { target: { field: 'sectionId', kind: 'section' }, refFields: [] },
   delete_section: { target: { field: 'sectionId', kind: 'section' }, refFields: [] },
   create_label: { creates: 'label', refFields: [] },
+  create_note: { creates: 'note', refFields: [] },
+  update_note: { target: { field: 'noteId', kind: 'note' }, refFields: [] },
+  delete_note: { target: { field: 'noteId', kind: 'note' }, refFields: [] },
 };
 
-const KIND_TO_CONTEXT_KEY = { project: 'projects', section: 'sections', label: 'labels', task: 'tasks', event: 'events' };
-const KIND_DISPLAY_FIELD = { project: 'name', section: 'name', label: 'name', task: 'title', event: 'title' };
+const KIND_TO_CONTEXT_KEY = { project: 'projects', section: 'sections', label: 'labels', task: 'tasks', event: 'events', note: 'notes' };
+const KIND_DISPLAY_FIELD = { project: 'name', section: 'name', label: 'name', task: 'title', event: 'title', note: 'title' };
+const ENTITY_KINDS = Object.keys(KIND_TO_CONTEXT_KEY);
+
+/* Per-kind bookkeeping maps below are built from ENTITY_KINDS rather than
+   listed by hand — adding a kind to KIND_TO_CONTEXT_KEY used to also require
+   remembering two separate literal objects, and missing one threw at runtime
+   only for plans that happened to touch the new kind. */
+function perKind(make) {
+  return Object.fromEntries(ENTITY_KINDS.map((kind) => [kind, make()]));
+}
 
 function isLocalId(id) {
   return typeof id === 'string' && /^new:\d+$/.test(id);
@@ -128,7 +140,7 @@ export function resolvePlan(operations, context) {
   });
 
   // Deleted-in-this-plan ids, per kind — referencing one of these is always an error.
-  const deletedIds = { project: new Set(), section: new Set(), label: new Set(), task: new Set(), event: new Set() };
+  const deletedIds = perKind(() => new Set());
   operations.forEach((operation) => {
     const shape = OP_SHAPES[operation.op];
     if (shape && shape.target && operation.op.startsWith('delete_')) {
@@ -333,7 +345,7 @@ export function resolvePlan(operations, context) {
   for (const kind of Object.keys(KIND_TO_CONTEXT_KEY)) {
     realNames[kind] = new Map((context[KIND_TO_CONTEXT_KEY[kind]] || []).map((e) => [e.id, e[KIND_DISPLAY_FIELD[kind]]]));
   }
-  const localNames = { project: new Map(), section: new Map(), label: new Map(), task: new Map(), event: new Map() };
+  const localNames = perKind(() => new Map());
   for (const entry of entries) {
     const shape = OP_SHAPES[entry.operation.op];
     if (shape?.creates && entry.operation.localId) {
@@ -416,6 +428,12 @@ function describeOperation(op, context, nameFor) {
       return `Delete section "${nameFor('section', op.sectionId)}"`;
     case 'create_label':
       return `Create label "${op.name}"`;
+    case 'create_note':
+      return `Create note "${op.title}"`;
+    case 'update_note':
+      return `Update note "${nameFor('note', op.noteId)}"`;
+    case 'delete_note':
+      return `Delete note "${nameFor('note', op.noteId)}"`;
     default:
       return op.op;
   }
@@ -489,7 +507,7 @@ function contentFields(op, excludeKeys) {
  *
  * @param {{ entries: Array, applyOrder: number[] }} plan - resolvePlan's output.
  * @param {Set<number>} checkedIndices - entry indices the user left checked on the confirm screen.
- * @param {Object} mutators - { addTask, updateTask, deleteTask, addManualEvent, updateEvent, deleteEvent, addProject, renameProject, deleteProject, addSection, renameSection, deleteSection, getOrCreateLabelIds } from useScheduler().
+ * @param {Object} mutators - { addTask, updateTask, deleteTask, addManualEvent, updateEvent, deleteEvent, addProject, renameProject, deleteProject, addSection, renameSection, deleteSection, getOrCreateLabelIds } from useScheduler(), plus { addNote, updateNote, deleteNote } from useNoteMutations() (notes live in SchedulerContext but their mutators don't — see that hook).
  * @returns {Array<{ index: number, ok: boolean, error?: string, createdId?: string }>}
  *   `createdId` is set (to the real, resolved id) whenever the operation is one
  *   of the `creates`-kind ops (create_task/event/project/section/label) and it
@@ -568,6 +586,18 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
           break;
         case 'delete_section':
           mutators.deleteSection(resolved.sectionId);
+          break;
+        case 'create_note': {
+          const created = mutators.addNote(resolved.title, resolved.body || '');
+          idMap.set(resolved.localId, created.id);
+          createdId = created.id;
+          break;
+        }
+        case 'update_note':
+          mutators.updateNote(resolved.noteId, contentFields(resolved, new Set(['op', 'noteId'])));
+          break;
+        case 'delete_note':
+          mutators.deleteNote(resolved.noteId);
           break;
         default:
           throw new Error(`Unhandled operation "${resolved.op}".`);

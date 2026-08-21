@@ -57,11 +57,13 @@ const CONTEXT_SCOPE_OPTIONS = [
   { value: 'custom', label: 'Custom' },
 ];
 
-const DEFAULT_CONTEXT_SCOPE = { mode: 'full', projectId: '', eventStart: '', eventEnd: '' };
+// includeNotes defaults to false in every mode, notes being the one part of
+// the snapshot that's unbounded freeform prose (see filterContextData).
+const DEFAULT_CONTEXT_SCOPE = { mode: 'full', projectId: '', eventStart: '', eventEnd: '', includeNotes: false };
 
 export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   const scheduler = useScheduler();
-  const { tasks, projects, sections, labels, events } = scheduler;
+  const { tasks, projects, sections, labels, events, notes } = scheduler;
   // This component swaps its ENTIRE rendered tree between its own <Modal>
   // (the form) and <AIPlanConfirmModal> (a separately migrated <Modal> of
   // its own) once a plan exists — so when `plan` is set, no <Modal> of this
@@ -130,8 +132,9 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
           projectId: projectStillExists ? contextScope.projectId : undefined,
           eventStart: contextScope.eventStart || defaultEventStart,
           eventEnd: contextScope.eventEnd || defaultEventEnd,
+          includeNotes: contextScope.includeNotes,
         }
-      : { mode: contextScope.mode };
+      : { mode: contextScope.mode, includeNotes: contextScope.includeNotes };
 
   const [text, setText] = useState('');
   const textareaRef = useRef(null);
@@ -152,9 +155,9 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   // — keeping both derived from the same filtered arrays is what guarantees
   // the displayed estimate never diverges from what's actually sent.
   const filteredContextData = useMemo(
-    () => filterContextData({ tasks, projects, sections, labels, events }, effectiveScope),
+    () => filterContextData({ tasks, projects, sections, labels, events, notes: notes?.notes || [] }, effectiveScope),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasks, projects, sections, labels, events, contextScope]
+    [tasks, projects, sections, labels, events, notes, contextScope]
   );
 
   // Only rebuilds when the workspace or scope changes, not on every
@@ -334,8 +337,8 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
         <>
         <p className="form-hint" style={{ marginTop: -4, marginBottom: 12 }}>
           Describe what you want in your own words, or paste/attach screenshots or PDFs — add/edit/move tasks and
-          events, break a task into subtasks, set up dependencies, reorganize projects — you'll review every change
-          before anything is applied.
+          events, break a task into subtasks, set up dependencies, reorganize projects, write notes — you'll review
+          every change before anything is applied.
         </p>
 
         <div className="ai-quickadd-provider-row">
@@ -407,13 +410,34 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
             />
           </div>
         )}
-        <p className="form-hint" style={{ marginTop: contextScope.mode === 'custom' ? 4 : -6, marginBottom: 12 }}>
+        {/* Independent of the mode picker above: notes are opt-in even in Full
+            context, and meaningless in No context. */}
+        {contextScope.mode !== 'none' && (
+          <div className="form-row settings-toggle-row" style={{ marginTop: contextScope.mode === 'custom' ? 8 : 10, marginBottom: 6 }}>
+            <input
+              type="checkbox"
+              id="ai-quickadd-include-notes"
+              checked={!!contextScope.includeNotes}
+              onChange={(e) => updateContextScope({ includeNotes: e.target.checked })}
+            />
+            <label htmlFor="ai-quickadd-include-notes">
+              Include my notes ({(notes?.notes || []).length})
+            </label>
+          </div>
+        )}
+        {/* The -6 pull-up only applies when the notes toggle above isn't there
+            to supply its own gap. */}
+        <p className="form-hint" style={{ marginTop: contextScope.mode === 'none' ? -6 : 0, marginBottom: 12 }}>
           {contextScope.mode === 'full' &&
             'Sends your full workspace (all projects, tasks, and calendar events) so the AI can reference anything by id.'}
           {contextScope.mode === 'none' &&
             "Sends none of your existing workspace — the AI can still create new tasks/events/projects, it just can't reference anything existing."}
           {contextScope.mode === 'custom' &&
             'Restrict what the AI can see: pick one project and/or narrow the calendar events sent, leaving either at its default to not restrict it.'}
+          {contextScope.mode !== 'none' &&
+            (contextScope.includeNotes
+              ? ' Your notes are included, so the AI can read and edit them — untick to keep them out.'
+              : ' Your notes are not sent. The AI can still write new notes, it just can’t read the ones you already have.')}
         </p>
 
         <div className="form-row">

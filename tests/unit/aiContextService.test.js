@@ -20,22 +20,30 @@ const events = [
   { id: 'e3', title: 'Late', date: '2026-09-01' },
 ];
 
-const fullData = { tasks, projects, sections, labels, events };
+const notes = [
+  { id: 'n1', title: 'Packing list', body: '- socks' },
+  { id: 'n2', title: 'Meeting notes', body: 'shipped v1' },
+];
+
+// Notes are opt-in per request, so the "no notes" shape (an empty notes array)
+// is the DEFAULT everywhere below — only the includeNotes tests pass them on.
+const fullData = { tasks, projects, sections, labels, events, notes };
+const fullDataNoNotes = { ...fullData, notes: [] };
 
 describe('filterContextData', () => {
   it('mode "full" (or omitted) returns the arrays unchanged', () => {
-    expect(filterContextData(fullData, { mode: 'full' })).toEqual(fullData);
-    expect(filterContextData(fullData, undefined)).toEqual(fullData);
+    expect(filterContextData(fullData, { mode: 'full' })).toEqual(fullDataNoNotes);
+    expect(filterContextData(fullData, undefined)).toEqual(fullDataNoNotes);
   });
 
   it('mode "none" empties every array, including labels', () => {
     const result = filterContextData(fullData, { mode: 'none' });
-    expect(result).toEqual({ tasks: [], projects: [], sections: [], labels: [], events: [] });
+    expect(result).toEqual({ tasks: [], projects: [], sections: [], labels: [], events: [], notes: [] });
   });
 
   it('mode "custom" with no sub-filters behaves like full (no restriction)', () => {
     const result = filterContextData(fullData, { mode: 'custom' });
-    expect(result).toEqual(fullData);
+    expect(result).toEqual(fullDataNoNotes);
   });
 
   it('mode "custom" with a projectId restricts projects/sections/tasks to that project, but not labels', () => {
@@ -78,5 +86,40 @@ describe('buildAIContext — reduced-context instructions addendum', () => {
     expect(noneMd).toMatch(/Limited context/);
     const customMd = buildAIContext({ ...fullData, today: '2026-08-16', scope: { mode: 'custom', projectId: 'p1' } }).markdown;
     expect(customMd).toMatch(/Limited context/);
+  });
+});
+
+describe('filterContextData — notes are opt-in', () => {
+  it('drops notes unless includeNotes is set, in every mode', () => {
+    expect(filterContextData(fullData, { mode: 'full' }).notes).toEqual([]);
+    expect(filterContextData(fullData, { mode: 'custom', projectId: 'p1' }).notes).toEqual([]);
+    expect(filterContextData(fullData, undefined).notes).toEqual([]);
+  });
+
+  it('passes notes through untouched when includeNotes is set', () => {
+    expect(filterContextData(fullData, { mode: 'full', includeNotes: true }).notes).toEqual(notes);
+    // A project filter must not touch notes — a note belongs to a notes folder,
+    // not a project.
+    expect(filterContextData(fullData, { mode: 'custom', projectId: 'p1', includeNotes: true }).notes).toEqual(notes);
+  });
+
+  it('"no context" beats includeNotes — nothing at all means nothing at all', () => {
+    expect(filterContextData(fullData, { mode: 'none', includeNotes: true }).notes).toEqual([]);
+  });
+});
+
+describe('buildAIContext — notes section', () => {
+  it('lists the notes it was given when includeNotes is set', () => {
+    const { markdown } = buildAIContext({ ...fullData, today: '2026-08-20', scope: { mode: 'full', includeNotes: true } });
+    expect(markdown).toMatch(/## Existing notes \(2 total\)/);
+    expect(markdown).toContain('Packing list');
+  });
+
+  it('says notes were deliberately withheld rather than showing an empty list', () => {
+    const { markdown } = buildAIContext({ ...fullData, today: '2026-08-20', scope: { mode: 'full' } });
+    expect(markdown).toMatch(/chose not to send their notes/);
+    expect(markdown).not.toContain('Packing list');
+    // "0 total" would read as "this user has no notes", a different claim.
+    expect(markdown).not.toMatch(/Existing notes \(0 total\)/);
   });
 });

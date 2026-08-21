@@ -422,9 +422,10 @@ one of the mini-FABs next to "Add task" in Tasks list/Board view and next to
 "New event" in Calendar, and a standalone floating button in the same corner
 on Dashboard, Projects, Stats, and Settings (which have no FAB of their own).
 It can create tasks and events, break a task into subtasks, set up
-dependencies ("do X after Y"), move tasks between projects/sections, and
-create/rename/delete projects, sections, and labels — essentially anything
-you could do by hand. Nothing is applied automatically: every request opens
+dependencies ("do X after Y"), move tasks between projects/sections,
+create/rename/delete projects, sections, and labels, and write dashboard
+notes (Markdown, so it can produce a formatted checklist or summary) —
+essentially anything you could do by hand. Nothing is applied automatically: every request opens
 a review screen listing each proposed change individually, so you can
 uncheck anything you don't want before applying. Tasks are the default for
 anything that needs doing (even with a deadline) — events are reserved for
@@ -442,6 +443,12 @@ anything existing by id); **Custom** lets you independently restrict to one
 project and/or narrow the calendar events sent to a date range, useful for
 keeping a request smaller/cheaper or more focused. Your last scope choice is
 remembered on that device, same as the provider/model choice.
+
+Your **notes are a separate, opt-in part of that snapshot** — off by default
+in every scope, since a note body is unbounded freeform text that can dwarf
+the rest of the request. Tick **Include my notes** if you want the AI to be
+able to read, edit, or delete the notes you already have; leave it off and it
+can still write new ones, it just can't see the existing ones.
 
 This is **bring-your-own-key (BYOK)**, the same model as the Todoist
 integration above: each person using the app pastes their own Anthropic

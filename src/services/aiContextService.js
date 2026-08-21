@@ -99,7 +99,14 @@ Critical rules — follow these exactly, mistakes here are not auto-corrected:
    "Food", "Invitations") whenever there's a sensible grouping. Don't force
    sections onto a single task or a small handful of unrelated asks just
    because the capability exists.
-9. **Don't touch what wasn't asked.** Only propose operations that serve the
+9. **Notes are freeform, tasks are not.** \`create_note\` is for reference
+   material the user wants to keep and read later — meeting notes, a packing
+   list they'll tick off by hand, a summary, a snippet. It is NOT a substitute
+   for \`create_task\`: anything with a deadline, a duration, or a "get this
+   done" shape is a task. A note's \`body\` is Markdown (headings, lists,
+   \`- [ ]\` checkboxes, links, code fences all render), so use it. Only
+   propose notes when the user actually asked for something note-shaped.
+10. **Don't touch what wasn't asked.** Only propose operations that serve the
    user's actual request — do not "clean up" or reorganize unrelated tasks
    the user didn't mention, even if you notice something that looks messy.
 `;
@@ -174,6 +181,14 @@ function eventsSection(events) {
   return `## Existing calendar events (${rows.length} total)\n\n\`\`\`json\n${JSON.stringify(rows, null, 2)}\n\`\`\`\n`;
 }
 
+/* Only ever called when the user opted into sending notes (see
+   filterContextData's `includeNotes`) — a note body is unbounded freeform
+   text, so it's the one part of the snapshot that's off by default. */
+function notesSection(notes) {
+  const rows = (notes || []).map((n) => ({ id: n.id, title: n.title, body: n.body || undefined }));
+  return `## Existing notes (${rows.length} total)\n\n\`\`\`json\n${JSON.stringify(rows, null, 2)}\n\`\`\`\n`;
+}
+
 function projectsSection(projects) {
   const rows = (projects || []).map((p) => ({
     id: p.id,
@@ -226,10 +241,15 @@ export const DEFAULT_EVENT_RANGE_DAYS = 30;
  *     sub-filters unset behaves identically to 'full'.
  * @returns {{ tasks, projects, sections, labels, events }}
  */
-export function filterContextData({ tasks, projects, sections, labels, events }, scope) {
+export function filterContextData({ tasks, projects, sections, labels, events, notes }, scope) {
   const mode = scope?.mode || 'full';
-  if (mode === 'full') return { tasks, projects, sections, labels, events };
-  if (mode === 'none') return { tasks: [], projects: [], sections: [], labels: [], events: [] };
+  // Notes are opt-in in every mode rather than following the mode the way
+  // everything else does: a note body is unbounded freeform prose, so it can
+  // dwarf the rest of the snapshot, and some of it is the kind of thing a user
+  // would rather not send anywhere. See AIQuickAddModal's "Include my notes".
+  const scopedNotes = scope?.includeNotes && mode !== 'none' ? notes || [] : [];
+  if (mode === 'full') return { tasks, projects, sections, labels, events, notes: scopedNotes };
+  if (mode === 'none') return { tasks: [], projects: [], sections: [], labels: [], events: [], notes: [] };
 
   // mode === 'custom'
   let filteredProjects = projects;
@@ -246,7 +266,7 @@ export function filterContextData({ tasks, projects, sections, labels, events },
   if (scope.eventStart || scope.eventEnd) {
     filteredEvents = (events || []).filter((e) => (!scope.eventStart || e.date >= scope.eventStart) && (!scope.eventEnd || e.date <= scope.eventEnd));
   }
-  return { tasks: filteredTasks, projects: filteredProjects, sections: filteredSections, labels, events: filteredEvents };
+  return { tasks: filteredTasks, projects: filteredProjects, sections: filteredSections, labels, events: filteredEvents, notes: scopedNotes };
 }
 
 /**
@@ -259,7 +279,7 @@ export function filterContextData({ tasks, projects, sections, labels, events },
  *   the addendum stays in sync with what was actually filtered.
  * @returns {{ markdown: string, approxTokens: number, activeTaskCount: number }}
  */
-export function buildAIContext({ tasks, projects, sections, labels, events, today, scope }) {
+export function buildAIContext({ tasks, projects, sections, labels, events, notes, today, scope }) {
   const referenceDate = today || new Date().toISOString().slice(0, 10);
   const mode = scope?.mode || 'full';
   const parts = [
@@ -271,6 +291,13 @@ export function buildAIContext({ tasks, projects, sections, labels, events, toda
     `\n${labelsSection(labels)}`,
     `\n${tasksSection(tasks)}`,
     `\n${eventsSection(events)}`,
+    // Notes are opt-in, so the absence of this section is ambiguous on its
+    // own ("no notes exist" vs. "you weren't shown them") — hence one explicit
+    // line saying which, rather than an "Existing notes (0 total)" heading
+    // that would read as the former.
+    scope?.includeNotes
+      ? `\n${notesSection(notes)}`
+      : "\n## Existing notes\n\nThe user chose not to send their notes with this request, so you cannot see or edit any existing note. You may still propose `create_note` operations for new notes.\n",
   ];
   const markdown = parts.join('\n');
   return {

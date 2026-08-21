@@ -313,13 +313,24 @@ test.describe('AI Quick Add', () => {
     await expect(scopeMenu).toContainText('Full context');
     await expect(modal.getByRole('button', { name: 'Restrict to one project' })).toHaveCount(0);
 
-    // "No context" — still no sub-filters (nothing to restrict when nothing is sent).
+    // Notes are opt-in independently of the mode, and off by default.
+    const includeNotes = page.locator('#ai-quickadd-include-notes');
+    await expect(includeNotes).toBeVisible();
+    await expect(includeNotes).not.toBeChecked();
+    await expect(modal).toContainText(/notes are not sent/i);
+    await includeNotes.check();
+    await expect(modal).toContainText(/notes are included/i);
+    await includeNotes.uncheck();
+
+    // "No context" — still no sub-filters (nothing to restrict when nothing is sent),
+    // and no notes toggle either: there's nothing to opt into.
     await scopeMenu.click();
     await page.waitForTimeout(150);
     await page.getByRole('option', { name: 'No context', exact: true }).click();
     await page.waitForTimeout(150);
     await expect(modal.getByRole('button', { name: 'Restrict to one project' })).toHaveCount(0);
     await expect(modal).toContainText(/can still create new tasks\/events\/projects/i);
+    await expect(page.locator('#ai-quickadd-include-notes')).toHaveCount(0);
 
     // "Custom" reveals both sub-filters: a project picker and an event date range.
     await scopeMenu.click();
