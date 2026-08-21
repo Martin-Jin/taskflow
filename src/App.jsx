@@ -66,9 +66,12 @@ import {
   Settings,
   Search,
   Sparkles,
+  StickyNote,
 } from 'lucide-react';
 import { useAIQuickAddGate } from './hooks/useAIQuickAddGate';
 import AIQuickAddModal from './components/Modals/AIQuickAddModal';
+import NoteEditorModal from './components/Modals/NoteEditorModal';
+import { useNoteMutations } from './hooks/useNoteMutations';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch). Six
@@ -145,6 +148,12 @@ function AppShell() {
   // modal from their own local state instead (AddTaskFabGroup/CalendarPage),
   // since those already have a FAB group to host the entry point.
   const [showStandaloneAIQuickAdd, setShowStandaloneAIQuickAdd] = useState(false);
+  // "Add note" from the command palette opens the note editor right here rather
+  // than signalling the Dashboard — the Notes widget can be hidden (see
+  // DashboardPage's widget toggles), and the palette shouldn't silently do
+  // nothing just because it is.
+  const [showStandaloneNoteEditor, setShowStandaloneNoteEditor] = useState(false);
+  const { createNote: createNoteFromPalette } = useNoteMutations();
   const isMobile = useIsMobile();
   useSelectAllOnFocus();
   const { toggleTheme } = useTheme();
@@ -384,6 +393,7 @@ function AppShell() {
           },
         ]
       : []),
+    { id: 'addNote', label: 'Add note', icon: StickyNote, run: () => setShowStandaloneNoteEditor(true) },
     { id: 'rebalance', label: 'Re-balance schedule', run: runRebalance },
     { id: 'toggleTheme', label: 'Toggle light/dark theme', run: toggleTheme },
     { id: 'manageProjects', label: 'Manage projects', run: () => openManageProjects() },
@@ -591,6 +601,12 @@ function AppShell() {
         />
       )}
       {paletteTask && <TaskDetailModal task={paletteTask} onClose={() => setPaletteTaskId(null)} />}
+      {showStandaloneNoteEditor && (
+        <NoteEditorModal
+          onCreate={(title, body) => createNoteFromPalette(title, body)}
+          onClose={() => setShowStandaloneNoteEditor(false)}
+        />
+      )}
       {showStandaloneAIQuickAdd && (
         <AIQuickAddModal onClose={() => setShowStandaloneAIQuickAdd(false)} onProjectCreated={selectProject} />
       )}

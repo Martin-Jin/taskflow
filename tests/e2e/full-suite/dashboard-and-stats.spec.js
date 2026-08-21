@@ -271,3 +271,27 @@ test('notes: saving a note with no title explains why instead of doing nothing',
 
   expectNoErrors(errors);
 });
+
+test('notes: "Export as Markdown" downloads the note as a .md file', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Dashboard');
+
+  await page.getByRole('button', { name: /Add note/i }).first().click();
+  await page.getByPlaceholder('Title').fill('Export me');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+  await page.locator('.note-tile-clickable', { hasText: 'Export me' }).first().click();
+  await page.locator('.note-editor-content .tiptap').click();
+  await page.keyboard.type('body text');
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    (async () => {
+      await page.locator('.modal-note-editor .menu-trigger').first().click();
+      await page.getByRole('menuitem', { name: /Export as Markdown/i }).click();
+    })(),
+  ]);
+  expect(download.suggestedFilename()).toBe('Export me.md');
+
+  expectNoErrors(errors);
+});

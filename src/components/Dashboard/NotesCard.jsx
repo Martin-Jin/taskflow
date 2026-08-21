@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, X, Clock, FolderPlus, Search, StickyNote } from 'lucide-react';
-import { useScheduler } from '../../context/SchedulerContext';
+import { useNoteMutations } from '../../hooks/useNoteMutations';
 import { linkify, containsLink } from '../../utils/linkify';
-import { nextLabelColor } from '../../utils/labelColor';
 import { rankByNameSearch } from '../../utils/nameSearch';
 import { stripMarkdown } from '../../utils/stripMarkdown';
 import NoteEditorModal from '../Modals/NoteEditorModal';
@@ -24,7 +23,7 @@ function firstLinkHref(text) {
  * devices and survive a backup restore, like every other setting.
  */
 export default function NotesCard() {
-  const { notes: data, setNotes: setData } = useScheduler();
+  const { data, setData, createNote: addNote, updateNote, removeNote: deleteNote } = useNoteMutations();
   const [activeFolderId, setActiveFolderId] = useState('all');
   const [isAdding, setIsAdding] = useState(false);
   const [isAddingFolder, setIsAddingFolder] = useState(false);
@@ -45,22 +44,15 @@ export default function NotesCard() {
 
   const editingNote = editingNoteId ? data.notes.find((n) => n.id === editingNoteId) || null : null;
 
+  /* New notes land in the folder currently being viewed, or the default one
+     when the "All" tab is active. */
   function createNote(title, body) {
-    const folderId = activeFolderId === 'all' ? DEFAULT_FOLDER_ID : activeFolderId;
-    const now = Date.now();
-    setData((d) => ({
-      ...d,
-      notes: [...d.notes, { id: crypto.randomUUID(), title, body, folderId, color: nextLabelColor(d.notes.length), createdAt: now, updatedAt: now }],
-    }));
+    addNote(title, body, activeFolderId === 'all' ? DEFAULT_FOLDER_ID : activeFolderId);
     setIsAdding(false);
   }
 
-  function updateNote(id, fields) {
-    setData((d) => ({ ...d, notes: d.notes.map((n) => (n.id === id ? { ...n, ...fields, updatedAt: Date.now() } : n)) }));
-  }
-
   function removeNote(id) {
-    setData((d) => ({ ...d, notes: d.notes.filter((n) => n.id !== id) }));
+    deleteNote(id);
     if (editingNoteId === id) setEditingNoteId(null);
   }
 

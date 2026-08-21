@@ -10,6 +10,8 @@
  * ============================================================================
  */
 
+import { downloadTextFile } from '../utils/downloadFile';
+
 /**
  * Almost exactly the fields the live cloud sync already pushes (see
  * firestoreSync.js's pushUserData) — a backup is the same shape, just
@@ -197,18 +199,13 @@ export function isValidBackupPayload(payload) {
   });
 }
 
-/** Triggers a browser download of `payload` as a formatted .json file — an in-memory Blob + a throwaway link, no server round trip. */
+/** Triggers a browser download of `payload` as a formatted .json file. */
 export function downloadBackupFile(payload) {
-  const json = JSON.stringify(payload, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `taskflow-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadTextFile(
+    `taskflow-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify(payload, null, 2),
+    'application/json'
+  );
 }
 
 /** Reads a File (from an <input type="file"> picker) and resolves to its parsed JSON contents, or rejects if it isn't valid JSON. */

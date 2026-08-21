@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '7.1.0',
+    date: '2026-08-21',
+    title: 'Export notes, and add one from anywhere',
+    changes: [
+      'The note editor’s ⋯ menu has a new "Export as Markdown" option, which saves the note (title included) as a .md file. It exports what is on screen, so an export taken mid-edit still matches what you are looking at.',
+      '"Add note" is now a command-palette action (Ctrl/Cmd+K), so you can jot something down from any tab — it works even if you have hidden the Notes widget on your dashboard.',
+    ],
+  },
+  {
     /* 7.0.0, not 6.11.0: the minor part rolls over at 9 (see CLAUDE.md), and
        6.10.x had already drifted past that — this rolls it properly, and
        doubles as the marker for the finished "quiet density" UI overhaul. */
