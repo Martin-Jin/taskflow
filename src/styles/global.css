@@ -3269,13 +3269,22 @@ input[type='checkbox']:checked::after {
 /* Every .btn inside the bar (field toggles, Select all, Cancel, and the
    Apply/Turn off buttons inside a field's popover) drops its border — the
    bar itself already reads as one bounded surface (border-top + shadow),
-   so a border on every button inside it was redundant visual noise. */
+   so a border on every button inside it was redundant visual noise. Without
+   a border, the base `.btn` fill (--color-bg-surface-hover) has to carry
+   the whole boundary on its own — but that token and the bar's own
+   background (--color-bg-surface) sit only a few RGB points apart in dark
+   theme, so the buttons read as barely-there faint squares instead of
+   clearly-bounded controls. `color-mix` against the bar's own background
+   guarantees a fixed, theme-independent contrast step instead of leaning on
+   two tokens that happen to be close together in one theme. */
 .bulk-action-bar .btn {
   border-color: transparent;
+  background: color-mix(in srgb, var(--color-text-primary) 10%, var(--color-bg-surface));
 }
 
 .bulk-action-bar .btn:hover:not(:disabled) {
   border-color: transparent;
+  background: color-mix(in srgb, var(--color-text-primary) 16%, var(--color-bg-surface));
 }
 
 .bulk-action-bar-count {
