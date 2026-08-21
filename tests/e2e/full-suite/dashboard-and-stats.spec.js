@@ -125,11 +125,11 @@ test('now/next card: clicking the current or next item opens its detail modal', 
 
 test('progress rings render for today and this week', async ({ page }) => {
   const errors = trackConsoleErrors(page);
-  const row = page.locator('.progress-ring-row');
-  await row.waitFor({ state: 'visible' });
+  const strip = page.locator('.progress-rings-strip');
+  await strip.waitFor({ state: 'visible' });
 
-  await row.locator('.progress-ring-card', { hasText: "Today's progress" }).waitFor({ state: 'visible' });
-  await row.locator('.progress-ring-card', { hasText: "This week's progress" }).waitFor({ state: 'visible' });
+  await strip.locator('.progress-ring-mini', { hasText: 'Today' }).waitFor({ state: 'visible' });
+  await strip.locator('.progress-ring-mini', { hasText: 'This week' }).waitFor({ state: 'visible' });
 
   expectNoErrors(errors);
 });

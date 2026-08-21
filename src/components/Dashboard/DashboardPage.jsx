@@ -5,8 +5,7 @@ import NowNextCard from './NowNextCard';
 import TodayAgenda from './TodayAgenda';
 import DashboardStats from './DashboardStats';
 import NotesCard from './NotesCard';
-import WeeklyProgressRing from './WeeklyProgressRing';
-import TodayProgressRing from './TodayProgressRing';
+import ProgressRings from './ProgressRings';
 import DashboardCustomizeMenu from './DashboardCustomizeMenu';
 import { DEFAULT_DASHBOARD_WIDGETS } from './dashboardWidgets';
 
@@ -62,12 +61,7 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar }) {
           {showSide && (
             <div className="dashboard-grid-side">
               {widgets.notes !== false && <NotesCard />}
-              {widgets.progressRings !== false && (
-                <div className="progress-ring-row">
-                  <TodayProgressRing />
-                  <WeeklyProgressRing />
-                </div>
-              )}
+              {widgets.progressRings !== false && <ProgressRings />}
             </div>
           )}
         </div>

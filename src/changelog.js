@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.8',
+    date: '2026-08-21',
+    title: 'A calmer, clearer dashboard',
+    changes: [
+      '"Right now" is now the dashboard\'s clear focal point, with a subtle highlighted background and a larger heading.',
+      "Today's and this week's progress now show as one compact strip instead of two large cards, so they read as a supporting stat rather than competing for attention.",
+      'The greeting at the top of the dashboard is smaller, so it no longer outweighs the actual content below it.',
+    ],
+  },
+  {
     version: '6.8.7',
     date: '2026-08-21',
     title: 'Click a field, replace it',
