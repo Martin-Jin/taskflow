@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '7.4.1',
+    date: '2026-08-22',
+    title: 'Flatter pop-up menus',
+    changes: [
+      'The collaborator search box in a task’s Assign to menu no longer draws its own bordered panel inside the menu’s panel — it reads as one row alongside the names below it.',
+      'The “Start timer” button lost its border and fill for the same reason: it is the only thing in its pop-up, so the pop-up is already the button’s frame.',
+    ],
+  },
+  {
     version: '7.4.0',
     date: '2026-08-22',
     title: 'The calendar covers the whole day now',

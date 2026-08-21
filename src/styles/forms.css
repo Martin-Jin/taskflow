@@ -643,6 +643,19 @@
    fit that control's content rather than a fixed menu width, with a min-width
    so the "Start timer (25:00)" button/live countdown doesn't wrap awkwardly,
    and a max-width so it can't overflow a narrow phone viewport when centered. */
+/* Unboxed action inside .detail-timer-popover — see the button's own comment
+   in TaskDetailModal. Keeps .btn's sizing/layout, drops only its chrome. */
+.detail-timer-popover .detail-timer-start {
+  border-color: transparent;
+  background: transparent;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.detail-timer-popover .detail-timer-start:hover {
+  background: var(--color-bg-surface-hover);
+}
+
 .detail-timer-popover {
   z-index: 200;
   min-width: 200px;
@@ -757,14 +770,16 @@
   padding: 2px 8px 4px;
 }
 
+/* No box of its own: this already sits inside .detail-menu-dropdown's raised
+   surface, so a bordered, differently-shaded field nested inside it read as
+   two stacked panels. Matches .calendar-filter-search, the app's other
+   search-inside-a-portaled-menu — icon plus a bare input, separated from the
+   rows below by space and the ASSIGN TO label above, not by an outline. */
 .assign-to-search {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-surface);
+  padding: 3px 0;
 }
 
 .assign-to-search-icon {

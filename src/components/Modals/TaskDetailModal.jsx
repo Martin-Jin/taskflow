@@ -2471,7 +2471,10 @@ function TaskTimerControl({ durationSeconds, timer, onStart, onPause, onResume, 
 
   if (!timer) {
     return (
-      <button type="button" className="btn" onClick={() => onStart(durationSeconds)}>
+      /* Plain, unboxed: it's the only thing in .detail-timer-popover, which
+         already supplies the raised surface — a bordered .btn inside it read
+         as a button floating in a panel rather than the panel's own action. */
+      <button type="button" className="btn detail-timer-start" onClick={() => onStart(durationSeconds)}>
         <Timer size={14} /> Start timer ({formatTimerDuration(durationSeconds)})
       </button>
     );
