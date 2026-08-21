@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.9.1',
+    date: '2026-08-21',
+    title: 'Fixed clipped focus rings, added an "All Tasks" icon',
+    changes: [
+      'The keyboard-focus highlight no longer gets cut off at the edge of a scrolling list (most noticeable tabbing through the new all-projects panel) — it now draws just inside each item instead of outside it, everywhere in the app.',
+      '"All Tasks" now has an icon next to it everywhere "Inbox" does, instead of standing out as the one option without one.',
+      'The all-projects panel\'s collapse button lost its boxy background/border to match the other plain icon buttons nearby.',
+    ],
+  },
+  {
     version: '6.9.0',
     date: '2026-08-21',
     title: 'A cleaner sidebar and a new all-projects panel',

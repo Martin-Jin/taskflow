@@ -27,7 +27,7 @@
  */
 
 import React from 'react';
-import { Search, Pin, Inbox as InboxIcon, X } from 'lucide-react';
+import { Search, Pin, Inbox as InboxIcon, Layers, X } from 'lucide-react';
 import Modal from './Common/Modal';
 import { useProjectSearch } from '../hooks/useProjectSearch';
 import SharedProjectBadge from './Common/SharedProjectBadge';
@@ -44,6 +44,7 @@ function RailBody({ visibleProjects, isSearching, activeIndex, setActiveIndex, a
         aria-current={activeProjectId === ALL_TASKS_PROJECT_ID ? 'true' : undefined}
         onClick={() => onPick(ALL_TASKS_PROJECT_ID)}
       >
+        <Layers size={13} aria-hidden="true" />
         {ALL_TASKS_PROJECT_LABEL}
       </button>
       <button

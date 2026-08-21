@@ -663,7 +663,7 @@ export default function TaskListPanel({
                 now happens through that rail instead. */}
             <button
               type="button"
-              className="btn btn-icon taskpage-project-rail-trigger"
+              className="btn btn-icon menu-trigger taskpage-project-rail-trigger"
               onClick={toggleProjectRail}
               aria-label={isProjectRailOpen ? 'Hide all projects' : 'Show all projects'}
               aria-expanded={isProjectRailOpen}

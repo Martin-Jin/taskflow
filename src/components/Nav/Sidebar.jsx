@@ -23,7 +23,7 @@
  */
 
 import React, { useState } from 'react';
-import { Inbox, Pin } from 'lucide-react';
+import { Inbox, Layers, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -115,6 +115,7 @@ export default function Sidebar({
           onClick={() => onSelectProject(ALL_TASKS_PROJECT_ID)}
           aria-current={activeProjectId === ALL_TASKS_PROJECT_ID ? 'page' : undefined}
         >
+          <Layers size={14} aria-hidden="true" />
           <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
         </button>
 
