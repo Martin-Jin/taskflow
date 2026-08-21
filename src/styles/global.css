@@ -2392,13 +2392,13 @@ h4 + .settings-hint {
   margin-top: var(--space-2);
 }
 
-/* A status pill carries 8px of its own horizontal padding, which pushed its
-   TEXT 8px right of the body copy directly above/below it — the two read as
-   misaligned even though the elements' boxes weren't. Pull the pill back by
-   exactly that padding so the text baselines line up on the left. */
-.settings-card .settings-actions > .badge:first-child {
-  margin-left: -8px;
-}
+/* A status pill aligns on its BOX, like the buttons and paragraphs it stacks
+   with — deliberately not on its label. Pulling it left by its own 8px
+   padding to line the text up instead made the pill's rounded edge hang past
+   everything else, and it couldn't work for a pill carrying a leading icon
+   anyway: the icon pushes the text a further 17px in, so no single offset
+   aligns both kinds. A button's label is inset from its box for the same
+   reason and reads as aligned regardless. */
 
 .settings-hint + .settings-toggle-row {
   margin-top: var(--space-3);
