@@ -547,11 +547,15 @@ test('Settings desktop rail: lists every section, click-to-scroll and scroll-tra
   await gotoTab(page, 'Settings');
 
   // All 13 sections (SETTINGS_SECTIONS in SettingsPanel.jsx) are present in
-  // the rail, each backed by its own extracted <Name>Section component under
+  // the rail EXCEPT "Install app" — InstallAppSection only ever renders
+  // content on mobile, and the rail only ever shows on desktop, so those two
+  // conditions can never overlap; a rail link there would always scroll
+  // nowhere (see visibleSections in SettingsPanel.jsx). The other 12 are each
+  // backed by their own extracted <Name>Section component under
   // Settings/sections/ — this is the one thing that would silently drop a
   // whole section if that extraction ever went wrong.
   const rail = page.locator('.settings-rail-link');
-  await expect(rail).toHaveCount(13);
+  await expect(rail).toHaveCount(12);
   await expect(rail).toHaveText([
     'Account & sync',
     'Integrations',
@@ -560,7 +564,6 @@ test('Settings desktop rail: lists every section, click-to-scroll and scroll-tra
     'Appearance',
     'Tags',
     'Notifications',
-    'Install app',
     'Help',
     'Keyboard shortcuts',
     'Versions',
