@@ -571,7 +571,7 @@
 
 .cal-block:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 1px;
+  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
   z-index: 5;
 }
 
@@ -843,7 +843,7 @@
 
 .cal-event:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 1px;
+  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
   z-index: 5;
 }
 

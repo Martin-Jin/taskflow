@@ -338,12 +338,20 @@ input:not([type]):focus-visible {
   outline: none;
 }
 
+/* Inset (negative offset), not outset — an outset ring on an element flush
+   against a scrolling container's edge (a list's first/last row, a tightly
+   packed grid) gets silently clipped by that container's own overflow, with
+   no visual sign anything is even focused. An inset ring can never extend
+   past the element's own box, so it can never be clipped this way regardless
+   of where the element sits — every other focus-visible override in this
+   app (.cal-block, .cal-event, .board-card, .select-menu-trigger, etc.)
+   mirrors this same -2px choice for the same reason. */
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 /* Minimalist scrollbars app-wide: thin, square-cornered, transparent track

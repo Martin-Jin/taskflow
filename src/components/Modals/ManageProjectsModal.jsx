@@ -11,7 +11,7 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { Plus, Search, Pin, Inbox as InboxIcon } from 'lucide-react';
+import { Plus, Search, Pin, Inbox as InboxIcon, Layers } from 'lucide-react';
 import Modal from '../Common/Modal';
 import { useProjectSearch } from '../../hooks/useProjectSearch';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
@@ -119,6 +119,7 @@ export default function ManageProjectsModal({
                 className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
                 onClick={() => pickProject(ALL_TASKS_PROJECT_ID)}
               >
+                <Layers size={14} aria-hidden="true" />
                 <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
               </button>
 

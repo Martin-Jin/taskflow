@@ -248,7 +248,9 @@
 .board-card:focus-visible,
 .board-column-title:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 2px;
+  /* Inset — see global.css's button:focus-visible comment; a card near the
+     top/bottom of .board-column-body's own scroll would otherwise clip. */
+  outline-offset: -2px;
 }
 
 /* Same "picked up" lift as the calendar's .cal-block.is-dragging (see that
