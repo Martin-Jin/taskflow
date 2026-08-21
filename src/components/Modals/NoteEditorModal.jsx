@@ -233,10 +233,26 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
   // Passed to <Modal onClose={...}> — the one funnel every dismissal
   // (X/Escape/backdrop) goes through, same technique as EventDetailModal's
   // own handleModalClose. Only edit mode has anything to flush; an
-  // abandoned create intentionally saves nothing.
+  // abandoned create saves nothing (see guardCasualDismiss for why that's
+  // no longer silent).
   function handleModalClose() {
     if (!isCreate) flushSave();
     onClose();
+  }
+
+  /* A new note with a body but no title can't be saved, and closing the
+     editor threw that body away without a word — which read as the app
+     silently losing work. A casual dismissal (Escape, clicking the backdrop,
+     the X) is now refused with the same "needs a title" hint the Add button
+     gives; Cancel still discards, since that one is an explicit choice. */
+  function guardCasualDismiss() {
+    if (!isCreate) return true;
+    const hasContent = title.trim() || currentMarkdown().trim();
+    if (hasContent && !title.trim()) {
+      titleRejection.reject('Give the note a title to save it, or press Cancel to discard it.');
+      return false;
+    }
+    return true;
   }
 
   function handleCreate() {
@@ -284,8 +300,14 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
   });
 
   return (
-    <Modal onClose={handleModalClose} ariaLabel={isCreate ? 'Add note' : 'Edit note'} size="lg" variantClassName="modal-note-editor">
-      {({ requestClose }) => {
+    <Modal
+      onClose={handleModalClose}
+      ariaLabel={isCreate ? 'Add note' : 'Edit note'}
+      size="lg"
+      variantClassName="modal-note-editor"
+      guardDismiss={guardCasualDismiss}
+    >
+      {({ requestClose, attemptClose }) => {
         requestCloseRef.current = requestClose;
         return (
           <>
@@ -315,7 +337,7 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
                     <MoreHorizontal size={15} />
                   </button>
                 )}
-                <button type="button" className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+                <button type="button" className="btn btn-icon detail-header-close" onClick={attemptClose} aria-label="Close">
                   <X size={16} />
                 </button>
               </div>

@@ -646,3 +646,29 @@ test('Scheduling rules: an out-of-range number is rejected with a hint instead o
 
   expectNoErrors(errors);
 });
+
+test('Integrations: a token/key submit button only appears once something is typed', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const card = page.locator('.settings-card', { hasText: 'Integrations' }).first();
+  // The AI-key field rather than the Todoist one: the seeded mock state
+  // already has a Todoist token, so that block renders its "Change token"
+  // branch instead of an empty input.
+  const keyInput = card.getByPlaceholder(/Anthropic API key/i);
+  await keyInput.scrollIntoViewIfNeeded();
+  const saveButton = page.locator('form:has(input[placeholder*="Anthropic API key"])').getByRole('button', { name: 'Save' });
+
+  // Empty field: nothing to submit, so no button at all (it used to sit there
+  // permanently disabled).
+  await expect(saveButton).toHaveCount(0);
+
+  await keyInput.fill('sk-test-key');
+  await expect(saveButton).toBeVisible();
+
+  // Whitespace-only counts as empty.
+  await keyInput.fill('   ');
+  await expect(saveButton).toHaveCount(0);
+
+  expectNoErrors(errors);
+});

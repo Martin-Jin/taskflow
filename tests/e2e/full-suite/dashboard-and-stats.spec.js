@@ -295,3 +295,41 @@ test('notes: "Export as Markdown" downloads the note as a .md file', async ({ pa
 
   expectNoErrors(errors);
 });
+
+test('notes: dismissing a half-written new note is refused, but Cancel still discards it', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Dashboard');
+
+  await page.getByRole('button', { name: /Add note/i }).first().click();
+  await page.getByPlaceholder('Title').waitFor();
+  await page.locator('.note-editor-content .tiptap').click();
+  await page.keyboard.type('work in progress');
+
+  // Escape and the X are casual dismissals — they used to throw the body away
+  // without a word, which read as the app losing work.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.modal-note-editor')).toBeVisible();
+  await expect(page.locator('.field-rejection-hint')).toContainText('title');
+
+  await page.locator('.modal-note-editor .detail-header-close').click();
+  await expect(page.locator('.modal-note-editor')).toBeVisible();
+
+  // Cancel is an explicit choice, so it discards without argument.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('.modal-note-editor')).toHaveCount(0);
+  await expect(page.locator('.note-tile-title', { hasText: 'work in progress' })).toHaveCount(0);
+
+  expectNoErrors(errors);
+});
+
+test('notes: an untitled, empty new note closes freely — nothing to lose', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Dashboard');
+
+  await page.getByRole('button', { name: /Add note/i }).first().click();
+  await page.getByPlaceholder('Title').waitFor();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.modal-note-editor')).toHaveCount(0);
+
+  expectNoErrors(errors);
+});

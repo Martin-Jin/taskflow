@@ -28,6 +28,15 @@
  * through to useModalA11y as a no-op close, the same technique that modal
  * already used by hand before this component existed.
  *
+ * `guardDismiss` is the softer version of that: a `() => boolean` consulted
+ * on each CASUAL dismissal (Escape, overlay click, and the `attemptClose`
+ * handed to slots) — return false to refuse and, presumably, say why. It
+ * deliberately does NOT gate `requestClose`, so an explicit Cancel button or
+ * a post-submit self-close is never blocked; a slot wires the guarded
+ * `attemptClose` to its X button and the unguarded `requestClose` to Cancel.
+ * See NoteEditorModal, where dismissing a half-written note used to discard
+ * it with no explanation.
+ *
  * NOT every modal in the app is on this yet — some have deliberately
  * bespoke shapes (JoinProjectModal's busy-gated dismissal, TaskDetailModal's
  * own multi-panel layout) migrated separately, on their own terms, rather
@@ -56,10 +65,15 @@ export default function Modal({
   variantClassName = '',
   overlayClassName = '',
   dismissible = true,
+  guardDismiss,
 }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(dismissible ? requestClose : () => {});
-  const ctx = { requestClose, isClosing };
+  const attemptClose = () => {
+    if (guardDismiss && guardDismiss() === false) return;
+    requestClose();
+  };
+  const modalRef = useModalA11y(dismissible ? attemptClose : () => {});
+  const ctx = { requestClose, attemptClose, isClosing };
 
   // .stat-list-modal-header (not .detail-header) is the correct match for a
   // plain static-text title: .detail-header is shaped for AddProjectModal/
@@ -74,7 +88,7 @@ export default function Modal({
       : title !== undefined && (
           <div className="stat-list-modal-header">
             <h3>{title}</h3>
-            <button type="button" className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
+            <button type="button" className="btn btn-icon detail-header-close" onClick={attemptClose} aria-label="Close">
               <X size={16} />
             </button>
           </div>
