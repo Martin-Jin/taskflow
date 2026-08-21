@@ -41,6 +41,7 @@ import { findRecurrencePhrase, WEEKDAY_LABELS, expandTaskOccurrences, deriveRecu
 import { stripMatchedText } from '../../utils/smartParse';
 import DetailField from '../Common/DetailField';
 import HelpTooltip from '../Common/HelpTooltip';
+import NumberField from '../Common/NumberField';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
 
 const SCOPE_OPTIONS = [
@@ -618,16 +619,15 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                         <option value="until">On date</option>
                       </select>
                       {repeatEndType === 'count' && (
-                        <input
-                          type="number"
-                          min="1"
-                          max="730"
+                        <NumberField
+                          min={1}
+                          max={730}
                           step="1"
                           value={repeatCount}
                           disabled={isReadOnly || !repeatControlsApply}
-                          onChange={(e) => {
+                          onCommit={(v) => {
                             markRepeatEdited();
-                            setRepeatCount(Math.max(1, Number(e.target.value) || 1));
+                            setRepeatCount(v);
                           }}
                           style={{ width: 56 }}
                         />

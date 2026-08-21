@@ -15,6 +15,7 @@
 import React, { useEffect, useState } from 'react';
 import { Timer } from 'lucide-react';
 import Modal from './Modal';
+import NumberField from './NumberField';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { formatTimerDuration } from '../../context/TimerContext';
 
@@ -35,9 +36,13 @@ function ConfirmModalInner({ pending, onConfirm, onCancel }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending.taskId]);
 
+  /* `hours` is always a valid in-range number: NumberField only commits values
+     that parse and satisfy min, and tells the user when one doesn't rather
+     than handing back a silent fallback. The old guard here substituted
+     pending.elapsedHours for anything unparseable, so typing a negative
+     number logged the timer's value instead and said nothing. */
   function handleConfirm() {
-    const parsed = Number(hours);
-    onConfirm(Number.isFinite(parsed) && parsed >= 0 ? parsed : pending.elapsedHours);
+    onConfirm(hours);
   }
 
   return (
@@ -61,14 +66,14 @@ function ConfirmModalInner({ pending, onConfirm, onCancel }) {
           </p>
           <div className="form-row">
             <label htmlFor="complete-confirm-hours">Hours spent</label>
-            <input
+            <NumberField
               id="complete-confirm-hours"
-              type="number"
-              min="0"
+              min={0}
               step="0.1"
+              unitLabel="hours"
               autoFocus
               value={hours}
-              onChange={(e) => setHours(e.target.value)}
+              onCommit={setHours}
             />
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>

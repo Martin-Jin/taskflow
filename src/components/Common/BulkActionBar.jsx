@@ -27,6 +27,7 @@ import { X, Trash2, CheckSquare, Square, Calendar, Repeat, Folder, Tag, Flag } f
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { RECURRENCE_UNITS } from '../../utils/recurrence';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
+import NumberField from './NumberField';
 
 /**
  * @param {object} props
@@ -100,12 +101,12 @@ export default function BulkActionBar({
                 <div className="bulk-action-bar-popover">
                   <div className="bulk-action-bar-recurrence-row">
                     <span>Every</span>
-                    <input
-                      type="number"
+                    <NumberField
                       min={1}
                       max={999}
+                      unitLabel={recurrenceUnit + 's'}
                       value={recurrenceCount}
-                      onChange={(e) => setRecurrenceCount(e.target.value)}
+                      onCommit={setRecurrenceCount}
                       style={{ width: 50 }}
                     />
                     <select value={recurrenceUnit} onChange={(e) => setRecurrenceUnit(e.target.value)}>
@@ -120,7 +121,7 @@ export default function BulkActionBar({
                     <button
                       type="button"
                       className="btn btn-primary"
-                      onClick={() => applyAndClose('recurrence', { count: Number(recurrenceCount) || 1, unit: recurrenceUnit })}
+                      onClick={() => applyAndClose('recurrence', { count: recurrenceCount, unit: recurrenceUnit })}
                     >
                       Apply
                     </button>

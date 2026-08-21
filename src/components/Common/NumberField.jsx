@@ -9,6 +9,12 @@
  * range, and on blur (or Enter) explains the rejection via useFieldRejection
  * and snaps the draft back to the last good value — so an invalid entry is
  * never silently accepted OR silently discarded.
+ *
+ * `inputProps` is spread BEFORE this component's own handlers, so a caller
+ * passing onChange/onBlur/onFocus/onKeyDown would have it silently dropped
+ * rather than composed. That's deliberate — those four are the mechanism —
+ * but it means a caller wanting extra behavior on blur has to wrap this
+ * component instead of passing a handler through it.
  */
 
 import React, { useEffect, useRef, useState } from 'react';

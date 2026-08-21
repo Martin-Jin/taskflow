@@ -1434,4 +1434,47 @@ test.describe('Validation edge cases', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+  test('an out-of-range recurrence count is rejected with a hint instead of being silently rewritten', async ({ page }) => {
+    // Regression guard: this field used to clamp inside onChange
+    // (Math.min(999, Math.max(1, Number(...) || 1))), so typing past the max
+    // rewrote the keystroke as you typed and clearing the box snapped it to 1
+    // — both with no explanation. It now goes through NumberField like the
+    // Settings number fields do.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    await page.getByPlaceholder('Task name').fill(`E2E recurrence range ${RUN_ID}`);
+
+    // Recurrence needs a due date before its checkbox is enabled, and lives
+    // behind the "More options" pill.
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click();
+    await page.locator('.addtask-pill-panel input[type="date"]').fill('2027-01-15');
+    await pills.nth(0).click();
+    await page.getByRole('button', { name: 'More options' }).click();
+    await page.locator('.form-checkbox-row input[type=checkbox]').first().check();
+
+    const count = page.locator('.detail-field-inline input[type=number]').first();
+    await expect(count).toHaveValue('1');
+
+    await count.fill('5000');
+    await count.blur();
+    await expect(page.locator('.field-rejection-hint')).toContainText('between 1 and 999');
+    await expect(count).toHaveValue('1');
+
+    await count.fill('');
+    await count.blur();
+    await expect(page.locator('.field-rejection-hint')).toBeVisible();
+    await expect(count).toHaveValue('1');
+
+    await count.fill('3');
+    await count.blur();
+    await expect(page.locator('.field-rejection-hint')).toHaveCount(0);
+    await expect(count).toHaveValue('3');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
