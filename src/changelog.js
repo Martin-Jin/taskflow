@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.10.1',
+    date: '2026-08-21',
+    title: 'Quieter note-editor toolbar button',
+    changes: [
+      'The "⋯" note-actions button in the note editor lost its boxy background/border to match the other plain icon buttons next to it.',
+    ],
+  },
+  {
     version: '6.10.0',
     date: '2026-08-21',
     title: 'Notes got a real editor',
