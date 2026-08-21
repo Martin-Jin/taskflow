@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '7.2.1',
+    date: '2026-08-21',
+    title: 'Tour and docs caught up',
+    changes: [
+      'The guided tour and the AI Quick Add guide now mention notes — the tour’s Dashboard step says notes are a markdown editor, and both AI descriptions list notes among what the AI can change.',
+      'README and the contributor docs were re-checked against the app: the dashboard’s progress rings, the note editor’s ⋯ menu, the command palette’s full action list, and the opt-in "Include my notes" setting are all described accurately again.',
+    ],
+  },
+  {
     version: '7.2.0',
     date: '2026-08-21',
     title: 'AI can write your notes too',
