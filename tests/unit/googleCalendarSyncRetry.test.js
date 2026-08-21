@@ -47,6 +47,7 @@ import {
   computeTodaysBlockPushSignature,
 } from '../../src/hooks/useGoogleCalendarSync.js';
 import { isBlockSourcedEvent } from '../../src/services/googleCalendarService.js';
+import { toISODate } from '../../src/utils/dateUtils.js';
 import { mergePulledGoogleEvents } from '../../src/services/eventSyncService.js';
 
 describe('getSilentReauthRetryDelay', () => {
@@ -120,7 +121,14 @@ describe('isUnsyncedPushableEvent — the retry sweep for events', () => {
   // failed (offline, not yet connected, tab closed mid-flight) was stranded
   // with googleEventId: null forever. Blocks were swept every poll tick;
   // events simply weren't. This predicate is what makes the sweep symmetric.
-  const base = { id: 'e1', title: 'Coffee', date: '2026-08-20', startTime: '09:00', endTime: '10:00' };
+  // These dates MUST stay relative to today. The predicate refuses to push
+  // anything already in the past (isPastCalendarItem — "history is frozen"),
+  // so a hardcoded date silently rots: every expect(true) here started
+  // failing once the date passed, and — worse — every expect(false) kept
+  // passing for the wrong reason, so the safety cases below were no longer
+  // testing the rule they name.
+  const tomorrow = toISODate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const base = { id: 'e1', title: 'Coffee', date: tomorrow, startTime: '09:00', endTime: '10:00' };
 
   it('selects a manual event that has never been pushed', () => {
     expect(isUnsyncedPushableEvent({ ...base, source: 'manual', googleEventId: null })).toBe(true);
@@ -148,6 +156,18 @@ describe('isUnsyncedPushableEvent — the retry sweep for events', () => {
   it('skips an event missing date/time, which could not build a valid resource', () => {
     expect(isUnsyncedPushableEvent({ id: 'e2', title: 'Broken', source: 'manual', googleEventId: null })).toBe(false);
     expect(isUnsyncedPushableEvent({ ...base, startTime: undefined, source: 'manual', googleEventId: null })).toBe(false);
+  });
+
+  it('skips an event whose day is already over, since history is frozen', () => {
+    const yesterday = toISODate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    expect(isUnsyncedPushableEvent({ ...base, date: yesterday, source: 'manual', googleEventId: null })).toBe(false);
+  });
+
+  it('still pushes a past-dated RECURRING event, whose rule outlives its start date', () => {
+    const yesterday = toISODate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    expect(
+      isUnsyncedPushableEvent({ ...base, date: yesterday, recurrenceRule: 'FREQ=WEEKLY', source: 'manual', googleEventId: null })
+    ).toBe(true);
   });
 });
 
