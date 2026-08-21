@@ -225,8 +225,12 @@
   border-bottom: 1px solid var(--color-border);
   padding: 10px 4px 10px 9px;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard);
-  animation: card-in var(--duration-base) var(--ease-decelerate);
+  /* background transition is a plain hover/press feedback; transform/
+     box-shadow/opacity are the drag pickup/settle below ("emphasis" role,
+     see global.css). */
+  transition: background var(--duration-fast) var(--ease-standard), transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease), opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
+  animation: card-in var(--motion-enter-duration) var(--motion-enter-ease);
 }
 
 .board-column-body>.board-card:last-child {
@@ -247,8 +251,15 @@
   outline-offset: 2px;
 }
 
+/* Same "picked up" lift as the calendar's .cal-block.is-dragging (see that
+   rule's comment) — the browser drags its own frozen snapshot, so this is
+   the faded original left behind, lifted to read as "in motion" rather
+   than just dimmed. Settling on drop is the same transition in reverse. */
 .board-card.is-dragging {
   opacity: 0.5;
+  transform: scale(1.03) translateY(-2px);
+  box-shadow: var(--shadow-elevated);
+  z-index: 3;
 }
 
 .board-column-body.is-dragover {
