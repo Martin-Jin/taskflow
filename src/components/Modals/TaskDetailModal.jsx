@@ -62,35 +62,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Repeat,
   Ban,
   Wind,
   X,
   Lock,
   Unlock,
-  CalendarClock,
   CalendarCheck,
-  CalendarRange,
-  Flag,
   Link2,
   CalendarX2,
-  Folder,
   Layers,
-  Tag,
   Clock,
-  Plus,
   Check,
   AlignLeft,
   MoreHorizontal,
   Trash2,
   Link as LinkIcon,
-  Paperclip,
-  File as FileIcon,
-  Send,
-  Loader2,
   Sparkles,
   Timer,
-  Hourglass,
   Pause,
   Play,
   Square,
@@ -102,7 +90,7 @@ import {
   UserPlus,
   Search,
 } from 'lucide-react';
-import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../context/SchedulerContext';
+import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import {
   useTimers,
@@ -113,21 +101,15 @@ import {
 } from '../../context/TimerContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
 import { useSound } from '../../context/SoundContext';
-import { validateAttachment, formatFileSize, ATTACHMENT_ACCEPT } from '../../services/attachmentService';
-import { parseDurationHours, formatDisplayDate, formatDisplayDateTime, formatTime12h, toISODate } from '../../utils/dateUtils';
+import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
 import {
   parseRecurrenceRule,
   findRecurrencePhrase,
-  RECURRENCE_UNITS,
   buildRecurrenceString,
-  WEEKDAY_LABELS,
-  MAX_RECURRENCE_COUNT,
   resolveCurrentOccurrenceDueDate,
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
-import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours } from '../../utils/formatHours';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
@@ -135,18 +117,11 @@ import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitl
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { useMultiSelect } from '../../hooks/useMultiSelect';
-import { useTaskBulkEditActions } from '../../hooks/useTaskBulkEditActions';
 import DependencyPicker from '../Common/DependencyPicker';
 import HelpTooltip from '../Common/HelpTooltip';
-import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
-import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
-import SmartDurationInput from '../Common/SmartDurationInput';
-import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
-import BulkActionBar from '../Common/BulkActionBar';
 import { faviconUrl } from '../Dashboard/notesModel';
 import { findLinkPhrases, stripMatchedText } from '../../utils/smartParse';
 import {
@@ -155,7 +130,6 @@ import {
   isCompletedForCurrentOccurrence,
   getEffectiveRemainingHoursForOccurrence,
   computeRemainingHoursPatchAfterElapsed,
-  isAtMaxSubtaskDepth,
   getIneligibleParentIds,
 } from '../../utils/taskHierarchy';
 import {
@@ -165,23 +139,11 @@ import {
   computeEnforcingAncestor,
 } from '../../utils/taskValidation';
 import SmartParseGuideModal from './SmartParseGuideModal';
-import {
-  findActiveMentionSpan,
-  getMentionCandidates,
-  filterMentionCandidates,
-  insertMention,
-  parseCommentBody,
-} from '../../utils/commentMentions';
-import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
-import { computeEffectiveRole, isSharedProject, resolveOwnerProfile, getAssignableCollaborators } from '../../utils/sharedProjectAccess';
-
-// Default estimated hours for a quick-added sub-task — matches
-// AddTaskModal's DEFAULT_ESTIMATED_HOURS for a brand-new top-level task, so
-// an un-estimated sub-task doesn't eat an oversized chunk of capacity
-// either (it's schedulable immediately, due date or not — see
-// allocator.js's prioritizeTasks — but keeps the two "new task" entry
-// points consistent).
-const DEFAULT_SUBTASK_ESTIMATED_HOURS = 5 / 60;
+import CommentThread from './TaskDetail/CommentThread';
+import SubtaskList from './TaskDetail/SubtaskList';
+import DetailSidebar from './TaskDetail/DetailSidebar';
+import { filterMentionCandidates } from '../../utils/commentMentions';
+import { computeEffectiveRole, resolveOwnerProfile, getAssignableCollaborators } from '../../utils/sharedProjectAccess';
 
 // Sentinel stored in smartParentTaskId by a smart-parsed "unsubtask" mention
 // (see fields.unsubtask below) to mean "clear this task's parentId" — distinct
@@ -336,40 +298,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [fixedTimeEnabled, setFixedTimeEnabled] = useState(!!task.fixedTime);
   const [hasEditedFixedTime, setHasEditedFixedTime] = useState(false);
   const [labelIds, setLabelIds] = useState(task.labelIds || []);
-  const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
-  const [isAddingSubtask, setIsAddingSubtask] = useState(false);
-  // Smart-parse draft state for the "Add sub-task" row — mirrors
-  // AddTaskModal's blank-start fields (not this modal's own edit-mode fields
-  // above, which compare against task.* originals) since a new sub-task
-  // starts blank the same way a brand-new top-level task does. Every field
-  // the main Title field smart-parses is wired here too, even though this
-  // compact row has no picker widget for recurrence/dependency/unattended/
-  // enforceDueDate/link/fixedTime — those simply have no way to become
-  // "touched" (no hasEdited flag) since there's nothing to edit them with
-  // other than smart-parse itself, so isUntouched() for them is just `true`.
-  const [subtaskProjectId, setSubtaskProjectId] = useState(task.projectId ?? '');
-  const [subtaskHasEditedProject, setSubtaskHasEditedProject] = useState(false);
-  const [subtaskSectionId, setSubtaskSectionId] = useState(task.sectionId ?? '');
-  const [subtaskHasEditedSection, setSubtaskHasEditedSection] = useState(false);
-  const [subtaskPriority, setSubtaskPriority] = useState('medium');
-  const [subtaskHasEditedPriority, setSubtaskHasEditedPriority] = useState(false);
-  const [subtaskDueDate, setSubtaskDueDate] = useState('');
-  const [subtaskHasEditedDueDate, setSubtaskHasEditedDueDate] = useState(false);
-  const [subtaskEstimatedHours, setSubtaskEstimatedHours] = useState(DEFAULT_SUBTASK_ESTIMATED_HOURS);
-  const [subtaskHasEditedHours, setSubtaskHasEditedHours] = useState(false);
-  const [subtaskLabelIds, setSubtaskLabelIds] = useState([]);
-  const [subtaskLink, setSubtaskLink] = useState('');
-  const [subtaskFixedTime, setSubtaskFixedTime] = useState('');
-  const [subtaskFixedTimeEnabled, setSubtaskFixedTimeEnabled] = useState(false);
-  const [subtaskIsRecurring, setSubtaskIsRecurring] = useState(false);
-  const [subtaskRecurrenceCount, setSubtaskRecurrenceCount] = useState(1);
-  const [subtaskRecurrenceUnit, setSubtaskRecurrenceUnit] = useState('week');
-  const [subtaskRecurrenceDays, setSubtaskRecurrenceDays] = useState(null);
-  const [subtaskIsPassive, setSubtaskIsPassive] = useState(false);
-  const [subtaskEnforceDueDate, setSubtaskEnforceDueDate] = useState(false);
-  const [subtaskDependsOn, setSubtaskDependsOn] = useState([]);
-  const [subtaskAssignedTo, setSubtaskAssignedTo] = useState(null);
-  const [hideCompletedSubtasks, setHideCompletedSubtasks] = useState(false);
+  // The "Add sub-task" draft form's own state, smart-parse instance, and
+  // handlers all live in SubtaskList now (see TaskDetail/SubtaskList.jsx) —
+  // like CommentThread, it never touches this modal's draft/autosave
+  // lifecycle, so it only needs `task` + `setActiveTaskId` from here.
   const [menuOpen, setMenuOpen] = useState(false);
   // "Move to" popover (breadcrumb button next to the hierarchy label) — lets
   // the user manually reparent this task, or clear its parent, instead of the
@@ -395,29 +327,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const [notesLinkMatches, setNotesLinkMatches] = useState(() => getInitialNoteLinks(task));
   const [isNotesFocused, setIsNotesFocused] = useState(false);
 
-  // Comments post immediately (like Todoist) rather than going through the
-  // draft-state + Save/Cancel flow the rest of this modal uses — so this
-  // local state only ever tracks the in-progress *next* comment, not the
-  // thread itself (that lives on `task.comments`, read live).
-  const [commentText, setCommentText] = useState('');
-  const [commentFile, setCommentFile] = useState(null);
-  const [commentFilePreview, setCommentFilePreview] = useState(null);
-  const [isPostingComment, setIsPostingComment] = useState(false);
-  const [commentError, setCommentError] = useState('');
-  const [lightboxAttachment, setLightboxAttachment] = useState(null);
-  const commentFileInputRef = useRef(null);
-  const commentInputRef = useRef(null);
-  const atCommentCap = (task.comments?.length || 0) >= MAX_COMMENTS_PER_TASK;
-
-  // @-mention autocomplete (Collaborative Projects, Phase 3) — shared tasks
-  // only, see the "isShared"-gated candidate list below. `mentionSpan` is
-  // the in-progress "@query" the caret currently sits at the end of (see
-  // utils/commentMentions.js's findActiveMentionSpan), null when the caret
-  // isn't inside one.
+  // Comment composing/posting state, @-mention autocomplete, and the
+  // attachment lightbox all live in CommentThread now (see TaskDetail/
+  // CommentThread.jsx) — it's genuinely self-contained (comments post
+  // immediately, bypassing this modal's draft/autosave lifecycle entirely)
+  // and only needs `task` from here.
   const isSharedTask = !!task.sharedProjectId;
   const sharedProject = isSharedTask ? sharedProjects?.[task.sharedProjectId] : null;
-  const [mentionSpan, setMentionSpan] = useState(null);
-  const [mentionHighlight, setMentionHighlight] = useState(0);
 
   // "Assign to…" search (three-dot menu) — a type-to-filter input over
   // `assignableCollaborators` below, replacing what used to be a flat button
@@ -449,18 +365,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // would just fail against Firestore.
   const myRole = isSharedTask ? computeEffectiveRole(sharedProject, user?.uid) : null;
   const isReadOnlyViewer = isSharedTask && myRole === 'viewer';
-  const mentionCandidates = useMemo(() => {
-    if (!sharedProject) return [];
-    return getMentionCandidates({
-      ownerId: sharedProject.ownerId,
-      collaborators: sharedProject.collaborators,
-      currentUid: user?.uid,
-      ownerDisplayName: ownerProfile?.displayName,
-      ownerPhotoURL: ownerProfile?.photoURL,
-    });
-  }, [sharedProject, user?.uid, ownerProfile]);
-  const mentionMatches = mentionSpan ? filterMentionCandidates(mentionSpan.query, mentionCandidates) : [];
-  const mentionDropdownOpen = isSharedTask && !!mentionSpan && mentionMatches.length > 0;
 
   // "Assign to…" menu (three-dot menu below) — every non-anonymous
   // collaborator plus the owner, for a shared task only. Unlike
@@ -500,132 +404,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   function chooseAssignee(candidate) {
     updateTask(task.id, { assignedTo: candidate?.uid ?? null });
     setMenuOpen(false);
-  }
-
-  /** Re-derive the active "@query" span from the input's current caret position. */
-  function refreshMentionSpan(nextText) {
-    if (!isSharedTask) return;
-    const el = commentInputRef.current;
-    const caret = el ? el.selectionStart : null;
-    const span = caret == null ? null : findActiveMentionSpan(nextText, caret);
-    setMentionSpan(span);
-    setMentionHighlight(0);
-  }
-
-  function selectMention(candidate) {
-    const el = commentInputRef.current;
-    const caret = el ? el.selectionStart : commentText.length;
-    if (!mentionSpan) return;
-    const { text: nextText, caret: nextCaret } = insertMention(commentText, mentionSpan, candidate, caret);
-    setCommentText(nextText);
-    setMentionSpan(null);
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(nextCaret, nextCaret);
-    });
-  }
-
-  /** Returns true if it handled the key (caller should preventDefault). */
-  function handleCommentInputKeyDown(e) {
-    if (mentionDropdownOpen) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setMentionHighlight((i) => Math.min(i + 1, mentionMatches.length - 1));
-        return true;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setMentionHighlight((i) => Math.max(i - 1, 0));
-        return true;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setMentionSpan(null);
-        return true;
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        selectMention(mentionMatches[mentionHighlight]);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Revoke the previous object URL whenever the pending attachment changes
-  // (new file picked, removed, or comment posted) so picking several image
-  // attachments in a row doesn't leak blob URLs for the lifetime of the tab.
-  useEffect(() => {
-    return () => {
-      if (commentFilePreview) URL.revokeObjectURL(commentFilePreview);
-    };
-  }, [commentFilePreview]);
-
-  function handleCommentFileSelect(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const error = validateAttachment(file);
-    if (error) {
-      setCommentError(error);
-      return;
-    }
-    setCommentError('');
-    setCommentFile(file);
-    setCommentFilePreview(file.type.startsWith('image/') ? URL.createObjectURL(file) : null);
-  }
-
-  function handleRemoveCommentFile() {
-    setCommentFile(null);
-    setCommentFilePreview(null);
-  }
-
-  // Lets a screenshot on the clipboard (Ctrl+V / Cmd+V, e.g. from Win+Shift+S)
-  // attach directly to the comment without saving it to disk first — same
-  // validation/preview path as picking a file.
-  function handleCommentPaste(e) {
-    const file = Array.from(e.clipboardData?.items || [])
-      .find((item) => item.kind === 'file')
-      ?.getAsFile();
-    if (!file) return;
-    e.preventDefault();
-    // Attachments aren't offered on shared tasks (see the attach-button
-    // removal above), but paste doesn't go through that button — guard it
-    // here too so a pasted screenshot can't sneak a file in anyway.
-    if (isSharedTask) {
-      setCommentError('Attachments aren\'t available in shared projects yet.');
-      return;
-    }
-    const error = validateAttachment(file);
-    if (error) {
-      setCommentError(error);
-      return;
-    }
-    setCommentError('');
-    setCommentFile(file);
-    setCommentFilePreview(file.type.startsWith('image/') ? URL.createObjectURL(file) : null);
-  }
-
-  async function handlePostComment() {
-    if (isReadOnlyViewer) return; // Defense in depth — UI already hides the composer for viewers.
-    const text = commentText.trim();
-    if (!text && !commentFile) return;
-    if (atCommentCap) {
-      setCommentError(`This task has reached the ${MAX_COMMENTS_PER_TASK}-comment limit — delete an old comment to add a new one.`);
-      return;
-    }
-    setIsPostingComment(true);
-    setCommentError('');
-    try {
-      await addComment(task.id, { text, file: commentFile });
-      setCommentText('');
-      setMentionSpan(null);
-      handleRemoveCommentFile();
-    } catch (err) {
-      setCommentError(err.message || 'Failed to post comment.');
-    } finally {
-      setIsPostingComment(false);
-    }
   }
 
   const notesRef = useRef(null);
@@ -899,11 +677,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setPauseLogPrompt(null);
     setMoveToOpen(false);
     setMoveToQuery('');
-    // Sub-task bulk-select is scoped to whichever task's sub-task list is
-    // currently shown — switching to a different task (parent, or a child
-    // navigated into) must not carry over a selection made against the
-    // PREVIOUS task's children.
-    subtaskSelect.setSelectionMode(false);
     resetSmartState();
     lastSmartEstimatedHoursRef.current = null;
     lastSmartEarliestDateRef.current = null;
@@ -1048,20 +821,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   // Direct children only (one level) — a grandchild is reached by opening
   // its own parent's nested TaskDetailModal in turn, not shown flattened here.
+  // (SubtaskList recomputes its own copy for rendering the list itself —
+  // this one stays here because isContainer/effectiveEstimatedHours and the
+  // hierarchy label below all need it too.)
   const childTasks = useMemo(() => tasks.filter((t) => t.parentId === task.id), [tasks, task.id]);
-  const visibleChildTasks = hideCompletedSubtasks ? childTasks.filter((c) => !c.isCompleted) : childTasks;
-  const completedChildTasks = childTasks.filter((c) => c.isCompleted).length;
-  // Bulk multi-select scoped to JUST this modal's own sub-task list (see
-  // hooks/useMultiSelect.js's module doc) — fully independent of List/
-  // Board/Calendar's own selections, and never shared even if this modal is
-  // opened from one of those pages. Sub-tasks are plain Tasks, so this
-  // reuses the same Task-only action set List/Board's own bulk-edit uses.
-  const subtaskSelect = useMultiSelect();
-  const selectedSubtasks = useMemo(
-    () => [...subtaskSelect.selectedKeys].map((id) => childTasks.find((c) => c.id === id)).filter(Boolean),
-    [subtaskSelect.selectedKeys, childTasks]
-  );
-  const subtaskBulkActions = useTaskBulkEditActions(selectedSubtasks, subtaskSelect.exitSelectionMode);
   // This task's own parent, if any — drives the hierarchy label in the
   // header. Only one level is looked up here; if that parent itself has a
   // parent, navigating to it re-renders this same label against the new
@@ -1093,7 +856,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     task,
     tasks,
   ]);
-  const atMaxSubtaskDepth = useMemo(() => isAtMaxSubtaskDepth(task, tasks), [task, tasks]);
 
   // "Time left" (see types/index.js's Task.remainingHoursOverride) — a manual
   // edit to how much work remains, which directly reduces the number the
@@ -1460,124 +1222,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     handleSmartTitleChange(value);
   }
 
-  function handleSubtaskProjectChange(newProjectId) {
-    setSubtaskProjectId(newProjectId);
-    if (subtaskSectionId && !sections.find((s) => s.id === subtaskSectionId && s.projectId === newProjectId)) {
-      setSubtaskSectionId('');
-    }
-  }
-
-  const {
-    smartDetected: subtaskSmartDetected,
-    handleTitleChange: handleSubtaskSmartTitleChange,
-    dismissSmartChip: dismissSubtaskSmartChip,
-    buildFinalTitle: buildSubtaskFinalTitle,
-    resetSmartState: resetSubtaskSmartState,
-  } = useSmartTaskTitle({
-    tasks,
-    projects,
-    sections,
-    // Only offered while the draft still inherits its parent's (shared)
-    // project by default — see the assignedTo-omission comment in
-    // handleAddSubtask below for why a detection stops being meaningful once
-    // the draft's own project field is touched.
-    collaborators: isSharedTask && !subtaskHasEditedProject ? assignableCollaborators : [],
-    fields: {
-      link: {
-        isUntouched: () => true,
-        apply: (match) => setSubtaskLink(match.url),
-        revert: () => setSubtaskLink(''),
-      },
-      dueDate: {
-        isUntouched: () => !subtaskHasEditedDueDate,
-        apply: (match) => setSubtaskDueDate(match.iso),
-        revert: () => setSubtaskDueDate(''),
-      },
-      fixedTime: {
-        isUntouched: () => true,
-        apply: (match) => {
-          setSubtaskFixedTime(match.time);
-          setSubtaskFixedTimeEnabled(true);
-        },
-        revert: () => {
-          setSubtaskFixedTime('');
-          setSubtaskFixedTimeEnabled(false);
-        },
-      },
-      recurrence: {
-        isUntouched: () => true,
-        apply: (match, detected) => {
-          setSubtaskIsRecurring(true);
-          setSubtaskRecurrenceCount(match.rule.count);
-          setSubtaskRecurrenceUnit(match.rule.unit);
-          setSubtaskRecurrenceDays(match.rule.days || null);
-          if (!subtaskDueDate && !detected.dueDate) setSubtaskDueDate(toISODate(new Date()));
-        },
-        revert: () => {
-          setSubtaskIsRecurring(false);
-          setSubtaskRecurrenceDays(null);
-        },
-      },
-      priority: {
-        isUntouched: () => !subtaskHasEditedPriority,
-        apply: (match) => setSubtaskPriority(match.level),
-        revert: () => setSubtaskPriority('medium'),
-      },
-      estimatedHours: {
-        isUntouched: () => !subtaskHasEditedHours,
-        apply: (match) => setSubtaskEstimatedHours(match.hours),
-        revert: () => setSubtaskEstimatedHours(DEFAULT_SUBTASK_ESTIMATED_HOURS),
-      },
-      unattended: {
-        isUntouched: () => true,
-        apply: () => setSubtaskIsPassive(true),
-        revert: () => setSubtaskIsPassive(false),
-      },
-      enforceDueDate: {
-        isUntouched: () => true,
-        apply: (match, detected) => {
-          setSubtaskEnforceDueDate(true);
-          if (!subtaskDueDate && !detected.dueDate) setSubtaskDueDate(toISODate(new Date()));
-        },
-        revert: () => setSubtaskEnforceDueDate(false),
-      },
-      assignTo: {
-        isUntouched: () => true,
-        apply: (match) => {
-          if (match.collaborator) setSubtaskAssignedTo(match.collaborator.uid);
-        },
-        revert: () => setSubtaskAssignedTo(null),
-      },
-      dependency: {
-        isUntouched: () => true,
-        apply: (match) => {
-          if (match.task) setSubtaskDependsOn((prev) => (prev.includes(match.task.id) ? prev : [...prev, match.task.id]));
-        },
-        revert: (entry) => {
-          if (entry.task) setSubtaskDependsOn((prev) => prev.filter((id) => id !== entry.task.id));
-        },
-      },
-      project: {
-        isUntouched: () => !subtaskHasEditedProject,
-        apply: (match) => {
-          if (match.project) handleSubtaskProjectChange(match.project.id);
-          if (match.section && !subtaskHasEditedSection) setSubtaskSectionId(match.section.id);
-        },
-        revert: () => {
-          handleSubtaskProjectChange('');
-          if (!subtaskHasEditedSection) setSubtaskSectionId('');
-        },
-      },
-    },
-  });
-
-  function handleSubtaskTitleChange(value) {
-    setNewSubtaskTitle(value);
-    handleSubtaskSmartTitleChange(value);
-  }
-
-  const subtaskSmartChips = useMemo(() => buildSmartChips(subtaskSmartDetected), [subtaskSmartDetected]);
-
   // Commits the free-text repeat edit (see Repeat DetailField below) by
   // running it through the same phrase parser the title field's smart-parse
   // uses — reusing that parser instead of a bespoke day/unit picker for the
@@ -1743,87 +1387,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     });
     if (cursor < text.length) parts.push(text.slice(cursor));
     return parts;
-  }
-
-  function resetSubtaskDraft() {
-    setNewSubtaskTitle('');
-    setSubtaskProjectId(task.projectId ?? '');
-    setSubtaskHasEditedProject(false);
-    setSubtaskSectionId(task.sectionId ?? '');
-    setSubtaskHasEditedSection(false);
-    setSubtaskPriority('medium');
-    setSubtaskHasEditedPriority(false);
-    setSubtaskDueDate('');
-    setSubtaskHasEditedDueDate(false);
-    setSubtaskEstimatedHours(DEFAULT_SUBTASK_ESTIMATED_HOURS);
-    setSubtaskHasEditedHours(false);
-    setSubtaskLabelIds([]);
-    setSubtaskLink('');
-    setSubtaskFixedTime('');
-    setSubtaskFixedTimeEnabled(false);
-    setSubtaskIsRecurring(false);
-    setSubtaskRecurrenceCount(1);
-    setSubtaskRecurrenceUnit('week');
-    setSubtaskRecurrenceDays(null);
-    setSubtaskIsPassive(false);
-    setSubtaskEnforceDueDate(false);
-    setSubtaskDependsOn([]);
-    setSubtaskAssignedTo(null);
-    resetSubtaskSmartState();
-  }
-
-  function handleAddSubtask() {
-    if (isReadOnlyViewer) return; // Defense in depth — UI already hides the composer for viewers.
-    const trimmed = newSubtaskTitle.trim();
-    if (!trimmed || atMaxSubtaskDepth) return;
-    // A sub-task is just a top-level task with `parentId` set — created via
-    // the same addTask every other task uses. `dueDate` defaults to unset —
-    // an undated sub-task is still immediately schedulable (see
-    // allocator.js's prioritizeTasks), it just competes for capacity at
-    // baseline urgency (or its nearest ancestor's due date, if any) instead
-    // of a deadline of its own — unless smart-parse (or a manual pick) set
-    // one. Project/section inherit the parent task's by default, same as
-    // before, unless the draft's own project field was touched.
-    const section = sections.find((s) => s.id === subtaskSectionId);
-    const pendingLabelNames = (subtaskSmartDetected.labels || []).map((m) => m.name);
-    const finalLabelIds = [
-      ...new Set([...subtaskLabelIds, ...(pendingLabelNames.length ? getOrCreateLabelIds(pendingLabelNames) : [])]),
-    ];
-    addTask({
-      title: buildSubtaskFinalTitle(newSubtaskTitle),
-      parentId: task.id,
-      estimatedHours: Number(subtaskEstimatedHours) || DEFAULT_SUBTASK_ESTIMATED_HOURS,
-      priority: subtaskPriority,
-      dueDate: subtaskDueDate || null,
-      projectId: subtaskHasEditedProject ? subtaskProjectId || null : task.projectId ?? null,
-      sectionId: subtaskHasEditedProject ? subtaskSectionId || null : task.sectionId ?? null,
-      sectionName: subtaskHasEditedProject ? section?.name ?? null : task.sectionName ?? null,
-      labelIds: finalLabelIds,
-      link: subtaskLink || null,
-      isRecurring: subtaskIsRecurring && !!subtaskDueDate,
-      recurrenceString:
-        subtaskIsRecurring && subtaskDueDate
-          ? buildRecurrenceString(subtaskRecurrenceCount, subtaskRecurrenceUnit, subtaskRecurrenceDays)
-          : null,
-      dependsOn: subtaskDependsOn,
-      isPassive: subtaskIsPassive,
-      enforceDueDate: subtaskEnforceDueDate && !!subtaskDueDate,
-      fixedTime: subtaskFixedTimeEnabled && subtaskFixedTime ? subtaskFixedTime : null,
-      // Only meaningful while the sub-task still inherits its parent's
-      // (shared) project by default — the `collaborators` list passed to
-      // useSmartTaskTitle above is scoped to that same shared project, so a
-      // detected assignment here would be meaningless once the draft's own
-      // project field has been changed away from that default. Omitted
-      // entirely rather than set to null on a personal task (see
-      // types/index.js's Task.assignedTo doc comment).
-      ...(isSharedTask && !subtaskHasEditedProject && subtaskAssignedTo ? { assignedTo: subtaskAssignedTo } : {}),
-    });
-    resetSubtaskDraft();
-  }
-
-  function handleCancelAddSubtask() {
-    resetSubtaskDraft();
-    setIsAddingSubtask(false);
   }
 
   /**
@@ -2831,657 +2394,58 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 </p>
               )}
 
-              <div className="form-row">
-                <div className="subtask-header">
-                  <span className="subtask-header-label">
-                    <label>Sub-tasks {childTasks.length > 0 ? `(${completedChildTasks}/${childTasks.length})` : ''}</label>
-                    <HelpTooltip label="How do sub-tasks work?">
-                      A sub-task is a normal task in every way — priority, dependencies, search — except it's shown nested
-                      under its parent here. It needs its own due date (or one borrowed from its nearest dated ancestor) to
-                      be auto-scheduled, exactly like a top-level task needs one. A sub-task's own due date can never be
-                      later than that ancestor's — the ancestor's due date is the deadline for finishing every step toward
-                      it. Once a task has its own sub-task, it becomes a goal/container: it's never scheduled itself, and
-                      its hours become a live total of its sub-tasks' hours. Nesting is capped at 2 levels (a sub-task of a
-                      sub-task can't have its own sub-tasks).
-                    </HelpTooltip>
-                  </span>
-                  {!isReadOnlyViewer && childTasks.length > 0 && (
-                    <button
-                      type="button"
-                      className={`subtask-hide-completed ${subtaskSelect.selectionMode ? 'is-active' : ''}`}
-                      onClick={() => subtaskSelect.setSelectionMode(!subtaskSelect.selectionMode)}
-                      aria-pressed={subtaskSelect.selectionMode}
-                    >
-                      {subtaskSelect.selectionMode ? 'Cancel select' : 'Select'}
-                    </button>
-                  )}
-                  {completedChildTasks > 0 && (
-                    <button type="button" className="subtask-hide-completed" onClick={() => setHideCompletedSubtasks((v) => !v)}>
-                      {hideCompletedSubtasks ? 'Show completed' : 'Hide completed'}
-                    </button>
-                  )}
-                </div>
-                <div className="subtask-list">
-                  {visibleChildTasks.map((child) => {
-                    const childDoneForToday = isCompletedForCurrentOccurrence(child, todayIso);
-                    const childSelected = subtaskSelect.isSelected(child.id);
-                    return (
-                    <div key={child.id} className={`subtask-row ${childSelected ? 'is-selected' : ''}`}>
-                      {subtaskSelect.selectionMode ? (
-                        <input
-                          type="checkbox"
-                          className="bulk-select-checkbox"
-                          checked={childSelected}
-                          onChange={() => subtaskSelect.toggle(child.id)}
-                          aria-label={`Select ${child.title}`}
-                        />
-                      ) : (
-                        <input
-                          type="checkbox"
-                          checked={childDoneForToday}
-                          disabled={isReadOnlyViewer}
-                          // Mirrors the header checkbox above: a recurring
-                          // child completed for today shows checked and can
-                          // only be un-completed, rather than re-offering
-                          // "complete" (child.isCompleted stays false for
-                          // recurring tasks — see isCompletedForCurrentOccurrence).
-                          onChange={() => {
-                            if (isReadOnlyViewer) return; // Defense in depth — checkbox is already disabled for viewers.
-                            if (!childDoneForToday) {
-                              requestComplete(child.id);
-                            } else {
-                              uncompleteTask(child.id);
-                              playUncomplete();
-                            }
-                          }}
-                        />
-                      )}
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        className={`subtask-row-title-wrap ${childDoneForToday ? 'completed' : ''}`}
-                        onClick={() => (subtaskSelect.selectionMode ? subtaskSelect.toggle(child.id) : setActiveTaskId(child.id))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            if (subtaskSelect.selectionMode) subtaskSelect.toggle(child.id);
-                            else setActiveTaskId(child.id);
-                          }
-                        }}
-                        title={subtaskSelect.selectionMode ? undefined : 'Open sub-task'}
-                      >
-                        <span className="subtask-row-title">
-                          {child.link ? (
-                            <a
-                              href={child.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="task-title-link"
-                              onClick={(e) => e.stopPropagation()}
-                              title={`Open link: ${child.link}`}
-                            >
-                              {child.title}
-                              <ExternalLink size={11} aria-hidden="true" />
-                            </a>
-                          ) : (
-                            child.title
-                          )}
-                        </span>
-                        {child.notes && <span className="subtask-row-notes">{child.notes}</span>}
-                      </div>
-                      <button
-                        className="btn btn-icon subtask-row-remove"
-                        onClick={() => {
-                          if (isReadOnlyViewer) return; // Defense in depth — button is already disabled for viewers.
-                          deleteTask(child.id);
-                        }}
-                        disabled={isReadOnlyViewer}
-                        style={{ color: 'var(--color-danger)' }}
-                        aria-label={`Delete ${child.title}`}
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                    );
-                  })}
-                  {isReadOnlyViewer ? (
-                    <p className="comment-viewonly-note">
-                      <Lock size={13} aria-hidden="true" />
-                      <span>Adding sub-tasks needs edit access on this project — ask the owner for editor access.</span>
-                    </p>
-                  ) : atMaxSubtaskDepth ? (
-                    <p className="form-hint">
-                      Sub-tasks are capped at 2 levels deep — this task is already a sub-task of a sub-task, so it can't have its own.
-                    </p>
-                  ) : isAddingSubtask ? (
-                    <div
-                      className="subtask-add-wrap"
-                      onKeyDown={(e) => e.key === 'Escape' && handleCancelAddSubtask()}
-                      onBlur={(e) => {
-                        // Collapse the row back to the "Add sub-task" trigger
-                        // once focus leaves it entirely with nothing typed —
-                        // matches the plain-textarea row's old onBlur, but
-                        // gated on relatedTarget since this now wraps
-                        // SmartTitleInput's own popups (mention/keyword-
-                        // suggest) and the Add button, which shouldn't count
-                        // as "focus left" while still inside this row.
-                        if (!newSubtaskTitle.trim() && !e.currentTarget.contains(e.relatedTarget)) {
-                          setIsAddingSubtask(false);
-                        }
-                      }}
-                    >
-                      <div className="subtask-add-row">
-                        <SmartTitleInput
-                          autoFocus
-                          value={newSubtaskTitle}
-                          onChange={handleSubtaskTitleChange}
-                          smartDetected={subtaskSmartDetected}
-                          onDismiss={dismissSubtaskSmartChip}
-                          placeholder="Add a sub-task…"
-                          projects={projects}
-                          sections={sections}
-                          labels={labels}
-                          onEnter={handleAddSubtask}
-                        />
-                        <button type="button" className="btn" onClick={handleAddSubtask}>
-                          Add
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                      <SmartChips chips={subtaskSmartChips} onDismiss={dismissSubtaskSmartChip} />
-                    </div>
-                  ) : (
-                    <button type="button" className="subtask-add-trigger" onClick={() => setIsAddingSubtask(true)}>
-                      <Plus size={14} />
-                      Add sub-task
-                    </button>
-                  )}
-                </div>
-                {subtaskSelect.selectionMode && (
-                  <BulkActionBar
-                    count={subtaskSelect.count}
-                    editableFields={subtaskBulkActions.editableFields}
-                    projects={projects}
-                    labels={labels}
-                    onApplyField={subtaskBulkActions.applyField}
-                    onMarkComplete={subtaskBulkActions.markComplete}
-                    onMarkIncomplete={subtaskBulkActions.markIncomplete}
-                    onDelete={subtaskBulkActions.handleDelete}
-                    onCancel={subtaskSelect.exitSelectionMode}
-                    onSelectAll={() => subtaskSelect.selectAll(visibleChildTasks.map((c) => c.id))}
-                  />
-                )}
-              </div>
+              <SubtaskList task={task} setActiveTaskId={setActiveTaskId} />
 
-              <div className="form-row comments-section">
-                <label>
-                  Comments{task.comments?.length ? ` (${task.comments.length}/${MAX_COMMENTS_PER_TASK})` : ''}
-                </label>
-                <div className="comment-list">
-                  {(task.comments || []).map((c) => {
-                    // Personal-task comments have no author fields (see
-                    // Comment typedef) — every comment there was posted by
-                    // the current user, so this falls back to `user` for
-                    // avatar/name exactly like it always has. A shared
-                    // task's comment renders ITS OWN stored author instead
-                    // (Phase 3) — this used to hardcode the CURRENT user for
-                    // every row, which was wrong as soon as anyone else
-                    // posted.
-                    const authorName = c.authorDisplayName || user?.displayName || user?.email || '?';
-                    const authorPhotoURL = c.authorUid ? c.authorPhotoURL : user?.photoURL;
-                    return (
-                      <div key={c.id} className="comment-row">
-                        {authorPhotoURL ? (
-                          <img src={authorPhotoURL} alt="" referrerPolicy="no-referrer" className="account-avatar" />
-                        ) : (
-                          <span className="account-avatar account-avatar-fallback">{authorName[0].toUpperCase()}</span>
-                        )}
-                        <div className="comment-body">
-                          {isSharedTask && c.authorDisplayName && (
-                            <span className="comment-author">{c.authorDisplayName}</span>
-                          )}
-                          {c.text && (
-                            <p className="comment-text">
-                              {parseCommentBody(c.text).map((seg, i) =>
-                                seg.type === 'mention' ? (
-                                  <span key={i} className="comment-mention">
-                                    @{seg.displayName}
-                                  </span>
-                                ) : (
-                                  <React.Fragment key={i}>{seg.value}</React.Fragment>
-                                )
-                              )}
-                            </p>
-                          )}
-                          {c.attachment &&
-                            (c.attachment.type.startsWith('image/') ? (
-                              <button
-                                type="button"
-                                className="comment-attachment-thumb"
-                                onClick={() => setLightboxAttachment(c.attachment)}
-                              >
-                                <img src={c.attachment.url} alt={c.attachment.name} />
-                              </button>
-                            ) : (
-                              <a
-                                href={c.attachment.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="comment-attachment-file"
-                              >
-                                <FileIcon size={14} />
-                                <span className="comment-attachment-file-name">{c.attachment.name}</span>
-                                <span className="comment-attachment-file-size">{formatFileSize(c.attachment.size)}</span>
-                              </a>
-                            ))}
-                          <span className="comment-meta">{formatDisplayDateTime(c.createdAt)}</span>
-                        </div>
-                        {/* Deleting a comment is also a task write (embedded array) — same
-                            rules gap as posting, so hidden for read-only viewers too. */}
-                        {!isReadOnlyViewer && (
-                          <button
-                            type="button"
-                            className="btn btn-icon comment-remove"
-                            onClick={() => deleteComment(task.id, c.id)}
-                            style={{ color: 'var(--color-danger)' }}
-                            aria-label="Delete comment"
-                          >
-                            <X size={13} />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {(commentError || atCommentCap) && (
-                  <p className="form-warning">
-                    <Ban size={13} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden="true" />
-                    <span>
-                      {commentError ||
-                        `Comment limit reached (${MAX_COMMENTS_PER_TASK}) — delete an old comment to add a new one.`}
-                    </span>
-                  </p>
-                )}
-
-                {commentFile && (
-                  <div className="comment-pending-file">
-                    {commentFilePreview ? (
-                      <img src={commentFilePreview} alt="" className="comment-pending-thumb" />
-                    ) : (
-                      <FileIcon size={14} />
-                    )}
-                    <span className="comment-pending-name">{commentFile.name}</span>
-                    <button type="button" onClick={handleRemoveCommentFile} aria-label="Remove attachment">
-                      <X size={12} />
-                    </button>
-                  </div>
-                )}
-
-                {isReadOnlyViewer ? (
-                  <p className="comment-viewonly-note">
-                    <Lock size={13} aria-hidden="true" />
-                    <span>Commenting needs edit access on this project — ask the owner for editor access to reply.</span>
-                  </p>
-                ) : (
-                <div className="comment-input-bar-wrapper">
-                  {/* Shared tasks can't attach files yet (Storage isn't provisioned —
-                      see attachmentService.js's checkAttachmentAllowed), so this note
-                      takes the attach button's place instead of stacking a second
-                      notice under the comment-cap warning above. Only shown once the
-                      cap note above isn't already covering this state's own composer. */}
-                  {isSharedTask && !atCommentCap && (
-                    <p className="comment-viewonly-note">
-                      <Paperclip size={13} aria-hidden="true" />
-                      <span>Attachments aren't available in shared projects yet — text comments work as usual.</span>
-                    </p>
-                  )}
-                  {mentionDropdownOpen && (
-                    <ul className="mention-dropdown comment-mention-dropdown" role="listbox">
-                      {mentionMatches.map((candidate, i) => (
-                        <li key={candidate.uid} role="presentation">
-                          <button
-                            type="button"
-                            role="option"
-                            aria-selected={i === mentionHighlight}
-                            className={`mention-dropdown-option ${i === mentionHighlight ? 'highlighted' : ''}`}
-                            onMouseEnter={() => setMentionHighlight(i)}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              selectMention(candidate);
-                            }}
-                          >
-                            {candidate.photoURL ? (
-                              <img src={candidate.photoURL} alt="" referrerPolicy="no-referrer" className="account-avatar" />
-                            ) : (
-                              <span className="account-avatar account-avatar-fallback">
-                                {candidate.displayName[0].toUpperCase()}
-                              </span>
-                            )}
-                            {candidate.displayName}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="comment-input-bar">
-                    <input
-                      ref={commentInputRef}
-                      type="text"
-                      value={commentText}
-                      onChange={(e) => {
-                        setCommentText(e.target.value);
-                        refreshMentionSpan(e.target.value);
-                      }}
-                      onKeyDown={(e) => {
-                        if (handleCommentInputKeyDown(e)) return;
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handlePostComment();
-                        }
-                      }}
-                      onKeyUp={() => refreshMentionSpan(commentText)}
-                      onClick={() => refreshMentionSpan(commentText)}
-                      onBlur={() => setMentionSpan(null)}
-                      onPaste={handleCommentPaste}
-                      placeholder={atCommentCap ? 'Comment limit reached' : isSharedTask ? 'Comment (type @ to mention)' : 'Comment'}
-                      disabled={isPostingComment || atCommentCap}
-                    />
-                    {!isSharedTask && (
-                      <>
-                        <input
-                          ref={commentFileInputRef}
-                          type="file"
-                          accept={ATTACHMENT_ACCEPT}
-                          style={{ display: 'none' }}
-                          onChange={handleCommentFileSelect}
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-icon comment-attach-btn"
-                          onClick={() =>
-                            user ? commentFileInputRef.current?.click() : setCommentError('Sign in to attach files to a comment.')
-                          }
-                          title={user ? 'Attach a file' : 'Sign in to attach files'}
-                          disabled={isPostingComment || atCommentCap}
-                        >
-                          <Paperclip size={15} />
-                        </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn-icon comment-send-btn"
-                      onClick={handlePostComment}
-                      disabled={isPostingComment || atCommentCap || (!commentText.trim() && !commentFile)}
-                      aria-label={isPostingComment ? 'Posting comment…' : 'Post comment'}
-                    >
-                      {isPostingComment ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
-                    </button>
-                  </div>
-                </div>
-                )}
-              </div>
+              <CommentThread task={task} />
             </div>
 
-            <div className="detail-sidebar">
-              <DetailField icon={Folder} label="Project">
-                <SelectMenu
-                  ariaLabel="Project"
-                  value={projectId}
-                  onChange={handleProjectChange}
-                  options={[
-                    { value: '', label: 'No project' },
-                    ...projects
-                      .filter((p) => !isSharedProject(p) || p.id === task.projectId)
-                      .map((p) => ({ value: p.id, label: p.name })),
-                    // A synthetic destination, not a real Project record (see
-                    // projectConstants.js) — set apart with a separator since
-                    // it isn't part of the real project list above it.
-                    { value: NO_SCHEDULE_PROJECT_ID, label: NO_SCHEDULE_PROJECT_LABEL, separatorBefore: true },
-                  ]}
-                  disabled={isReadOnlyViewer}
-                />
-              </DetailField>
-
-              <DetailField icon={Layers} label="Section">
-                <select
-                  value={sectionId}
-                  onChange={(e) => {
-                    setSectionId(e.target.value);
-                    setHasEditedSection(true);
-                  }}
-                  disabled={isReadOnlyViewer}
-                >
-                  <option value="">No section</option>
-                  {availableSections.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </DetailField>
-
-              <DetailField icon={CalendarClock} label="Due date">
-                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={isReadOnlyViewer} />
-                {dueDateRequiredError ? (
-                  <p className="form-error">{dueDateRequiredError}</p>
-                ) : dueDateError ? (
-                  <p className="form-error">{dueDateError}</p>
-                ) : isContainer ? (
-                  <p className="form-hint">
-                    A container's own due date isn't scheduled directly — it feeds urgency for sub-tasks that don't have their own.
-                  </p>
-                ) : !dueDate && task.parentId ? (
-                  <p className="form-hint">
-                    Still schedulable without one — it'll use its parent's due date (if any) or default priority/urgency.
-                  </p>
-                ) : (
-                  !dueDate && <p className="form-hint">Won't be auto-scheduled without a due date.</p>
-                )}
-              </DetailField>
-
-              {!isContainer && taskScheduledBlocks.length > 0 && (
-                <DetailField icon={CalendarRange} label="Scheduled">
-                  <div className="scheduled-blocks-list">
-                    {taskScheduledBlocks.map((b) => (
-                      <p key={b.id} className="form-hint scheduled-block-row">
-                        {formatDisplayDate(b.date)}, {formatTime12h(b.startTime)}–{formatTime12h(b.endTime)}
-                      </p>
-                    ))}
-                  </div>
-                </DetailField>
-              )}
-
-              <DetailField icon={Flag} label="Priority">
-                <select value={priority} onChange={(e) => setPriority(e.target.value)} disabled={isReadOnlyViewer}>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </DetailField>
-
-              <DetailField icon={Tag} label="Labels">
-                <LabelPicker
-                  labels={labels}
-                  selectedIds={labelIds}
-                  onChange={setLabelIds}
-                  onCreateLabel={handleCreateLabel}
-                  disabled={isReadOnlyViewer}
-                />
-                {(smartDetected.labels || []).length > 0 && (
-                  <p className="form-hint">Pending from the title: {smartDetected.labels.map((m) => `#${m.name}`).join(', ')}</p>
-                )}
-              </DetailField>
-
-              <DetailField icon={Clock} label="Estimated time">
-                {isContainer ? (
-                  <>
-                    <p style={{ margin: 0, fontWeight: 600 }}>{formatHours(effectiveEstimatedHours)}</p>
-                    <p className="form-hint">
-                      Computed from {childTasks.length} sub-task{childTasks.length === 1 ? '' : 's'} — not directly editable.
-                    </p>
-                  </>
-                ) : (
-                  <SmartDurationInput hours={Number(estimatedHours) || 0} onChange={setEstimatedHours} disabled={isReadOnlyViewer} />
-                )}
-                {typeof task.actualHours === 'number' && (
-                  <p className="form-hint">Actually spent: {formatHours(task.actualHours)} (tracked via timer)</p>
-                )}
-              </DetailField>
-
-              {!isContainer && (
-              <DetailField icon={Hourglass} label="Time left">
-                <SmartDurationInput
-                  hours={effectiveRemainingHours}
-                  onChange={handleRemainingHoursChange}
-                  disabled={isReadOnlyViewer}
-                />
-              </DetailField>
-              )}
-
-              <DetailField
-                icon={Repeat}
-                label="Repeat"
-                labelExtra={
-                  <HelpTooltip label="Recurrence syntax help">
-                    The text field accepts free-text recurrence phrases like "every 2 weeks", "every mon and wed", or
-                    "every other friday".
-                  </HelpTooltip>
-                }
-              >
-                {isRecurring && recurrenceDays && recurrenceDays.length > 0 ? (
-                  repeatEditText !== null ? (
-                    <SmartRecurrenceInput
-                      value={repeatEditText}
-                      autoFocus
-                      onChange={(e) => setRepeatEditText(e.target.value)}
-                      onBlur={commitRepeatEditText}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.currentTarget.blur();
-                        if (e.key === 'Escape') setRepeatEditText(null);
-                      }}
-                      disabled={isReadOnlyViewer}
-                    />
-                  ) : (
-                    <div className="detail-field-inline">
-                      <button
-                        type="button"
-                        className="detail-recurrence-toggle"
-                        style={{ flex: 1 }}
-                        disabled={isReadOnlyViewer}
-                        onClick={() =>
-                          setRepeatEditText(
-                            `every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
-                              .map((d) => WEEKDAY_LABELS[d])
-                              .join(', ')}`
-                          )
-                        }
-                      >
-                        {`Every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
-                          .map((d) => WEEKDAY_LABELS[d])
-                          .join(', ')}`}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-icon detail-recurrence-clear"
-                        onClick={() => setIsRecurring(false)}
-                        disabled={isReadOnlyViewer}
-                        aria-label="Turn off repeat"
-                        title="Does not repeat"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  )
-                ) : isRecurring ? (
-                  <div className="detail-recurrence-toggle detail-recurrence-toggle-active">
-                    {`Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`}
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="detail-recurrence-toggle"
-                    disabled={!dueDate || isReadOnlyViewer}
-                    onClick={() => setIsRecurring(true)}
-                  >
-                    Does not repeat
-                  </button>
-                )}
-                {isRecurring && !(recurrenceDays && recurrenceDays.length > 0) && (
-                  <div className="detail-field-inline" style={{ marginTop: 6 }}>
-                    <input
-                      type="number"
-                      min="1"
-                      max={MAX_RECURRENCE_COUNT}
-                      step="1"
-                      value={recurrenceCount}
-                      onChange={(e) => {
-                        setRecurrenceCount(Math.min(MAX_RECURRENCE_COUNT, Math.max(1, Number(e.target.value) || 1)));
-                        setRecurrenceDays(null);
-                      }}
-                      style={{ width: 56 }}
-                      disabled={isReadOnlyViewer}
-                    />
-                    <select
-                      value={recurrenceUnit}
-                      onChange={(e) => {
-                        setRecurrenceUnit(e.target.value);
-                        setRecurrenceDays(null);
-                      }}
-                      style={{ flex: 1 }}
-                      disabled={isReadOnlyViewer}
-                    >
-                      {RECURRENCE_UNITS.map((u) => (
-                        <option key={u.value} value={u.value}>
-                          {u.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className="btn btn-icon detail-recurrence-clear"
-                      onClick={() => setIsRecurring(false)}
-                      disabled={isReadOnlyViewer}
-                      aria-label="Turn off repeat"
-                      title="Does not repeat"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-                {isRecurring && (
-                  <p className="form-hint">Marking this complete advances the due date instead of moving it to Completed.</p>
-                )}
-                {task.isRecurring && (
-                  <p className="form-hint">
-                    Completed {recentCompletionCount} of the last 7 days
-                  </p>
-                )}
-                {!dueDate && <p className="form-hint">Needs a due date first.</p>}
-              </DetailField>
-
-            </div>
+              <DetailSidebar
+                task={task}
+                isReadOnlyViewer={isReadOnlyViewer}
+                isContainer={isContainer}
+                projects={projects}
+                projectId={projectId}
+                onProjectChange={handleProjectChange}
+                availableSections={availableSections}
+                sectionId={sectionId}
+                onSectionChange={(value) => {
+                  setSectionId(value);
+                  setHasEditedSection(true);
+                }}
+                dueDate={dueDate}
+                onDueDateChange={setDueDate}
+                dueDateError={dueDateError}
+                dueDateRequiredError={dueDateRequiredError}
+                taskScheduledBlocks={taskScheduledBlocks}
+                priority={priority}
+                onPriorityChange={setPriority}
+                labels={labels}
+                labelIds={labelIds}
+                onLabelIdsChange={setLabelIds}
+                onCreateLabel={handleCreateLabel}
+                pendingSmartLabels={smartDetected.labels || []}
+                estimatedHours={estimatedHours}
+                onEstimatedHoursChange={setEstimatedHours}
+                effectiveEstimatedHours={effectiveEstimatedHours}
+                childTasksCount={childTasks.length}
+                effectiveRemainingHours={effectiveRemainingHours}
+                onRemainingHoursChange={handleRemainingHoursChange}
+                isRecurring={isRecurring}
+                onIsRecurringChange={setIsRecurring}
+                recurrenceCount={recurrenceCount}
+                onRecurrenceCountChange={setRecurrenceCount}
+                recurrenceUnit={recurrenceUnit}
+                onRecurrenceUnitChange={setRecurrenceUnit}
+                recurrenceDays={recurrenceDays}
+                onRecurrenceDaysChange={setRecurrenceDays}
+                repeatEditText={repeatEditText}
+                onRepeatEditTextChange={setRepeatEditText}
+                onCommitRepeatEditText={commitRepeatEditText}
+                recentCompletionCount={recentCompletionCount}
+              />
           </div>
         </div>
       </div>
-
-      {lightboxAttachment &&
-        createPortal(
-          <div className="attachment-lightbox" onClick={() => setLightboxAttachment(null)}>
-            <button
-              type="button"
-              className="attachment-lightbox-close"
-              onClick={() => setLightboxAttachment(null)}
-              aria-label="Close"
-            >
-              <X size={20} />
-            </button>
-            <img src={lightboxAttachment.url} alt={lightboxAttachment.name} onClick={(e) => e.stopPropagation()} />
-          </div>,
-          document.body
-        )}
 
       {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
     </>

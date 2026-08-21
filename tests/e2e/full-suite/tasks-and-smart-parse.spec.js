@@ -3,7 +3,16 @@
 // See AddTaskModal.jsx / TaskDetailModal.jsx / smartParse.js / recurrence.js /
 // dependencyUtils.js for the behaviors asserted below.
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, openAddTask, closeAnyModal, trackConsoleErrors, expectNoErrors } from './helpers';
+import {
+  gotoApp,
+  gotoTab,
+  openAddTask,
+  closeAnyModal,
+  trackConsoleErrors,
+  expectNoErrors,
+  chooseSelectMenuOption,
+  selectMenuLabel,
+} from './helpers';
 
 // Unique-ish suffix per test run so repeated runs against the same
 // localStorage-backed app don't collide with tasks left over from a
@@ -135,25 +144,25 @@ test.describe('Task CRUD', () => {
     // Verify it was created and shows up in search.
     await searchAndOpen(page, title);
     await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.locator('.detail-sidebar select').first()).toHaveValue('work');
-    // Priority select (2nd select in sidebar order: Project, Section, Due date-input, Priority...)
-    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await expect(prioritySelect).toHaveValue('urgent');
+    // Project/Priority/Section are all SelectMenu (a button + portaled
+    // listbox, not a native <select>) — read the displayed label instead of
+    // a form-control value.
+    await expect.poll(() => selectMenuLabel(page, 'Project')).toBe('Work');
+    await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe('Urgent');
     const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
     await expect(dueDateInput).toHaveValue('2026-08-15');
     await expect(page.locator('.detail-notes-textarea')).toHaveValue('E2E description text');
     await expect(page.locator('.chip.chip-label', { hasText: `e2e-label-${RUN_ID}` })).toBeVisible();
 
     // Edit: lower priority to low, wait for sidebar auto-save (debounced 500ms).
-    await prioritySelect.selectOption('low');
+    await chooseSelectMenuOption(page, 'Priority', 'Low');
     await page.waitForTimeout(700);
     await closeAnyModal(page);
     await page.waitForTimeout(300);
 
     // Re-open and verify the edit persisted.
     await searchAndOpen(page, title);
-    const prioritySelect2 = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await expect(prioritySelect2).toHaveValue('low');
+    await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe('Low');
 
     // Delete via the "..." menu.
     await page.getByRole('button', { name: /more actions/i }).click();
@@ -312,8 +321,7 @@ test.describe('Sub-tasks', () => {
     await expect(applyAllBtn).toBeVisible();
 
     // An appliable field (priority) surfaces/keeps the button.
-    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await prioritySelect.selectOption('urgent');
+    await chooseSelectMenuOption(page, 'Priority', 'Urgent');
     await page.waitForTimeout(600);
     await expect(applyAllBtn).toBeVisible();
     await expect(applyAllBtn).toHaveClass(/btn-primary/);
@@ -337,8 +345,7 @@ test.describe('Sub-tasks', () => {
     await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).not.toBeVisible();
 
     // Editing another appliable field brings the button back.
-    const prioritySelect2 = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await prioritySelect2.selectOption('medium');
+    await chooseSelectMenuOption(page, 'Priority', 'Medium');
     await page.waitForTimeout(600);
     await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).toBeVisible();
 
@@ -378,8 +385,7 @@ test.describe('Sub-tasks', () => {
     await searchAndOpen(page, 'E2E smart child');
     const titleField = page.locator('.detail-title-wrap textarea').first();
     await expect(titleField).toHaveValue(childTitle);
-    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await expect(prioritySelect).toHaveValue('urgent');
+    await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe('Urgent');
     const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
     await expect(dueDateInput).not.toHaveValue('');
 
@@ -422,8 +428,7 @@ test.describe('Sub-tasks', () => {
     // IMMEDIATELY (well within that window) fire the direct reparent action
     // — this is the race: the debounce timer is still pending when
     // "Remove from parent task" calls updateTask directly.
-    const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await prioritySelect.selectOption('high');
+    await chooseSelectMenuOption(page, 'Priority', 'High');
 
     await page.getByRole('button', { name: 'More actions' }).click();
     await page.getByRole('menuitem', { name: /remove from parent task/i }).click();
@@ -444,8 +449,7 @@ test.describe('Sub-tasks', () => {
     // priority edit landed too.
     await searchAndOpen(page, childTitle);
     await expect(page.locator('.detail-hierarchy-link', { hasText: parentTitle })).toHaveCount(0);
-    const prioritySelect2 = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-    await expect(prioritySelect2).toHaveValue('high');
+    await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe('High');
 
     await closeAnyModal(page);
     expectNoErrors(errors);
@@ -665,6 +669,39 @@ test.describe('Labels', () => {
     await expect(page.locator('.chip.chip-label', { hasText: labelName })).toBeVisible();
     await closeAnyModal(page);
 
+    expectNoErrors(errors);
+  });
+});
+
+test.describe('Comments', () => {
+  test('posting a comment shows it in the thread with a count, and deleting it removes it', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+    const title = `E2E Comment Task ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    const commentText = `E2E comment ${RUN_ID}`;
+    await page.locator('.comment-input-bar input[type="text"]').fill(commentText);
+    await page.locator('.comment-send-btn').click();
+    await page.waitForTimeout(400);
+    await expect(page.locator('.comment-text', { hasText: commentText })).toBeVisible();
+    await expect(page.locator('.comments-section label')).toHaveText('Comments (1/200)');
+
+    // Persists across a reopen (not just optimistic local state).
+    await closeAnyModal(page);
+    await page.waitForTimeout(200);
+    await searchAndOpen(page, title);
+    await expect(page.locator('.comment-text', { hasText: commentText })).toBeVisible();
+
+    await page.locator('.comment-row', { hasText: commentText }).locator('.comment-remove').click();
+    await page.waitForTimeout(400);
+    await expect(page.locator('.comment-text', { hasText: commentText })).toHaveCount(0);
+    await expect(page.locator('.comments-section label')).toHaveText('Comments');
+
+    await closeAnyModal(page);
     expectNoErrors(errors);
   });
 });
@@ -1117,9 +1154,7 @@ test.describe('Smart parse', () => {
     // <id>", not "Work Notes <id>" or plain "Work".
     await searchAndOpen(page, 'Pack bags');
     await expect(page.locator('.detail-title-input, .modal-detail textarea').first()).not.toHaveValue(new RegExp(`#${projectA}`));
-    const projectSelect = page.locator('.detail-sidebar select').first();
-    const selectedLabel = await projectSelect.evaluate((el) => el.options[el.selectedIndex]?.textContent);
-    expect(selectedLabel).toBe(projectA);
+    await expect.poll(() => selectMenuLabel(page, 'Project')).toBe(projectA);
     await closeAnyModal(page);
 
     expectNoErrors(errors);

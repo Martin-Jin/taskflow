@@ -154,3 +154,17 @@ export async function resolveConfirmModal(page, { expectMessage, confirmLabel, a
 export function expectNoErrors(errors) {
   expect(errors, errors.join('\n')).toEqual([]);
 }
+
+// SelectMenu (src/components/Common/SelectMenu.jsx) replaces a native
+// <select> with a button that opens a portaled listbox — `.selectOption()`/
+// `.inputValue()` don't apply to it. `ariaLabel` must match the SelectMenu's
+// own `ariaLabel` prop exactly (e.g. "Priority", "Section").
+export async function chooseSelectMenuOption(page, ariaLabel, optionLabel) {
+  await page.getByRole('button', { name: ariaLabel, exact: true }).click();
+  await page.getByRole('listbox', { name: ariaLabel }).getByRole('option', { name: optionLabel, exact: true }).click();
+}
+
+/** The currently displayed label text of a SelectMenu identified by its ariaLabel — the closed-state equivalent of `.inputValue()`. */
+export async function selectMenuLabel(page, ariaLabel) {
+  return page.getByRole('button', { name: ariaLabel, exact: true }).locator('.select-menu-value').textContent();
+}

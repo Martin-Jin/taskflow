@@ -8,7 +8,16 @@
 // reasons. (The Calendar-event search test below seeds its own event
 // directly, since the app has no seeded CalendarEvent by default.)
 import { test, expect } from '@playwright/test';
-import { trackConsoleErrors, gotoApp, gotoTab, openAddTask, closeAnyModal, expectNoErrors } from './helpers';
+import {
+  trackConsoleErrors,
+  gotoApp,
+  gotoTab,
+  openAddTask,
+  closeAnyModal,
+  expectNoErrors,
+  chooseSelectMenuOption,
+  selectMenuLabel,
+} from './helpers';
 
 test.beforeEach(async ({ page }) => {
   await gotoApp(page);
@@ -421,10 +430,9 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   // --- Part 1: single edit undo/redo ---------------------------------------
   await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
-  const prioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-  const priorityBefore = await prioritySelect.inputValue();
-  const priorityAfter = priorityBefore === 'low' ? 'urgent' : 'low';
-  await prioritySelect.selectOption(priorityAfter);
+  const priorityBefore = await selectMenuLabel(page, 'Priority');
+  const priorityAfter = priorityBefore === 'Low' ? 'Urgent' : 'Low';
+  await chooseSelectMenuOption(page, 'Priority', priorityAfter);
   await page.waitForTimeout(700); // debounced sidebar auto-save
   await closeAnyModal(page);
   await page.waitForTimeout(300);
@@ -433,7 +441,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await page.waitForTimeout(400);
   await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
-  await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).toHaveValue(priorityBefore);
+  await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe(priorityBefore);
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
@@ -441,7 +449,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await page.waitForTimeout(400);
   await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
-  await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).toHaveValue(priorityAfter);
+  await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe(priorityAfter);
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
@@ -476,8 +484,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   }
 
   await openChainTask();
-  const chainPrioritySelect = page.locator('.detail-field', { hasText: 'Priority' }).locator('select');
-  await chainPrioritySelect.selectOption('urgent');
+  await chooseSelectMenuOption(page, 'Priority', 'Urgent');
   await page.waitForTimeout(700);
   await closeAnyModal(page);
   await page.waitForTimeout(300);
@@ -495,7 +502,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await page.waitForTimeout(400);
   await expect(chainRow).toBeVisible();
   await openChainTask();
-  await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).toHaveValue('urgent');
+  await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe('Urgent');
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
@@ -503,7 +510,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await page.keyboard.press('Control+Z');
   await page.waitForTimeout(400);
   await openChainTask();
-  await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).not.toHaveValue('urgent');
+  await expect.poll(() => selectMenuLabel(page, 'Priority')).not.toBe('Urgent');
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
@@ -511,7 +518,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await page.keyboard.press('Control+Shift+Z');
   await page.waitForTimeout(400);
   await openChainTask();
-  await expect(page.locator('.detail-field', { hasText: 'Priority' }).locator('select')).toHaveValue('urgent');
+  await expect.poll(() => selectMenuLabel(page, 'Priority')).toBe('Urgent');
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
@@ -528,7 +535,7 @@ test('undo/redo an edit (priority change), then chains two actions (edit + delet
   await page.waitForTimeout(300);
   await page.getByText('Refactor auth module', { exact: false }).first().click();
   await page.waitForTimeout(300);
-  await page.locator('.detail-field', { hasText: 'Priority' }).locator('select').selectOption(priorityBefore);
+  await chooseSelectMenuOption(page, 'Priority', priorityBefore);
   await page.waitForTimeout(700);
   await closeAnyModal(page);
   await page.waitForTimeout(200);
