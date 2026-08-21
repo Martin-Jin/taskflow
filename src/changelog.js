@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '7.4.0',
+    date: '2026-08-22',
+    title: 'The calendar covers the whole day now',
+    changes: [
+      'The calendar time grid runs the full 00:00–24:00 instead of starting at 06:00. Anything scheduled in the early hours — an overnight routine, a 5am flight, a late-night work block — used to render off the top of the grid where you simply could not scroll to it.',
+      'It still opens on the morning rather than on empty overnight hours, and drops lower automatically when something on screen starts earlier, so the extra hours never cost you screen space you were using.',
+    ],
+  },
+  {
     version: '7.3.0',
     date: '2026-08-22',
     title: 'Spacing, alignment, and no more vanishing notes',

@@ -1142,3 +1142,38 @@ test.describe('View/Filter menu', () => {
     expectNoErrors(errors);
   });
 });
+
+test('Calendar: the time grid covers the full day and opens anchored to the morning', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await gotoTab(page, 'Calendar');
+  await page.waitForTimeout(600);
+
+  const grid = page.locator('.week-grid');
+  await expect(grid).toBeVisible();
+
+  // Both ends of the day are rendered — 00:00 used to be off the top of the
+  // grid entirely, so an overnight routine or early event was unreachable.
+  const labels = await page.locator('.week-grid .time-label').allInnerTexts();
+  expect(labels.map((t) => t.trim())).toContain('00:00');
+  expect(labels.map((t) => t.trim())).toContain('23:00');
+
+  // ...but it doesn't OPEN on the empty overnight hours: the grid starts
+  // scrolled down, and is scrollable back up to the very top.
+  const metrics = await grid.evaluate((el) => ({
+    scrollTop: el.scrollTop,
+    scrollable: el.scrollHeight > el.clientHeight,
+  }));
+  expect(metrics.scrollTop).toBeGreaterThan(0);
+  expect(metrics.scrollable).toBe(true);
+
+  await grid.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(0);
+  // The seeded overnight routine starts at 00:00, so reaching the top of the
+  // grid is what makes it visible at all.
+  await expect(grid.getByText('00:00–07:00').first()).toBeVisible();
+
+  expectNoErrors(errors);
+});

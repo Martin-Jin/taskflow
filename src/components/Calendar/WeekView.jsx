@@ -3,10 +3,13 @@
  * WeekView
  * ============================================================================
  * The primary interactive calendar surface. Renders a 1/3/7-day time grid
- * (06:00-24:00, 18 of the 24 hours — a block/event starting before 06:00
- * would render off the top of the grid; column count set by `dayCount` —
- * Day/3 Day/Week in CalendarPage all render this same component) with ScheduledBlocks
- * and CalendarEvents positioned absolutely by time.
+ * (the full 00:00-24:00, so nothing can render off the top — it used to
+ * start at 06:00, which left an earlier block/event unreachable; the grid
+ * scrolls to DEFAULT_SCROLL_MIN on mount, or to the earliest visible item
+ * when that's earlier, so the overnight hours aren't dead viewport space.
+ * Column count set by `dayCount` — Day/3 Day/Week in CalendarPage all render
+ * this same component) with ScheduledBlocks and CalendarEvents positioned
+ * absolutely by time.
  *
  * Interaction model:
  *   - Click a day-of-week/day-of-month header -> onSelectDay jumps the
@@ -45,7 +48,7 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { groupItemsByDay } from '../../utils/calendarGrouping';
-import { GRID_START_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
+import { GRID_START_MIN, DEFAULT_SCROLL_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { makeSelectionKey } from '../../hooks/useMultiSelect';
@@ -289,6 +292,33 @@ export default function WeekView({
     }
     return map;
   }, [days, blocksByDay, eventsByDay, pxPerMin]);
+
+  /* Park the scroll position on mount (and whenever the visible date range
+     changes) rather than at 00:00, which the full-day grid would otherwise
+     open on. Anchors to the earliest item actually on screen when something
+     starts before DEFAULT_SCROLL_MIN, so an early-morning event isn't hidden
+     above the fold — the whole point of extending the grid upward. Left alone
+     afterwards, so a user's own scrolling is never yanked back. */
+  const earliestItemMin = useMemo(() => {
+    let earliest = Infinity;
+    for (const day of days) {
+      for (const item of dayItemsByDay.get(day) || []) earliest = Math.min(earliest, item.start);
+    }
+    return Number.isFinite(earliest) ? earliest : null;
+  }, [days, dayItemsByDay]);
+
+  const scrollAnchorMin =
+    earliestItemMin === null ? DEFAULT_SCROLL_MIN : Math.min(DEFAULT_SCROLL_MIN, Math.max(GRID_START_MIN, earliestItemMin - 30));
+
+  const daysKey = days.join(',');
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    el.scrollTop = Math.round((scrollAnchorMin - GRID_START_MIN) * pxPerMin);
+    // pxPerMin is deliberately NOT a dependency: re-anchoring on every zoom
+    // step would fight the user's own scroll position while they pinch/zoom.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daysKey, scrollAnchorMin]);
 
   // Active routines that apply to each visible day, purely for the
   // grayed-out "scheduler won't place things here" background — mirrors
@@ -921,7 +951,15 @@ export default function WeekView({
           <div
             key={m}
             className="time-label"
-            style={{ position: 'absolute', top: Math.round((m - GRID_START_MIN) * pxPerMin), right: 0, transform: 'translateY(-50%)' }}
+            style={{
+              position: 'absolute',
+              top: Math.round((m - GRID_START_MIN) * pxPerMin),
+              right: 0,
+              // Every label is centered on its own hour line except the very
+              // first, which would sit half above the top of the grid and get
+              // clipped — that edge is now reachable (00:00), so it matters.
+              transform: m === GRID_START_MIN ? 'none' : 'translateY(-50%)',
+            }}
           >
             {minutesToTime(m)}
           </div>
