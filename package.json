@@ -18,18 +18,18 @@
     "@tiptap/extension-task-list": "^3.30.2",
     "@tiptap/react": "^3.30.2",
     "@tiptap/starter-kit": "^3.30.2",
-    "firebase": "^12.16.0",
+    "firebase": "^12.17.1",
     "framer-motion": "^12.43.0",
-    "lucide-react": "^1.28.0",
+    "lucide-react": "^1.32.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tiptap-markdown": "^0.9.0"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "^1.62.1",
     "@vitejs/plugin-react": "^6.0.5",
-    "vite": "^8.1.5",
+    "vite": "^8.2.1",
     "vitest": "^4.1.10"
   },
   "allowScripts": {
