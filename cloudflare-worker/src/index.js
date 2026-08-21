@@ -339,6 +339,44 @@ const OPERATIONS = [
       'Create a new label/tag. Only call this if nothing in the "Existing labels" list in context.md reasonably matches — prefer reusing an existing label id over creating a near-duplicate.',
     fields: [LOCAL_ID_FIELD, { name: 'name', type: 'string', required: true, description: 'Label name, worded as close to what the user said as sensible.' }],
   },
+  // Notes are the app's freeform reference material (Dashboard → Notes), NOT
+  // an alternative way to record work — the descriptions below say so
+  // explicitly, since a model with only create_task and create_note to choose
+  // between will otherwise happily file a deadline as a note.
+  {
+    name: 'create_note',
+    apply: 'create',
+    description:
+      'Create a freeform note — reference material the user wants to keep and read later (meeting notes, a checklist they will tick off by hand, a summary, a snippet). Never use this for something with a deadline, a duration, or a "get this done" shape: that is create_task.',
+    fields: [
+      LOCAL_ID_FIELD,
+      { name: 'title', type: 'string', required: true, description: 'Short note title, worded as close to what the user said as sensible.' },
+      {
+        name: 'body',
+        type: 'string',
+        required: false,
+        description:
+          'The note body, in Markdown — headings, bullet/numbered lists, "- [ ]" checkboxes, links, bold/italic, and fenced code blocks all render. Omit for a title-only note.',
+      },
+    ],
+  },
+  {
+    name: 'update_note',
+    apply: 'update',
+    description:
+      'Edit an existing note. Only fields you include are changed; anything omitted is left as-is. The note must appear in the "Existing notes" list in context.md — if that list is absent, the user chose not to send their notes and you cannot edit any.',
+    fields: [
+      targetIdField('noteId', 'The existing note to edit — an exact id from the "Existing notes" list in context.md.'),
+      { name: 'title', type: 'string', required: false, description: 'New title. Omit to leave unchanged.' },
+      { name: 'body', type: 'string', required: false, description: 'New Markdown body, replacing the old one entirely. Omit to leave unchanged.' },
+    ],
+  },
+  {
+    name: 'delete_note',
+    apply: 'delete',
+    description: 'Delete an existing note. Only propose this when the user actually asked for it.',
+    fields: [targetIdField('noteId', 'The existing note to delete — an exact id from the "Existing notes" list in context.md.')],
+  },
 ];
 
 const OPERATIONS_BY_NAME = new Map(OPERATIONS.map((op) => [op.name, op]));

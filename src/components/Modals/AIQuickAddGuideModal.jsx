@@ -11,7 +11,7 @@ import Modal from '../Common/Modal';
 const SECTIONS = [
   {
     title: 'What it does',
-    body: 'Type a free-form description — or attach/paste up to 5 screenshots and/or PDFs (an email, text message, flyer, or document) — and the AI proposes a plan of changes: creating tasks/events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving things between projects/sections, even renaming or deleting things. Nothing is applied straight away — you always get a review screen listing every proposed change with a checkbox, so you can uncheck anything you don\'t want before applying.',
+    body: 'Type a free-form description — or attach/paste up to 5 screenshots and/or PDFs (an email, text message, flyer, or document) — and the AI proposes a plan of changes: creating tasks/events, breaking a task into subtasks, setting up dependencies ("do X after Y"), moving things between projects/sections, writing notes, even renaming or deleting things. Nothing is applied straight away — you always get a review screen listing every proposed change with a checkbox, so you can uncheck anything you don\'t want before applying.',
   },
   {
     title: 'Bring your own key',
@@ -20,6 +20,10 @@ const SECTIONS = [
   {
     title: 'Getting a free API key',
     body: 'Google AI Studio (aistudio.google.com/app/apikey) offers a genuinely free tier for Gemini — no billing required to get started. Anthropic (console.anthropic.com/settings/keys) typically requires adding a small amount of prepaid credit before its API will respond, so it isn\'t free the same way — pick whichever provider matches what you already have, or use Gemini if you just want to try this out without paying anything.',
+  },
+  {
+    title: 'What the AI can see',
+    body: 'The "Full context / No context / Custom" picker controls how much of your workspace is sent with your request — everything, nothing at all, or one project and/or a narrower calendar date range. Your notes are separate and off by default: tick "Include my notes" if you want the AI to be able to read and edit the notes you already have. Either way it can still write new ones.',
   },
   {
     title: 'How to use it',

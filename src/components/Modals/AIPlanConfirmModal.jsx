@@ -14,6 +14,7 @@ import { Sparkles, X, AlertTriangle, Loader2, CheckSquare, Square } from 'lucide
 import { useScheduler } from '../../context/SchedulerContext';
 import Modal from '../Common/Modal';
 import { applyPlan } from '../../services/aiPlanService';
+import { useNoteMutations } from '../../hooks/useNoteMutations';
 
 const GROUPS = [
   { key: 'create', label: 'Create', match: (op) => op.startsWith('create_') },
@@ -23,6 +24,9 @@ const GROUPS = [
 
 export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProjectCreated }) {
   const scheduler = useScheduler();
+  // Note mutators live in their own hook rather than on SchedulerContext (see
+  // useNoteMutations), so applyPlan's mutator bag is the two merged.
+  const { createNote, updateNote, removeNote } = useNoteMutations();
   // handleApply is defined above the JSX return, so it captures requestClose
   // via this ref (set during render, from Modal's render-prop) instead of
   // destructuring it directly — ref mutation during render is safe, unlike
@@ -66,7 +70,7 @@ export default function AIPlanConfirmModal({ plan, onClose, onApplied, onProject
     setIsApplying(true);
     setApplyErrors(null);
     try {
-      const results = applyPlan(plan, checkedIndices, scheduler);
+      const results = applyPlan(plan, checkedIndices, { ...scheduler, addNote: createNote, updateNote, deleteNote: removeNote });
       const failed = results.filter((r) => !r.ok);
       if (failed.length > 0) {
         setApplyErrors(

@@ -110,3 +110,42 @@ describe('resolvePlan — enforceDueDate cross-field validation', () => {
     expect(entryFor(plan, 0).valid).toBe(true);
   });
 });
+
+describe('resolvePlan — note operations', () => {
+  const contextWithNotes = { ...emptyContext, notes: [{ id: 'n1', title: 'Packing list' }] };
+
+  it('accepts a create_note and describes it by title', () => {
+    const plan = resolvePlan([{ op: 'create_note', localId: 'new:1', title: 'Recipe', body: '- eggs' }], emptyContext);
+    const entry = entryFor(plan, 0);
+    expect(entry.valid).toBe(true);
+    expect(entry.humanDescription).toContain('Recipe');
+  });
+
+  it('accepts update_note and delete_note pointing at a real note id', () => {
+    const update = resolvePlan([{ op: 'update_note', noteId: 'n1', body: 'new body' }], contextWithNotes);
+    expect(entryFor(update, 0).valid).toBe(true);
+    // Resolves the id back to a human title rather than echoing "n1".
+    expect(entryFor(update, 0).humanDescription).toContain('Packing list');
+
+    const del = resolvePlan([{ op: 'delete_note', noteId: 'n1' }], contextWithNotes);
+    expect(entryFor(del, 0).valid).toBe(true);
+  });
+
+  it('rejects editing a note the same plan also deletes', () => {
+    const plan = resolvePlan(
+      [
+        { op: 'update_note', noteId: 'n1', body: 'new body' },
+        { op: 'delete_note', noteId: 'n1' },
+      ],
+      contextWithNotes
+    );
+    expect(entryFor(plan, 0).valid).toBe(false);
+  });
+
+  it('rejects a note id that was never in the context — including when notes were withheld', () => {
+    // Exactly the "user unticked Include my notes" case: the AI must not
+    // invent an id for a note it was never shown.
+    const plan = resolvePlan([{ op: 'update_note', noteId: 'n1', title: 'x' }], emptyContext);
+    expect(entryFor(plan, 0).valid).toBe(false);
+  });
+});

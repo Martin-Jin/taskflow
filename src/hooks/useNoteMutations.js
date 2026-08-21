@@ -14,24 +14,18 @@ import { DEFAULT_FOLDER_ID } from '../components/Dashboard/notesModel';
 export function useNoteMutations() {
   const { notes: data, setNotes: setData } = useScheduler();
 
+  /* Returns the created note so callers that need its id can have it without
+     re-deriving one (applyPlan's create_note resolves `new:<n>` local ids
+     against it, the same as every other create_* operation). */
   const createNote = useCallback(
     (title, body, folderId = DEFAULT_FOLDER_ID) => {
       const now = Date.now();
+      const note = { id: crypto.randomUUID(), title, body, folderId, createdAt: now, updatedAt: now };
       setData((d) => ({
         ...d,
-        notes: [
-          ...d.notes,
-          {
-            id: crypto.randomUUID(),
-            title,
-            body,
-            folderId,
-            color: nextLabelColor(d.notes.length),
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
+        notes: [...d.notes, { ...note, color: nextLabelColor(d.notes.length) }],
       }));
+      return note;
     },
     [setData]
   );
