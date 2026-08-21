@@ -648,7 +648,6 @@ export default function TaskListPanel({
                 aria-label={`Rename project "${activeProject?.name || ''}"`}
                 value={projectNameDraft}
                 onChange={(e) => setProjectNameDraft(e.target.value)}
-                onFocus={(e) => e.target.select()}
                 onBlur={commitRenameProject}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {

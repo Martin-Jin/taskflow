@@ -205,7 +205,6 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove })
                     autoFocus
                     defaultValue={r.label}
                     onMouseDown={(e) => e.stopPropagation()}
-                    onFocus={(e) => e.target.select()}
                     onBlur={(e) => {
                       onUpdate(r.id, { label: e.target.value.trim() || r.label });
                       setEditingId(null);

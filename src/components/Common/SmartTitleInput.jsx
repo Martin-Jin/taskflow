@@ -294,7 +294,6 @@ export default function SmartTitleInput({
         onKeyUp={handleCaretMove}
         onClick={handleCaretMove}
         onKeyDown={handleKeyDown}
-        onFocus={(e) => e.target.select()}
         placeholder={placeholder}
         rows={1}
         maxLength={500}

@@ -49,6 +49,7 @@ import CommandPalette from './components/CommandPalette';
 import { useIsMobile } from './hooks/useIsMobile';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useSelectAllOnFocus } from './hooks/useSelectAllOnFocus';
 import { useJoinFlow } from './hooks/useJoinFlow';
 import { readJoinToken } from './utils/joinFlow';
 import GuidedTour from './components/Tutorial/GuidedTour';
@@ -145,6 +146,7 @@ function AppShell() {
   // since those already have a FAB group to host the entry point.
   const [showStandaloneAIQuickAdd, setShowStandaloneAIQuickAdd] = useState(false);
   const isMobile = useIsMobile();
+  useSelectAllOnFocus();
   const { toggleTheme } = useTheme();
   const { aiConfigured, requestOpen: requestAIQuickAddOpen } = useAIQuickAddGate();
   const {

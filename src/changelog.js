@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.7',
+    date: '2026-08-21',
+    title: 'Click a field, replace it',
+    changes: [
+      'Clicking (or tabbing) into a text field now selects its whole current value, so you can immediately start typing to replace it instead of having to select it yourself first. Applies app-wide.',
+    ],
+  },
+  {
     version: '6.8.6',
     date: '2026-08-21',
     title: 'Calendar event edits no longer get lost',
