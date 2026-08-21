@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '7.4.2',
+    date: '2026-08-22',
+    title: 'The docs got readable',
+    changes: [
+      'The README had grown into an 860-line manual. It is now a short overview with a feature table and an index, and the detail moved into focused docs: using the app, sync and sharing, integrations, hosting, and known limitations.',
+      'Notifications are finally documented — which task events can notify you, how the in-app channel works with no setup, and what the optional self-hosted email channel needs. The feature shipped without ever being written up.',
+      'Fixed docs that had drifted: the List/Board/Gantt views were described under Projects instead of Tasks, the Settings walkthrough was missing the Notifications and Tags cards, and the calendar section predated the full-day time grid.',
+    ],
+  },
+  {
     version: '7.4.1',
     date: '2026-08-22',
     title: 'Flatter pop-up menus',
