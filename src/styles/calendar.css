@@ -512,14 +512,18 @@
   transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
 }
 
-/* Routine (Fixed-availability) background: purely informational — the
-   label/time only reveal on hover (see .cal-routine-block-label/-time
-   below), and mousedown is forwarded to the underlying day-column's own
+/* Routine (Fixed-availability) background: purely informational, and
+   mousedown is forwarded to the underlying day-column's own
    drag-to-block-out gesture (see WeekView's handleColumnMouseDown call
-   here) rather than truly ignoring clicks, so hover still works.
-   Deliberately much quieter than .cal-block/.cal-event (no border, shadow,
-   or saturated fill) so it reads as "unavailable" without competing with
-   real scheduled items for attention. */
+   here) rather than truly ignoring clicks. Deliberately much quieter than
+   .cal-block/.cal-event (no border, shadow, or saturated fill) so it reads
+   as "unavailable" without competing with real scheduled items for
+   attention. The label/time used to be opacity:0 until hover — reads fine
+   on desktop, but leaves a routine block permanently blank (no equivalent
+   reveal gesture) on touch, so a first-time mobile viewer had no way to
+   learn what the muted gray rectangle even was. Shown at a muted opacity
+   always now, brightening on hover as a lighter-touch affordance instead
+   of the sole way to read it. */
 .cal-routine-block {
   position: absolute;
   left: 0;
@@ -539,7 +543,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
-  opacity: 0;
+  opacity: 0.75;
   transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
@@ -548,7 +552,7 @@
 }
 
 .cal-routine-block-time {
-  opacity: 0;
+  opacity: 0.75;
   transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
@@ -603,16 +607,12 @@
   cursor: not-allowed;
 }
 
-.cal-block.passive {
-  border-left-style: dashed;
-  background: repeating-linear-gradient(
-    135deg,
-    var(--color-bg-surface-raised),
-    var(--color-bg-surface-raised) 8px,
-    var(--color-bg-surface) 8px,
-    var(--color-bg-surface) 16px
-  );
-}
+/* No dashed border / stripe here on purpose, despite once having one — that
+   idiom is now reserved for .cal-event.free-time/.month-chip-event.free-time
+   ("scheduler-ignored") below, and .cal-cluster's own dashed border a folded
+   group of items — a passive task sharing either look made all three
+   indistinguishable at a glance. The Wind icon in the title (WeekView) is
+   passive's own, unshared signal instead. */
 
 .cal-cluster {
   border-left-style: dashed;
@@ -986,6 +986,16 @@
 .cal-block.locked .lock-indicator {
   background: var(--color-accent-soft);
   color: var(--color-accent);
+}
+
+/* Read-only event badge — same tint as a locked task block (same
+   "protected" meaning), but a static <span> rather than a <button>: there's
+   no toggle here, so no hover/pointer affordance suggesting one. */
+.cal-event.is-readonly .lock-indicator {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  cursor: default;
+  opacity: 1;
 }
 
 .cal-block.is-mobile {

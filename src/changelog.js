@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.2',
+    date: '2026-08-21',
+    title: 'Calendar blocks are easier to read at a glance',
+    changes: [
+      "Fixed-routine blocks (like sleep or commute time) now always show their label and time, instead of only revealing them on hover — which never worked on touch screens.",
+      "A task that can run unattended no longer looks like a scheduler-ignored event or a folded group of tasks — it now just shows its own \"can run unattended\" icon.",
+      "A read-only calendar event (from a subscribed or shared calendar you can't edit) is now marked with a small lock badge, instead of only being discoverable by trying to drag it and having nothing happen.",
+    ],
+  },
+  {
     version: '6.8.1',
     date: '2026-08-21',
     title: 'More Settings layout fixes',
