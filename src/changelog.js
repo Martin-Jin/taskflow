@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.5',
+    date: '2026-08-21',
+    title: 'Fixed faint bulk-action buttons',
+    changes: [
+      'The toolbar buttons that appear when selecting multiple tasks (set priority, due date, delete, etc.) were nearly invisible against the bar behind them, especially in dark mode — they now have a clearly visible background.',
+    ],
+  },
+  {
     version: '6.8.4',
     date: '2026-08-21',
     title: 'Motion that means something',
