@@ -43,7 +43,6 @@ function SmartDurationInput({ hours, onChange, placeholder, disabled = false }) 
   function handleFocus(e) {
     setRawText(formatHours(hours));
     setEditing(true);
-    e.target.select();
   }
 
   function handleChange(e) {

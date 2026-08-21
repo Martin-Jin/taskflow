@@ -289,7 +289,6 @@ export default function NotesCard() {
                   placeholder="Title"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
-                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) => e.key === 'Escape' && setEditingNoteId(null)}
                 />
                 <textarea
@@ -298,7 +297,6 @@ export default function NotesCard() {
                   rows={3}
                   value={editBody}
                   onChange={(e) => setEditBody(e.target.value)}
-                  onFocus={(e) => e.target.select()}
                   onBlur={handleBodyBlur}
                   onKeyDown={(e) => e.key === 'Escape' && setEditingNoteId(null)}
                 />
