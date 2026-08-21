@@ -2,7 +2,16 @@
 // event creation/detail, date picker, mobile swipe carousel) and the
 // Tasks page's View/Filter menu. See helpers.js for shared setup.
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, closeAnyModal, trackConsoleErrors, expectNoErrors, resolveConfirmModal, selectMenuLabel } from './helpers';
+import {
+  gotoApp,
+  gotoTab,
+  closeAnyModal,
+  trackConsoleErrors,
+  expectNoErrors,
+  resolveConfirmModal,
+  selectMenuLabel,
+  switchToProject,
+} from './helpers';
 
 // Opens the Tasks page's "Change view or filter" menu and picks a view
 // (Board/Gantt/List) by its exact label — mirrors ViewFilterMenu's
@@ -15,17 +24,6 @@ async function switchTaskView(page, label) {
   await page.waitForTimeout(200);
   await page.getByRole('menuitemradio', { name: label, exact: true }).click();
   await page.waitForTimeout(400);
-}
-
-// Selects a real project (not "All Tasks") by name via the Tasks page's
-// project switcher (SelectMenu, role="option" items) so Board tests land on
-// a project whose sections are known ahead of time (mock data's "Work"
-// project ships with Planning/In Progress/Review sections — see mockData.js).
-async function switchToProject(page, name) {
-  await page.getByRole('button', { name: 'Switch project' }).click();
-  await page.waitForTimeout(200);
-  await page.getByRole('option', { name, exact: true }).click();
-  await page.waitForTimeout(300);
 }
 
 // Drags `source` onto `target` using native HTML5 DnD (BoardView's cards use
@@ -357,11 +355,9 @@ test.describe('Board view', () => {
 
     // Board only appears in the view menu once a real project (not the "All
     // Tasks"/"Inbox" pseudo views) is selected — see TaskListPanel's
-    // PAGE_VIEWS filter. Option 0 is "All Tasks", option 1 is "Inbox", so the
-    // first real project is option 2.
-    await page.getByRole('button', { name: 'Switch project' }).click();
-    await page.waitForTimeout(200);
-    await page.getByRole('option').nth(2).click();
+    // PAGE_VIEWS filter. Row 0 is "All Tasks", row 1 is "Inbox", so the
+    // first real project is row 2.
+    await page.locator('.task-project-rail-link').nth(2).click();
     await page.waitForTimeout(300);
 
     await switchTaskView(page, 'Board');

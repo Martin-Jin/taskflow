@@ -7,7 +7,16 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { trackConsoleErrors, gotoApp, gotoTab, openAddTask, closeAnyModal, expectNoErrors, resolveConfirmModal } from './helpers.js';
+import {
+  trackConsoleErrors,
+  gotoApp,
+  gotoTab,
+  openAddTask,
+  closeAnyModal,
+  expectNoErrors,
+  resolveConfirmModal,
+  switchToProject,
+} from './helpers.js';
 
 test.beforeEach(async ({ page }) => {
   await gotoApp(page);
@@ -278,13 +287,13 @@ test('Tasks page header "See / manage all projects" button opens Manage Projects
   // Switch to a real project — the trigger's accessible name becomes
   // project-specific ("Actions for <name>", see TaskListPanel.jsx) instead
   // of the generic "Manage projects" used for "All Tasks"/"Inbox", but the
-  // menu it opens still offers this same menuitem regardless. Option 0 is
-  // "All Tasks", option 1 is the "Inbox" pseudo-project, so the first real
-  // project is option 2.
-  await page.getByRole('button', { name: 'Switch project' }).click();
-  const projectOption = page.getByRole('option').nth(2);
-  const projectName = await projectOption.textContent();
-  await projectOption.click();
+  // menu it opens still offers this same menuitem regardless. Row 0 is
+  // "All Tasks", row 1 is the "Inbox" pseudo-project, so the first real
+  // project is row 2.
+  const projectLink = page.locator('.task-project-rail-link').nth(2);
+  const projectName = await projectLink.textContent();
+  await projectLink.click();
+  await page.waitForTimeout(300);
   // Scoped to main — this same label also exists in the sidebar's own copy
   // of the project row, which would otherwise make this a strict-mode
   // violation (see CLAUDE.md's "Actions for <project> is ambiguous" note).
@@ -314,12 +323,9 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   await page.waitForTimeout(200);
 
   await gotoTab(page, 'Tasks');
-  await page.getByRole('button', { name: 'Switch project' }).click();
-  await page.waitForTimeout(200);
-  await page.getByRole('option', { name: projectName, exact: true }).click();
-  await page.waitForTimeout(300);
+  await switchToProject(page, projectName);
   // Confirm it's actually the active selection before deleting it.
-  await expect(page.getByRole('button', { name: 'Switch project' })).toContainText(projectName);
+  await expect(page.locator('.taskpage-project-title')).toContainText(projectName);
 
   // Delete it via Manage Projects while it's still the active view.
   await gotoTab(page, 'Projects');
@@ -338,7 +344,7 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   // gracefully fallen back to "All Tasks" (see TaskListPanel's activeProjectId
   // effect: `if (!projects.some(...)) onChangeActiveProject(ALL_TASKS_PROJECT_ID)`).
   await gotoTab(page, 'Tasks');
-  await expect(page.getByRole('button', { name: 'Switch project' })).toContainText('All Tasks');
+  await expect(page.locator('.taskpage-project-title')).toContainText('All Tasks');
   await expect(page.getByPlaceholder(/search tasks/i)).toBeVisible();
   const taskRows = page.locator('.task-row, .board-card');
   await expect(taskRows.first()).toBeVisible();

@@ -991,13 +991,6 @@ select:focus-visible,
   padding: 8px 10px;
 }
 
-.sidebar-see-all-projects-btn {
-  margin-top: 4px;
-  justify-content: space-between;
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
-}
-
 .sidebar-add-project-btn {
   margin-top: 4px;
 }

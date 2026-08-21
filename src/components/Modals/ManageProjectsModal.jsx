@@ -13,20 +13,13 @@
 import React, { useRef, useState } from 'react';
 import { Plus, Search, Pin, Inbox as InboxIcon } from 'lucide-react';
 import Modal from '../Common/Modal';
-import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
+import { useProjectSearch } from '../../hooks/useProjectSearch';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
-import {
-  ALL_TASKS_PROJECT_ID,
-  ALL_TASKS_PROJECT_LABEL,
-  INBOX_PROJECT_ID,
-  INBOX_PROJECT_LABEL,
-  sortProjectsForSidebar,
-} from '../../utils/projectConstants';
-import { rankByNameSearch } from '../../utils/nameSearch';
+import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../../utils/projectConstants';
 
 export default function ManageProjectsModal({
   projects,
@@ -46,38 +39,21 @@ export default function ManageProjectsModal({
   const { sharedProjects } = useScheduler();
   const { user } = useAuth();
   const confirm = useConfirm();
-  const [query, setQuery] = useState('');
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
-  // pickProject is called from useListKeyboardNav's onSelect, a hook wired up
-  // before Modal's render-prop (the only place requestClose is exposed) runs
-  // — so requestClose is captured into this ref during render instead (ref
-  // mutation during render is safe, unlike setState in render).
+  // pickProject is called from useProjectSearch's keyboard-nav onSelect, wired
+  // up before Modal's render-prop (the only place requestClose is exposed)
+  // runs — so requestClose is captured into this ref during render instead
+  // (ref mutation during render is safe, unlike setState in render).
   const requestCloseRef = useRef(() => {});
-
-  const sortedProjects = sortProjectsForSidebar(projects);
-  // Same relevance-ranked-with-pinned/recency-tiebreak search as Sidebar.jsx
-  // — see its comment for why sortedProjects (not raw `projects`) is passed in.
-  const visibleProjects = query.trim()
-    ? rankByNameSearch(query, sortedProjects.map((p) => ({ ...p, label: p.name })))
-    : sortedProjects;
-  // Same as Sidebar.jsx: keyboard nav only kicks in once a query has
-  // actually narrowed the list down to ranked results.
-  const isSearching = query.trim().length > 0;
 
   function pickProject(projectId) {
     onSelectProject(projectId);
     requestCloseRef.current();
   }
 
-  const { activeIndex, setActiveIndex, listRef, handleKeyDown } = useListKeyboardNav({
-    itemCount: isSearching ? visibleProjects.length : 0,
-    onSelect: (index) => {
-      const project = visibleProjects[index];
-      if (project) pickProject(project.id);
-    },
-    resetKey: query,
-  });
+  const { query, setQuery, visibleProjects, isSearching, activeIndex, setActiveIndex, listRef, handleKeyDown } =
+    useProjectSearch(projects, pickProject);
 
   // Unlike CalendarFilterMenu/Sidebar (a portal popover and a persistent nav
   // rail, neither of which is a modal), Escape here can't be intercepted to

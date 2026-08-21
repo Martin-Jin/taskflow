@@ -3,7 +3,7 @@
 // with confirmation. See helpers.js for shared setup, and CLAUDE.md's
 // Testing section for this suite's conventions.
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors, resolveConfirmModal } from './helpers';
+import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors, resolveConfirmModal, switchToProject } from './helpers';
 
 test.describe('Bulk multi-select', () => {
   test('List view: select two tasks, bulk-set priority, then bulk-delete', async ({ page }) => {
@@ -79,10 +79,7 @@ test.describe('Bulk multi-select', () => {
     // Board view is only offered for a real project, not "All Tasks"/"Inbox"
     // (see TaskListPanel's isPseudoProject filter on viewOptions) — switch to
     // the seeded "Work" project first.
-    await page.getByRole('button', { name: 'Switch project' }).click();
-    await page.waitForTimeout(200);
-    await page.getByRole('option', { name: 'Work', exact: true }).click();
-    await page.waitForTimeout(300);
+    await switchToProject(page, 'Work');
 
     // Switch to Board view via the view/filter menu.
     await page.getByRole('button', { name: /change view or filter|view, filter, and project actions/i }).click();
