@@ -3,15 +3,17 @@
  * Sidebar
  * ============================================================================
  * Desktop-only nav rail: the Workspace tab switch (Dashboard/Calendar/Tasks/
- * Projects/Stats/Settings) plus a lean "Projects" group underneath — the
- * "All Tasks" pseudo-project pinned at the top, then a capped list of the
+ * Projects/Stats/Settings) plus a lean "Recent projects" group underneath —
+ * the "All Tasks" pseudo-project pinned at the top, then a capped list of the
  * most recently visited real projects (RECENT_PROJECT_LIMIT, by
  * `lastVisitedAt`), each with a "⋯" menu (Rename/Pin/Delete via
- * ProjectActionsMenu), and a "See all projects" link to the dedicated
- * Projects tab. Full project search/browsing, and the "Manage projects"
- * entry point (ManageProjectsModal, which also has its own "Add project"
- * button opening the dedicated AddProjectModal), now live on the Projects
- * page itself rather than duplicated here.
+ * ProjectActionsMenu). No link out to the dedicated Projects tab here — it's
+ * already one click away via the Workspace group above, so a second entry
+ * point to the same destination would be redundant. Full project search/
+ * browsing, and the "Manage projects" entry point (ManageProjectsModal, which
+ * also has its own "Add project" button opening the dedicated
+ * AddProjectModal), live on the Projects page itself and (for the Tasks page
+ * specifically) TaskProjectRail rather than duplicated here.
  *
  * Extracted out of App.jsx once the Projects group made the inline JSX too
  * large to keep readable there. Only rendered on desktop — mobile has no
@@ -21,7 +23,7 @@
  */
 
 import React, { useState } from 'react';
-import { ArrowRight, Inbox, Pin } from 'lucide-react';
+import { Inbox, Pin } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -106,7 +108,7 @@ export default function Sidebar({
       </div>
 
       <div className="nav-group sidebar-projects-group">
-        <div className="nav-group-label">Projects</div>
+        <div className="nav-group-label">Recent projects</div>
 
         <button
           className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
@@ -173,14 +175,6 @@ export default function Sidebar({
           ))}
           {recentProjects.length === 0 && <div className="sidebar-project-empty">No recently visited projects yet.</div>}
         </div>
-
-        <button
-          className="nav-item sidebar-see-all-projects-btn"
-          onClick={() => onSelectTab('projects')}
-        >
-          See all projects
-          <ArrowRight size={13} />
-        </button>
       </div>
 
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>{footer}</div>

@@ -49,17 +49,9 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors, BASE_URL } from './helpers.js';
+import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors, switchToProject, BASE_URL } from './helpers.js';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-
-/** Same idiom as views.spec.js — the project switcher is a SelectMenu of role="option" items. */
-async function switchToProject(page, name) {
-  await page.getByRole('button', { name: 'Switch project' }).click();
-  await page.waitForTimeout(200);
-  await page.getByRole('option', { name, exact: true }).click();
-  await page.waitForTimeout(300);
-}
 
 test.describe('Sharing a project — reachability', () => {
   test('desktop: the sidebar project menu offers "Share project"', async ({ page }) => {

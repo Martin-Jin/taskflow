@@ -1,8 +1,8 @@
 // Full-suite — the Projects directory page (tab id 'projects'): navigation
-// into it (sidebar nav item, mobile bottom tab bar, Sidebar's "See all
-// projects" link), its fuzzy project search (filters the three columns
-// in place), the "My projects" sort menu, and clicking a row to jump to
-// Tasks with that project active. See helpers.js for shared setup.
+// into it (sidebar nav item, mobile bottom tab bar), its fuzzy project
+// search (filters the three columns in place), the "My projects" sort menu,
+// and clicking a row to jump to Tasks with that project active. See
+// helpers.js for shared setup.
 //
 // Seeded data assumed from src/services/mockData.js: three projects — Work
 // (order 1, 9 tasks incl. subtasks, ~21.25 top-level effective hours),
@@ -13,14 +13,12 @@
 import { test, expect } from '@playwright/test';
 import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors } from './helpers';
 
-// Confirms the Tasks page's project switcher (a SelectMenu, aria-label
-// "Switch project") is currently showing `name` as its selected value — the
-// same "active project" signal views.spec.js's switchToProject helper relies
-// on when picking a project, used here in reverse to confirm ProjectsPage's
-// navigation landed on the right one.
+// Confirms the Tasks page landed on `name` as its active project, by reading
+// the page's own title heading directly (TaskListPanel's .taskpage-project-title) —
+// used to confirm ProjectsPage's navigation landed on the right one.
 async function expectActiveProject(page, name) {
   await expect(page.getByPlaceholder(/search tasks/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Switch project' })).toContainText(name);
+  await expect(page.locator('.taskpage-project-title')).toContainText(name);
 }
 
 test.describe('Projects page', () => {
@@ -192,20 +190,6 @@ test.describe('Projects page', () => {
     await page.waitForTimeout(400);
 
     await expectActiveProject(page, 'Writing');
-
-    expectNoErrors(errors);
-  });
-
-  test('Sidebar "See all projects" link lands on the Projects page', async ({ page }) => {
-    const errors = trackConsoleErrors(page);
-    await gotoApp(page);
-    await gotoTab(page, 'Tasks');
-
-    await page.locator('.sidebar-see-all-projects-btn').click();
-    await page.waitForTimeout(300);
-
-    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
-    await expect(page.getByLabel('Search projects')).toBeVisible();
 
     expectNoErrors(errors);
   });

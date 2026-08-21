@@ -47,7 +47,22 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Repeat, Wind, Ban, Check, ExternalLink, ChevronRight, ChevronDown, RotateCcw, Inbox, ListChecks, CheckSquare, CornerUpLeft } from 'lucide-react';
+import {
+  Repeat,
+  Wind,
+  Ban,
+  Check,
+  ExternalLink,
+  ChevronRight,
+  ChevronDown,
+  RotateCcw,
+  Inbox,
+  ListChecks,
+  CheckSquare,
+  CornerUpLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useConfirm } from '../context/ConfirmContext';
@@ -60,7 +75,6 @@ import GanttChart from './Gantt/GanttChart';
 import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
 import AddTaskFabGroup from './Common/AddTaskFabGroup';
 import ReparentDropHint from './Common/ReparentDropHint';
-import SelectMenu from './Common/SelectMenu';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import PresenceAvatars from './Common/PresenceAvatars';
 import SharedProjectBadge from './Common/SharedProjectBadge';
@@ -69,6 +83,7 @@ import MarqueeText from './Common/MarqueeText';
 import Badge from './Common/Badge';
 import AccountButton from './Nav/AccountButton';
 import BulkActionBar from './Common/BulkActionBar';
+import TaskProjectRail from './TaskProjectRail';
 import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
@@ -268,6 +283,23 @@ export default function TaskListPanel({
   function setFilter(key) {
     setFilterByView((prev) => ({ ...prev, [view]: key }));
   }
+  // TaskProjectRail's open/closed state — replaces the old project SelectMenu
+  // dropdown in the header (see that button below). Desktop's "collapsed"
+  // preference persists (device-local, same reasoning as filterByView above);
+  // mobile's drawer is always closed on a fresh visit instead — an overlay
+  // that silently reopened over the whole page on every reload would be a
+  // much worse surprise than a persistent column defaulting back open.
+  const [desktopRailCollapsed, setDesktopRailCollapsed] = usePersistedState('taskProjectRailCollapsed', false);
+  const [mobileRailOpen, setMobileRailOpen] = useState(false);
+  const isProjectRailOpen = isMobile ? mobileRailOpen : !desktopRailCollapsed;
+  function toggleProjectRail() {
+    if (isMobile) setMobileRailOpen((v) => !v);
+    else setDesktopRailCollapsed((v) => !v);
+  }
+  function closeProjectRail() {
+    if (isMobile) setMobileRailOpen(false);
+    else setDesktopRailCollapsed(true);
+  }
   // Ids of parent tasks whose children are currently hidden — collapsed is
   // opt-in per row, so anything not in this set renders expanded (the
   // default), and it's plain local state rather than persisted.
@@ -417,14 +449,6 @@ export default function TaskListPanel({
     if (isPseudoProject) return;
     if (!projects.some((p) => p.id === activeProjectId)) onChangeActiveProject(ALL_TASKS_PROJECT_ID);
   }, [activeProjectId, isPseudoProject, projects, onChangeActiveProject]);
-  const projectSelectOptions = useMemo(
-    () => [
-      { value: ALL_TASKS_PROJECT_ID, label: ALL_TASKS_PROJECT_LABEL },
-      { value: INBOX_PROJECT_ID, label: INBOX_PROJECT_LABEL },
-      ...projects.map((p) => ({ value: p.id, label: p.name })),
-    ],
-    [projects]
-  );
 
   const visibleTasks = useMemo(() => {
     // Sub-tasks (parentId set) never go through this top-level filter/sort —
@@ -634,13 +658,19 @@ export default function TaskListPanel({
         <div className="taskpage-sticky-header-backdrop" aria-hidden="true" />
         <div className="taskpage-header-row">
           <div className="taskpage-project-header">
-            <SelectMenu
-              value={activeProjectId}
-              options={projectSelectOptions}
-              onChange={onChangeActiveProject}
-              ariaLabel="Switch project"
-              marquee
-            />
+            {/* Opens/closes TaskProjectRail — replaces the old project
+                SelectMenu dropdown that used to live here; switching projects
+                now happens through that rail instead. */}
+            <button
+              type="button"
+              className="btn btn-icon taskpage-project-rail-trigger"
+              onClick={toggleProjectRail}
+              aria-label={isProjectRailOpen ? 'Hide all projects' : 'Show all projects'}
+              aria-expanded={isProjectRailOpen}
+              title="All projects"
+            >
+              {isProjectRailOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+            </button>
             {isRenamingProject ? (
               <input
                 autoFocus
@@ -777,116 +807,133 @@ export default function TaskListPanel({
         )}
       </div>
 
-      {/* Rendered as a sibling of .taskpage-sticky-header, not inside it —
-          that element carries an inline `transform` (the scroll-driven dock
-          offset above), and any transform — even translateY(0) at rest —
-          makes its subtree a containing block for position:fixed
-          descendants, which broke this FAB's "fixed to viewport" corner
-          positioning (it would render pinned near the header instead of the
-          bottom-right corner, overlapping the view/filter menu). */}
-      {view === 'list' && !select.selectionMode && (
-        <AddTaskFabGroup
-          onAddTask={() => setShowAddModal(true)}
-          onAIQuickAdd={() => setShowAIQuickAdd(true)}
-          onOpenSearch={isMobile ? onOpenSearch : undefined}
-          addTaskDisabled={isActiveProjectViewerOnly}
+      {/* "Jump to any project" rail, styled after SettingsPanel's own section
+          rail on desktop; an overlay drawer on mobile instead, since there's
+          no room for a permanent column there — see TaskProjectRail's own
+          doc comment for the full split. */}
+      <div className="taskpage-body-row">
+        <TaskProjectRail
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSelectProject={onChangeActiveProject}
+          isMobile={isMobile}
+          isOpen={isProjectRailOpen}
+          onRequestClose={closeProjectRail}
         />
-      )}
 
-      {view === 'board' && (
-        <BoardView
-          projectId={activeProjectId}
-          onProjectChange={onResolveBoardProject}
-          filter={filter}
-          onOpenSearch={isMobile ? onOpenSearch : undefined}
-          openAIQuickAddSignal={openAIQuickAddSignal}
-          onSelectTaskRef={boardSelectTaskRef}
-          select={boardSelect}
-          onProjectCreated={onProjectCreated}
-        />
-      )}
-      {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}
-
-      {view === 'list' && (
-        <>
-          <div
-            // tab-panel (global.css): the row list is fresh-mounted every
-            // time the List/Board/Gantt switch lands back here (and
-            // AnimatePresence's initial={false} below deliberately skips
-            // per-row entrance animation for whatever's already showing —
-            // see that comment), so without this the whole list would just
-            // snap into view with no transition at all. See W7's "Project/
-            // view switch: short content cross-fade".
-            className="tasklist-rows tab-panel"
-            // Drop a dragged sub-task row anywhere in here that ISN'T another
-            // row (see hooks/useReparentDrag.js's UNPARENT section) to clear
-            // its parentId — the natural inverse of dragging it onto another
-            // row to set one. `data-unparent-drop` is what the touch long-press
-            // path (elementFromPoint) looks for as its background counterpart.
-            data-unparent-drop
-            onDragOver={(e) => reparent.handlers.dragOverRoot(e)}
-            onDrop={(e) => reparent.handlers.dropRoot(e)}
-          >
-            {reparent.targetId === UNPARENT_TARGET_ID && (
-              <div className="unparent-drop-hint" aria-hidden="true">
-                <CornerUpLeft size={13} />
-                Drop here to remove from parent task
-              </div>
-            )}
-            {visibleTasks.length === 0 && (
-              <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-                <Inbox size={22} className="empty-state-icon" aria-hidden="true" />
-                No tasks {searchQuery ? 'match your search' : 'here yet'}.
-              </div>
-            )}
-            {/* `initial={false}` so the rows already on screen when the list
-                first mounts don't all animate in — only rows added later do
-                (and even then via the shared `.card` CSS enter animation),
-                while removals still get their exit animation. */}
-            {taskGroups
-              ? taskGroups.map((group) => (
-                <div key={group.key} className="tasklist-section">
-                  <h3 className={`tasklist-section-header ${group.key === 'overdue' ? 'is-overdue' : ''}`}>
-                    {group.label}
-                    <span className="tasklist-section-count">{group.tasks.length}</span>
-                  </h3>
-                  <AnimatePresence initial={false}>
-                    {group.tasks.flatMap((task) => flattenRows(task)).map(renderTaskRow)}
-                  </AnimatePresence>
-                </div>
-              ))
-              : (
-                <AnimatePresence initial={false}>
-                  {visibleTasks.flatMap((task) => flattenRows(task)).map(renderTaskRow)}
-                </AnimatePresence>
-              )}
-          </div>
-
-          {showAddModal && (
-            <AddTaskModal onClose={() => setShowAddModal(false)} initialProjectId={activeProject ? activeProject.id : ''} />
-          )}
-          {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
-          {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
-          {select.selectionMode && (
-            <BulkActionBar
-              count={select.count}
-              editableFields={bulkActions.editableFields}
-              projects={projects}
-              labels={labels}
-              onApplyField={bulkActions.applyField}
-              onMarkComplete={bulkActions.markComplete}
-              onMarkIncomplete={bulkActions.markIncomplete}
-              onDelete={bulkActions.handleDelete}
-              onCancel={select.exitSelectionMode}
-              // "Select all" selects every currently-visible/filtered row —
-              // the obvious "all visible items" set for List view (matches
-              // whatever the active status filter/search already narrowed
-              // down to), not every task in the project.
-              onSelectAll={() => select.selectAll(visibleTasks.map((t) => t.id))}
+        <div className="taskpage-main-column">
+          {/* Rendered as a sibling of .taskpage-sticky-header, not inside it —
+              that element carries an inline `transform` (the scroll-driven dock
+              offset above), and any transform — even translateY(0) at rest —
+              makes its subtree a containing block for position:fixed
+              descendants, which broke this FAB's "fixed to viewport" corner
+              positioning (it would render pinned near the header instead of the
+              bottom-right corner, overlapping the view/filter menu). */}
+          {view === 'list' && !select.selectionMode && (
+            <AddTaskFabGroup
+              onAddTask={() => setShowAddModal(true)}
+              onAIQuickAdd={() => setShowAIQuickAdd(true)}
+              onOpenSearch={isMobile ? onOpenSearch : undefined}
+              addTaskDisabled={isActiveProjectViewerOnly}
             />
           )}
-        </>
-      )}
+
+          {view === 'board' && (
+            <BoardView
+              projectId={activeProjectId}
+              onProjectChange={onResolveBoardProject}
+              filter={filter}
+              onOpenSearch={isMobile ? onOpenSearch : undefined}
+              openAIQuickAddSignal={openAIQuickAddSignal}
+              onSelectTaskRef={boardSelectTaskRef}
+              select={boardSelect}
+              onProjectCreated={onProjectCreated}
+            />
+          )}
+          {view === 'gantt' && <GanttChart activeProjectId={activeProjectId} filter={filter} />}
+
+          {view === 'list' && (
+            <>
+              <div
+                // tab-panel (global.css): the row list is fresh-mounted every
+                // time the List/Board/Gantt switch lands back here (and
+                // AnimatePresence's initial={false} below deliberately skips
+                // per-row entrance animation for whatever's already showing —
+                // see that comment), so without this the whole list would just
+                // snap into view with no transition at all. See W7's "Project/
+                // view switch: short content cross-fade".
+                className="tasklist-rows tab-panel"
+                // Drop a dragged sub-task row anywhere in here that ISN'T another
+                // row (see hooks/useReparentDrag.js's UNPARENT section) to clear
+                // its parentId — the natural inverse of dragging it onto another
+                // row to set one. `data-unparent-drop` is what the touch long-press
+                // path (elementFromPoint) looks for as its background counterpart.
+                data-unparent-drop
+                onDragOver={(e) => reparent.handlers.dragOverRoot(e)}
+                onDrop={(e) => reparent.handlers.dropRoot(e)}
+              >
+                {reparent.targetId === UNPARENT_TARGET_ID && (
+                  <div className="unparent-drop-hint" aria-hidden="true">
+                    <CornerUpLeft size={13} />
+                    Drop here to remove from parent task
+                  </div>
+                )}
+                {visibleTasks.length === 0 && (
+                  <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                    <Inbox size={22} className="empty-state-icon" aria-hidden="true" />
+                    No tasks {searchQuery ? 'match your search' : 'here yet'}.
+                  </div>
+                )}
+                {/* `initial={false}` so the rows already on screen when the list
+                    first mounts don't all animate in — only rows added later do
+                    (and even then via the shared `.card` CSS enter animation),
+                    while removals still get their exit animation. */}
+                {taskGroups
+                  ? taskGroups.map((group) => (
+                    <div key={group.key} className="tasklist-section">
+                      <h3 className={`tasklist-section-header ${group.key === 'overdue' ? 'is-overdue' : ''}`}>
+                        {group.label}
+                        <span className="tasklist-section-count">{group.tasks.length}</span>
+                      </h3>
+                      <AnimatePresence initial={false}>
+                        {group.tasks.flatMap((task) => flattenRows(task)).map(renderTaskRow)}
+                      </AnimatePresence>
+                    </div>
+                  ))
+                  : (
+                    <AnimatePresence initial={false}>
+                      {visibleTasks.flatMap((task) => flattenRows(task)).map(renderTaskRow)}
+                    </AnimatePresence>
+                  )}
+              </div>
+
+              {showAddModal && (
+                <AddTaskModal onClose={() => setShowAddModal(false)} initialProjectId={activeProject ? activeProject.id : ''} />
+              )}
+              {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onProjectCreated} />}
+              {editingTask && <TaskDetailModal task={editingTask} onClose={() => setEditingTaskId(null)} />}
+              {select.selectionMode && (
+                <BulkActionBar
+                  count={select.count}
+                  editableFields={bulkActions.editableFields}
+                  projects={projects}
+                  labels={labels}
+                  onApplyField={bulkActions.applyField}
+                  onMarkComplete={bulkActions.markComplete}
+                  onMarkIncomplete={bulkActions.markIncomplete}
+                  onDelete={bulkActions.handleDelete}
+                  onCancel={select.exitSelectionMode}
+                  // "Select all" selects every currently-visible/filtered row —
+                  // the obvious "all visible items" set for List view (matches
+                  // whatever the active status filter/search already narrowed
+                  // down to), not every task in the project.
+                  onSelectAll={() => select.selectAll(visibleTasks.map((t) => t.id))}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

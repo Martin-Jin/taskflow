@@ -92,7 +92,7 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="manage-projects"]',
     placement: 'left',
     title: 'Creating projects',
-    body: 'Create as many projects as you like to separate work, personal life, or any other area — pin your favorites, rename or delete any of them, and switch between them from here, the Tasks page, the project picker, or the search bar. Each project\'s "⋯" menu also lets you share it via a link, so others can view or edit it with you.',
+    body: 'Create as many projects as you like to separate work, personal life, or any other area — pin your favorites, rename or delete any of them, and switch between them from here, the Tasks page (including its own collapsible "all projects" panel), or the search bar. Each project\'s "⋯" menu also lets you share it via a link, so others can view or edit it with you.',
   },
   {
     tab: 'stats',

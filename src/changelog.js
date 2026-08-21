@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.9.0',
+    date: '2026-08-21',
+    title: 'A cleaner sidebar and a new all-projects panel',
+    changes: [
+      'The sidebar\'s "Projects" list is now labeled "Recent projects" and dropped its redundant "See all projects" link (the Projects tab is already one click away).',
+      'The Tasks page has a new collapsible "all projects" panel with its own search — a persistent column on desktop, an overlay that closes itself after you pick on mobile. It replaces the old project dropdown in the page header.',
+    ],
+  },
+  {
     version: '6.8.8',
     date: '2026-08-21',
     title: 'A calmer, clearer dashboard',
