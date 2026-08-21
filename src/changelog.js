@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.1',
+    date: '2026-08-21',
+    title: 'More Settings layout fixes',
+    changes: [
+      "Settings description text now wraps at the full width of its container instead of stopping early and leaving empty space on the right.",
+      'Increased the left/right padding on Settings sections, and made the spacing above each section\'s title consistent across all of them.',
+    ],
+  },
+  {
     version: '6.8.0',
     date: '2026-08-21',
     title: 'Quieter, cleaner look across the app',

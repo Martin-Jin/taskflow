@@ -2248,21 +2248,45 @@ input.search-bar-input {
   min-width: 0;
 }
 
-/* Replaces the 14 separate `<h3 style={{ marginTop: 0 }}>` declarations —
-   a card's title never needs leading space above it. */
+/* Extra horizontal breathing room beyond the base .card's uniform 16px —
+   settings cards run much wider than a typical .card (the content column
+   fills whatever's left of the page next to the rail), so the base padding
+   alone left title/body text hugging the left edge with a lot of unused
+   space on the right. Vertical padding is handled separately below (the
+   heading's own margin-top), not here. */
+.settings-card {
+  padding-left: var(--space-6);
+  padding-right: var(--space-6);
+}
+
+/* Deliberate breathing room above a card's own title, replacing the flat
+   `margin-top: 0` this used to reset to. IntegrationsSection wraps its
+   title+subtitle in an extra `data-tour` div (every other section doesn't),
+   which meant its `<h3>` was never actually a match for a plain `> h3:first-
+   child` reset and kept the browser's default h3 margin instead — by
+   accident, that happened to look better than every other (flush-to-the-
+   top) card, so this is now a real, deliberate value instead of an
+   accident one section had and the rest didn't. The second/third selector
+   pair matches that one-level-nested case too, so Integrations' heading
+   gets this SAME explicit value rather than doubling up with its old
+   accidental UA-default margin. */
 .settings-card > h3:first-child,
-.settings-card > h4:first-child {
-  margin-top: 0;
+.settings-card > h4:first-child,
+.settings-card > *:first-child > h3:first-child,
+.settings-card > *:first-child > h4:first-child {
+  margin-top: var(--space-4);
 }
 
 /* The "explanatory line under a heading" pattern: 23 inline styles across
    three near-identical variants (11px/12.5px, assorted margins, all
-   text-secondary). One treatment now. */
+   text-secondary). One treatment now. Deliberately no max-width — a
+   settings card is already as wide as the content column, so capping the
+   line length left most of that width empty; wrap at the card's own edge
+   instead. */
 .settings-hint {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
   margin: 0 0 var(--space-3);
-  max-width: 62ch;
 }
 
 /* Tightens a hint sitting directly beneath its own heading, replacing the
