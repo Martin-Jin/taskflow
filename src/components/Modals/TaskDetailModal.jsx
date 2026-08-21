@@ -110,8 +110,7 @@ import {
   resolveCurrentOccurrenceDueDate,
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
-import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
-import { useModalA11y } from '../../hooks/useModalA11y';
+import Modal from '../Common/Modal';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
@@ -226,8 +225,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   const { getTimerForTask, startTimer, pauseTimer, resumeTimer, stopTimer } = useTimers();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
-  const { isClosing, requestClose } = useAnimatedUnmount(onClose);
-  const modalRef = useModalA11y(requestClose);
+  // TaskDetailModal's overlay/close/focus-trap shell now comes from <Modal>
+  // (see the render-prop below), but a couple of handlers that call
+  // requestClose (e.g. handleDelete) are defined up here, outside that
+  // render prop's scope. Ref mutation during render is safe (unlike
+  // setState), so the render prop just stashes the latest requestClose here
+  // on every render for those handlers to read.
+  const requestCloseRef = useRef(() => {});
 
   const [title, setTitle] = useState(task.title);
   const [link, setLink] = useState(task.link || '');
@@ -1688,22 +1692,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   function handleDelete() {
     if (isReadOnlyViewer) return; // Defense in depth — menu item is already disabled for viewers.
     deleteTask(task.id);
-    requestClose();
+    requestCloseRef.current();
   }
 
   return (
     <>
-      <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
-        <div
-          className="modal modal-detail"
-          onClick={(e) => e.stopPropagation()}
-          style={{ width: 760 }}
-          ref={modalRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Task details"
-          tabIndex={-1}
-        >
+      <Modal onClose={onClose} ariaLabel="Task details" size="xl" variantClassName="modal-detail">
+        {({ requestClose }) => {
+          requestCloseRef.current = requestClose;
+          return (
+            <>
           <div className="detail-topbar">
             {/* Always rendered (not gated on having a parent/children) so the
                 "move to" button is reachable from a plain standalone task too
@@ -2444,8 +2442,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 recentCompletionCount={recentCompletionCount}
               />
           </div>
-        </div>
-      </div>
+            </>
+          );
+        }}
+      </Modal>
 
       {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
     </>

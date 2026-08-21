@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.7.2',
+    date: '2026-08-21',
+    title: 'Task detail fills the screen properly on mobile',
+    changes: [
+      "The task detail view no longer gets clipped to a fixed desktop width on small screens — it now fills the available width like the rest of the app's mobile layout.",
+    ],
+  },
+  {
     version: '6.7.1',
     date: '2026-08-21',
     title: 'Settings layout fixes',
