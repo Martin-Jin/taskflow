@@ -2,7 +2,7 @@
 // event creation/detail, date picker, mobile swipe carousel) and the
 // Tasks page's View/Filter menu. See helpers.js for shared setup.
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, closeAnyModal, trackConsoleErrors, expectNoErrors, resolveConfirmModal } from './helpers';
+import { gotoApp, gotoTab, closeAnyModal, trackConsoleErrors, expectNoErrors, resolveConfirmModal, selectMenuLabel } from './helpers';
 
 // Opens the Tasks page's "Change view or filter" menu and picks a view
 // (Board/Gantt/List) by its exact label — mirrors ViewFilterMenu's
@@ -153,8 +153,7 @@ test.describe('Board view', () => {
     // move) by reopening the card's detail modal and checking its section.
     await inProgressColumn.locator('.board-card', { hasText: cardTitle }).click();
     await page.waitForTimeout(300);
-    const sectionSelect = page.locator('.detail-field', { hasText: 'Section' }).locator('select');
-    await expect(sectionSelect).toHaveValue('sec_in_progress');
+    await expect.poll(() => selectMenuLabel(page, 'Section')).toBe('In Progress');
     await closeAnyModal(page);
 
     expectNoErrors(errors);
