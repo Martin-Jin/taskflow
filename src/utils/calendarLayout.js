@@ -13,11 +13,19 @@
 
 import { SHORT_BLOCK_MAX_MIN } from './calendarGrouping';
 
-// Top of the rendered time grid (06:00) — mirrors WeekView's own
-// GRID_START_MIN (the source of truth for the grid's visible range), needed
-// here only to convert an item's start minute into a top-of-grid pixel offset
-// in packLane.
-export const GRID_START_MIN = 6 * 60;
+// Top of the rendered time grid — the full day, so nothing can ever land
+// above it. It used to start at 06:00, which meant an early-morning block or
+// event simply rendered off the top of the grid with no way to scroll to it.
+// WeekView scrolls to DEFAULT_SCROLL_MIN on mount so the extra pre-dawn hours
+// don't just show up as empty space. Needed here only to convert an item's
+// start minute into a top-of-grid pixel offset in packLane.
+export const GRID_START_MIN = 0;
+
+// Where WeekView parks the grid's scroll position on mount: early enough to
+// show a normal morning start, late enough that the overnight hours aren't
+// taking up the viewport. Overridden downward when a visible item actually
+// starts earlier (see WeekView's initial-scroll effect).
+export const DEFAULT_SCROLL_MIN = 6 * 60;
 
 // A run of tiny tasks (e.g. several 5-minute defaults back-to-back) renders
 // as unreadable slivers if drawn individually — see foldSequentialItems below.
