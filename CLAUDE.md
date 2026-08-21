@@ -155,11 +155,19 @@ changelog" for the same rule in the contributor docs.
 - Synced text (e.g. synced with Google Calendar and Todoist) doesn't need to be
   surfaced everywhere — only where it's relevant.
 - Update the tutorial and README when a change affects what they document.
-  The README was split: user-facing setup/usage stays in `README.md`;
-  scheduler internals, data model, project layout, persistence, contributing
-  conventions, tech stack, and testing live in `docs/DEVELOPMENT.md` — update
-  whichever file actually documents the area you changed (a change can touch
-  both).
+  Docs are split by audience, and `README.md` is deliberately kept short — a
+  pitch, a quick start, a feature table, and an index. Prose belongs in the
+  doc that owns the area, not the README: `docs/USAGE.md` (every tab, smart
+  task titles, bulk select, palette), `docs/SYNC-AND-SHARING.md` (sign-in,
+  cross-device sync, backups, shared projects), `docs/INTEGRATIONS.md`
+  (Todoist, Google Calendar, AI Quick Add, notifications),
+  `docs/HOSTING.md` (GitHub Pages, private network), `docs/LIMITATIONS.md`
+  (what it doesn't do, and why), and `docs/DEVELOPMENT.md` (scheduler
+  internals, data model, project layout, persistence, contributing
+  conventions, tech stack, testing). Update whichever file actually documents
+  the area you changed — a change can touch several. If a change makes the
+  README's feature table or an index entry wrong, fix that too, but resist
+  growing the README back into a manual.
 - Before changing a component, check what else depends on it. E.g. adding a new
   input field may also require updating integrations with other apps (syncing/
   importing that new field).

@@ -844,7 +844,7 @@ rules, fixed routines, when the last Todoist import ran, and a "connected
 to Google Calendar" flag plus a short-lived cached access token (the Google
 refresh token itself is never persisted client-side at all — it lives only
 in Firestore, written by the Cloudflare Worker; see
-[Google Calendar](../README.md#google-calendar) in the README). A recurring
+[Google Calendar](INTEGRATIONS.md#google-calendar)). A recurring
 calendar event is stored once with its RRULE recurrence rule, not as one
 record per occurrence — occurrences are expanded for display only.
 
@@ -1064,8 +1064,8 @@ there's nothing to restore a tombstone to, and a much-later restore
 reintroducing a dead entry would just create a zombie every live device had
 already purged.
 
-If signed in (see [Account & cross-device sync](../README.md#account--cross-device-sync)
-in the README), the same data also syncs to Firestore — `localStorage` on
+If signed in (see [Account & cross-device sync](SYNC-AND-SHARING.md#account--cross-device-sync)),
+the same data also syncs to Firestore — `localStorage` on
 the current device stays the always-on, works-offline source of truth, and
 the cloud copy is what a second device pulls down.
 
@@ -1428,7 +1428,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8787" -Method Post -Body $body -Content
 
 **Switching back to the deployed Worker** once done testing locally: change
 `.env`'s `VITE_AI_QUICKADD_WORKER_URL` back to the `*.workers.dev` URL (see
-[README's AI Quick Add section](../README.md#ai-quick-add) for the deploy
+[the AI Quick Add docs](INTEGRATIONS.md#ai-quick-add) for the deploy
 steps) and restart `npm run dev`. Stop the `wrangler dev` terminal with
 Ctrl+C whenever — it's not needed unless actively iterating on the Worker.
 
@@ -1438,7 +1438,7 @@ domain — this is a per-deployer value, not something to hardcode here.
 
 **No service worker — ruled out as a caching suspect, if it comes up
 again.** TaskFlow is installable (manifest.json + iOS meta tags, see
-[README's "Using the app"](../README.md#using-the-app)) but has **no
+[Using the app](USAGE.md#layout-and-mobile)) but has **no
 service worker** — confirmed by grepping the whole repo for
 `navigator.serviceWorker`/`sw.js`/`workbox`/`vite-plugin-pwa` and finding
 nothing. If the app ever "still looks stale after deploy," that's ordinary
