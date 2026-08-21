@@ -678,6 +678,85 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
         ? formatDisplayDate(rangeStart)
         : `${formatDisplayDate(rangeStart)} – ${formatDisplayDate(rangeEnd)}`;
 
+  // The 4 controls below render identically regardless of isMobile — only
+  // WHERE they land in the toolbar differs (mobile groups them into
+  // .calendar-toolbar-trailing inside .calendar-toolbar-left; desktop splits
+  // them between .calendar-toolbar-left and .calendar-toolbar-actions). They
+  // used to be written out twice, once per branch — hoisted here into single
+  // JSX expressions instead, referenced from both branches below, since only
+  // one branch ever mounts at a time (isMobile), so there's no risk of two
+  // live copies of the same ref/state fighting each other.
+  const viewMenuControl = (
+    <div className="calendar-view-menu-wrap">
+      <button
+        ref={viewMenuTriggerRef}
+        className="btn btn-icon calendar-view-menu-trigger"
+        onClick={() => setShowViewMenu((v) => !v)}
+        aria-label="Change view"
+        aria-haspopup="true"
+        aria-expanded={showViewMenu}
+      >
+        <Menu size={16} />
+      </button>
+      {showViewMenu &&
+        createPortal(
+          <>
+            {viewMenuMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowViewMenu(false)} />}
+            <div
+              ref={viewMenuRef}
+              className={`calendar-view-menu ${viewMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
+              style={viewMenuMode === 'anchored' ? viewMenuStyle : undefined}
+            >
+              {VIEWS.map((v) => (
+                <button
+                  key={v.key}
+                  className={view === v.key ? 'active' : ''}
+                  onClick={() => {
+                    setView(v.key);
+                    setShowViewMenu(false);
+                  }}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
+    </div>
+  );
+
+  const selectToggleControl = (
+    <button
+      type="button"
+      className={`btn btn-icon menu-trigger ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
+      onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
+      aria-pressed={bulkSelect.selectionMode}
+      aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
+      title={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
+    >
+      <CheckSquare size={14} />
+    </button>
+  );
+
+  const filterMenuControl = <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />;
+
+  // Only className differs between the two former call sites (each has its
+  // own small mobile-only CSS override, e.g. width — see calendar.css) —
+  // preserved via the same isMobile check that used to pick which JSX block
+  // rendered at all.
+  const refreshButtonControl = googleConnected && (
+    <button
+      className={`btn btn-icon ${isMobile ? 'calendar-refresh-btn-mobile' : 'calendar-refresh-btn'}`}
+      onClick={syncNow}
+      disabled={isSyncing}
+      aria-label="Refresh Google Calendar events"
+      title="Refresh Google Calendar events"
+    >
+      <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
+    </button>
+  );
+
   return (
     <div className="calendar-container">
       <div className="calendar-toolbar">
@@ -700,49 +779,10 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
           )}
           {/* Mobile: hamburger view-switcher leads the bar, matching Google
               Calendar's own mobile top bar (menu icon, then the date title).
-              Desktop keeps it trailing the title (see calendar-view-menu-wrap
-              order below via CSS on mobile, not DOM order, isn't worth the
-              complexity — it's simplest as an explicit mobile-only duplicate
-              of the trigger placed first in the DOM). */}
-          {isMobile && (
-            <div className="calendar-view-menu-wrap">
-              <button
-                ref={viewMenuTriggerRef}
-                className="btn btn-icon calendar-view-menu-trigger"
-                onClick={() => setShowViewMenu((v) => !v)}
-                aria-label="Change view"
-                aria-haspopup="true"
-                aria-expanded={showViewMenu}
-              >
-                <Menu size={16} />
-              </button>
-              {showViewMenu &&
-                createPortal(
-                  <>
-                    {viewMenuMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowViewMenu(false)} />}
-                    <div
-                      ref={viewMenuRef}
-                      className={`calendar-view-menu ${viewMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
-                      style={viewMenuMode === 'anchored' ? viewMenuStyle : undefined}
-                    >
-                      {VIEWS.map((v) => (
-                        <button
-                          key={v.key}
-                          className={view === v.key ? 'active' : ''}
-                          onClick={() => {
-                            setView(v.key);
-                            setShowViewMenu(false);
-                          }}
-                        >
-                          {v.label}
-                        </button>
-                      ))}
-                    </div>
-                  </>,
-                  document.body
-                )}
-            </div>
-          )}
+              Desktop keeps it trailing the title instead (see the other
+              viewMenuControl reference below) — same control, just
+              repositioned per breakpoint. */}
+          {isMobile && viewMenuControl}
           <div className="calendar-title-wrap">
             <button
               ref={dateTitleBtnRef}
@@ -775,45 +815,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
                 document.body
               )}
           </div>
-          {!isMobile && (
-            <div className="calendar-view-menu-wrap">
-              <button
-                ref={viewMenuTriggerRef}
-                className="btn btn-icon calendar-view-menu-trigger"
-                onClick={() => setShowViewMenu((v) => !v)}
-                aria-label="Change view"
-                aria-haspopup="true"
-                aria-expanded={showViewMenu}
-              >
-                <Menu size={16} />
-              </button>
-              {showViewMenu &&
-                createPortal(
-                  <>
-                    {viewMenuMode === 'centered' && <div className="menu-popover-backdrop" onClick={() => setShowViewMenu(false)} />}
-                    <div
-                      ref={viewMenuRef}
-                      className={`calendar-view-menu ${viewMenuMode === 'centered' ? 'menu-popover-centered' : ''}`}
-                      style={viewMenuMode === 'anchored' ? viewMenuStyle : undefined}
-                    >
-                      {VIEWS.map((v) => (
-                        <button
-                          key={v.key}
-                          className={view === v.key ? 'active' : ''}
-                          onClick={() => {
-                            setView(v.key);
-                            setShowViewMenu(false);
-                          }}
-                        >
-                          {v.label}
-                        </button>
-                      ))}
-                    </div>
-                  </>,
-                  document.body
-                )}
-            </div>
-          )}
+          {!isMobile && viewMenuControl}
           {/* Trailing cluster (Today-solo/refresh/filter, mobile only) is
               wrapped in its own flex container so a single margin-left: auto
               on the wrapper pushes the whole group to the right edge as one
@@ -831,35 +833,9 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
                   Today
                 </button>
               )}
-              {/* Only useful once Google Calendar is actually connected —
-                  hidden rather than shown-but-disabled, matching how
-                  Settings' own Google controls are gated on googleConnected.
-                  Shares isSyncing with Settings' "Sync now"/"Push to Google
-                  Calendar" so this button, that button, and any other sync
-                  action all show a consistent busy state if one is already
-                  running. */}
-              {googleConnected && (
-                <button
-                  className="btn btn-icon calendar-refresh-btn-mobile"
-                  onClick={syncNow}
-                  disabled={isSyncing}
-                  aria-label="Refresh Google Calendar events"
-                  title="Refresh Google Calendar events"
-                >
-                  <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
-                </button>
-              )}
-              <button
-                type="button"
-                className={`btn btn-icon menu-trigger ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
-                onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
-                aria-pressed={bulkSelect.selectionMode}
-                aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
-                title={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
-              >
-                <CheckSquare size={14} />
-              </button>
-              <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
+              {refreshButtonControl}
+              {selectToggleControl}
+              {filterMenuControl}
             </div>
           )}
         </div>
@@ -868,17 +844,8 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
               below (see .calendar-fab) instead of wrapping onto its own row. */}
           {!isMobile && (
             <>
-              <CalendarFilterMenu filter={calendarFilter} onChange={setCalendarFilter} />
-              <button
-                type="button"
-                className={`btn btn-icon menu-trigger ${bulkSelect.selectionMode ? 'btn-primary' : ''}`}
-                onClick={() => bulkSelect.setSelectionMode(!bulkSelect.selectionMode)}
-                aria-pressed={bulkSelect.selectionMode}
-                aria-label={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
-                title={bulkSelect.selectionMode ? 'Cancel select' : 'Select'}
-              >
-                <CheckSquare size={14} />
-              </button>
+              {filterMenuControl}
+              {selectToggleControl}
               <button className="btn btn-primary" data-tour="rebalance" onClick={runRebalance} disabled={isLoading}>
                 <Zap size={14} />
                 Re-balance schedule
@@ -890,23 +857,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
                 days — weighting urgency by due date, priority, and whatever depends on it, splitting work across
                 free gaps, and falling back to a task's fixed time if it has one.
               </HelpTooltip>
-              {/* Only useful once Google Calendar is actually connected — hidden
-                  rather than shown-but-disabled, matching how Settings' own
-                  Google controls are gated on googleConnected. Shares isSyncing
-                  with Settings' "Sync now"/"Push to Google Calendar" so this
-                  button, that button, and any other sync action all show a
-                  consistent busy state if one is already running. */}
-              {googleConnected && (
-                <button
-                  className="btn btn-icon calendar-refresh-btn"
-                  onClick={syncNow}
-                  disabled={isSyncing}
-                  aria-label="Refresh Google Calendar events"
-                  title="Refresh Google Calendar events"
-                >
-                  <RefreshCw size={14} className={isSyncing ? 'spin' : undefined} />
-                </button>
-              )}
+              {refreshButtonControl}
             </>
           )}
         </div>
