@@ -419,6 +419,19 @@
   color: var(--color-text-secondary);
 }
 
+/* One consolidated rail for a row's status glyphs (sub-task count,
+   recurring, passive, blocked-by-dependency) — sits right after the title
+   text. Replaces three separately marginLeft-styled icons plus a
+   text-labeled warning that used to live down in the meta line. */
+.task-row-status-rail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  vertical-align: -2px;
+  color: var(--color-text-secondary);
+}
+
 /* Priority/label pills sit under the "remaining/due" line, left-aligned —
    previously a right-aligned column with its own delete "X"; the row now
    opens TaskDetailModal (with its own Delete button) for that instead. */
