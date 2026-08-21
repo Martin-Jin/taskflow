@@ -42,12 +42,14 @@ import {
   Code as CodeIcon,
   Braces,
   MoreHorizontal,
+  Download,
   Trash2,
   X,
 } from 'lucide-react';
 import Modal from '../Common/Modal';
 import FieldRejectionHint from '../Common/FieldRejectionHint';
 import { useFieldRejection } from '../../hooks/useFieldRejection';
+import { downloadTextFile, toSafeFilename } from '../../utils/downloadFile';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
@@ -247,6 +249,19 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
     requestCloseRef.current();
   }
 
+  /* Exports what's on screen, not what's last saved — the body is read
+     straight out of the editor and the title out of state, so an export taken
+     mid-edit (before the autosave debounce fires) still matches what the user
+     is looking at. Markdown is already the storage format, so the file needs
+     no conversion beyond prepending the title as an H1. */
+  function handleExportMarkdown() {
+    setMenuOpen(false);
+    const heading = title.trim();
+    const body = currentMarkdown();
+    const contents = [heading && `# ${heading}`, body].filter(Boolean).join('\n\n');
+    downloadTextFile(`${toSafeFilename(heading, 'note')}.md`, `${contents}\n`, 'text/markdown');
+  }
+
   function handleDelete() {
     setMenuOpen(false);
     onDelete(note.id);
@@ -315,6 +330,10 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
                       role="menu"
                       style={menuMode === 'anchored' ? menuStyle : undefined}
                     >
+                      <button type="button" role="menuitem" className="project-actions-item" onClick={handleExportMarkdown}>
+                        <Download size={13} />
+                        Export as Markdown
+                      </button>
                       <button
                         type="button"
                         role="menuitem"

@@ -573,3 +573,26 @@ test('mention autocomplete: typing "#" in the task title suggests and inserts a 
   await closeAnyModal(page);
   expectNoErrors(errors);
 });
+
+test('command palette: "Add note" opens the note editor even when the Dashboard is not the active tab', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  // Deliberately started from Calendar: the palette action opens the editor
+  // at App level rather than signalling the Dashboard's Notes widget, which
+  // can be switched off entirely.
+  await gotoTab(page, 'Calendar');
+
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await page.getByLabel('Command palette search').fill('Add note');
+  await palette.getByRole('option', { name: 'Add note' }).first().click();
+
+  await expect(page.locator('.modal-note-editor')).toBeVisible();
+  await page.getByPlaceholder('Title').fill('Noted from the palette');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.locator('.modal-note-editor')).toHaveCount(0);
+
+  await gotoTab(page, 'Dashboard');
+  await expect(page.locator('.note-tile-title', { hasText: 'Noted from the palette' })).toBeVisible();
+
+  expectNoErrors(errors);
+});
