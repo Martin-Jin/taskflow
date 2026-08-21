@@ -1164,6 +1164,17 @@ export default function WeekView({
                         aria-label={`Select ${evt.title}`}
                       />
                     )}
+                    {/* A read-only (subscribed/shared) event previously had no
+                        visual cue at all — the only way to discover it wasn't
+                        yours to move was to try dragging it and have nothing
+                        happen. Reuses .lock-indicator's look (same "protected"
+                        idiom as a locked task block) as a static badge, not a
+                        button — there's nothing to toggle here. */}
+                    {evt.canEdit === false && !selectionMode && (
+                      <span className="lock-indicator" title="Read-only — you can't edit or move this event">
+                        <Lock size={11} />
+                      </span>
+                    )}
                     {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
                     {showTimeLine && (
                       <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
