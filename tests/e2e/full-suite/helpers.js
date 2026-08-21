@@ -6,8 +6,8 @@ import { CURRENT_VERSION } from '../../../src/changelog.js';
 
 export const BASE_URL = process.env.BASE_URL || 'http://localhost:5183';
 
-// Google Fonts' CDN (fonts.gstatic.com, loaded via the @font-face rules in
-// src/styles/fonts.css) intermittently 404s under CI/local network
+// Google Fonts' CDN (fonts.gstatic.com, loaded via the stylesheet <link> in
+// index.html) intermittently 404s under CI/local network
 // conditions unrelated to anything the app does — Chrome logs that as a
 // console error ("Failed to load resource: the server responded with a
 // status of 404 ()"), which would otherwise make expectNoErrors flaky across

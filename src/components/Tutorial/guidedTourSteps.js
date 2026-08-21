@@ -23,7 +23,7 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="nav-dashboard"]',
     placement: 'right',
     title: 'Dashboard',
-    body: 'Your home base — what\'s due, what you\'re doing right now, today\'s agenda, this week\'s progress, and your notes, all at a glance.',
+    body: 'Your home base — what\'s due, what you\'re doing right now, today\'s agenda, your progress today and this week, and your notes, all at a glance. Notes are a mini markdown editor: click one (or "Add note") to write, format, and tick off checklists.',
   },
   {
     tab: 'calendar',
@@ -71,7 +71,7 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="add-task"]',
     placement: 'bottom',
     title: 'AI Quick Add',
-    body: 'Tap this button to expand a small "AI Quick Add" option next to it. Type — or paste a screenshot or PDF of an email, text, or flyer — and let AI propose changes across your tasks, events, projects, and subtasks/dependencies: creating, editing, moving, or deleting them. You review and approve each change before anything is applied. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
+    body: 'Tap this button to expand a small "AI Quick Add" option next to it. Type — or paste a screenshot or PDF of an email, text, or flyer — and let AI propose changes across your tasks, events, projects, notes, and subtasks/dependencies: creating, editing, moving, or deleting them. You review and approve each change before anything is applied. Needs your own Anthropic or Gemini API key added in Settings → Integrations first; tap the "?" inside the panel for the full setup guide.',
   },
   {
     tab: 'tasks',

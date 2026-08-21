@@ -511,14 +511,18 @@ cached copy.
 - **Dashboard** — the default landing tab: a stats strip (due today,
   overdue, hours scheduled this week), **Right now** (the block currently
   in progress, or what's next, with a live countdown), **Today's agenda**,
-  a **this week's progress** ring, and **Notes** — folder-organized sticky
-  notes (a title plus a markdown body) for jotting anything down. Clicking a
-  note (or "Add note") opens a mini WYSIWYG markdown editor — a toolbar for
-  bold/italic/strikethrough, headings, bullet/numbered/checklist lists,
-  links, and inline/block code — with changes to an existing note saved
-  automatically as you type. A note that's just a pasted link auto-formats
-  and stays clickable, and a "Recently edited" row surfaces whichever notes
-  you touched last regardless of folder.
+  a pair of **progress rings** (today and this week), and **Notes** —
+  folder-organized sticky notes (a title plus a markdown body) for jotting
+  anything down. Clicking a note (or "Add note") opens a mini WYSIWYG
+  markdown editor — a toolbar for bold/italic/strikethrough, headings,
+  bullet/numbered/checklist lists, links, and inline/block code — with
+  changes to an existing note saved automatically as you type. Its "⋯" menu
+  holds **Export as Markdown** (saves the note as a `.md` file) and
+  **Delete**. A note that's just a pasted link auto-formats and stays
+  clickable, and a "Recently edited" row surfaces whichever notes you
+  touched last regardless of folder. Notes are also searchable (typo-tolerant,
+  like every other search box), reachable from the command palette's "Add
+  note" action from any tab, and writable by AI Quick Add.
 - **Calendar** — Month / Week / 3 Day / Day views, picked from the hamburger
   menu next to the date title (tap the date itself to drop down a
   Google-Calendar-style month-strip date picker and jump to any day). A
@@ -642,8 +646,9 @@ cached copy.
   button — see `useKeyboardShortcuts.js`.
 - **Command palette** — `Ctrl+K` (rebindable from Settings) opens a Linear/
   Todoist-style "jump to anything" search across Views, Projects, Tasks,
-  Calendar events, and quick actions (like Re-balance schedule or toggling
-  the theme); Arrow keys + Enter pick a result without touching the mouse.
+  Calendar events, and quick actions (Add task, Add note, Quick Add with AI,
+  Re-balance schedule, Toggle light/dark theme, Manage projects); Arrow keys
+  + Enter pick a result without touching the mouse.
 
 ### Smart task titles
 

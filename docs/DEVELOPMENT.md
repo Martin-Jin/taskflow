@@ -739,14 +739,15 @@ src/
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
 │   ├── Stats/                 # StatsDashboard + BarChart/PieChart
-│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, EventDetailModal (create mode has an Event/Task toggle — Task mode schedules an existing same-day-due task onto the clicked slot via `scheduleTaskAt` instead of creating a `CalendarEvent`), ShortcutsModal (Settings → Keyboard shortcuts), ShareProjectModal (owner link/collaborator management, Phase 2), JoinProjectModal (`?join=<token>` landing, Phase 2)
+│   ├── Modals/                # AddTaskModal (Todoist-style quick-add), TaskDetailModal (sub-tasks open a nested instance of itself), BlockDetailModal, NoteEditorModal (mini Tiptap/markdown note editor — opened from NotesCard and from the command palette's "Add note"), EventDetailModal (create mode has an Event/Task toggle — Task mode schedules an existing same-day-due task onto the clicked slot via `scheduleTaskAt` instead of creating a `CalendarEvent`), ShortcutsModal (Settings → Keyboard shortcuts), ShareProjectModal (owner link/collaborator management, Phase 2), JoinProjectModal (`?join=<token>` landing, Phase 2)
 │   ├── Nav/                   # Sidebar — desktop/tablet nav + a capped recent-projects strip (pin/rename/delete via ProjectActionsMenu) with a link into Projects/; BottomTabBar — mobile-only nav; AccountButton — sign-in/account menu (sidebar + mobile topbar)
 │   ├── Projects/               # ProjectsPage — directory/launcher tab: fuzzy project search, Recent/Shared/My-projects columns, size/duration/creation-date sort (stats/sort logic in utils/projectStats.js)
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
-│   ├── Common/                 # SearchBar (also searches/switches projects and jumps to matching Calendar events), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator), BulkActionBar (shared docked bottom bar for bulk multi-select edit/delete — List/Board/Calendar/TaskDetailModal's sub-task list)
+│   ├── Common/                 # SearchBar (also searches/switches projects and jumps to matching Calendar events), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, NumberField (min/max-enforcing number input — plain `<input type=number>` min/max only constrains the spinner), FieldRejectionHint (transient "that input wasn't accepted" message, paired with useFieldRejection), CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator), BulkActionBar (shared docked bottom bar for bulk multi-select edit/delete — List/Board/Calendar/TaskDetailModal's sub-task list)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── CommandPalette.jsx      # Ctrl+K "jump to anything" — fuzzy-searches Views/Projects/Tasks/Calendar Events/quick Actions
 │   ├── TaskListPanel.jsx
+│   ├── TaskProjectRail.jsx     # Tasks page's collapsible all-projects panel — an inline column on desktop, an overlay drawer on mobile, from one piece of state
 │   └── SettingsPanel.jsx
 ├── context/
 │   ├── SchedulerContext.jsx  # Global state: tasks/blocks/routines/rules/sections + actions (+ cloud sync, see AuthContext)
@@ -763,6 +764,11 @@ src/
 │   ├── useComboboxMultiSelect.js  # Shared open/close/query state for DependencyPicker + LabelPicker
 │   ├── useListKeyboardNav.js      # Shared Arrow/Enter highlighted-row navigation + scroll-into-view for ranked-results dropdowns (CommandPalette, Sidebar/ManageProjectsModal/CalendarFilterMenu/SearchBar project search) — a separate hook from useComboboxMultiSelect (see that file's own doc comment on why), composed alongside it where a caller needs both (CalendarFilterMenu's FilterGroup)
 │   ├── useSmartTaskTitle.js       # Shared smart-parse wiring for the title field
+│   ├── useProjectSearch.js        # Shared query state + fuzzy ranking + keyboard nav for the app's three project-search boxes (ManageProjectsModal, TaskProjectRail, Sidebar)
+│   ├── useSelectAllOnFocus.js     # App-wide "focusing a text field selects its contents" behavior, so an existing value can be replaced by typing
+│   ├── useFieldRejection.js       # One-shot shake + message for a rejected input, so a refusing handler explains itself instead of silently returning
+│   ├── useNoteMutations.js        # Notes create/update/delete over SchedulerContext — shared by NotesCard, the command palette's "Add note", and applyPlan's note operations
+│   ├── useMenuPosition.js         # Anchored-vs-centered popover placement (forceCentered on mobile) + outside-click/Escape wiring
 │   ├── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 │   ├── useSharedProjectSync.js    # Live multi-writer Firestore sync for shared projects (Phase 1, Collaborative Projects) — subscriptions, diff-and-push, presence heartbeat
 │   ├── useCloudSync.js            # Cross-device Firestore sync (fingerprint/merge/race-guard logic, auto/manual backups) — see "Persistence"
@@ -804,6 +810,8 @@ src/
 │   ├── bulkEditEngine.js     # Bulk multi-select's editable-field intersection (computeBulkEditableFields) + per-item validate/skip/apply orchestration (applyBulkEdit, using taskValidation.js's gates) + result-summary formatting
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
 │   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
+│   ├── stripMarkdown.js      # Renders a markdown string as plain text for previews (note tiles, note search)
+│   ├── downloadFile.js       # downloadTextFile/toSafeFilename — shared Blob-and-anchor download used by the JSON backup export and a note's "Export as Markdown"
 │   ├── boardColumnOrder.js   # Board's device-local, per-project column order layered over synced Section.order
 │   ├── nameSearch.js         # Single shared typo-tolerant/relevance-ranked name matcher (rankByNameSearch/scoreNameMatch) — the one source of truth for searching projects (and reused for Views/Actions) in Sidebar, ManageProjectsModal, SearchBar, useMentionAutocomplete, CommandPalette, and CalendarFilterMenu; don't add another ad-hoc `.includes()` matcher for names elsewhere
 │   ├── calendarFilter.js     # Calendar show-mode/project/tag filter predicates (CalendarFilterMenu's logic) — project search itself now lives in nameSearch.js
@@ -816,7 +824,7 @@ src/
 │   └── avatarDisplay.js      # Shared avatar helpers (safe photoURL check, initials fallback) used by PresenceAvatars/SharedProjectBadge/ShareProjectModal
 ├── types/
 │   └── index.js               # JSDoc typedefs for the whole domain model
-├── styles/                    # global.css (tokens/breakpoints), calendar.css, gantt.css, board.css, nav.css, tasklist.css, stats.css, forms.css, tutorial.css
+├── styles/                    # global.css (tokens/breakpoints), calendar.css, dashboard.css, gantt.css, board.css, nav.css, tasklist.css, stats.css, forms.css, timer.css, tutorial.css
 ├── App.jsx                    # Shell: sidebar (desktop/tablet) or bottom tab bar (mobile) + tabs; mobile-only brand topbar; global keyboard shortcuts (see useKeyboardShortcuts.js)
 └── main.jsx                   # React root
 ```
@@ -1282,8 +1290,10 @@ npm run test:e2e -- tests/e2e/full-suite       # Playwright, boots its own dev s
 `npm run test:unit` runs [Vitest](https://vitest.dev) over `tests/unit/` —
 pure-logic coverage (date/recurrence math, natural-language parsing,
 backup/restore, dependency-cycle detection, cloud-sync merge/race-guard
-logic, the bulk multi-select engine's editable-field intersection and
-per-item validate/skip/apply decisions — see `taskValidation.test.js`,
+logic, the AI Quick Add context-scope filter and plan resolution/validation
+— see `aiContextService.test.js`/`aiPlanService.test.js` — and the bulk
+multi-select engine's editable-field intersection and per-item
+validate/skip/apply decisions — see `taskValidation.test.js`,
 `bulkEditEngine.test.js`, `multiSelectKeys.test.js`). Output (pass/fail
 counts per file) prints straight to the terminal when it finishes.
 
