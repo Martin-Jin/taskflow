@@ -1442,3 +1442,10 @@
   color: var(--color-text-secondary);
   white-space: nowrap;
 }
+
+/* The hint sits above the note editor's header row; .detail-header has no
+   horizontal padding of its own (the modal shell supplies it), so the hint
+   only needs its own bottom gap. */
+.modal-note-editor .note-editor-hint {
+  margin: 0 0 6px;
+}

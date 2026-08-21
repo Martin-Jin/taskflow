@@ -21,6 +21,19 @@
 
 export const CHANGELOG = [
   {
+    /* 7.0.0, not 6.11.0: the minor part rolls over at 9 (see CLAUDE.md), and
+       6.10.x had already drifted past that — this rolls it properly, and
+       doubles as the marker for the finished "quiet density" UI overhaul. */
+    version: '7.0.0',
+    date: '2026-08-21',
+    title: 'Inputs tell you when something is wrong',
+    changes: [
+      'Rejected input now says why instead of silently doing nothing: trying to save a note without a title shakes the title field and shows a short warning above it, and the same for adding a project with no name.',
+      'The number fields in Settings now actually respect their own limits. Typing 99 into "Max deep-work hours per day" (a 1–16 field), or clearing it entirely, used to be saved as-is or quietly turned into 0 — it now explains the valid range and keeps your last good value.',
+      'Warning messages clear themselves as soon as you start fixing the field, so a stale complaint never sits under an input you have already corrected.',
+    ],
+  },
+  {
     version: '6.10.4',
     date: '2026-08-21',
     title: 'Easier-to-see pop-up menus',

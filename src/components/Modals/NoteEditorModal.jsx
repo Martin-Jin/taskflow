@@ -46,6 +46,8 @@ import {
   X,
 } from 'lucide-react';
 import Modal from '../Common/Modal';
+import FieldRejectionHint from '../Common/FieldRejectionHint';
+import { useFieldRejection } from '../../hooks/useFieldRejection';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
@@ -166,6 +168,8 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
   const titleRef = useRef(title);
   titleRef.current = title;
 
+  const titleRejection = useFieldRejection();
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ link: false }),
@@ -213,6 +217,7 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
 
   function handleTitleChange(value) {
     setTitle(value);
+    titleRejection.clear();
     if (!isCreate) scheduleSave();
   }
 
@@ -234,7 +239,10 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
 
   function handleCreate() {
     const trimmedTitle = title.trim();
-    if (!trimmedTitle) return;
+    if (!trimmedTitle) {
+      titleRejection.reject('Give the note a title before saving.');
+      return;
+    }
     onCreate(trimmedTitle, currentMarkdown());
     requestCloseRef.current();
   }
@@ -266,10 +274,13 @@ export default function NoteEditorModal({ note, onClose, onCreate, onUpdate, onD
         requestCloseRef.current = requestClose;
         return (
           <>
+            <FieldRejectionHint message={titleRejection.message} className="note-editor-hint" />
+
             <div className="detail-header note-editor-header">
               <input
                 autoFocus={isCreate}
-                className="note-editor-title-input"
+                className={`note-editor-title-input ${titleRejection.shakeProps.className}`.trim()}
+                onAnimationEnd={titleRejection.shakeProps.onAnimationEnd}
                 placeholder="Title"
                 value={title}
                 onChange={(e) => handleTitleChange(e.target.value)}

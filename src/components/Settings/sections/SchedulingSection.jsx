@@ -6,6 +6,7 @@
 
 import React from 'react';
 import { useScheduler } from '../../../context/SchedulerContext';
+import NumberField from '../../Common/NumberField';
 
 export default function SchedulingSection({ sectionRef }) {
   const { rules, setRules } = useScheduler();
@@ -15,12 +16,7 @@ export default function SchedulingSection({ sectionRef }) {
       <h3>Scheduling rules</h3>
       <div className="form-row">
         <label>Buffer days (finish this many days before due date)</label>
-        <input
-          type="number"
-          min="0"
-          value={rules.bufferDays}
-          onChange={(e) => setRules({ ...rules, bufferDays: Number(e.target.value) })}
-        />
+        <NumberField min={0} value={rules.bufferDays} onCommit={(v) => setRules({ ...rules, bufferDays: v })} />
       </div>
       <div className="form-row-split">
         <div className="form-row" style={{ flex: 1 }}>
@@ -34,23 +30,17 @@ export default function SchedulingSection({ sectionRef }) {
       </div>
       <div className="form-row">
         <label>Max deep-work hours per day</label>
-        <input
-          type="number"
-          min="1"
-          max="16"
+        <NumberField
+          min={1}
+          max={16}
+          unitLabel="hours"
           value={rules.maxDailyDeepWorkHours}
-          onChange={(e) => setRules({ ...rules, maxDailyDeepWorkHours: Number(e.target.value) })}
+          onCommit={(v) => setRules({ ...rules, maxDailyDeepWorkHours: v })}
         />
       </div>
       <div className="form-row">
         <label>Planning horizon (weeks)</label>
-        <input
-          type="number"
-          min="1"
-          max="12"
-          value={rules.horizonWeeks}
-          onChange={(e) => setRules({ ...rules, horizonWeeks: Number(e.target.value) })}
-        />
+        <NumberField min={1} max={12} unitLabel="weeks" value={rules.horizonWeeks} onCommit={(v) => setRules({ ...rules, horizonWeeks: v })} />
       </div>
       <div className="form-row settings-toggle-row">
         <input

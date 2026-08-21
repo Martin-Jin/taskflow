@@ -248,3 +248,26 @@ test('stats tab: charts render without console errors', async ({ page }) => {
 
   expectNoErrors(errors);
 });
+
+test('notes: saving a note with no title explains why instead of doing nothing', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Dashboard');
+
+  await page.getByRole('button', { name: /Add note/i }).first().click();
+  await page.getByPlaceholder('Title').waitFor();
+
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.locator('.field-rejection-hint')).toContainText('title');
+  // Still open — the rejected save didn't close the editor.
+  await expect(page.locator('.modal-note-editor')).toBeVisible();
+
+  // The first keystroke dismisses the hint rather than leaving it stale.
+  await page.getByPlaceholder('Title').fill('Titled after all');
+  await expect(page.locator('.field-rejection-hint')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.locator('.modal-note-editor')).toHaveCount(0);
+  await expect(page.locator('.note-tile-title', { hasText: 'Titled after all' })).toBeVisible();
+
+  expectNoErrors(errors);
+});
