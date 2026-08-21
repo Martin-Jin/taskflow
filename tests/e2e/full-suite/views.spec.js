@@ -685,6 +685,96 @@ test.describe('Calendar', () => {
     expectNoErrors(errors);
   });
 
+  test('editing an existing event auto-saves on close/Escape (not just the Save button), but Cancel still discards', async ({ page }) => {
+    // Regression coverage: EventDetailModal used to only persist edits to an
+    // EXISTING event via the explicit "Save" button — closing any other way
+    // (X, Escape, backdrop click) silently discarded the edit. Now every
+    // dismissal except the explicit "Cancel" button auto-saves (see
+    // EventDetailModal's handleModalClose), matching how editing a task
+    // already never requires hunting down a specific button to not lose an
+    // edit. Creating a brand new event is unaffected — that still requires
+    // the explicit "Add event" action.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Calendar');
+
+    await page.getByRole('button', { name: /change view/i }).click();
+    await page.waitForTimeout(150);
+    await page.getByRole('button', { name: 'Day', exact: true }).click();
+    await page.waitForTimeout(400);
+
+    const dayColumn = page.locator('.day-column').first();
+    await expect(dayColumn).toBeVisible();
+    const box = await dayColumn.boundingBox();
+
+    const dialog = page.getByRole('dialog').filter({ hasText: 'New event' });
+    let created = false;
+    for (const frac of [0.02, 0.1, 0.2, 0.4, 0.6, 0.8]) {
+      const x = box.x + box.width / 2;
+      const yStart = box.y + box.height * frac;
+      await page.mouse.move(x, yStart);
+      await page.mouse.down();
+      await page.mouse.move(x, yStart + 40, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      if (await dialog.isVisible({ timeout: 500 }).catch(() => false)) {
+        created = true;
+        break;
+      }
+    }
+    if (!created) {
+      console.log('Could not find an empty slot to drag on (day fully booked) — skipping autosave-on-close assertion.');
+      expectNoErrors(errors);
+      return;
+    }
+
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder('e.g. Team standup').fill('E2E autosave-on-close');
+    await dialog.getByRole('button', { name: /^add event$/i }).click();
+    await page.waitForTimeout(400);
+
+    const newEvent = page.locator('.cal-event', { hasText: 'E2E autosave-on-close' }).first();
+    await expect(newEvent).toBeVisible({ timeout: 3000 });
+
+    // Edit the location, then close via Escape (not Save) — should persist.
+    await newEvent.click();
+    let editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await editDialog.getByPlaceholder('e.g. Conference room').fill('Room 42');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    await newEvent.click();
+    editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByPlaceholder('e.g. Conference room')).toHaveValue('Room 42');
+
+    // Edit it again, but this time click Cancel — should discard.
+    await editDialog.getByPlaceholder('e.g. Conference room').fill('Should not be saved');
+    await editDialog.getByRole('button', { name: /^cancel$/i }).click();
+    await page.waitForTimeout(300);
+
+    await newEvent.click();
+    editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByPlaceholder('e.g. Conference room')).toHaveValue('Room 42');
+
+    // Pressing Enter in a single-line field saves and closes the modal.
+    await editDialog.getByPlaceholder('e.g. Conference room').fill('Room 99');
+    await editDialog.getByPlaceholder('e.g. Conference room').press('Enter');
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    await newEvent.click();
+    editDialog = page.getByRole('dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByPlaceholder('e.g. Conference room')).toHaveValue('Room 99');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+
+    expectNoErrors(errors);
+  });
+
   test('deleting a recurring event with "All events in the series" removes it entirely', async ({ page }) => {
     // Regression test for a bug where SchedulerContext.deleteEvent looked up
     // the row to delete by the clicked occurrence's VIRTUAL id

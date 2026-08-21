@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.6',
+    date: '2026-08-21',
+    title: 'Calendar event edits no longer get lost',
+    changes: [
+      "Editing an existing calendar event's title, location, description, or time now saves automatically when you close the popup — you no longer have to specifically click \"Save\" for the edit to stick (Cancel still discards, as before).",
+      'Pressing Enter in the title or location field now saves and closes the popup immediately.',
+    ],
+  },
+  {
     version: '6.8.5',
     date: '2026-08-21',
     title: 'Fixed faint bulk-action buttons',
