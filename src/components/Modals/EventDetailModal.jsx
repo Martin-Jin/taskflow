@@ -88,6 +88,15 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // in-progress edit to an existing event just because the user didn't
   // specifically hunt down the "Save" button (see handleModalClose).
   const cancelledRef = useRef(false);
+  // Set right before handleSave calls requestClose (Save button, or Enter
+  // in the title/location field) — handleSave already persisted the edit
+  // itself, so handleModalClose's own auto-save-on-close must NOT run a
+  // second time for that same close. Without this, every Save/Enter was
+  // silently calling updateEvent (and setEventIgnored) twice in a row —
+  // harmless for the fields themselves (writing the same values again is a
+  // no-op), but anything that reacts to an update firing once per actual
+  // edit (a "this event changed" notification, say) fired twice.
+  const savedRef = useRef(false);
 
   const isCreate = !event;
   // Only an explicit `canEdit === false` counts as read-only — a manual event
@@ -344,8 +353,19 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
       addManualEvent({ title: finalTitle, description, location, date, startTime, endTime, recurrenceRule });
     } else {
       persistEditedFields();
+      savedRef.current = true;
     }
     requestCloseRef.current();
+  }
+
+  // Enter in a single-line field commits the same way clicking Save does —
+  // for the Title/Location inputs specifically, not the Description
+  // textarea, where Enter should insert a newline like any other multi-line
+  // field rather than submit the whole form.
+  function saveOnEnter(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    handleSave();
   }
 
   // Passed to <Modal onClose={...}> below instead of this component's own
@@ -363,18 +383,13 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // does) if the required fields aren't currently valid — a passive
   // dismissal surfacing a validation error would be more surprising than
   // just discarding an invalid in-progress edit.
-  // Enter in a single-line field commits the same way clicking Save does —
-  // for the Title/Location inputs specifically, not the Description
-  // textarea, where Enter should insert a newline like any other multi-line
-  // field rather than submit the whole form.
-  function saveOnEnter(e) {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    handleSave();
-  }
-
+  //
+  // `requestClose` also runs for the Save button/Enter path (handleSave
+  // calls it after saving) — `savedRef` guards against persisting the same
+  // edit a second time in that case, since this function otherwise can't
+  // tell "closing after an explicit save" apart from "closing without one".
   function handleModalClose() {
-    if (!cancelledRef.current && !isCreate && !isReadOnly) {
+    if (!cancelledRef.current && !savedRef.current && !isCreate && !isReadOnly) {
       const hasValidTimes = date && startTime && endTime && timeToMinutes(endTime) > timeToMinutes(startTime);
       if (hasValidTimes) persistEditedFields();
     }
