@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.7.1',
+    date: '2026-08-21',
+    title: 'Settings layout fixes',
+    changes: [
+      'The Settings content area now fills the available width on desktop instead of stopping short and leaving empty space on the right.',
+      'Removed "Install app" from the Settings section list on desktop, where it never did anything — it only ever applies on mobile, so it now only appears there.',
+    ],
+  },
+  {
     version: '6.7.0',
     date: '2026-08-21',
     title: 'Consistent modal design across the app',

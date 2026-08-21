@@ -1756,16 +1756,17 @@ input.search-bar-input {
   pointer-events: none;
 }
 
-/* Settings page's "jump to section" search — capped to the same 720px
-   width as the settings column below it, left-aligned to match (no auto
-   margins — this wrapper spans the full page width, but the column below
-   starts at its left edge, not centered), instead of SearchBar's own 320px
+/* Settings page's "jump to section" search — full width, matching
+   .settings-content below it (which now fills the remaining grid track
+   rather than capping at a fixed 720px), instead of SearchBar's own 320px
    toolbar cap. Unlike .tasklist-toolbar (a wrapper row around .search-bar),
    this element IS the .search-bar itself; it no longer needs its own
    position/sticky styling since .settings-search-bar-wrap (above) is the
    sticky element now. */
 .settings-search-bar {
-  max-width: 720px;
+  /* Overrides the base .search-bar's own 320px toolbar cap — this element
+     needs to span the full column width, not the compact toolbar width. */
+  max-width: none;
   width: 100%;
   border-radius: var(--radius-md);
 }
@@ -2206,7 +2207,7 @@ input.search-bar-input {
    ---------------------------------------------------------------------- */
 .settings-layout {
   display: grid;
-  grid-template-columns: 188px minmax(0, 720px);
+  grid-template-columns: 188px minmax(0, 1fr);
   gap: var(--space-6);
   align-items: start;
 }

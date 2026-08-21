@@ -10,6 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 import AccountSection from './Settings/sections/AccountSection';
 import IntegrationsSection from './Settings/sections/IntegrationsSection';
 import SchedulingSection from './Settings/sections/SchedulingSection';
@@ -27,9 +28,17 @@ import DangerZoneSection from './Settings/sections/DangerZoneSection';
 // One entry per section component below, in the same top-to-bottom order —
 // drives the settings search dropdown's suggestions and its scroll target
 // (see sectionRefs). Keep this in sync if a section is added/renamed/reordered.
-// installApp deliberately has no guaranteed ref: InstallAppSection renders
-// null on desktop / already-installed, so goToSection's optional chaining
-// on sectionRefs.current[id] is what keeps that safe, not a check here.
+// installApp is a genuine special case: InstallAppSection renders null on
+// desktop / already-installed (the rail only shows on desktop — see
+// .settings-rail's own breakpoint — so on desktop these two conditions are
+// mutually exclusive: the rail can never be visible while InstallAppSection
+// renders real content). Left in the rail/search unfiltered, that meant a
+// permanently dead "Install app" link/search-result whenever the rail was
+// visible at all — clicking it scrolled nowhere with zero feedback. Filtered
+// out of the rail and search results via `visibleSections` below (not out of
+// this array itself, so the IntersectionObserver/scroll-tracking effects
+// further down — which already tolerate a missing ref via `.filter(Boolean)`
+// — don't need their own separate list).
 const SETTINGS_SECTIONS = [
   { id: 'account', label: 'Account & sync' },
   { id: 'integrations', label: 'Integrations' },
@@ -48,6 +57,10 @@ const SETTINGS_SECTIONS = [
 
 /** @param {{ onOpenTour: () => void }} props — replays the app-level guided tour (see App.jsx), which needs to be able to switch tabs as it advances. */
 export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
+  const isMobile = useIsMobile();
+  // See SETTINGS_SECTIONS' own comment above for why installApp is excluded
+  // here specifically (rail + search), not from SETTINGS_SECTIONS itself.
+  const visibleSections = SETTINGS_SECTIONS.filter((s) => s.id !== 'installApp' || isMobile);
   const [sectionQuery, setSectionQuery] = useState('');
   const [isSectionSearchFocused, setIsSectionSearchFocused] = useState(false);
   const sectionSearchRef = useRef(null);
@@ -67,7 +80,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   }, []);
 
   const matchingSections = sectionQuery.trim()
-    ? SETTINGS_SECTIONS.filter((s) => s.label.toLowerCase().includes(sectionQuery.trim().toLowerCase()))
+    ? visibleSections.filter((s) => s.label.toLowerCase().includes(sectionQuery.trim().toLowerCase()))
     : [];
   const showSectionDropdown = isSectionSearchFocused && matchingSections.length > 0;
 
@@ -178,7 +191,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
         {/* Desktop-only jump rail (hidden under 1024px — see global.css); the
             sticky search bar above stays the way in on narrower viewports. */}
         <nav className="settings-rail" aria-label="Settings sections">
-          {SETTINGS_SECTIONS.map((s) => (
+          {visibleSections.map((s) => (
             <button
               key={s.id}
               type="button"
