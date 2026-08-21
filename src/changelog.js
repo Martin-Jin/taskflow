@@ -28,7 +28,7 @@ export const CHANGELOG = [
       'Closing a half-written new note no longer throws it away in silence. If it has a body but no title, pressing Escape, clicking the backdrop, or hitting ✕ now explains that it needs a title — Cancel still discards it, since that one is a deliberate choice.',
       'Search boxes lost their drop shadow; it was adding noise around what is just an input.',
       'Fixed cramped spacing throughout Settings: explanatory text no longer runs flush into the buttons above it, and a status pill (“Gemini key connected”) no longer sits directly on top of its own buttons.',
-      'Status pills in Settings are now left-aligned with the text around them — the pill’s own padding used to push its text slightly right of everything else.',
+      'Status pills in Settings (“Gemini key connected”) now line up with the buttons and text they stack with, instead of their rounded edge hanging out past everything else.',
       '“Connect Todoist” and the API-key “Save” buttons now appear only once you have typed something, instead of sitting there permanently greyed out.',
     ],
   },
