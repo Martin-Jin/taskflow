@@ -256,9 +256,11 @@ export default function IntegrationsSection({ sectionRef }) {
                   style={{ flex: 1 }}
                   autoFocus
                 />
-                <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }}>
-                  Save
-                </button>
+                {!!tokenDraft.trim() && (
+                  <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }}>
+                    Save
+                  </button>
+                )}
               </form>
             )}
           </>
@@ -275,9 +277,14 @@ export default function IntegrationsSection({ sectionRef }) {
                 onChange={(e) => setTokenDraft(e.target.value)}
                 style={{ flex: 1, minWidth: 220 }}
               />
-              <button type="submit" className="btn btn-primary" disabled={!tokenDraft.trim()}>
-                Connect Todoist
-              </button>
+              {/* Rendered only once there's something to submit, rather than
+                  sitting there permanently disabled — an empty field has no
+                  action to offer. Same for the two AI-key forms below. */}
+              {!!tokenDraft.trim() && (
+                <button type="submit" className="btn btn-primary">
+                  Connect Todoist
+                </button>
+              )}
             </form>
             <p className="settings-hint">
               Get yours from{' '}
@@ -359,9 +366,11 @@ export default function IntegrationsSection({ sectionRef }) {
                   onChange={(e) => setAnthropicKeyDraft(e.target.value)}
                   style={{ flex: 1, minWidth: 220 }}
                 />
-                <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }} disabled={!anthropicKeyDraft.trim()}>
-                  Save
-                </button>
+                {!!anthropicKeyDraft.trim() && (
+                  <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }}>
+                    Save
+                  </button>
+                )}
               </form>
             )}
           </div>
@@ -410,9 +419,11 @@ export default function IntegrationsSection({ sectionRef }) {
                   onChange={(e) => setGeminiKeyDraft(e.target.value)}
                   style={{ flex: 1, minWidth: 220 }}
                 />
-                <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }} disabled={!geminiKeyDraft.trim()}>
-                  Save
-                </button>
+                {!!geminiKeyDraft.trim() && (
+                  <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }}>
+                    Save
+                  </button>
+                )}
               </form>
             )}
           </div>

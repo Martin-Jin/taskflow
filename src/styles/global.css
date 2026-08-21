@@ -1710,12 +1710,11 @@ input.search-bar-input {
   border-radius: var(--radius-sm);
   color: var(--color-text-primary);
   font-size: 13px;
-  /* All three SearchBar instances (Tasks list, Board, Settings) sit in a
-     sticky toolbar/row that floats over scrolled content — a permanent
-     raised look (border + shadow) is what keeps it reading as "floating
-     above" instead of blending into whatever scrolls underneath it, rather
-     than only looking different once actually stuck. */
-  box-shadow: var(--shadow-elevated);
+  /* Deliberately no box-shadow. This used to carry --shadow-elevated to read
+     as "floating above" scrolled content, but the surfaces it sits on supply
+     that themselves now (.settings-search-bar-wrap has its own sticky blurred
+     backdrop, and .tasklist-toolbar isn't sticky at all) — the shadow was
+     only adding noise around a plain input. */
 }
 
 .search-bar-clear {
@@ -2372,6 +2371,35 @@ h4 + .settings-hint {
 /* Vertical rhythm between consecutive toggle rows, replacing the assorted
    inline marginTop values (10px/12px) those rows carried individually. */
 .settings-toggle-row + .settings-toggle-row,
+/* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
+   only carry a bottom margin, so a hint following a button row, a toggle, or
+   a bare inline button ran flush into it. Every "control, then explanation"
+   pairing in Settings goes through one of these selectors. */
+.settings-actions + .settings-hint,
+.settings-actions + .form-hint,
+.settings-actions + p,
+.settings-toggle-row + .settings-hint,
+.settings-inline + .settings-hint,
+.settings-inline + .form-hint {
+  margin-top: var(--space-3);
+}
+
+/* Two stacked control rows — typically a status badge row followed by its own
+   button row (the AI-key and Todoist blocks in Integrations do this) — also
+   had no gap of their own, so the badge sat directly on top of the buttons.
+   Tighter than the text gap above: these belong to each other. */
+.settings-actions + .settings-actions {
+  margin-top: var(--space-2);
+}
+
+/* A status pill carries 8px of its own horizontal padding, which pushed its
+   TEXT 8px right of the body copy directly above/below it — the two read as
+   misaligned even though the elements' boxes weren't. Pull the pill back by
+   exactly that padding so the text baselines line up on the left. */
+.settings-card .settings-actions > .badge:first-child {
+  margin-left: -8px;
+}
+
 .settings-hint + .settings-toggle-row {
   margin-top: var(--space-3);
 }
