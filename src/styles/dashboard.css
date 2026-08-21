@@ -18,7 +18,11 @@
 
 .dashboard-greeting h1 {
   font-family: var(--font-display);
-  font-size: 34px;
+  /* Was 34px — larger than even --text-display (28px), the top of the type
+     scale, making a pleasantry the loudest thing on the page. Sized down so
+     it costs less visual weight than the first actionable thing below it
+     (.now-next-card) — see W8 in TODO.md. */
+  font-size: var(--text-xl);
   font-weight: 600;
   margin: 0;
   animation: dashboard-greeting-in var(--duration-slow) var(--ease-decelerate);
@@ -166,6 +170,20 @@
 /* Right now / up next                                                   */
 /* -------------------------------------------------------------------- */
 
+/* The dashboard's one hero — "what should I be doing right now" is the
+   single most actionable thing on this page, so it gets more presence than
+   every other card here (see W8 in TODO.md). Weight and tone carry that,
+   not a border (direction rule 1) — a subtle accent-tinted background
+   (relative color-mix, so it holds up in both themes) plus its header/title
+   sized a step up from every other dashboard-card-header. */
+.now-next-card {
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-surface));
+}
+
+.now-next-card .dashboard-card-header h3 {
+  font-size: var(--text-lg);
+}
+
 .now-block-title-row {
   display: flex;
   align-items: center;
@@ -178,7 +196,7 @@
 }
 
 .now-block-title {
-  font-size: var(--text-md);
+  font-size: var(--text-lg);
   font-weight: 600;
   flex: 1;
   min-width: 0;
@@ -973,90 +991,87 @@
 }
 
 /* -------------------------------------------------------------------- */
-/* Progress rings (weekly + today) — shared by ProgressRingCard.jsx        */
+/* Progress rings (today + this week) — ProgressRings.jsx                */
 /* -------------------------------------------------------------------- */
 
-/* Two-up row for TodayProgressRing + WeeklyProgressRing — two separate
-   .card containers side by side, not one card cramming both rings in. */
-.progress-ring-row {
+/* One compact strip, not two full-size .card widgets each with their own
+   header — progress is a supporting stat here, not something competing
+   with .now-next-card for attention (see W8 in TODO.md). Both mini-rings
+   share this one card's padding/background instead of each getting their
+   own dashboard-card-header. */
+.progress-rings-strip {
   display: flex;
   gap: var(--space-4);
-  align-items: stretch;
 }
 
-.progress-ring-row .progress-ring-card {
+.progress-ring-mini {
   flex: 1 1 0;
   min-width: 0;
-}
-
-.progress-ring-card .dashboard-card-header {
-  text-align: center;
-}
-
-@media (max-width: 639px) {
-  .progress-ring-row {
-    flex-direction: column;
-  }
-
-  .progress-ring-body {
-    justify-content: center;
-  }
-
-  .progress-ring-detail {
-    align-items: center;
-  }
-}
-
-.progress-ring-body {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
-.progress-ring-svg {
+.progress-ring-mini-svg {
   flex-shrink: 0;
   transform: rotate(-90deg);
 }
 
-.progress-ring-track {
+.progress-ring-mini-track {
   fill: none;
   stroke: var(--color-bg-page);
-  stroke-width: 8;
+  stroke-width: 5;
 }
 
-.progress-ring-fill {
+.progress-ring-mini-fill {
   fill: none;
   stroke: var(--color-accent-solid-bg);
-  stroke-width: 8;
+  stroke-width: 5;
   stroke-linecap: round;
   transition: stroke-dashoffset var(--duration-slow) var(--ease-decelerate);
 }
 
-.progress-ring-percent {
+.progress-ring-mini-percent {
   fill: var(--color-text-primary);
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 600;
   transform: rotate(90deg);
   transform-box: fill-box;
   transform-origin: center;
 }
 
-.progress-ring-detail {
+.progress-ring-mini-detail {
   display: flex;
   flex-direction: column;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   min-width: 0;
 }
 
-.progress-ring-hours {
+.progress-ring-mini-label {
   font-weight: 600;
   color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.progress-ring-of {
+.progress-ring-mini-hours {
   color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-ring-mini-empty {
+  padding: 0;
+  text-align: left;
+}
+
+@media (max-width: 639px) {
+  .progress-rings-strip {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
 }
 
 /* -------------------------------------------------------------------- */

@@ -734,7 +734,7 @@ src/
 │   ├── localSearch.js        # Time-boxed search that refines the greedy seed to lower cost
 │   └── rebalanceEngine.js    # Orchestrates capacity+allocator+search, preserves locks
 ├── components/
-│   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, WeeklyProgressRing, NotesCard (+ notesModel.js)
+│   ├── Dashboard/              # DashboardPage (default landing tab) — DashboardStats, NowNextCard, TodayAgenda, ProgressRings, NotesCard (+ notesModel.js)
 │   ├── Calendar/              # WeekView (day/week time-grid, drag/resize), MonthView (density overview), CalendarPage, CalendarFilterMenu (show-type/project/tag filter — predicate lives in utils/calendarFilter.js)
 │   ├── Board/                 # BoardView — Kanban-style Section columns, or a flat list for a project with no Sections yet
 │   ├── Gantt/                 # GanttChart burn-down view
