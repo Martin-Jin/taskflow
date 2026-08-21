@@ -170,7 +170,9 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
   }
 
   return (
-    <div className="gantt-container">
+    // tab-panel (global.css): same content-swap fade-in as switching main
+    // nav tabs — see W7's "Project/view switch: short content cross-fade".
+    <div className="gantt-container tab-panel">
       <div className="gantt-date-header" style={{ gridTemplateColumns: `${labelColWidth}px 1fr` }}>
         <div />
         <div className="gantt-date-header-track">

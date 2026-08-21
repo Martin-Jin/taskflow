@@ -55,6 +55,28 @@
   --ease-decelerate: cubic-bezier(0, 0, 0, 1);
   --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
 
+  /* Three named motion roles, so new motion in this app picks one of these
+     instead of inventing its own duration/easing combo (see the "Quiet
+     density" plan's direction rule 4). Each maps to the timing this
+     codebase already leaned on for that purpose before these existed:
+       - enter: something new mounts/appears (matches .card's existing
+         card-in animation).
+       - exit: something is leaving before removal (matches TaskListPanel/
+         BoardView's ROW_EXIT/CARD_EXIT framer-motion transitions).
+       - emphasis: a self-contained state pulse that returns to rest without
+         mounting/unmounting anything (matches .task-checkbox.checked's
+         existing checkbox-pop).
+     Framer-motion's `transition`/`exit` props take plain JS objects, not
+     CSS custom properties, so JS call sites can't read these directly —
+     each one mirrors the numbers here instead and says so in its own
+     comment (see ROW_TRANSITION/ROW_EXIT). */
+  --motion-enter-duration: var(--duration-base);
+  --motion-enter-ease: var(--ease-decelerate);
+  --motion-exit-duration: var(--duration-fast);
+  --motion-exit-ease: var(--ease-accelerate);
+  --motion-emphasis-duration: var(--duration-fast);
+  --motion-emphasis-ease: var(--ease-standard);
+
   /* -------------------------------------------------------------------- */
   --color-bg-page: #fafaf9;
   --color-bg-surface: #ffffff;
@@ -1477,7 +1499,8 @@ select:focus-visible,
   background: var(--color-bg-surface);
   border-radius: var(--radius-md);
   padding: 16px;
-  animation: card-in var(--duration-base) var(--ease-decelerate);
+  /* "enter" role — see the named motion roles at the top of this file. */
+  animation: card-in var(--motion-enter-duration) var(--motion-enter-ease);
 }
 
 .theme-toggle {
@@ -2595,7 +2618,8 @@ input[type='checkbox']:checked::after {
    applies once toggled on, so the animation naturally (re)plays each time a
    task is completed rather than looping. */
 .task-checkbox.checked {
-  animation: checkbox-pop var(--duration-fast) var(--ease-standard);
+  /* "emphasis" role — see the named motion roles at the top of this file. */
+  animation: checkbox-pop var(--motion-emphasis-duration) var(--motion-emphasis-ease);
 }
 
 @keyframes checkbox-pop {

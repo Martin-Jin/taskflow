@@ -113,12 +113,23 @@ let lastHandledAIQuickAddSignal = 0;
 
 // Row reorder/removal motion (see the ROW MOTION note above). `layout:
 // 'position'` animates a row's position only, never its size — a row whose
-// text reflows would otherwise visibly squash/stretch mid-animation. Timing
-// mirrors the CSS tokens (--duration-base / --ease-standard) everything else
-// in the app animates with, and exit is deliberately quicker than the
-// reflow so a completed row is gone before the gap closes behind it.
+// text reflows would otherwise visibly squash/stretch mid-animation.
+// Framer-motion transition objects can't read CSS custom properties, so
+// these mirror global.css's named motion roles by number rather than by
+// reference: ROW_TRANSITION is the "enter" role (--motion-enter-duration/
+// -ease — --duration-base/--ease-standard), ROW_EXIT is the "exit" role
+// (--motion-exit-duration/-ease — --duration-fast/--ease-accelerate),
+// deliberately quicker than the reflow so a completed row is gone before
+// the gap closes behind it.
 const ROW_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
 const ROW_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
+
+// How long a just-completed row stays put (checked, in place) before
+// visibleTasks lets it drop out and play ROW_EXIT — long enough for
+// global.css's `checkbox-pop` ("emphasis" role, --duration-fast/120ms) to
+// fully settle first, so "check" and "collapse" read as sequential
+// cause-and-effect rather than two animations firing over each other.
+const PENDING_COLLAPSE_HOLD_MS = 260;
 
 // The Tasks page's own view switch — List/Board/Gantt are three
 // presentations of the same underlying tasks, so they live under one nav
@@ -263,6 +274,17 @@ export default function TaskListPanel({
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [isRenamingProject, setIsRenamingProject] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
+  // Ids of tasks that were just marked complete and are being held visible
+  // (checked, in place) for one more beat before visibleTasks lets them drop
+  // out of the list — see handleCompleteTask/PENDING_COLLAPSE_HOLD_MS below.
+  const [pendingCollapseIds, setPendingCollapseIds] = useState(() => new Set());
+  const pendingCollapseTimeouts = useRef(new Map());
+  useEffect(
+    () => () => {
+      pendingCollapseTimeouts.current.forEach(clearTimeout);
+    },
+    []
+  );
 
   // Today's ISO date, used both for the Overdue/Today/Upcoming grouping below
   // and (via isCompletedForCurrentOccurrence) each row's "done for today"
@@ -341,6 +363,32 @@ export default function TaskListPanel({
     },
     [uncompleteTask, playUncomplete]
   );
+  // Wraps requestComplete so a synchronous completion (the common case — no
+  // running timer to confirm first, see CompleteTaskContext) holds its row
+  // in place for PENDING_COLLAPSE_HOLD_MS instead of yanking it out of
+  // visibleTasks the instant isCompleted flips. When requestComplete instead
+  // opens the timer-confirmation modal (returns false), there's no row to
+  // hold — completion (and its exit) happens later, once the user confirms.
+  const handleCompleteTask = useCallback(
+    (taskId) => {
+      const completed = requestComplete(taskId);
+      if (completed) {
+        setPendingCollapseIds((prev) => new Set(prev).add(taskId));
+        const timeoutId = setTimeout(() => {
+          pendingCollapseTimeouts.current.delete(taskId);
+          setPendingCollapseIds((prev) => {
+            if (!prev.has(taskId)) return prev;
+            const next = new Set(prev);
+            next.delete(taskId);
+            return next;
+          });
+        }, PENDING_COLLAPSE_HOLD_MS);
+        pendingCollapseTimeouts.current.set(taskId, timeoutId);
+      }
+      return completed;
+    },
+    [requestComplete]
+  );
   // Neither "All Tasks" nor "Inbox" is a real Project record, so both resolve
   // to a null activeProject — every downstream consumer (rename/delete
   // buttons, ProjectActionsMenu, SharedProjectBadge) already treats a null
@@ -387,7 +435,8 @@ export default function TaskListPanel({
     // Completed tasks live only under the "Completed" filter (auto-deleted
     // 30 days after completion, see SchedulerContext's retention sweep) —
     // see filterTasksByStatus for what each filter key means.
-    let list = filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId);
+    const projectTasks = filterTasksByProject(tasks, activeProjectId).filter((t) => !t.parentId);
+    let list = projectTasks;
     // A non-empty search query bypasses the active/all/noDueDate filter
     // chip's due-date narrowing — search should surface any matching task
     // from the whole project regardless of due date, not just the subset
@@ -400,9 +449,20 @@ export default function TaskListPanel({
     if (filter === 'completed') list = filterTasksByStatus(list, 'completed');
     else if (searchQuery) list = list.filter((t) => !t.isCompleted);
     else list = filterTasksByStatus(list, filter);
+    // A task just marked complete stays in the list for one more beat (see
+    // handleCompleteTask's pendingCollapseIds) so its checkbox-pop animation
+    // (global.css) finishes before the row's own FLIP exit plays, instead of
+    // both firing at once — direction rule 4 ("motion explains causality").
+    // Only relevant on active/all/noDueDate/search, since "Completed" already
+    // includes it and would double it up otherwise.
+    if (filter !== 'completed' && pendingCollapseIds.size > 0) {
+      const alreadyIncluded = new Set(list.map((t) => t.id));
+      const held = projectTasks.filter((t) => t.isCompleted && pendingCollapseIds.has(t.id) && !alreadyIncluded.has(t.id));
+      if (held.length) list = [...list, ...held];
+    }
     list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
-  }, [tasks, activeProjectId, filter, searchQuery, labels]);
+  }, [tasks, activeProjectId, filter, searchQuery, labels, pendingCollapseIds]);
 
   function startRenameProject() {
     if (!activeProject) return;
@@ -535,7 +595,7 @@ export default function TaskListPanel({
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
         onOpen={setEditingTaskId}
-        onComplete={requestComplete}
+        onComplete={handleCompleteTask}
         onUncomplete={handleUncomplete}
         isReadOnlyViewer={!!task.projectId && viewerOnlyProjectIds.has(task.projectId)}
         isDragging={reparent.draggedId === task.id}
@@ -751,7 +811,14 @@ export default function TaskListPanel({
       {view === 'list' && (
         <>
           <div
-            className="tasklist-rows"
+            // tab-panel (global.css): the row list is fresh-mounted every
+            // time the List/Board/Gantt switch lands back here (and
+            // AnimatePresence's initial={false} below deliberately skips
+            // per-row entrance animation for whatever's already showing —
+            // see that comment), so without this the whole list would just
+            // snap into view with no transition at all. See W7's "Project/
+            // view switch: short content cross-fade".
+            className="tasklist-rows tab-panel"
             // Drop a dragged sub-task row anywhere in here that ISN'T another
             // row (see hooks/useReparentDrag.js's UNPARENT section) to clear
             // its parentId — the natural inverse of dragging it onto another

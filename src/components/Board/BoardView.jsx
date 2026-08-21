@@ -122,9 +122,11 @@ import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../..
 import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
 
 // Card reorder/removal motion — see CARD MOTION above. Mirrors
-// TaskListPanel's row timings (the CSS --duration-base/--ease-standard
-// tokens), and `layout: 'position'` keeps a card's own box from being
-// scaled mid-animation.
+// TaskListPanel's row timings, `layout: 'position'` keeps a card's own box
+// from being scaled mid-animation. Same "enter"/"exit" named motion roles
+// as ROW_TRANSITION/ROW_EXIT there (global.css's --motion-enter-*/
+// --motion-exit-*) — mirrored by number since framer-motion can't read CSS
+// custom properties.
 const CARD_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
 const CARD_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
 
@@ -566,7 +568,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   }
 
   return (
-    <div className="board-page">
+    // tab-panel (global.css): the same short fade-in used for the main
+    // nav's tab switch, applied here too since switching into Board from
+    // List/Gantt is a content swap of the same kind — see W7's "make motion
+    // mean something" ("Project/view switch: short content cross-fade").
+    <div className="board-page tab-panel">
       {!select.selectionMode && (
         <AddTaskFabGroup
           onAddTask={() => setAddingToSectionId('')}

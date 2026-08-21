@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.4',
+    date: '2026-08-21',
+    title: 'Motion that means something',
+    changes: [
+      "Completing a task now shows the checkmark for a beat before the row slides away, instead of both happening at once.",
+      "Switching between List/Board/Gantt now cross-fades in instead of snapping.",
+      "Dragging a calendar block or board card now has a proper \"pick up\" and \"put down\" feel instead of snapping between states.",
+    ],
+  },
+  {
     version: '6.8.3',
     date: '2026-08-21',
     title: 'Cleaner, calmer task rows',

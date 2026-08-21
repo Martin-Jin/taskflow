@@ -509,7 +509,11 @@
   border-left: 3px solid;
   background: var(--color-bg-surface-raised);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
+  /* "emphasis" role (see global.css) — pickup/drop is a self-contained
+     state change on this element, not a mount/unmount. */
+  transition: box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
 }
 
 /* Routine (Fixed-availability) background: purely informational, and
@@ -574,13 +578,16 @@
 /* The item currently being dragged. With native HTML5 DnD (mouse) the
    browser drags a frozen snapshot and leaves the real element sitting in
    the grid, and the touch long-press path never moves the element either —
-   so in both cases this is the "you picked this up" cue, lifted and faded
-   while .cal-event-ghost shows where it will land. */
+   so in both cases this is the "you picked this up" cue: lifted (scaled up,
+   nudged up a couple px, shadow raised) and faded while .cal-event-ghost
+   shows where it will land. Settling back down on drop is the same
+   transition running in reverse (see the base .cal-block/.cal-event rule
+   above) rather than a snap. */
 .cal-block.is-dragging,
 .cal-event.is-dragging {
   opacity: 0.3;
-  transform: scale(1.02);
-  box-shadow: var(--shadow-card);
+  transform: scale(1.03) translateY(-2px);
+  box-shadow: var(--shadow-elevated);
   z-index: 3;
 }
 
@@ -821,7 +828,11 @@
   border-left: 3px solid var(--color-accent-border);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.12s ease, transform 0.12s ease, opacity 0.12s ease;
+  /* "emphasis" role (see global.css) — pickup/drop is a self-contained
+     state change on this element, not a mount/unmount. */
+  transition: box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
   overflow: hidden;
 }
 
