@@ -755,11 +755,26 @@ test.describe('Calendar', () => {
     await expect(editDialog).toBeVisible();
     await expect(editDialog.getByPlaceholder('e.g. Conference room')).toHaveValue('Room 42');
 
+    // Dismiss whatever toast the earlier Escape-close save left on screen —
+    // isolates the count check below to just the Enter-press below it.
+    for (const dismiss of await page.locator('.action-toast').getByLabel('Dismiss').all()) {
+      await dismiss.click().catch(() => {});
+    }
+    await page.waitForTimeout(200);
+
     // Pressing Enter in a single-line field saves and closes the modal.
     await editDialog.getByPlaceholder('e.g. Conference room').fill('Room 99');
     await editDialog.getByPlaceholder('e.g. Conference room').press('Enter');
     await page.waitForTimeout(300);
     await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    // Regression: handleSave (Save button/Enter) used to persist the edit
+    // AND handleModalClose's own auto-save-on-close would immediately fire a
+    // second time for that same close (nothing marked "already saved"),
+    // silently calling updateEvent twice — visible as this "Updated event"
+    // toast (see SchedulerContext.updateEvent's pushActionToast) popping
+    // twice for one Enter press instead of once.
+    await expect(page.locator('.action-toast', { hasText: 'Updated event' })).toHaveCount(1);
 
     await newEvent.click();
     editDialog = page.getByRole('dialog');

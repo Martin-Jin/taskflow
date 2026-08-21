@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '6.10.2',
+    date: '2026-08-21',
+    title: 'Fixed duplicate "Updated event" notifications',
+    changes: [
+      'Saving a calendar event edit (via the Save button, or pressing Enter in the title/location field) was silently saving it twice — visible as the "Updated event" toast popping up twice for a single edit. Now saves (and notifies) once.',
+    ],
+  },
+  {
     version: '6.10.1',
     date: '2026-08-21',
     title: 'Quieter note-editor toolbar button',
