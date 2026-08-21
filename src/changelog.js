@@ -21,6 +21,19 @@
 
 export const CHANGELOG = [
   {
+    version: '6.10.0',
+    date: '2026-08-21',
+    title: 'Notes got a real editor',
+    changes: [
+      'Notes now open in a proper mini markdown editor — a toolbar for bold/italic/strikethrough, headings, bullet/numbered/checklist lists, links, and code, similar to a lightweight Obsidian. Click a note (or "Add note") to edit directly — no more separate hover-only Edit button.',
+      'Editing an existing note now saves automatically as you type, the same way editing a task already does.',
+      'A note\'s "⋯" menu now holds Delete, in place of a hover-only remove button.',
+      'Note tiles are now smaller and show one clean preview line (markdown formatting stripped) instead of two lines of raw syntax.',
+      'The notes search box is now fuzzy and typo-tolerant, matching every other search box in the app.',
+      'Removed "Import bookmarks" — it was left over from before Notes existed and is no longer needed.',
+    ],
+  },
+  {
     version: '6.9.1',
     date: '2026-08-21',
     title: 'Fixed clipped focus rings, added an "All Tasks" icon',
