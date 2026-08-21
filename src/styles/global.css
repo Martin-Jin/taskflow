@@ -27,7 +27,14 @@
   --radius-md: 10px;
   --radius-lg: 16px;
 
-  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* Two layers on purpose: the offset layer gives the usual "lifted off the
+     page" cast below the surface, and the offset-less ambient layer puts a
+     faint halo on the top/left/right edges too. Without the ambient layer a
+     portaled popover's upper edges cast nothing, so the menu bled into
+     similarly-toned content behind it. */
+  --shadow-elevated:
+    0 0 12px rgba(0, 0, 0, 0.2),
+    0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
   --shadow-card: 0 3px 10px rgba(0, 0, 0, 0.4);
 
@@ -156,6 +163,13 @@
   --color-border: #38362f;
   --color-border-strong: #4a473d;
   --color-border-interactive: #8c8980;
+
+  /* Pure black has less room to darken an already-dark page, so dark mode
+     needs a deeper cast than light mode to separate a popover from whatever
+     is behind it. Same two-layer structure as the light token above. */
+  --shadow-elevated:
+    0 0 14px rgba(0, 0, 0, 0.45),
+    0 8px 26px rgba(0, 0, 0, 0.6);
 
   --color-text-primary: #f2f0ea;
   --color-text-secondary: #b5b2a7;

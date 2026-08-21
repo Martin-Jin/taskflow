@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.10.4',
+    date: '2026-08-21',
+    title: 'Easier-to-see pop-up menus',
+    changes: [
+      'Dropdowns, pop-up menus and dialogs now cast a soft shadow on all sides instead of only downward, so they stand out from whatever is behind them — previously a menu opening over similarly-coloured content could be hard to pick out along its top and left edges.',
+      'The "Add note" button is now a compact single-line button; its label no longer wraps onto two lines and stretches it back to full tile height.',
+    ],
+  },
+  {
     version: '6.10.3',
     date: '2026-08-21',
     title: 'Dashboard and notes polish',

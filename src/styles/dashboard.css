@@ -788,15 +788,23 @@
 }
 
 .note-tile-add {
+  /* Icon beside the label rather than above it (.note-tile's own column
+     layout) — stacked, "Add note" wrapped to two lines and the button grew
+     back to roughly a real tile's height, defeating the point of a smaller
+     control. */
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  text-align: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: var(--text-xs);
   /* Solid all around instead of a dashed left edge — the dashed-left style
      is .note-tile's own accent-bar idiom (meaningful per-note color), which
-     doesn't apply here since this isn't a note. Smaller than a real note
+     doesn't apply here since this isn't a note. Shorter than a real note
      tile's height floor so it reads as a button, not another card. */
   border: 1px solid var(--color-border-strong);
-  min-height: 40px;
+  min-height: 34px;
+  padding: 6px 8px;
   color: var(--color-text-secondary);
   background: transparent;
 }

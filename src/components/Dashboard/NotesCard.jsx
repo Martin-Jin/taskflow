@@ -195,7 +195,7 @@ export default function NotesCard() {
         ))}
 
         <button className="note-tile note-tile-add" onClick={() => setIsAdding(true)}>
-          <Plus size={18} />
+          <Plus size={14} />
           <span>Add note</span>
         </button>
 
