@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '6.10.3',
+    date: '2026-08-21',
+    title: 'Dashboard and notes polish',
+    changes: [
+      'The "Right now" and "Up next" hover highlights now have proper padding around their text instead of hugging the card edges, and the divider line that used to sit inside the "Up next" highlight is gone.',
+      'The "Add note" button is now smaller with a solid border all around, instead of a full-size tile with a dashed left edge.',
+    ],
+  },
+  {
     version: '6.10.2',
     date: '2026-08-21',
     title: 'Fixed duplicate "Updated event" notifications',

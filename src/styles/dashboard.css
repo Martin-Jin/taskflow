@@ -224,10 +224,30 @@
   white-space: nowrap;
 }
 
+/* Padding + a matching negative margin so the hover/focus highlight below
+   reads as an inset pill with room to breathe, not a hard-edged rectangle
+   flush against .now-next-card's own edges — the highlight box is exactly
+   this element's own padding box, and it had none before. Left/right/bottom
+   only (not shorthand) so .next-block's own margin-top/padding-top/
+   border-top — its divider from .now-block above — stay untouched. */
 .now-block.is-openable,
 .next-block.is-openable {
   cursor: pointer;
   border-radius: var(--radius-md);
+  padding: 8px 10px;
+  margin-left: -10px;
+  margin-right: -10px;
+  margin-bottom: -8px;
+}
+
+.now-block.is-openable {
+  margin-top: -8px;
+}
+
+/* Keeps .next-block's own gap from .now-block above (var(--space-4)) intact
+   while still pulling back the 8px the shared padding above added. */
+.next-block.is-openable {
+  margin-top: calc(var(--space-4) - 8px);
 }
 
 .now-block.is-openable:hover,
@@ -259,13 +279,16 @@
   padding: var(--space-2) 0;
 }
 
+/* Separated from .now-block above by spacing, not a divider line — a
+   border-top here also fell *inside* .next-block.is-openable's hover
+   highlight (the highlight paints the border box), which read as a stray
+   line through the top of the highlighted pill. Direction rule 1: space and
+   tone separate things; borders don't. */
 .next-block {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
 }
 
 .next-block-icon {
@@ -766,8 +789,14 @@
 
 .note-tile-add {
   align-items: center;
+  justify-content: center;
   text-align: center;
-  border-left: 1px dashed var(--color-border-strong);
+  /* Solid all around instead of a dashed left edge — the dashed-left style
+     is .note-tile's own accent-bar idiom (meaningful per-note color), which
+     doesn't apply here since this isn't a note. Smaller than a real note
+     tile's height floor so it reads as a button, not another card. */
+  border: 1px solid var(--color-border-strong);
+  min-height: 40px;
   color: var(--color-text-secondary);
   background: transparent;
 }
