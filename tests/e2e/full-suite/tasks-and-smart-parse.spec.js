@@ -541,12 +541,13 @@ test.describe('Dependencies', () => {
     await closeAnyModal(page);
     await page.waitForTimeout(200);
 
-    // The list row should show "blocked by dependency" and clicking complete
-    // should refuse (toast) rather than completing it.
+    // The list row should show the blocked-by-dependency icon (see
+    // TaskListPanel's task-row-status-rail) and clicking complete should
+    // refuse (toast) rather than completing it.
     await clearSearch(page);
     await page.getByPlaceholder(/search tasks/i).fill(titleB);
     await page.waitForTimeout(300);
-    await expect(page.getByText('blocked by dependency')).toBeVisible();
+    await expect(page.getByTitle('Blocked by dependency')).toBeVisible();
 
     const completeBBtn = page.getByRole('button', { name: new RegExp(`Mark ${titleB} complete`) });
     await completeBBtn.click();
@@ -564,7 +565,7 @@ test.describe('Dependencies', () => {
     await clearSearch(page);
     await page.getByPlaceholder(/search tasks/i).fill(titleB);
     await page.waitForTimeout(300);
-    await expect(page.getByText('blocked by dependency')).toHaveCount(0);
+    await expect(page.getByTitle('Blocked by dependency')).toHaveCount(0);
     await page.getByRole('button', { name: new RegExp(`Mark ${titleB} complete`) }).click();
     await page.waitForTimeout(300);
     // Completed tasks drop out of the default (non-Completed) search results.

@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '6.8.3',
+    date: '2026-08-21',
+    title: 'Cleaner, calmer task rows',
+    changes: [
+      "Task rows no longer show a \"low\" priority badge or \"no due date\" text — those are the common/default case, not something worth calling out on every row.",
+      "The sub-task count, repeat, unattended, and blocked-by-dependency icons now sit together in one small group next to the title, instead of being scattered inline.",
+      "A task with a lot of labels now shows the first few plus a \"+N\" pill instead of spilling onto extra lines.",
+    ],
+  },
+  {
     version: '6.8.2',
     date: '2026-08-21',
     title: 'Calendar blocks are easier to read at a glance',

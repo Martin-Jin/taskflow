@@ -93,6 +93,12 @@ import { computeEffectiveRole } from '../utils/sharedProjectAccess';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
+// A row's label pills are unbounded in principle (a task can carry as many
+// labels as exist) — capped here so one heavily-labeled task can't push a
+// row's badge line onto several wrapped lines; the rest collapse into a
+// single "+N" pill (title attribute lists the overflow names).
+const MAX_VISIBLE_LABEL_PILLS = 3;
+
 // Baselines for the openAddTaskSignal/openAIQuickAddSignal props below — kept
 // at module scope (not component-instance refs) because this component
 // unmounts/remounts every time the user leaves and returns to the Tasks tab,
@@ -958,20 +964,27 @@ const TaskRow = React.memo(function TaskRow({
           ) : (
             task.title
           )}
-          {hasChildren && (
-            <span
-              className="task-row-subtask-count"
-              style={{ verticalAlign: -2, marginLeft: 6 }}
-              title={`${childCount} sub-task${childCount === 1 ? '' : 's'}`}
-            >
-              <ListChecks size={12} aria-hidden="true" />
-              {childCount}
+          {/* One consolidated rail for status glyphs, replacing what used to be
+              three separately marginLeft-styled icons plus a text-labeled
+              "blocked by dependency" warning buried in the meta line below —
+              see TaskListPanel's ROW MOTION note; this is purely internal to
+              one row's JSX and doesn't touch the flattenRows/AnimatePresence
+              structure. */}
+          {(hasChildren || task.isRecurring || task.isPassive || (!isCheckedForDisplay && !dependenciesMet)) && (
+            <span className="task-row-status-rail">
+              {hasChildren && (
+                <span className="task-row-subtask-count" title={`${childCount} sub-task${childCount === 1 ? '' : 's'}`}>
+                  <ListChecks size={12} aria-hidden="true" />
+                  {childCount}
+                </span>
+              )}
+              {task.isRecurring && <Repeat size={13} title={task.recurrenceString || 'Repeats'} />}
+              {task.isPassive && <Wind size={13} title="Can run unattended" />}
+              {!isCheckedForDisplay && !dependenciesMet && (
+                <Ban size={13} style={{ color: 'var(--color-danger)' }} title="Blocked by dependency" />
+              )}
             </span>
           )}
-          {task.isRecurring && (
-            <Repeat size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title={task.recurrenceString || 'Repeats'} />
-          )}
-          {task.isPassive && <Wind size={13} style={{ verticalAlign: -2, marginLeft: 6 }} title="Can run unattended" />}
         </div>
         <div
           style={{
@@ -988,28 +1001,40 @@ const TaskRow = React.memo(function TaskRow({
             {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
                 frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
             {formatHours(effectiveRemainingHours)} remaining of {formatHours(effectiveEstimatedHours)}
-            {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ' · no due date'}
+            {/* No due date is the common/default case, not something worth
+                calling out on every undated row — see direction rule 3
+                ("never render the absence of information"). The blocked
+                icon that used to render its own text label here moved into
+                the status rail next to the title instead. */}
+            {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ''}
             {task.sectionName ? ` · ${task.sectionName}` : ''}
           </span>
-          {!isCheckedForDisplay && !dependenciesMet && (
-            <span style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-              {' · '}
-              <Ban size={12} />
-              blocked by dependency
-            </span>
-          )}
         </div>
         <div className="task-row-badges">
-          <Badge variant={task.priority}>{task.priority}</Badge>
-          {(task.labelIds || []).map((labelId) => {
-            const label = labelById.get(labelId);
-            if (!label) return null;
+          {/* "low" is the default priority new tasks get — flagging it on
+              every such row is noise, not information (direction rule 3).
+              Medium/high/urgent still render since those are a deliberate
+              upward choice worth surfacing. */}
+          {task.priority !== 'low' && <Badge variant={task.priority}>{task.priority}</Badge>}
+          {(() => {
+            const resolvedLabels = (task.labelIds || []).map((id) => labelById.get(id)).filter(Boolean);
+            const visibleLabels = resolvedLabels.slice(0, MAX_VISIBLE_LABEL_PILLS);
+            const overflowLabels = resolvedLabels.slice(MAX_VISIBLE_LABEL_PILLS);
             return (
-              <Badge key={label.id} pill style={{ background: `${label.color}22`, color: label.color }}>
-                {label.name}
-              </Badge>
+              <>
+                {visibleLabels.map((label) => (
+                  <Badge key={label.id} pill style={{ background: `${label.color}22`, color: label.color }}>
+                    {label.name}
+                  </Badge>
+                ))}
+                {overflowLabels.length > 0 && (
+                  <span title={overflowLabels.map((l) => l.name).join(', ')}>
+                    <Badge pill>+{overflowLabels.length}</Badge>
+                  </span>
+                )}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
       {isCheckedForDisplay && (
