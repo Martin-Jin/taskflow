@@ -378,3 +378,28 @@ test('Stats: estimate accuracy explains itself when empty, and reports with a sa
 
   expectNoErrors(errors);
 });
+
+test('loading skeletons never replace a genuine empty state', async ({ page }) => {
+  /* The failure mode worth guarding: a placeholder shown when the app is NOT
+     loading spins forever, which is strictly worse than "nothing here yet".
+     Signed out there is no loading window at all — local state is read from
+     localStorage synchronously — so no surface may ever show one. */
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+
+  // Populated: no skeletons anywhere.
+  await gotoTab(page, 'Tasks');
+  await expect(page.locator('.skeleton-list')).toHaveCount(0);
+  await gotoTab(page, 'Dashboard');
+  await expect(page.locator('.skeleton-list')).toHaveCount(0);
+
+  // Genuinely empty: the honest empty state, still no skeleton.
+  await page.evaluate(() => localStorage.setItem('taskflow:v1:tasks', '[]'));
+  await page.reload();
+  await page.waitForTimeout(900);
+  await gotoTab(page, 'Tasks');
+  await expect(page.locator('.skeleton-list')).toHaveCount(0);
+  await expect(page.locator('.tasklist-rows')).toContainText(/no tasks/i);
+
+  expectNoErrors(errors);
+});

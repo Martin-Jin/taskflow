@@ -67,6 +67,8 @@ import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useConfirm } from '../context/ConfirmContext';
 import SaveViewModal from './Modals/SaveViewModal';
+import { SkeletonList } from './Common/Skeleton';
+import { useFirstLoadSkeleton } from '../hooks/useFirstLoadSkeleton';
 import { useSound } from '../context/SoundContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import AIQuickAddModal from './Modals/AIQuickAddModal';
@@ -183,6 +185,7 @@ export default function TaskListPanel({
   const { user } = useAuth();
   const confirm = useConfirm();
   const [savingView, setSavingView] = useState(false);
+  const showSkeleton = useFirstLoadSkeleton(tasks.length === 0);
   const isMobile = useIsMobile();
   const motionEnabled = useMotionEnabled();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -885,12 +888,20 @@ export default function TaskListPanel({
                     Drop here to remove from parent task
                   </div>
                 )}
-                {visibleTasks.length === 0 && (
-                  <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-                    <Inbox size={22} className="empty-state-icon" aria-hidden="true" />
-                    No tasks {searchQuery ? 'match your search' : 'here yet'}.
-                  </div>
-                )}
+                {visibleTasks.length === 0 &&
+                  (showSkeleton ? (
+                    /* A first cloud pull is still in flight and there's nothing
+                       local yet, so "No tasks here yet" would be a claim the app
+                       can't back up. See useFirstLoadSkeleton. */
+                    <div className="card">
+                      <SkeletonList rows={5} label="Loading your tasks" />
+                    </div>
+                  ) : (
+                    <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                      <Inbox size={22} className="empty-state-icon" aria-hidden="true" />
+                      No tasks {searchQuery ? 'match your search' : 'here yet'}.
+                    </div>
+                  ))}
                 {/* `initial={false}` so the rows already on screen when the list
                     first mounts don't all animate in — only rows added later do
                     (and even then via the shared `.card` CSS enter animation),
