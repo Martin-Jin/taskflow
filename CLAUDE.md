@@ -458,6 +458,64 @@ specifically so it could be unit tested.
   refactor only; verify old and new code make identical decisions for the
   same inputs before trusting it.
 
+
+## UI invariants and design direction
+
+The "Quiet density" UI overhaul (2026-08-21) established these. They outlived
+the workstreams that produced them, so they live here rather than in a
+gitignored working file.
+
+### Design direction — check UI decisions against these four rules
+
+1. **Space and tone separate things; borders don't.** Borders survive in
+   exactly two roles: the boundary of an interactive control, and a focus ring.
+   Decorative dividers are gaps; nested bordered containers are flattened.
+2. **Hierarchy comes from weight and scale.** The 7-step type scale exists —
+   use it rather than compensating with badges and rules. Fraunces
+   (`--font-display`) stays rare: page and card titles only.
+3. **Never render the absence of information.** A row does not print "no due
+   date" or a `low` priority badge. The absence of a badge *is* the signal.
+4. **Motion explains causality or it doesn't ship.** No ambient drift.
+   Everything gated on `useMotionEnabled` + `prefers-reduced-motion`. Three
+   named roles exist on the duration/easing tokens in `global.css` —
+   `--motion-enter-*` / `--motion-exit-*` / `--motion-emphasis-*` — and new
+   transitions should use them rather than inventing their own timing.
+   framer-motion transition objects can't read CSS custom properties, so
+   `ROW_TRANSITION`/`ROW_EXIT`/`CARD_TRANSITION`/`CARD_EXIT` mirror the numbers
+   in JS; keep them in step.
+
+### Never violate these — each one is a fixed bug or an accessibility floor
+
+- **`.btn`'s 1px border is load-bearing.** The button fill sits too close in
+  tone to its surfaces, and the border is what satisfies WCAG 1.4.11 (3:1
+  non-text contrast). Never remove it. Same for input and checkbox boundaries.
+- **`--color-text-muted` measures ~2.4:1 and is decorative-only.** Never use it
+  for anything that conveys information.
+- **`calendarLayout.js`'s maths are accumulated bug fixes.**
+  `MIN_BLOCK_HEIGHT_PX`, `MAX_SIDE_BY_SIDE_LANES`, `EXCESSIVE_PUSHDOWN_PX`,
+  cluster-folding and `packLane` each encode a real fixed bug (most recently
+  v6.4.1's adjacent-block merge). Visual changes only — never touch the
+  thresholds or the maths. Relatedly, keep transitions to
+  `transform`/`opacity`/`box-shadow`: anything animating
+  `top`/`left`/`height`/`width` collides with WeekView's absolute-position
+  pixel maths.
+- **`SelectMenu`/`MentionDropdown` are portaled to `document.body`** to escape
+  `.modal`'s `overflow-y: auto` clipping, and `.select-menu-dropdown` uses
+  `z-index: 200` to clear `.modal-overlay`'s 100. Preserve both; don't create a
+  new stacking context that re-clips them.
+- **Any new high-z-index surface must be checked against the guided tour
+  overlay.** That exact bug already hit `JoinProjectModal` once.
+- **Touch targets must hold at the 639px breakpoint.** Consolidated toolbars
+  are where hit areas quietly shrink.
+
+### Deliberately not doing (don't "helpfully" add these)
+
+- Not rebuilding the token system — there are 5 stray colour literals in the
+  whole app outside `:root`. It works; extend it, don't replace it.
+- Not adding a component library. The shared primitives (`Modal`, `EmptyState`,
+  `Badge`, `NumberField`, …) replace code that already existed many times over.
+  That's consolidation, not architecture.
+
 ## Code review checklist
 
 - Maintainable, efficient, modular, follows good programming practices for the
