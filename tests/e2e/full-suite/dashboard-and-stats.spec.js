@@ -591,3 +591,40 @@ test.describe('Weekly review', () => {
     expectNoErrors(errors);
   });
 });
+
+test('Stats: a "must be done on due date" task is not flagged as missing its buffer', async ({ page }) => {
+  /* enforceDueDate collapses the planning window onto the due date, so there
+     is no buffer to miss. Stats re-derived the deadline as
+     `dueDate - bufferDays` and dropped that carve-out, reporting such a task
+     permanently at risk while the scheduler considered it on time. It now uses
+     the scheduler's own getEffectiveDeadline, so the two cannot disagree. */
+  const errors = trackConsoleErrors(page);
+  await page.evaluate(() => {
+    const iso = (o) => {
+      const x = new Date();
+      x.setDate(x.getDate() + o);
+      return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    };
+    const base = {
+      isCompleted: false, isLocked: false, estimatedHours: 2, remainingHours: 2, priority: 'medium',
+      dependsOn: [], minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem('taskflow:v1:tasks', JSON.stringify([
+      { ...base, id: 'enf', title: 'BUFENF on the day', dueDate: iso(0), enforceDueDate: true },
+      { ...base, id: 'ord', title: 'BUFORD ordinary', dueDate: iso(0) },
+      { ...base, id: 'fut', title: 'BUFFUT later', dueDate: iso(7) },
+    ]));
+    localStorage.setItem('taskflow:v1:blocks', JSON.stringify([]));
+  });
+  await page.reload();
+  await gotoTab(page, 'Stats');
+  await page.waitForTimeout(900);
+
+  const body = ((await page.locator('body').textContent()) || '').replace(/\s+/g, ' ');
+  expect(body).not.toContain('BUFENF'); // has no buffer to miss
+  expect(body).toContain('BUFORD'); // genuinely past its buffer deadline
+  expect(body).not.toContain('BUFFUT'); // plenty of time
+
+  expectNoErrors(errors);
+});

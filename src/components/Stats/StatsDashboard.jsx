@@ -14,7 +14,8 @@ import { AlertTriangle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { computeEstimateAccuracy, computeAccuracyByProject, describeAccuracy, accuracyHeadline, MIN_RELIABLE_SAMPLE } from '../../utils/estimateAccuracy';
 import { computeHorizonCapacity } from '../../algorithms/capacityEngine';
-import { addDays, getWeekRange, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
+import { getEffectiveDeadline } from '../../algorithms/allocator';
+import { getWeekRange, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
 import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
 import { getOverdueTasks } from '../../utils/overdueTasks';
 import BarChart from './BarChart';
@@ -82,10 +83,17 @@ export default function StatsDashboard() {
     const totalWeekCapacity = [...capacityMap.values()].reduce((sum, c) => sum + c.totalAvailableHours, 0);
     const freeCapacityThisWeek = Math.max(0, totalWeekCapacity - scheduledThisWeek);
 
+    // Uses the scheduler's own getEffectiveDeadline rather than re-deriving
+    // it: a task marked "must be done on due date" (enforceDueDate) has no
+    // buffer to miss — its deadline IS its due date — so subtracting
+    // bufferDays here flagged it as permanently at-risk while the scheduler
+    // considered it perfectly on time. It also resolves an undated sub-task's
+    // inherited due date, which the old inline version couldn't see at all.
+    // A Map, not a plain object — findAncestorDueDate calls .get() on it.
+    const taskByIdForDeadlines = new Map(tasks.map((t) => [t.id, t]));
     const overdueRiskTasks = activeTasks.filter((t) => {
-      if (!t.dueDate) return false;
-      const effectiveDeadline = addDays(t.dueDate, -rules.bufferDays);
-      return effectiveDeadline < today && t.remainingHours > 0;
+      const effectiveDeadline = getEffectiveDeadline(t, rules.bufferDays, taskByIdForDeadlines);
+      return !!effectiveDeadline && effectiveDeadline < today && t.remainingHours > 0;
     });
 
     // ---- Task-count stats (mirrors DashboardStats' own definitions, so the

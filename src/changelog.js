@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '9.4.1',
+    date: '2026-08-23',
+    title: 'Stats no longer warns about a buffer that doesn’t exist',
+    changes: [
+      'A task marked "Must be done on due date" is no longer listed as at risk of missing its buffer deadline. That setting collapses the whole planning window onto the due date, so there is no buffer to miss — Stats was warning about one anyway, while the scheduler treated the same task as perfectly on time.',
+      'Stats now reads the deadline from the scheduler itself instead of recalculating it, so the warning and the plan can’t disagree again. As a side effect an undated sub-task now inherits its parent’s deadline here too, which the old calculation couldn’t see at all.',
+    ],
+  },
+  {
     version: '9.4.0',
     date: '2026-08-23',
     title: 'Calendar: short events cluster, and small blocks keep their titles',

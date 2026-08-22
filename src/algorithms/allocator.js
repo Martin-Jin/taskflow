@@ -246,8 +246,15 @@ export function resolveDueDate(task, taskById) {
  * *finished* by this day" for its steps, not "every step happens on this
  * exact day." Returns null if there's no due date to resolve at all (see
  * resolveDueDate).
+ *
+ * Exported so anything REPORTING on deadline pressure uses the same rule the
+ * scheduler plans by. Stats' "at risk of missing buffer deadline" list used to
+ * re-derive this as a bare `addDays(dueDate, -bufferDays)`, which dropped the
+ * enforceDueDate carve-out below — so a task explicitly marked "must be done
+ * on its due date" was reported permanently at-risk of missing a buffer it
+ * does not have, while the scheduler simultaneously considered it on time.
  */
-function getEffectiveDeadline(task, bufferDays, taskById) {
+export function getEffectiveDeadline(task, bufferDays, taskById) {
   const dueDate = resolveDueDate(task, taskById);
   if (!dueDate) return null;
   return task.enforceDueDate && task.dueDate ? task.dueDate : addDays(dueDate, -bufferDays);
