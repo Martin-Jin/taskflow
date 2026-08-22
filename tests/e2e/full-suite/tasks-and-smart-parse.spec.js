@@ -1531,3 +1531,68 @@ test.describe('Preferred time of day', () => {
     expectNoErrors(errors);
   });
 });
+
+  test('changing the preferred time on an existing task saves once, without a write loop', async ({ page }) => {
+    /* This is the regression guard for the bug that got a first attempt at this
+       reverted. The field has to appear in SEVEN places in TaskDetailModal — the
+       two snapshot builds, the reconcile effect's taskValues/setters/localValues,
+       sidebarDirty, the commitChanges payload, AND the post-save snapshot
+       rebuild. Miss the last one and the field stays dirty after its own save,
+       so the debounce re-arms and writes forever: it pegged the CPU and killed
+       the browser mid-suite, surfacing as unrelated tests timing out.
+
+       Counting persistence writes is what makes that visible. A functional
+       assertion alone passes happily while the loop runs in the background. */
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+
+    await page.locator('.task-row').first().click();
+    await page.waitForTimeout(500);
+
+    await page.evaluate(() => {
+      window.__taskWrites = 0;
+      const orig = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (k, v) => {
+        if (k.endsWith(':tasks')) window.__taskWrites += 1;
+        return orig(k, v);
+      };
+    });
+
+    // Baseline: an open modal with nothing touched must not write at all.
+    await page.waitForTimeout(1200);
+    expect(await page.evaluate(() => window.__taskWrites)).toBe(0);
+
+    // The picker lives in the task's "⋯" menu, not the always-visible sidebar.
+    await page.getByRole('button', { name: /more/i }).first().click();
+    await page.waitForTimeout(300);
+    const select = page.getByLabel('Preferred time of day');
+    await expect(select).toBeVisible();
+    await select.selectOption('afternoon');
+    await page.waitForTimeout(1200);
+
+    const afterEdit = await page.evaluate(() => window.__taskWrites);
+    expect(afterEdit).toBeGreaterThan(0);
+
+    // The load-bearing assertion: idling after the save must add nothing.
+    await page.waitForTimeout(2000);
+    expect(await page.evaluate(() => window.__taskWrites)).toBe(afterEdit);
+
+    // And it actually persisted.
+    const stored = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').filter((t) => t.preferredTimeOfDay === 'afternoon')
+    );
+    expect(stored.length).toBe(1);
+
+    // Clearing it back to no preference works too, and writes null not ''.
+    await select.selectOption('');
+    await page.waitForTimeout(1200);
+    expect(
+      await page.evaluate(() =>
+        JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').filter((t) => t.preferredTimeOfDay).length
+      )
+    ).toBe(0);
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });

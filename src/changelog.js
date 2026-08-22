@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '8.3.1',
+    date: '2026-08-22',
+    title: 'Change a task’s preferred time after making it',
+    changes: [
+      'The preferred time of day (morning/afternoon/evening) can now be changed on a task you already created, from its "⋯" menu. Until now it could only be set when creating the task or by typing it into the title, so changing your mind meant retyping the phrase.',
+    ],
+  },
+  {
     version: '8.3.0',
     date: '2026-08-22',
     title: 'Save a search you keep repeating',

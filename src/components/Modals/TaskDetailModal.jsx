@@ -64,6 +64,7 @@ import { createPortal } from 'react-dom';
 import {
   Ban,
   Wind,
+  Sunrise,
   X,
   Lock,
   Unlock,
@@ -111,6 +112,7 @@ import {
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import Modal from '../Common/Modal';
+import { TIME_OF_DAY_OPTIONS, TIME_OF_DAY_LABELS } from '../../utils/timeOfDay';
 import NumberField from '../Common/NumberField';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
@@ -287,6 +289,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // to a null parentId at commit time.
   const [smartParentTaskId, setSmartParentTaskId] = useState(null);
   const [isPassive, setIsPassive] = useState(!!task.isPassive);
+  /* A sidebar-style field, so it must appear in SIX places or the autosave
+     machinery misbehaves — see the reconcile effect below. Missing it from
+     commitChanges while dirty-tracking it here is the specific mistake that
+     produced an infinite save loop on the first attempt at this: the field
+     stays dirty forever because nothing ever writes it, so the debounce
+     re-arms on every pass. */
+  const [preferredTimeOfDay, setPreferredTimeOfDay] = useState(task.preferredTimeOfDay || '');
   const [earliestDate, setEarliestDate] = useState(task.earliestDate || '');
   const [enforceDueDate, setEnforceDueDate] = useState(!!task.enforceDueDate);
   const [fixedTime, setFixedTime] = useState(task.fixedTime || '');
@@ -626,6 +635,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       dependsOn: task.dependsOn || [],
       parentId: task.parentId ?? null,
       isPassive: !!task.isPassive,
+      preferredTimeOfDay: task.preferredTimeOfDay || '',
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
       fixedTime: task.fixedTime || '',
@@ -673,6 +683,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setParentId(task.parentId ?? null);
     setSmartParentTaskId(null);
     setIsPassive(!!task.isPassive);
+    setPreferredTimeOfDay(task.preferredTimeOfDay || '');
     setEarliestDate(task.earliestDate || '');
     setEnforceDueDate(!!task.enforceDueDate);
     setFixedTime(task.fixedTime || '');
@@ -705,6 +716,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       dependsOn: task.dependsOn || [],
       parentId: task.parentId ?? null,
       isPassive: !!task.isPassive,
+      preferredTimeOfDay: task.preferredTimeOfDay || '',
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
       fixedTime: task.fixedTime || '',
@@ -758,6 +770,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionId: task.sectionId || '',
       parentId: task.parentId ?? null,
       isPassive: !!task.isPassive,
+      preferredTimeOfDay: task.preferredTimeOfDay || '',
       earliestDate: task.earliestDate || '',
       enforceDueDate: !!task.enforceDueDate,
       fixedTime: task.fixedTime || '',
@@ -774,6 +787,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionId: setSectionId,
       parentId: setParentId,
       isPassive: setIsPassive,
+      preferredTimeOfDay: setPreferredTimeOfDay,
       earliestDate: setEarliestDate,
       enforceDueDate: setEnforceDueDate,
       fixedTime: setFixedTime,
@@ -790,6 +804,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       sectionId,
       parentId,
       isPassive,
+      preferredTimeOfDay,
       earliestDate,
       enforceDueDate,
       fixedTime,
@@ -1275,6 +1290,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     projectId !== initialSnapshotRef.current.projectId ||
     sectionId !== initialSnapshotRef.current.sectionId ||
     isPassive !== initialSnapshotRef.current.isPassive ||
+    preferredTimeOfDay !== initialSnapshotRef.current.preferredTimeOfDay ||
     earliestDate !== initialSnapshotRef.current.earliestDate ||
     enforceDueDate !== initialSnapshotRef.current.enforceDueDate ||
     fixedTime !== initialSnapshotRef.current.fixedTime ||
@@ -1467,6 +1483,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       // actually runs) is always the value the user most recently asked for.
       parentId: smartParentTaskId !== null ? resolvedSmartParentId : parentId,
       isPassive,
+      // Written as null rather than '' when cleared, so an unset preference
+      // carries no value at all (see placementCost's zero-cost path).
+      preferredTimeOfDay: preferredTimeOfDay || null,
       earliestDate: earliestDate || null,
       // Only meaningful once a due date exists — clear it rather than
       // persisting a flag that has nothing to enforce.
@@ -1523,6 +1542,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       dependsOn,
       parentId: smartParentTaskId !== null ? resolvedSmartParentId : parentId,
       isPassive,
+      preferredTimeOfDay,
       earliestDate: earliestDate || '',
       enforceDueDate: enforceDueDate && !!nextDueDate,
       fixedTime: fixedTime || '',
@@ -2201,6 +2221,24 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                               This task is never scheduled directly once it has sub-tasks — set a fixed time on the sub-task itself instead.
                             </p>
                           )}
+                        </DetailField>
+                      </li>
+
+                      <li role="none">
+                        <DetailField icon={Sunrise} label="Preferred time">
+                          <select
+                            value={preferredTimeOfDay}
+                            onChange={(e) => setPreferredTimeOfDay(e.target.value)}
+                            aria-label="Preferred time of day"
+                          >
+                            <option value="">No preference</option>
+                            {TIME_OF_DAY_OPTIONS.map((period) => (
+                              <option key={period} value={period}>
+                                {TIME_OF_DAY_LABELS[period]}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="form-hint">A nudge, not a rule — the scheduler prefers this part of the day but will still use another slot rather than leave the work unplanned.</p>
                         </DetailField>
                       </li>
 
