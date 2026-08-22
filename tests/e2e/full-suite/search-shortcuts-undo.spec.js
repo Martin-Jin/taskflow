@@ -596,3 +596,58 @@ test('command palette: "Add note" opens the note editor even when the Dashboard 
 
   expectNoErrors(errors);
 });
+
+test('search operators filter structurally, and plain text still works as before', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await gotoTab(page, 'Tasks');
+
+  const input = page.locator('.search-bar-input').first();
+  const rows = page.locator('.task-row');
+  const countFor = async (query) => {
+    await input.fill(query);
+    await page.waitForTimeout(400);
+    return rows.count();
+  };
+
+  const total = await rows.count();
+  expect(total).toBeGreaterThan(2);
+
+  // The operator vocabulary is advertised on an empty focused input — an
+  // operator language nobody discovers is barely worth having.
+  await input.click();
+  await expect(page.locator('.search-bar-hint')).toBeVisible();
+  await expect(page.locator('.search-bar-hint-token').first()).toHaveText('due:today');
+
+  // Structural filters return a real subset, not everything and not nothing.
+  const urgent = await countFor('p1');
+  expect(urgent).toBeGreaterThan(0);
+  expect(urgent).toBeLessThan(total);
+  // Every match is actually urgent.
+  expect(await page.locator('.task-row', { hasText: 'urgent' }).count()).toBe(urgent);
+
+  const undated = await countFor('no:date');
+  expect(undated).toBeGreaterThan(0);
+  expect(undated).toBeLessThan(total);
+
+  const dueToday = await countFor('due:today');
+  expect(dueToday).toBeGreaterThan(0);
+
+  // Plain text is untouched by the operator grammar.
+  expect(await countFor('nonexistentqueryxyz')).toBe(0);
+
+  /* The reason every operator carries a sigil or a colon: a bare word that
+     looks like one must still be searched for literally, not swallowed. */
+  await openAddTask(page);
+  await page.getByPlaceholder('Task name').fill('Overdue invoices reminder');
+  await page.locator('.addtask-pill').nth(0).click();
+  await page.locator('.addtask-pill-panel input[type="date"]').fill('2027-03-01');
+  await page.locator('.addtask-pill').nth(0).click();
+  await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
+  await page.waitForTimeout(600);
+
+  expect(await countFor('overdue invoices')).toBe(1);
+
+  await input.fill('');
+  expectNoErrors(errors);
+});

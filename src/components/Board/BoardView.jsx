@@ -305,7 +305,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
       // behavior — see filterTasksByStatus.
       const columnTasks = filterTasksByStatus(filterTasksByProject(tasks, selectedProjectId).filter((t) => !t.parentId), filter)
         .filter((t) => (col.id === null ? !t.sectionId : t.sectionId === col.id))
-        .filter((t) => taskMatchesQuery(t, searchQuery, labels));
+        .filter((t) => taskMatchesQuery(t, searchQuery, labels, projects));
       // Hand-ranked order (see utils/boardCardOrder.js). Cards never dragged
       // into a position have no rank and keep their natural order at the end.
       return { ...col, tasks: sortByBoardOrder(columnTasks) };
