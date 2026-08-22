@@ -8,12 +8,18 @@
  *     routine, e.g. Sleep — it can still be dragged/resized/paused, just
  *     not deleted, see FixedRoutine.isProtected).
  *   - Click the label -> rename inline; click the dot -> toggle active.
+ *   - `selectedDay` scopes the column to one weekday (see RoutinesSection's
+ *     day picker). In "all days" mode a routine that does NOT apply to every
+ *     day is marked, because otherwise a Tuesday-only routine is
+ *     indistinguishable from a daily one and dragging it looks like it changed
+ *     every day.
  * Mirrors the interaction model of Calendar/WeekView (mousedown+drag to
  * block out time, edge-drag to resize) so the gesture feels familiar.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { timeToMinutes, minutesToTime } from '../../utils/dateUtils';
+import { WEEKDAY_NAMES } from '../../utils/workHours';
 
 const GRID_END_MIN = 24 * 60;
 const SNAP_MIN = 5;
@@ -25,7 +31,7 @@ function clampMinutes(mins) {
   return Math.max(0, Math.min(GRID_END_MIN, mins));
 }
 
-export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove }) {
+export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove, selectedDay = null, onToggleRoutineDay }) {
   const columnRef = useRef(null);
   const [createDrag, setCreateDrag] = useState(null); // { startMin, currentMin }
   const [editingId, setEditingId] = useState(null);
@@ -228,6 +234,31 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove })
                   <span className="routine-block-time routine-block-time-inline">
                     {r.startTime}–{r.endTime}
                   </span>
+                )}
+                {/* Only in "all days" mode, and only when it isn't all days —
+                    a badge reading "7 days" on every block would be noise
+                    (never render the absence of information). */}
+                {selectedDay === null && (r.daysOfWeek || []).length > 0 && r.daysOfWeek.length < 7 && (
+                  <span
+                    className="routine-block-days"
+                    title={`Only on ${r.daysOfWeek.map((d) => WEEKDAY_NAMES[d]).join(', ')}`}
+                  >
+                    {r.daysOfWeek.length === 1 ? WEEKDAY_NAMES[r.daysOfWeek[0]].slice(0, 3) : `${r.daysOfWeek.length} days`}
+                  </span>
+                )}
+                {/* In single-day mode, one control to take this routine off
+                    this day without opening anything. Hidden for a protected
+                    routine, which must keep applying every day. */}
+                {selectedDay !== null && !r.isProtected && onToggleRoutineDay && (
+                  <button
+                    type="button"
+                    className="routine-block-days routine-block-days-action"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => onToggleRoutineDay(r.id, selectedDay)}
+                    title={`Stop applying "${r.label}" on ${WEEKDAY_NAMES[selectedDay]}`}
+                  >
+                    Not this day
+                  </button>
                 )}
                 {!r.isProtected && (
                   <button

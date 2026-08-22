@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '9.3.0',
+    date: '2026-08-23',
+    title: 'Routines per weekday, and quieter routine blocks',
+    changes: [
+      'Fixed routines can now be set for individual weekdays. A day picker beside the timeline scopes what you see, and anything you draw while a day is selected applies to that day alone — so "gym on Tuesdays" is one drag. Routines always had per-day support internally; there was just no way to reach it, so every new routine took all seven days.',
+      'Each day shows how many routines it carries, and in "All days" view a routine that isn’t daily is badged with its days — previously a Tuesday-only routine looked identical to a daily one, so dragging it seemed to change every day.',
+      'Routine blocks in the calendar now take half the column instead of all of it. At full width a routine read as the main event, and on a day with nothing else scheduled it looked exactly like a booked block; half leaves the rest of the column visibly free, which is what "available" should look like. They also sit further off the column edge, and a long routine name scrolls to reveal itself when you point at it.',
+    ],
+  },
+  {
     version: '9.2.0',
     date: '2026-08-23',
     title: 'Pick your first day of the week, and a fixed weekly review',

@@ -293,6 +293,13 @@ One page of cards, each covering one area:
   [Sync, backups, and sharing](SYNC-AND-SHARING.md).
 - **Integrations** — connect Todoist, Google Calendar, and your AI Quick Add
   API key. See [Integrations](INTEGRATIONS.md).
+- **Fixed routines** — the drag-to-edit 24-hour timeline for sleep, meals and
+  commutes, subtracted from a day's capacity before tasks are scheduled. The
+  day picker beside it scopes what you see: "All days" shows every routine and
+  anything you draw applies to all seven, while picking a weekday shows only
+  what applies then and scopes new routines to that day alone — so "gym on
+  Tuesdays" is one drag. Each day shows how many routines it carries, and in
+  "All days" a routine that isn't daily is badged with its days.
 - **Scheduling rules** — first day of the week (Sunday or Monday, used by the
   Calendar's week view, the weekly review, and every "this week" figure),
   buffer days, work hours, max daily hours, planning

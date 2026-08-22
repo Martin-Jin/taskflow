@@ -1031,3 +1031,60 @@ test.describe('Recently deleted (trash/restore)', () => {
     expectNoErrors(errors);
   });
 });
+
+test('fixed routines: a day picker scopes the timeline and new routines to one weekday', async ({ page }) => {
+  /* A routine has always carried daysOfWeek, but nothing could reach it — a
+     new routine always took all seven days, so "gym on Tuesdays" wasn't
+     expressible. */
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(300);
+  const card = page.locator('.settings-card', { has: page.getByRole('heading', { name: 'Fixed routines' }) });
+  await card.scrollIntoViewIfNeeded();
+
+  // Per-day counts, so you can see which days carry extras without clicking each.
+  await expect(card.locator('.routine-day-option')).toHaveCount(8);
+  await expect(card.locator('.routine-day-option').first()).toHaveText(/All days/);
+
+  // Draw a routine with Tuesday selected -> it applies to Tuesday alone.
+  await card.locator('.routine-day-option', { hasText: 'Tuesday' }).click();
+  await page.waitForTimeout(250);
+  const col = card.locator('.routine-timeline-column').first();
+  const box = await col.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 400);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + 460, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+
+  const created = await page.evaluate(() => {
+    const r = JSON.parse(localStorage.getItem('taskflow:v1:routines'));
+    return r[r.length - 1].daysOfWeek;
+  });
+  expect(created).toEqual([2]);
+
+  // In "All days" it's marked, so a Tuesday-only routine can't be mistaken for
+  // a daily one — dragging it would otherwise look like it changed every day.
+  await card.locator('.routine-day-option', { hasText: 'All days' }).click();
+  await page.waitForTimeout(300);
+  await expect(card.locator('.routine-block-days', { hasText: 'Tue' })).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('fixed routines: the day picker is a usable chip row on a phone', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await page.setViewportSize({ width: 375, height: 800 });
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(400);
+  const card = page.locator('.settings-card', { has: page.getByRole('heading', { name: 'Fixed routines' }) });
+  await card.scrollIntoViewIfNeeded();
+
+  // Stacked, not a side column that would squeeze the timeline to nothing.
+  const opt = card.locator('.routine-day-option').first();
+  const box = await opt.boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(40); // holds at the 639px breakpoint
+  expect(await page.evaluate(() => document.body.scrollWidth <= document.body.clientWidth)).toBe(true);
+
+  expectNoErrors(errors);
+});

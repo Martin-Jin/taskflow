@@ -2837,3 +2837,114 @@
     flex-basis: 100%;
   }
 }
+
+/* ----------------------------------------------------------------------
+   Fixed routines: the 24h timeline with a day picker beside it
+   (RoutinesSection). Two columns on desktop, stacked on a phone where a
+   side column would squeeze the timeline to nothing.
+   ---------------------------------------------------------------------- */
+.routines-layout {
+  display: grid;
+  grid-template-columns: 1fr minmax(150px, 190px);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.routine-day-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.routine-day-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* A real touch target — this is a list of eight small controls, exactly
+     where hit areas quietly shrink. */
+  min-height: 34px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.routine-day-option:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Selected state carries a border as well as a fill: the fill alone is close
+   enough in tone to the hover state to be ambiguous about which is current. */
+.routine-day-option.is-selected {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.routine-day-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.routine-day-note {
+  margin: var(--space-2) 0 0;
+}
+
+/* Marks a routine that doesn't apply to every day, and doubles as the
+   "not this day" control when the timeline is scoped to one weekday. */
+.routine-block-days {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 100px;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.routine-block-days-action {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.routine-block-days-action:hover {
+  background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+  color: var(--color-danger);
+}
+
+@media (max-width: 639px) {
+  .routines-layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Horizontal chip row on a phone: eight stacked full-width rows would push
+     the timeline off the screen entirely. */
+  .routine-day-picker {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .routine-day-option {
+    min-height: 40px;
+    border-color: var(--color-border);
+  }
+
+  .routine-day-note {
+    flex-basis: 100%;
+    margin-top: 0;
+  }
+}

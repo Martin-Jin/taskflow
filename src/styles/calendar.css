@@ -609,14 +609,48 @@
 .cal-routine-block {
   position: absolute;
   left: 0;
-  right: 0;
+  /* HALF the column, not all of it. A routine is background information, but
+     at full width it reads as the main event — on a day with nothing else
+     scheduled it looked exactly like a booked block, and beside a real block
+     it was the wider of the two. Half leaves the rest of the column visibly
+     free, which is what "available" should look like, and gives task blocks
+     room to be read alongside it.
+     Left-anchored rather than centred so every routine in a column shares an
+     edge; a ragged left edge across several routines reads as noise. */
+  right: 50%;
   background: color-mix(in srgb, var(--color-border) 55%, transparent);
   overflow: hidden;
-  padding: 3px 7px;
+  /* Roomier left inset: the label used to sit almost flush against the
+     column's own left edge/gridline, which made it read as part of the axis
+     rather than as content inside the block. */
+  padding: 3px 7px 3px 10px;
   font-size: 10.5px;
   color: var(--color-text-secondary);
   z-index: 0;
   cursor: grab;
+}
+
+/* Halving the width halves the room for the label, so a name that fit before
+   can now overflow. MarqueeText handles that — it measures real overflow, so
+   short names (the common case) never animate at all.
+   ON HOVER ONLY, though, and that part is not optional. A week view holds ~45
+   routine blocks; letting every overflowing one scroll continuously is exactly
+   the "ambient drift" the design rules reject, and it would burn a phone's
+   battery to no purpose. Paused, the marquee rests at the start of its text
+   with the plain ellipsis showing; pointing at a block runs it, which makes the
+   motion a response to the user rather than decoration. With animations off
+   globally the duration collapses to ~0 anyway, so this is inert there. */
+.cal-routine-block-label .marquee-text {
+  max-width: 100%;
+}
+
+.cal-routine-block .marquee-text-inner {
+  animation-play-state: paused;
+}
+
+.cal-routine-block:hover .marquee-text-inner,
+.cal-routine-block:focus-within .marquee-text-inner {
+  animation-play-state: running;
 }
 
 .cal-routine-block-label {

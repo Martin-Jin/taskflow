@@ -53,6 +53,7 @@ import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { makeSelectionKey } from '../../hooks/useMultiSelect';
 import HoverPreviewCard from './HoverPreviewCard';
+import MarqueeText from '../Common/MarqueeText';
 
 const GRID_END_MIN = 24 * 60; // 24:00
 const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
@@ -1061,10 +1062,19 @@ export default function WeekView({
                   key={r.id}
                   className="cal-routine-block"
                   style={{ top, height }}
+                  /* Full name on hover for the half-width block, without
+                     waiting out the marquee. */
+                  title={`${r.label} · ${r.startTime}–${r.endTime}`}
                   onMouseDown={(e) => handleColumnMouseDown(e, day, dayColumnRefs.current[day])}
                 >
                   <span className="cal-routine-block-label">
-                    {r.label}
+                    {/* Marquee rather than a bare ellipsis: the block is half a
+                        column wide now (see calendar.css), so a longer routine
+                        name no longer fits. MarqueeText measures real overflow
+                        and only animates when there is some, and its animation
+                        is plain CSS so it already collapses under
+                        prefers-reduced-motion and the Animations toggle. */}
+                    <MarqueeText text={r.label} />
                     {!showRoutineTime && (
                       <span className="cal-routine-block-time">
                         {' '}
