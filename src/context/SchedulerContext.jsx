@@ -1354,6 +1354,9 @@ export function SchedulerProvider({ children }) {
   }, [cloudSyncState]);
 
   const {
+    // Surfaced so first-load skeletons can tell "data is on its way" from
+    // "there is genuinely nothing here" — see useFirstLoadSkeleton.
+    isPullingCloud,
     cloudBackups,
     lastAutoBackupAt,
     pullFromCloud,
@@ -3833,6 +3836,7 @@ export function SchedulerProvider({ children }) {
       sharedProjectIds,
       searchQuery,
       isLoading,
+      isPullingCloud,
       isSyncing,
       isBackingUp,
       isPullingGoogleEvents,
@@ -3950,6 +3954,7 @@ export function SchedulerProvider({ children }) {
       sharedProjectIds,
       searchQuery,
       isLoading,
+      isPullingCloud,
       isSyncing,
       isBackingUp,
       isPullingGoogleEvents,

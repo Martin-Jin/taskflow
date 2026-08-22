@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.4.0',
+    date: '2026-08-22',
+    title: 'No more "you have no tasks" while your tasks load',
+    changes: [
+      'Opening TaskFlow on a new device while signed in used to show "No tasks here yet" for a moment before your data arrived from the cloud — confidently telling you the opposite of the truth. The task list and today’s agenda now show placeholder rows for that moment instead.',
+      'Only for that moment: if you genuinely have nothing yet, you still get the plain "nothing here" message rather than a placeholder that never resolves. Signed out there is no waiting at all, so nothing changes.',
+      'The placeholder shimmer respects the Animations setting, like every other bit of motion in the app.',
+    ],
+  },
+  {
     version: '8.3.1',
     date: '2026-08-22',
     title: 'Change a task’s preferred time after making it',

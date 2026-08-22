@@ -9,6 +9,8 @@ import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
 import MarqueeText from '../Common/MarqueeText';
 import EmptyState from '../Common/EmptyState';
+import { SkeletonList } from '../Common/Skeleton';
+import { useFirstLoadSkeleton } from '../../hooks/useFirstLoadSkeleton';
 
 export default function TodayAgenda() {
   const { tasks, blocks, events } = useScheduler();
@@ -70,6 +72,8 @@ export default function TodayAgenda() {
     });
   }, [blocks, events, taskById]);
 
+  const showSkeleton = useFirstLoadSkeleton(items.length === 0);
+
   const currentId = current?.kind === 'block' ? current.block.id : current?.kind === 'event' ? current.event.id : null;
 
   useEffect(() => {
@@ -87,7 +91,11 @@ export default function TodayAgenda() {
         <div className="dashboard-card-header">
           <h3>Today's agenda</h3>
         </div>
-        <EmptyState>Nothing on the calendar today.</EmptyState>
+        {showSkeleton ? (
+          <SkeletonList rows={3} label="Loading today's agenda" />
+        ) : (
+          <EmptyState>Nothing on the calendar today.</EmptyState>
+        )}
       </div>
     );
   }
