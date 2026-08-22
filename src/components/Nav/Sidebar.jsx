@@ -3,17 +3,30 @@
  * Sidebar
  * ============================================================================
  * Desktop-only nav rail: the Workspace tab switch (Dashboard/Calendar/Tasks/
- * Projects/Stats/Settings) plus a lean "Recent projects" group underneath —
- * the "All Tasks" pseudo-project pinned at the top, then a capped list of the
- * most recently visited real projects (RECENT_PROJECT_LIMIT, by
- * `lastVisitedAt`), each with a "⋯" menu (Rename/Pin/Delete via
- * ProjectActionsMenu). No link out to the dedicated Projects tab here — it's
- * already one click away via the Workspace group above, so a second entry
- * point to the same destination would be redundant. Full project search/
- * browsing, and the "Manage projects" entry point (ManageProjectsModal, which
- * also has its own "Add project" button opening the dedicated
- * AddProjectModal), live on the Projects page itself and (for the Tasks page
- * specifically) TaskProjectRail rather than duplicated here.
+ * Projects/Stats/Settings) plus a "Pinned projects" group underneath — the
+ * "All Tasks" and "Inbox" pseudo-projects, then whichever real projects the
+ * user has explicitly pinned, each with a "⋯" menu (Rename/Unpin/Delete via
+ * ProjectActionsMenu).
+ *
+ * PINNED, not recent — a deliberate split of responsibilities with the
+ * Projects page rather than an incidental cap. Both surfaces used to answer
+ * "find and switch project", which meant neither owned it: the sidebar showed
+ * the 5 most-recently-visited, so it churned under you and you could never
+ * count on a given project being there. It's now a shortcut strip the user
+ * curates, and BROWSING belongs entirely to the Projects page (search, Recent/
+ * Shared/My Projects columns) — one click away via the Workspace group above,
+ * so no second link out from here.
+ *
+ * The cost of the split is that pinning becomes the way to get a project into
+ * the rail, which nobody discovers by accident — hence the empty state below
+ * says so explicitly instead of rendering a blank group. No count cap: pinning
+ * is explicit and self-limiting, so a cap would silently hide a project the
+ * user deliberately put there. .sidebar-project-list already scrolls within
+ * the rail (flex + overflow-y), so a long pin list costs nothing.
+ *
+ * "Manage projects" (ManageProjectsModal, which also has its own "Add project"
+ * button opening AddProjectModal) lives on the Projects page itself and — for
+ * the Tasks page specifically — TaskProjectRail, rather than duplicated here.
  *
  * Extracted out of App.jsx once the Projects group made the inline JSX too
  * large to keep readable there. Only rendered on desktop — mobile has no
@@ -23,7 +36,7 @@
  */
 
 import React, { useState } from 'react';
-import { Inbox, Layers, Pin } from 'lucide-react';
+import { Inbox, Layers } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -36,7 +49,6 @@ import {
   INBOX_PROJECT_LABEL,
 } from '../../utils/projectConstants';
 
-const RECENT_PROJECT_LIMIT = 5;
 
 export default function Sidebar({
   tabs,
@@ -57,15 +69,13 @@ export default function Sidebar({
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
-  // Purely recency-based (not pinned-first like the old full list) — this is
-  // now a "what was I just working on" strip, not a directory to browse, so
-  // pinning as a concept belongs to the full Projects page/ManageProjectsModal
-  // instead. Projects never visited yet (no lastVisitedAt) are excluded rather
-  // than padding out the list.
-  const recentProjects = [...projects]
-    .filter((p) => p.lastVisitedAt)
-    .sort((a, b) => new Date(b.lastVisitedAt).getTime() - new Date(a.lastVisitedAt).getTime())
-    .slice(0, RECENT_PROJECT_LIMIT);
+  /* Pinned only, sorted by name. Name order rather than pin-recency or
+     last-visited on purpose: the whole point of a curated strip is that a
+     project stays where the user last saw it, and a list that rearranges
+     itself is one you have to re-read every time. */
+  const pinnedProjects = [...projects]
+    .filter((p) => p.isPinned)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   function startRename(project) {
     setRenamingId(project.id);
@@ -108,7 +118,7 @@ export default function Sidebar({
       </div>
 
       <div className="nav-group sidebar-projects-group">
-        <div className="nav-group-label">Recent projects</div>
+        <div className="nav-group-label">Pinned projects</div>
 
         <button
           className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
@@ -129,7 +139,7 @@ export default function Sidebar({
         </button>
 
         <div className="sidebar-project-list">
-          {recentProjects.map((p) => (
+          {pinnedProjects.map((p) => (
             <div key={p.id} className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''}`}>
               {renamingId === p.id ? (
                 <input
@@ -156,7 +166,6 @@ export default function Sidebar({
                   onClick={() => onSelectProject(p.id)}
                   aria-current={activeProjectId === p.id ? 'page' : undefined}
                 >
-                  {p.isPinned && <Pin size={12} className="sidebar-project-pin-icon" aria-hidden="true" />}
                   <span className="sidebar-project-name">{p.name}</span>
                   <SharedProjectBadge project={p} sharedProject={sharedProjects[p.sharedProjectId]} uid={user?.uid} />
                 </button>
@@ -174,7 +183,14 @@ export default function Sidebar({
               )}
             </div>
           ))}
-          {recentProjects.length === 0 && <div className="sidebar-project-empty">No recently visited projects yet.</div>}
+          {pinnedProjects.length === 0 && (
+            /* Says how to fill it, not just that it's empty: pinning is the
+               only route into this rail now, and it isn't discoverable on its
+               own. */
+            <div className="sidebar-project-empty">
+              Pin a project from its <span aria-hidden="true">⋯</span> menu to keep it here.
+            </div>
+          )}
         </div>
       </div>
 

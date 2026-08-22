@@ -188,9 +188,13 @@ scheduled, or outside the 4-week horizon) simply has no arrow to draw.
 
 A directory of every project: a fuzzy search box, and
 Recent / Shared / My Projects columns (the last sortable by size, total
-estimated hours, or creation date). The sidebar itself only shows your 5
-most recently visited projects plus a link into this page, so it stays
-short even with a large project list.
+estimated hours, or creation date).
+
+**This page is where you browse; the sidebar is where you keep shortcuts.** The
+sidebar lists only the projects you've pinned (from any project's "⋯" menu), in
+alphabetical order, so a project you rely on stays put instead of sliding out of
+view as you work on other things. Nothing pinned means an empty list — it tells
+you how to fill it — and everything else is one click away here.
 
 ## Bulk select
 
