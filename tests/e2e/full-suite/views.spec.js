@@ -1338,3 +1338,39 @@ test('Calendar: an all-day event renders in the all-day row, not as a block in t
 
   expectNoErrors(errors);
 });
+
+test('Sidebar lists pinned projects only, and says how to fill it when empty', async ({ page }) => {
+  /* The Projects page owns browsing; the sidebar is a curated shortcut strip.
+     It used to show the 5 most-recently-visited, which meant it churned under
+     the user and neither surface owned "find a project". */
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+
+  const sidebarRows = page.locator('.sidebar-project-row-wrap .sidebar-project-name');
+  await expect(page.locator('.nav-group-label').last()).toHaveText(/pinned projects/i);
+
+  // Seeded data pins nothing, so the empty state must teach the mechanism
+  // rather than just report a void — pinning is the only route in now.
+  await expect(sidebarRows).toHaveCount(0);
+  await expect(page.locator('.sidebar-project-empty')).toContainText(/pin a project/i);
+
+  await page.evaluate(() => {
+    const projects = JSON.parse(localStorage.getItem('taskflow:v1:projects') || '[]');
+    // Pin two, deliberately out of alphabetical order in the array.
+    const named = projects.filter((p) => p.name);
+    if (named[2]) named[2].isPinned = true;
+    if (named[0]) named[0].isPinned = true;
+    localStorage.setItem('taskflow:v1:projects', JSON.stringify(projects));
+  });
+  await page.reload();
+  await page.waitForTimeout(900);
+
+  const names = await sidebarRows.allInnerTexts();
+  expect(names.length).toBe(2);
+  // Alphabetical, so a pinned project holds its position instead of moving
+  // around as other projects are visited.
+  expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  await expect(page.locator('.sidebar-project-empty')).toHaveCount(0);
+
+  expectNoErrors(errors);
+});

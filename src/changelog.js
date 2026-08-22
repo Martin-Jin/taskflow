@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.5.0',
+    date: '2026-08-22',
+    title: 'The sidebar keeps what you pin',
+    changes: [
+      'The sidebar now lists the projects you have pinned, alphabetically, instead of the five you happened to open most recently. A project you rely on stays where you left it rather than sliding out of view as you work on other things.',
+      'Pin or unpin from any project’s "⋯" menu. With nothing pinned the list says so and tells you how to fill it.',
+      'Browsing all your projects now belongs entirely to the Projects tab — search, plus Recent, Shared and My Projects columns. Previously both places half-did the same job.',
+    ],
+  },
+  {
     version: '8.4.0',
     date: '2026-08-22',
     title: 'No more "you have no tasks" while your tasks load',
