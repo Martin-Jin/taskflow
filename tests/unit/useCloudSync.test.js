@@ -133,6 +133,7 @@ describe('isValidBackupPayload', () => {
     theme: 'dark',
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
+    savedViews: [],
     events: [],
     sharedProjectIds: [],
   };

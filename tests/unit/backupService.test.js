@@ -33,6 +33,7 @@ function makeSampleState() {
     theme: 'dark',
     notes: { folders: [], notes: [] },
     shortcutBindings: { addTask: 'n' },
+    savedViews: [{ id: 'v1', name: 'Overdue p1', query: 'is:overdue p1' }],
     events: [{ id: 'e1', title: 'Standup', date: '2026-07-31' }],
     sharedProjectIds: ['sp1'],
   };

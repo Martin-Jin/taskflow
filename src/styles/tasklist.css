@@ -635,3 +635,49 @@
     bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
   }
 }
+
+/* Saved-view rows in ViewFilterMenu. The delete button is a sibling of the
+   apply button rather than nested inside it, so a mis-aimed click runs the view
+   instead of deleting it — and so the apply target stays the full row width. */
+.saved-view-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.saved-view-apply {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.saved-view-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-view-delete {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  opacity: 0;
+  transition: opacity var(--motion-emphasis-duration, 0.12s) ease;
+}
+
+/* Revealed on hover/focus of the row, so a list of views reads as names rather
+   than a column of delete buttons. Always visible on touch, which has no hover. */
+.saved-view-row:hover .saved-view-delete,
+.saved-view-delete:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .saved-view-delete {
+    opacity: 1;
+  }
+}

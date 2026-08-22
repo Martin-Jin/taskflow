@@ -18,6 +18,11 @@
  * there isn't room for a title plus two separate menu triggers — desktop
  * keeps rendering ViewFilterMenu and ProjectActionsMenu as two triggers.
  *
+ * The "Views" group lists saved searches (see utils/savedViews.js) — picking
+ * one just writes its query into the search box, since a saved view IS a named
+ * query. Saving is offered only while a query is active, because there is
+ * nothing to name otherwise.
+ *
  * `onOpenManageProjects` (optional) adds a "See / manage all projects" item
  * to that same Project group — mobile-only (desktop instead gets the same
  * item folded into ProjectActionsMenu's own dropdown, see TaskListPanel).
@@ -29,12 +34,26 @@
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Check, MoreHorizontal, FolderKanban } from 'lucide-react';
+import { ChevronDown, Check, MoreHorizontal, FolderKanban, Bookmark, BookmarkPlus, X } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { TASK_STATUS_FILTERS } from '../../utils/projectConstants';
+import { sortSavedViews } from '../../utils/savedViews';
 import { ProjectActionsItems } from './ProjectActionsMenu';
 
-export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter, onChangeFilter, projectActions, onOpenManageProjects }) {
+export default function ViewFilterMenu({
+  view,
+  onChangeView,
+  viewOptions,
+  filter,
+  onChangeFilter,
+  projectActions,
+  onOpenManageProjects,
+  savedViews = [],
+  activeQuery = '',
+  onApplySavedView,
+  onSaveCurrentView,
+  onDeleteSavedView,
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -57,6 +76,13 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
       };
     },
   });
+
+  const sortedSavedViews = sortSavedViews(savedViews);
+  /* Offered only when there's a query to name, and only when it isn't already
+     saved — "Save current search" on a search that's already a view is a
+     duplicate waiting to be rejected. */
+  const trimmedQuery = activeQuery.trim();
+  const canSaveCurrent = !!trimmedQuery && !!onSaveCurrentView && !savedViews.some((v) => v.query === trimmedQuery);
 
   const currentViewLabel = viewOptions.find((v) => v.key === view)?.label || view;
   // Either kind of "Project" group item switches the trigger to the compact
@@ -140,6 +166,57 @@ export default function ViewFilterMenu({ view, onChangeView, viewOptions, filter
                   {filter === f.key && <Check size={13} />}
                 </button>
               ))}
+
+              {(sortedSavedViews.length > 0 || canSaveCurrent) && (
+                <>
+                  <p className="dashboard-customize-heading">Views</p>
+                  {sortedSavedViews.map((v) => (
+                    <div key={v.id} className="saved-view-row">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="project-actions-item view-filter-item saved-view-apply"
+                        onClick={() => {
+                          onApplySavedView?.(v);
+                          closeMenu();
+                        }}
+                        title={v.query}
+                      >
+                        <Bookmark size={13} />
+                        <span className="saved-view-name">{v.name}</span>
+                        {v.query === activeQuery.trim() && <Check size={13} />}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-icon saved-view-delete"
+                        aria-label={`Delete view ${v.name}`}
+                        onClick={(e) => {
+                          // Kept out of the apply button so a mis-aimed click
+                          // runs the view rather than deleting it.
+                          e.stopPropagation();
+                          onDeleteSavedView?.(v.id);
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {canSaveCurrent && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="project-actions-item view-filter-item"
+                      onClick={() => {
+                        onSaveCurrentView?.();
+                        closeMenu();
+                      }}
+                    >
+                      <BookmarkPlus size={13} />
+                      Save current search as a view
+                    </button>
+                  )}
+                </>
+              )}
 
               {hasProjectGroup && (
                 <>

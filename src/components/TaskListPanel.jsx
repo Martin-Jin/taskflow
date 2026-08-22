@@ -66,6 +66,7 @@ import {
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
 import { useConfirm } from '../context/ConfirmContext';
+import SaveViewModal from './Modals/SaveViewModal';
 import { useSound } from '../context/SoundContext';
 import AddTaskModal from './Modals/AddTaskModal';
 import AIQuickAddModal from './Modals/AIQuickAddModal';
@@ -176,11 +177,12 @@ export default function TaskListPanel({
   onProjectCreated,
   onSelectEvent,
 }) {
-  const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
+  const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, setSearchQuery, savedViews, setSavedViews, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const { user } = useAuth();
   const confirm = useConfirm();
+  const [savingView, setSavingView] = useState(false);
   const isMobile = useIsMobile();
   const motionEnabled = useMotionEnabled();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -734,6 +736,11 @@ export default function TaskListPanel({
               onChangeFilter={setFilter}
               projectActions={isMobile ? projectActionsProps : undefined}
               onOpenManageProjects={isMobile ? onOpenManageProjects : undefined}
+              savedViews={savedViews}
+              activeQuery={searchQuery}
+              onApplySavedView={(v) => setSearchQuery(v.query)}
+              onSaveCurrentView={() => setSavingView(true)}
+              onDeleteSavedView={(id) => setSavedViews((prev) => prev.filter((v) => v.id !== id))}
             />
             {(view === 'list' || view === 'board') && (
               <button
@@ -934,6 +941,15 @@ export default function TaskListPanel({
           )}
         </div>
       </div>
+
+      {savingView && (
+        <SaveViewModal
+          query={searchQuery}
+          existingViews={savedViews}
+          onSave={(view) => setSavedViews((prev) => [...prev, view])}
+          onClose={() => setSavingView(false)}
+        />
+      )}
     </div>
   );
 }
