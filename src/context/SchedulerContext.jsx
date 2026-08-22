@@ -14,90 +14,466 @@
  *   - tasks / blocks / sections / projects / events are all seeded from
  *     localStorage on boot and re-saved on every change, so nothing is
  *     lost on refresh.
- *   - If Todoist sync is OFF (no token configured, or the user has
- *     switched off "Keep syncing task changes to Todoist" in Settings),
- *     the initial-load effect below does NOT re-fetch from Todoist —
- *     the locally persisted `tasks` are the source of truth, full stop.
- *     This is what makes local-only mode actually local-only: without
- *     this guard, every page load would silently re-import from Todoist
- *     and clobber local edits regardless of the toggle.
- *   - If Google Calendar was connected in a previous session,
- *     `googleConnected` persists and the load effect attempts a SILENT
- *     token refresh (no popup) so the user isn't asked to sign in again
- *     every time they open the app. If the silent refresh fails (token
- *     revoked, grant expired), we fall back to `googleConnected: false`
- *     and the user just clicks "Connect" again — no error state, no
- *     forced popup on load.
- *
- * TWO-WAY TODOIST SYNC: every task/subtask/section mutation below applies
- * the change to local state immediately (so the UI and Undo/Redo never
- * wait on a network round trip), then — if the item is Todoist-sourced and
- * a token is configured — fires the matching todoistService write call in
- * the background. Failures surface as a toast rather than rolling back the
- * local edit, since silently reverting a change the user just made would
- * be more confusing than a "sync failed, retry from Todoist" notice.
- * Local-only ("manual") tasks and their subtasks are never pushed, since
- * there's no corresponding Todoist item to update.
+ *   - Todoist is a ONE-TIME IMPORT, not a live sync: nothing here ever
+ *     fetches from Todoist automatically. `importFromTodoist()` below is
+ *     the only thing that talks to Todoist's API, and it only runs when
+ *     the user explicitly triggers it from Settings. Once imported, a task
+ *     is exactly as locally-editable as any manually-created one — no
+ *     field is ever pushed back to Todoist, and re-running the import
+ *     later just upserts (updates existing imported items by id, adds new
+ *     ones) rather than wiping out local edits by replacing everything.
  *
  * RECURRING TASKS: a Task can carry `isRecurring` + `recurrenceString`
  * (captured from Todoist's `due.is_recurring` / `due.string` on import, or
  * set directly when adding/editing a local task). Completing a recurring
- * task does NOT set `isCompleted` — mirroring Todoist, where checking off a
- * recurring task just advances its due date to the next occurrence and
- * keeps it active. See `completeTask` below and `utils/recurrence.js` for
- * the local next-due-date computation, which now uses a much more
- * permissive parser (handles "every month", "monthly", "every 1 month",
- * Todoist's non-shifting "every!" marker, etc.) plus a defensive fallback
- * detector (`isRecurringDue`) so recurrence is picked up even if Todoist's
- * `is_recurring` flag is ever missing on a task that clearly repeats.
+ * task does NOT set `isCompleted` — mirroring Todoist's own behavior —
+ * instead its due date advances to the next occurrence, computed locally
+ * via `utils/recurrence.js`.
  *
- * `recurrenceString` is now also a Todoist-synced field (see
- * TODOIST_SYNCED_FIELDS below) — editing the "Repeats every N ___" control
- * in TaskDetailModal/AddTaskModal pushes the change to Todoist via its
- * natural-language `due_string` field, same as any other synced field.
+ * Google Calendar sync and Firestore cloud sync have been extracted into
+ * useGoogleCalendarSync and useCloudSync hooks respectively — see
+ * src/hooks/ for those files.
  * ============================================================================
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
-import { usePersistedState } from '../hooks/usePersistedState';
+import { usePersistedState, useLocalEditTrackedState } from '../hooks/usePersistedState';
+import { useNotificationChecker } from '../hooks/useNotificationChecker';
+import { useGoogleCalendarSync } from '../hooks/useGoogleCalendarSync';
+import { useCloudSync } from '../hooks/useCloudSync';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { useAuth } from './AuthContext';
-import { pullUserData, pushUserData } from '../services/firestoreSync';
+import { auth } from '../firebase';
+import { useTheme } from './ThemeContext';
+import { DEFAULT_NOTES, migrateLinksToNotes } from '../components/Dashboard/notesModel';
+import { playAddSound, playDeleteSound } from '../services/soundService';
+import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowed } from '../services/attachmentService';
+import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
 import { rebalance } from '../algorithms/rebalanceEngine';
-import { computeNextDueDate } from '../utils/recurrence';
+import { areDependenciesMet } from '../utils/dependencyUtils';
+import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate } from '../utils/taskFieldDerivations';
+import {
+  computeRecurringRescheduleUpdate,
+  computeRecurrenceSyncUpdates,
+  computeEnforceDueDateSyncUpdates,
+  deriveRecurrenceRule,
+  resolveCurrentOccurrenceDueDate,
+} from '../utils/recurrence';
+// The convergent recurring-task model (see utils/recurrenceState.js). Every
+// recurring completion goes through applyRecurringCompletion rather than
+// advancing dueDate/completedDates/completionHistory in place, so the same
+// occurrence completed twice — by a double-click, or by two collaborators —
+// is a no-op instead of skipping an occurrence.
+import {
+  applyRecurringCompletion,
+  computeRecurringDescendantDueDateOverrides,
+  computeRecurringDescendantState,
+  dropClosedOccurrenceOverride,
+  ensureRecurrenceAnchor,
+  planOccurrenceUncompletion,
+  planSeriesReanchor,
+  planSubtaskOccurrenceCompletion,
+  reanchorRecurringEnforceDueDateUpdates,
+} from '../utils/recurrenceState';
+import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
+import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
+import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAndPresenceForProjects } from '../services/sharedProjectService';
+import { RETENTION_DAYS_COMPLETED_TASKS, RETENTION_DAYS_DELETED_TASKS, computeCutoffMs } from '../services/dataRetention';
+import { tombstoneTasks, isStaleTombstone } from '../utils/taskTombstones';
+import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
+import { setGuestDisplayName } from '../utils/guestIdentity';
+import {
+  isSharedTask,
+  partitionTasksBySharing,
+  preserveSharedTasks,
+  isSharedSection,
+  partitionSectionsBySharing,
+  preserveSharedSections,
+  MAX_COMMENT_TOMBSTONES,
+} from '../utils/sharedTaskSync';
+import {
+  isCompletedForCurrentOccurrence,
+  areAllChildrenCompletedForCurrentOccurrence,
+  canCompact,
+  applyUpwardCompletionCascade,
+  getAllDescendants,
+} from '../utils/taskHierarchy';
+import { planPostponeUpdate } from '../utils/rescheduleHistory';
+import { planTemplateInstantiation } from '../utils/taskTemplates';
+import {
+  buildProjectTrashEntry,
+  buildSectionTrashEntry,
+  buildLabelTrashEntry,
+  pruneTrash,
+  planTrashRestore,
+} from '../utils/trash';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
   fetchProjects as fetchTodoistProjects,
-  createProject as createTodoistProject,
-  createTask as createTodoistTask,
-  updateTask as updateTodoistTask,
-  moveTask as moveTodoistTask,
-  deleteTask as deleteTodoistTask,
-  setTaskCompleted as setTodoistTaskCompleted,
-  createSubtask as createTodoistSubtask,
-  setSubtaskCompleted as setTodoistSubtaskCompleted,
-  deleteSubtask as deleteTodoistSubtask,
-  renameSubtask as renameTodoistSubtask,
-  createSection as createTodoistSection,
-  renameSection as renameTodoistSection,
-  deleteSection as deleteTodoistSection,
 } from '../services/todoistService';
-import { fetchEvents as fetchGoogleEvents, pushBlockToCalendar, initGoogleCalendar, requestAccessToken } from '../services/googleCalendarService';
-import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects } from '../services/mockData';
-import { toISODate } from '../utils/dateUtils';
+import {
+  pushEventToCalendar,
+  deleteCalendarEvent,
+  pushEventInstanceUpdate,
+  deleteCalendarEventInstance,
+} from '../services/googleCalendarService';
+import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, getMockProjects, getMockEvents } from '../services/mockData';
+import { toISODate, addDays, timeToMinutes, minutesToTime, getBrowserTimeZone } from '../utils/dateUtils';
+import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
+import { dedupeEventsByOccurrence } from '../utils/eventUtils';
 import { nextLabelColor } from '../utils/labelColor';
+import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
+import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
+import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
+import { migrateStaleRecurringRemainingHours } from '../migrations/migrateStaleRecurringRemainingHours';
+import { ensureProtectedSleepRoutine } from '../utils/protectedSleepRoutine';
 
 const SchedulerContext = createContext(null);
 
-/** Fields on a Task that have a Todoist equivalent and should be pushed on updateTask(). */
-const TODOIST_SYNCED_FIELDS = ['title', 'notes', 'priority', 'dueDate', 'estimatedHours', 'recurrenceString'];
+// Cap on simultaneously-queued bottom-corner action toasts (see
+// `actionToasts` below) — a burst of quick actions drops the oldest rather
+// than growing the stack unbounded.
+const MAX_ACTION_TOASTS = 3;
 
-const EVENTS_HORIZON_DAYS = 28;
+// How long after completing a recurring task the same task ignores another
+// completion. Recurring tasks are the only ones where a repeat click does
+// something rather than nothing: each click completes the NEXT occurrence, so
+// rapid-fire clicking walks the series into the future a day at a time. That's
+// indistinguishable, to the data model, from deliberately clearing a backlog —
+// the occurrences really are different — so it can't be prevented by the
+// idempotence in utils/recurrenceState.js and needs a UI-level guard instead.
+//
+// Deliberately short: long enough to absorb a double-click or a stuck mouse,
+// short enough that deliberately clearing several overdue occurrences in a row
+// still works at any normal clicking pace. Kept out of the data model entirely
+// so it can't affect the convergence properties that model guarantees.
+const RECURRING_COMPLETE_COOLDOWN_MS = 1000;
+
+// Cap on comments per task. `tasks` (and therefore every task's comment
+// array) lives inside the single `users/{uid}` Firestore doc that gets
+// rewritten whole on every debounced sync push, so an unbounded comment
+// thread would inflate every future sync write forever. 200 is a generous
+// round number for a personal-scale app's task discussion — reached, the add
+// is rejected with a clear error rather than silently trimming/evicting old
+// comments (which would orphan their attachments and destroy user content
+// without going through the explicit per-comment delete path).
+export const MAX_COMMENTS_PER_TASK = 200;
+
+function getDefaultNotificationSettings() {
+  return {
+    inAppEnabled: true,
+    emailEnabled: false,
+    taskStartingSoon: true,
+    taskOverdue: true,
+    taskDueToday: true,
+    startingSoonMinutes: 10,
+    timezone: getBrowserTimeZone(),
+  };
+}
+
+let localIdSequence = 0;
+function generateLocalId(prefix) {
+  localIdSequence += 1;
+  return `${prefix}_${Date.now()}_${localIdSequence}`;
+}
+
+// Matches the same short fallback used elsewhere for "no reliable duration
+// estimate" (AddTaskModal, todoistService, aiPlanService each define their
+// own copy of this same 5-minute value rather than sharing an export).
+const DEFAULT_TASK_ESTIMATED_HOURS = 5 / 60;
+
+/**
+ * Sanitizes just the two task fields whose shape assumptions cascade into
+ * either NaN/Infinity math (estimatedHours — see rebalanceEngine.js's
+ * `estimatedHours - spent`) or a hard TypeError (dependsOn — several call
+ * sites call `.some()`/`.filter()` on it) elsewhere in the app if a bad
+ * shape slips in from a UI bug, an AI-assistant plan, or a Todoist import.
+ * Not a full schema validator — just the fields already known to matter.
+ * `fallback` supplies what to use when a field is present but invalid:
+ * the app-wide default for a brand new task (buildNewTaskObject has no
+ * existing value to fall back to), or the task's own current value for an
+ * update (sanitizeTaskUpdate below) so a bad partial edit doesn't wipe out
+ * an otherwise-good existing estimate/dependency list.
+ */
+function sanitizeTaskFields(fields, fallback) {
+  const sanitized = { ...fields };
+  if ('estimatedHours' in sanitized) {
+    const hours = Number(sanitized.estimatedHours);
+    sanitized.estimatedHours = Number.isFinite(hours) && hours > 0 ? hours : fallback.estimatedHours;
+    // Shift remainingHours by however much the estimate changed, so work
+    // already done stays reflected — see deriveRemainingHoursOnEstimateChange.
+    // Only for an existing task (fallback carries remainingHours/estimatedHours
+    // only when sanitizing an update, not a brand new task) whose estimate
+    // actually changed, and only when the caller didn't already explicitly
+    // set remainingHours itself in this same update (that's an intentional
+    // override, e.g. completing/uncompleting work, and must win).
+    if (
+      'remainingHours' in fallback &&
+      sanitized.estimatedHours !== fallback.estimatedHours &&
+      !('remainingHours' in sanitized)
+    ) {
+      sanitized.remainingHours = deriveRemainingHoursOnEstimateChange(
+        fallback.remainingHours,
+        fallback.estimatedHours,
+        sanitized.estimatedHours
+      );
+    }
+  }
+  if ('dependsOn' in sanitized) {
+    sanitized.dependsOn = Array.isArray(sanitized.dependsOn)
+      ? sanitized.dependsOn.filter((id) => typeof id === 'string')
+      : fallback.dependsOn;
+  }
+  // The postponement counter is DERIVED — planPostponeUpdate owns it, and it's
+  // applied after this sanitizer runs (see updateTask). Dropping it from any
+  // incoming update makes that ownership structural instead of a convention:
+  // several callers pass update objects they didn't fully author (bulkEditEngine
+  // spreads a caller-supplied patch, and aiPlanService's contentFields is a
+  // DENY-list, so a model emitting `postponeCount` would otherwise write it
+  // straight through). A future "reset this count" affordance would need to
+  // bypass this rather than route through updateTask.
+  delete sanitized.postponeCount;
+  delete sanitized.lastPostponedAt;
+  return sanitized;
+}
+
+/** sanitizeTaskFields for a brand new task — no existing task to fall back to, so an invalid value uses the app-wide default instead. */
+function sanitizeNewTaskFields(taskInput) {
+  return sanitizeTaskFields(taskInput, { estimatedHours: DEFAULT_TASK_ESTIMATED_HOURS, dependsOn: [] });
+}
+
+/** sanitizeTaskFields for a partial update — an invalid value falls back to the task's own current (already-sanitized) value rather than resetting it. */
+function sanitizeTaskUpdate(updates, existingTask) {
+  return sanitizeTaskFields(updates, existingTask);
+}
+
+function buildNewTaskObject(taskInput, id) {
+  const sanitizedInput = sanitizeNewTaskFields(taskInput);
+  const merged = {
+    id,
+    remainingHours: sanitizedInput.estimatedHours,
+    isLocked: false,
+    isCompleted: false,
+    isRecurring: false,
+    recurrenceString: null,
+    priority: 'medium',
+    minChunkHours: 0.5,
+    maxChunkHours: 4,
+    dependsOn: [],
+    isPassive: false,
+    earliestDate: null,
+    enforceDueDate: false,
+    fixedTime: null,
+    link: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    source: 'manual',
+    ...sanitizedInput,
+  };
+  const withRule = { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
+  // A task created as recurring needs its series anchor from the outset, or it
+  // would reach the derive path un-anchored and never advance — see
+  // utils/recurrenceState.js. No-op for the (overwhelmingly common)
+  // non-recurring case.
+  return { ...withRule, ...ensureRecurrenceAnchor(withRule) };
+}
+
+/**
+ * Splits a true-RRULE master event's series in two at `occurrenceDate`,
+ * implementing 'following' ("this and all future occurrences") scope for
+ * both updateEvent and setEventIgnored below. A true-RRULE series (as
+ * opposed to a "synthetic" one — see googleCalendarService.withSyntheticSeries)
+ * is stored as exactly ONE row (the master, `seriesId === id`), so unlike a
+ * synthetic series' scope fan-out (below) there's no second row to just
+ * filter/map over — a new one has to be created.
+ *   - The OLD master keeps its own id/googleEventId; its recurrenceRule is
+ *     truncated to end the day before occurrenceDate (see
+ *     truncateRuleUntil), so it now only produces occurrences strictly
+ *     BEFORE the split.
+ *   - A NEW master is created dated `occurrenceDate` with `fieldUpdates`
+ *     applied on top of a clone of the old master, re-anchored via
+ *     rebaseRuleForSplit (same FREQ/INTERVAL/BYDAY, carrying over the
+ *     original series' own end bound if it had one). It has no
+ *     googleEventId yet — from Google's point of view this is a brand new
+ *     series (pushEventToCalendar will `insert`, not `update`).
+ *   - Only override entries dated >= occurrenceDate are carried onto the
+ *     new master (earlier ones belong to occurrences the old master still
+ *     owns).
+ * `newMasterId` is generated by the caller (not internally via e.g.
+ * `Date.now()`) and threaded through explicitly — updateEvent below calls
+ * this indirectly (via applyEventScopeUpdate) TWICE per edit for unrelated
+ * reasons (once for the actual state write, once — against a possibly
+ * different `prevEvents` snapshot — to compute what to push to Google), and
+ * both calls need to agree on the new row's id or the post-push
+ * googleEventId patch-back would target a row that doesn't match what was
+ * actually committed to state.
+ * @returns {{events: Array, newMaster: Object, updatedOldMaster: Object}}
+ */
+function splitSeriesAtOccurrence(prevEvents, master, occurrenceDate, fieldUpdates, newMasterId) {
+  const dayBefore = addDays(occurrenceDate, -1);
+  const updatedOldMaster = { ...master, recurrenceRule: truncateRuleUntil(master.recurrenceRule, dayBefore) };
+
+  const carriedOverrides = {};
+  for (const [date, ov] of Object.entries(master.overrides || {})) {
+    if (date >= occurrenceDate) carriedOverrides[date] = ov;
+  }
+
+  const newMaster = {
+    ...master,
+    ...fieldUpdates,
+    id: newMasterId,
+    date: occurrenceDate,
+    recurrenceRule: rebaseRuleForSplit(master.recurrenceRule, master.date, occurrenceDate),
+    overrides: carriedOverrides,
+    googleEventId: null, // a new series from Google's POV
+  };
+  newMaster.seriesId = newMaster.id; // matches googleCalendarService's "master's own id doubles as its seriesId" convention
+
+  const events = prevEvents.map((e) => (e.id === master.id ? updatedOldMaster : e)).concat(newMaster);
+  return { events, newMaster, updatedOldMaster };
+}
+
+/**
+ * Shared by updateEvent (state update) and its Google-push side effect
+ * below — applies `stamped` field updates onto `eventId`, optionally
+ * spreading across its recurring series per the same 'this'/'following'/
+ * 'all' scope semantics setEventIgnored uses. Pulled out as a standalone
+ * function (rather than only living inside a setEvents updater) so
+ * updateEvent can compute the resulting event data to push to Google
+ * without waiting for React to actually commit the state update.
+ *
+ * `eventId` may be a VIRTUAL id (`${masterId}::${occurrenceDate}`, see
+ * recurrenceExpansion.resolveEventId) when the target is a single
+ * occurrence of a true-RRULE Google series stored as one master row (see
+ * that module's doc comment) — resolved back to the real master row before
+ * anything is touched. For a real id (manual event, or a "synthetic"
+ * series' own real per-occurrence rows — see googleCalendarService), scope
+ * fan-out behaves exactly as before this fix.
+ *
+ * @param {string} [splitId] - For scope 'following' on a true-RRULE
+ *   occurrence, the id to give the newly-created master (see
+ *   splitSeriesAtOccurrence) — threaded in by the caller rather than
+ *   generated here so that updateEvent's two separate calls to this
+ *   function for the same logical edit (one for the state write, one to
+ *   compute Google push targets) agree on the new row's id. Unused for any
+ *   other scope/event shape.
+ * @returns {{events: Array, pushTargets: Array}} `pushTargets` lists every
+ *   event object that changed and would need pushing to Google — for a
+ *   plain edit or 'all' scope this is just the one edited/master row; for a
+ *   'following' split on a true-RRULE series it's BOTH the truncated old
+ *   master (an update — its Google-side RRULE must also gain the UNTIL, or
+ *   the next pull would resurrect the un-truncated series over the split,
+ *   per eventSyncService's "Google always wins on pull" policy) and the
+ *   newly-created master (an insert). The caller (updateEvent) decides
+ *   whether pushTargets is actually pushed — a 'this'-scope edit on a
+ *   true-RRULE occurrence is local-only (see updateEvent's own comment).
+ */
+function applyEventScopeUpdate(prevEvents, eventId, stamped, scope, splitId) {
+  const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
+
+  if (!isVirtual) {
+    const target = prevEvents.find((e) => e.id === eventId);
+    if (!target || scope === 'this' || !target.seriesId) {
+      const events = prevEvents.map((e) => (e.id === eventId ? { ...e, ...stamped } : e));
+      return { events, pushTargets: [events.find((e) => e.id === eventId)].filter(Boolean) };
+    }
+    const events = prevEvents.map((e) => {
+      if (e.seriesId !== target.seriesId) return e;
+      if (scope === 'following' && e.date < target.date) return e;
+      return { ...e, ...stamped };
+    });
+    return { events, pushTargets: [] }; // a synthetic (non-RRULE) series has no single "master" record to push
+  }
+
+  // True-RRULE occurrence: exactly one real row (the master) exists.
+  const master = prevEvents.find((e) => e.id === masterId);
+  if (!master) return { events: prevEvents, pushTargets: [] };
+
+  if (scope === 'all') {
+    const updatedMaster = { ...master, ...stamped };
+    const events = prevEvents.map((e) => (e.id === masterId ? updatedMaster : e));
+    return { events, pushTargets: [updatedMaster] };
+  }
+
+  if (scope === 'following') {
+    const { events, newMaster, updatedOldMaster } = splitSeriesAtOccurrence(prevEvents, master, occurrenceDate, stamped, splitId);
+    return { events, pushTargets: [updatedOldMaster, newMaster] };
+  }
+
+  // scope === 'this' — folds the edit into the master's per-occurrence
+  // overrides map instead of touching its own top-level fields, so it only
+  // ever affects this one date. Never pushed — see updateEvent's comment.
+  const updatedMaster = {
+    ...master,
+    overrides: { ...(master.overrides || {}), [occurrenceDate]: { ...(master.overrides?.[occurrenceDate]), ...stamped } },
+  };
+  const events = prevEvents.map((e) => (e.id === masterId ? updatedMaster : e));
+  return { events, pushTargets: [] };
+}
+/**
+ * All ids of `taskId`'s descendants (children, grandchildren, ...) via the
+ * `parentId` chain — shared by completeTask's cascade (reset a recurring
+ * parent's whole subtree / complete a non-recurring parent's whole subtree)
+ * and deleteTask's cascade-delete, so a parent's subtree always moves
+ * together instead of leaving orphaned or inconsistent children behind.
+ *
+ * Nothing in the app's own UI can create a `parentId` cycle (it's only ever
+ * set once, at creation, and never re-parented), but a `visited` guard costs
+ * nothing and stops a hand-edited/corrupted backup restore from hanging the
+ * tab in an infinite loop.
+ */
+function getDescendantIds(taskId, tasks) {
+  const childrenByParentId = new Map();
+  for (const t of tasks) {
+    if (!t.parentId) continue;
+    const siblings = childrenByParentId.get(t.parentId) || [];
+    siblings.push(t.id);
+    childrenByParentId.set(t.parentId, siblings);
+  }
+  const descendants = [];
+  const visited = new Set([taskId]);
+  const queue = [...(childrenByParentId.get(taskId) || [])];
+  while (queue.length > 0) {
+    const id = queue.pop();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    descendants.push(id);
+    queue.push(...(childrenByParentId.get(id) || []));
+  }
+  return descendants;
+}
 
 export function SchedulerProvider({ children }) {
-  const { user } = useAuth();
+  const { user, authLoading } = useAuth();
+
+  // Ref-based indirection so useGoogleCalendarSync (constructed below, before
+  // queueDueDateRebalance exists later in this component) can still trigger
+  // an auto-rebalance when Google Calendar events change/import — populated
+  // once queueDueDateRebalance itself is defined, called via a stable wrapper
+  // so the hook's own dependency array never needs to change.
+  const queueDueDateRebalanceRef = useRef(() => {});
+  const triggerDueDateRebalance = useCallback(() => queueDueDateRebalanceRef.current(), []);
+  // Same forward-reference problem, same fix: useCloudSync (constructed
+  // below, before runRebalance exists later in this component) needs to
+  // trigger a rebalance after a per-task cross-device merge changes the task
+  // set (see useCloudSync.js's applyRemoteData/planRemoteDataMerge) so
+  // `blocks` regenerates fresh from the merged tasks instead of staying a
+  // stale mix of two devices' block arrays. Backfilled once the real
+  // runRebalance is defined — reuses the SAME runRebalanceRef the debounced
+  // due-date-rebalance queue already maintains (see queueDueDateRebalance
+  // below), since that ref is already kept current via its own effect and
+  // read from async/deferred callers exactly like this one.
+  const runRebalanceRef = useRef(() => {});
+  const triggerRebalanceFromMerge = useCallback(() => runRebalanceRef.current(), []);
+  // Owned live by ThemeContext (which wraps this provider — see App.jsx) —
+  // only read/written here so the backup payload (exportBackup/
+  // createCloudBackup, both in useCloudSync) can capture it and a restore
+  // (importBackup/restoreCloudBackup, also in useCloudSync) can apply it back.
+  // accentSeed rides along for exactly the same reason — its LIVE cross-device
+  // sync is also owned by ThemeContext directly (see that file), same as theme.
+  const { theme, setTheme, accentSeed, setAccentSeed } = useTheme();
 
   // tasks/blocks: seeded from whatever was last saved locally (falling back
   // to mock data on first-ever run). Whether the initial-load effect below
@@ -105,61 +481,424 @@ export function SchedulerProvider({ children }) {
   // (see the effect) — `blocks` (calendar placements) have no Todoist
   // equivalent and are NEVER overwritten by that effect; the persisted
   // copy is always the source of truth for them.
-  const { state, commit, undo, redo, canUndo, canRedo, currentActionLabel } = useHistoryState({
+  const { state, commit, commitAndGet, undo: undoHistory, redo: redoHistory, canUndo, canRedo, currentActionLabel, currentActionId, overwritePresent} = useHistoryState({
     tasks: loadPersisted('tasks', null) ?? getMockTasks(),
     blocks: loadPersisted('blocks', null) ?? [],
   });
+  // Mirrors currentActionId for useCloudSync's async pull/listener effects
+  // (see their own comments there) — they need to detect "did a genuinely
+  // new local commit land while I was waiting on the network" from inside
+  // an async callback/closure, where the `currentActionId` render value
+  // would otherwise be stale.
+  //
+  // Assigned directly in the render body (NOT inside a useEffect) — same
+  // "assign in render, not effect" pattern useGoogleCalendarSync.js already
+  // uses for eventsRef/tasksRef/blocksRef, and for the same reason: a
+  // useEffect only flushes AFTER commit, leaving a real (if normally narrow)
+  // window where an async callback racing a fresh commit() could read the
+  // PRE-commit action id and wrongly conclude "no local edit landed" — the
+  // exact failure mode hasLocalEditRaced exists to catch. That window widens
+  // under load (many concurrent effects/timers deferring when a passive
+  // effect actually flushes — exactly the conditions a signed-in, cloud-sync
+  // session with several polling/debounced effects running at once
+  // produces), so a plain useEffect here was never actually safe, just
+  // usually fast enough not to be noticed.
+  const currentActionIdRef = useRef(currentActionId);
+  currentActionIdRef.current = currentActionId;
+
+  // Parallel to currentActionIdRef, but for LOCAL edits to cloud-synced
+  // fields that never go through commit()/overwritePresent at all — every
+  // field below EXCEPT tasks/blocks (sections/projects/labels/routines/
+  // rules/soundEnabled/soundVolume/animationsEnabled/notificationSettings/
+  // notes/shortcutBindings/sharedProjectIds), since none of those are
+  // undo-stack actions.
+  //
+  // Bumped automatically by useLocalEditTrackedState (see that hook's doc
+  // comment in usePersistedState.js) — every one of the fields above is
+  // declared through it, so EVERY mutator for EVERY one of them (CRUD
+  // actions, migrations, self-healing effects) bumps this ref for free,
+  // rather than each call site needing to remember to do it manually.
+  //
+  // This started life narrower: a bug was found where sharing/joining a
+  // project (shareProject/joinSharedProject) wrote projects/sharedProjectIds
+  // via plain setState, invisible to useCloudSync's race guard
+  // (hasLocalEditRaced, which only watches currentActionId) — so a cloud-sync
+  // pull/listener snapshot landing in the narrow window right after a
+  // share/join (before that write's own debounced push confirms) could
+  // wholesale-revert the just-shared/just-joined project via
+  // planRemoteDataMerge's plain pickValid merge, which has no per-item "is
+  // this newer" signal the way tasks does. The initial fix bumped this ref
+  // manually inside just those two call sites — but EVERY OTHER mutator for
+  // EVERY one of the fields above had (and, before useLocalEditTrackedState,
+  // would keep having) the exact same gap: e.g. addProject/renameProject/
+  // deleteProject/togglePinProject on an ordinary PERSONAL project (not
+  // shared at all) were just as invisible to this race guard, which is what
+  // let a stale sync silently revert a brand-new project on another device.
+  // useLocalEditTrackedState closes that gap structurally instead of per call
+  // site — see its own doc comment for the tracked-vs-raw setter split that
+  // keeps the sync engine's OWN writes from tripping this same ref.
+  //
+  // Bumped (not set to a fixed value) so two edits in a row are each
+  // individually detectable, mirroring how currentActionId changing at all
+  // (not to what) is what hasLocalEditRaced checks.
+  const localNonUndoEditIdRef = useRef(0);
+
+  // Bottom-corner "Task added"/"Event saved"-style toasts with an inline
+  // Undo, replacing the old always-on topbar text label. A small queue
+  // rather than a single slot, so two toast-producing actions in quick
+  // succession (e.g. add an event, then complete a task) each get their own
+  // Undo opportunity instead of the newer one silently overwriting the
+  // older. Capped at MAX_ACTION_TOASTS, dropping the oldest, so a burst of
+  // actions can't paper the corner of the screen. `currentActionId` only
+  // changes to a value we haven't seen before when commit() lands a
+  // genuinely new action — undo/redo revisit an id already in this set (so
+  // they clear any still-showing history toast instead of popping a new
+  // one), and the cloud-sync `overwritePresent` path never touches it at all.
+  const [actionToasts, setActionToasts] = useState([]);
+  const seenActionIdsRef = useRef(new Set([currentActionId]));
+  const pushActionToast = useCallback(
+    (toast) => setActionToasts((prev) => [...prev, toast].slice(-MAX_ACTION_TOASTS)),
+    []
+  );
+  const dismissActionToast = useCallback((id) => setActionToasts((prev) => prev.filter((t) => t.id !== id)), []);
+  useEffect(() => {
+    // overwritePresent() (cloud sync / initial load) mints a fresh
+    // `sync_...` id every time rather than reusing one we've already seen,
+    // so it can't be caught by the "seen before" check below — skip it
+    // explicitly instead, or every sync would pop a stale Undo toast.
+    if (currentActionId.startsWith('sync_') || seenActionIdsRef.current.has(currentActionId)) {
+      seenActionIdsRef.current.add(currentActionId);
+      // Only clear the history-commit toast (no `.undo` of its own — it
+      // relies on the shared undo()/redo() below), not any independent
+      // event-undo toasts still queued.
+      setActionToasts((prev) => prev.filter((t) => t.undo));
+      return;
+    }
+    seenActionIdsRef.current.add(currentActionId);
+    pushActionToast({ id: currentActionId, label: currentActionLabel });
+  }, [currentActionId, currentActionLabel, pushActionToast]);
 
   // Pure user preferences — persisted verbatim, no Todoist/Google
   // equivalent to fall back on, so these must survive a refresh or every
-  // setting (work hours, buffer days, routines, sync toggle...) would
-  // silently reset each time the app is opened.
-  const [routines, setRoutines] = usePersistedState('routines', getDefaultRoutines);
-  const [rules, setRules] = usePersistedState('rules', getDefaultRules);
-  const [taskSyncEnabled, setTaskSyncEnabled] = usePersistedState('taskSyncEnabled', true);
+  // setting (work hours, buffer days, routines...) would silently reset
+  // each time the app is opened.
+  //
+  // Every field below runs through useLocalEditTrackedState (see its doc
+  // comment) rather than being handed usePersistedState's setter directly:
+  // that gives each field TWO setters — a tracked one (bumps
+  // localNonUndoEditIdRef so useCloudSync's race guard notices a local edit
+  // to it, same as every other setter below) exposed to ordinary app code via
+  // the context value, and the original raw/untracked one (named `*Raw`)
+  // that's passed into useCloudSync so ITS OWN application of remote/backup
+  // data is never mistaken for a local edit racing itself.
+  const [routines, setRoutines, setRoutinesRaw] = useLocalEditTrackedState(
+    usePersistedState('routines', getDefaultRoutines),
+    localNonUndoEditIdRef
+  );
+  const [rules, setRules, setRulesRaw] = useLocalEditTrackedState(usePersistedState('rules', getDefaultRules), localNonUndoEditIdRef);
+  // Sound effect settings — synced/backed-up siblings of routines/rules (see
+  // BACKUP_FIELDS) rather than SoundContext's own local-only state, so they
+  // follow the user across devices and survive a backup restore like every
+  // other setting. SoundContext (rendered inside this provider) just reads
+  // these via useScheduler() instead of maintaining an independent copy.
+  const [soundEnabled, setSoundEnabled, setSoundEnabledRaw] = useLocalEditTrackedState(
+    usePersistedState('soundEnabled', true),
+    localNonUndoEditIdRef
+  );
+  const [soundVolume, setSoundVolume, setSoundVolumeRaw] = useLocalEditTrackedState(
+    usePersistedState('soundVolume', 0.5),
+    localNonUndoEditIdRef
+  );
+  // Global animation toggle — same synced-setting treatment as sound above.
+  // Applied to the DOM via the effect below (mirrors ThemeContext's
+  // data-theme attribute) so global.css can key off it.
+  const [animationsEnabled, setAnimationsEnabled, setAnimationsEnabledRaw] = useLocalEditTrackedState(
+    usePersistedState('animationsEnabled', true),
+    localNonUndoEditIdRef
+  );
+  // Notification settings (TODO.md #10). In-app firing logic lives in
+  // useNotificationChecker (Phase 2); emailEnabled is inert client-side and
+  // only takes effect via the self-hosted notify-worker GitHub Actions job
+  // (Phase 3, see notify-worker/README.md) — a single fixed recipient set in
+  // that workflow, not a per-account email. Kept as one object (rather
+  // than separate usePersistedState calls per toggle) since these are all
+  // facets of a single feature that's always read/written together — same
+  // synced-setting treatment as sound/animations above, following it through
+  // the same list of places (useCloudSync's applyRemoteData/applyBackupPayload,
+  // its cloud-push payload, and the context value below), plus BACKUP_FIELDS
+  // in backupService.js.
+  const [notificationSettings, setNotificationSettings, setNotificationSettingsRaw] = useLocalEditTrackedState(
+    usePersistedState('notificationSettings', getDefaultNotificationSettings),
+    localNonUndoEditIdRef
+  );
 
-  // Whether the user has connected Google Calendar in *some* previous
-  // session. The actual OAuth access token is short-lived and lives only
-  // in googleCalendarService's module state (tokens shouldn't be persisted
-  // to localStorage), but THIS flag persisting is what lets the load
-  // effect know it should attempt a silent re-auth instead of requiring a
-  // manual "Connect" click every time.
-  const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
+  // Keep notificationSettings.timezone resynced to the browser's own IANA
+  // timezone on every load — covers both an existing user who predates this
+  // field (it's simply undefined until this runs once) and a returning user
+  // who's switched devices or traveled since their last sync. Deliberately
+  // unconditional (not gated on `user`) so it applies for signed-out/local-
+  // only usage too. Runs before the cloud-sync effects further down, so a
+  // remote pull that follows (see applyRemoteData) still gets the last word
+  // for a signed-in user — it re-applies this same detected value there too,
+  // ensuring the freshly-detected browser zone always wins over whatever's
+  // stored locally or in the cloud, rather than a stale value from another
+  // device sticking around.
+  useEffect(() => {
+    const detected = getBrowserTimeZone();
+    setNotificationSettings((prev) => (prev.timezone === detected ? prev : { ...prev, timezone: detected }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-animations', animationsEnabled ? 'on' : 'off');
+  }, [animationsEnabled]);
+
+  // Folder-organized sticky notes (see Dashboard/NotesCard.jsx) — lifted up
+  // here (rather than that component's own local usePersistedState) so this
+  // user-created content follows them across devices and survives a backup
+  // restore, same as routines/rules/sound settings.
+  //
+  // ONE-TIME MIGRATION — safe to delete this lazy initializer's fallback
+  // (and just pass DEFAULT_NOTES directly) once no user's localStorage can
+  // still have data under the old `pinnedLinks` key, i.e. once every active
+  // user has loaded a version with this migration at least once. Reads the
+  // old bookmark-style pinned-links shape directly (bypassing usePersistedState,
+  // which only reads the *new* 'notes' key) and converts it once; from then
+  // on 'notes' exists and this branch is never taken again.
+  const [notes, setNotes, setNotesRaw] = useLocalEditTrackedState(
+    usePersistedState('notes', () => {
+      const legacy = loadPersisted('pinnedLinks', null);
+      return legacy ? migrateLinksToNotes(legacy) : DEFAULT_NOTES;
+    }),
+    localNonUndoEditIdRef
+  );
+  // Custom keyboard-shortcut rebindings — the SOURCE OF TRUTH for these still
+  // lives in localStorage under this exact same key, written directly by
+  // useKeyboardShortcuts.js's setShortcutBinding/resetShortcutBinding (its
+  // global keydown listener deliberately reads localStorage fresh on every
+  // keydown, not through React state/context, for hot-path performance —
+  // see that file's doc comment). This is a React-state MIRROR of that same
+  // localStorage entry, kept in sync by ShortcutsModal.jsx after every write,
+  // purely so it can be pushed/pulled/backed-up like every other setting.
+  const [shortcutBindings, setShortcutBindings, setShortcutBindingsRaw] = useLocalEditTrackedState(
+    usePersistedState('shortcutBindings', {}),
+    localNonUndoEditIdRef
+  );
+  /* Named search queries (see utils/savedViews.js). Synced rather than
+     device-local, unlike the anonymous view/filter SELECTION beside it: a
+     one-off filter choice is transient UI state, but a view the user bothered
+     to name is data they'd be annoyed to lose and would expect to find on
+     their phone. Per CLAUDE.md's Backups rule that makes it a BACKUP_FIELDS
+     entry with a matching path in every sync function. */
+  const [savedViews, setSavedViews, setSavedViewsRaw] = useLocalEditTrackedState(
+    usePersistedState('savedViews', []),
+    localNonUndoEditIdRef
+  );
+
+  /* Reusable shapes of work (see utils/taskTemplates.js). Synced for the same
+     reason savedViews is — a template someone built by hand is data, not a UI
+     preference — so it carries a BACKUP_FIELDS entry and a path through every
+     sync function. Bounded at both levels (MAX_TEMPLATES, and
+     MAX_TEMPLATE_TASKS per template) rather than time-pruned: a named template
+     is meant to be kept until deleted. */
+  const [taskTemplates, setTaskTemplates, setTaskTemplatesRaw] = useLocalEditTrackedState(
+    usePersistedState('taskTemplates', []),
+    localNonUndoEditIdRef
+  );
+
+  /* Recoverable deletes of projects/sections/labels (see utils/trash.js).
+     Undo covers only tasks and blocks, so these were permanent; this is the
+     safety net. Synced like the collections above — the misclick and the
+     recovery needn't happen on the same device — and genuinely PRUNED rather
+     than merely capped, since unlike a saved view or a template a trash entry
+     has a natural shelf life (TRASH_RETENTION_DAYS). */
+  const [trash, setTrash, setTrashRaw] = useLocalEditTrackedState(
+    usePersistedState('trash', []),
+    localNonUndoEditIdRef
+  );
+
+  // When the last one-time Todoist import ran, and how many tasks it
+  // touched — shown as a status line in Settings so a re-import isn't a
+  // total mystery each time ("last imported 3 tasks, 2 days ago").
+  const [lastTodoistImport, setLastTodoistImport] = usePersistedState('lastTodoistImport', null);
+
+  // Guards the one-time migrateBlockedTimeToEvents backfill below so it only
+  // ever runs once per device instead of re-running (harmlessly, but
+  // pointlessly) on every load. See src/migrations/migrateBlockedTimeToEvents.js.
+  const [blockedTimeMigrationDone, setBlockedTimeMigrationDone] = usePersistedState('blockedTimeMigrationDone', false);
+
+  // Guards the one-time migrateSubtasksToTasks backfill below — see
+  // src/migrations/migrateSubtasksToTasks.js for why (the old nested
+  // Task.subtasks array became standalone Tasks linked by parentId).
+  const [subtasksMigrationDone, setSubtasksMigrationDone] = usePersistedState('subtasksMigrationDone', false);
+
+  // Guards the one-time migrateRecurrenceConsistency backfill below — see
+  // src/migrations/migrateRecurrenceConsistency.js (parent/sub-task
+  // recurrence used to be able to drift out of sync; addTask/updateTask now
+  // keep them in sync going forward, this just catches up existing data).
+  const [recurrenceConsistencyMigrationDone, setRecurrenceConsistencyMigrationDone] = usePersistedState(
+    'recurrenceConsistencyMigrationDone',
+    false
+  );
+
+  // Guards the one-time migrateRecurrenceState backfill below — see
+  // src/migrations/migrateRecurrenceState.js (recurring tasks gained a
+  // commutative completedOccurrences/skippedThrough source of truth, with
+  // dueDate/completedDates/completionHistory derived from it).
+  const [recurrenceStateMigrationDone, setRecurrenceStateMigrationDone] = usePersistedState(
+    'recurrenceStateMigrationDone',
+    false
+  );
+
+  // Guards the one-time migrateStaleRecurringRemainingHours backfill below —
+  // see src/migrations/migrateStaleRecurringRemainingHours.js (a recurring
+  // task that became recurring while already isCompleted/remainingHours: 0
+  // used to stay stuck there forever).
+  const [staleRecurringRemainingHoursMigrationDone, setStaleRecurringRemainingHoursMigrationDone] = usePersistedState(
+    'staleRecurringRemainingHoursMigrationDone',
+    false
+  );
 
   // events: seeded from local storage so a refresh doesn't blank the
-  // calendar grid while the silent Google re-auth (below) is in flight, or
-  // permanently if Google Calendar isn't configured at all (mock events
-  // persist too, which is fine — they're deterministic from `mockData.js`
-  // regardless).
-  const [events, setEvents] = useState(() => loadPersisted('events', null) ?? []);
+  // calendar grid while the silent Google re-auth (below) is in flight,
+  // falling back to mock data on a genuine first-ever run (no persisted key
+  // at all) same as tasks/sections/projects above — see AuthContext.jsx's
+  // logout() for why that fallback is deliberately NOT re-triggered on every
+  // sign-out (it persists an empty `events` array there for the same reason
+  // it already does for tasks/blocks).
+  const [events, setEvents] = useState(() => dedupeEventsByOccurrence(loadPersisted('events', null) ?? getMockEvents()));
 
-  // sections/projects: same idea as tasks — seeded from local storage so a
-  // refresh doesn't wipe locally-created boards/sections when Todoist isn't
-  // configured (or sync is paused), but overwritten by the Todoist fetch
-  // below whenever that sync is actually active.
-  const [sections, setSections] = useState(() => loadPersisted('sections', null) ?? getMockSections());
-  const [projects, setProjects] = useState(() => loadPersisted('projects', null) ?? getMockProjects());
-  // labels: app-local tags (see types/index.js's Label typedef) — no Todoist
-  // equivalent, so unlike sections/projects this is never overwritten by the
-  // Todoist load effect below.
-  const [labels, setLabels] = useState(() => loadPersisted('labels', null) ?? []);
+  // sections/projects: same idea as tasks — seeded from local storage, and
+  // only ever touched by importFromTodoist's upsert-merge (see below), not
+  // by anything that runs automatically on load.
+  //
+  // Same useLocalEditTrackedState treatment as the usePersistedState-backed
+  // settings above (see that hook's doc comment) — these four are plain
+  // useState rather than usePersistedState (their persistence needs its own
+  // effect further down, e.g. to strip shared items before saving), but the
+  // tracked/raw split applies identically regardless of which state hook
+  // backs a field.
+  const [sections, setSections, setSectionsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('sections', null) ?? getMockSections()),
+    localNonUndoEditIdRef
+  );
+  const [projects, setProjects, setProjectsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('projects', null) ?? getMockProjects()),
+    localNonUndoEditIdRef
+  );
+  // labels: app-local tags (see types/index.js's Label typedef) — Todoist
+  // does have its own label concept, and importFromTodoist maps a task's
+  // Todoist labels onto these (creating any that don't exist yet by name),
+  // but nothing here is ever pushed back to Todoist.
+  const [labels, setLabels, setLabelsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('labels', null) ?? []),
+    localNonUndoEditIdRef
+  );
+  // sharedProjectIds: ids of Collaborative Projects (Firestore
+  // `sharedProjects/{projectId}`) this user is a member of — just a pointer
+  // list so joined projects re-list on every device and survive a restore;
+  // the projects' actual content lives in Firestore, not here (see
+  // backupService.js's SHARED PROJECTS doc comment above BACKUP_FIELDS).
+  const [sharedProjectIds, setSharedProjectIds, setSharedProjectIdsRaw] = useLocalEditTrackedState(
+    useState(() => loadPersisted('sharedProjectIds', null) ?? []),
+    localNonUndoEditIdRef
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  // Separate from isSyncing — Todoist import / Google push / cloud "Sync
+  // now" are all conceptually "talk to a third party", while backups are
+  // TaskFlow talking to its own storage. Keeping them distinct avoids a
+  // Backups button reading "Syncing…" (or vice versa) if a user ever
+  // triggers both around the same time.
+  // Busy flag specifically for the cloud-backup create/restore actions below
+  // (createCloudBackup/restoreCloudBackup, both from useCloudSync) — that
+  // hook doesn't track its own busy state for these, so it's tracked here,
+  // right around the two call sites that wrap them.
+  const [isBackingUp, setIsBackingUp] = useState(false);
   const [lastOverflow, setLastOverflow] = useState([]);
   const [notification, setNotification] = useState(null);
+  // Ephemeral, transient UI state for the "View details" flow off a
+  // rebalance toast (see runRebalance below) — not persisted/backed up, just
+  // the enriched overflow list (each entry's `reason` describes WHY that
+  // task couldn't be scheduled) for SchedulingConflictsModal to render.
+  const [schedulingConflicts, setSchedulingConflicts] = useState([]);
+  const [schedulingConflictsModalOpen, setSchedulingConflictsModalOpen] = useState(false);
+  // Ephemeral cross-component "jump to a Settings section" signal — not
+  // persisted/synced/backed-up, just a bumped-counter request (mirrors the
+  // addTaskSignal pattern in App.jsx) so components outside SettingsPanel can
+  // switch to the Settings tab and scroll to a specific section.
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState(null);
 
+  const requestSettingsSection = useCallback((section) => {
+    setSettingsSectionRequest((prev) => ({ section, requestId: prev ? prev.requestId + 1 : 1 }));
+  }, []);
+
+  // `tasks` here is intentionally the RAW array, tombstones and all — nearly
+  // every mutator below reads it, mutates it, and hands the result straight
+  // back into commit()/setState (e.g. `commit({ tasks, blocks: newBlocks })`
+  // in the block-CRUD actions further down); if this binding were pre-
+  // filtered, every one of those passthrough commits would silently drop
+  // every tombstone from state on its next unrelated write. `visibleTasks`
+  // below is the ONLY place tombstones are filtered out, and it's used
+  // solely for what's exposed to the rest of the app (`value.tasks`) and for
+  // the notification checker (no reason to notify about a deleted task) —
+  // see its own comment for why this is safe and where the line is drawn.
   const { tasks, blocks } = state;
+
+  // The tombstone-aware view of `tasks` handed to every component/hook OUTSIDE
+  // this file (search, board, list, scheduler eligibility, dependency/reparent
+  // pickers, dashboard stats, etc. — all consume `tasks` via useScheduler(),
+  // which returns `value` below) plus useNotificationChecker just under this.
+  // Filtering ONCE here means none of those ~10+ consumers need their own
+  // `!t.deletedAt` check — a tombstoned task simply never appears to them,
+  // the same way a tombstoned task is already invisible today (it's just
+  // "deleted" from their point of view).
+  //
+  // CRITICAL: this filtering must NEVER reach `stateRef.current` (mirrors the
+  // full, unfiltered `state` — see the effect below), the raw `tasks` binding
+  // above (used internally throughout this file, including every commit()
+  // passthrough), or anything persisted/synced (savePersisted('tasks', ...),
+  // cloudSyncState.tasks) — the whole point of a tombstone is that the
+  // sync/merge layer (built in a later step) and local persistence NEED to
+  // see it; only the rendered-UI-facing value below hides it.
+  const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks]);
+
+  // In-app notification checker (TODO.md #10, Phase 2) — scans tasks/blocks
+  // on an interval and fires a native Notification (or Toast fallback) per
+  // notificationSettings' toggles. Fully inert when in-app notifications are
+  // off. Lives in its own hook rather than inline here since this file is
+  // already large — see hooks/useNotificationChecker.js for the trigger/
+  // dedupe logic. Uses the tombstone-filtered view — no reason to notify
+  // about a task that's already been deleted.
+  useNotificationChecker({ tasks: visibleTasks, blocks, notificationSettings, setNotification });
 
   // Async Todoist-sync continuations (the `.then()` after a create call)
   // resolve after the fact, potentially after other commits have landed —
   // closing over `tasks`/`blocks` directly would replay a stale snapshot
   // and silently clobber whatever changed in the meantime. This ref always
   // holds the latest committed state for those continuations to read.
+  // Last completion time per recurring task id, backing the cooldown above.
+  // A ref, not state: it must never trigger a re-render, and it's read/written
+  // inside completeTask's own callback where a state value would be stale.
+  const recentRecurringCompletionsRef = useRef(new Map());
+
   const stateRef = useRef(state);
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  // Sections aren't part of useHistoryState's {tasks, blocks} (they're a plain
+  // useState — see the "sections/projects" comment below), but
+  // useSharedProjectSync's async push/pull callbacks need the LATEST array the
+  // same way they need stateRef.current.tasks. Kept as its own ref rather than
+  // folded into `state` so useHistoryState's undo/redo stays scoped to exactly
+  // tasks/blocks, matching sections never being undoable today.
+  const sectionsRef = useRef(sections);
+  useEffect(() => {
+    sectionsRef.current = sections;
+  }, [sections]);
+
 
   // The Todoist token: a per-visitor personal API token entered in Settings
   // (see setTodoistApiToken below), persisted to THIS BROWSER's localStorage
@@ -168,14 +907,13 @@ export function SchedulerProvider({ children }) {
   // Todoist account to every visitor. `VITE_TODOIST_API_TOKEN` is still read
   // as a fallback purely for local `npm run dev` convenience; it's gitignored
   // (see .env.example) and stays out of any production build a visitor uses.
-  // A ref (not state) because every write helper below needs the current
-  // value without re-creating its callback whenever unrelated state changes;
+  // A ref (not state) because importFromTodoist needs the current value
+  // without re-creating its callback whenever unrelated state changes;
   // changing the token instead reloads the page (see setTodoistApiToken),
   // which naturally re-reads this on the fresh mount.
   const todoistTokenRef = useRef(loadPersisted('todoistToken', null) || import.meta.env.VITE_TODOIST_API_TOKEN || null);
   const todoistToken = todoistTokenRef.current;
-  const todoistEnabled = !!todoistToken; // "is a Todoist token configured" — governs import + UI visibility
-  const syncActive = todoistEnabled && taskSyncEnabled; // "should we actually push writes to Todoist right now"
+  const todoistEnabled = !!todoistToken; // "is a Todoist token configured" — governs whether Import is available
 
   /**
    * Save (or clear, if passed a falsy value) the visitor's personal Todoist
@@ -197,7 +935,13 @@ export function SchedulerProvider({ children }) {
   // setters in several places), so they're persisted via a plain effect
   // instead of the usePersistedState wrapper.
   useEffect(() => {
-    savePersisted('tasks', tasks);
+    // Shared-project tasks are deliberately NOT persisted locally: Firestore is
+    // their source of truth (the inverse of everything else here — see
+    // services/sharedProjectService.js). Keeping a local copy would mean two
+    // stores reconciling the same multi-writer data, and a stale one could
+    // resurrect a task a collaborator deleted. They reload from their
+    // subscription instead.
+    savePersisted('tasks', partitionTasksBySharing(tasks).personalTasks);
   }, [tasks]);
 
   useEffect(() => {
@@ -205,7 +949,9 @@ export function SchedulerProvider({ children }) {
   }, [blocks]);
 
   useEffect(() => {
-    savePersisted('sections', sections);
+    // Shared-project sections are deliberately NOT persisted locally, mirroring
+    // shared tasks above — Firestore is their source of truth.
+    savePersisted('sections', partitionSectionsBySharing(sections).personalSections);
   }, [sections]);
 
   useEffect(() => {
@@ -217,387 +963,1304 @@ export function SchedulerProvider({ children }) {
   }, [labels]);
 
   useEffect(() => {
+    savePersisted('sharedProjectIds', sharedProjectIds);
+  }, [sharedProjectIds]);
+
+  useEffect(() => {
     savePersisted('events', events);
   }, [events]);
 
-  /** Surface a background sync failure without disturbing the local edit that already applied. */
-  const notifySyncFailure = useCallback((action, err) => {
-    console.error(`[SchedulerContext] Todoist sync failed: ${action}`, err);
-    setNotification({ type: 'warning', message: `Saved locally, but syncing to Todoist failed (${action}): ${err.message || err}` });
+  // ONE-TIME MIGRATION — see src/migrations/migrateBlockedTimeToEvents.js. Safe to delete this effect once the flag above is true for all users.
+  useEffect(() => {
+    if (blockedTimeMigrationDone) return;
+    setEvents((prev) => migrateBlockedTimeToEvents(prev));
+    setBlockedTimeMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateSubtasksToTasks.js. Only
+  // actually commits a new history entry when this device's data has legacy
+  // embedded subtasks to convert, so most users (who never had any) don't
+  // get a needless "Migrated sub-tasks" entry in their Undo stack. Safe to
+  // delete this effect once the flag above is true for all users.
+  useEffect(() => {
+    if (subtasksMigrationDone) return;
+    if (stateRef.current.tasks.some((t) => t.subtasks && t.subtasks.length > 0)) {
+      commit({ tasks: migrateSubtasksToTasks(stateRef.current.tasks), blocks: stateRef.current.blocks }, 'Migrated sub-tasks to standalone tasks');
+    }
+    setSubtasksMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateRecurrenceConsistency.js.
+  // Runs after the subtasks migration above (so parentId links are already
+  // in their final standalone-Task shape) and only commits a history entry
+  // when this device actually has an inconsistent parent/sub-task recurrence
+  // chain to fix. Safe to delete this effect once the flag above is true for
+  // all users.
+  useEffect(() => {
+    if (recurrenceConsistencyMigrationDone) return;
+    const synced = migrateRecurrenceConsistency(stateRef.current.tasks);
+    if (synced !== stateRef.current.tasks) {
+      commit({ tasks: synced, blocks: stateRef.current.blocks }, 'Synced recurring parent/sub-task consistency');
+    }
+    setRecurrenceConsistencyMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateRecurrenceState.js. Runs
+  // after the recurrence-consistency migration above so parent/sub-task
+  // recurrence is already settled before each series gets its anchor. Uses
+  // overwritePresent rather than commit: adopting the new model is a
+  // representation change with no user-visible effect (every derived value
+  // comes out identical — that's asserted in its unit tests), so it has no
+  // business appearing in the undo stack or popping an action toast. Safe to
+  // delete this effect once the flag above is true for all users.
+  useEffect(() => {
+    if (recurrenceStateMigrationDone) return;
+    const migrated = migrateRecurrenceState(stateRef.current.tasks);
+    if (migrated !== stateRef.current.tasks) {
+      overwritePresent({ tasks: migrated, blocks: stateRef.current.blocks });
+    }
+    setRecurrenceStateMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ONE-TIME MIGRATION — see src/migrations/migrateStaleRecurringRemainingHours.js.
+  // Runs after the two migrations above (so it sees final isRecurring state)
+  // and only commits a history entry when this device actually has a
+  // recurring task stuck at remainingHours <= 0 with nothing legitimately
+  // backing it. Safe to delete this effect once the flag above is true for
+  // all users.
+  useEffect(() => {
+    if (staleRecurringRemainingHoursMigrationDone) return;
+    const repaired = migrateStaleRecurringRemainingHours(stateRef.current.tasks);
+    if (repaired !== stateRef.current.tasks) {
+      commit({ tasks: repaired, blocks: stateRef.current.blocks }, 'Fixed recurring tasks stuck at 0 remaining hours');
+    }
+    setStaleRecurringRemainingHoursMigrationDone(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Runs on every load (not a one-time migration — see
+  // src/utils/protectedSleepRoutine.js) so a user who ends up
+  // with zero routines labeled "Sleep" — however that happened — always gets
+  // a protected one back, rather than only being backfilled once.
+  useEffect(() => {
+    setRoutines((prev) => ensureProtectedSleepRoutine(prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- Completed task retention sweep --------------------------------------
+  // Runs once on mount. Completed (non-recurring — recurring tasks never set
+  // isCompleted, see completeTask) tasks older than RETENTION_DAYS_COMPLETED_TASKS
+  // are dropped along with their blocks. A once-per-load check is enough for
+  // this personal-scale app — no need for a running interval on top of it.
+  useEffect(() => {
+    const cutoffMs = computeCutoffMs(RETENTION_DAYS_COMPLETED_TASKS);
+    const isStaleCompleted = (t) => t.isCompleted && t.completedAt && new Date(t.completedAt).getTime() < cutoffMs;
+    // Shared tasks are exempt: this sweep is personal housekeeping running on
+    // whichever device happens to load first, so applying it to a shared
+    // project would delete other people's tasks out from under them, on one
+    // user's local clock and retention preference.
+    const staleTasks = stateRef.current.tasks.filter((t) => isStaleCompleted(t) && !isSharedTask(t));
+    if (staleTasks.length === 0) return;
+    const staleIds = new Set(staleTasks.map((t) => t.id));
+    // Mirrors deleteTask's cascade above — otherwise every comment attachment
+    // on a swept task is orphaned in Storage with nothing left to ever clean
+    // it up, since this sweep is the only path that removes these tasks.
+    if (user) {
+      staleTasks
+        .flatMap((t) => t.comments || [])
+        .forEach((c) => {
+          if (c.attachment) deleteCommentAttachment(c.attachment.path);
+        });
+    }
+    const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
+    const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
+    commit({ tasks: newTasks, blocks: newBlocks }, `Removed ${staleIds.size} completed task(s) older than ${RETENTION_DAYS_COMPLETED_TASKS} days`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- Deleted task (tombstone) retention sweep ----------------------------
+  // Runs once on mount, same shape as the completed-task sweep just above.
+  // A tombstoned task (see deleteTask/utils/taskTombstones.js) stays in
+  // `tasks` — never physically removed at delete time — so a cross-device
+  // merge has time to see the deletion before it's gone for good. Once
+  // that window (RETENTION_DAYS_DELETED_TASKS) has passed, this actually
+  // drops it from the array, same as the completed-task sweep does for
+  // isCompleted tasks. Reads/writes stateRef.current.tasks (the RAW array),
+  // not the tombstone-filtered `tasks`/`visibleTasks` binding — the whole
+  // point of this sweep is to find tombstones, which that filtered view
+  // never contains.
+  useEffect(() => {
+    const staleTombstones = stateRef.current.tasks.filter((t) => isStaleTombstone(t, RETENTION_DAYS_DELETED_TASKS));
+    if (staleTombstones.length === 0) return;
+    const staleIds = new Set(staleTombstones.map((t) => t.id));
+    const newTasks = stateRef.current.tasks.filter((t) => !staleIds.has(t.id));
+    // Blocks were already dropped at delete time (deleteTask never tombstones
+    // blocks — see its own comment), but filtering here too is cheap
+    // insurance against any future path that tombstones a task without also
+    // clearing its blocks.
+    const newBlocks = stateRef.current.blocks.filter((b) => !staleIds.has(b.taskId));
+    commit({ tasks: newTasks, blocks: newBlocks }, `Purged ${staleIds.size} deleted task(s) older than ${RETENTION_DAYS_DELETED_TASKS} days`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Trash retention sweep, alongside the two task sweeps above: drop trash
+  // entries past TRASH_RETENTION_DAYS (and anything over the cap) once per
+  // load. rememberDeletion prunes on every delete too, but an entry that aged
+  // out while the app was closed needs this — otherwise an expired entry would
+  // sit in the synced document until the user happened to delete something
+  // else. Deliberately not a commit(): `trash` is its own collection outside
+  // the undo stack, and a retention sweep isn't a user action to undo.
+  useEffect(() => {
+    setTrash((prev) => {
+      const pruned = pruneTrash(prev, Date.now());
+      // Referential equality guard — returning a fresh array unconditionally
+      // would mark local state dirty on every load and trigger a needless
+      // cloud push.
+      return pruned.length === (prev || []).length ? prev : pruned;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- Initial data load ---------------------------------------------------
-  // Runs once on mount. Two independent concerns, gated separately:
-  //   1. Todoist projects/sections/tasks — only re-fetched if sync is
-  //      actually active (token configured AND the user hasn't paused it
-  //      in Settings). If sync is off, whatever was loaded from
-  //      localStorage above stands untouched — that's the whole point of
-  //      "local-only" mode.
-  //   2. Google Calendar events — only attempted if the user previously
-  //      connected (persisted `googleConnected`), and done SILENTLY (no
-  //      consent popup) so re-opening the app doesn't require signing in
-  //      again. If the silent attempt fails, we quietly fall back to
-  //      "not connected" rather than throwing an error at the user.
+  // Google Calendar's own silent re-auth/pull now runs inside
+  // useGoogleCalendarSync (below), so there's nothing left to block on here —
+  // this just clears the loading flag once the one-time migration/sweep
+  // effects above have run.
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setIsLoading(true);
-      const shouldSyncTodoist = todoistEnabled && taskSyncEnabled;
-
-      try {
-        if (shouldSyncTodoist) {
-          // Deliberately a wholesale replace, not a merge: this is also what
-          // drops the bundled sample tasks/boards/sections (see mockData.js,
-          // isDefault: true) the moment a real Todoist sync succeeds — they
-          // only ever exist as the local-storage fallback above and are
-          // never pushed to Todoist (createProject/createSection/createTask
-          // below are only ever called from user-driven add* actions).
-          const [fetchedProjects, fetchedSections] = await Promise.all([
-            fetchTodoistProjects(todoistToken),
-            fetchTodoistSections(todoistToken),
-          ]);
-          const sectionsById = new Map(fetchedSections.map((s) => [s.id, s.name]));
-          const fetchedTasks = await fetchTodoistTasks(todoistToken, sectionsById);
-          if (!cancelled) {
-            // NOTE: blocks is intentionally preserved here (not reset to
-            // []) — calendar placements have no Todoist equivalent and
-            // this effect runs on every mount, so resetting it would wipe
-            // the user's schedule every time the app reloads. Read via
-            // stateRef (not the `blocks` closed over at mount) in case the
-            // user edited a block while this fetch was in flight.
-            commit({ tasks: fetchedTasks, blocks: stateRef.current.blocks }, 'Loaded tasks from Todoist');
-            setSections(fetchedSections);
-            setProjects(fetchedProjects);
-          }
-        }
-        // else: sync is off — leave the locally persisted tasks/sections/
-        // projects exactly as loaded from storage above.
-      } catch (err) {
-        console.error('Failed to load Todoist data', err);
-        if (!cancelled) setNotification({ type: 'error', message: `Failed to load Todoist data: ${err.message}` });
-      }
-
-      if (googleConnected) {
-        try {
-          const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-          const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-          const { enabled } = await initGoogleCalendar(clientId, apiKey);
-          if (enabled) {
-            await requestAccessToken(true); // silent — no consent popup
-            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(
-              toISODate(new Date()),
-              toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000))
-            );
-            if (!cancelled) {
-              setEvents(fetchedEvents);
-              if (failedCalendars.length > 0) {
-                setNotification({
-                  type: 'warning',
-                  message: `Couldn't load events from: ${failedCalendars.join(', ')}. Check that you still have access to these calendars.`,
-                });
-              }
-            }
-          } else if (!cancelled) {
-            setGoogleConnected(false);
-          }
-        } catch (err) {
-          // Silent refresh failed — the grant likely expired or was
-          // revoked. Don't show an error; just fall back to "disconnected"
-          // so the Settings panel invites a normal manual reconnect.
-          console.warn('[SchedulerContext] Silent Google Calendar re-auth failed, falling back to disconnected.', err);
-          if (!cancelled) setGoogleConnected(false);
-        }
-      }
-
-      if (!cancelled) setIsLoading(false);
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setIsLoading(false);
   }, []);
 
-  // ---- Cloud sync (Firestore) ----------------------------------------------
-  // Pulls the signed-in user's synced data ONCE per sign-in (not a live
-  // subscription — see firestoreSync.js's doc comment for why). This is what
-  // makes a second device converge onto the first device's data instead of
-  // keeping its own separate local copy: whatever's in the cloud doc wins
-  // and overwrites what was loaded from THIS browser's local storage above.
-  // If nothing's been synced yet (first device to ever sign in), this
-  // device's current local data seeds the cloud doc instead.
-  /**
-   * Pulls the signed-in user's cloud doc and overwrites local state with it
-   * (or, if nothing's been synced yet, seeds the cloud with this device's
-   * current local data). Used both by the sign-in effect below and by
-   * Settings' manual "Sync now" button — see syncNow.
-   */
-  const pullFromCloud = useCallback(
-    async (uid) => {
-      const remote = await pullUserData(uid);
-      if (remote) {
-        if ('tasks' in remote || 'blocks' in remote) {
-          commit(
-            { tasks: remote.tasks ?? stateRef.current.tasks, blocks: remote.blocks ?? stateRef.current.blocks },
-            'Synced from your account'
-          );
-        }
-        if ('sections' in remote) setSections(remote.sections);
-        if ('projects' in remote) setProjects(remote.projects);
-        if ('labels' in remote) setLabels(remote.labels);
-        if ('routines' in remote) setRoutines(remote.routines);
-        if ('rules' in remote) setRules(remote.rules);
-        if ('events' in remote) setEvents(remote.events);
-        if ('taskSyncEnabled' in remote) setTaskSyncEnabled(remote.taskSyncEnabled);
-      } else {
-        await pushUserData(uid, {
-          tasks: stateRef.current.tasks,
-          blocks: stateRef.current.blocks,
-          sections,
-          projects,
-          labels,
-          routines,
-          rules,
-          events,
-          taskSyncEnabled,
-        });
-      }
-    },
-    [sections, projects, labels, routines, rules, events, taskSyncEnabled, commit, setSections, setProjects, setLabels, setRoutines, setRules, setEvents, setTaskSyncEnabled]
+  // ---- Google Calendar sync -------------------------------------------------
+  // Connection state, silent re-auth, periodic polling, visibility-refresh,
+  // and connect/pull/push actions all live in this hook now — see its own
+  // doc comment (src/hooks/useGoogleCalendarSync.js).
+  const {
+    googleConnected,
+    googleNeedsReconnect,
+    googleSyncStale,
+    lastGoogleSyncAt,
+    isPullingGoogleEvents,
+    connectGoogleCalendar,
+    pullFromGoogleCalendar,
+    pushToGoogleCalendar,
+    rebuildEventsFromGoogle,
+    disconnectGoogleCalendar,
+    ensureGoogleRangeSynced,
+    markGoogleEventDeleted,
+    unmarkGoogleEventDeleted,
+    markGoogleEventInstanceDeleted,
+    unmarkGoogleEventInstanceDeleted,
+    isRewritingCalendar,
+    rewriteProgress,
+    rewriteGoogleCalendarFromTaskflow,
+  } = useGoogleCalendarSync({
+    events,
+    setEvents,
+    tasks,
+    blocks,
+    setNotification,
+    authLoading,
+    onEventsChanged: triggerDueDateRebalance,
+  });
+
+  // ---- Shared project live sync (Collaborative Projects, Phase 1) ----------
+  // Deliberately a separate, smaller hook from useCloudSync below: that one
+  // treats localStorage as truth and converges one person's devices, while
+  // this one treats Firestore as truth with many concurrent writers. See
+  // hooks/useSharedProjectSync.js for why the two paths stay separate.
+  // projectsRef: read from inside the hook's long-lived onSnapshot callbacks
+  // to resolve THIS user's own local Project row id for a shared project
+  // (deserializeSharedTask/-Section's `localProjectId` — see their doc
+  // comments for why the synced document's own `projectId` can never be
+  // trusted for this).
+  const projectsRef = useRef(projects);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+  const {
+    sharedProjects,
+    viewersByProject,
+    liveSharedTasks,
+    liveSharedSections,
+    noteSharedTaskDeleted,
+    noteSharedSectionDeleted,
+    noteSharedProjectDeleted,
+    lostProjectIds,
+  } = useSharedProjectSync({
+    tasks,
+    sections,
+    stateRef,
+    sectionsRef,
+    projectsRef,
+    // Remote changes are applied WITHOUT a history entry — they came from
+    // someone else, so they must not be undoable by this user (and must not
+    // consume a redo slot), exactly like the cloud-sync listener's own writes.
+    //
+    // applyRemoteSections uses the RAW (untracked) setter — see
+    // useLocalEditTrackedState's doc comment. A shared-project collaborator's
+    // edit landing here is remote data being applied, not a local edit, and
+    // must not bump localNonUndoEditIdRef: doing so would make useCloudSync's
+    // (personal, unrelated) race guard spuriously think a local edit just
+    // raced its own pull/listener purely because SOMEONE ELSE changed a
+    // shared project, needlessly delaying that personal sync by a round.
+    // `overwritePresent` (tasks/blocks) doesn't need the same treatment since
+    // it was never wired into the tracked/raw split at all — tasks/blocks
+    // race-detection runs entirely on currentActionId (see
+    // useHistoryState), which overwritePresent deliberately never touches.
+    applyRemote: overwritePresent,
+    applyRemoteSections: setSectionsRaw,
+    sharedProjectIds,
+    user,
+    setNotification,
+  });
+
+  // A shared project this user had access to was deleted by its owner, or
+  // this user was removed as a collaborator — either way, Firestore has
+  // already dropped them; without this, the local Project row (and its
+  // sharedProjectIds pointer) never gets cleaned up and lingers dead in the
+  // sidebar forever (see TODO's "removing a collaborator leaves a stale
+  // shared project" / "deleting a shared project leaves a stale copy" bugs).
+  // Mirrors deleteProject's own shared-project branch, just triggered by
+  // remote loss-of-access instead of a local click — there's nothing left to
+  // write back to Firestore here, only local cleanup.
+  useEffect(() => {
+    if (!lostProjectIds?.length) return;
+    const lost = new Set(lostProjectIds);
+    const affectedProjectIds = new Set(
+      projects.filter((p) => lost.has(p.sharedProjectId)).map((p) => p.id)
+    );
+    if (!affectedProjectIds.size) return;
+
+    setProjects((prev) => prev.filter((p) => !lost.has(p.sharedProjectId)));
+    setSections((prev) => prev.filter((s) => !affectedProjectIds.has(s.projectId)));
+    setSharedProjectIds((prev) => prev.filter((id) => !lost.has(id)));
+    commit(
+      (current) => ({
+        tasks: current.tasks.filter((t) => !lost.has(t.sharedProjectId)),
+        blocks: current.blocks.filter(
+          (b) => !current.tasks.some((t) => t.id === b.taskId && lost.has(t.sharedProjectId))
+        ),
+      }),
+      `Removed access to a shared project`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lostProjectIds]);
+
+  // Undo/redo must never restore a history snapshot's copy of a SHARED task.
+  // HistoryEntry snapshots the entire task array (see types/index.js), so a
+  // plain restore would revert collaborators' concurrent edits to tasks this
+  // user never touched, and resurrect ones they deleted. Wrapping the raw
+  // primitives keeps every consumer — the toolbar buttons, keyboard shortcuts,
+  // the action toasts — calling `undo`/`redo` exactly as before.
+  const liveSharedTasksRef = useRef(liveSharedTasks);
+  useEffect(() => {
+    liveSharedTasksRef.current = liveSharedTasks;
+  }, [liveSharedTasks]);
+
+  const restoreLiveSharedTasks = useCallback(() => {
+    // Cheap and a no-op when the user has no shared projects at all.
+    //
+    // Uses overwritePresent's UPDATER form, not `stateRef.current`: this runs in
+    // the same tick as the undoHistory()/redoHistory() call above, whose result
+    // hasn't been rendered yet, so `stateRef` (refreshed in an effect) still
+    // holds the PRE-undo tasks. Reading it here wrote those straight back and
+    // cancelled the undo — the history pointer moved but the visible state
+    // didn't. The updater receives the post-undo snapshot React has already
+    // queued, which is the array we actually want to re-graft shared tasks onto.
+    if (liveSharedTasksRef.current.length === 0) return;
+    overwritePresent((current) => ({
+      tasks: preserveSharedTasks(current.tasks, liveSharedTasksRef.current),
+      blocks: current.blocks,
+    }));
+  }, [overwritePresent]);
+
+  const undo = useCallback(() => {
+    undoHistory();
+    restoreLiveSharedTasks();
+  }, [undoHistory, restoreLiveSharedTasks]);
+
+  const redo = useCallback(() => {
+    redoHistory();
+    restoreLiveSharedTasks();
+  }, [redoHistory, restoreLiveSharedTasks]);
+
+  // ---- Cloud sync (Firestore) ------------------------------------------------
+  // Pull/push/listener/fingerprint/backup/restore logic all lives in this
+  // hook now — see its own doc comment (src/hooks/useCloudSync.js).
+  // `cloudSyncState`/`cloudStateRef` bundle every field the LIVE sync (push/
+  // pull/listener/fingerprint) covers — everything BACKUP_FIELDS lists
+  // except `theme` and `events`, both passed to the hook as separate params
+  // instead (see its own JSDoc): `theme` because live sync leaves it to
+  // ThemeContext's own independent sync, and `events` because it's backed up
+  // (point-in-time) but deliberately never live cross-device synced — see
+  // backupService.js's BACKUP_FIELDS doc comment for why.
+  const cloudSyncState = useMemo(
+    () => ({
+      // Personal tasks only. A shared project's content isn't solely this
+      // user's to push, and round-tripping it through the users/{uid} document
+      // would put a second, independently-reconciled store behind data that
+      // already has concurrent writers — the same failure mode that keeps
+      // `events` out of live sync (see backupService.js's BACKUP_FIELDS notes).
+      tasks: partitionTasksBySharing(tasks).personalTasks,
+      blocks,
+      // Personal sections only — same reasoning as tasks above: a shared
+      // project's columns have concurrent writers and sync through
+      // useSharedProjectSync/Firestore, not through this user's own
+      // users/{uid} document (see utils/sharedTaskSync.js's SECTIONS note).
+      sections: partitionSectionsBySharing(sections).personalSections,
+      projects,
+      labels,
+      routines,
+      rules,
+      soundEnabled,
+      soundVolume,
+      animationsEnabled,
+      notificationSettings,
+      notes,
+      shortcutBindings,
+      savedViews,
+      taskTemplates,
+      trash,
+      sharedProjectIds,
+    }),
+    [
+      tasks,
+      blocks,
+      sections,
+      projects,
+      labels,
+      routines,
+      rules,
+      soundEnabled,
+      soundVolume,
+      animationsEnabled,
+      notificationSettings,
+      notes,
+      shortcutBindings,
+      savedViews,
+      taskTemplates,
+      trash,
+      sharedProjectIds,
+    ]
   );
 
+  // Live shared sections, authoritative — mirrors liveSharedTasksRef above.
+  // Needed so setSectionsGuarded (passed to useCloudSync below) can restore
+  // them after a pull/restore replaces `sections` wholesale, the same
+  // landmine preserveSharedTasks fixes for tasks.
+  const liveSharedSectionsRef = useRef(liveSharedSections);
   useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    pullFromCloud(user.uid).catch((err) => {
-      if (cancelled) return;
-      console.error('[SchedulerContext] Cloud sync failed to load', err);
-      setNotification({ type: 'warning', message: "Signed in, but couldn't reach cloud storage to sync your data." });
-    });
-    return () => {
-      cancelled = true;
-    };
-    // Deliberately only re-runs when the signed-in user changes — this pulls
-    // once per sign-in, not on every local state change (that's the push
-    // effect below).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+    liveSharedSectionsRef.current = liveSharedSections;
+  }, [liveSharedSections]);
 
-  // Pushes local data up to the cloud doc whenever it changes, so the NEXT
-  // device to sign in (or this device's next reload) picks up the latest
-  // state. Debounced so a burst of edits (typing, dragging) doesn't fire a
-  // write per keystroke.
-  useEffect(() => {
-    if (!user) return;
-    const handle = setTimeout(() => {
-      pushUserData(user.uid, { tasks, blocks, sections, projects, labels, routines, rules, events, taskSyncEnabled }).catch((err) => {
-        console.error('[SchedulerContext] Cloud sync failed to save', err);
+  // Wraps setSections so every caller inside useCloudSync (applyRemoteData's
+  // live listener/pull, and applyBackupPayload's restore) — both of which
+  // replace `sections` WHOLESALE with a remote/backup array that knows
+  // nothing about shared sections — re-merges the live shared ones back in
+  // afterward, instead of the incoming array silently dropping them until
+  // the next shared-project snapshot happens to arrive.
+  //
+  // Wraps setSectionsRAW (untracked), not the tracked setSections exposed to
+  // the rest of the app: this is specifically the setter useCloudSync itself
+  // calls to apply remote/backup data, which must never bump
+  // localNonUndoEditIdRef (see useLocalEditTrackedState's doc comment) or the
+  // sync engine would flag its own writes as racing a local edit.
+  const setSectionsGuarded = useCallback(
+    (next) => {
+      setSectionsRaw((prev) => {
+        const incoming = typeof next === 'function' ? next(prev) : next;
+        return preserveSharedSections(incoming, liveSharedSectionsRef.current);
       });
-    }, 1500);
-    return () => clearTimeout(handle);
-  }, [user, tasks, blocks, sections, projects, labels, routines, rules, events, taskSyncEnabled]);
+    },
+    [setSectionsRaw]
+  );
+
+  // Wraps overwritePresent/commit so every caller inside useCloudSync
+  // (applyRemoteData's live listener/pull for the former, applyBackupPayload's
+  // restore for the latter) — both of which replace `tasks` WHOLESALE with a
+  // remote/backup array that knows nothing about shared tasks — re-grafts the
+  // live shared ones back in afterward. Same landmine restoreLiveSharedTasks
+  // above fixes for undo/redo, and setSectionsGuarded fixes for sections;
+  // tasks never got the equivalent, which let a rebalance-triggered personal
+  // cloud-sync echo wholesale-replace `tasks` and drop every shared task
+  // until the next shared-project snapshot happened to arrive.
+  const overwritePresentGuarded = useCallback(
+    (newTasksAndBlocksOrUpdater) => {
+      overwritePresent((current) => {
+        const next =
+          typeof newTasksAndBlocksOrUpdater === 'function'
+            ? newTasksAndBlocksOrUpdater(current)
+            : newTasksAndBlocksOrUpdater;
+        return { tasks: preserveSharedTasks(next.tasks, liveSharedTasksRef.current), blocks: next.blocks };
+      });
+    },
+    [overwritePresent]
+  );
+  const commitGuarded = useCallback(
+    (newTasksAndBlocksOrUpdater, actionLabelOrFn) => {
+      commit((current) => {
+        const next =
+          typeof newTasksAndBlocksOrUpdater === 'function'
+            ? newTasksAndBlocksOrUpdater(current)
+            : newTasksAndBlocksOrUpdater;
+        return { tasks: preserveSharedTasks(next.tasks, liveSharedTasksRef.current), blocks: next.blocks };
+      }, actionLabelOrFn);
+    },
+    [commit]
+  );
+
+  const cloudStateRef = useRef(cloudSyncState);
+  useEffect(() => {
+    cloudStateRef.current = cloudSyncState;
+  }, [cloudSyncState]);
+
+  const {
+    // Surfaced so first-load skeletons can tell "data is on its way" from
+    // "there is genuinely nothing here" — see useFirstLoadSkeleton.
+    isPullingCloud,
+    cloudBackups,
+    lastAutoBackupAt,
+    pullFromCloud,
+    exportBackup,
+    importBackup,
+    createCloudBackup,
+    loadCloudBackups,
+    restoreCloudBackup: restoreCloudBackupRaw,
+    removeCloudBackup,
+  } = useCloudSync({
+    state: cloudSyncState,
+    stateRef: cloudStateRef,
+    currentActionIdRef,
+    localNonUndoEditIdRef,
+    setNotification,
+    commit: commitGuarded,
+    overwritePresent: overwritePresentGuarded,
+    // Every setter below is the RAW (untracked) one — see
+    // useLocalEditTrackedState's doc comment. useCloudSync only ever calls
+    // these to APPLY remote/backup data (applyRemoteData, applyBackupPayload),
+    // never as a stand-in for a local edit, so they must not bump
+    // localNonUndoEditIdRef — otherwise the sync engine's own writes would
+    // look like a local edit racing themselves and never cleanly apply.
+    setSections: setSectionsGuarded,
+    setProjects: setProjectsRaw,
+    setLabels: setLabelsRaw,
+    setRoutines: setRoutinesRaw,
+    setRules: setRulesRaw,
+    setSoundEnabled: setSoundEnabledRaw,
+    setSoundVolume: setSoundVolumeRaw,
+    setAnimationsEnabled: setAnimationsEnabledRaw,
+    setNotificationSettings: setNotificationSettingsRaw,
+    setNotes: setNotesRaw,
+    setShortcutBindings: setShortcutBindingsRaw,
+    setSavedViews: setSavedViewsRaw,
+    setTaskTemplates: setTaskTemplatesRaw,
+    setTrash: setTrashRaw,
+    setSharedProjectIds: setSharedProjectIdsRaw,
+    theme,
+    setTheme,
+    accentSeed,
+    setAccentSeed,
+    events,
+    setEvents,
+    googleConnected,
+    googleSyncStale,
+    pullFromGoogleCalendar,
+    runRebalance: triggerRebalanceFromMerge,
+  });
 
   /**
-   * Manual re-pull for Settings' "Sync now" button — covers the gap this
-   * app's sync model deliberately leaves open (no live listener; see
-   * firestoreSync.js): if another device pushed changes while this tab was
-   * already open and signed in, those changes only arrive on next sign-in
-   * or reload unless the user asks for them explicitly here.
+   * Manual re-sync for Settings' "Sync now" button — covers the gap this
+   * app's sync model deliberately leaves open (no live listener would ever
+   * fire for a device that's just idly sitting open): if another device
+   * pushed changes while this tab was already open and signed in, those
+   * changes only arrive on next sign-in/reload/manual sync. Covers both
+   * Firestore (useCloudSync's pullFromCloud) and Google Calendar
+   * (useGoogleCalendarSync's pullFromGoogleCalendar) in one click; each pops
+   * its own success/error toast, so this doesn't layer on a third.
    */
   const syncNow = useCallback(async () => {
     if (!user) return;
     setIsSyncing(true);
     try {
-      await pullFromCloud(user.uid);
-      setNotification({ type: 'success', message: 'Synced with your account.' });
-    } catch (err) {
-      console.error('[SchedulerContext] Manual cloud sync failed', err);
-      setNotification({ type: 'error', message: `Sync failed: ${err.message || err}` });
+      await pullFromCloud();
+      if (googleConnected) await pullFromGoogleCalendar();
     } finally {
       setIsSyncing(false);
     }
-  }, [user, pullFromCloud]);
+  }, [user, pullFromCloud, googleConnected, pullFromGoogleCalendar]);
 
-  // ---- Google Calendar connection ----------------------------------------
-  const connectGoogleCalendar = useCallback(async () => {
+  /** Settings' "Back up now" button — wraps useCloudSync's createCloudBackup with a busy flag that hook doesn't track itself. */
+  const backupToCloud = useCallback(async () => {
+    setIsBackingUp(true);
     try {
-      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-      const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-      const { enabled } = await initGoogleCalendar(clientId, apiKey);
-      if (!enabled) {
-        setNotification({ type: 'info', message: 'Google Calendar not configured — see README for setup. Using mock events.' });
-        return;
-      }
-      await requestAccessToken(false); // explicit user action — show consent screen if needed
-      setGoogleConnected(true);
-      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(
-        toISODate(new Date()),
-        toISODate(new Date(Date.now() + EVENTS_HORIZON_DAYS * 86400000))
-      );
-      setEvents(fetchedEvents);
-      if (failedCalendars.length > 0) {
-        setNotification({
-          type: 'warning',
-          message: `Connected, but couldn't load events from: ${failedCalendars.join(', ')}.`,
-        });
-      } else {
-        setNotification({ type: 'success', message: 'Connected to Google Calendar.' });
-      }
-    } catch (err) {
-      console.error(err);
-      const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
-      setNotification({ type: 'error', message: `Google Calendar connection failed: ${reason}` });
+      await createCloudBackup();
+    } finally {
+      setIsBackingUp(false);
     }
-  }, [setGoogleConnected]);
+  }, [createCloudBackup]);
+
+  /**
+   * Settings' cloud-backups picker "Restore" action — same busy-flag
+   * wrapping as backupToCloud above. Passes through restoreCloudBackupRaw's
+   * boolean result (whether the restore actually applied) so BackupsModal
+   * can offer the "Rewrite Google Calendar to match TaskFlow" follow-up only
+   * after a real restore.
+   */
+  const restoreCloudBackup = useCallback(
+    async (backupId) => {
+      setIsBackingUp(true);
+      try {
+        return await restoreCloudBackupRaw(backupId);
+      } finally {
+        setIsBackingUp(false);
+      }
+    },
+    [restoreCloudBackupRaw]
+  );
+
+  /**
+   * One atomic "restore, then make Google Calendar match" action — replaces
+   * the earlier design of restoring and then separately OFFERING a rewrite
+   * follow-up via a toast action button. That gap between "restore lands"
+   * and "user clicks the follow-up" was a real race: the periodic Google
+   * poll (every 60s, policy "Google always wins" — see eventSyncService.js)
+   * could fire in that window and pull Google's still-stale state back over
+   * the just-restored data before the user ever got to decide, so by the
+   * time they clicked the offer the rewrite would run against already-
+   * reverted local state. Chaining restore directly into rewrite here, with
+   * no gap for a poll to land in between, closes that race outright rather
+   * than trying to win it. rewriteGoogleCalendarFromTaskflow's own guards
+   * (googleFetchInFlightRef + pollPausedRef — see useGoogleCalendarSync.js)
+   * keep the poll paused for this whole sequence, not just the rewrite half.
+   *
+   * The rewrite covers the restored CalendarEvents only — ScheduledBlocks
+   * have no Google Calendar presence (see useGoogleCalendarSync.js's module
+   * doc), so no pre-rewrite rebalance is needed to materialize them first.
+   *
+   * Only runs the rewrite if the restore actually applied AND Google Calendar
+   * is connected (nothing to rewrite otherwise) — returns the restore's own
+   * boolean result either way so the caller's UI can react the same as a
+   * plain restore.
+   */
+  const restoreCloudBackupAndRewriteCalendar = useCallback(
+    async (backupId) => {
+      const restored = await restoreCloudBackup(backupId);
+      if (restored && googleConnected) {
+        await rewriteGoogleCalendarFromTaskflow();
+      }
+      return restored;
+    },
+    [restoreCloudBackup, googleConnected, rewriteGoogleCalendarFromTaskflow]
+  );
+
+  /** Settings' "Restore from file" action — matches old importBackupFromFile's name. */
+  const importBackupFromFile = useCallback((file) => importBackup(file), [importBackup]);
+
+  /**
+   * File-restore counterpart to restoreCloudBackupAndRewriteCalendar above —
+   * same reasoning, same no-gap chaining. importBackupFromFile already returns whether the restore
+   * applied (see importBackup/applyBackupPayload).
+   */
+  const importBackupFromFileAndRewriteCalendar = useCallback(
+    async (file) => {
+      const restored = await importBackupFromFile(file);
+      if (restored && googleConnected) {
+        await rewriteGoogleCalendarFromTaskflow();
+      }
+      return restored;
+    },
+    [importBackupFromFile, googleConnected, rewriteGoogleCalendarFromTaskflow]
+  );
+
+  /** Settings' cloud-backups picker open action — matches old refreshCloudBackups' name. */
+  const refreshCloudBackups = useCallback(() => loadCloudBackups(), [loadCloudBackups]);
+
+  /** Settings' cloud-backups picker "Delete" action — matches old deleteCloudBackup's name. */
+  const deleteCloudBackup = useCallback((backupId) => removeCloudBackup(backupId), [removeCloudBackup]);
 
   // ---- Core action: run the rebalance/reschedule engine -------------------
+  // Debounce handle for the auto-rebalance queue (queueDueDateRebalance,
+  // defined below). Declared up here so runRebalance can cancel a pending
+  // queued run — see the cancel at the top of runRebalance for why.
+  const dueDateRebalanceTimeoutRef = useRef(null);
+
   const runRebalance = useCallback(() => {
-    const result = rebalance({ tasks, existingBlocks: blocks, routines, events, rules });
-    commit({ tasks, blocks: result.blocks }, `Re-balanced schedule (${result.stats.blocksCreated} blocks placed)`);
+    // Any rebalance now in the debounce queue is about to be made redundant:
+    // this run reads the freshest tasks/blocks/events itself, so a queued run
+    // firing moments later would only recompute the same thing — except
+    // rebalance() re-mints block ids freely, so its "same thing" is a
+    // DIFFERENT block layout that silently replaces the one just produced.
+    // That is what made a manual "Re-balance schedule" click look like it
+    // didn't take: the button calls this function directly rather than going
+    // through queueDueDateRebalance, so the 300ms debounce could never
+    // coalesce the click with an already-queued run (from a Google Calendar
+    // poll, say) — both fired, as two separate full rebalances, and the
+    // second overwrote the first for no user-visible reason. Cancelling here
+    // makes the newest rebalance win, whichever path asked for it.
+    if (dueDateRebalanceTimeoutRef.current) {
+      clearTimeout(dueDateRebalanceTimeoutRef.current);
+      dueDateRebalanceTimeoutRef.current = null;
+    }
+    // commitAndGet, not commit (see useHistoryState's own doc comments) —
+    // this can be invoked from a debounced timer (queueDueDateRebalance) that
+    // may fire in the same tick as another commit (a second addTask/
+    // updateTask, a completeTask, a Google Calendar sync callback, etc.).
+    // Two requirements have to hold at once here, and only commitAndGet gives
+    // both:
+    //   1. rebalance() must run against `current` (the freshest queued
+    //      tasks/blocks), not the closure's stale `tasks`/`blocks` —
+    //      otherwise it could schedule against a task that was just deleted,
+    //      or silently drop one just added.
+    //   2. `result` must be readable SYNCHRONOUSLY below, for the toast /
+    //      lastOverflow / conflicts modal.
+    // Plain commit() satisfied (1) but not (2): React doesn't guarantee a
+    // setState updater runs before setState returns, so under automatic
+    // batching (precisely the debounced-timer/awaited-promise callers above)
+    // the updater was deferred and `result` was still undefined on the next
+    // line — a live "can't access property 'overflow'" crash that aborted the
+    // rest of this function.
+    let result;
+    commitAndGet(
+      (current) => {
+        result = rebalance({ tasks: current.tasks, existingBlocks: current.blocks, routines, events, rules, currentUserId: user?.uid });
+        return { next: { tasks: current.tasks, blocks: result.blocks }, value: result };
+      },
+      // Function-form label (see useHistoryState's commit) — result.stats
+      // isn't known until the updater above has actually run.
+      () => `Re-balanced schedule (${result.stats.blocksCreated} blocks placed)`
+    );
     setLastOverflow(result.overflow);
     const blockedNote =
       result.stats.blockedByDependencies > 0
-        ? ` ${result.stats.blockedByDependencies} task(s) held back pending dependencies.`
+        ? ` ${result.stats.blockedByDependencies} task(s) blocked by a dependency that itself couldn't be scheduled.`
         : '';
+    // The toast's own count/message is intentionally based on `overflow`
+    // alone (tasks that genuinely couldn't be fully scheduled) — a
+    // `timeShifted` entry's hours WERE fully placed, just not at the
+    // requested exact time, so it would be misleading to count it toward
+    // "couldn't be fully scheduled." It's still surfaced in the "View
+    // details" modal alongside overflow, since the user should still know
+    // their fixedTime request wasn't honored exactly.
+    const allConflicts = [...result.overflow, ...result.timeShifted];
     if (result.overflow.length > 0) {
       setNotification({
         type: 'warning',
         message: `${result.overflow.length} task(s) couldn't be fully scheduled within their deadline window — consider extending due dates or freeing up capacity.${blockedNote}`,
+        actionLabel: 'View details',
+        onAction: () => {
+          setSchedulingConflicts(allConflicts);
+          setSchedulingConflictsModalOpen(true);
+        },
+      });
+    } else if (result.timeShifted.length > 0) {
+      setNotification({
+        type: 'warning',
+        message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote} ${result.timeShifted.length} fixed-time task(s) shifted to a different time today.`,
+        actionLabel: 'View details',
+        onAction: () => {
+          setSchedulingConflicts(allConflicts);
+          setSchedulingConflictsModalOpen(true);
+        },
       });
     } else {
       setNotification({ type: 'success', message: `Schedule rebalanced: ${result.stats.blocksCreated} blocks placed.${blockedNote}` });
     }
     return result;
-  }, [tasks, blocks, routines, events, rules, commit]);
+  }, [routines, events, rules, commitAndGet, user?.uid]);
+
+  // Always-current ref to runRebalance so the debounced callback below never
+  // fires against a stale tasks/blocks closure captured when it was queued.
+  // (Declared as `runRebalanceRef` further up, alongside `triggerRebalanceFromMerge`,
+  // so useCloudSync's forward reference to it can be wired before runRebalance
+  // itself exists — this effect is what actually keeps it current.)
+  useEffect(() => {
+    runRebalanceRef.current = runRebalance;
+  }, [runRebalance]);
+
+  // Debounces the due-date-triggered auto-rebalance — several updateTask
+  // calls can land in the same tick/burst, and this collapses them into a
+  // single runRebalance() call instead of one per change. (Its timeout ref is
+  // declared above runRebalance, which also cancels a pending run.)
+  const queueDueDateRebalance = useCallback(() => {
+    if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
+    dueDateRebalanceTimeoutRef.current = setTimeout(() => {
+      dueDateRebalanceTimeoutRef.current = null;
+      runRebalanceRef.current();
+    }, 300);
+  }, []);
+  useEffect(() => {
+    // Gated on the user's auto-reschedule toggle (Settings → Scheduling
+    // rules) — undefined (persisted before this setting existed) defaults to
+    // on, same as addTask/updateTask's checks above.
+    queueDueDateRebalanceRef.current = rules.autoRescheduleEnabled !== false ? queueDueDateRebalance : () => {};
+  }, [queueDueDateRebalance, rules.autoRescheduleEnabled]);
+  useEffect(() => {
+    return () => {
+      if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
+    };
+  }, []);
 
   // ---- Task CRUD -----------------------------------------------------------
 
   /**
-   * Add a task. Local-only by default (source: 'manual'); pass
-   * `syncToTodoist: true` (e.g. from an "Add to Todoist too" checkbox) to
-   * also create it in Todoist immediately and adopt the returned todoistId.
+   * Add a task. Always local-only (source: 'manual') — Todoist tasks only
+   * ever enter TaskFlow via the one-time importFromTodoist below, never
+   * created directly from here.
    *
    * A due date is OPTIONAL — an undated task simply has no planning window
    * for the allocator, so it never gets auto-scheduled, but it still shows
    * up normally in the Tasks list and Board view (matching Todoist).
+   *
+   * VIEWER REFUSAL (defense in depth): a viewer-role collaborator on a
+   * shared project has no write access to that project's tasks subcollection
+   * (Firestore rules only allow owner/editor) — the UI already hides/disables
+   * every task-creation entry point for a viewer (AddTaskModal, Board's
+   * per-column add), but this throws too, same rationale as addComment's
+   * checkAttachmentAllowed refusal, so a stale client or a future call site
+   * (AI plans, imports) can't silently create a task that syncs nowhere.
    */
   const addTask = useCallback(
     (taskInput) => {
-      const { syncToTodoist, ...rest } = taskInput;
-      const localId = `task_${Date.now()}`;
-      const newTask = {
-        id: localId,
-        remainingHours: taskInput.estimatedHours,
-        isLocked: false,
-        isCompleted: false,
-        isRecurring: false,
-        recurrenceString: null,
-        minChunkHours: 0.5,
-        maxChunkHours: 4,
-        dependsOn: [],
-        isPassive: false,
-        earliestDate: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        source: 'manual',
-        subtasks: [],
-        ...rest,
-      };
-      commit({ tasks: [...tasks, newTask], blocks }, `Added task "${newTask.title}"`);
-
-      if (syncToTodoist && syncActive) {
-        createTodoistTask(todoistToken, {
-          title: newTask.title,
-          notes: newTask.notes,
-          priority: newTask.priority,
-          dueDate: newTask.dueDate,
-          estimatedHours: newTask.estimatedHours,
-          recurrenceString: newTask.recurrenceString,
-          projectId: newTask.projectId,
-          sectionId: newTask.sectionId,
-        })
-          .then((created) => {
-            if (!created?.id) return;
-            // Read the latest tasks/blocks (via stateRef), not the `tasks`
-            // closed over at call time — an intervening commit elsewhere
-            // must not be clobbered by this delayed follow-up commit.
-            commit(
-              {
-                tasks: stateRef.current.tasks.map((t) =>
-                  t.id === localId ? { ...t, source: 'todoist', todoistId: String(created.id) } : t
-                ),
-                blocks: stateRef.current.blocks,
-              },
-              `Synced task "${newTask.title}" to Todoist`
-            );
-          })
-          .catch((err) => notifySyncFailure('create task', err));
+      const built = buildNewTaskObject(taskInput, generateLocalId('task'));
+      // Tag a task created inside a shared project so the write-diff picks it
+      // up — without this it stays local forever and a collaborator never
+      // sees it, which is exactly what happened before this lookup existed.
+      // Mirrors addSection; see its comment for why the project's own `id`
+      // and its `sharedProjectId` are separate for an owner who shared it.
+      // Every creation path (quick-add, modal, AI plans, imports) funnels
+      // through here, so this one lookup covers all of them.
+      const owningProject = built.projectId ? projects.find((p) => p.id === built.projectId) : null;
+      if (owningProject?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[owningProject.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Adding tasks needs edit access on this project — ask the owner for editor access.');
+        }
       }
+      const newTask = owningProject?.sharedProjectId
+        ? { ...built, sharedProjectId: owningProject.sharedProjectId }
+        : built;
+      // Function form (see useHistoryState's commit doc comment) so several
+      // addTask calls in the same synchronous tick — e.g. the AI Assistant
+      // applying a multi-task plan — each build on the previous call's
+      // result instead of each computing from the same stale `tasks` closure
+      // and silently clobbering all but the last one.
+      commit((current) => {
+        const nextTasks = [...current.tasks, newTask];
+        // A recurring parent's sub-tasks (and vice versa) must stay
+        // recurrence-consistent — see computeRecurrenceSyncUpdates. A new
+        // recurring sub-task can make its (non-recurring) parent recurring
+        // too, or a new sub-task under a recurring parent picks up that
+        // recurrence automatically. Likewise an enforcing ancestor's
+        // `enforceDueDate` must cascade onto a newly-added descendant — see
+        // computeEnforceDueDateSyncUpdates. Both maps are merged per task id
+        // (rather than one overwriting the other) since a single new task can
+        // need updates from both in the same commit.
+        const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+        const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+          nextTasks,
+          computeEnforceDueDateSyncUpdates(nextTasks)
+        );
+        const syncedTasks = recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
+          ? nextTasks
+          : nextTasks.map((t) => ({
+              ...t,
+              ...recurrenceSyncUpdates.get(t.id),
+              ...enforceDueDateSyncUpdates.get(t.id),
+            }));
+        return { tasks: syncedTasks, blocks: current.blocks };
+      }, `Added task "${newTask.title}"`);
+
+      if (soundEnabled) playAddSound(soundVolume);
+      // A new task with a due date needs a planning slot — queue the same
+      // debounced rebalance updateTask uses for a due-date change, so it
+      // gets picked up without requiring a manual Re-balance click. Gated on
+      // the user's auto-reschedule toggle (Settings → Scheduling rules) —
+      // undefined (persisted before this setting existed) defaults to on.
+      if (newTask.dueDate && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
+      return newTask;
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects, sharedProjects, user]
   );
 
   /**
-   * Update a task's fields. Applies locally first, then pushes any
-   * Todoist-synced fields (title/notes/priority/dueDate/estimatedHours/
-   * recurrenceString) and, separately, any section/project move — Todoist
-   * requires the move to go through its own `/move` endpoint rather than
-   * the general update call.
+   * Creates every task in a template instantiation as ONE transaction (see
+   * utils/taskTemplates.js).
+   *
+   * Not a loop over addTask, and that's the whole reason this exists. addTask
+   * is safe to call repeatedly — its commit is in function form — but each call
+   * is its own undo entry and its own add sound, so instantiating an eight-task
+   * template would leave the user pressing Ctrl+Z eight times to take it back
+   * and hearing eight chimes on the way in. Instantiating a template is one
+   * user action, so the creation is one history entry.
+   *
+   * "One entry" is not the same as "one Ctrl+Z", and that's pre-existing: the
+   * debounced rebalance this queues afterwards commits its own entry, exactly
+   * as it does for a single addTask with a due date, so undoing a fresh
+   * instantiation takes two presses — one for the re-plan, one for the tasks.
+   * Not worked around here; how rebalance interacts with history is a
+   * cross-cutting question and this is not the place to answer it.
+   *
+   * The plan arrives with ids already assigned and parent/dependency
+   * references already resolved between them (planTemplateInstantiation), so
+   * this only has to run each task through the same buildNewTaskObject
+   * defaults and shared-project tagging addTask applies, then commit the lot.
+   *
+   * Owns the planning step too (rather than taking a pre-built plan) so id
+   * generation never leaks out of this file — the plan's parent and dependency
+   * references are real task ids, and those have to come from the same
+   * generateLocalId sequence every other creation path uses.
+   *
+   * @param {object} template - a saved template (see utils/taskTemplates.js)
+   * @param {{anchorDate: string|null, projectId?: string|null, sectionId?: string|null}} options
+   * @returns {object[]} the created tasks
+   */
+  const instantiateTemplate = useCallback(
+    (template, options) => {
+      const plannedTasks = planTemplateInstantiation(
+        template,
+        { ...options, validLabelIds: new Set(labels.map((l) => l.id)) },
+        () => generateLocalId('task')
+      );
+      if (!plannedTasks || plannedTasks.length === 0) return [];
+      const templateName = template?.name || 'template';
+
+      // Same viewer refusal as addTask, checked once for the whole batch since
+      // every task in an instantiation lands in the same project.
+      const targetProjectId = plannedTasks[0].projectId;
+      const owningProject = targetProjectId ? projects.find((p) => p.id === targetProjectId) : null;
+      if (owningProject?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[owningProject.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Adding tasks needs edit access on this project — ask the owner for editor access.');
+        }
+      }
+
+      const created = plannedTasks.map((planned) => {
+        // `id` is already decided (the plan's own references point at it), so
+        // it's passed through rather than generated here.
+        const { id, ...input } = planned;
+        const built = buildNewTaskObject(input, id);
+        // Preserve the plan's resolved references: buildNewTaskObject defaults
+        // `dependsOn` to [] and knows nothing of parentId, and sanitizeNewTaskFields
+        // would drop a dependency id it can't see in isolation.
+        const withRefs = { ...built, dependsOn: planned.dependsOn || [] };
+        if (planned.parentId) withRefs.parentId = planned.parentId;
+        return owningProject?.sharedProjectId
+          ? { ...withRefs, sharedProjectId: owningProject.sharedProjectId }
+          : withRefs;
+      });
+
+      commit((current) => {
+        const nextTasks = [...current.tasks, ...created];
+        // Same two cascades addTask runs, for the same reasons — a template's
+        // tasks can land under an enforcing ancestor if the chosen project
+        // already has one, and the parent/child recurrence invariant has to
+        // hold for a freshly-created subtree too.
+        const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+        const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+          nextTasks,
+          computeEnforceDueDateSyncUpdates(nextTasks)
+        );
+        const syncedTasks =
+          recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
+            ? nextTasks
+            : nextTasks.map((t) => ({
+                ...t,
+                ...recurrenceSyncUpdates.get(t.id),
+                ...enforceDueDateSyncUpdates.get(t.id),
+              }));
+        return { tasks: syncedTasks, blocks: current.blocks };
+      }, `Created ${created.length} task${created.length === 1 ? '' : 's'} from "${templateName}"`);
+
+      if (soundEnabled) playAddSound(soundVolume);
+      if (created.some((t) => t.dueDate) && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
+      return created;
+    },
+    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects, sharedProjects, user, labels]
+  );
+
+  /**
+   * Update a task's fields — purely local, regardless of `source`. A
+   * Todoist-imported task is exactly as editable as a manual one once it's
+   * in TaskFlow; nothing here is ever pushed back to Todoist.
    *
    * LIVE UI UPDATE: because this always calls `commit`, which updates the
    * shared `tasks` array in context, every consumer reading `tasks` (the
    * task list, board, and any open TaskDetailModal that derives its `task`
    * prop from `tasks` rather than holding a stale local copy) re-renders
    * with the new data immediately — no need to close/reopen anything.
+   *
+   * VIEWER REFUSAL (defense in depth): same rationale as addTask's own
+   * comment above — TaskDetailModal already hides/disables every edit
+   * control for a viewer-role collaborator (see its `isReadOnlyViewer`), but
+   * a path that skips that per-field UI gating entirely (the AI Assistant
+   * applying an `update_task` op straight to this mutator) would otherwise
+   * sail through here, silently mutate local state, and only fail once the
+   * sync layer's write hits Firestore rules moments later — a confusing
+   * "looks applied, then reverts" experience rather than an immediate,
+   * clear refusal. Firestore rules remain the actual security boundary
+   * either way; this only makes the failure immediate and the message clear.
    */
   const updateTask = useCallback(
     (taskId, updates) => {
-      const existing = tasks.find((t) => t.id === taskId);
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t));
-      commit({ tasks: newTasks, blocks }, `Updated task`);
-
-      if (!existing || existing.source !== 'todoist' || !syncActive || !existing.todoistId) return;
-
-      const fieldUpdates = {};
-      for (const field of TODOIST_SYNCED_FIELDS) {
-        if (field in updates) fieldUpdates[field] = updates[field];
+      // Does this edit touch a field the scheduler cares about, in a way that
+      // makes the task's existing block stale or newly eligible for
+      // placement? See needsRescheduleOnTaskUpdate. Read from the current
+      // `tasks`/`blocks` closure (fine here since, unlike the commit()
+      // function-form calls elsewhere in this file, we're not chaining off
+      // another mutation in the same tick).
+      const prevTask = tasks.find((t) => t.id === taskId);
+      if (prevTask?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[prevTask.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Editing this task needs edit access on this project — ask the owner for editor access.');
+        }
       }
-      if (Object.keys(fieldUpdates).length > 0) {
-        updateTodoistTask(todoistToken, existing.todoistId, fieldUpdates).catch((err) => notifySyncFailure('update task', err));
-      }
+      const hasUnlockedScheduledBlock = blocks.some((b) => b.taskId === taskId && !b.isLocked);
+      const needsRebalance = needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock, user?.uid);
 
-      if ('sectionId' in updates || 'projectId' in updates) {
-        moveTodoistTask(todoistToken, existing.todoistId, {
-          sectionId: 'sectionId' in updates ? updates.sectionId : undefined,
-          projectId: 'projectId' in updates ? updates.projectId : undefined,
-        }).catch((err) => notifySyncFailure('move task', err));
-      }
+      // Function form — see addTask's comment just above.
+      commit(
+        (current) => {
+          // Captured across the map below so the post-commit descendant
+          // cascade (see recurringParentDueDateChanged below) knows whether
+          // THIS edit actually moved a recurring parent's due date, without
+          // re-deriving it from `updates` again (which lacks the sanitization/
+          // reopen/re-anchor logic the map applies to get the real new value).
+          let recurringParentDueDateChanged = false;
+          const nextTasks = current.tasks.map((t) => {
+            if (t.id !== taskId) return t;
+            let merged = { ...t, ...sanitizeTaskUpdate(updates, t), updatedAt: new Date().toISOString() };
+            // Editing the due date of an already-completed task means the
+            // user is reopening/rescheduling it, not just relabeling a done
+            // task — otherwise it stays `isCompleted: true` forever (still
+            // showing in "Completed" tiles/lists) even though the user just
+            // moved it back onto the schedule. Only when the caller didn't
+            // already set `isCompleted` itself (completeTask/uncompleteTask
+            // don't go through updateTask, but keep this from double-acting
+            // if that ever changes) and the date is actually changing.
+            if (t.isCompleted && !('isCompleted' in updates) && 'dueDate' in updates && updates.dueDate !== t.dueDate) {
+              merged = { ...merged, isCompleted: false, completedAt: null };
+            }
+            // An explicit dueDate edit means the user now owns this task's
+            // due date directly — even if it was previously copied down from
+            // an enforcing ancestor (see computeEnforceDueDateSyncUpdates).
+            // Clear the inherited flag BEFORE that sync function re-runs
+            // below (against `nextTasks`, which is built from this `merged`
+            // task) so it correctly treats this as "no longer tracking the
+            // ancestor" in the same commit, not just on some future run.
+            // Guarded on the value actually changing (same condition as the
+            // isCompleted re-open check just above) — TaskDetailModal's
+            // commitChanges resubmits `dueDate` on every save regardless of
+            // whether the user touched that field, and that resubmission-of-
+            // the-same-value must not be treated as "the user just claimed
+            // this date as their own".
+            if ('dueDate' in updates && updates.dueDate !== t.dueDate && merged.dueDateInherited) {
+              merged = { ...merged, dueDateInherited: false };
+            }
+            // Recurring-only due-date guards (never let it end up empty; drop
+            // stale completedDates when rescheduling reopens an occurrence
+            // already marked done) — see computeRecurringRescheduleUpdate.
+            merged = { ...merged, ...computeRecurringRescheduleUpdate(t, updates) };
+            // recurrenceRule is a derived cache of recurrenceString (see
+            // utils/recurrence.js) — recompute it whenever a caller touches
+            // recurrenceString so the two can never drift apart.
+            if ('recurrenceString' in updates) {
+              merged = { ...merged, recurrenceRule: deriveRecurrenceRule(merged.recurrenceString) };
+            }
+            // Manually moving a recurring task's due date RE-ANCHORS its
+            // series rather than advancing it: the user picked a date, so that
+            // date must be what they get. Without this the old anchor (plus
+            // any skip watermark) would immediately derive the due date back
+            // off the one they chose. See planSeriesReanchor.
+            if (merged.isRecurring && 'dueDate' in updates && merged.dueDate && merged.dueDate !== t.dueDate) {
+              merged = { ...merged, ...planSeriesReanchor(merged, merged.dueDate) };
+              recurringParentDueDateChanged = true;
+            }
+            // Count a user-moved deadline. Deliberately keyed off the
+            // PRE-edit task `t` and the raw `updates`, not `merged` — by this
+            // point merged has been through the reopen, re-anchor and
+            // recurring-reschedule rewrites above, any of which can change
+            // dueDate for reasons that are not the user pushing a deadline.
+            // Only the task being edited passes through here: the enforcing-
+            // ancestor and recurring-descendant cascades below are applied in
+            // their own pass over `nextTasks`, so one user action stays one
+            // increment. See utils/rescheduleHistory.js for what counts.
+            merged = { ...merged, ...planPostponeUpdate(t, updates, merged.updatedAt) };
+            // Covers a task that just BECAME recurring (or gained its first
+            // due date) — it needs an anchor before anything can derive from it.
+            return { ...merged, ...ensureRecurrenceAnchor(merged) };
+          });
+          // A recurring parent's sub-tasks (and vice versa) must stay
+          // recurrence-consistent — see computeRecurrenceSyncUpdates. Only
+          // relevant when this update touched recurrence itself, but running
+          // it unconditionally is cheap and keeps this branch simple; it's a
+          // no-op whenever the edited task's recurrence didn't change. Same
+          // reasoning for computeEnforceDueDateSyncUpdates and
+          // `enforceDueDate` below — both maps are merged per task id since a
+          // single edit can trigger updates from both at once.
+          const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+          const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+            nextTasks,
+            computeEnforceDueDateSyncUpdates(nextTasks)
+          );
+          // A manual edit to a recurring PARENT's due date also nudges its
+          // recurring descendants' DISPLAYED due date to match, for this cycle
+          // only — see computeRecurringDescendantDueDateOverrides's doc
+          // comment for the full mechanism/self-healing rationale. Skip any
+          // descendant the enforceDueDate cascade above already permanently
+          // re-anchored in this same commit (it fully owns that descendant's
+          // dueDate now; adding a redundant override on top would be no-op-
+          // shaped but sloppy untested state).
+          const descendantDueDateOverrides = recurringParentDueDateChanged
+            ? computeRecurringDescendantDueDateOverrides(
+                nextTasks.find((t) => t.id === taskId),
+                getAllDescendants(taskId, nextTasks).filter((d) => !enforceDueDateSyncUpdates.has(d.id))
+              )
+            : new Map();
+          const syncedTasks =
+            recurrenceSyncUpdates.size === 0 &&
+            enforceDueDateSyncUpdates.size === 0 &&
+            descendantDueDateOverrides.size === 0
+              ? nextTasks
+              : nextTasks.map((t) => ({
+                  ...t,
+                  ...recurrenceSyncUpdates.get(t.id),
+                  ...enforceDueDateSyncUpdates.get(t.id),
+                  ...descendantDueDateOverrides.get(t.id),
+                }));
+          return { tasks: syncedTasks, blocks: current.blocks };
+        },
+        `Updated task`
+      );
+
+      // Queue rather than call runRebalance() synchronously: several
+      // updateTask calls can land in the same tick (e.g. aiPlanService
+      // applying a multi-task plan), and each closes over the same
+      // pre-commit `blocks`/`tasks` — rebalancing after every single one
+      // would run the engine redundantly against still-stale snapshots.
+      // Debouncing collapses a burst into exactly one rebalance, run after
+      // the batch's commits have all landed.
+      // Gated on the user's auto-reschedule toggle (Settings → Scheduling
+      // rules) — undefined (persisted before this setting existed) defaults
+      // to on, same as addTask's check above.
+      if (needsRebalance && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [commit, tasks, blocks, queueDueDateRebalance, rules.autoRescheduleEnabled, sharedProjects, user]
   );
 
+  /**
+   * Delete a task, cascading to its whole subtree — a task with children
+   * (parentId pointing at it) would otherwise leave those children orphaned,
+   * pointing at a parentId that no longer exists.
+   *
+   * VIEWER REFUSAL (defense in depth): same rationale as updateTask's own
+   * comment just above.
+   */
   const deleteTask = useCallback(
     (taskId) => {
-      const existing = tasks.find((t) => t.id === taskId);
-      // Scrub the deleted id out of every other task's dependsOn — otherwise
-      // a dependent task references a task that no longer exists and,
-      // since areDependenciesMet() treats a missing dependency as unmet,
-      // it would stay permanently blocked with no way to fix it in the UI.
-      const newTasks = tasks
-        .filter((t) => t.id !== taskId)
-        .map((t) => (t.dependsOn?.includes(taskId) ? { ...t, dependsOn: t.dependsOn.filter((id) => id !== taskId) } : t));
-      const newBlocks = blocks.filter((b) => b.taskId !== taskId);
-      commit({ tasks: newTasks, blocks: newBlocks }, `Deleted task`);
-
-      if (existing?.source === 'todoist' && syncActive && existing.todoistId) {
-        deleteTodoistTask(todoistToken, existing.todoistId).catch((err) => notifySyncFailure('delete task', err));
+      const targetTask = tasks.find((t) => t.id === taskId);
+      if (targetTask?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[targetTask.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Deleting this task needs edit access on this project — ask the owner for editor access.');
+        }
       }
+      const idsToDelete = new Set([taskId, ...getDescendantIds(taskId, tasks)]);
+      // Tell the shared-project sync engine these deletions were DELIBERATE.
+      // It never infers a delete from a task simply being absent, because an
+      // undo, a backup restore or a cloud pull all replace the task array
+      // wholesale — inferring from any of those would destroy a collaborator's
+      // data. This is the one place that knows the difference.
+      tasks
+        .filter((t) => idsToDelete.has(t.id) && isSharedTask(t))
+        .forEach((t) => noteSharedTaskDeleted(t.id));
+      // Scrub every deleted id (parent + descendants) out of every other
+      // task's dependsOn — otherwise a dependent task references a task
+      // that no longer exists and, since areDependenciesMet() treats a
+      // missing dependency as unmet, it would stay permanently blocked with
+      // no way to fix it in the UI.
+      // Best-effort — deleted tasks' comment attachments would otherwise
+      // stay orphaned in Storage forever. Fire-and-forget, not awaited: the
+      // task deletion itself shouldn't wait on Storage round-trips. Skipped
+      // entirely while signed out — Storage paths are uid-scoped, so the
+      // delete would just fail auth (the attachment is orphaned either way;
+      // no point spending a network round-trip on a call known to fail).
+      if (user) {
+        tasks
+          .filter((t) => idsToDelete.has(t.id))
+          .flatMap((t) => t.comments || [])
+          .forEach((c) => {
+            if (c.attachment) deleteCommentAttachment(c.attachment.path);
+          });
+      }
+      // Blocks belonging to a deleted task are simply dropped from local state
+      // below — they have no Google Calendar presence to clean up (see
+      // useGoogleCalendarSync.js's module doc on why blocks aren't synced).
+      //
+      // Function form — see addTask's comment above. The actual array
+      // transform runs against `current`, not the closed-over `tasks`/
+      // `blocks`, so this is safe even when several deletes/creates happen
+      // in the same synchronous batch.
+      //
+      // TOMBSTONES: the deleted task (and its cascade) is no longer removed
+      // from `tasks` — it's tombstoned in place (deletedAt stamped, heavy
+      // content cleared) via tombstoneTasks, so a future per-task cross-
+      // device merge can tell "never existed here" apart from "deleted
+      // here" (see utils/taskTombstones.js). Blocks are still dropped
+      // outright — they don't participate in this scheme. Every OTHER
+      // component/view reads tasks through the filtered `tasks` binding
+      // (see line ~682), which strips tombstones out, so this is invisible
+      // to the rest of the app; only stateRef/persistence/sync see it.
+      commit(
+        (current) => ({
+          tasks: tombstoneTasks(current.tasks, idsToDelete, new Date().toISOString()),
+          blocks: current.blocks.filter((b) => !idsToDelete.has(b.taskId)),
+        }),
+        `Deleted task`
+      );
+      if (soundEnabled) playDeleteSound(soundVolume);
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit, user, soundEnabled, soundVolume, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted, noteSharedTaskDeleted, sharedProjects]
   );
 
-  // Lock/unlock is a scheduling-engine-only concept with no Todoist
-  // equivalent, so it's never synced.
+  /**
+   * Post a new comment on a task, optionally with one file attachment.
+   * Uploads the file to Storage first (if present) so the Comment object
+   * committed to `tasks` already has a resolved url/path — matches the
+   * rest of the app's "Firestore only ever holds fully-formed data" model.
+   * Requires a signed-in user for the attachment upload (Storage paths are
+   * uid-scoped); text-only comments work whether signed in or not, same as
+   * every other local-first field.
+   *
+   * SHARED-TASK ATTACHMENTS ARE DISABLED (defense in depth): Firebase
+   * Storage has never been provisioned for this project, so storage.rules
+   * has never been deployed and every upload to the shared-project path
+   * would fail at runtime. TaskDetailModal already hides the attach-file
+   * control for shared tasks; this refuses a `file` here too so a stale
+   * client or a future call site can't trigger a doomed upload. Personal
+   * (non-shared) task attachments are unaffected. See attachmentService.js's
+   * checkAttachmentAllowed and docs/DEVELOPMENT.md for how to re-enable.
+   *
+   * AUTHOR ATTRIBUTION (Collaborative Projects, Phase 3): only stamped when
+   * the task belongs to a shared project (`sharedProjectId`) — a personal
+   * task has exactly one possible author, so authorUid/authorDisplayName/
+   * authorPhotoURL stay absent there (see Comment typedef). Denormalized at
+   * post time from the collaborator entry (or, for the owner, from `user`
+   * itself), so a later display-name change doesn't rewrite history.
+   * `mentions` is likewise only populated for a shared task's comment — see
+   * utils/commentMentions.js's extractMentionUids.
+   *
+   * Applies onto stateRef.current.tasks (the LATEST state), not the `tasks`
+   * closed over at call time — an upload can take a while, and any
+   * edit/delete that lands while it's in flight would otherwise be silently
+   * clobbered when this commits a stale snapshot (same hazard
+   * pushToGoogleCalendar works around below).
+   */
+  const addComment = useCallback(
+    async (taskId, { text, file } = {}) => {
+      const task = stateRef.current.tasks.find((t) => t.id === taskId);
+      if ((task?.comments?.length || 0) >= MAX_COMMENTS_PER_TASK) {
+        throw new Error(`This task has reached the ${MAX_COMMENTS_PER_TASK}-comment limit — delete an old comment to add a new one.`);
+      }
+      let attachment = null;
+      if (file) {
+        if (!user) throw new Error('Sign in to attach files to a comment.');
+        const attachmentError = checkAttachmentAllowed(task?.sharedProjectId);
+        if (attachmentError) throw new Error(attachmentError);
+        attachment = await uploadCommentAttachment(user.uid, taskId, file, task?.sharedProjectId);
+      }
+      const newComment = {
+        id: `comment_${Date.now()}`,
+        text: text || '',
+        attachment,
+        createdAt: new Date().toISOString(),
+      };
+      if (task?.sharedProjectId && user) {
+        const sharedProject = sharedProjects[task.sharedProjectId];
+        const isOwner = sharedProject?.ownerId === user.uid;
+        const collaborator = sharedProject?.collaborators?.[user.uid];
+        newComment.authorUid = user.uid;
+        newComment.authorDisplayName = isOwner
+          ? user.displayName || user.email || 'Someone'
+          : collaborator?.displayName || user.displayName || 'Someone';
+        newComment.authorPhotoURL = isOwner ? user.photoURL || null : collaborator?.photoURL ?? user.photoURL ?? null;
+        // Validated against real membership, not just parsed out of the text:
+        // the mention token is typable by hand, so an unchecked list could name
+        // any uid at all. `currentUid` is deliberately omitted here (unlike the
+        // autocomplete's candidate list, which hides you from your own
+        // suggestions) so a self-mention still records rather than being
+        // dropped as bogus.
+        const mentions = extractValidMentionUids(
+          text || '',
+          getMentionCandidates({
+            ownerId: sharedProject?.ownerId,
+            collaborators: sharedProject?.collaborators,
+          })
+        );
+        if (mentions.length) newComment.mentions = mentions;
+      }
+      const newTasks = stateRef.current.tasks.map((t) =>
+        t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment], updatedAt: new Date().toISOString() } : t
+      );
+      commit({ tasks: newTasks, blocks: stateRef.current.blocks }, 'Added comment');
+    },
+    [commit, user, sharedProjects]
+  );
+
+  /**
+   * Remove a comment and, if it carried one, its attachment. The Storage
+   * delete is best-effort (see deleteCommentAttachment) so a transient
+   * failure there never blocks removing the comment itself.
+   *
+   * On a shared task, a comment may now be authored by someone else — only
+   * the comment's own author or the project owner may delete it (mirrors
+   * firestore.rules' abandoned-but-intent-setting comments subcollection
+   * rule: "author or owner, no editing/deleting others' messages"). Personal
+   * tasks are unaffected: every comment there is implicitly "authored" by
+   * the one possible user, so this check is a no-op for them.
+   */
+  const deleteComment = useCallback(
+    (taskId, commentId) => {
+      const task = tasks.find((t) => t.id === taskId);
+      const comment = task?.comments?.find((c) => c.id === commentId);
+      if (!comment) return;
+      if (task?.sharedProjectId && comment.authorUid) {
+        const sharedProject = sharedProjects[task.sharedProjectId];
+        const isOwner = sharedProject?.ownerId === user?.uid;
+        const isAuthor = comment.authorUid === user?.uid;
+        if (!isOwner && !isAuthor) {
+          setNotification?.({ type: 'error', message: 'Only the comment author or project owner can delete this comment.' });
+          return;
+        }
+      }
+      // See deleteTask's cleanup above for why this is skipped signed-out.
+      if (comment?.attachment && user) deleteCommentAttachment(comment.attachment.path);
+      const newTasks = tasks.map((t) => {
+        if (t.id !== taskId) return t;
+        const next = { ...t, comments: (t.comments || []).filter((c) => c.id !== commentId) };
+        // On a shared task, removing the comment from the array isn't enough: the
+        // thread is merged rather than overwritten (see sharedTaskSync's
+        // mergeComments), and a plain absence is indistinguishable from "this
+        // client hasn't received it yet" — so the deleted comment would come
+        // straight back on the next snapshot. Record a tombstone instead.
+        // Personal tasks have a single writer and need no such marker.
+        if (t.sharedProjectId) {
+          next.deletedCommentIds = [...new Set([...(t.deletedCommentIds || []), commentId])].slice(
+            -MAX_COMMENT_TOMBSTONES
+          );
+        }
+        return next;
+      });
+      commit({ tasks: newTasks, blocks }, 'Deleted comment');
+    },
+    [tasks, blocks, commit, user, sharedProjects, setNotification]
+  );
+
   const toggleTaskLock = useCallback(
     (taskId) => {
       const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isLocked: !t.isLocked } : t));
@@ -611,185 +2274,406 @@ export function SchedulerProvider({ children }) {
    *
    * RECURRING TASKS (isRecurring: true): matches Todoist's own behavior —
    * checking off a recurring task does NOT complete it. Instead its due
-   * date advances to the next occurrence (computed locally via
-   * utils/recurrence.js — now with a much more permissive parser and a
-   * defensive "does the string look like a recurrence rule" fallback, so
-   * "every month", "monthly", "every 1 month" etc. all advance correctly
-   * instead of silently falling back to +1 day), `remainingHours` resets
-   * to `estimatedHours` so it's schedulable again, and `isCompleted` stays
-   * false. Any scheduled blocks tied to the task's *previous* occurrence
-   * are removed, since they belonged to a cycle that's now closed out. We
-   * still call Todoist's `close` endpoint (not `reopen`) for recurring
-   * tasks — that's the exact action Todoist itself uses to advance a
-   * recurring task's date server-side, and it remains the ultimate
-   * authority on the precise next date on the next sync.
+   * date advances to the next occurrence, computed locally via
+   * utils/recurrence.js (a permissive parser with a defensive "does the
+   * string look like a recurrence rule" fallback, so "every month",
+   * "monthly", "every 1 month", multi-weekday phrases, etc. all advance
+   * correctly instead of silently falling back to +1 day) — this is now
+   * the only source of truth for the next date, since there's no Todoist
+   * round trip to defer to. `remainingHours` resets to `estimatedHours` so
+   * it's schedulable again, and `isCompleted` stays false. Any scheduled
+   * blocks tied to the task's *previous* occurrence are removed, since they
+   * belonged to a cycle that's now closed out.
    *
    * NON-RECURRING TASKS: unchanged — `isCompleted: true`, `remainingHours: 0`.
+   *
+   * SUB-TASK CASCADE (both branches): completing a task with children
+   * (parentId chain, to arbitrary depth) cascades to the whole subtree —
+   * see getDescendantIds. For a recurring parent, each descendant is
+   * evaluated the same way completeTask would evaluate it standalone: if the
+   * descendant is itself recurring with its own dueDate (e.g. via "Apply to
+   * all sub-tasks" in TaskDetailModal, which copies isRecurring/
+   * recurrenceString/dueDate down onto every sub-task), its dueDate advances
+   * to the next occurrence too; otherwise it's left untouched (no recurrence
+   * reason to clear a plain sub-task deadline) — see
+   * utils/recurrenceState.js's computeRecurringDescendantState for the exact
+   * per-descendant decision and why. For a non-recurring parent, every
+   * descendant is marked completed right alongside it.
+   *
+   * UPWARD CASCADE: after completing a task, if it has a parent, check
+   * whether ALL of that parent's direct children are now "done for the
+   * current cycle" (isCompletedForCurrentOccurrence — isCompleted for a
+   * plain task, today's date in completedDates for a recurring one); if so,
+   * complete the parent too, and repeat one level up (2-level nesting is the
+   * UI's cap, but this walks generally). This mirrors the Tasks list's own
+   * display logic (TaskListPanel's isCheckedForDisplay), so "every sub-task
+   * shows checked" and "the parent auto-completes" stay in agreement. A
+   * recurring parent auto-completed this way advances to its next occurrence
+   * exactly like a manual completion would — there's nothing special about
+   * how it got triggered.
+   *
+
+   * ACTUAL TIME TRACKING: optional second arg `actualHours` — passed only by
+   * CompleteTaskContext.requestComplete when the task being completed had a
+   * Pomodoro timer, confirmed by the user via CompleteTaskConfirmModal. Only
+   * applied to the task itself (not the sub-task cascade, which never ran a
+   * timer of its own) and only on the non-recurring branch — a recurring
+   * completion never sets `isCompleted: true` in the first place, so there's
+   * nowhere meaningful to record it there (see requestComplete, which resets
+   * that timer silently instead of prompting).
+   *
+   * DEPENDENCY GUARD: refuses to complete a task whose `dependsOn` isn't
+   * fully satisfied yet (areDependenciesMet), popping the same toast
+   * notification used for sync/backup errors instead of silently no-op'ing —
+   * otherwise a task could be marked done while the thing it depends on still
+   * isn't. Returns `false` in that case (and `true` on an actual completion)
+   * so callers — namely CompleteTaskContext.requestComplete, whose own return
+   * value callers like TaskDetailModal treat as "did this finish
+   * synchronously" — don't act as if the task completed when it didn't.
    */
+
+  /**
+   * Re-plan the REST of today (only) into whatever capacity completeTask just
+   * freed up by closing out a task early — e.g. a task originally scheduled
+   * for later this afternoon that just got marked done this morning. Uses
+   * rebalanceEngine's `todayOnly` mode (see its own doc comment) so this
+   * NEVER touches tomorrow or any later day — only today's still-unlocked,
+   * not-yet-completed blocks are eligible to be cleared and re-placed. This
+   * is a separate, additive call path from the manual "Re-balance schedule"
+   * button (runRebalance above), which still does its normal full-horizon
+   * pass and is unchanged by this.
+   *
+   * Safe to call unconditionally after every completeTask — if nothing
+   * actually freed up (no later-today block existed, or no other task had
+   * remaining hours to fill it), rebalance() is a no-op and returns the same
+   * blocks back, same as clicking "Re-balance" with nothing to do.
+   */
+  const rebalanceTodayOnly = useCallback(
+    (currentTasks, currentBlocks) => {
+      const result = rebalance({
+        tasks: currentTasks,
+        existingBlocks: currentBlocks,
+        routines,
+        events,
+        rules,
+        todayOnly: true,
+        currentUserId: user?.uid,
+      });
+      return { tasks: currentTasks, blocks: result.blocks };
+    },
+    [routines, events, rules, user?.uid]
+  );
+
   const completeTask = useCallback(
-    (taskId) => {
+    (taskId, actualHours) => {
       const existing = tasks.find((t) => t.id === taskId);
-      if (!existing) return;
+      if (!existing) return false;
+
+      const taskById = new Map(tasks.map((t) => [t.id, t]));
+      if (!areDependenciesMet(existing, taskById)) {
+        const blockers = (existing.dependsOn || [])
+          .map((id) => taskById.get(id))
+          .filter((t) => t && !t.isCompleted)
+          .map((t) => t.title);
+        setNotification({
+          type: 'warning',
+          message:
+            blockers.length > 0
+              ? `Can't complete "${existing.title}" — finish "${blockers.join('", "')}" first.`
+              : `Can't complete "${existing.title}" — its dependencies aren't done yet.`,
+        });
+        return false;
+      }
+
+      // See RECURRING_COMPLETE_COOLDOWN_MS. Returns true rather than false:
+      // from the caller's point of view the completion it asked for did happen
+      // (a moment ago), so the UI should behave exactly as it does on success
+      // — closing the detail modal, resetting the timer — rather than treating
+      // this as a refusal the way the dependency guard above does.
+      if (existing.isRecurring) {
+        const lastCompletedAtMs = recentRecurringCompletionsRef.current.get(taskId);
+        const nowMs = Date.now();
+        if (lastCompletedAtMs != null && nowMs - lastCompletedAtMs < RECURRING_COMPLETE_COOLDOWN_MS) return true;
+        recentRecurringCompletionsRef.current.set(taskId, nowMs);
+      }
+
+      const descendantIds = new Set(getDescendantIds(taskId, tasks));
 
       if (existing.isRecurring && existing.dueDate) {
-        const nextDueDate = computeNextDueDate(existing.dueDate, existing.recurrenceString);
-        const newTasks = tasks.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                dueDate: nextDueDate,
-                remainingHours: t.estimatedHours,
-                isCompleted: false,
-                updatedAt: new Date().toISOString(),
-              }
-            : t
-        );
-        // Drop any *unlocked* blocks scheduled for the just-finished
-        // occurrence — a fresh planning window starts from the new due date
-        // on the next rebalance. Locked blocks are protected the same way a
-        // rebalance protects them (see rebalanceEngine), and blocks for
-        // other tasks are untouched.
-        const newBlocks = blocks.filter((b) => b.taskId !== taskId || b.isLocked);
-        commit({ tasks: newTasks, blocks: newBlocks }, `Completed recurring task — advanced to ${nextDueDate}`);
+        // Base the next occurrence off today (not the stale due date) when the
+        // task is completed late, so finishing an overdue daily task today
+        // makes it due tomorrow instead of 1 day after the missed due date.
+        const todayIso = toISODate(new Date());
+        // Kept for the block filter below, which still reasons in terms of
+        // "the occurrence actually being closed out" — completing late closes
+        // out today's occurrence, not the stale overdue one.
+        const baseDate = existing.dueDate < todayIso ? todayIso : existing.dueDate;
+        const nowIso = new Date().toISOString();
 
-        if (existing.source === 'todoist' && syncActive && existing.todoistId) {
-          setTodoistTaskCompleted(todoistToken, existing.todoistId, true).catch((err) => notifySyncFailure('complete recurring task', err));
-        }
-        return;
+        // Same reasoning as the non-recurring branch's freedFutureCapacity
+        // below: closing out an occurrence whose kept historical block
+        // (date === baseDate) sits on a FUTURE day (completed ahead of its
+        // due date) frees that slot up — capacityEngine no longer counts a
+        // completed block as busy (see rebalanceEngine.js), so without this,
+        // nothing would re-fill it until the user manually rebalances.
+        // rebalanceTodayOnly below only ever touches today, never later days.
+        const freedFutureCapacity = baseDate > todayIso;
+
+        // Record this occurrence's completion against the actual occurrence
+        // date (the original dueDate). When a task is completed late we still
+        // advance its next due date from today, but recording the closed
+        // occurrence under the original due date prevents it from appearing
+        // as "completed today" on the dashboard.
+        const occurrenceDate = existing.dueDate;
+
+        // If this occurrence was moved off-pattern (see
+        // computeRecurringRescheduleUpdate's overrides branch), its entry is
+        // keyed by this same occurrenceDate — drop it now that the occurrence
+        // it described is closed out, so it doesn't linger as dead data.
+        const nextOverrides = dropClosedOccurrenceOverride(existing.overrides, occurrenceDate);
+
+        // Same drop for a manual "time left" edit on this occurrence (see
+        // types/index.js's Task.remainingHoursOverride) — once the occurrence
+        // is closed out its in-progress figure is meaningless, and leaving it
+        // would otherwise leak onto a future occurrence that reuses the same
+        // pattern date after a long recurrence cycle.
+        const nextRemainingHoursOverride = dropClosedOccurrenceOverride(existing.remainingHoursOverride, occurrenceDate);
+
+        // The current occurrence may be sitting on an off-pattern override
+        // (see computeRecurringRescheduleUpdate/resolveCurrentOccurrenceDueDate)
+        // — the series' own `dueDate`/`recurrenceAnchor` deliberately stayed
+        // pinned to the old pattern date when that move happened, since a
+        // single off-pattern nudge shouldn't re-anchor every FUTURE occurrence.
+        // But completing it is different: the user is done with the occurrence
+        // sitting on the moved-to date, and "next" should count forward from
+        // THAT date, not silently resurrect the stale pre-move anchor. Re-anchor
+        // the series onto the resolved date first (same treatment updateTask's
+        // planSeriesReanchor already gives a plain manual dueDate edit — see
+        // its call site above), then let completion roll forward from there.
+        // `occurrenceDate` above is deliberately left as the pre-move date: it's
+        // the key `overrides`/`nextOverrides` already agree on, and completing
+        // an occurrence just re-anchored onto itself immediately resolves it
+        // (completedOccurrences on/after the new anchor gets dropped by
+        // planSeriesReanchor, then re-added by the completion below) so the
+        // bookkeeping still ends up correct either way.
+        const resolvedDueDate = resolveCurrentOccurrenceDueDate(existing);
+        const effectiveTask = resolvedDueDate && resolvedDueDate !== existing.dueDate
+          ? { ...existing, ...planSeriesReanchor(existing, resolvedDueDate) }
+          : existing;
+
+        // A recurring SUB-TASK (has a parentId) does NOT roll forward on its
+        // own — only the group as a whole (the parent, plus every recurring
+        // descendant together) advances once every sub-task is done for the
+        // cycle, via applyUpwardCompletionCascade's descendant-sync below.
+        // Individually completing one sub-task just marks it checked for
+        // today (planSubtaskOccurrenceCompletion) and pins its dueDate so it
+        // doesn't prematurely jump out of "Today" while siblings are still
+        // outstanding. A top-level recurring task has no such group to wait
+        // for, so it keeps rolling forward immediately on its own completion
+        // — see utils/recurrenceState.js's applyRecurringCompletion.
+        const isSubtask = !!existing.parentId;
+        const rolled = isSubtask
+          ? planSubtaskOccurrenceCompletion(effectiveTask, effectiveTask.dueDate, todayIso)
+          : applyRecurringCompletion(effectiveTask, effectiveTask.dueDate, todayIso, { compact: canCompact(effectiveTask) });
+        const nextDueDate = rolled.dueDate;
+
+        // Function form (see addTask's comment above) so two completions
+        // landing in the same tick (double-click, or a recurring task's
+        // checkbox — never disabled, since isCompleted deliberately stays
+        // false for recurring tasks — clicked twice quickly) each compute
+        // off the OTHER's result instead of both reading the same stale
+        // `tasks`/`blocks` closure and the second commit silently
+        // overwriting the first's change.
+        commit((current) => {
+          const newTasks = current.tasks.map((t) => {
+            if (t.id === taskId) {
+              return { ...t, ...rolled, overrides: nextOverrides, remainingHoursOverride: nextRemainingHoursOverride, completedAt: nowIso, updatedAt: nowIso };
+            }
+            // A sub-task's OWN descendants (grandchildren of the top-level
+            // parent — nesting is capped at 2 levels, so this is an edge case)
+            // don't roll forward here either, for the same reason `existing`
+            // itself doesn't: the group they belong to hasn't closed out yet.
+            // They'll roll forward alongside `existing` when the cascade below
+            // eventually advances the whole group.
+            if (!isSubtask && descendantIds.has(t.id)) {
+              // null means "not independently recurring — leave it entirely
+              // alone", which is why this spreads nothing rather than writing
+              // undefined over the descendant's own fields.
+              const update = computeRecurringDescendantState(t, todayIso);
+              return update ? { ...t, ...update, updatedAt: nowIso } : t;
+            }
+            return t;
+          });
+          // Upward cascade: if this was a sub-task and every one of its
+          // siblings is now done for today's cycle too, complete its parent
+          // (and so on up the chain) — see applyUpwardCompletionCascade.
+          const cascadedTasks = applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso);
+          // Drop only *unlocked* blocks for occurrences strictly BEFORE the one
+          // actually being closed out (date < baseDate) — those are stale/
+          // missed prior occurrences with nothing left to show. The occurrence
+          // just closed out (date === baseDate) keeps its block so today's
+          // agenda/calendar can keep showing it, crossed out, as a completed
+          // record (see isBlockTaskCompleted in missedTasks.js, which reads
+          // `completedDates` instead of `isCompleted` for this exact reason).
+          // Blocks for LATER dates belong to future occurrences already placed
+          // by the last rebalance (each occurrence gets its own block now, see
+          // rebalanceEngine's generateTaskOccurrences expansion) and must
+          // survive. Locked blocks are protected the same way a rebalance
+          // protects them, and blocks for other tasks are untouched.
+          //
+          // This filter only ever keyed on the parent's own taskId, and that's
+          // still correct for descendants: a descendant's blocks are scheduled/
+          // rebalanced independently under ITS OWN taskId (allocator.js treats
+          // every task, container or not, as its own schedulable unit — see
+          // resolveDueDate), so they were never touched by this filter before
+          // and don't need to be now either. A descendant whose own dueDate
+          // just advanced above will simply get fresh blocks placed for its new
+          // occurrence on the next rebalance, same as any other recurring task.
+          const newBlocks = current.blocks.filter((b) => b.taskId !== taskId || b.isLocked || b.date >= baseDate);
+          // Completing early can free up a later-today slot the just-closed
+          // occurrence was holding — re-plan the REST of today (only) into it.
+          // See rebalanceTodayOnly's own comment for why this is scoped tightly
+          // to today rather than reusing the full-horizon runRebalance.
+          return rebalanceTodayOnly(cascadedTasks, newBlocks);
+        }, isSubtask ? `Completed recurring sub-task for today` : `Completed recurring task — advanced to ${nextDueDate}`);
+        // Gated on the user's auto-reschedule toggle — see the non-recurring
+        // branch's identical check below for the convention this follows.
+        if (freedFutureCapacity && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
+        return true;
       }
 
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: true, remainingHours: 0 } : t));
-      commit({ tasks: newTasks, blocks }, `Completed task`);
-
-      if (existing.source === 'todoist' && syncActive && existing.todoistId) {
-        setTodoistTaskCompleted(todoistToken, existing.todoistId, true).catch((err) => notifySyncFailure('complete task', err));
-      }
-    },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
-  );
-
-  // ---- Subtask CRUD (nested under a parent Task) ---------------------------
-
-  const addSubtask = useCallback(
-    (taskId, title) => {
-      const trimmed = title.trim();
-      if (!trimmed) return;
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const localId = `sub_${Date.now()}`;
-      const newSubtasks = [...(parent.subtasks || []), { id: localId, title: trimmed, isCompleted: false }];
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, subtasks: newSubtasks, updatedAt: new Date().toISOString() } : t));
-      commit({ tasks: newTasks, blocks }, `Added subtask`);
-
-      if (parent.source === 'todoist' && syncActive && parent.todoistId) {
-        createTodoistSubtask(todoistToken, parent.todoistId, trimmed)
-          .then((created) => {
-            if (!created?.id) return;
-            // Read the latest tasks/blocks (via stateRef) rather than the
-            // `tasks` closed over at call time — see stateRef's doc comment.
-            const latestTasks = stateRef.current.tasks;
-            const latestParent = latestTasks.find((t) => t.id === taskId);
-            if (!latestParent) return;
-            const updatedSubtasks = (latestParent.subtasks || newSubtasks).map((s) =>
-              s.id === localId ? { ...s, todoistId: String(created.id) } : s
-            );
-            const finalTasks = latestTasks.map((t) => (t.id === taskId ? { ...t, subtasks: updatedSubtasks } : t));
-            commit({ tasks: finalTasks, blocks: stateRef.current.blocks }, `Synced subtask to Todoist`);
-          })
-          .catch((err) => notifySyncFailure('add subtask', err));
-      }
-    },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
-  );
-
-  const renameSubtask = useCallback(
-    (taskId, subtaskId, title) => {
-      const trimmed = title.trim();
-      if (!trimmed) return;
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
-      const newTasks = tasks.map((t) =>
-        t.id === taskId ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, title: trimmed } : s)) } : t
+      const nowIso = new Date().toISOString();
+      const todayIso = toISODate(new Date());
+      // Any other task that depended on this one (or one of its completed
+      // descendants) is no longer blocked, so scrub those now-satisfied ids
+      // out of dependsOn — same cleanup deleteTask does when a dependency
+      // disappears, just triggered by it being *done* instead of gone.
+      const completedIds = new Set([taskId, ...descendantIds]);
+      // Completing a task that (or one of its descendants) still had an
+      // unlocked block on a FUTURE day means it was finished early — that
+      // slot is now free capacity on a day rebalanceTodayOnly deliberately
+      // never touches (it's scoped to "the rest of today" only, see its own
+      // doc comment). Queue the same full-horizon debounced rebalance
+      // updateTask/addTask use for a due-date change, so that freed future
+      // capacity actually gets reallocated instead of just sitting empty.
+      const freedFutureCapacity = blocks.some(
+        (b) => completedIds.has(b.taskId) && !b.isLocked && b.date > todayIso
       );
-      commit({ tasks: newTasks, blocks }, `Renamed subtask`);
-
-      if (sub?.todoistId && syncActive) {
-        renameTodoistSubtask(todoistToken, sub.todoistId, trimmed).catch((err) => notifySyncFailure('rename subtask', err));
-      }
+      // Function form — see the recurring branch's comment above.
+      commit((current) => {
+        const newTasks = current.tasks.map((t) => {
+          if (t.id === taskId) {
+            return {
+              ...t,
+              isCompleted: true,
+              completedAt: nowIso,
+              remainingHours: 0,
+              ...(actualHours != null ? { actualHours } : {}),
+              updatedAt: nowIso,
+            };
+          }
+          if (descendantIds.has(t.id)) {
+            return { ...t, isCompleted: true, completedAt: nowIso, remainingHours: 0, updatedAt: nowIso };
+          }
+          if (t.dependsOn?.some((id) => completedIds.has(id))) {
+            return { ...t, dependsOn: t.dependsOn.filter((id) => !completedIds.has(id)), updatedAt: nowIso };
+          }
+          return t;
+        });
+        // Upward cascade — see the recurring branch's comment above.
+        const cascadedTasks = applyUpwardCompletionCascade(newTasks, taskId, todayIso, nowIso);
+        // Completing early can free up a later-today slot this task was
+        // holding — re-plan the REST of today (only) into it.
+        return rebalanceTodayOnly(cascadedTasks, current.blocks);
+      }, `Completed task`);
+      // Gated on the user's auto-reschedule toggle (Settings → Scheduling
+      // rules) — undefined (persisted before this setting existed) defaults
+      // to on, same as addTask/updateTask's checks above.
+      if (freedFutureCapacity && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
+      return true;
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
-  );
-
-  const toggleSubtask = useCallback(
-    (taskId, subtaskId) => {
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
-      const nextCompleted = !sub?.isCompleted;
-      const newTasks = tasks.map((t) =>
-        t.id === taskId
-          ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, isCompleted: nextCompleted } : s)) }
-          : t
-      );
-      commit({ tasks: newTasks, blocks }, `Toggled subtask`);
-
-      if (sub?.todoistId && syncActive) {
-        setTodoistSubtaskCompleted(todoistToken, sub.todoistId, nextCompleted).catch((err) => notifySyncFailure('toggle subtask', err));
-      }
-    },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
-  );
-
-  const removeSubtask = useCallback(
-    (taskId, subtaskId) => {
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
-      const newTasks = tasks.map((t) => (t.id === taskId ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== subtaskId) } : t));
-      commit({ tasks: newTasks, blocks }, `Removed subtask`);
-
-      if (sub?.todoistId && syncActive) {
-        deleteTodoistSubtask(todoistToken, sub.todoistId).catch((err) => notifySyncFailure('delete subtask', err));
-      }
-    },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit, setNotification, rebalanceTodayOnly, queueDueDateRebalance, rules.autoRescheduleEnabled]
   );
 
   /**
-   * Update a subtask's title/notes/completion from its own compact detail
-   * view (SubtaskDetailModal) in one commit, rather than composing the
-   * individual renameSubtask/toggleSubtask calls above — those still exist
-   * for the quick inline checkbox/rename affordances in the checklist row.
-   * Only `title` and `isCompleted` have a Todoist equivalent; `notes` stays
-   * app-local (see Subtask typedef).
+   * Restore a task out of the completed state (undoes completeTask). Only
+   * the single task (plus, for a recurring one, its own upward-cascaded
+   * ancestors — see below) is restored — a parent's *children* aren't
+   * force-restored alongside it, since completing the parent cascaded to
+   * them but that doesn't mean the reverse should be assumed.
+   *
+   * RECURRING TASKS: the Tasks list's restore button (TaskListPanel) is only
+   * ever shown for a task that's currently displaying as checked — for a
+   * recurring task that means "completed for the current occurrence" (see
+   * taskHierarchy's isCompletedForCurrentOccurrence), not isCompleted (which
+   * completeTask never sets true for a recurring task in the first place).
+   * So restoring one has to undo exactly what completing it just did: drop
+   * today's date back out of `completedDates` (reversing
+   * utils/recurrenceState.js's model) rather than only touching isCompleted,
+   * which would otherwise leave the task showing checked forever with no way
+   * to un-check it. This deliberately does NOT try to roll dueDate back to
+   * its pre-completion value — recurrence advancement and calendar
+   * placement already happened and reversing them cleanly would need
+   * reconstructing state this function doesn't have (the old dueDate, any
+   * blocks a rebalance already produced for the new occurrence); simply
+   * un-marking today as done is what the restore button visually promises
+   * and is enough to let the task be completed again today if it was
+   * restored by mistake.
+   *
+   * UPWARD-CASCADE SYMMETRY: if completing this task had auto-completed a
+   * parent (and so on up the chain — see applyUpwardCompletionCascade),
+   * restoring it un-does that too, walking up while each ancestor is still
+   * showing completed for today AND was only completed by virtue of every
+   * child being done (i.e. would no longer qualify now that this one just
+   * un-checked) — matching completeTask's cascade the other direction so a
+   * mis-click restore doesn't leave a parent stuck showing done for a child
+   * that no longer is.
    */
-  const updateSubtask = useCallback(
-    (taskId, subtaskId, updates) => {
-      const parent = tasks.find((t) => t.id === taskId);
-      if (!parent) return;
-      const sub = parent.subtasks?.find((s) => s.id === subtaskId);
-      if (!sub) return;
-      const nextTitle = updates.title !== undefined ? updates.title.trim() || sub.title : sub.title;
-      const newTasks = tasks.map((t) =>
-        t.id === taskId
-          ? { ...t, subtasks: t.subtasks.map((s) => (s.id === subtaskId ? { ...s, ...updates, title: nextTitle } : s)) }
-          : t
-      );
-      commit({ tasks: newTasks, blocks }, `Updated subtask`);
+  const uncompleteTask = useCallback(
+    (taskId) => {
+      const todayIso = toISODate(new Date());
+      const target = tasks.find((t) => t.id === taskId);
+      if (!target) return;
+      // Deliberately re-opening a task clears its completion cooldown, so
+      // un-checking and immediately re-checking isn't swallowed as a repeat.
+      recentRecurringCompletionsRef.current.delete(taskId);
 
-      if (sub.todoistId && syncActive) {
-        if (updates.title !== undefined && nextTitle !== sub.title) {
-          renameTodoistSubtask(todoistToken, sub.todoistId, nextTitle).catch((err) => notifySyncFailure('rename subtask', err));
-        }
-        if (updates.isCompleted !== undefined && updates.isCompleted !== sub.isCompleted) {
-          setTodoistSubtaskCompleted(todoistToken, sub.todoistId, updates.isCompleted).catch((err) =>
-            notifySyncFailure('toggle subtask', err)
-          );
-        }
+      let newTasks;
+      if (target.isRecurring) {
+        // Remove today's occurrence from the SOURCE set — completedDates is a
+        // derived view now (see utils/recurrenceState.js), so filtering it
+        // directly would be silently undone by the next recompute.
+        newTasks = tasks.map((t) =>
+          t.id === taskId ? { ...t, ...planOccurrenceUncompletion(t, todayIso, todayIso) } : t
+        );
+      } else {
+        newTasks = tasks.map((t) => (t.id === taskId ? { ...t, isCompleted: false, completedAt: null } : t));
       }
+
+      // Walk up parentId, un-completing any ancestor that's still showing
+      // "done for today" but would no longer qualify now that this child
+      // just un-checked — same cycle-guard shape as the completion cascade.
+      const visited = new Set([taskId]);
+      let cursor = target;
+      while (cursor?.parentId && !visited.has(cursor.parentId)) {
+        visited.add(cursor.parentId);
+        const parentId = cursor.parentId;
+        const parent = newTasks.find((t) => t.id === parentId);
+        if (!parent || !isCompletedForCurrentOccurrence(parent, todayIso)) break;
+        if (areAllChildrenCompletedForCurrentOccurrence(parentId, newTasks, todayIso)) break; // still legitimately fully done — leave it
+        newTasks = newTasks.map((t) =>
+          t.id === parentId
+            ? parent.isRecurring
+              ? { ...t, ...planOccurrenceUncompletion(t, todayIso, todayIso) }
+              : { ...t, isCompleted: false, completedAt: null }
+            : t
+        );
+        cursor = parent;
+      }
+
+      commit({ tasks: newTasks, blocks }, `Restored completed task`);
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [tasks, blocks, commit]
   );
 
   // ---- Label CRUD (app-local tags, see Label typedef) -----------------------
@@ -832,81 +2716,661 @@ export function SchedulerProvider({ children }) {
     [labels]
   );
 
-  // ---- Project CRUD (Board view "boards") -----------------------------------
+  // ---- Trash: recoverable deletes of projects/sections/labels --------------
+  // See utils/trash.js for what an entry stores and why restore is
+  // best-effort. Everything here is deliberately OUTSIDE the undo stack:
+  // `trash` is its own persisted collection, so a delete stays recoverable
+  // across a reload (which is the whole reason this isn't just undo).
 
   /**
-   * Create a new Project ("board"). If Todoist is configured, tries to
-   * create it there first (so it two-way-syncs like everything else). If
-   * Todoist rejects it because the account has hit its project limit (free
-   * tier: 5 active projects), we fall back to a LOCAL-ONLY project instead
-   * of failing outright — the board still works in TaskFlow, it just won't
-   * exist in Todoist, and we tell the user that explicitly via toast so
-   * they're not confused later about why it's missing from the Todoist app.
+   * Files a captured deletion, pruning in the same pass.
    *
-   * @returns {Promise<{ ok: boolean, localOnly: boolean }>}
+   * Pruning here as well as on load matters: a delete spree has to be capped
+   * immediately rather than at the next load, and an entry that aged out while
+   * the app was closed has to disappear on the next delete even if the load
+   * sweep somehow missed it. Tolerates null so each caller can hand over
+   * whatever its builder returned (a shared project yields none).
    */
-  const addProject = useCallback(
-    async (name) => {
-      const trimmed = name.trim();
-      if (!trimmed) return { ok: false, localOnly: false };
+  const rememberDeletion = useCallback((entry) => {
+    if (!entry) return;
+    setTrash((prev) => pruneTrash([entry, ...(prev || [])], Date.now()));
+  }, [setTrash]);
 
-      if (!syncActive) {
-        const localId = `proj_${Date.now()}`;
-        setProjects((prev) => [...prev, { id: localId, name: trimmed, order: prev.length + 1 }]);
-        setNotification({
-          type: 'success',
-          message: todoistEnabled
-            ? `Board "${trimmed}" created (TaskFlow only — task sync is turned off in Settings).`
-            : `Board "${trimmed}" created (TaskFlow only — Todoist not configured).`,
-        });
-        return { ok: true, localOnly: true };
+  /** Drops one entry without restoring it ("delete permanently"). */
+  const discardTrashEntry = useCallback((entryId) => {
+    setTrash((prev) => (prev || []).filter((e) => e.id !== entryId));
+  }, [setTrash]);
+
+  /**
+   * Puts a deleted project/section/label back, along with whatever of its
+   * tasks can still be re-attached.
+   *
+   * The decision of what to re-attach lives in planTrashRestore (pure, and
+   * unit-tested against the cases that matter — a task deleted since, a task
+   * filed elsewhere since). This function only applies the plan: the row(s) go
+   * through their own setters, and every task edit lands in ONE commit so the
+   * restore is a single undoable action rather than one per task.
+   *
+   * @returns {{ok: boolean, error?: string, reattached?: number, skipped?: number}}
+   */
+  const restoreFromTrash = useCallback(
+    (entryId) => {
+      const entry = (trash || []).find((e) => e.id === entryId);
+      const plan = planTrashRestore(entry, { tasks, projects, sections, labels });
+      if (!plan.ok) return plan;
+
+      if (plan.projects.length > 0) setProjects((prev) => [...prev, ...plan.projects]);
+      if (plan.sections.length > 0) setSections((prev) => [...prev, ...plan.sections]);
+      if (plan.labels.length > 0) setLabels((prev) => [...prev, ...plan.labels]);
+
+      if (plan.taskUpdates.length > 0) {
+        const updatesByTaskId = new Map(plan.taskUpdates.map((u) => [u.taskId, u.updates]));
+        const nowIso = new Date().toISOString();
+        // Function form — see addTask's comment — so this builds on current
+        // state rather than the closure's snapshot.
+        commit(
+          (current) => ({
+            tasks: current.tasks.map((t) =>
+              updatesByTaskId.has(t.id) ? { ...t, ...updatesByTaskId.get(t.id), updatedAt: nowIso } : t
+            ),
+            blocks: current.blocks,
+          }),
+          `Restored "${entry.name}"`
+        );
       }
 
-      try {
-        const created = await createTodoistProject(todoistToken, trimmed);
-        if (!created?.id) throw new Error('Todoist did not return a created project.');
-        setProjects((prev) => [...prev, { id: String(created.id), name: trimmed, color: created.color, order: prev.length + 1 }]);
-        setNotification({ type: 'success', message: `Board "${trimmed}" created and synced to Todoist.` });
-        return { ok: true, localOnly: false };
-      } catch (err) {
-        if (err.isLimitReached) {
-          // Fall back to a local-only board rather than blocking the user.
-          const localId = `proj_${Date.now()}`;
-          setProjects((prev) => [...prev, { id: localId, name: trimmed, order: prev.length + 1 }]);
-          setNotification({
-            type: 'warning',
-            message: `Todoist's project limit is reached, so "${trimmed}" was created in TaskFlow only — it won't sync to Todoist.`,
-          });
-          return { ok: true, localOnly: true };
-        }
-        console.error('[SchedulerContext] Failed to create project', err);
-        setNotification({ type: 'error', message: `Couldn't create board: ${err.message || err}` });
-        return { ok: false, localOnly: false };
-      }
+      discardTrashEntry(entryId);
+      return { ok: true, reattached: plan.reattached, skipped: plan.skipped };
     },
-    [syncActive, todoistEnabled, todoistToken]
+    [trash, tasks, projects, sections, labels, setProjects, setSections, setLabels, commit, discardTrashEntry]
   );
 
+  /** Rename a Label — purely local (labels have no Todoist equivalent). Every task referencing it by id picks up the new name automatically since nothing denormalizes a label's name onto the task itself. */
+  const renameLabel = useCallback((labelId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setLabels((prev) => prev.map((l) => (l.id === labelId ? { ...l, name: trimmed } : l)));
+  }, []);
+
+  /** Delete a Label and strip it out of every task's labelIds — goes through commit() (not a bare setState) so removing a tag from every task it's attached to is itself one undoable action. */
+  const deleteLabel = useCallback(
+    (labelId) => {
+      // Captured BEFORE the delete: the entry records which tasks are about to
+      // have this tag stripped, which is unknowable afterwards.
+      const label = labels.find((l) => l.id === labelId);
+      if (label) rememberDeletion(buildLabelTrashEntry({ label, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') }));
+      setLabels((prev) => prev.filter((l) => l.id !== labelId));
+      const newTasks = tasks.map((t) =>
+        t.labelIds?.includes(labelId) ? { ...t, labelIds: t.labelIds.filter((id) => id !== labelId) } : t
+      );
+      if (newTasks.some((t, i) => t !== tasks[i])) commit({ tasks: newTasks, blocks }, `Deleted tag`);
+    },
+    [tasks, blocks, commit, labels, rememberDeletion]
+  );
+
+  // ---- Todoist: one-time import ---------------------------------------------
+
+  /**
+   * Pull every Project/Section/Task from Todoist ONCE and merge it into
+   * local state — the only thing in this app that ever talks to the
+   * Todoist API. Safe to re-run any time the user wants to pull in what's
+   * changed on Todoist since the last import:
+   *   - Projects/Sections/Tasks already imported (matched by id) get their
+   *     fields refreshed from the fresh fetch.
+   *   - New Projects/Sections/Tasks are added.
+   *   - Anything local-only (a manually-created board/section, or a task
+   *     with source: 'manual') is left completely untouched — this is an
+   *     upsert-merge, never a wholesale replace.
+   *   - A previously-imported item that's since been deleted in Todoist is
+   *     NOT removed here; it just stops being touched by future imports,
+   *     which is the expected "import once, then manage locally" contract.
+   *
+   * Also resolves each imported task's Todoist labels (raw label name
+   * strings — Todoist's `labels` field, distinct from TaskFlow's own Label
+   * records) onto local `labelIds`, creating any label that doesn't
+   * already exist by name. This used to be silently dropped entirely (see
+   * todoistService.js's module doc comment) from before the LabelPicker
+   * feature existed, when labels genuinely had no Todoist equivalent to
+   * worry about.
+   */
+  const importFromTodoist = useCallback(async () => {
+    if (!todoistToken) {
+      setNotification({ type: 'error', message: 'Add a Todoist API token in Settings first.' });
+      return { ok: false };
+    }
+
+    setIsSyncing(true);
+    try {
+      const [fetchedProjects, fetchedSections] = await Promise.all([
+        fetchTodoistProjects(todoistToken),
+        fetchTodoistSections(todoistToken),
+      ]);
+      const sectionsById = new Map(fetchedSections.map((s) => [s.id, s.name]));
+      const fetchedTasks = await fetchTodoistTasks(todoistToken, sectionsById);
+
+      setProjects((prev) => {
+        const byId = new Map(prev.map((p) => [p.id, p]));
+        fetchedProjects.forEach((p) => byId.set(p.id, { ...byId.get(p.id), ...p }));
+        return [...byId.values()];
+      });
+      setSections((prev) => {
+        const byId = new Map(prev.map((s) => [s.id, s]));
+        fetchedSections.forEach((s) => byId.set(s.id, { ...byId.get(s.id), ...s }));
+        return [...byId.values()];
+      });
+
+      // Resolve every fetched task's Todoist label NAMES to local label ids
+      // in one batched pass across all tasks (not one getOrCreateLabelIds
+      // call per task), so a label mentioned on several tasks is only
+      // created once instead of racing itself across separate state updates.
+      const allLabelNames = [...new Set(fetchedTasks.flatMap((t) => t.labelNames || []))];
+      const labelIdByName = new Map();
+      if (allLabelNames.length > 0) {
+        const byLowerName = new Map(labels.map((l) => [l.name.toLowerCase(), l]));
+        const newLabels = [];
+        let nextCount = labels.length;
+        allLabelNames.forEach((name) => {
+          const key = name.toLowerCase();
+          const existing = byLowerName.get(key);
+          if (existing) {
+            labelIdByName.set(name, existing.id);
+            return;
+          }
+          const newLabel = { id: `label_${Date.now()}_${nextCount}`, name, color: nextLabelColor(nextCount) };
+          byLowerName.set(key, newLabel);
+          newLabels.push(newLabel);
+          labelIdByName.set(name, newLabel.id);
+          nextCount += 1;
+        });
+        if (newLabels.length > 0) setLabels((prev) => [...prev, ...newLabels]);
+      }
+
+      let addedCount = 0;
+      let updatedCount = 0;
+      const byId = new Map(tasks.map((t) => [t.id, t]));
+      fetchedTasks.forEach((raw) => {
+        const { labelNames, ...task } = raw;
+        const resolvedLabelIds = (labelNames || []).map((n) => labelIdByName.get(n)).filter(Boolean);
+        const existing = byId.get(task.id);
+        if (existing) {
+          updatedCount += 1;
+          // Only refresh fields Todoist is actually the source of truth for.
+          // Everything else (remainingHours, isLocked, isCompleted,
+          // minChunkHours/maxChunkHours, dependsOn, isPassive, earliestDate,
+          // enforceDueDate, fixedTime, link, createdAt) is app-local and must
+          // survive a re-import untouched — see module doc comment above.
+          byId.set(task.id, {
+            ...existing,
+            title: task.title,
+            notes: task.notes,
+            estimatedHours: task.estimatedHours,
+            priority: task.priority,
+            dueDate: task.dueDate,
+            isRecurring: task.isRecurring,
+            recurrenceString: task.recurrenceString,
+            projectId: task.projectId,
+            sectionId: task.sectionId,
+            sectionName: task.sectionName,
+            // Todoist's parent_id hierarchy is authoritative the same way
+            // section/project membership is — a task moved under a
+            // different parent (or promoted to top-level) in Todoist
+            // should reflect that here on re-import too.
+            parentId: task.parentId ?? null,
+            labelIds: resolvedLabelIds,
+            updatedAt: task.updatedAt,
+          });
+        } else {
+          addedCount += 1;
+          byId.set(task.id, { ...task, labelIds: resolvedLabelIds });
+        }
+      });
+      const newTasks = [...byId.values()];
+      commit({ tasks: newTasks, blocks }, `Imported from Todoist (${addedCount} new, ${updatedCount} updated)`);
+
+      const summary = { at: new Date().toISOString(), addedCount, updatedCount, totalCount: fetchedTasks.length };
+      setLastTodoistImport(summary);
+      setNotification({
+        type: 'success',
+        message: `Imported ${addedCount} new and updated ${updatedCount} existing task${addedCount + updatedCount === 1 ? '' : 's'} from Todoist.`,
+      });
+      return { ok: true, ...summary };
+    } catch (err) {
+      console.error('[SchedulerContext] Todoist import failed', err);
+      setNotification({ type: 'error', message: `Todoist import failed: ${err.message || err}` });
+      return { ok: false };
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [todoistToken, tasks, blocks, labels, commit, setLastTodoistImport]);
+
+  // ---- Project CRUD (Board view "boards") -----------------------------------
+
+  /** Create a new Project ("board") — always local; Todoist projects only ever enter via importFromTodoist. */
+  const addProject = useCallback((name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false };
+    const id = generateLocalId('proj');
+    setProjects((prev) => [...prev, { id, name: trimmed, order: prev.length + 1 }]);
+    return { ok: true, id };
+  }, []);
+
+  /**
+   * Rename/delete/pin are all purely local — even for a Todoist-imported
+   * project, none of these ever call the Todoist API.
+   */
+  const renameProject = useCallback(
+    (projectId, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, name: trimmed } : p)));
+      // A shared project's name lives on its Firestore document too, so a
+      // rename has to reach collaborators — otherwise they keep seeing whatever
+      // it was called when they joined. Fire-and-forget: the local rename has
+      // already applied, and rules reject it for non-editors anyway.
+      const shared = projects.find((p) => p.id === projectId)?.sharedProjectId;
+      if (shared) {
+        updateSharedProject(shared, { name: trimmed }).catch((err) =>
+          console.error('[SchedulerContext] Failed to rename shared project', err)
+        );
+      }
+    },
+    [projects]
+  );
+
+  const deleteProject = useCallback(
+    (projectId) => {
+      const project = projects.find((p) => p.id === projectId);
+      const sharedId = project?.sharedProjectId;
+
+      // Captured before anything is removed. Returns null for a shared project
+      // — its tasks live in Firestore and are discarded outright below, so
+      // there'd be nothing to rebuild from (see utils/trash.js).
+      rememberDeletion(
+        buildProjectTrashEntry({ project, sections, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') })
+      );
+
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setSections((prev) => prev.filter((s) => s.projectId !== projectId));
+
+      if (sharedId) {
+        // Tell the sync engine BEFORE the delete goes out: an edit made just
+        // before clicking delete may still have a debounced task/section push
+        // in flight (writeSharedTasks/writeSharedSections, dispatched but
+        // awaiting its network round-trip) with no ordering guarantee against
+        // deleteSharedProject's own deleteDoc below — firestore.rules'
+        // parentOwner()/parentEditor() re-`get()` the parent doc on every such
+        // write, so if the delete happens to land first server-side, that
+        // write comes back permission-denied even though it was issued with
+        // full rights at send time. Without this, the rejection looked
+        // identical to a real lost-access error and surfaced a misleading
+        // "you don't have permission" toast for a delete that actually
+        // succeeded — see noteSharedProjectDeleted's doc comment.
+        noteSharedProjectDeleted(sharedId);
+        // Drop the membership pointer either way, so the project stops
+        // re-listing on this user's other devices.
+        setSharedProjectIds((prev) => prev.filter((id) => id !== sharedId));
+        // Only the OWNER deletes the shared document itself. For everyone else
+        // "delete" means leave — a collaborator removing it from their own list
+        // must not destroy a project they don't own (and rules would refuse
+        // anyway). Without this the document was orphaned in Firestore with
+        // nobody left listing it.
+        //
+        // See isLikelySharedProjectOwner's doc comment: prefers the LIVE
+        // sharedProjects[sharedId].ownerId, falling back to the local
+        // project's own (write-once, possibly stale) ownerId field only when
+        // the live doc hasn't loaded yet — otherwise deleting shortly after a
+        // fresh page load (before useSharedProjectSync's subscription
+        // delivers its first snapshot) silently skipped deleteSharedProject
+        // entirely, orphaning the document in Firestore even though the
+        // local row was already gone and the delete looked like it worked.
+        if (isLikelySharedProjectOwner(sharedProjects[sharedId], project, user?.uid)) {
+          deleteSharedProject(sharedId).catch((err) =>
+            console.error('[SchedulerContext] Failed to delete shared project', err)
+          );
+        }
+      }
+
+      // Function form — see addTask's comment above. A shared project's tasks
+      // are dropped outright rather than being unparented into All Tasks:
+      // they live in Firestore, not this user's store, so keeping local copies
+      // would strand tasks nobody is syncing any more.
+      commit(
+        (current) => ({
+          tasks: sharedId
+            ? current.tasks.filter((t) => t.sharedProjectId !== sharedId)
+            : current.tasks.map((t) =>
+              t.projectId === projectId
+                ? { ...t, projectId: null, sectionId: null, sectionName: null, updatedAt: new Date().toISOString() }
+                : t
+            ),
+          blocks: sharedId ? current.blocks.filter((b) => !current.tasks.some((t) => t.id === b.taskId && t.sharedProjectId === sharedId)) : current.blocks,
+        }),
+        `Deleted project`
+      );
+    },
+    [commit, projects, sections, tasks, user, sharedProjects, noteSharedProjectDeleted, rememberDeletion]
+  );
+
+  /**
+   * Turn an existing personal project into a collaborative one (Collaborative
+   * Projects, Phase 1). Creates the `sharedProjects/{id}` document, moves the
+   * project's tasks into it, and records the membership pointer so the project
+   * re-lists on this user's other devices.
+   *
+   * Sharing is opt-in per project and never retroactive — everything else stays
+   * exactly where it is, in this user's own `users/{uid}` document.
+   *
+   * This does NOT generate a share link. Link tokens live in a document no
+   * client may read (`sharedProjects/{id}/private/links`), so generating,
+   * rotating, revoking or even VIEWING a link all require the server-side join
+   * endpoint that Phase 2 adds. Until then this makes a project collaborative
+   * and syncs it live across the owner's own devices, which is what Phase 1
+   * needs to be testable on its own.
+   *
+   * Requires a real signed-in account: `firestore.rules` refuses to let an
+   * anonymous user create a shared project, since an ephemeral identity would
+   * leave it permanently unowned.
+   */
+  const shareProject = useCallback(
+    async (projectId) => {
+      if (!user) {
+        setNotification({ type: 'warning', message: 'Sign in to share a project.' });
+        return { ok: false };
+      }
+      if (user.isAnonymous) {
+        setNotification({ type: 'warning', message: 'Sharing needs a full account, not a guest session.' });
+        return { ok: false };
+      }
+      const project = projects.find((p) => p.id === projectId);
+      if (!project) return { ok: false };
+      if (project.sharedProjectId) return { ok: true, id: project.sharedProjectId };
+
+      // Recurring tasks are safe to share: their completion state merges rather
+      // than overwrites (see utils/recurrenceState.js), which is exactly why
+      // that model was built before this.
+      const sharedProjectId = generateLocalId('shared');
+      try {
+        await createSharedProject(sharedProjectId, {
+          ownerId: user.uid,
+          name: project.name,
+          ownerDisplayName: user.displayName,
+          ownerPhotoURL: user.photoURL,
+        });
+        // Move this project's tasks into the shared store, then tag them
+        // locally so every consumer (Board, list, search) keeps rendering them
+        // while the sync engine takes over their persistence.
+        //
+        // THE UPLOAD MUST FULLY SUCCEED BEFORE ANYTHING IS TAGGED. Tagging a
+        // task with `sharedProjectId` is what stops it being written to
+        // localStorage (Firestore becomes its only store — see
+        // utils/sharedTaskSync.js's header), so tagging tasks whose upload
+        // failed strands them: gone from local persistence, absent remotely,
+        // and dropped from the array entirely by the first snapshot that
+        // arrives (planRemoteTaskApply treats a tagged local task the server
+        // doesn't have as remotely deleted). The `await` below is therefore
+        // load-bearing, and every step after it has to be synchronous.
+        const movingTasks = stateRef.current.tasks.filter((t) => t.projectId === projectId);
+        // Sections upload alongside tasks, same all-or-nothing rule: a
+        // section tagged before its own upload is confirmed would be
+        // stranded exactly like a task would (see the comment above) — gone
+        // from local persistence, absent remotely, then dropped by the first
+        // snapshot treating it as remotely-deleted. Read from sectionsRef,
+        // not `sections`: this callback is async and sections could have
+        // changed since it was invoked.
+        const movingSections = sectionsRef.current.filter((s) => s.projectId === projectId);
+        await Promise.all([
+          writeSharedTasks(sharedProjectId, { creates: movingTasks }),
+          writeSharedSections(sharedProjectId, { creates: movingSections }),
+        ]);
+
+        // Read state ONCE, after the last await, and derive every write from
+        // that single snapshot. Re-reading stateRef/sectionsRef between the
+        // steps below would let a task/section added during the upload be
+        // tagged without ever having been uploaded — the exact stranding case
+        // described above.
+        const current = stateRef.current;
+        const currentSections = sectionsRef.current;
+        const uploadedIds = new Set(movingTasks.map((t) => t.id));
+        const uploadedSectionIds = new Set(movingSections.map((s) => s.id));
+
+        // setProjects here is the TRACKED setter (see useLocalEditTrackedState's
+        // doc comment) — it bumps localNonUndoEditIdRef automatically, so
+        // useCloudSync's race guard can never observe the pre-share value and
+        // wrongly conclude "no local edit happened" during the network
+        // round-trip above. (This used to be a manual `localNonUndoEditIdRef
+        // .current += 1` here — now redundant and removed, since every
+        // tracked setter does this generically.)
+        setProjects((prev) =>
+          prev.map((p) => (p.id === projectId ? { ...p, ownerId: user.uid, sharedProjectId } : p))
+        );
+        // overwritePresent, not commit: this is a storage-location change, not
+        // a user action to sit in the undo stack — and undoing it could not
+        // un-create the Firestore document anyway.
+        overwritePresent({
+          // Only tasks actually confirmed uploaded are tagged. A task created
+          // in this project while the upload was in flight stays personal for
+          // now and is picked up by the ordinary write-diff once the
+          // subscription is live, rather than being tagged into a store it
+          // was never written to.
+          tasks: current.tasks.map((t) =>
+            t.projectId === projectId && uploadedIds.has(t.id) ? { ...t, sharedProjectId } : t
+          ),
+          blocks: current.blocks,
+        });
+        // Sections aren't part of the tasks/blocks undo history — a plain
+        // setSections call, mirroring the overwritePresent call above for the
+        // same "only tag confirmed uploads" reasoning.
+        setSections(
+          currentSections.map((s) =>
+            s.projectId === projectId && uploadedSectionIds.has(s.id) ? { ...s, sharedProjectId } : s
+          )
+        );
+        // Subscribing LAST, once the tasks/sections are both uploaded and
+        // tagged, so the first snapshot can never arrive while the two sides
+        // disagree.
+        setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
+        setNotification({ type: 'success', message: `"${project.name}" is now a shared project.` });
+        return { ok: true, id: sharedProjectId };
+      } catch (err) {
+        // Nothing has been tagged at this point (see above), so the project is
+        // still fully intact locally — the shared document may exist but is
+        // empty and unreferenced, which is inert.
+        console.error('[SchedulerContext] Failed to share project', err);
+        setNotification({ type: 'error', message: "Couldn't share that project. Your tasks are safe — please try again." });
+        return { ok: false };
+      }
+    },
+    [user, projects, stateRef, sectionsRef, overwritePresent, setNotification]
+  );
+
+  /**
+   * Finish joining a shared project after the server has validated the link
+   * token and signed this user in with a `joinToken`-bearing session (see
+   * services/shareLinkService.js's resolveShareToken, which does both).
+   *
+   * Two writes, in this order:
+   *   1. Add this user to the project's `collaborators` map in Firestore. This
+   *      is what actually grants access — until it lands, the rules still deny
+   *      every read of the project's tasks. It is authorized by the `joinToken`
+   *      auth claim, which is short-lived, so it must happen promptly after
+   *      resolution rather than being deferred behind any UI.
+   *   2. File the project into this user's own local list, so it's reachable
+   *      from the sidebar like any other project. The whole point of the spec's
+   *      "joined projects appear locally" requirement is that nobody has to
+   *      keep the original link around to get back in.
+   *
+   * The local project row is created with the SAME id as the shared document,
+   * so `sharedProjectId === id`. That's deliberate: tasks arriving from the
+   * sync engine carry `projectId` values written by the owner's client, and
+   * they have to match a project this user actually has, or every joined task
+   * would render as belonging to nothing.
+   *
+   * Idempotent: re-running it for a project already in the list updates the
+   * existing row rather than adding a duplicate, so re-clicking a link (the
+   * common case — people re-open the chat message rather than find the
+   * project) is harmless.
+   */
+  const joinSharedProject = useCallback(
+    async ({ sharedProjectId, projectName, role, displayName, wasAnonymous }) => {
+      // Read the LIVE Firebase Auth user, not the `user` this callback closed
+      // over. useJoinFlow's join effect runs once (guarded by its own
+      // startedRef) and calls this via a `completeJoin` reference it captured
+      // BEFORE signInAnonymously/resolveShareToken's signInWithCustomToken
+      // resolved — this context's own `user` state only catches up once
+      // AuthContext's onAuthStateChanged listener fires and this provider
+      // re-renders, which is not guaranteed to have happened yet by the time
+      // this runs. Reading `user` here would see the pre-sign-in value (often
+      // `null`) and fail with 'not_signed_in' on a visitor's very first
+      // attempt — exactly the "works on refresh, fails on the first try" bug
+      // this works around. auth.currentUser is synchronous and always current
+      // (see useJoinFlow.js's own identical `auth.currentUser` reads, and its
+      // header comment). Falls back to the React `user` for any caller
+      // outside the join flow where both should already agree.
+      const currentUser = auth.currentUser || user;
+      if (!currentUser) return { ok: false, reason: 'not_signed_in' };
+      try {
+        await addSelfAsCollaborator(sharedProjectId, currentUser.uid, {
+          role,
+          displayName: displayName || currentUser.displayName || 'Someone',
+          photoURL: currentUser.photoURL || null,
+          // Falls back to user.isAnonymous only for callers outside the join
+          // flow. Inside it, `wasAnonymous` (from the refreshed custom-token
+          // claim) is the only correct source: after signInWithCustomToken
+          // every session reports isAnonymous === false, so trusting it here
+          // would write a value the rules reject. See resolveShareToken.
+          isAnonymous: wasAnonymous === undefined ? !!currentUser.isAnonymous : !!wasAnonymous,
+        });
+
+        // setProjects/setSharedProjectIds below are both TRACKED setters (see
+        // useLocalEditTrackedState's doc comment) — each bumps
+        // localNonUndoEditIdRef on its own now, so useCloudSync's race guard
+        // can detect this join without a manual bump here (this used to be
+        // one, now redundant and removed — every tracked setter does this
+        // generically).
+        setProjects((prev) => {
+          const existing = prev.find((p) => p.id === sharedProjectId);
+          if (existing) {
+            return prev.map((p) =>
+              p.id === sharedProjectId ? { ...p, name: projectName || p.name, sharedProjectId } : p
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: sharedProjectId,
+              name: projectName || 'Shared project',
+              order: prev.length + 1,
+              sharedProjectId,
+              lastVisitedAt: new Date().toISOString(),
+            },
+          ];
+        });
+        // Subscribing last, once membership exists — subscribing first would
+        // just produce a permission-denied burst until the write landed.
+        setSharedProjectIds((prev) => (prev.includes(sharedProjectId) ? prev : [...prev, sharedProjectId]));
+        return { ok: true, projectId: sharedProjectId };
+      } catch (err) {
+        console.error('[SchedulerContext] Failed to join shared project', err);
+        return { ok: false, reason: 'write_failed' };
+      }
+    },
+    [user]
+  );
+
+  /**
+   * Let a guest (see isGuestUser) rename themselves from Settings — every
+   * signed-out visitor is a guest by default now, not just a share-link
+   * joiner, so this also covers someone who has never touched a shared
+   * project (and, per the lazy-sign-in design in AuthContext.jsx, may not
+   * even have a Firebase session yet — `user` can genuinely be `null` here,
+   * not just anonymous). Real (Google-signed-in) accounts don't use this:
+   * their name comes from their Google account, not from anything TaskFlow
+   * stores.
+   *
+   * Touches every shared project this browser's guest identity has joined
+   * (planSelfRename, pure) — a guest may have joined several boards and a
+   * rename should be visible consistently everywhere, matching what
+   * addSelfAsCollaborator already denormalizes per-project. Also refreshes
+   * this uid's presence doc in each project (so the avatar strip picks up
+   * the new name immediately rather than waiting for the next 30s
+   * heartbeat). Does NOT touch past comments' authorDisplayName — that
+   * denormalization is deliberately frozen at post time (see
+   * types/index.js's Comment typedef). A guest with no `user` at all has
+   * nothing in `sharedProjects` either (joining is what creates a session in
+   * the first place), so `projectIds` is simply empty and no remote write is
+   * attempted — this is a purely local rename.
+   *
+   * The local guest-identity record (guestIdentity.js) — the durable copy
+   * that survives this guest being removed from every shared project, and
+   * that a name-less guest with no shared projects relies on entirely — is
+   * only updated once every remote write above has actually succeeded, so a
+   * partial failure never leaves the local record claiming a name that
+   * didn't make it to (say) one of several joined projects.
+   */
+  const renameAnonymousSelf = useCallback(
+    async (displayName) => {
+      if (user && !isGuestUser(user)) return { ok: false, reason: 'not_anonymous' };
+      const trimmed = (displayName || '').trim();
+      if (!trimmed) return { ok: false, reason: 'empty_name' };
+
+      const projectIds = user ? planSelfRename(user.uid, trimmed, sharedProjects) : [];
+      try {
+        // One batched write per project (rename + presence together) rather
+        // than 2×N concurrent individual writes — see
+        // renameSelfAndPresenceForProjects' doc comment.
+        await renameSelfAndPresenceForProjects(projectIds, user.uid, {
+          displayName: trimmed,
+          photoURL: user.photoURL || null,
+        });
+        setGuestDisplayName(trimmed);
+        return { ok: true };
+      } catch (err) {
+        console.error('[SchedulerContext] Failed to rename anonymous self', err);
+        return { ok: false, reason: 'write_failed' };
+      }
+    },
+    [user, sharedProjects]
+  );
+
+  const togglePinProject = useCallback((projectId) => {
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, isPinned: !p.isPinned } : p)));
+  }, []);
+
+  const touchProjectVisited = useCallback((projectId) => {
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, lastVisitedAt: new Date().toISOString() } : p)));
+  }, []);
+
   // ---- Section CRUD (Board view columns) ------------------------------------
+  // Sections follow the exact same sharing model as tasks (see
+  // utils/sharedTaskSync.js's SECTIONS note): a section belonging to a shared
+  // project is tagged `sharedProjectId` and lives in the same `sections`
+  // array, synced by useSharedProjectSync's write-diff rather than by any
+  // direct Firestore call here.
 
   const addSection = useCallback(
     (projectId, name) => {
       const trimmed = name.trim();
-      if (!trimmed || !projectId) return;
-      const localId = `sec_${Date.now()}`;
-      const newSection = { id: localId, name: trimmed, projectId, order: sections.length + 1 };
+      if (!trimmed || !projectId) return null;
+      // A section created inside a shared project is tagged immediately so
+      // the write-diff picks it up — mirrors what shareProject does for
+      // tasks moved in bulk, just one at a time here since sections are
+      // created one at a time. Unlike a personal project (own id === own
+      // lookup), a project the CURRENT USER owns and has shared keeps its own
+      // local `id` with a separate `sharedProjectId` pointer (see
+      // shareProject) — the lookup below is what makes this section land in
+      // the right Firestore document either way (owner or joined member).
+      const project = projects.find((p) => p.id === projectId);
+      const newSection = {
+        id: generateLocalId('sec'),
+        name: trimmed,
+        projectId,
+        order: sections.length + 1,
+        ...(project?.sharedProjectId ? { sharedProjectId: project.sharedProjectId } : {}),
+      };
       setSections((prev) => [...prev, newSection]);
-
-      if (syncActive) {
-        createTodoistSection(todoistToken, projectId, trimmed)
-          .then((created) => {
-            if (!created?.id) return;
-            setSections((prev) => prev.map((s) => (s.id === localId ? { ...s, id: String(created.id) } : s)));
-          })
-          .catch((err) => notifySyncFailure('create section', err));
-      }
+      return newSection;
     },
-    [sections.length, syncActive, todoistToken, notifySyncFailure]
+    [sections.length, projects]
   );
 
   const renameSection = useCallback(
@@ -914,29 +3378,60 @@ export function SchedulerProvider({ children }) {
       const trimmed = name.trim();
       if (!trimmed) return;
       setSections((prev) => prev.map((s) => (s.id === sectionId ? { ...s, name: trimmed } : s)));
-      // Denormalized sectionName on any task currently in this section stays in sync too.
-      const newTasks = tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionName: trimmed } : t));
-      if (newTasks.some((t, i) => t !== tasks[i])) commit({ tasks: newTasks, blocks }, `Renamed section`);
-
-      if (syncActive) {
-        renameTodoistSection(todoistToken, sectionId, trimmed).catch((err) => notifySyncFailure('rename section', err));
-      }
+      // Denormalized sectionName on any task currently in this section stays
+      // in sync too. Function form — see addTask's comment above — always
+      // commits rather than skipping when no task happens to reference this
+      // section, since "did anything change" can't be checked ahead of time
+      // against `current` (only known once the updater runs); a harmless
+      // no-op-content undo entry in that rare case beats risking a lost
+      // write in a same-tick batch.
+      commit(
+        (current) => ({
+          tasks: current.tasks.map((t) =>
+            t.sectionId === sectionId ? { ...t, sectionName: trimmed, updatedAt: new Date().toISOString() } : t
+          ),
+          blocks: current.blocks,
+        }),
+        `Renamed section`
+      );
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [commit]
   );
 
   const deleteSection = useCallback(
     (sectionId) => {
-      setSections((prev) => prev.filter((s) => s.id !== sectionId));
-      // Tasks in the deleted section fall back to "No Section", matching what Todoist does.
-      const newTasks = tasks.map((t) => (t.sectionId === sectionId ? { ...t, sectionId: null, sectionName: null } : t));
-      commit({ tasks: newTasks, blocks }, `Deleted section`);
-
-      if (syncActive) {
-        deleteTodoistSection(todoistToken, sectionId).catch((err) => notifySyncFailure('delete section', err));
+      const section = sections.find((s) => s.id === sectionId);
+      // Tell the shared-project sync engine this was deliberate, same
+      // reasoning as noteSharedTaskDeleted — "absent from the array" is
+      // ambiguous (undo/restore/cloud pull all replace it wholesale), so only
+      // an explicit delete call may issue a remote delete.
+      if (section && isSharedSection(section)) noteSharedSectionDeleted(sectionId);
+      // A shared section is deliberately not captured: restoring it locally
+      // would not recreate the Firestore document its collaborators read, so
+      // the row would come back pointing at nothing (same reasoning as a
+      // shared project — see utils/trash.js).
+      if (section && !isSharedSection(section)) {
+        rememberDeletion(buildSectionTrashEntry({ section, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') }));
       }
+      setSections((prev) => prev.filter((s) => s.id !== sectionId));
+      // Tasks in the deleted section fall back to "No Section", matching
+      // what Todoist does (and matching this app's own local behavior before
+      // sharing existed) — kept exactly the same for a shared project's
+      // section, rather than inventing different semantics for the shared
+      // case. Function form — see addTask's comment above.
+      commit(
+        (current) => ({
+          tasks: current.tasks.map((t) =>
+            t.sectionId === sectionId
+              ? { ...t, sectionId: null, sectionName: null, updatedAt: new Date().toISOString() }
+              : t
+          ),
+          blocks: current.blocks,
+        }),
+        `Deleted section`
+      );
     },
-    [tasks, blocks, commit, syncActive, todoistToken, notifySyncFailure]
+    [commit, sections, tasks, noteSharedSectionDeleted, rememberDeletion]
   );
 
   // ---- Block CRUD (manual drag/resize/lock) --------------------------------
@@ -964,36 +3459,49 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
-  // ---- Push all auto-scheduled, unpushed blocks to Google Calendar --------
-  const pushToGoogleCalendar = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      const toPush = blocks.filter((b) => !b.googleEventId);
-      const pushedEventIdsByBlockId = new Map();
-      for (const block of toPush) {
-        const task = tasks.find((t) => t.id === block.taskId);
-        if (!task) continue;
-        const eventId = await pushBlockToCalendar(block, task);
-        if (eventId) pushedEventIdsByBlockId.set(block.id, eventId);
+  // Manually place a task's work onto a specific date/time slot — the one
+  // "manual scheduling" entry point in the app (every other block comes from
+  // the auto-scheduler in allocator.js/rebalanceEngine.js; see
+  // EventDetailModal's Task-mode create flow, the only current caller). If
+  // the task already has a ScheduledBlock, it's moved (same
+  // `isAutoScheduled: false` convention WeekView's own drag-reschedule uses,
+  // so a later Re-balance won't fight this placement); otherwise a fresh
+  // block is created, mirroring the shape allocator.js itself stamps onto a
+  // new block. Silently replaces any prior schedule for this task — no
+  // confirmation, no dedupe beyond "at most one block per call".
+  const scheduleTaskAt = useCallback(
+    (taskId, date, startTime, endTime) => {
+      if (!date || !startTime || !endTime || timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+        setNotification({ type: 'error', message: 'Invalid time range.' });
+        return;
       }
-      // Apply the pushed googleEventIds onto the LATEST blocks (via
-      // stateRef), not the `blocks` closed over at call time — the network
-      // round-trip above can take a while per block, and any edit/delete
-      // that lands while it's in flight would otherwise be clobbered by
-      // committing the stale array wholesale.
-      const latestBlocks = stateRef.current.blocks;
-      const updated = latestBlocks.map((b) =>
-        pushedEventIdsByBlockId.has(b.id) ? { ...b, googleEventId: pushedEventIdsByBlockId.get(b.id) } : b
-      );
-      commit({ tasks: stateRef.current.tasks, blocks: updated }, `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar`);
-      setNotification({ type: 'success', message: `Pushed ${pushedEventIdsByBlockId.size} block(s) to Google Calendar.` });
-    } catch (err) {
-      console.error(err);
-      setNotification({ type: 'error', message: `Push to Google Calendar failed: ${err.message || err}` });
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [blocks, tasks, commit]);
+      const existing = blocks.filter((b) => b.taskId === taskId);
+      if (existing.length > 0) {
+        const existingId = existing[0].id;
+        const newBlocks = blocks.map((b) =>
+          b.id === existingId ? { ...b, date, startTime, endTime, isAutoScheduled: false } : b
+        );
+        commit({ tasks, blocks: newBlocks }, `Scheduled task`);
+        return;
+      }
+      const task = tasks.find((t) => t.id === taskId);
+      const newBlock = {
+        id: generateLocalId('block'),
+        taskId,
+        date,
+        startTime,
+        endTime,
+        durationHours: (timeToMinutes(endTime) - timeToMinutes(startTime)) / 60,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+        googleEventId: null,
+        isPassive: !!task?.isPassive,
+      };
+      commit({ tasks, blocks: [...blocks, newBlock] }, `Scheduled task`);
+    },
+    [tasks, blocks, commit, setNotification]
+  );
 
   // ---- Manual blocked-time CRUD --------------------------------------------
   // A "manual" CalendarEvent has no Google counterpart — it's the user
@@ -1002,58 +3510,560 @@ export function SchedulerProvider({ children }) {
   // perspective exactly like a Google event (see capacityEngine — it
   // doesn't distinguish by `source`), and re-running Re-balance schedule
   // will move any unlocked task work out from under it.
-  const addManualEvent = useCallback(({ title, date, startTime, endTime }) => {
-    const newEvent = {
-      id: `evt_manual_${Date.now()}`,
-      title: title?.trim() || 'Blocked time',
-      date,
-      startTime,
-      endTime,
-      isFreeTime: false,
-      isRecurring: false,
-      googleEventId: null,
-      seriesId: null,
-      source: 'manual',
-    };
-    setEvents((prev) => [...prev, newEvent]);
-    return newEvent;
-  }, []);
+  const addManualEvent = useCallback(
+    ({ title, date, startTime, endTime, description = '', location = '', recurrenceRule = null }) => {
+      // Belt-and-suspenders: EventDetailModal already validates this before
+      // calling in, but a reversed/zero-length interval here would silently
+      // fail to block any time (subtractIntervals doesn't special-case
+      // start > end), so a caller that bypasses the modal (e.g. a future AI
+      // assistant integration) can't slip one through.
+      if (!date || !startTime || !endTime || timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+        setNotification({ type: 'error', message: 'Invalid event time range.' });
+        return;
+      }
+      const id = generateLocalId('evt_manual');
+      const newEvent = {
+        id,
+        title: title?.trim() || 'Untitled event',
+        date,
+        startTime,
+        endTime,
+        description: description?.trim() || '',
+        location: location?.trim() || '',
+        isFreeTime: false,
+        isRecurring: !!recurrenceRule,
+        recurrenceRule: recurrenceRule || null,
+        googleEventId: null,
+        // Own id doubles as seriesId when recurring — same convention
+        // googleCalendarService uses for a true-RRULE master (see its own
+        // "master's own id doubles as its seriesId" comment) — so
+        // EventDetailModal's "Apply to" scope picker (gated on
+        // `event.seriesId`) shows up for this event's own edits/deletes the
+        // same way it already does for a Google-sourced recurring master.
+        seriesId: recurrenceRule ? id : null,
+        source: 'manual',
+      };
+      setEvents((prev) => [...prev, newEvent]);
 
-  const updateEvent = useCallback((eventId, updates) => {
-    setEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, ...updates } : e)));
-  }, []);
+      // Fire-and-forget push to Google Calendar — don't block returning the
+      // new event on a network round trip. On success, patch the returned
+      // googleEventId/googleUpdatedAt back onto the LATEST events (via the
+      // functional setEvents form) so a later edit/delete on this same
+      // event knows which Google event to update/delete, regardless of
+      // whatever else has changed in `events` while this was in flight.
+      // Also flips `source` to 'google' — once this row has a real Google
+      // copy, Google Calendar is authoritative for it (see
+      // eventSyncService.mergePulledGoogleEvents's "Google always wins"
+      // policy): a row left at source:'manual' forever is PERMANENTLY
+      // exempt from pull-driven updates, including detecting that it was
+      // deleted directly in Google Calendar — a real event where events
+      // stopped in sync after their first successful push (and a manual/
+      // google distinction the UI no longer visually makes anyway).
+      if (googleConnected) {
+        pushEventToCalendar(newEvent)
+          .then((result) => {
+            if (!result) return;
+            setEvents((prev) =>
+              prev.map((e) => (e.id === newEvent.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+            );
+          })
+          .catch((err) => {
+            console.error('[SchedulerContext] Failed to push new event to Google Calendar', err);
+            // Unlike every other push/pull path in this file, this failure was
+            // previously swallowed to the console only — the event would just
+            // silently never show up on Google with no indication why. Saved
+            // locally either way, so this is a heads-up, not a rollback.
+            setNotification({
+              type: 'error',
+              message: `Saved "${newEvent.title}" locally, but couldn't push it to Google Calendar: ${err?.message || err}`,
+            });
+          });
+      }
 
-  /** Only meaningful for manual events — Google-sourced events aren't owned by TaskFlow to delete. */
-  const deleteEvent = useCallback((eventId) => {
-    setEvents((prev) => prev.filter((e) => e.id !== eventId));
-  }, []);
+      // ---- Undo toast -----------------------------------------------------
+      // Mirrors updateEvent/deleteEvent's own toast below — Undo removes the
+      // just-added row locally and, if it made it to Google in the meantime,
+      // deletes it there too (using the latest events, since the Google push
+      // above may still be in flight and hasn't patched a googleEventId in
+      // yet by the time Undo is clicked).
+      pushActionToast({
+        id: `evt_add_${Date.now()}`,
+        label: 'Added event',
+        undo: () => {
+          setEvents((prev) => {
+            const current = prev.find((e) => e.id === newEvent.id);
+            if (googleConnected && current?.googleEventId) {
+              deleteCalendarEvent(current.googleEventId, current.calendarId).catch((err) =>
+                console.error('[SchedulerContext] Failed to delete undone event from Google Calendar', err)
+              );
+            }
+            return prev.filter((e) => e.id !== newEvent.id);
+          });
+        },
+      });
+
+      return newEvent;
+    },
+    [googleConnected]
+  );
+
+  /**
+   * Update an event's fields, optionally applied across its recurring
+   * series — mirrors setEventIgnored's own 'this'/'following'/'all' scope
+   * branching just below (see its doc comment) so Save and Ignore use the
+   * exact same scope semantics. Every touched event gets a fresh
+   * `localUpdatedAt` stamp (kept for potential future use — see
+   * eventSyncService.js's conflict policy doc comment for why it doesn't
+   * currently gate anything). `eventId` may be a virtual per-occurrence id
+   * (see recurrenceExpansion.resolveEventId / applyEventScopeUpdate) for a
+   * single occurrence of a true-RRULE Google series.
+   *
+   * If connected, fire-and-forget pushes the edit to Google. A 'this'-scope
+   * edit on a single occurrence of a true-RRULE series pushes via Google's
+   * real per-occurrence instance id, resolved through `events.instances()`
+   * (see googleCalendarService.pushEventInstanceUpdate) rather than through
+   * `applyEventScopeUpdate`'s `pushTargets` (which stays
+   * empty for that case, since there's no top-level master-row change to
+   * push — the edit only ever touches the master's `overrides` map). There's
+   * no per-occurrence row to stamp a fresh googleEventId onto afterwards
+   * (occurrences are virtual, never real rows — see recurrenceExpansion.js),
+   * so success here is fire-and-forget with nothing to patch back onto state.
+   * @param {string} eventId
+   * @param {Partial<import('../types').CalendarEvent>} updates
+   * @param {'this'|'following'|'all'} scope
+   */
+  const updateEvent = useCallback(
+    (eventId, updates, scope = 'this') => {
+      const stamped = { ...updates, localUpdatedAt: new Date().toISOString() };
+      // Generated once up front (rather than inside applyEventScopeUpdate)
+      // so BOTH calls below — the actual state write and the separate
+      // push-targets computation — agree on the new master's id for a
+      // 'following'-scope split; only used when scope is actually
+      // 'following', but cheap enough to just always compute.
+      const splitId = `evt_split_${Date.now()}`;
+      // `events` as it stood BEFORE this edit (this callback closed over it
+      // at call time) — kept around for the Undo toast below, which reverts
+      // to this exact snapshot rather than trying to unwind whatever
+      // scope-specific transform just ran (in-place edit, override-map entry,
+      // or a 'following' series split into two rows).
+      const prevEventsSnapshot = events;
+      const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
+
+      setEvents((prev) => applyEventScopeUpdate(prev, eventId, stamped, scope, splitId).events);
+
+      // ---- Undo toast -----------------------------------------------------
+      // Calendar events are a separate array from tasks/blocks (see this
+      // file's doc comment) and deliberately NOT wired through
+      // useHistoryState's commit()/undo stack — this pops the same
+      // bottom-corner toast tasks/blocks actions use (see `actionToasts`
+      // above), but carries its own `undo` thunk instead of relying on the
+      // shared tasks/blocks `undo()`. On Undo:
+      //   - Local state always reverts to `prevEventsSnapshot` verbatim —
+      //     trivially correct for every scope, including a 'following' split
+      //     (just discards the new row) or an 'all' edit across every row of
+      //     a synthetic series.
+      //   - A single-occurrence edit on a true-RRULE series ('this' scope on
+      //     a virtual id) never touches a top-level row — it's pushed to
+      //     Google via the deterministic per-instance id instead of
+      //     `pushTargets`, so its revert re-pushes the occurrence's pre-edit
+      //     override the same way.
+      //   - Everything else re-pushes the PRE-edit version of whatever
+      //     `pushTargets` says changed, using its original googleEventId, so
+      //     Google ends up back at its pre-edit content. A 'following'
+      //     split's newly-created master has no pre-edit counterpart — that
+      //     row is DELETED from Google instead (using whatever googleEventId
+      //     it's picked up by the time Undo is clicked; if the fire-and-forget
+      //     insert is still in flight, this is a no-op and leaves an orphan
+      //     event on Google — rare enough, and cheap enough to remove by
+      //     hand, not to justify blocking Undo on a network round trip).
+      pushActionToast({
+        id: `evt_${Date.now()}`,
+        label: 'Updated event',
+        undo: () => {
+          if (googleConnected) {
+            if (isVirtual && scope === 'this') {
+              const master = prevEventsSnapshot.find((e) => e.id === masterId);
+              if (master?.googleEventId) {
+                const originalOverride = master.overrides?.[occurrenceDate];
+                const originalFields = { ...master, ...originalOverride, date: originalOverride?.date || occurrenceDate };
+                pushEventInstanceUpdate(master, occurrenceDate, originalFields).catch((err) =>
+                  console.error('[SchedulerContext] Failed to revert single-occurrence Google edit on undo', err)
+                );
+              }
+            } else {
+              const { pushTargets } = applyEventScopeUpdate(prevEventsSnapshot, eventId, stamped, scope, splitId);
+              if (pushTargets.length > 0) {
+                setEvents((latest) => {
+                  for (const target of pushTargets) {
+                    const before = prevEventsSnapshot.find((e) => e.id === target.id);
+                    if (before) {
+                      pushEventToCalendar(before).catch((err) =>
+                        console.error('[SchedulerContext] Failed to revert Google event on undo', err)
+                      );
+                    } else {
+                      // Only reachable for a 'following' split's newly-created
+                      // master (see doc comment above) — delete it from
+                      // Google instead of updating, since undo removes the
+                      // row entirely.
+                      const inserted = latest.find((e) => e.id === target.id);
+                      if (inserted?.googleEventId) {
+                        deleteCalendarEvent(inserted.googleEventId, inserted.calendarId).catch((err) =>
+                          console.error('[SchedulerContext] Failed to delete split-series event from Google on undo', err)
+                        );
+                      }
+                    }
+                  }
+                  return prevEventsSnapshot;
+                });
+                return; // already restored state via the functional setEvents above
+              }
+            }
+          }
+          setEvents(prevEventsSnapshot);
+        },
+      });
+
+      if (!googleConnected) return;
+
+      if (isVirtual && scope === 'this') {
+        // Single-occurrence edit on a true-RRULE series: push via the
+        // instance-id mechanism instead of the normal pushTargets path (see
+        // doc comment above). `stamped` may only carry a PARTIAL edit (e.g.
+        // WeekView's resize handler only sends `{ endTime }`), so re-merge it
+        // onto any pre-existing override for this date the same way
+        // applyEventScopeUpdate's 'this' branch just did for state, to get
+        // this occurrence's full current field set (title/description/
+        // location/date/startTime/endTime) before building the Google patch
+        // body — a PATCH still needs complete start/end dateTimes.
+        const master = events.find((e) => e.id === masterId);
+        if (master?.googleEventId) {
+          const mergedOverride = { ...master.overrides?.[occurrenceDate], ...stamped };
+          const occurrenceFields = { ...master, ...mergedOverride, date: mergedOverride.date || occurrenceDate };
+          pushEventInstanceUpdate(master, occurrenceDate, occurrenceFields).catch((err) =>
+            console.error('[SchedulerContext] Failed to push single-occurrence edit to Google Calendar', err)
+          );
+        }
+        return;
+      }
+
+      const { pushTargets } = applyEventScopeUpdate(events, eventId, stamped, scope, splitId);
+      for (const eventToPush of pushTargets) {
+        const pushId = eventToPush.id;
+        pushEventToCalendar(eventToPush)
+          .then((result) => {
+            if (!result) return;
+            // Flips source to 'google' too — see addManualEvent's own
+            // comment on its equivalent patch for why: a manual event can
+            // get its FIRST googleEventId here instead, if it was created
+            // while disconnected and only pushed later via an edit.
+            setEvents((prev) =>
+              prev.map((e) => (e.id === pushId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+            );
+          })
+          .catch((err) => console.error('[SchedulerContext] Failed to push updated event to Google Calendar', err));
+      }
+    },
+    [events, googleConnected]
+  );
+
+  /**
+   * Delete an event, honoring 'this'/'following'/'all' scope for a
+   * true-RRULE Google series (one master row per series — see
+   * recurrenceExpansion.js's doc comment). `eventId` may be a virtual
+   * per-occurrence id (see resolveEventId).
+   *   - 'all' (default): for a manual/non-recurring event, deletes the whole
+   *     row and its Google copy, if one was ever pushed. For a "synthetic"
+   *     series (see googleCalendarService's withSyntheticSeries — each
+   *     occurrence is its own real row sharing `seriesId`, no master row),
+   *     fans out across every row sharing `seriesId`, deleting each on
+   *     Google too — otherwise untouched siblings would just get re-imported
+   *     on the next poll.
+   *   - 'following' on a synthetic series: same fan-out, restricted to rows
+   *     with `date >= this occurrence's date`.
+   *   - 'this' on a synthetic series (or any real id with no series):
+   *     deletes only the clicked row.
+   *   - 'this' (true-RRULE occurrence only): keeps the master row; marks
+   *     just this date's override `deleted`, so expandRecurringEvent stops
+   *     generating it — and, if connected, also deletes that single instance
+   *     on Google via the same real-instance-id resolution `updateEvent` uses
+   *     for 'this'-scope edits (see
+   *     googleCalendarService.deleteCalendarEventInstance).
+   *   - 'following' (true-RRULE occurrence only): truncates the master's
+   *     recurrenceRule to end the day before this occurrence — no
+   *     continuation series to create, unlike updateEvent's 'following'
+   *     (there's nothing to re-create after a delete) — and pushes that
+   *     truncation to Google so a later pull doesn't resurrect the deleted
+   *     tail (mirrors updateEvent's old-master push).
+   * @param {string} eventId
+   * @param {'this'|'following'|'all'} scope
+   */
+  const deleteEvent = useCallback(
+    (eventId, scope = 'all') => {
+      const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
+      // Captured before any mutation below, same technique updateEvent uses
+      // for its own Undo — restoring this verbatim always reverts local
+      // state regardless of which scope branch ran.
+      const prevEventsSnapshot = events;
+
+      if (!isVirtual || scope === 'all') {
+        // For a virtual per-occurrence id (a true-RRULE series, scope 'all'
+        // only — see below), the real row to delete is the MASTER, not the
+        // virtual id itself: `events` never contains a row keyed by the
+        // `${masterId}::${date}` virtual id, so looking it up by the raw
+        // `eventId` here silently found nothing and made "Delete" on "All
+        // events in the series" a no-op for every true-RRULE series (the
+        // 'this'/'following' branches further below already resolved via
+        // `masterId` correctly — this branch was the one gap).
+        const target = events.find((e) => e.id === (isVirtual ? masterId : eventId));
+        if (!target) return;
+
+        // A "synthetic" series (see googleCalendarService's withSyntheticSeries)
+        // has no single master row — every occurrence is its own real row,
+        // grouped only by sharing `seriesId` — so 'following'/'all' scope has
+        // to fan out across those sibling rows the same way applyEventScopeUpdate
+        // does for edits. 'this' scope (or no series at all) only ever touches
+        // the one clicked row.
+        const deleteTargets =
+          target.seriesId && scope !== 'this'
+            ? events.filter((e) => e.seriesId === target.seriesId && (scope === 'all' || e.date >= target.date))
+            : [target];
+        const deleteIds = new Set(deleteTargets.map((e) => e.id));
+
+        setEvents((prev) => prev.filter((e) => !deleteIds.has(e.id)));
+        deleteTargets.forEach((t) => {
+          if (googleConnected && t.googleEventId) {
+            // Suppress this id from being merged back in by a poll/pull that
+            // lands before Google's own delete has propagated (see
+            // eventSyncService.mergePulledGoogleEvents) — the fire-and-forget
+            // delete call below isn't awaited, so without this a pull racing
+            // ahead of it would see the event as still live and resurrect it.
+            markGoogleEventDeleted(t.googleEventId);
+            deleteCalendarEvent(t.googleEventId, t.calendarId).catch((err) => {
+              console.error('[SchedulerContext] Failed to delete event from Google Calendar', err);
+              // The delete never actually happened on Google's side — stop
+              // suppressing pulls for this id so the next poll/pull can merge
+              // in its (still-live) real state rather than continuing to hide
+              // it locally for the rest of the suppression window.
+              unmarkGoogleEventDeleted(t.googleEventId);
+              // Also put THIS specific target back locally now, rather than
+              // leaving it removed until the next poll silently resurrects it
+              // with no explanation — only this target reverts, so siblings
+              // in a multi-event fan-out that deleted successfully stay gone.
+              setEvents((prev) => (prev.some((e) => e.id === t.id) ? prev : [...prev, t]));
+              setNotification({
+                type: 'error',
+                message: `Couldn't delete "${t.title}" from Google Calendar: ${err?.message || err}`,
+              });
+            });
+          }
+        });
+        pushActionToast({
+          id: `evt_del_${Date.now()}`,
+          label: deleteTargets.length > 1 ? `Deleted ${deleteTargets.length} events` : 'Deleted event',
+          undo: () => {
+            setEvents(prevEventsSnapshot);
+            deleteTargets.forEach((t) => {
+              // The user undid the delete — this id shouldn't be suppressed
+              // from merges anymore (it's no longer "recently deleted" from
+              // the user's point of view), otherwise a pull landing before
+              // the recreate below finishes could drop the restored event
+              // right back out as an out-of-band Google-side delete.
+              if (t.googleEventId) unmarkGoogleEventDeleted(t.googleEventId);
+              // The Google copy was deleted above — recreate it (a fresh
+              // insert, not a revert-in-place) rather than trying to
+              // resurrect the same googleEventId.
+              if (googleConnected && t.googleEventId) {
+                pushEventToCalendar(t)
+                  .then((result) => {
+                    if (!result) return;
+                    setEvents((prev) =>
+                      prev.map((e) => (e.id === t.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+                    );
+                  })
+                  .catch((err) => console.error('[SchedulerContext] Failed to restore deleted event on Google Calendar on undo', err));
+              }
+            });
+          },
+        });
+        return;
+      }
+
+      const master = events.find((e) => e.id === masterId);
+      if (!master) return;
+
+      if (scope === 'this') {
+        setEvents((prev) =>
+          prev.map((e) =>
+            e.id === masterId
+              ? {
+                  ...e,
+                  overrides: { ...(e.overrides || {}), [occurrenceDate]: { ...(e.overrides?.[occurrenceDate]), deleted: true } },
+                }
+              : e
+          )
+        );
+        if (googleConnected && master.googleEventId) {
+          // Suppress this occurrence from being merged back in by a poll/pull
+          // that lands before Google's own EXDATE update has propagated (see
+          // eventSyncService.mergePulledGoogleEvents) — mirrors the whole-event
+          // suppression above, just keyed per-occurrence since the master's own
+          // googleEventId never changes for a single-occurrence delete.
+          markGoogleEventInstanceDeleted(master.googleEventId, occurrenceDate);
+          deleteCalendarEventInstance(master, occurrenceDate).catch((err) => {
+            console.error('[SchedulerContext] Failed to delete single occurrence from Google Calendar', err);
+            // The delete never actually happened on Google's side — stop
+            // suppressing pulls for this occurrence so the next poll/pull can
+            // merge in its (still-live) real state.
+            unmarkGoogleEventInstanceDeleted(master.googleEventId, occurrenceDate);
+            // Also undo the optimistic local 'deleted' override for just this
+            // occurrence, restoring whatever override it had before (e.g. a
+            // moved time) instead of leaving it hidden until the next poll
+            // silently brings it back with no explanation.
+            setEvents((prev) =>
+              prev.map((e) => {
+                if (e.id !== masterId) return e;
+                const overrides = { ...(e.overrides || {}) };
+                const priorOverride = master.overrides?.[occurrenceDate];
+                if (priorOverride) overrides[occurrenceDate] = priorOverride;
+                else delete overrides[occurrenceDate];
+                return { ...e, overrides };
+              })
+            );
+            setNotification({
+              type: 'error',
+              message: `Couldn't delete "${master.title}" from Google Calendar: ${err?.message || err}`,
+            });
+          });
+        }
+        pushActionToast({
+          id: `evt_del_${Date.now()}`,
+          label: 'Deleted event',
+          undo: () => {
+            setEvents(prevEventsSnapshot);
+            if (googleConnected && master.googleEventId) {
+              // The user undid the delete — this occurrence shouldn't be
+              // suppressed from merges anymore, otherwise a pull landing
+              // before the restore push below finishes could drop it right
+              // back out as an out-of-band Google-side delete.
+              unmarkGoogleEventInstanceDeleted(master.googleEventId, occurrenceDate);
+              const originalOverride = master.overrides?.[occurrenceDate];
+              const originalFields = { ...master, ...originalOverride, date: originalOverride?.date || occurrenceDate };
+              pushEventInstanceUpdate(master, occurrenceDate, originalFields).catch((err) =>
+                console.error('[SchedulerContext] Failed to restore single occurrence on Google Calendar on undo', err)
+              );
+            }
+          },
+        });
+        return;
+      }
+
+      // scope === 'following'
+      const dayBefore = addDays(occurrenceDate, -1);
+      const truncatedMaster = { ...master, recurrenceRule: truncateRuleUntil(master.recurrenceRule, dayBefore) };
+      setEvents((prev) => prev.map((e) => (e.id === masterId ? truncatedMaster : e)));
+      if (googleConnected) {
+        pushEventToCalendar(truncatedMaster)
+          .then((result) => {
+            if (!result) return;
+            setEvents((prev) =>
+              prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+            );
+          })
+          .catch((err) => {
+            console.error('[SchedulerContext] Failed to push truncated series to Google Calendar', err);
+            // The truncated series never actually made it to Google — put the
+            // master's original (pre-truncation) recurrenceRule back locally
+            // rather than leaving it truncated until the next poll silently
+            // restores the "deleted" occurrences with no explanation.
+            setEvents((prev) => prev.map((e) => (e.id === masterId ? master : e)));
+            setNotification({
+              type: 'error',
+              message: `Couldn't delete "${master.title}" from Google Calendar: ${err?.message || err}`,
+            });
+          });
+      }
+      pushActionToast({
+        id: `evt_del_${Date.now()}`,
+        label: 'Deleted events',
+        undo: () => {
+          setEvents(prevEventsSnapshot);
+          // Push the pre-truncation master back so its full recurrence
+          // (including the occurrences we just truncated away) reappears
+          // on Google too.
+          if (googleConnected) {
+            pushEventToCalendar(master)
+              .then((result) => {
+                if (!result) return;
+                setEvents((prev) =>
+                  prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+                );
+              })
+              .catch((err) => console.error('[SchedulerContext] Failed to restore truncated series on Google Calendar on undo', err));
+          }
+        },
+      });
+    },
+    [events, googleConnected, markGoogleEventDeleted, unmarkGoogleEventDeleted, markGoogleEventInstanceDeleted, unmarkGoogleEventInstanceDeleted]
+  );
 
   /**
    * Set a (typically Google-sourced) event's `isFreeTime` "ignore" flag,
    * optionally applied across its recurring series — mirroring Google
    * Calendar's own "This event / This and following events / All events"
-   * prompt when editing a recurring event.
+   * prompt when editing a recurring event. `event.id` may be a virtual
+   * per-occurrence id (see resolveEventId) for a single occurrence of a
+   * true-RRULE Google series (one master row per series). Always
+   * local-only regardless of scope — Google Calendar has no concept of
+   * "ignore" (it's a TaskFlow-only scheduling override), so this never
+   * pushes.
    * @param {import('../types').CalendarEvent} event
    * @param {boolean} ignored
    * @param {'this'|'following'|'all'} scope
    */
   const setEventIgnored = useCallback((event, ignored, scope = 'this') => {
-    if (scope === 'this' || !event.seriesId) {
-      setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, isFreeTime: ignored } : e)));
+    const { masterId, occurrenceDate, isVirtual } = resolveEventId(event.id);
+
+    if (!isVirtual) {
+      if (scope === 'this' || !event.seriesId) {
+        setEvents((prev) => prev.map((e) => (e.id === event.id ? { ...e, isFreeTime: ignored } : e)));
+        return;
+      }
+      setEvents((prev) =>
+        prev.map((e) => {
+          if (e.seriesId !== event.seriesId) return e;
+          if (scope === 'following' && e.date < event.date) return e;
+          return { ...e, isFreeTime: ignored };
+        })
+      );
       return;
     }
-    setEvents((prev) =>
-      prev.map((e) => {
-        if (e.seriesId !== event.seriesId) return e;
-        if (scope === 'following' && e.date < event.date) return e;
-        return { ...e, isFreeTime: ignored };
-      })
-    );
-  }, []);
 
-  /** Bulk-toggle every recurring (seriesId-bearing) event's `isFreeTime` flag at once. */
-  const setAllRecurringIgnored = useCallback((ignored) => {
-    setEvents((prev) => prev.map((e) => (e.seriesId ? { ...e, isFreeTime: ignored } : e)));
+    if (scope === 'all') {
+      setEvents((prev) => prev.map((e) => (e.id === masterId ? { ...e, isFreeTime: ignored } : e)));
+      return;
+    }
+
+    if (scope === 'following') {
+      const splitId = `evt_split_${Date.now()}`;
+      setEvents((prev) => {
+        const master = prev.find((e) => e.id === masterId);
+        if (!master) return prev;
+        return splitSeriesAtOccurrence(prev, master, occurrenceDate, { isFreeTime: ignored }, splitId).events;
+      });
+      return;
+    }
+
+    // scope === 'this'
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === masterId
+          ? {
+              ...e,
+              overrides: { ...(e.overrides || {}), [occurrenceDate]: { ...(e.overrides?.[occurrenceDate]), isFreeTime: ignored } },
+            }
+          : e
+      )
+    );
   }, []);
 
   const clearNotification = useCallback(() => setNotification(null), []);
@@ -1076,7 +4086,9 @@ export function SchedulerProvider({ children }) {
 
   const value = useMemo(
     () => ({
-      tasks,
+      // The tombstone-filtered view — see visibleTasks' own comment above.
+      // Every consumer of useScheduler() gets this, never the raw array.
+      tasks: visibleTasks,
       blocks,
       routines,
       events,
@@ -1084,24 +4096,61 @@ export function SchedulerProvider({ children }) {
       sections,
       projects,
       labels,
+      sharedProjectIds,
       searchQuery,
       isLoading,
+      isPullingCloud,
       isSyncing,
+      isBackingUp,
+      isPullingGoogleEvents,
+      cloudBackups,
+      lastAutoBackupAt,
       googleConnected,
+      googleNeedsReconnect,
+      googleSyncStale,
+      lastGoogleSyncAt,
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
-      taskSyncEnabled,
-      setTaskSyncEnabled,
-      syncActive,
+      importFromTodoist,
+      lastTodoistImport,
       lastOverflow,
+      schedulingConflicts,
+      schedulingConflictsModalOpen,
+      setSchedulingConflictsModalOpen,
       notification,
+      setNotification,
+      settingsSectionRequest,
+      requestSettingsSection,
       canUndo,
       canRedo,
       currentActionLabel,
+      actionToasts,
+      dismissActionToast,
       setRoutines,
       setEvents,
       setRules,
+      setSharedProjectIds,
+      soundEnabled,
+      setSoundEnabled,
+      soundVolume,
+      setSoundVolume,
+      animationsEnabled,
+      setAnimationsEnabled,
+      notificationSettings,
+      setNotificationSettings,
+      notes,
+      setNotes,
+      shortcutBindings,
+      setShortcutBindings,
+      savedViews,
+      setSavedViews,
+      taskTemplates,
+      setTaskTemplates,
+      instantiateTemplate,
+      trash,
+      restoreFromTrash,
+      discardTrashEntry,
       setSearchQuery,
       undo,
       redo,
@@ -1111,32 +4160,59 @@ export function SchedulerProvider({ children }) {
       deleteTask,
       toggleTaskLock,
       completeTask,
-      addSubtask,
-      renameSubtask,
-      toggleSubtask,
-      removeSubtask,
-      updateSubtask,
+      uncompleteTask,
+      addComment,
+      deleteComment,
       getOrCreateLabelIds,
+      renameLabel,
+      deleteLabel,
       addProject,
+      renameProject,
+      deleteProject,
+      togglePinProject,
+      // Collaborative Projects (Phase 1): the shared project documents this
+      // user belongs to, who else is currently viewing each, and the action
+      // that turns a personal project into a shared one.
+      sharedProjects,
+      viewersByProject,
+      shareProject,
+      joinSharedProject,
+      renameAnonymousSelf,
+      touchProjectVisited,
       addSection,
       renameSection,
       deleteSection,
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      scheduleTaskAt,
       addManualEvent,
       updateEvent,
       deleteEvent,
       setEventIgnored,
-      setAllRecurringIgnored,
       connectGoogleCalendar,
+      pullFromGoogleCalendar,
       pushToGoogleCalendar,
+      rebuildEventsFromGoogle,
+      disconnectGoogleCalendar,
+      ensureGoogleRangeSynced,
+      isRewritingCalendar,
+      rewriteProgress,
+      rewriteGoogleCalendarFromTaskflow,
       syncNow,
+      exportBackup,
+      importBackupFromFile,
+      importBackupFromFileAndRewriteCalendar,
+      refreshCloudBackups,
+      backupToCloud,
+      restoreCloudBackup,
+      restoreCloudBackupAndRewriteCalendar,
+      deleteCloudBackup,
       clearNotification,
       clearAllData,
     }),
     [
-      tasks,
+      visibleTasks,
       blocks,
       routines,
       events,
@@ -1144,21 +4220,50 @@ export function SchedulerProvider({ children }) {
       sections,
       projects,
       labels,
+      sharedProjectIds,
       searchQuery,
       isLoading,
+      isPullingCloud,
       isSyncing,
+      isBackingUp,
+      isPullingGoogleEvents,
+      cloudBackups,
+      lastAutoBackupAt,
       googleConnected,
+      googleNeedsReconnect,
+      googleSyncStale,
+      lastGoogleSyncAt,
       todoistEnabled,
       todoistToken,
       setTodoistApiToken,
-      taskSyncEnabled,
-      setTaskSyncEnabled,
-      syncActive,
+      importFromTodoist,
+      lastTodoistImport,
       lastOverflow,
+      schedulingConflicts,
+      schedulingConflictsModalOpen,
       notification,
+      setNotification,
+      settingsSectionRequest,
+      requestSettingsSection,
       canUndo,
       canRedo,
       currentActionLabel,
+      actionToasts,
+      dismissActionToast,
+      soundEnabled,
+      soundVolume,
+      animationsEnabled,
+      notificationSettings,
+      notes,
+      shortcutBindings,
+      savedViews,
+      setSavedViews,
+      taskTemplates,
+      setTaskTemplates,
+      instantiateTemplate,
+      trash,
+      restoreFromTrash,
+      discardTrashEntry,
       undo,
       redo,
       runRebalance,
@@ -1167,27 +4272,51 @@ export function SchedulerProvider({ children }) {
       deleteTask,
       toggleTaskLock,
       completeTask,
-      addSubtask,
-      renameSubtask,
-      toggleSubtask,
-      removeSubtask,
-      updateSubtask,
+      uncompleteTask,
+      addComment,
+      deleteComment,
       getOrCreateLabelIds,
+      renameLabel,
+      deleteLabel,
       addProject,
+      renameProject,
+      deleteProject,
+      togglePinProject,
+      sharedProjects,
+      viewersByProject,
+      shareProject,
+      joinSharedProject,
+      renameAnonymousSelf,
+      touchProjectVisited,
       addSection,
       renameSection,
       deleteSection,
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      scheduleTaskAt,
       addManualEvent,
       updateEvent,
       deleteEvent,
       setEventIgnored,
-      setAllRecurringIgnored,
       connectGoogleCalendar,
+      pullFromGoogleCalendar,
       pushToGoogleCalendar,
+      rebuildEventsFromGoogle,
+      disconnectGoogleCalendar,
+      ensureGoogleRangeSynced,
+      isRewritingCalendar,
+      rewriteProgress,
+      rewriteGoogleCalendarFromTaskflow,
       syncNow,
+      exportBackup,
+      importBackupFromFile,
+      importBackupFromFileAndRewriteCalendar,
+      refreshCloudBackups,
+      backupToCloud,
+      restoreCloudBackup,
+      restoreCloudBackupAndRewriteCalendar,
+      deleteCloudBackup,
       clearNotification,
       clearAllData,
     ]

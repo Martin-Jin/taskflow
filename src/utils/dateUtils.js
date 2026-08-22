@@ -9,6 +9,22 @@
  * ============================================================================
  */
 
+/**
+ * The browser's current IANA timezone (e.g. "Pacific/Auckland"), used to
+ * stamp notificationSettings.timezone so the server-side notify-worker can
+ * compute "today"/overdue/starting-soon against the same wall-clock day the
+ * user actually sees, instead of blindly assuming UTC (see
+ * notify-worker/src/computeNotifications.js). Falls back to 'UTC' on the
+ * rare runtime that doesn't support Intl's timezone resolution.
+ */
+export function getBrowserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
 /** Convert a Date object to an ISO "YYYY-MM-DD" string (local time, not UTC). */
 export function toISODate(date) {
   const y = date.getFullYear();
@@ -44,6 +60,14 @@ export function timeToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+/** Format "HH:MM" (24h) as a 12-hour clock string, e.g. "14:05" -> "2:05 PM". */
+export function formatTime12h(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
 /** Convert minutes since midnight -> "HH:MM". */
 export function minutesToTime(mins) {
   const h = Math.floor(mins / 60)
@@ -65,6 +89,26 @@ export function dayOfWeek(iso) {
   return fromISODate(iso).getDay();
 }
 
+/** The week containing `todayIso`, as `{ weekStart, weekEnd }` ISO dates (inclusive). `weekStartsOn` is 0 for Sunday (the default) or 1 for Monday — see rules.weekStartsOn. */
+export function getWeekRange(todayIso, weekStartsOn = 0) {
+  return { weekStart: startOfWeek(todayIso, weekStartsOn), weekEnd: addDays(startOfWeek(todayIso, weekStartsOn), 6) };
+}
+
+/**
+ * First day of the week containing `iso`, honouring the user's week-start
+ * preference (see rules.weekStartsOn — 0 = Sunday, 1 = Monday).
+ *
+ * The modulo is what makes it work for either start without a branch: shifting
+ * the day-of-week by the configured start and wrapping gives "how many days
+ * into the week we are", which is exactly what to subtract. A plain
+ * `-dayOfWeek(iso)` (what this used to be, Sunday-only) lands a Monday-start
+ * user on the wrong day for six days out of seven.
+ */
+export function startOfWeek(iso, weekStartsOn = 0) {
+  const offset = (dayOfWeek(iso) - weekStartsOn + 7) % 7;
+  return addDays(iso, -offset);
+}
+
 /** Returns an array of ISO date strings, `count` days starting at `startIso` inclusive. */
 export function dateRange(startIso, count) {
   const out = [];
@@ -76,6 +120,24 @@ export function dateRange(startIso, count) {
 export function isPast(iso) {
   return iso < toISODate(new Date());
 }
+
+/**
+ * True once a scheduled block's time has fully elapsed, regardless of
+ * whether its `status` was ever manually flipped to 'done' — time already
+ * elapsed is simply a fact. Shared by the weekly/today progress rings (and
+ * anything else that needs "is this block in the past" for a given
+ * `today`/`nowMinutes` snapshot).
+ */
+export function isBlockPast(block, today, nowMinutes) {
+  if (block.date < today) return true;
+  if (block.date > today) return false;
+  return timeToMinutes(block.endTime) <= nowMinutes;
+}
+
+// Re-exported so existing `import { BASE_WORD_NUMBERS } from '../utils/dateUtils'`
+// call sites keep working — see wordNumbers.js for why the vocabulary itself
+// lives in its own dependency-free file instead of here.
+export { BASE_WORD_NUMBERS } from './wordNumbers';
 
 /**
  * Parse a free-text duration estimate out of a task title/description, e.g.
@@ -102,6 +164,25 @@ export function addMonths(iso, n) {
   return toISODate(new Date(date.getFullYear(), date.getMonth() + n, 1));
 }
 
+/**
+ * Add N months to an ISO date, clamping the day-of-month if it overflows the
+ * target month (e.g. Jan 31 + 1 -> Feb 28/29). Unlike `addMonths` above (which
+ * always resets to the 1st, for month-view navigation), this preserves the
+ * day-of-month — used for recurrence/date-math where "same day next month"
+ * is the intent. Shared by recurrence.js (task due-date recurrence),
+ * recurrenceExpansion.js (calendar RRULE expansion), and dateParse.js
+ * (natural-language "next month"/"in N months" phrases).
+ */
+export function addMonthsClamped(iso, n) {
+  const date = fromISODate(iso);
+  const targetMonthIndex = date.getMonth() + n;
+  const year = date.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const monthIndex = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const day = Math.min(date.getDate(), lastDayOfTargetMonth);
+  return toISODate(new Date(year, monthIndex, day));
+}
+
 /** Format an ISO date as "Month YYYY", e.g. "July 2026" — month-view toolbar title. */
 export function formatMonthLabel(iso) {
   return fromISODate(iso).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -114,5 +195,27 @@ export function formatDisplayDate(iso) {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
+  });
+}
+
+/** Format an ISO date compactly, e.g. "Aug 5" — no weekday/year, for tight
+ * spaces like the mobile Day view's time-gutter date label. */
+export function formatShortDate(iso) {
+  const date = fromISODate(iso);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Format a full ISO datetime (unlike the other formatters here, this takes a
+ * timestamp with a time component — e.g. Comment.createdAt — not a bare
+ * YYYY-MM-DD, so it goes through `new Date()` rather than `fromISODate`).
+ */
+export function formatDisplayDateTime(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   });
 }

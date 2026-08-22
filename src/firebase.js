@@ -16,8 +16,9 @@
  */
 
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDQYZNYMuTb16jDE58viFAUcUv4N2izQi8',
@@ -32,9 +33,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
+// Asserted explicitly (rather than relying on the SDK's implicit default) so
+// a signed-in session survives a full browser close/reopen, not just a page
+// refresh — the underlying default already matches this, but making it
+// explicit documents the requirement in code.
+setPersistence(auth, browserLocalPersistence);
 export const db = getFirestore(app);
-
-export const googleProvider = new GoogleAuthProvider();
-// Always show the account chooser rather than silently reusing whichever
-// Google account last signed into any app on this device.
-googleProvider.setCustomParameters({ prompt: 'select_account' });
+export const storage = getStorage(app);

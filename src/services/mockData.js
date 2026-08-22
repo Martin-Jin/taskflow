@@ -9,6 +9,7 @@
  */
 
 import { addDays, toISODate } from '../utils/dateUtils';
+import { deriveRecurrenceRule } from '../utils/recurrence';
 
 const today = () => toISODate(new Date());
 
@@ -24,9 +25,9 @@ const today = () => toISODate(new Date());
  */
 export function getMockProjects() {
   return [
-    { id: 'work', name: 'Work', color: 'blue', order: 1, isDefault: true },
-    { id: 'writing', name: 'Writing', color: 'green', order: 2, isDefault: true },
-    { id: 'personal', name: 'Personal', color: 'grape', order: 3, isDefault: true },
+    { id: 'work', name: 'Work', order: 1, isDefault: true },
+    { id: 'writing', name: 'Writing', order: 2, isDefault: true },
+    { id: 'personal', name: 'Personal', order: 3, isDefault: true },
   ];
 }
 
@@ -56,6 +57,7 @@ export function getMockTasks() {
       dueDate: addDays(base, 2),
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'work',
       sectionId: null,
       sectionName: null,
@@ -67,11 +69,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [
-        { id: 'sub_1_1', title: 'Pull latest growth metrics from BI dashboard', isCompleted: true },
-        { id: 'sub_1_2', title: 'Draft competitive landscape slide', isCompleted: false },
-        { id: 'sub_1_3', title: 'Review with finance', isCompleted: false },
-      ],
     },
     {
       id: 'task_2',
@@ -83,6 +80,7 @@ export function getMockTasks() {
       dueDate: addDays(base, 10),
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'writing',
       sectionId: null,
       sectionName: null,
@@ -94,7 +92,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
     },
     {
       id: 'task_3',
@@ -106,6 +103,7 @@ export function getMockTasks() {
       dueDate: addDays(base, 5),
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'work',
       sectionId: 'sec_in_progress',
       sectionName: 'In Progress',
@@ -117,10 +115,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [
-        { id: 'sub_3_1', title: 'Migrate token model', isCompleted: false },
-        { id: 'sub_3_2', title: 'Update integration tests', isCompleted: false },
-      ],
     },
     {
       id: 'task_4',
@@ -132,6 +126,7 @@ export function getMockTasks() {
       dueDate: addDays(base, 21),
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'personal',
       sectionId: null,
       sectionName: null,
@@ -143,7 +138,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
     },
     {
       id: 'task_5',
@@ -155,6 +149,7 @@ export function getMockTasks() {
       dueDate: addDays(base, 14),
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'work',
       sectionId: 'sec_planning',
       sectionName: 'Planning',
@@ -166,7 +161,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [{ id: 'sub_5_1', title: 'Coordinate with product + design leads', isCompleted: false }],
     },
     {
       id: 'task_6',
@@ -178,6 +172,7 @@ export function getMockTasks() {
       dueDate: addDays(base, 3),
       isRecurring: true,
       recurrenceString: 'every week',
+      recurrenceRule: deriveRecurrenceRule('every week'),
       projectId: 'personal',
       sectionId: null,
       sectionName: null,
@@ -189,7 +184,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
     },
     {
       id: 'task_7',
@@ -201,6 +195,7 @@ export function getMockTasks() {
       dueDate: base,
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'work',
       sectionId: 'sec_review',
       sectionName: 'Review',
@@ -212,7 +207,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
     },
     {
       id: 'task_8',
@@ -224,6 +218,7 @@ export function getMockTasks() {
       dueDate: null,
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'work',
       sectionId: 'sec_review',
       sectionName: 'Review',
@@ -235,7 +230,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
     },
     {
       id: 'task_9',
@@ -247,6 +241,7 @@ export function getMockTasks() {
       dueDate: null,
       isRecurring: false,
       recurrenceString: null,
+      recurrenceRule: null,
       projectId: 'personal',
       sectionId: null,
       sectionName: null,
@@ -258,7 +253,6 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
     },
     {
       id: 'task_10',
@@ -270,6 +264,7 @@ export function getMockTasks() {
       dueDate: base,
       isRecurring: true,
       recurrenceString: 'every day',
+      recurrenceRule: deriveRecurrenceRule('every day'),
       projectId: 'work',
       sectionId: null,
       sectionName: null,
@@ -281,15 +276,184 @@ export function getMockTasks() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isDefault: true,
-      subtasks: [],
+    },
+    // Sub-tasks (previously a nested `subtasks` array on their parent — see
+    // the removed `Subtask` typedef) are now flat entries in this same
+    // array, linked back to their parent via `parentId`, matching the
+    // `parentId`-linked hierarchy every task uses.
+    {
+      id: 'task_1_1',
+      title: 'Pull latest growth metrics from BI dashboard',
+      notes: '',
+      estimatedHours: 1,
+      remainingHours: 0,
+      priority: 'urgent',
+      dueDate: null,
+      isRecurring: false,
+      recurrenceString: null,
+      recurrenceRule: null,
+      parentId: 'task_1',
+      projectId: 'work',
+      sectionId: null,
+      sectionName: null,
+      source: 'todoist',
+      isLocked: false,
+      isCompleted: true,
+      minChunkHours: 0.5,
+      maxChunkHours: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDefault: true,
+    },
+    {
+      id: 'task_1_2',
+      title: 'Draft competitive landscape slide',
+      notes: '',
+      estimatedHours: 1.5,
+      remainingHours: 1.5,
+      priority: 'urgent',
+      dueDate: null,
+      isRecurring: false,
+      recurrenceString: null,
+      recurrenceRule: null,
+      parentId: 'task_1',
+      projectId: 'work',
+      sectionId: null,
+      sectionName: null,
+      source: 'todoist',
+      isLocked: false,
+      isCompleted: false,
+      minChunkHours: 0.5,
+      maxChunkHours: 1.5,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDefault: true,
+    },
+    {
+      id: 'task_1_3',
+      title: 'Review with finance',
+      notes: '',
+      estimatedHours: 0.5,
+      remainingHours: 0.5,
+      priority: 'urgent',
+      dueDate: null,
+      isRecurring: false,
+      recurrenceString: null,
+      recurrenceRule: null,
+      parentId: 'task_1',
+      projectId: 'work',
+      sectionId: null,
+      sectionName: null,
+      source: 'todoist',
+      isLocked: false,
+      isCompleted: false,
+      minChunkHours: 0.5,
+      maxChunkHours: 0.5,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDefault: true,
+    },
+    {
+      id: 'task_3_1',
+      title: 'Migrate token model',
+      notes: '',
+      estimatedHours: 3,
+      remainingHours: 3,
+      priority: 'high',
+      dueDate: null,
+      isRecurring: false,
+      recurrenceString: null,
+      recurrenceRule: null,
+      parentId: 'task_3',
+      projectId: 'work',
+      sectionId: 'sec_in_progress',
+      sectionName: 'In Progress',
+      source: 'todoist',
+      isLocked: false,
+      isCompleted: false,
+      minChunkHours: 0.5,
+      maxChunkHours: 3,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDefault: true,
+    },
+    {
+      id: 'task_3_2',
+      title: 'Update integration tests',
+      notes: '',
+      estimatedHours: 2,
+      remainingHours: 2,
+      priority: 'high',
+      dueDate: null,
+      isRecurring: false,
+      recurrenceString: null,
+      recurrenceRule: null,
+      parentId: 'task_3',
+      projectId: 'work',
+      sectionId: 'sec_in_progress',
+      sectionName: 'In Progress',
+      source: 'todoist',
+      isLocked: false,
+      isCompleted: false,
+      minChunkHours: 0.5,
+      maxChunkHours: 2,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDefault: true,
+    },
+    {
+      id: 'task_5_1',
+      title: 'Coordinate with product + design leads',
+      notes: '',
+      estimatedHours: 1,
+      remainingHours: 1,
+      priority: 'high',
+      dueDate: null,
+      isRecurring: false,
+      recurrenceString: null,
+      recurrenceRule: null,
+      parentId: 'task_5',
+      projectId: 'work',
+      sectionId: 'sec_planning',
+      sectionName: 'Planning',
+      source: 'todoist',
+      isLocked: false,
+      isCompleted: false,
+      minChunkHours: 0.5,
+      maxChunkHours: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDefault: true,
     },
   ];
 }
 
-export function getMockEvents(startIso, endIso) {
+/**
+ * Mock CalendarEvents — standalone (non-task) calendar items, so the
+ * Calendar tab isn't empty on a zero-config first run. `source: 'manual'`
+ * (not `'google'`) since these aren't backed by a real Google account:
+ * eventSyncService.js's Google-wins reconciliation treats `source: 'google'`
+ * as "this came from a real poll, so if Google's poll stops returning it,
+ * it was deleted upstream" — a fake `source: 'google'` event with no real
+ * `googleEventId` would risk exactly that logic silently removing it (or
+ * mismatching it against a real synced event) the first time a user
+ * actually connects Google Calendar. `source: 'manual'` keeps these out of
+ * that reconciliation entirely, same as any other local-only event. A truly
+ * recurring one carries a real `recurrenceRule` (RRULE) — the only field
+ * `expandRecurringEvent`/`expandEventsForRange` (recurrenceExpansion.js)
+ * actually check; `isRecurring` alone (with no rule) renders as a single
+ * one-off occurrence, same as `isRecurring: false`, so it's set consistently
+ * with whichever of the two this data actually is.
+ */
+export function getMockEvents() {
   const base = today();
   return [
     {
+      // "Daily" in the title is the display name a real Google-synced
+      // standup series would carry (Google Calendar's own naming, not this
+      // demo's choice) — the actual rule here recurs weekly (same simple
+      // FREQ=WEEKLY every mock event below uses, recurring on DTSTART's own
+      // weekday with no BYDAY needed), not literally every day.
       id: 'evt_standup',
       title: 'Daily Standup',
       date: base,
@@ -297,8 +461,9 @@ export function getMockEvents(startIso, endIso) {
       endTime: '09:15',
       isFreeTime: false,
       isRecurring: true,
+      recurrenceRule: 'FREQ=WEEKLY',
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
     {
       id: 'evt_lecture',
@@ -308,8 +473,9 @@ export function getMockEvents(startIso, endIso) {
       endTime: '15:30',
       isFreeTime: true, // marked as "ignore" override — schedulable over
       isRecurring: true,
+      recurrenceRule: 'FREQ=WEEKLY',
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
     {
       id: 'evt_1on1',
@@ -319,8 +485,9 @@ export function getMockEvents(startIso, endIso) {
       endTime: '11:30',
       isFreeTime: false,
       isRecurring: true,
+      recurrenceRule: 'FREQ=WEEKLY',
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
     },
     {
       id: 'evt_dentist',
@@ -331,7 +498,29 @@ export function getMockEvents(startIso, endIso) {
       isFreeTime: false,
       isRecurring: false,
       googleEventId: null,
-      source: 'google',
+      source: 'manual',
+    },
+    {
+      /* An all-day event, so the sample data shows the calendar's all-day
+         strip rather than leaving that feature invisible until someone
+         connects a real Google Calendar with a holiday on it.
+         Deliberately isFreeTime: true — the "Free" marking a birthday or a
+         holiday-calendar entry carries on Google (see googleCalendarService's
+         transparency mapping). A busy one would zero that day's capacity,
+         which would quietly change what the seeded scheduler demo produces.
+         Spans two days (endDate) so the multi-day expansion path is
+         exercised by the sample data too. */
+      id: 'evt_conference',
+      title: 'Design Conference',
+      date: addDays(base, 1),
+      endDate: addDays(base, 2),
+      startTime: '00:00',
+      endTime: '23:59',
+      isAllDay: true,
+      isFreeTime: true,
+      isRecurring: false,
+      googleEventId: null,
+      source: 'manual',
     },
   ];
 }
@@ -340,8 +529,8 @@ export function getDefaultRoutines() {
   const weekdays = [1, 2, 3, 4, 5];
   const allDays = [0, 1, 2, 3, 4, 5, 6];
   return [
-    { id: 'rt_sleep', label: 'Sleep', startTime: '23:00', endTime: '23:59', daysOfWeek: allDays, isActive: true },
-    { id: 'rt_sleep_am', label: 'Sleep (overnight)', startTime: '00:00', endTime: '07:00', daysOfWeek: allDays, isActive: true },
+    { id: 'rt_sleep', label: 'Sleep', startTime: '23:00', endTime: '23:59', daysOfWeek: allDays, isActive: true, isProtected: true },
+    { id: 'rt_sleep_am', label: 'Sleep (overnight)', startTime: '00:00', endTime: '07:00', daysOfWeek: allDays, isActive: true, isProtected: true },
     { id: 'rt_hygiene_am', label: 'Morning routine', startTime: '07:00', endTime: '08:00', daysOfWeek: allDays, isActive: true },
     { id: 'rt_commute_am', label: 'Commute (AM)', startTime: '08:00', endTime: '08:30', daysOfWeek: weekdays, isActive: true },
     { id: 'rt_lunch', label: 'Lunch', startTime: '12:30', endTime: '13:15', daysOfWeek: allDays, isActive: true },
@@ -353,11 +542,16 @@ export function getDefaultRoutines() {
 export function getDefaultRules() {
   return {
     bufferDays: 1,
+    // 0 = Sunday, 1 = Monday. Sunday is the default because that's what every
+    // week-based view did before this was configurable — a returning user's
+    // calendar must not silently shift under them.
+    weekStartsOn: 0,
     workDayStart: '07:00',
     workDayEnd: '23:00',
     maxDailyDeepWorkHours: 8,
     horizonWeeks: 4,
     frontLoadUrgent: true,
     minGapBetweenBlocksMins: 10,
+    autoRescheduleEnabled: true,
   };
 }

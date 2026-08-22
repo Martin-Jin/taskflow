@@ -1,80 +1,95 @@
 .board-page {
   display: flex;
   flex-direction: column;
-  height: 100%;
-}
-
-.board-toolbar {
-  display: flex;
-  margin-bottom: 14px;
-}
-
-.board-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-
-.board-project-select {
-  background: var(--color-bg-surface);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 7px 10px;
-  color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  min-width: 180px;
-}
-
-.board-project-select:focus {
-  border-color: var(--color-accent-border);
-  outline: none;
-}
-
-.board-sync-badge {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.board-sync-badge.enabled {
-  color: var(--color-success);
-}
-
-.board-columns {
-  display: flex;
-  gap: 14px;
-  overflow-x: auto;
   flex: 1;
   min-height: 0;
-  padding-bottom: 8px;
+  /* Flex items default to min-width: auto, which refuses to shrink below
+     their content's natural width — without this, .board-columns' wide
+     row of cards pushes .board-page (and its ancestors) wider instead of
+     ever triggering .board-columns' own horizontal scrollbar below. */
+  min-width: 0;
 }
 
+  .board-columns {
+    margin-top: 10px;
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Deliberately visible here (unlike other scrollbar-width:none spots in
+      the app) — Board's columns are the one place a desktop mouse user has
+      no intuitive gesture to discover "there's more to the right" without
+      a scrollbar to grab. Picks up the app-wide themed thumb/track already
+      defined in global.css's ::-webkit-scrollbar rules. */
+  }
+
+
+/* Deliberately NOT a boxed surface — a column is a header label plus a
+   plain stack of cards sitting on the page background, matching Todoist's
+   board (only the cards themselves are "boxed"). An extra bordered/filled
+   wrapper around the whole column read as a box-inside-a-box. */
 .board-column {
   flex: 0 0 280px;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-surface);
-  border-radius: var(--radius-md);
+  min-height: 0;
   max-height: 100%;
+  padding-right: 14px;
+  margin-right: 14px;
+  border-right: 1px solid var(--color-border);
 }
 
 .board-column-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 4px 4px 10px;
   border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-bg-page);
 }
 
 .board-column.no-section .board-column-header {
   color: var(--color-text-secondary);
   font-weight: 500;
+}
+
+/* Column reorder handle — only the grip starts a column drag, so the column
+   body stays free for card drops (see BoardView's COLUMN REORDER note).
+   Stays dim until the header is hovered to keep the board uncluttered. */
+.board-column-grip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: -2px;
+  color: var(--color-text-secondary);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.board-column-header:hover .board-column-grip {
+  opacity: 0.7;
+}
+
+.board-column-grip:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+
+.board-column.is-column-dragging {
+  opacity: 0.5;
+}
+
+/* Drop indicator for a reorder — a leading accent edge showing where the
+   dragged column will land, rather than tinting the whole column (which
+   would clash with .board-column-body.is-dragover's card-drop highlight). */
+.board-column.is-column-dragover {
+  box-shadow: inset 3px 0 0 0 var(--color-accent);
 }
 
 .board-column-title {
@@ -169,11 +184,31 @@
 
 .board-column-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.board-column-body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Flat single-list mode (no sections yet in this project) — same card
+   stack as a column's body, just without any column chrome around it. */
+.board-flat-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.board-flat-list-footer {
+  margin-top: 4px;
+  max-width: 260px;
 }
 
 .board-column-empty {
@@ -186,29 +221,52 @@
 .board-card {
   display: flex;
   gap: 8px;
-  background: var(--color-bg-surface-raised);
   border-left: 3px solid;
-  border-radius: var(--radius-sm);
-  padding: 10px 10px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 10px 4px 10px 9px;
   cursor: pointer;
-  transition: box-shadow var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard),
-    transform var(--duration-fast) var(--ease-standard);
-  animation: card-in var(--duration-base) var(--ease-decelerate);
+  /* background transition is a plain hover/press feedback; transform/
+     box-shadow/opacity are the drag pickup/settle below ("emphasis" role,
+     see global.css). */
+  transition: background var(--duration-fast) var(--ease-standard), transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease), opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
+  animation: card-in var(--motion-enter-duration) var(--motion-enter-ease);
+}
+
+.board-column-body>.board-card:last-child {
+  border-bottom: none;
 }
 
 .board-card:hover {
-  box-shadow: var(--shadow-card);
   background: var(--color-bg-surface-hover);
 }
 
 .board-card:active {
-  transform: scale(0.985);
+  background: var(--color-bg-surface-raised);
 }
 
 .board-card:focus-visible,
 .board-column-title:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 2px;
+  /* Inset — see global.css's button:focus-visible comment; a card near the
+     top/bottom of .board-column-body's own scroll would otherwise clip. */
+  outline-offset: -2px;
+}
+
+/* Same "picked up" lift as the calendar's .cal-block.is-dragging (see that
+   rule's comment) — the browser drags its own frozen snapshot, so this is
+   the faded original left behind, lifted to read as "in motion" rather
+   than just dimmed. Settling on drop is the same transition in reverse. */
+.board-card.is-dragging {
+  opacity: 0.5;
+  transform: scale(1.03) translateY(-2px);
+  box-shadow: var(--shadow-elevated);
+  z-index: 3;
+}
+
+.board-column-body.is-dragover {
+  background-color: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
 }
 
 .board-card-check {
@@ -250,13 +308,15 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 10px 2px;
+  margin-top: 2px;
   border: none;
   border-top: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12.5px;
   text-align: left;
+  border-radius: var(--radius-sm);
 }
 
 .board-add-task:hover {
@@ -265,23 +325,90 @@
 }
 
 @media (max-width: 639px) {
-  .board-toolbar > * {
+  .board-toolbar>* {
     flex: 1 1 100%;
   }
 
-  .board-sync-badge {
-    margin-left: 0;
-  }
-
+  /* Stack columns vertically on mobile instead of horizontal swipe-scroll
+     — each column gets its own full-width section, scrolled the same way
+     as the rest of the page, rather than needing a horizontal gesture.
+     Single `overflow: visible` (not separate overflow-x/overflow-y) is
+     deliberate: per the CSS overflow spec, setting one axis to a
+     non-visible value (e.g. overflow-x: hidden) while the other stays
+     visible silently promotes the visible axis to auto — turning this
+     into its own internal scroll container clipped to .board-page's
+     flex-constrained height instead of letting .main-content's real
+     page scrollbar show the stacked columns, which is what made the
+     board effectively disappear on mobile. */
   .board-columns {
-    scroll-snap-type: x mandatory;
-    gap: 10px;
-    padding: 0 6px 8px;
+    flex-direction: column;
+    overflow: visible;
   }
 
-  .board-column,
-  .board-add-column {
-    flex: 0 0 88vw;
-    scroll-snap-align: center;
+  .board-column {
+    flex: none;
+    width: 100%;
+    max-height: none;
+    border-right: none;
+    padding-right: 0;
+    margin-right: 0;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 14px;
+    margin-bottom: 14px;
   }
+
+  /* Desktop's sticky header relies on .board-column-body being its own
+     scroll container — once that's gone on mobile (see .board-columns
+     above), "sticky" instead sticks to .main-content, the page's real
+     scroller, so every stacked column's header piles up opaquely at the
+     top as you scroll. A plain static header per column reads correctly
+     here since the whole page scrolls past it instead. */
+  .board-column-header {
+    position: static;
+  }
+
+  .board-column-body {
+    /* Column bodies were capped by the desktop board's shared height
+       (flex:1 inside a fixed-height row) — on mobile each column is its
+       own full-height section instead, so let it size to its cards.
+       `overflow: visible` (both axes) for the same reason as
+       .board-columns above — the base rule's overflow-x: hidden would
+       otherwise silently promote this back to a clipped auto scrollbar. */
+    overflow: visible;
+    max-height: none;
+  }
+
+  .board-add-column {
+    flex: none;
+    width: 100%;
+  }
+
+  .board-flat-list-footer {
+    max-width: 100%;
+  }
+}
+/* Drop target for reordering cards within a column. Zero-height and invisible
+   at rest so it adds no gaps to the column and can't intercept a click; it
+   only opens up once a card drag is in flight (.is-armed, driven by the
+   reparent hook's draggedId) and highlights under the pointer (.is-active).
+   Card-ON-card is a different gesture here — that makes a sub-task — so these
+   gaps are what keep reordering and reparenting from fighting each other. */
+.board-card-dropgap {
+  height: 0;
+  margin: 0;
+  border-radius: 2px;
+  transition: height var(--motion-emphasis-duration, 0.12s) ease, background var(--motion-emphasis-duration, 0.12s) ease;
+}
+
+.board-card-dropgap.is-armed {
+  /* Tall enough to be a reliable pointer target mid-drag without visibly
+     spacing the cards out. */
+  height: 10px;
+  margin: -3px 0;
+}
+
+.board-card-dropgap.is-active {
+  height: 14px;
+  margin: 1px 0;
+  background: var(--color-accent-border);
 }

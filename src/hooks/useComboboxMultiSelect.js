@@ -10,9 +10,18 @@
  * through this hook would need the caller's filtered-row count before the
  * hook itself could exist, which is circular. Sharing just the state here
  * still removes the bulk of the duplication between the two pickers.
+ *
+ * Not to be confused with useListKeyboardNav.js, a separate hook covering a
+ * different shape of the same problem: single-select "pick exactly one and
+ * the interaction ends" comboboxes (CommandPalette, Sidebar/
+ * ManageProjectsModal project search) rather than this hook's multi-select
+ * "Enter toggles a row without closing the list" one. CalendarFilterMenu's
+ * FilterGroup is the one caller that needs both — this hook's query/open
+ * state plus useListKeyboardNav's Arrow/Enter handling on top of it.
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useEscapeLayer } from './useEscapeLayer';
 
 export function useComboboxMultiSelect() {
   const [query, setQuery] = useState('');
@@ -24,6 +33,21 @@ export function useComboboxMultiSelect() {
   // Cancel a pending close if the component unmounts mid-delay (e.g. the
   // modal it lives in closes right after the input blurs).
   useEffect(() => () => clearTimeout(blurTimeoutRef.current), []);
+
+  // Escape dismisses the open list, and only the open list. Both pickers live
+  // inside modals, so this has to go through the shared layer stack — as a
+  // plain onKeyDown on the input it never fired at all, and one Escape while
+  // typing a tag discarded the whole draft task instead (see useEscapeLayer).
+  // Closes now, not in 120ms: going through blur alone would leave the list
+  // (and this escape layer) nominally open for the close delay below, so a
+  // quick second Escape meant to reach the surrounding modal hit a list that
+  // was already visually gone. Blur as well as close, so re-focusing the input
+  // reopens it — closing with focus still inside would leave a dead input.
+  useEscapeLayer(isOpen, () => {
+    clearTimeout(blurTimeoutRef.current);
+    setIsOpen(false);
+    inputRef.current?.blur();
+  });
 
   function handleBlur() {
     // Delay closing so a click on a dropdown option (which blurs the

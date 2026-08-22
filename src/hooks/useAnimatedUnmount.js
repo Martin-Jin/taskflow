@@ -6,9 +6,21 @@
  * CSS exit transition — so callers use `requestClose` in place of calling
  * `onClose` directly, and the modal keeps rendering (with an `.is-closing`
  * class applied) for `exitDuration` ms before the real onClose fires.
+ *
+ * When motion is off there's no exit animation to wait for, so the delay is
+ * skipped entirely and onClose fires immediately — otherwise closing would
+ * still lag by exitDuration even though the modal vanished instantly. The
+ * check reads the same `data-animations` attribute the CSS gates on (see
+ * useMotionEnabled for why the explicit Settings toggle wins over the OS
+ * reduced-motion preference), so there's one source of truth for "motion is
+ * off".
  */
 
 import { useEffect, useRef, useState } from 'react';
+
+function motionDisabled() {
+  return document.documentElement.getAttribute('data-animations') === 'off';
+}
 
 export function useAnimatedUnmount(onClose, exitDuration = 160) {
   const [isClosing, setIsClosing] = useState(false);
@@ -21,6 +33,10 @@ export function useAnimatedUnmount(onClose, exitDuration = 160) {
 
   function requestClose() {
     if (isClosing) return;
+    if (motionDisabled()) {
+      onClose();
+      return;
+    }
     setIsClosing(true);
     timeoutRef.current = setTimeout(onClose, exitDuration);
   }

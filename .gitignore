@@ -39,10 +39,25 @@ pnpm-debug.log*
 .vite/
 .eslintcache
 
+# Cloudflare Worker local dev cache (cloudflare-worker/) — never commit secrets set via `wrangler secret put`.
+.wrangler/
+
+# Firebase CLI local state (emulator data exports, etc.) — used by `npm run test:rules`.
+.firebase/
+
 # ==========================
 # Testing
 # ==========================
 coverage/
+test-results/
+playwright-report/
+playwright/.cache/
+# Personal Todoist login session used only by tests/e2e/todoist-parity.spec.js — never commit a real session.
+todoist-storage-state.json
+TODO.MD
+TODO-collab.md
+# Scratch/exploratory Playwright specs written during ad-hoc manual testing sessions — reusable but not part of the tracked suite.
+tests/e2e/manual/
 
 # ==========================
 # Editor / IDE
@@ -78,12 +93,9 @@ temp/
 .yarn/
 
 # ==========================
-# Developer notes (private, machine-specific)
-# ==========================
-DEV_NOTES.md
-
-# ==========================
 # Claude
 # ==========================
-.claude/
+# .claude/settings.json and CLAUDE.md are tracked (shared team config/docs).
+# settings.local.json stays personal/machine-specific — never commit it.
+.claude/settings.local.json
 CLAUDE.local.md

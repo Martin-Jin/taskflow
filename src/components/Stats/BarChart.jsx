@@ -29,7 +29,7 @@ export default function BarChart({ data, valueFormatter = (v) => v.toFixed(1), b
         return (
           <div
             key={d.label + i}
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', minWidth: 0 }}
+            style={{ flex: '1 0 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', minWidth: 34 }}
             onMouseEnter={() => setHoverIdx(i)}
             onMouseLeave={() => setHoverIdx(null)}
           >

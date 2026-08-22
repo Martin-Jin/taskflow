@@ -12,8 +12,12 @@
 import React, { useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { computeEstimateAccuracy, computeAccuracyByProject, describeAccuracy, accuracyHeadline, MIN_RELIABLE_SAMPLE } from '../../utils/estimateAccuracy';
 import { computeHorizonCapacity } from '../../algorithms/capacityEngine';
-import { addDays, dayOfWeek, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
+import { getEffectiveDeadline } from '../../algorithms/allocator';
+import { getWeekRange, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
+import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
+import { getOverdueTasks } from '../../utils/overdueTasks';
 import BarChart from './BarChart';
 import PieChart from './PieChart';
 
@@ -52,25 +56,68 @@ export default function StatsDashboard() {
     const activeTasks = tasks.filter((t) => !t.isCompleted);
     const totalHoursLeft = activeTasks.reduce((sum, t) => sum + t.remainingHours, 0);
 
-    const weekStart = addDays(today, -dayOfWeek(today));
-    const weekEnd = addDays(weekStart, 6);
+    // Only set on tasks completed via a tracked Pomodoro timer (see
+    // CompleteTaskContext) — most completed tasks have no `actualHours` at
+    // all, so this only sums the ones that do rather than assuming 0.
+    const totalActualHours = tasks.reduce((sum, t) => sum + (typeof t.actualHours === 'number' ? t.actualHours : 0), 0);
+
+    // Was open-coded Sunday-start maths; goes through the shared helper now so
+    // it honours rules.weekStartsOn like every other week-based view.
+    const { weekStart, weekEnd } = getWeekRange(today, rules.weekStartsOn);
 
     const scheduledToday = blocks.filter((b) => b.date === today).reduce((sum, b) => sum + b.durationHours, 0);
     const scheduledThisWeek = blocks
       .filter((b) => b.date >= weekStart && b.date <= weekEnd)
       .reduce((sum, b) => sum + b.durationHours, 0);
 
-    const capacityMap = computeHorizonCapacity(weekStart, 7, { routines, events, blocks, rules });
+    // nowClamp so today's contribution to the week's free-capacity total
+    // doesn't count hours that have already passed — without it, checking
+    // this stat at 5pm still counted today as if the full work day were
+    // still open, overstating "Free capacity (week)" by however much of
+    // today has already elapsed. Mirrors rebalanceEngine.js's own nowClamp
+    // construction (the actual scheduler already gets this right; this just
+    // brings the stats display in line with it).
+    const now = new Date();
+    const nowClamp = { date: today, minutes: now.getHours() * 60 + now.getMinutes() };
+    const capacityMap = computeHorizonCapacity(weekStart, 7, { routines, events, blocks, rules, nowClamp });
     const totalWeekCapacity = [...capacityMap.values()].reduce((sum, c) => sum + c.totalAvailableHours, 0);
     const freeCapacityThisWeek = Math.max(0, totalWeekCapacity - scheduledThisWeek);
 
+    // Uses the scheduler's own getEffectiveDeadline rather than re-deriving
+    // it: a task marked "must be done on due date" (enforceDueDate) has no
+    // buffer to miss — its deadline IS its due date — so subtracting
+    // bufferDays here flagged it as permanently at-risk while the scheduler
+    // considered it perfectly on time. It also resolves an undated sub-task's
+    // inherited due date, which the old inline version couldn't see at all.
+    // A Map, not a plain object — findAncestorDueDate calls .get() on it.
+    const taskByIdForDeadlines = new Map(tasks.map((t) => [t.id, t]));
     const overdueRiskTasks = activeTasks.filter((t) => {
-      if (!t.dueDate) return false;
-      const effectiveDeadline = addDays(t.dueDate, -rules.bufferDays);
-      return effectiveDeadline < today && t.remainingHours > 0;
+      const effectiveDeadline = getEffectiveDeadline(t, rules.bufferDays, taskByIdForDeadlines);
+      return !!effectiveDeadline && effectiveDeadline < today && t.remainingHours > 0;
     });
 
-    return { totalHoursLeft, scheduledToday, scheduledThisWeek, freeCapacityThisWeek, overdueRiskTasks };
+    // ---- Task-count stats (mirrors DashboardStats' own definitions, so the
+    // numbers agree wherever the same concept shows up) --------------------
+    const activeTaskCount = activeTasks.length;
+    const dueTodayCount = activeTasks.filter((t) => t.dueDate === today).length;
+    const overdueAndMissedCount = getOverdueTasks(tasks).length + getMissedTaskItems(tasks, blocks).length;
+    const taskById = new Map(tasks.map((t) => [t.id, t]));
+    const completedTodayCount = blocks.filter((b) => b.date === today && isBlockTaskCompleted(b, taskById.get(b.taskId))).length;
+    const totalCompletedCount = tasks.filter((t) => t.isCompleted || (t.isRecurring && t.completedDates?.length > 0)).length;
+
+    return {
+      totalHoursLeft,
+      totalActualHours,
+      scheduledToday,
+      scheduledThisWeek,
+      freeCapacityThisWeek,
+      overdueRiskTasks,
+      activeTaskCount,
+      dueTodayCount,
+      overdueAndMissedCount,
+      completedTodayCount,
+      totalCompletedCount,
+    };
   }, [tasks, blocks, routines, events, rules, today]);
 
   // ---- Hours planned per day (bar chart) -----------------------------------
@@ -105,8 +152,16 @@ export default function StatsDashboard() {
       .map(([label, value], i) => ({ label, value, color: PALETTE[i % PALETTE.length] }));
   }, [blocks, tasks, projects]);
 
+  /* Estimate accuracy (see utils/estimateAccuracy.js). Only tasks completed
+     with a running timer carry an actual, so this is often empty — the panel
+     below says so rather than rendering a zero, and always shows the sample
+     size next to any figure. */
+  const accuracy = useMemo(() => computeEstimateAccuracy(tasks), [tasks]);
+  const accuracyByProject = useMemo(() => computeAccuracyByProject(tasks, projects), [tasks, projects]);
+
   return (
     <div>
+      <h3 className="stats-section-title" style={{ marginTop: 0 }}>Time &amp; hours</h3>
       <div className="stats-cards-row">
         <StatCard label="Total hours left" value={stats.totalHoursLeft.toFixed(1)} sublabel="across all active tasks" />
         <StatCard label="Scheduled today" value={stats.scheduledToday.toFixed(1) + 'h'} />
@@ -116,6 +171,26 @@ export default function StatsDashboard() {
           value={stats.freeCapacityThisWeek.toFixed(1) + 'h'}
           accent={stats.freeCapacityThisWeek < 2 ? 'var(--color-warning)' : 'var(--color-success)'}
         />
+        {stats.totalActualHours > 0 && (
+          <StatCard label="Time logged" value={stats.totalActualHours.toFixed(1) + 'h'} sublabel="tracked via timer, on completed tasks" />
+        )}
+      </div>
+
+      <h3 className="stats-section-title">Task counts</h3>
+      <div className="stats-cards-row">
+        <StatCard label="Active tasks" value={stats.activeTaskCount} />
+        <StatCard label="Due today" value={stats.dueTodayCount} />
+        <StatCard
+          label="Overdue & missed"
+          value={stats.overdueAndMissedCount}
+          accent={stats.overdueAndMissedCount > 0 ? 'var(--color-danger)' : undefined}
+        />
+        <StatCard
+          label="Completed today"
+          value={stats.completedTodayCount}
+          accent={stats.completedTodayCount > 0 ? 'var(--color-success)' : undefined}
+        />
+        <StatCard label="Total completed" value={stats.totalCompletedCount} sublabel="all-time" />
       </div>
 
       {stats.overdueRiskTasks.length > 0 && (
@@ -133,6 +208,63 @@ export default function StatsDashboard() {
           </ul>
         </div>
       )}
+
+      <h3 className="stats-section-title">Estimate accuracy</h3>
+      <div className="card stats-accuracy-card">
+        {accuracy.sampleSize === 0 ? (
+          <p className="stats-accuracy-empty">
+            Nothing to compare yet. Run the timer on a task and log the time when you complete it, and this will start
+            showing how your estimates hold up.
+          </p>
+        ) : (
+          <>
+            <div className="stats-accuracy-headline">
+              <span className="stats-accuracy-verdict">{accuracyHeadline(accuracy.ratio)}</span>
+              {/* Sample size is never optional here. A ratio from two tasks
+                  looks identical to one from fifty, and acting on the first is
+                  how someone stops trusting the panel. */}
+              <span className="stats-accuracy-sample">
+                from {accuracy.sampleSize} timed task{accuracy.sampleSize === 1 ? '' : 's'}
+                {!accuracy.isReliable && ` — too few to read much into yet (${MIN_RELIABLE_SAMPLE}+ gives a clearer picture)`}
+              </span>
+            </div>
+            <p className="stats-accuracy-detail">
+              {accuracy.totalEstimated.toFixed(1)}h estimated, {accuracy.totalActual.toFixed(1)}h actually spent.
+            </p>
+
+            {accuracyByProject.length > 1 && (
+              <div className="table-scroll">
+                <table className="stats-accuracy-table">
+                  <thead>
+                    <tr>
+                      <th>Project</th>
+                      <th>Estimated</th>
+                      <th>Actual</th>
+                      <th>Difference</th>
+                      <th>Tasks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accuracyByProject.map((row) => (
+                      <tr key={row.projectId || 'none'} className={row.isReliable ? '' : 'is-thin-sample'}>
+                        <td>{row.projectName}</td>
+                        <td className="num">{row.totalEstimated.toFixed(1)}h</td>
+                        <td className="num">{row.totalActual.toFixed(1)}h</td>
+                        <td className="num">{describeAccuracy(row.ratio)}</td>
+                        <td className="num">{row.sampleSize}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p className="stats-accuracy-detail">
+              Shown for reference only — nothing here changes your estimates or your schedule automatically.
+            </p>
+          </>
+        )}
+      </div>
 
       <div className="stats-charts-row">
         <div className="card stats-chart-card" style={{ flex: '2 1 420px' }}>

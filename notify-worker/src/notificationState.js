@@ -1,0 +1,143 @@
+'use strict';
+
+/**
+ * ============================================================================
+ * DEDUPE / THROTTLE STATE (Firestore-backed, safe against duplicate sends)
+ * ============================================================================
+ * Cloud Functions instances are not persistent between invocations, so any
+ * "have we already emailed this" memory has to live in Firestore, at
+ * users/{uid}/notificationState/{stateId} — one small doc per (trigger type,
+ * task/block id). This is intentionally NOT part of BACKUP_FIELDS
+ * (backupService.js): it's a send-dedupe marker, not user data worth
+ * restoring — if a restore wipes it, the worst case is one possible re-sent
+ * email, never data loss.
+ *
+ * WHY A TRANSACTION: Cloud Scheduler + Cloud Functions v2 give no hard
+ * guarantee that exactly one invocation is ever in flight — a slow previous
+ * run can still be finishing when the next tick fires, and a delivery retry
+ * (see index.js's retryCount:0, which minimizes but doesn't by itself
+ * eliminate this) could in principle overlap another run. A naive
+ * "read state, decide, then separately write state" would race: two
+ * overlapping invocations could both read "not yet sent" before either
+ * writes, and both send. Wrapping the read + eligibility decision + write in
+ * one Firestore transaction closes that gap — transactions serialize on the
+ * document, so the second (losing) invocation's transaction is guaranteed to
+ * observe the first (winning) invocation's already-committed write and
+ * correctly comes back "not eligible", instead of both proceeding.
+ *
+ * The actual email send happens AFTER the transaction commits — Firestore
+ * transactions can't safely wrap an external network call (they may be
+ * retried internally by the SDK on contention, which would risk sending
+ * multiple times off a single logical claim). So the failure mode if
+ * Resend's send itself throws is a SKIPPED email (state is already marked
+ * "sent" by the transaction that already committed), never a DUPLICATE one —
+ * deliberately the safer side to fail on for a notification inbox.
+ * ============================================================================
+ */
+
+/**
+ * Attempts to claim the right to send one notification described by
+ * `candidate` (see computeNotifications.js for its shape). Returns true if
+ * the caller should proceed to send the email; false if another invocation
+ * already sent it, or this type's own throttle says it isn't due yet.
+ * @param {FirebaseFirestore.Firestore} db
+ * @param {string} uid
+ * @param {object} candidate
+ * @param {number} now - epoch ms, passed in (not read fresh) so every
+ *   candidate in one function run is judged against the same instant.
+ */
+async function claimNotification(db, uid, candidate, now) {
+  const ref = db.collection('users').doc(uid).collection('notificationState').doc(candidate.stateId);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const prev = snap.exists ? snap.data() : null;
+
+    let eligible = false;
+    let nextState = null;
+
+    switch (candidate.type) {
+      case 'startingSoon': {
+        // Fires once per block id UNLESS the block's own date/time has
+        // changed since the last time it fired (a reschedule after the
+        // original notification already went out is a new occurrence, not a
+        // repeat of the old one) — mirrors the client's firedStartingSoonRef
+        // Set, except that one has no reschedule-awareness at all.
+        const rescheduled = prev !== null && prev.scheduledAt !== candidate.scheduledAt;
+        eligible = prev === null || rescheduled;
+        nextState = { type: 'startingSoon', lastNotifiedAt: now, scheduledAt: candidate.scheduledAt };
+        break;
+      }
+
+      case 'overdue': {
+        // ONCE PER dueDate VALUE — not once per calendar day. A daily re-arm
+        // (`prev.lastNotifiedDate !== candidate.todayISO`) was the direct
+        // cause of the "I keep getting overdue emails for tasks I already
+        // finished days ago" bug: the client's push of isCompleted:true is
+        // debounced and its flush-on-teardown is explicitly best-effort (see
+        // useCloudSync.js), so a completion made shortly before the tab
+        // closed can fail to reach Firestore. The worker then reads a task
+        // that still looks incomplete and overdue, and — because midnight
+        // moved todayISO on — re-arms and emails again. Every following day
+        // did it again, indefinitely.
+        //
+        // Keying on dueDate instead means one email per overdue task per due
+        // date. It re-arms only when the dueDate genuinely changes (a
+        // reschedule that's still in the past is fresh news), which is
+        // sync-timing-independent: a stale snapshot can no longer manufacture
+        // a new trigger just by the clock rolling over. lastNotifiedDate is
+        // still written, for diagnostics and so an existing state doc from
+        // the old rule keeps a readable shape, but it's no longer consulted.
+        const dueDateChanged = prev !== null && prev.dueDate !== candidate.dueDate;
+        eligible = prev === null || dueDateChanged;
+        nextState = { type: 'overdue', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO, dueDate: candidate.dueDate };
+        break;
+      }
+
+      case 'missed': {
+        // Fires once per block id, same "unless rescheduled" rule as
+        // startingSoon — a block whose time already passed once and got
+        // reported is only worth a fresh email if the user then moved it to
+        // a new date/time and STILL missed that one too.
+        const rescheduled = prev !== null && prev.scheduledAt !== candidate.scheduledAt;
+        eligible = prev === null || rescheduled;
+        nextState = { type: 'missed', lastNotifiedAt: now, scheduledAt: candidate.scheduledAt };
+        break;
+      }
+
+      case 'dueTodayDigest': {
+        // Once per calendar date — the digest itself is already gated to not
+        // fire before the user's workDayStart (see computeNotifications.js),
+        // so this just prevents repeat sends on later ticks the same day.
+        eligible = prev === null || prev.lastNotifiedDate !== candidate.todayISO;
+        nextState = { type: 'dueTodayDigest', lastNotifiedAt: now, lastNotifiedDate: candidate.todayISO };
+        break;
+      }
+
+      // NOTE: 'dueToday' (the old one-email-per-task variant) is gone —
+      // replaced entirely by 'dueTodayDigest' above. No migration needed:
+      // any stale users/{uid}/notificationState/dueToday_{taskId} docs from
+      // before this change are simply never read again and can be ignored.
+      default:
+        return false;
+    }
+
+    if (!eligible) return false;
+    tx.set(ref, nextState);
+    return true;
+  });
+}
+
+/**
+ * Deletes a state doc if present. A plain delete (not wrapped in a
+ * transaction) is fine here — this only ever clears an "overdue" doc once a
+ * task is confirmed no longer overdue, which isn't racing any concurrent
+ * claim for that SAME doc (a task can't be simultaneously overdue and not
+ * overdue within one computeCandidates() pass), and worst case of a missed
+ * clear is just one stale doc noticed again next run.
+ */
+async function clearNotificationState(db, uid, stateId) {
+  await db.collection('users').doc(uid).collection('notificationState').doc(stateId).delete();
+}
+
+module.exports = { claimNotification, clearNotificationState };

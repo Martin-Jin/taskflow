@@ -20,7 +20,9 @@ import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
 import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
 
-export default function DependencyPicker({ options, selectedIds, onChange, placeholder = 'Search tasks…' }) {
+// Wrapped in memo — see LabelPicker's equivalent note; callers must keep
+// `options`/`selectedIds`/`onChange` reference-stable for this to help.
+function DependencyPicker({ options, selectedIds, onChange, placeholder = 'Search tasks…' }) {
   const { query, setQuery, isOpen, highlightedIndex, setHighlightedIndex, inputRef, handleBlur, handleFocus, resetQuery } =
     useComboboxMultiSelect();
 
@@ -62,9 +64,8 @@ export default function DependencyPicker({ options, selectedIds, onChange, place
       if (target) selectOption(target.id);
       return;
     }
-    if (e.key === 'Escape') {
-      inputRef.current?.blur();
-    }
+    // Escape is handled by useComboboxMultiSelect's escape layer, not here —
+    // a keydown on this input never sees it (see useEscapeLayer).
   }
 
   return (
@@ -129,3 +130,5 @@ export default function DependencyPicker({ options, selectedIds, onChange, place
     </div>
   );
 }
+
+export default React.memo(DependencyPicker);

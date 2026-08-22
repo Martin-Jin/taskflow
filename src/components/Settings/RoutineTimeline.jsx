@@ -4,14 +4,23 @@
  *   - Drag on empty space -> creates a new routine spanning the drag.
  *   - Drag a block's body -> moves it (start/end shift together).
  *   - Drag a block's top/bottom edge -> resizes that end only.
- *   - Click the trash icon -> removes the routine.
- *   - Click the label -> rename inline; click the dot -> toggle active.
+ *   - Click the trash icon -> removes the routine (hidden for a protected
+ *     routine, e.g. Sleep — it can still be dragged/resized/paused, just
+ *     not deleted, see FixedRoutine.isProtected).
+ *   - Click the label -> rename inline; the pause/resume and delete icon
+ *     buttons at the block's trailing edge handle active state and removal.
+ *   - `selectedDay` scopes the column to one weekday (see RoutinesSection's
+ *     day picker). In "all days" mode a routine that does NOT apply to every
+ *     day is marked, because otherwise a Tuesday-only routine is
+ *     indistinguishable from a daily one and dragging it looks like it changed
+ *     every day.
  * Mirrors the interaction model of Calendar/WeekView (mousedown+drag to
  * block out time, edge-drag to resize) so the gesture feels familiar.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { X, Pause, Play } from 'lucide-react';
 import { timeToMinutes, minutesToTime } from '../../utils/dateUtils';
+import { WEEKDAY_NAMES } from '../../utils/workHours';
 
 const GRID_END_MIN = 24 * 60;
 const SNAP_MIN = 5;
@@ -23,7 +32,7 @@ function clampMinutes(mins) {
   return Math.max(0, Math.min(GRID_END_MIN, mins));
 }
 
-export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove }) {
+export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove, selectedDay = null, onToggleRoutineDay }) {
   const columnRef = useRef(null);
   const [createDrag, setCreateDrag] = useState(null); // { startMin, currentMin }
   const [editingId, setEditingId] = useState(null);
@@ -190,20 +199,12 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove })
             >
               <div className="routine-block-edge routine-block-edge-top" onMouseDown={(e) => handleResizeStart(e, r, 'top')} />
               <div className="routine-block-row">
-                <button
-                  type="button"
-                  className="routine-block-dot"
-                  title={r.isActive ? 'Active — click to pause' : 'Paused — click to activate'}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => onUpdate(r.id, { isActive: !r.isActive })}
-                />
                 {editingId === r.id ? (
                   <input
                     className="routine-block-label-input"
                     autoFocus
                     defaultValue={r.label}
                     onMouseDown={(e) => e.stopPropagation()}
-                    onFocus={(e) => e.target.select()}
                     onBlur={(e) => {
                       onUpdate(r.id, { label: e.target.value.trim() || r.label });
                       setEditingId(null);
@@ -223,16 +224,67 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove })
                     {r.label}
                   </button>
                 )}
+                {!showTime && (
+                  <span className="routine-block-time routine-block-time-inline">
+                    {r.startTime}–{r.endTime}
+                  </span>
+                )}
+                {/* Only in "all days" mode, and only when it isn't all days —
+                    a badge reading "7 days" on every block would be noise
+                    (never render the absence of information). */}
+                {selectedDay === null && (r.daysOfWeek || []).length > 0 && r.daysOfWeek.length < 7 && (
+                  <span
+                    className="routine-block-days"
+                    title={`Only on ${r.daysOfWeek.map((d) => WEEKDAY_NAMES[d]).join(', ')}`}
+                  >
+                    {r.daysOfWeek.length === 1 ? WEEKDAY_NAMES[r.daysOfWeek[0]].slice(0, 3) : `${r.daysOfWeek.length} days`}
+                  </span>
+                )}
+                {/* In single-day mode, a badge saying what this routine's scope
+                    actually IS — "All days" for a daily routine, the day count
+                    otherwise. Clicking it takes the routine off this day, so
+                    the label describes the state rather than the action: a
+                    routine showing "All days" is the common case, and reading
+                    "Not this day" on it was actively misleading. Hidden for a
+                    protected routine, which must keep applying every day. */}
+                {selectedDay !== null && !r.isProtected && onToggleRoutineDay && (
+                  <button
+                    type="button"
+                    className="routine-block-days routine-block-days-action"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => onToggleRoutineDay(r.id, selectedDay)}
+                    title={`Applies on ${(r.daysOfWeek || []).map((d) => WEEKDAY_NAMES[d]).join(', ')} — click to stop applying on ${WEEKDAY_NAMES[selectedDay]}`}
+                  >
+                    {(r.daysOfWeek || []).length >= 7 ? 'All days' : `${(r.daysOfWeek || []).length} days`}
+                  </button>
+                )}
+                {/* Pause/resume, moved off the leading dot. As a coloured dot in
+                    front of the name it read as decoration — the one thing the
+                    design rules say a dot should never be — and gave no hint it
+                    was a control. As an icon beside Delete it sits with the
+                    block's other action and states which it is. */}
                 <button
                   type="button"
-                  className="btn btn-icon routine-block-remove"
+                  className="routine-block-action"
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => onRemove(r.id)}
-                  aria-label={`Delete ${r.label}`}
-                  title="Delete routine"
+                  onClick={() => onUpdate(r.id, { isActive: !r.isActive })}
+                  aria-label={r.isActive ? `Pause ${r.label}` : `Resume ${r.label}`}
+                  title={r.isActive ? 'Active — click to pause' : 'Paused — click to resume'}
                 >
-                  <Trash2 size={12} />
+                  {r.isActive ? <Pause size={12} /> : <Play size={12} />}
                 </button>
+                {!r.isProtected && (
+                  <button
+                    type="button"
+                    className="routine-block-remove"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => onRemove(r.id)}
+                    aria-label={`Delete ${r.label}`}
+                    title="Delete routine"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </div>
               {showTime && (
                 <div className="routine-block-time">

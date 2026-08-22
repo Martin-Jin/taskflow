@@ -1,0 +1,1459 @@
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.dashboard-greeting {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.dashboard-customize-trigger {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.dashboard-greeting h1 {
+  font-family: var(--font-display);
+  /* Was 34px — larger than even --text-display (28px), the top of the type
+     scale, making a pleasantry the loudest thing on the page. Sized down so
+     it costs less visual weight than the first actionable thing below it
+     (.now-next-card) — see W8 in TODO.md. */
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin: 0;
+  animation: dashboard-greeting-in var(--duration-slow) var(--ease-decelerate);
+}
+
+.dashboard-greeting p {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  margin: 4px 0 0;
+}
+
+@keyframes dashboard-greeting-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Quick stats strip                                                     */
+/* -------------------------------------------------------------------- */
+
+.dashboard-stats-strip {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dashboard-stat-tile {
+  flex: 1;
+  min-width: 140px;
+  padding: 14px 16px;
+}
+
+.dashboard-stat-tile-clickable {
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.dashboard-stat-tile-clickable:hover,
+.dashboard-stat-tile-clickable:focus-visible {
+  background: var(--color-bg-surface-hover);
+  transform: translateY(-1px);
+}
+
+.dashboard-stat-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dashboard-stat-value {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin-top: 4px;
+  color: var(--color-text-primary);
+}
+
+/* -------------------------------------------------------------------- */
+/* Grid layout                                                           */
+/* -------------------------------------------------------------------- */
+
+.dashboard-grid {
+  display: grid;
+  /* The main column caps out at 820px (its content — NowNextCard,
+     TodayAgenda — is a list of single-line rows, not prose, but at very
+     wide viewports letting it keep growing just adds empty-feeling
+     whitespace inside the cards). The side column is a flexible 1fr so it
+     absorbs the rest of the width instead of leaving a dead margin on the
+     right — see the (now-removed) .dashboard-page max-width. */
+  grid-template-columns: minmax(0, 820px) minmax(280px, 1fr);
+  gap: var(--space-4);
+  /* stretch (grid's default) makes both columns match the height of the
+     taller one — combined with .today-agenda's flex: 1 below, that lets
+     Today's Agenda absorb whatever leftover height the side column leaves,
+     so the two columns' bottoms always line up instead of leaving dead
+     space under the shorter column. */
+}
+
+/* Applied when Dashboard Customization (see DashboardCustomizeMenu.jsx) has
+   hidden every widget in one column — the remaining column takes the full
+   width instead of staying capped at the two-column split's 820px, which
+   would otherwise leave a dead gap where the hidden column used to be. */
+.dashboard-grid.dashboard-grid-single {
+  grid-template-columns: 1fr;
+}
+
+.dashboard-grid-main,
+.dashboard-grid-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Grid items default to min-width: auto, so nowrap/min-width content
+     inside (e.g. .today-agenda-time) can force this track wider than the
+     viewport instead of ever wrapping/shrinking — same trap as
+     .main-content, see global.css. */
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* On a single-column mobile layout there's no second column to match
+     heights with, so let the agenda size to its own content again instead
+     of stretching to fill leftover grid-row height. */
+  .today-agenda {
+    flex: none;
+  }
+
+  .today-agenda-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    flex: 1;
+    min-height: 0;
+    max-height: 420px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+}
+
+.dashboard-card-header {
+  margin-bottom: var(--space-3);
+}
+
+.dashboard-card-header h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* -------------------------------------------------------------------- */
+/* Right now / up next                                                   */
+/* -------------------------------------------------------------------- */
+
+/* The dashboard's one hero — "what should I be doing right now" is the
+   single most actionable thing on this page, so it gets more presence than
+   every other card here (see W8 in TODO.md). Weight and tone carry that,
+   not a border (direction rule 1) — a subtle accent-tinted background
+   (relative color-mix, so it holds up in both themes) plus its header/title
+   sized a step up from every other dashboard-card-header. */
+.now-next-card {
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-surface));
+}
+
+.now-next-card .dashboard-card-header h3 {
+  font-size: var(--text-lg);
+}
+
+.now-block-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.now-block-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.now-block-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-block-time {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+/* Surfaces other items overlapping the current one (see useNowAndNext's
+   overlapCount) so a same-time task/event doesn't just silently vanish. */
+.now-overlap-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Padding + a matching negative margin so the hover/focus highlight below
+   reads as an inset pill with room to breathe, not a hard-edged rectangle
+   flush against .now-next-card's own edges — the highlight box is exactly
+   this element's own padding box, and it had none before. Left/right/bottom
+   only (not shorthand) so .next-block's own margin-top/padding-top/
+   border-top — its divider from .now-block above — stay untouched. */
+.now-block.is-openable,
+.next-block.is-openable {
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  margin-left: -10px;
+  margin-right: -10px;
+  margin-bottom: -8px;
+}
+
+.now-block.is-openable {
+  margin-top: -8px;
+}
+
+/* Keeps .next-block's own gap from .now-block above (var(--space-4)) intact
+   while still pulling back the 8px the shared padding above added. */
+.next-block.is-openable {
+  margin-top: calc(var(--space-4) - 8px);
+}
+
+/* A translucent tint rather than --color-bg-surface-hover. This card is
+   deliberately accent-tinted (see .now-next-card above), and that flat neutral
+   token is a warm grey: hovering DROPPED the card's tint and shifted the hue,
+   so the highlight read as a differently-coloured panel sitting on the card
+   rather than the same surface lifting. Compositing over whatever is beneath
+   matches by construction, and keeps matching if the card's own tint changes.
+   The blocks have negative margins spanning nearly the full card, which is why
+   a mismatch here was so obvious — it recoloured most of the card. */
+.now-block.is-openable:hover,
+.now-block.is-openable:focus-visible,
+.next-block.is-openable:hover,
+.next-block.is-openable:focus-visible {
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+
+.now-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  margin-top: var(--space-3);
+  overflow: hidden;
+}
+
+.now-progress-fill {
+  height: 100%;
+  background: var(--color-accent-solid-bg);
+  border-radius: 999px;
+  transition: width 1s linear;
+}
+
+.now-empty {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  text-align: center;
+  padding: var(--space-2) 0;
+}
+
+/* Separated from .now-block above by spacing, not a divider line — a
+   border-top here also fell *inside* .next-block.is-openable's hover
+   highlight (the highlight paints the border box), which read as a stray
+   line through the top of the highlighted pill. Direction rule 1: space and
+   tone separate things; borders don't. */
+.next-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--space-4);
+}
+
+.next-block-icon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.next-block-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.next-block-title {
+  font-size: var(--text-base);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.next-block-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+/* -------------------------------------------------------------------- */
+/* Today's agenda                                                        */
+/* -------------------------------------------------------------------- */
+
+.today-agenda {
+  /* Grows to fill whatever height NowNextCard leaves within the (now
+     stretch-height) .dashboard-grid-main, so its bottom lines up with the
+     side column's — see .today-agenda-list below for the scrollable part. */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.today-agenda-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+.today-agenda-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  border: 1px solid transparent;
+  /* Rest state sits on the page background rather than
+     --color-bg-surface-hover — that token doubled as both this row's
+     resting color AND its hover target, so the two states barely read as
+     different. Using the page background at rest and the hover token on
+     hover/focus gives a clear, theme-consistent step between them,
+     matching how .task-row/.board-card do it elsewhere. */
+  background: var(--color-bg-page);
+  border-left: 3px solid transparent;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.today-agenda-item.is-openable {
+  cursor: pointer;
+}
+
+.today-agenda-item.is-openable:hover,
+.today-agenda-item.is-openable:focus-visible {
+  background: var(--color-bg-surface-hover);
+}
+
+/* A missed item's block/task pairing is mutually exclusive with is-current
+   (a block can't still be "in progress" once its end time has passed), so
+   these two states never need to combine. */
+.today-agenda-item.is-current {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+  border-color: var(--color-accent-border);
+  border-left-color: var(--color-accent-solid-bg);
+  font-weight: 600;
+}
+
+.today-agenda-item.is-missed {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-surface-hover));
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-left-color: var(--color-danger);
+}
+
+/* Without this, the generic .is-openable:hover rule above (same
+   specificity, later in source) would win on hover and flatten a missed
+   row back to plain gray — losing the red tint right when the user is
+   about to click it. */
+.today-agenda-item.is-missed.is-openable:hover,
+.today-agenda-item.is-missed.is-openable:focus-visible {
+  background: color-mix(in srgb, var(--color-danger) 16%, var(--color-bg-surface-hover));
+}
+
+.today-agenda-missed-icon {
+  color: var(--color-danger);
+  flex-shrink: 0;
+}
+
+.today-agenda-missed-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-danger);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Distinct from is-missed (red, "the deadline already passed") — a task due
+   today is still on track, so it gets a warning-orange accent instead of
+   danger-red, matching the same left-border + label pattern. */
+.today-agenda-item.is-due-today {
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-bg-surface-hover));
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  border-left-color: var(--color-warning);
+}
+
+.today-agenda-item.is-due-today.is-openable:hover,
+.today-agenda-item.is-due-today.is-openable:focus-visible {
+  background: color-mix(in srgb, var(--color-warning) 16%, var(--color-bg-surface-hover));
+}
+
+.today-agenda-due-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-warning);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A completed item is no longer "on track" or "missed" — it's just done —
+   so it gets its own muted label instead of the red/orange ones above,
+   with a distinct amber variant when it was finished after the block's
+   scheduled end time (see isBlockCompletedLate). */
+.today-agenda-completed-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-success);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.today-agenda-completed-late-label {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-warning);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.today-agenda-time {
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  min-width: 118px;
+  flex-shrink: 0;
+}
+
+.today-agenda-time-compact {
+  display: none;
+}
+
+/* Flags a row whose time range overlaps another row's — a flat time-sorted
+   list otherwise renders concurrent items identically to sequential ones. */
+.today-agenda-overlap-tag {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.today-agenda-title,
+.today-agenda-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.today-agenda-title-marquee {
+  min-width: 0;
+}
+
+.today-agenda-title-link-icon {
+  flex-shrink: 0;
+}
+
+/* Full label text ("Completed late", "Due today") on desktop; a shorter
+   variant swaps in on narrow screens (see the max-width: 640px block below)
+   so the row's fixed-width label column never forces the row wider than a
+   phone viewport. */
+.today-agenda-status-compact {
+  display: none;
+}
+
+/* The exact completion timestamp is a nice-to-have on a roomy desktop row,
+   but on mobile every row is already tight on width just fitting time +
+   title + status label — drop it there rather than truncating something
+   more useful. */
+@media (max-width: 640px) {
+  .today-agenda-time-full {
+    display: none;
+  }
+
+  .today-agenda-time-compact {
+    display: inline;
+  }
+
+  .today-agenda-time {
+    min-width: 0;
+  }
+
+  .today-agenda-status-full {
+    display: none;
+  }
+
+  .today-agenda-status-compact {
+    display: inline;
+  }
+
+  .today-agenda-completed-timestamp {
+    display: none;
+  }
+
+  /* Row is already tight fitting time + title + a status label on mobile —
+     shrink the overlap tag to a compact dot instead of the full word. */
+  .today-agenda-overlap-tag {
+    font-size: 0;
+    padding: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-accent);
+  }
+}
+
+.today-agenda-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-solid-bg);
+  flex-shrink: 0;
+  animation: today-agenda-pulse 2s ease-in-out infinite;
+}
+
+@keyframes today-agenda-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Notes (folder-organized sticky notes: folders + recent strip + grid)  */
+/* -------------------------------------------------------------------- */
+
+.notes-recent {
+  margin-bottom: var(--space-3);
+}
+
+/* Shown in place of the "Recently edited" strip when the user has no notes
+   at all yet, so the card reserves roughly the same vertical footprint
+   whether or not that strip has content to show. */
+.notes-recent-empty {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  padding: 8px 0;
+}
+
+.notes-recent-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.notes-recent-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.note-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  font-size: var(--text-xs);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  max-width: 160px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.note-chip:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.notes-folders {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  max-height: 92px;
+  overflow-y: auto;
+  padding: 2px 2px 0 0;
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.notes-folders::-webkit-scrollbar {
+  display: none;
+}
+
+.note-folder-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+.note-folder-tab:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-accent-border);
+}
+
+.note-folder-tab.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+  font-weight: 600;
+}
+
+.note-folder-tab-add {
+  color: var(--color-text-secondary);
+}
+
+/* Reset so the "select this folder" control reads as the tab's own label,
+   not a nested button — the tab pill itself (.note-folder-tab) is a plain
+   <div> now, since it holds two sibling buttons (select + remove). */
+.note-folder-tab-select {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.note-folder-remove {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.note-folder-remove:hover {
+  opacity: 1;
+}
+
+.note-folder-add-form input {
+  font-size: var(--text-sm);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-accent-border);
+  background: var(--color-bg-page);
+  width: 110px;
+}
+
+.notes-grid {
+  display: grid;
+  /* Fixed 3 columns rather than auto-fill: at the side column's narrowest
+     (280px, minus card padding/gaps) a min/max auto-fill track only just
+     missed the width needed for a 3rd column and silently fell back to 2,
+     leaving one column's worth of width unused. An explicit 3-column split
+     guarantees 3 per row regardless of container width. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  justify-content: start;
+  /* Rows size to their own content — the height floor lives on .note-tile
+     itself, not here, so a full-width row like .notes-empty (a couple lines
+     of text) isn't padded out to match tile height just because it shares
+     the grid with tiles. */
+  grid-auto-rows: auto;
+  align-content: start;
+  /* Without this, Grid's default align-items: stretch pads every tile in a
+     row out to match its tallest sibling — most visible on the "Add note"
+     tile, which otherwise gets stretched to match a taller real note tile
+     sharing its row and shows dead space below its icon/label. */
+  align-items: start;
+  gap: var(--space-2);
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px 4px 4px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.notes-grid::-webkit-scrollbar {
+  display: none;
+}
+
+/* A note tile is now just a title + one clamped preview line (see
+   .note-tile-body below), so it stays legible at 3-per-row even narrow —
+   unlike the old 2-line-body tiles, which needed to drop to 2 columns
+   below the app's standard mobile breakpoint (see useIsMobile.js). Kept at
+   3 columns throughout instead of adding that breakpoint back. */
+
+.note-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  /* Shorter than the old 76px floor — a title + one preview line needs much
+     less room, and the tile should read as a compact, glanceable card, not
+     a mini Post-it. */
+  min-height: 52px;
+  padding: 8px 10px 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+  /* Colored accent per note (see NotesCard's nextLabelColor assignment) —
+     a left border keeps the tile itself compact/dense rather than reading
+     as a full colored Post-it card. */
+  border-left: 3px solid var(--note-accent, var(--color-accent));
+  text-align: left;
+  transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.note-tile:hover {
+  background: var(--color-bg-surface-hover);
+  transform: translateY(-1px);
+}
+
+/* .note-tile is a plain styling class shared by two different elements —
+   a real <button> for each note (see .note-tile-clickable) and the
+   dashed-border "Add note" trigger, which was already a <button> before
+   this and needs no extra reset here. */
+.note-tile-clickable {
+  width: 100%;
+  cursor: pointer;
+}
+
+.note-tile-add {
+  /* Icon beside the label rather than above it (.note-tile's own column
+     layout) — stacked, "Add note" wrapped to two lines and the button grew
+     back to roughly a real tile's height, defeating the point of a smaller
+     control. */
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  /* Solid all around instead of a dashed left edge — the dashed-left style
+     is .note-tile's own accent-bar idiom (meaningful per-note color), which
+     doesn't apply here since this isn't a note. Shorter than a real note
+     tile's height floor so it reads as a button, not another card. */
+  border: 1px solid var(--color-border-strong);
+  min-height: 34px;
+  padding: 6px 8px;
+  color: var(--color-text-secondary);
+  background: transparent;
+}
+
+.note-tile-add:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+}
+
+.note-tile-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.note-tile-body-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.note-tile-body {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  margin-top: 1px;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  /* One line, not two — see .note-tile's own comment on the smaller tile. */
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.note-favicon {
+  border-radius: 3px;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+/* Font-size/color/padding/text-align now come from EmptyState's own
+   .now-empty base class (identical values — --space-2 is exactly 8px) —
+   this only needs to add the notes grid's own span-all-columns behavior. */
+.notes-empty {
+  grid-column: 1 / -1;
+}
+
+.notes-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.notes-search-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.notes-search-input {
+  width: 100%;
+  font-size: var(--text-sm);
+  padding: 6px 28px 6px 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+}
+
+.notes-search-clear {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.notes-search-clear:hover {
+  color: var(--color-text-primary);
+}
+
+/* -------------------------------------------------------------------- */
+/* NoteEditorModal (Modals/NoteEditorModal.jsx) — mini markdown editor    */
+/* -------------------------------------------------------------------- */
+
+.modal-note-editor {
+  width: 640px;
+}
+
+.note-editor-header {
+  margin-bottom: var(--space-2);
+}
+
+.note-editor-title-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding: 4px 0;
+}
+
+.note-editor-title-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.note-editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.note-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+
+.note-editor-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.note-editor-toolbar-btn:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.note-editor-toolbar-btn.is-active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* Breathing room between logical button groups (Bold/Italic/Strike |
+   Headings | Lists | Link/Code) — plain spacing, not a divider line, per
+   direction rule 1 (space and tone separate things; borders don't). */
+.note-editor-toolbar-divider {
+  width: 8px;
+  flex-shrink: 0;
+}
+
+.note-editor-content {
+  min-height: 240px;
+  max-height: 55vh;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+}
+
+.note-editor-content .tiptap {
+  outline: none;
+  min-height: 240px;
+}
+
+/* Tiptap's Placeholder extension marks the empty first paragraph with this
+   class + a data-placeholder attribute but injects no CSS of its own —
+   this is the standard pairing their own docs call for. */
+.note-editor-content .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-secondary);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.note-editor-content .tiptap h1,
+.note-editor-content .tiptap h2,
+.note-editor-content .tiptap h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  margin: 14px 0 4px;
+}
+
+.note-editor-content .tiptap h1:first-child,
+.note-editor-content .tiptap h2:first-child,
+.note-editor-content .tiptap h3:first-child {
+  margin-top: 0;
+}
+
+.note-editor-content .tiptap h1 {
+  font-size: var(--text-lg);
+}
+
+.note-editor-content .tiptap h2 {
+  font-size: var(--text-md);
+}
+
+.note-editor-content .tiptap h3 {
+  font-size: var(--text-base);
+}
+
+.note-editor-content .tiptap p {
+  margin: 4px 0;
+}
+
+.note-editor-content .tiptap ul,
+.note-editor-content .tiptap ol {
+  padding-left: 22px;
+  margin: 4px 0;
+}
+
+.note-editor-content .tiptap a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.note-editor-content .tiptap code {
+  background: var(--color-bg-page);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.note-editor-content .tiptap pre {
+  background: var(--color-bg-page);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.note-editor-content .tiptap pre code {
+  background: none;
+  padding: 0;
+}
+
+.note-editor-content .tiptap blockquote {
+  border-left: 2px solid var(--color-border);
+  margin: 4px 0;
+  padding-left: 10px;
+  color: var(--color-text-secondary);
+}
+
+/* Task list (checklist) rows — Tiptap renders each as
+   <li data-type="taskItem"><label><input type=checkbox></label><div>…</div></li>. */
+.note-editor-content .tiptap ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'] {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'] > label {
+  flex-shrink: 0;
+  margin-top: 3px;
+  user-select: none;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'] > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-editor-content .tiptap li[data-type='taskItem'][data-checked='true'] > div {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+}
+
+.note-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: var(--space-3);
+}
+
+/* -------------------------------------------------------------------- */
+/* Progress rings (today + this week) — ProgressRings.jsx                */
+/* -------------------------------------------------------------------- */
+
+/* One compact strip, not two full-size .card widgets each with their own
+   header — progress is a supporting stat here, not something competing
+   with .now-next-card for attention (see W8 in TODO.md). Both mini-rings
+   share this one card's padding/background instead of each getting their
+   own dashboard-card-header. */
+.progress-rings-strip {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.progress-ring-mini {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.progress-ring-mini-svg {
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+
+.progress-ring-mini-track {
+  fill: none;
+  stroke: var(--color-bg-page);
+  stroke-width: 5;
+}
+
+.progress-ring-mini-fill {
+  fill: none;
+  stroke: var(--color-accent-solid-bg);
+  stroke-width: 5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--duration-slow) var(--ease-decelerate);
+}
+
+.progress-ring-mini-percent {
+  fill: var(--color-text-primary);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  transform: rotate(90deg);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.progress-ring-mini-detail {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+
+.progress-ring-mini-label {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.progress-ring-mini-hours {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-ring-mini-empty {
+  padding: 0;
+  text-align: left;
+}
+
+@media (max-width: 639px) {
+  .progress-rings-strip {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Missed tasks card                                                     */
+/* -------------------------------------------------------------------- */
+
+.missed-tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.missed-tasks-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+/* Padding/radius matches .scheduled-today-item below so Missed/Overdue rows
+   carry the same visual weight as Scheduled today's rows instead of reading
+   as bare, unstyled lines of text next to a filled-in row. */
+.missed-tasks-item.is-openable {
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+/* .missed-tasks-item is only ever used for Missed/Overdue rows (a danger
+   icon leads every row) — hover reads as a light red tint rather than the
+   same neutral gray every other row uses, reinforcing "needs attention"
+   instead of looking identical to a plain row's hover. Scheduled today
+   reuses this class too but isn't a danger state, so it opts back out to
+   the neutral gray below. */
+.missed-tasks-item.is-openable:hover {
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-surface-hover));
+}
+
+.missed-tasks-item.scheduled-today-item.is-openable:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+/* Completed today rows: a positive "done" state, not a danger one — override
+   the danger-red icon color/hover tint .missed-tasks-item defaults to above. */
+.missed-tasks-item.completed-today-item .missed-tasks-icon {
+  color: var(--color-success);
+}
+
+.missed-tasks-item.completed-today-item.is-openable:hover {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-bg-surface-hover));
+}
+
+.missed-tasks-icon {
+  color: var(--color-danger);
+  flex-shrink: 0;
+}
+
+.missed-tasks-time {
+  color: var(--color-text-secondary);
+  min-width: 74px;
+  flex-shrink: 0;
+}
+
+.missed-tasks-title {
+  color: var(--color-text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- */
+/* Stat tile popup (Missed / Overdue) — reuses .missed-tasks-* row       */
+/* styling above for both lists, see StatListModal.jsx.                 */
+/* -------------------------------------------------------------------- */
+
+/* .modal-stat-list used to carry its own 420px width override here. It's
+   gone: Modal.jsx's `size` scale (see its `modal-size-*` classes in
+   global.css) now owns width for every modal, migrated or not — the base
+   .modal rule's 480px ("md", global.css) is what a modal-stat-list-classed
+   dialog gets today, a small deliberate consolidation rather than an
+   oversight. Do not re-add a width rule here; add/adjust a `modal-size-*`
+   step in global.css instead if a genuinely different width is needed. */
+
+.stat-list-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+/* Day-grouping heading between SchedulingConflictsModal sections — plain list
+   items (see StatListModal's `items.map(renderItem)`) rather than a real
+   <ul>/<li> nesting change, so it's just styled to read as a label, not a
+   clickable row like its siblings. */
+.stat-list-section-header {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+  padding: 6px 10px 2px;
+}
+
+.stat-list-section-header:first-child {
+  padding-top: 0;
+}
+
+.stat-list-modal-header h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Overdue rows show a due date instead of a time — wider than the 74px
+   time column so longer date strings (e.g. "Wed, Jul 22") don't clip. */
+.overdue-list-date {
+  min-width: 92px;
+}
+
+/* Shared padding/radius for rows that aren't openable (so they don't pick up
+   .is-openable's cursor/hover) — currently just LabelsModal's tag rows, which
+   supply their own background inline. No default background of its own: the
+   Dashboard "Scheduled today" popup applies this alongside .is-openable,
+   which already owns padding/radius/hover — a default background here would
+   make every row look permanently hovered and hover itself a no-op. */
+.scheduled-today-item {
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+/* -------------------------------------------------------------------- */
+/* ChangelogModal ("What's new")                                        */
+/* -------------------------------------------------------------------- */
+
+.modal-stat-list .sidebar-project-search {
+  margin: 0 0 8px;
+}
+
+.changelog-entry {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-page);
+}
+
+.changelog-entry-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.changelog-entry-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.changelog-entry-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.changelog-entry-changes {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.changelog-fixes {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.changelog-fixes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.changelog-fixes-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.changelog-fixes-chevron {
+  transition: transform var(--duration-base) var(--ease-decelerate);
+}
+
+.changelog-fixes-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.changelog-fixes-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.changelog-fix-entry {
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border);
+}
+
+.changelog-fix-meta {
+  margin-bottom: 4px;
+}
+
+.changelog-see-more {
+  justify-content: center;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  font-size: var(--text-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+/* -------------------------------------------------------------------- */
+/* ShortcutsModal (Settings → Keyboard shortcuts)                        */
+/* -------------------------------------------------------------------- */
+
+/* Width used to be overridden here (520px, for the label/description
+   column plus an inline combo + edit controls) — now expressed as
+   Modal.jsx's `size="lg"` (560px, see global.css's modal-size-lg) instead
+   of a bespoke rule. */
+
+.shortcut-kbd {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* The hint sits above the note editor's header row; .detail-header has no
+   horizontal padding of its own (the modal shell supplies it), so the hint
+   only needs its own bottom gap. */
+.modal-note-editor .note-editor-hint {
+  margin: 0 0 6px;
+}

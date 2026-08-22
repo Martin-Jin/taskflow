@@ -1,0 +1,24 @@
+name = "taskflow-ai-quickadd"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# The AI quick-add routes are bring-your-own-key (BYOK): each request carries
+# the caller's own Anthropic/Gemini API key, forwarded straight through and
+# never persisted (see src/index.js).
+#
+# The /calendar/* routes (see src/googleCalendarAuthRoutes.js) DO need
+# secrets of their own — GOOGLE_CLIENT_SECRET and a Firestore-scoped service
+# account's credentials — set via `wrangler secret put` (never committed,
+# never `VITE_`-prefixed). See cloudflare-worker/README.md for the exact
+# commands and GCP setup steps.
+#
+# ALLOWED_ORIGIN controls CORS (see src/index.js). Defaults to "*" if unset,
+# which is fine for local development but should be locked down to your
+# deployed app's origin for production — see cloudflare-worker/README.md.
+# FIREBASE_PROJECT_ID/GOOGLE_CLIENT_ID are not secrets (they identify the
+# project/OAuth client, not authorize access) so they're plain vars here,
+# same as elsewhere in this app — see src/firebase.js.
+[vars]
+ALLOWED_ORIGIN = "https://martin-jin.github.io"
+FIREBASE_PROJECT_ID = "storagetrackerapp-7bc55"
+GOOGLE_CLIENT_ID = "377055073196-dmch5bbg8a17eri9qns94cg98ocucad6.apps.googleusercontent.com"

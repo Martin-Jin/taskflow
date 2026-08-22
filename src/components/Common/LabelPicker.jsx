@@ -11,7 +11,11 @@ import React, { useMemo } from 'react';
 import { X, Plus } from 'lucide-react';
 import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
 
-export default function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder = 'Add a tag…' }) {
+// Wrapped in memo: its own re-renders are otherwise driven by every keystroke
+// in TaskDetailModal's title/notes fields, which don't touch this picker's
+// props at all — see call sites for the useCallback/useMemo needed to keep
+// `selectedIds`/`onCreateLabel` reference-stable so memo actually pays off.
+function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder = 'Add a tag…', disabled = false }) {
   const { query, setQuery, isOpen, highlightedIndex, setHighlightedIndex, inputRef, handleBlur, handleFocus, resetQuery } =
     useComboboxMultiSelect();
 
@@ -70,9 +74,8 @@ export default function LabelPicker({ labels, selectedIds, onChange, onCreateLab
       }
       return;
     }
-    if (e.key === 'Escape') {
-      inputRef.current?.blur();
-    }
+    // Escape is handled by useComboboxMultiSelect's escape layer, not here —
+    // a keydown on this input never sees it (see useEscapeLayer).
   }
 
   return (
@@ -86,6 +89,7 @@ export default function LabelPicker({ labels, selectedIds, onChange, onCreateLab
                 type="button"
                 className="chip-dependency-remove"
                 onClick={() => removeId(l.id)}
+                disabled={disabled}
                 title={`Remove ${l.name}`}
                 aria-label={`Remove ${l.name}`}
               >
@@ -109,9 +113,10 @@ export default function LabelPicker({ labels, selectedIds, onChange, onCreateLab
           onFocus={handleFocus}
           onBlur={handleBlur}
           placeholder={selectedLabels.length > 0 ? 'Add another…' : placeholder}
+          disabled={disabled}
         />
 
-        {isOpen && (
+        {!disabled && isOpen && (
           <div className="dependency-picker-dropdown">
             {filteredOptions.length === 0 && !canCreate ? (
               <div className="dependency-picker-empty">
@@ -152,3 +157,5 @@ export default function LabelPicker({ labels, selectedIds, onChange, onCreateLab
     </div>
   );
 }
+
+export default React.memo(LabelPicker);

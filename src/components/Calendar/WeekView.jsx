@@ -2,16 +2,40 @@
  * ============================================================================
  * WeekView
  * ============================================================================
- * The primary interactive calendar surface. Renders a 7-day time grid
- * (06:00-24:00, the full day) with ScheduledBlocks and CalendarEvents
- * positioned absolutely by time.
+ * The primary interactive calendar surface. Renders a 1/3/7-day time grid
+ * (the full 00:00-24:00, so nothing can render off the top — it used to
+ * start at 06:00, which left an earlier block/event unreachable; the grid
+ * scrolls to DEFAULT_SCROLL_MIN on mount, or to the earliest visible item
+ * when that's earlier, so the overnight hours aren't dead viewport space.
+ * Column count set by `dayCount` — Day/3 Day/Week in CalendarPage all render
+ * this same component) with ScheduledBlocks and CalendarEvents positioned
+ * absolutely by time.
  *
  * Interaction model:
- *   - Drag a block to a new day/time -> updateBlock() with new date/times.
- *   - Drag the bottom edge of a block -> resize (change duration).
+ *   - Click a day-of-week/day-of-month header -> onSelectDay jumps the
+ *     calendar into Day view on that date, same as MonthView's day cells.
+ *   - Drag a block or event to a new day/time -> updateBlock()/updateEvent()
+ *     with new date/times. Desktop uses native HTML5 DnD (mouse); mobile has
+ *     no such API, so touch gets its own long-press-then-drag path instead
+ *     (see handleItemTouchStart) — a normal short tap still just selects.
+ *     A read-only event (`canEdit === false` — a subscribed/shared calendar
+ *     the user can't write to on Google) isn't draggable/resizable for the
+ *     same reason a locked block isn't: updateEvent would try to push the
+ *     change to Google and fail.
+ *   - Drag the bottom edge of a block or event -> resize (change duration),
+ *     via mouse or touch (see handleResizeStart).
  *   - Click the lock icon -> toggleBlockLock() so the rebalance engine will
- *     never move it again.
- *   - Click a block -> opens BlockDetailModal for full editing.
+ *     never move it again. Events have no lock concept.
+ *   - Click a block/event -> opens its detail modal for full editing.
+ *   - Two or more overlapping blocks/events each get their own proportional
+ *     side-by-side lane by default, sized to their true duration at the
+ *     current zoom (no artificial minimum height) — matching Google
+ *     Calendar's own continuous layout. Only once an item's own height would
+ *     genuinely be too short to show a legible title does it become a
+ *     cluster-candidate, collapsing together with whatever else it overlaps
+ *     that's equally too-short into a single chip labelled with a truncated
+ *     list of the actual contained titles (see clusterLabel) instead of a
+ *     generic "N events" summary — see layoutDayItems/isLegibleAlone.
  * ============================================================================
  */
 
@@ -19,11 +43,18 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Lock, Unlock, Wind } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
-import { addDays, dateRange, dayOfWeek, formatDisplayDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
+import { addDays, dateRange, dayOfWeek, formatDisplayDate, formatShortDate, timeToMinutes, minutesToTime, toISODate } from '../../utils/dateUtils';
+import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
+import { groupItemsByDay } from '../../utils/calendarGrouping';
+import { GRID_START_MIN, DEFAULT_SCROLL_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
+import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
+import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
+import { makeSelectionKey } from '../../hooks/useMultiSelect';
+import HoverPreviewCard from './HoverPreviewCard';
+import MarqueeText from '../Common/MarqueeText';
 
-const GRID_START_MIN = 6 * 60; // 06:00
 const GRID_END_MIN = 24 * 60; // 24:00
 const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
 
@@ -34,18 +65,113 @@ const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
 export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
-// A run of tiny tasks (e.g. several 5-minute defaults back-to-back) renders
-// as unreadable slivers if drawn individually — see clusterShortBlocks below.
-const SHORT_BLOCK_MAX_MIN = 15; // blocks this short (or shorter) are cluster-eligible
-const CLUSTER_MAX_GAP_MIN = 30; // merge short blocks separated by no more than this gap
-const TWO_LINE_MIN_HEIGHT = 30; // below this px height, drop the time-range line rather than clip it
+const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
 
-// Floor height for any single block/cluster, and the breathing room left
-// between two boxes stacked back-to-back in the same lane — see packLane.
-const MIN_BLOCK_HEIGHT_PX = 26;
-const BLOCK_GAP_PX = 2;
+// tightGap (see foldSequentialItems) is meant to degrade a box that's ALSO
+// still short enough for a two-line render to look cramped next to its close
+// neighbour — not any box a close neighbour happens to sit next to. Without
+// this ceiling, a genuinely tall box (e.g. a cluster chip floored to
+// MIN_BLOCK_HEIGHT_PX, or one simply not tightly packed) would lose its time
+// line just because a neighbour starts/ends within TIGHT_GAP_PX of it, even
+// though it has plenty of its own visible room to spare.
+const TIGHT_GAP_HEIGHT_CEILING = 60;
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+// Character budget for a single title LINE within a cluster chip's stacked
+// label (see clusterLabel below) — an approximation of "how much text fits
+// on one line" rather than a true pixel measurement, since a chip's actual
+// rendered width isn't known at render time (day columns are fluid `1fr`
+// grid tracks — see calendar.css). Deliberately conservative (a single-lane
+// chip at typical day-column widths comfortably fits well more than this
+// many characters), so CSS's own `text-overflow: ellipsis` on each line
+// (see .cal-cluster-title-line) stays a backstop for the rare narrower case
+// rather than the primary truncation mechanism.
+const CLUSTER_LABEL_LINE_CHAR_BUDGET = 22;
+
+// Pixel height one title line + the chip's own vertical padding takes up —
+// used to estimate how many whole title lines can stack before a cluster
+// chip's own fixed height (from computeDayPositions) runs out, so titles
+// fill available vertical room rather than a hardcoded line count. Matches
+// .cal-block's 11.5px font-size at ~1.3 line-height, rounded up slightly for
+// safety. Not pixel-perfect (real text metrics vary slightly by browser/
+// font), which is fine — CSS's own overflow:hidden on the chip is the hard
+// backstop if this estimate is ever a line too generous.
+const CLUSTER_TITLE_LINE_HEIGHT_PX = 15;
+// Padding/chrome (chip's own padding, plus room for the time-range line when
+// shown) subtracted from a chip's total height before dividing by line
+// height — mirrors .cal-block's padding: 4px 7px (8px vertical) plus a
+// little extra so the last line doesn't look flush against the edge.
+const CLUSTER_TITLE_VERTICAL_CHROME_PX = 10;
+
+/**
+ * A cluster item's own `data` is either a CalendarEvent (which carries its
+ * `title` directly) or a raw ScheduledBlock (which does NOT — a block's
+ * title lives on its associated Task, looked up via `taskById[data.taskId]`,
+ * same as the cluster popover and every other block-title lookup in this
+ * file). Falls back to 'Untitled' only if the task itself can't be found
+ * (e.g. a stale block whose task was deleted).
+ */
+function clusterItemTitle(it, taskById) {
+  if (it.type === 'block') return taskById[it.data.taskId]?.title || 'Untitled';
+  return it.data.title || 'Untitled';
+}
+
+/**
+ * Builds a cluster chip's label as a VERTICAL STACK of its actual contained
+ * event/task titles (one per line) rather than a single comma-joined line or
+ * a generic "N events" summary — the whole point of a cluster chip is that
+ * it's standing in for items too small to show individually, so the user
+ * should still be able to tell AT A GLANCE what's inside without opening its
+ * popover. Returns an array of line strings, each already truncated to
+ * CLUSTER_LABEL_LINE_CHAR_BUDGET (CSS's own text-overflow:ellipsis on
+ * .cal-cluster-title-line is the backstop for the rare case a line still
+ * doesn't fit the chip's actual rendered width).
+ *
+ * How many whole titles get their own line is capped by `maxLines` (the
+ * chip's own available vertical room — see CLUSTER_TITLE_LINE_HEIGHT_PX at
+ * this file's top) rather than a fixed count, so a taller chip (more overlap,
+ * lower zoom) shows more titles before falling back to a final "…" line
+ * summarizing however many didn't fit. Never renders a half-title fragment —
+ * a title either gets its own whole (possibly char-truncated) line, or is
+ * folded into the trailing "+N more" line.
+ */
+function clusterLabel(items, taskById, maxLines) {
+  const titles = items.map((it) => clusterItemTitle(it, taskById));
+  const truncate = (t) => (t.length > CLUSTER_LABEL_LINE_CHAR_BUDGET ? `${t.slice(0, CLUSTER_LABEL_LINE_CHAR_BUDGET - 1)}…` : t);
+
+  if (titles.length <= maxLines) return titles.map(truncate);
+
+  // maxLines - 1 whole titles get their own line, leaving the last line for
+  // a "+N more" summary of everything else — unless maxLines is 1, in which
+  // case there's no room for even one whole title alongside the summary, so
+  // the summary alone becomes the only line.
+  // "items" rather than "tasks" once a cluster can hold calendar events too
+  // (see calendarLayout's isTooShortAlone) — a chip summarising two events and
+  // a task calling itself "3 tasks" is simply wrong. Still says "tasks" when
+  // that's all it holds, which is the common case and the more concrete word.
+  if (maxLines <= 1) {
+    const noun = items.every((it) => it.type === 'block') ? 'tasks' : 'items';
+    return [`${titles.length} ${noun}`];
+  }
+  const shown = titles.slice(0, maxLines - 1).map(truncate);
+  const remaining = titles.length - shown.length;
+  return [...shown, `+${remaining} more`];
+}
+
+/**
+ * How many title lines a cluster chip's own pixel height has room for,
+ * always at least 1 (even a very short chip shows something) — see
+ * CLUSTER_TITLE_LINE_HEIGHT_PX/CLUSTER_TITLE_VERTICAL_CHROME_PX doc comments.
+ * `hasTimeLine` reserves room for the time-range line rendered below the
+ * title stack (see showTimeLine in the cluster's own render) so titles never
+ * visually collide with it.
+ */
+function clusterMaxTitleLines(chipHeightPx, hasTimeLine) {
+  const timeLineReserve = hasTimeLine ? CLUSTER_TITLE_LINE_HEIGHT_PX : 0;
+  const available = chipHeightPx - CLUSTER_TITLE_VERTICAL_CHROME_PX - timeLineReserve;
+  return Math.max(1, Math.floor(available / CLUSTER_TITLE_LINE_HEIGHT_PX));
+}
 
 // Fixed viewport coordinates for a cluster's popover, anchored to the
 // clicked chip's own bounding rect (see openCluster state in WeekView) —
@@ -65,138 +191,29 @@ function computeClusterPopoverStyle(rect) {
 }
 
 /**
- * Group consecutive short blocks (<= SHORT_BLOCK_MAX_MIN long, separated by
- * no more than CLUSTER_MAX_GAP_MIN) into a single "cluster" item so a run of
- * tiny tasks — several 5-minute defaults placed back-to-back, say — renders
- * as one readable chip ("4 short tasks") instead of a stack of slivers.
- * Passive tasks are left alone since they intentionally overlap other work
- * rather than sitting in a sequential run. Runs of exactly one short block
- * are left as a normal single item — nothing to cluster with.
+ * Shared drop-position math used by both the mouse (native HTML5 DnD) and
+ * touch (long-press) drag paths (see handleDropOnDay / handleItemTouchStart)
+ * — converts a Y position relative to a day column's own bounding rect into
+ * a 15-minute-snapped start minute, clamped so the moved item's new start
+ * can never push its end past GRID_END_MIN (or its start before
+ * GRID_START_MIN), which would otherwise produce an out-of-range "HH:MM"
+ * string (e.g. "24:15") that corrupts every downstream time comparison.
  */
-function clusterShortBlocks(items) {
-  const out = [];
-  let run = [];
-
-  function flushRun() {
-    if (run.length === 0) return;
-    if (run.length === 1) {
-      out.push({ kind: 'single', block: run[0].block, start: run[0].start, end: run[0].end });
-    } else {
-      out.push({
-        kind: 'cluster',
-        blocks: run.map((r) => r.block),
-        start: run[0].start,
-        end: run[run.length - 1].end,
-      });
-    }
-    run = [];
-  }
-
-  for (const item of items) {
-    const isShort = !item.block.isPassive && item.end - item.start <= SHORT_BLOCK_MAX_MIN;
-    if (!isShort) {
-      flushRun();
-      out.push({ kind: 'single', block: item.block, start: item.start, end: item.end });
-      continue;
-    }
-    if (run.length > 0 && item.start - run[run.length - 1].end > CLUSTER_MAX_GAP_MIN) flushRun();
-    run.push(item);
-  }
-  flushRun();
-  return out;
+function computeSnappedStartMinute(relY, pxPerMin, duration) {
+  // relY is the cursor/finger's Y position, which should land at the
+  // dragged block's CENTER rather than its top edge — otherwise the block
+  // visibly jumps to put its top under the cursor, offset by however far
+  // below the top the user originally grabbed it.
+  let newStartMin = GRID_START_MIN + relY / pxPerMin - duration / 2;
+  newStartMin = Math.round(newStartMin / SNAP_MIN) * SNAP_MIN;
+  return Math.min(Math.max(newStartMin, GRID_START_MIN), GRID_END_MIN - duration);
 }
 
-/**
- * Assign each item in a single day a {lane, totalLanes} pair so items that
- * overlap in time (normally impossible, but passive tasks are allowed to —
- * see allocator.js) render side-by-side instead of stacking on top of each
- * other. Items are grouped into "overlap groups" of mutually-overlapping
- * time ranges first, so a lane count only applies within the group it's
- * needed for — an unrelated item later in the day still gets full width.
- * Short blocks are pre-merged into cluster items (see clusterShortBlocks)
- * before lane assignment so a cluster occupies one lane like any other item.
- */
-function layoutDayBlocks(dayBlocks) {
-  const items = dayBlocks
-    .map((block) => ({ block, start: timeToMinutes(block.startTime), end: timeToMinutes(block.endTime) }))
-    .sort((a, b) => a.start - b.start || a.end - b.end);
-
-  const clustered = clusterShortBlocks(items);
-
-  const results = [];
-  let overlapGroup = [];
-  let groupEnd = -Infinity;
-
-  function flushGroup() {
-    if (overlapGroup.length === 0) return;
-    const laneEnds = []; // end minute of the last item placed in each lane
-    for (const item of overlapGroup) {
-      let lane = laneEnds.findIndex((end) => end <= item.start);
-      if (lane === -1) {
-        lane = laneEnds.length;
-        laneEnds.push(item.end);
-      } else {
-        laneEnds[lane] = item.end;
-      }
-      results.push({ ...item, lane });
-    }
-    const totalLanes = laneEnds.length;
-    for (let i = results.length - overlapGroup.length; i < results.length; i++) results[i].totalLanes = totalLanes;
-    overlapGroup = [];
-  }
-
-  for (const item of clustered) {
-    if (overlapGroup.length === 0 || item.start < groupEnd) {
-      overlapGroup.push(item);
-      groupEnd = Math.max(groupEnd, item.end);
-    } else {
-      flushGroup();
-      overlapGroup = [item];
-      groupEnd = item.end;
-    }
-  }
-  flushGroup();
-
-  return results;
-}
-
-/**
- * Assign a final {top, height} in px to every item in a lane, guaranteeing
- * zero overlap no matter how many short items are packed back-to-back.
- * Each box's top is clamped to at least the *actual rendered* bottom of the
- * previous box in its lane (not just the next item's natural start time),
- * so a chain of short blocks/clusters pushes each subsequent box down as
- * far as needed — mirroring how Google Calendar visually stretches a dense
- * run of short meetings rather than letting their boxes collide.
- */
-function packLane(items, pxPerMin) {
-  const sorted = [...items].sort((a, b) => a.start - b.start);
-  let prevBottom = -Infinity;
-  return sorted.map((item) => {
-    const naturalTop = (item.start - GRID_START_MIN) * pxPerMin;
-    const naturalHeight = Math.max(MIN_BLOCK_HEIGHT_PX, (item.end - item.start) * pxPerMin);
-    // Round to whole pixels so block edges land on the same pixel grid as
-    // the hour lines (painted at integer --hour-height multiples) — left
-    // unrounded, sub-hour offsets go fractional at non-default zoom levels
-    // (e.g. 0.55 px/min -> 8.25px per 15min) and drift out of alignment.
-    const top = Math.round(Math.max(naturalTop, prevBottom));
-    const height = Math.round(naturalHeight);
-    prevBottom = top + height + BLOCK_GAP_PX;
-    return { ...item, top, height };
-  });
-}
-
-/** Runs packLane independently within each lane so side-by-side (genuinely
- * overlapping-in-time) items don't interfere with each other's stacking. */
-function computeDayPositions(items, pxPerMin) {
-  const byLane = new Map();
-  for (const item of items) {
-    if (!byLane.has(item.lane)) byLane.set(item.lane, []);
-    byLane.get(item.lane).push(item);
-  }
-  const out = [];
-  for (const laneItems of byLane.values()) out.push(...packLane(laneItems, pxPerMin));
-  return out;
+/** Normalizes a mouse OR touch event down to its clientY, so drag/resize
+ * handlers can be wired to both `mousemove`/`mouseup` and `touchmove`/
+ * `touchend` without duplicating the math for each input type. */
+function getClientY(evt) {
+  return evt.touches?.[0]?.clientY ?? evt.changedTouches?.[0]?.clientY ?? evt.clientY;
 }
 
 export default function WeekView({
@@ -208,46 +225,173 @@ export default function WeekView({
   onSelectBlock,
   onSelectEvent,
   onCreateEvent,
+  onSelectDay,
+  // blocks/events default to raw context state (unfiltered) so any other
+  // consumer of this component that doesn't pass them keeps working
+  // unchanged; CalendarPage always passes the calendar-filter-applied
+  // arrays plus the unfiltered ones (see filterIsActive/onClearFilter below,
+  // used only to decide whether to show the empty-filter overlay).
+  blocks: blocksProp,
+  events: eventsProp,
+  unfilteredBlocks,
+  unfilteredEvents,
+  filterIsActive = false,
+  onClearFilter,
+  // Bulk multi-select (see hooks/useMultiSelect.js, lifted into CalendarPage
+  // since Week/Month share one selection) — selectedKeys uses composite
+  // `block:<id>`/`event:<id>` keys (see makeSelectionKey) so this component
+  // can tell which entity kind a given item is without a separate lookup.
+  selectionMode = false,
+  selectedKeys,
+  onToggleSelectKey,
+  onSelectManyKeys,
 }) {
-  const { tasks, blocks, events, updateBlock, toggleBlockLock } = useScheduler();
+  const { tasks, blocks: contextBlocks, events: contextEvents, projects, routines, updateBlock, toggleBlockLock, updateEvent, setNotification } = useScheduler();
+  const blocks = blocksProp ?? contextBlocks;
+  const events = eventsProp ?? contextEvents;
   const days = useMemo(() => dateRange(weekStart, dayCount), [weekStart, dayCount]);
   const todayIso = toISODate(new Date());
 
   const taskById = useMemo(() => Object.fromEntries(tasks.map((t) => [t.id, t])), [tasks]);
+  const projectById = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p])), [projects]);
 
   // Group once per `blocks`/`events` change rather than filtering the full
   // array once per visible day, and pre-compute each day's cluster/lane
   // layout with useMemo — this is otherwise redone on every render,
   // including every dragover event that fires continuously while dragging.
-  const blocksByDay = useMemo(() => {
-    const map = new Map();
-    for (const b of blocks) {
-      const list = map.get(b.date);
-      if (list) list.push(b);
-      else map.set(b.date, [b]);
-    }
-    return map;
-  }, [blocks]);
-  const eventsByDay = useMemo(() => {
-    const map = new Map();
-    for (const e of events) {
-      const list = map.get(e.date);
-      if (list) list.push(e);
-      else map.set(e.date, [e]);
-    }
-    return map;
-  }, [events]);
-  const dayBlocksByDay = useMemo(() => {
+  const { blocksByDay, eventsByDay } = useMemo(() => groupItemsByDay(blocks, events, days, taskById), [blocks, events, days, taskById]);
+
+  // Empty-filter overlay: only worth showing when a filter is actually
+  // active AND it hid something that would otherwise be visible in THIS
+  // range — a genuinely empty week with no filters applied should keep
+  // looking like a normal empty calendar, not trigger the "nothing
+  // matches" messaging. Recomputing groupItemsByDay against the unfiltered
+  // arrays here is cheap (same days range, no lane-packing) and only runs
+  // while a filter is on.
+  const showEmptyFilterOverlay = useMemo(() => {
+    if (!filterIsActive || !unfilteredBlocks || !unfilteredEvents) return false;
+    if (blocksByDay.size > 0 || eventsByDay.size > 0) return false;
+    const unfiltered = groupItemsByDay(unfilteredBlocks, unfilteredEvents, days);
+    return unfiltered.blocksByDay.size > 0 || unfiltered.eventsByDay.size > 0;
+  }, [filterIsActive, unfilteredBlocks, unfilteredEvents, blocksByDay, eventsByDay, days]);
+  // Blocks and events are laid out together (one lane-packing pass sees
+  // both) so an overlapping block+event pair packs into side-by-side lanes
+  // (or, if short enough, collapses into one "N events" chip) exactly like
+  // two overlapping blocks would — see layoutDayItems. isMobile isn't part
+  // of this computation itself (both platforms share the same lane/chip
+  // layout now) — only the render below branches on it, for styling.
+  const dayItemsByDay = useMemo(() => {
     const map = new Map();
     for (const day of days) {
-      map.set(day, computeDayPositions(layoutDayBlocks(blocksByDay.get(day) || []), pxPerMin));
+      const blockItems = (blocksByDay.get(day) || []).map((b) => ({
+        type: 'block',
+        data: b,
+        start: timeToMinutes(b.startTime),
+        end: timeToMinutes(b.endTime),
+      }));
+      /* All-day events are deliberately kept OUT of the time grid. They carry
+         00:00-23:59 so the capacity engine can treat them as a full busy day
+         (see googleCalendarService's mapping), but rendered as a block that
+         would be a full-height column swallowing every real appointment on
+         that day. They also used to drag the grid's initial scroll position to
+         midnight, since that anchors on the earliest visible item. They render
+         in the strip above the grid instead — see allDayByDay below. */
+      const eventItems = (eventsByDay.get(day) || [])
+        .filter((e) => !e.isAllDay)
+        .map((e) => ({
+          type: 'event',
+          data: e,
+          start: timeToMinutes(e.startTime),
+          end: timeToMinutes(e.endTime),
+        }));
+      const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
+      map.set(day, computeDayPositions(layoutDayItems(merged, pxPerMin), pxPerMin));
     }
     return map;
-  }, [days, blocksByDay, pxPerMin]);
+  }, [days, blocksByDay, eventsByDay, pxPerMin]);
 
-  const [dragState, setDragState] = useState(null); // { blockId, mode: 'move'|'resize' }
+  /* Park the scroll position on mount (and whenever the visible date range
+     changes) rather than at 00:00, which the full-day grid would otherwise
+     open on. Anchors to the earliest item actually on screen when something
+     starts before DEFAULT_SCROLL_MIN, so an early-morning event isn't hidden
+     above the fold — the whole point of extending the grid upward. Left alone
+     afterwards, so a user's own scrolling is never yanked back. */
+  const allDayByDay = useMemo(() => {
+    const map = new Map();
+    for (const day of days) {
+      const allDay = (eventsByDay.get(day) || []).filter((e) => e.isAllDay);
+      if (allDay.length) map.set(day, allDay);
+    }
+    return map;
+  }, [days, eventsByDay]);
+
+  const hasAllDayEvents = allDayByDay.size > 0;
+
+  /* Height of the sticky day-header row, so the all-day row can stick
+     directly beneath it. Measured because it isn't a constant: the mobile
+     single-day variant hides the dow/dom text (see is-single-day-mobile),
+     which changes the row's height. */
+  const [dayHeaderHeight, setDayHeaderHeight] = useState(0);
+  useEffect(() => {
+    if (!hasAllDayEvents) return undefined;
+    const el = gridRef.current?.querySelector('.day-header');
+    if (!el) return undefined;
+    const measure = () => setDayHeaderHeight(el.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasAllDayEvents, dayCount, isMobile]);
+
+  const earliestItemMin = useMemo(() => {
+    let earliest = Infinity;
+    for (const day of days) {
+      for (const item of dayItemsByDay.get(day) || []) earliest = Math.min(earliest, item.start);
+    }
+    return Number.isFinite(earliest) ? earliest : null;
+  }, [days, dayItemsByDay]);
+
+  const scrollAnchorMin =
+    earliestItemMin === null ? DEFAULT_SCROLL_MIN : Math.min(DEFAULT_SCROLL_MIN, Math.max(GRID_START_MIN, earliestItemMin - 30));
+
+  const daysKey = days.join(',');
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    el.scrollTop = Math.round((scrollAnchorMin - GRID_START_MIN) * pxPerMin);
+    // pxPerMin is deliberately NOT a dependency: re-anchoring on every zoom
+    // step would fight the user's own scroll position while they pinch/zoom.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daysKey, scrollAnchorMin]);
+
+  // Active routines that apply to each visible day, purely for the
+  // grayed-out "scheduler won't place things here" background — mirrors
+  // capacityEngine's collectBusyIntervals filter (isActive + daysOfWeek)
+  // without pulling in the full busy/free interval computation, since we
+  // only need the routine's own start/end here, not merged-with-events math.
+  const routinesByDay = useMemo(() => {
+    const map = new Map();
+    for (const day of days) {
+      const dow = dayOfWeek(day);
+      map.set(
+        day,
+        (routines || []).filter((r) => r.isActive && r.daysOfWeek.includes(dow))
+      );
+    }
+    return map;
+  }, [days, routines]);
+
+  // Live drag/resize feedback state. `dragState` marks the item currently
+  // being moved (mouse or touch) so it can be styled as lifted out of the
+  // grid, and carries its duration so a drop target's ghost knows how tall
+  // to be; `dragPreview` is that ghost — the snapped slot the item would
+  // land in, labelled with its would-be start–end time; `resizePreview`
+  // drives the live height and time readout of the item being resized.
+  const [dragState, setDragState] = useState(null); // { id, type, duration }
   const [dragOverDay, setDragOverDay] = useState(null);
   const [createDrag, setCreateDrag] = useState(null); // { day, startMin, currentMin } — drag-to-block-out-time
+  const [dragPreview, setDragPreview] = useState(null); // { day, startMin, duration }
+  const [resizePreview, setResizePreview] = useState(null); // { id, type, endMin }
   const gridRef = useRef(null);
 
   // Ctrl+scroll / trackpad-pinch zoom. JSX's onWheel is attached passively by
@@ -263,6 +407,54 @@ export default function WeekView({
     }
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
+  }, [onZoomDelta]);
+
+  // Two-finger pinch zoom (mobile). Mirrors the ctrl+wheel path above but
+  // driven by the distance between the two touch points instead of wheel
+  // delta — each time that distance grows/shrinks past a fixed ratio from
+  // where it last stepped, we bump the zoom index by one and reset the
+  // baseline, so a long pinch can walk through several zoom levels.
+  const pinchRef = useRef(null); // { lastDist } while exactly 2 touches are down
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el || !onZoomDelta) return;
+    const PINCH_STEP_RATIO = 1.15;
+    function touchDist(touches) {
+      const [a, b] = touches;
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
+    function onTouchStart(e) {
+      if (e.touches.length === 2) pinchRef.current = { lastDist: touchDist(e.touches) };
+    }
+    function onTouchMove(e) {
+      if (e.touches.length !== 2 || !pinchRef.current) return;
+      // Non-passive so this can actually stop the browser's own page-zoom
+      // gesture from firing alongside our own (see the wheel handler above
+      // for the same passive-listener caveat).
+      if (e.cancelable) e.preventDefault();
+      const dist = touchDist(e.touches);
+      const ratio = dist / pinchRef.current.lastDist;
+      if (ratio >= PINCH_STEP_RATIO) {
+        onZoomDelta(1);
+        pinchRef.current.lastDist = dist;
+      } else if (ratio <= 1 / PINCH_STEP_RATIO) {
+        onZoomDelta(-1);
+        pinchRef.current.lastDist = dist;
+      }
+    }
+    function onTouchEnd(e) {
+      if (e.touches.length < 2) pinchRef.current = null;
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
   }, [onZoomDelta]);
 
   // Transient "48px/hr" pill, shown whenever pxPerMin actually changes (i.e.
@@ -284,7 +476,7 @@ export default function WeekView({
   }, [pxPerMin]);
   useEffect(() => () => clearTimeout(zoomHintTimer.current), []);
 
-  // Which short-task cluster chip (see clusterShortBlocks) has its popover
+  // Which "N tasks" cluster chip (see foldSequentialItems) has its popover
   // open, plus the chip's own viewport rect at click time so the popover can
   // be positioned as a fixed-position overlay (portal'd to <body>) rather
   // than absolutely inside the densely-packed day column — anchoring it to
@@ -317,6 +509,45 @@ export default function WeekView({
     };
   }, [openCluster]);
 
+  // Desktop-only hover preview (see HoverPreviewCard) for a single block/event
+  // whose title may be truncated in its compact grid box — shows the full
+  // title/time/priority/project without opening the detail modal. Mobile has
+  // no hover concept, so this is only ever wired up when !isMobile below.
+  // A short delay avoids a flash of preview cards while the pointer merely
+  // passes over several densely-packed items on its way somewhere else.
+  const [hoverPreview, setHoverPreview] = useState(null); // { rect, ...content }
+  const hoverTimer = useRef(null);
+  // Keyed by day-string, so a routine block's mousedown (which passes through
+  // pointer-events:none normally, but needs auto to support hover-reveal of
+  // its label) can still measure against the day-column's own rect rather
+  // than its own smaller rect when forwarding to handleColumnMouseDown.
+  const dayColumnRefs = useRef({});
+  const HOVER_DELAY_MS = 350;
+  function scheduleHoverPreview(rect, content) {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHoverPreview({ rect, ...content }), HOVER_DELAY_MS);
+  }
+  function cancelHoverPreview() {
+    clearTimeout(hoverTimer.current);
+    setHoverPreview(null);
+  }
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+  // The card is anchored to a rect captured at hover time — once the grid (or
+  // the page) scrolls, that rect is stale, so just drop the preview rather
+  // than let it float away from the item it's describing.
+  useEffect(() => {
+    if (!hoverPreview) return;
+    function onScroll() {
+      cancelHoverPreview();
+    }
+    gridRef.current?.addEventListener('scroll', onScroll);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      gridRef.current?.removeEventListener('scroll', onScroll);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [hoverPreview]);
+
   // Live "now" line — recomputed every 30s so it visibly creeps down the
   // current day's column like Google Calendar's own current-time indicator.
   const [now, setNow] = useState(() => new Date());
@@ -333,93 +564,285 @@ export default function WeekView({
     return marks;
   }, []);
 
-  const gridHeight = (GRID_END_MIN - GRID_START_MIN) * pxPerMin;
+  const gridHeight = Math.round((GRID_END_MIN - GRID_START_MIN) * pxPerMin);
   // Rounded to whole pixels so event/now-line edges land on the same pixel
   // grid as the hour lines (see packLane's matching rounding, above).
   const timeToY = (hhmm) => Math.round((timeToMinutes(hhmm) - GRID_START_MIN) * pxPerMin);
 
-  // --- Drag handlers (native HTML5 DnD for cross-day moves) -----------------
-  function handleDragStart(e, block) {
-    if (block.isLocked) {
+  // --- Drag handlers (native HTML5 DnD for cross-day moves, mouse/desktop) ---
+  // `item` is one of dayItemsByDay's `{ type: 'block'|'event', data, ... }`
+  // entries — generalized so a block and an event share the exact same
+  // move/resize math, only branching on `type` at the point they call back
+  // into SchedulerContext (updateBlock vs updateEvent).
+  function handleDragStart(e, item) {
+    cancelHoverPreview();
+    if (item.type === 'block' && item.data.isLocked) {
       e.preventDefault();
       return;
     }
-    e.dataTransfer.setData('text/plain', block.id);
-    setDragState({ blockId: block.id, mode: 'move' });
+    // Read-only events (calendars the user can't write to on Google) mustn't
+    // be movable here either — dragging calls updateEvent below just like
+    // the detail modal's Save does, which would attempt to push a change
+    // to a calendar the user doesn't own. Mirrors the isLocked check above.
+    if (item.type === 'event' && item.data.canEdit === false) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.setData('text/plain', JSON.stringify({ id: item.data.id, type: item.type }));
+    setDragState({
+      id: item.data.id,
+      type: item.type,
+      duration: timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime),
+    });
+  }
+
+  function endDrag() {
+    setDragOverDay(null);
+    setDragState(null);
+    setDragPreview(null);
   }
 
   function handleDragOverDay(e, day) {
     e.preventDefault();
     setDragOverDay(day);
+    // The payload isn't readable during dragover (only on drop), so the
+    // ghost's size comes from dragState instead — which also means a drag
+    // that didn't start in this grid simply gets no preview.
+    if (!dragState) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const startMin = computeSnappedStartMinute(e.clientY - rect.top, pxPerMin, dragState.duration);
+    // dragover fires continuously for as long as the pointer is over the
+    // column; returning the previous object unchanged when the snapped slot
+    // hasn't actually moved lets React bail out of the re-render entirely,
+    // so the whole grid only reconciles once per 15-minute step.
+    setDragPreview((prev) =>
+      prev && prev.day === day && prev.startMin === startMin && prev.duration === dragState.duration
+        ? prev
+        : { day, startMin, duration: dragState.duration }
+    );
+  }
+
+  /** Shared by the mouse-drop handler and the touch-drag-end handler — looks
+   * up the dragged block/event, applies the same snap/clamp math, and calls
+   * the right updater for its type. `id` may be a VIRTUAL event id
+   * (`${masterId}::${date}`, see recurrenceExpansion.resolveEventId) for a
+   * single occurrence of a recurring Google event — `events` (raw context
+   * state) only ever holds the real master row, never the virtual id
+   * itself, so it must be resolved back to the master and re-expanded for
+   * just that one date to read its current (override-merged) start/end
+   * time before computing the drag's new time. `updateEvent` (called below)
+   * defaults to 'this' scope, so dragging one occurrence only moves that
+   * occurrence, same as dragging any single event. */
+  function applyDrop(type, id, day, relY) {
+    let source;
+    if (type === 'block') {
+      source = blocks.find((b) => b.id === id);
+    } else {
+      const { masterId, occurrenceDate, isVirtual } = resolveEventId(id);
+      if (isVirtual) {
+        const master = events.find((e) => e.id === masterId);
+        source = master ? expandRecurringEvent(master, occurrenceDate, occurrenceDate)[0] : null;
+      } else {
+        source = events.find((e) => e.id === id);
+      }
+    }
+    if (!source) return;
+    const duration = timeToMinutes(source.endTime) - timeToMinutes(source.startTime);
+    const newStartMin = computeSnappedStartMinute(relY, pxPerMin, duration);
+    const newEndMin = newStartMin + duration;
+    const updates = { date: day, startTime: minutesToTime(newStartMin), endTime: minutesToTime(newEndMin) };
+    if (type === 'block') {
+      // A sub-task's block can never be dragged past its nearest dated
+      // ancestor's due date — that ancestor's due date is the hard deadline
+      // for finishing every step toward it (see TaskDetailModal's matching
+      // due-date validation, and allocator.js's resolveDueDate).
+      const task = taskById[source.taskId];
+      const ancestorDueDate = task ? findNearestAncestorDueDate(task, taskById) : null;
+      if (ancestorDueDate && day > ancestorDueDate) {
+        setNotification({
+          type: 'error',
+          message: `Can't schedule past "${taskById[task.parentId]?.title || 'parent task'}"'s due date (${formatDisplayDate(ancestorDueDate)}).`,
+        });
+        return;
+      }
+      updateBlock(id, { ...updates, isAutoScheduled: false });
+    } else {
+      updateEvent(id, updates);
+    }
   }
 
   function handleDropOnDay(e, day) {
     e.preventDefault();
-    const blockId = e.dataTransfer.getData('text/plain');
-    const block = blocks.find((b) => b.id === blockId);
-    setDragOverDay(null);
-    if (!block) return;
+    endDrag();
+    let payload;
+    try {
+      payload = JSON.parse(e.dataTransfer.getData('text/plain'));
+    } catch {
+      return; // not a drag we started (or a stale/foreign payload) — ignore
+    }
+    if (!payload?.id || !payload?.type) return;
 
     // Determine drop Y position relative to the day column to compute new start time.
     const columnEl = e.currentTarget;
     const rect = columnEl.getBoundingClientRect();
     const relY = e.clientY - rect.top;
-    let newStartMin = GRID_START_MIN + relY / pxPerMin;
-    newStartMin = Math.round(newStartMin / SNAP_MIN) * SNAP_MIN;
-
-    const duration = timeToMinutes(block.endTime) - timeToMinutes(block.startTime);
-    // Clamp so a drop near either edge of the grid can't push the block's
-    // start before GRID_START_MIN or its end past GRID_END_MIN, which would
-    // otherwise produce an out-of-range "HH:MM" string (e.g. "24:15") that
-    // corrupts every downstream time comparison.
-    newStartMin = Math.min(Math.max(newStartMin, GRID_START_MIN), GRID_END_MIN - duration);
-    const newEndMin = newStartMin + duration;
-
-    updateBlock(block.id, {
-      date: day,
-      startTime: minutesToTime(newStartMin),
-      endTime: minutesToTime(newEndMin),
-      isAutoScheduled: false,
-    });
+    applyDrop(payload.type, payload.id, day, relY);
   }
 
-  // --- Resize handlers (mouse-based, vertical only) --------------------------
-  function handleResizeStart(e, block) {
-    e.stopPropagation();
-    e.preventDefault();
-    const startY = e.clientY;
-    const originalEndMin = timeToMinutes(block.endTime);
+  // --- Touch drag (long-press then move) — mobile has no native HTML5 DnD ---
+  // Mirrors handleDragStart/handleDropOnDay above but driven by touchmove
+  // instead of the browser's own drag events, since those don't exist for
+  // touch. A short (~250ms) long-press delay distinguishes "the user means
+  // to drag this item" from "the user is scrolling the page" — if the touch
+  // moves more than a few px before the timer fires, it's treated as a
+  // scroll and the drag is aborted with no side effects.
+  const LONG_PRESS_MS = 250;
+  const DRAG_START_THRESHOLD_PX = 8;
+
+  /**
+   * Shared core of the touch-drag path: long-press `e`'s starting touch,
+   * then track the finger across day columns via `elementFromPoint` (there's
+   * no native touch drag-and-drop API) until release, calling `onDrop(day,
+   * relY)` with the final column/offset. `duration` (minutes) only affects
+   * the live snap preview (touchDragPreview) — the actual placement math is
+   * entirely up to `onDrop`. Used by both handleItemTouchStart (moving an
+   * existing block/event) and the unscheduled-task tray's chip drag below
+   * (placing a brand new block).
+   */
+  function trackTouchDragToColumn(e, duration, dragIdentity, onDrop) {
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    let dragging = false;
+    let lastDay = null;
+    let lastRelY = null;
+
+    const longPressTimer = setTimeout(() => {
+      dragging = true;
+      // Same "this item is in the air" styling the mouse path gets — the
+      // long press is the only feedback the user has otherwise.
+      setDragState({ ...dragIdentity, duration });
+    }, LONG_PRESS_MS);
+
+    function cleanup() {
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      endDrag();
+    }
 
     function onMove(moveEvent) {
-      const deltaY = moveEvent.clientY - startY;
-      const deltaMin = Math.round(deltaY / pxPerMin / SNAP_MIN) * SNAP_MIN;
-      let newEndMin = originalEndMin + deltaMin;
-      newEndMin = Math.min(Math.max(timeToMinutes(block.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
-      const el = document.getElementById(`block-${block.id}`);
-      if (el) el.style.height = `${(newEndMin - timeToMinutes(block.startTime)) * pxPerMin}px`;
+      const t = moveEvent.touches?.[0];
+      if (!t) return;
+      if (!dragging) {
+        if (Math.hypot(t.clientX - startX, t.clientY - startY) > DRAG_START_THRESHOLD_PX) {
+          clearTimeout(longPressTimer);
+          cleanup();
+        }
+        return;
+      }
+      // Once actually dragging, stop the page itself from scrolling under
+      // the finger — safe to call now since the initial scroll-vs-drag
+      // ambiguity (handled above) has already been resolved in favor of drag.
+      if (moveEvent.cancelable) moveEvent.preventDefault();
+      const columnEl = document.elementFromPoint(t.clientX, t.clientY)?.closest('.day-column');
+      if (!columnEl) return;
+      const day = columnEl.dataset.day;
+      const rect = columnEl.getBoundingClientRect();
+      const relY = t.clientY - rect.top;
+      lastDay = day;
+      lastRelY = relY;
+      setDragOverDay(day);
+      setDragPreview({ day, startMin: computeSnappedStartMinute(relY, pxPerMin, duration), duration });
+    }
+
+    function onEnd(endEvent) {
+      clearTimeout(longPressTimer);
+      if (dragging && lastDay != null && lastRelY != null) {
+        if (endEvent.cancelable) endEvent.preventDefault();
+        onDrop(lastDay, lastRelY);
+      }
+      cleanup();
+    }
+
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+  }
+
+  function handleItemTouchStart(e, item) {
+    if (item.type === 'block' && item.data.isLocked) return;
+    if (item.type === 'event' && item.data.canEdit === false) return;
+    // Stop this touch from bubbling up to CalendarPage's swipe-navigation
+    // listener — without this, dragging an item sideways across columns
+    // also reads as a horizontal swipe there, so releasing the drag could
+    // additionally page the view to the next/prev day (touchend keeps
+    // targeting this same element per the touch event spec, but the guard
+    // in CalendarPage's handleTouchEnd only holds if its handleTouchStart
+    // never ran, hence stopping propagation here rather than on end).
+    e.stopPropagation();
+    const duration = timeToMinutes(item.data.endTime) - timeToMinutes(item.data.startTime);
+    trackTouchDragToColumn(e, duration, { id: item.data.id, type: item.type }, (day, relY) => applyDrop(item.type, item.data.id, day, relY));
+  }
+
+  // --- Resize handlers (vertical only; mouse OR touch) ------------------------
+  // The live height is driven by `resizePreview` state (rather than poking
+  // the element's style.height directly, as this used to) so the box can also
+  // show its new end time as it grows/shrinks — a direct DOM write would be
+  // undone by the very next React render of the grid anyway. It only ever
+  // re-renders when the snapped 15-minute end actually changes, not on every
+  // pointer move.
+  function handleResizeStart(e, item) {
+    e.stopPropagation();
+    e.preventDefault();
+    cancelHoverPreview();
+    const startY = getClientY(e);
+    const originalEndMin = timeToMinutes(item.data.endTime);
+    const startMin = timeToMinutes(item.data.startTime);
+
+    /** Snapped end minute for a pointer position, clamped to at least one
+     * snap step long and to the bottom of the grid. */
+    function endMinuteFor(evt) {
+      const deltaMin = Math.round((getClientY(evt) - startY) / pxPerMin / SNAP_MIN) * SNAP_MIN;
+      return Math.min(Math.max(startMin + SNAP_MIN, originalEndMin + deltaMin), GRID_END_MIN);
+    }
+
+    function onMove(moveEvent) {
+      if (moveEvent.cancelable) moveEvent.preventDefault();
+      const endMin = endMinuteFor(moveEvent);
+      setResizePreview((prev) =>
+        prev && prev.id === item.data.id && prev.type === item.type && prev.endMin === endMin
+          ? prev
+          : { id: item.data.id, type: item.type, endMin }
+      );
     }
 
     function onUp(upEvent) {
-      const deltaY = upEvent.clientY - startY;
-      const deltaMin = Math.round(deltaY / pxPerMin / SNAP_MIN) * SNAP_MIN;
-      let newEndMin = originalEndMin + deltaMin;
-      newEndMin = Math.min(Math.max(timeToMinutes(block.startTime) + SNAP_MIN, newEndMin), GRID_END_MIN);
-      updateBlock(block.id, { endTime: minutesToTime(newEndMin), isAutoScheduled: false });
+      const newEndMin = endMinuteFor(upEvent);
+      setResizePreview(null);
+      if (item.type === 'block') {
+        updateBlock(item.data.id, { endTime: minutesToTime(newEndMin), isAutoScheduled: false });
+      } else {
+        updateEvent(item.data.id, { endTime: minutesToTime(newEndMin) });
+      }
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
     }
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
   }
 
   // --- Drag-to-block-out-time (mousedown+drag on empty grid space) ----------
   // Only fires when the mousedown lands directly on the day-column element
   // itself (not one of its absolutely-positioned block/event children), so
   // it never fights with dragging an existing block or clicking an event.
-  function handleColumnMouseDown(e, day) {
-    if (isMobile || e.target !== e.currentTarget || e.button !== 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+  function handleColumnMouseDown(e, day, columnEl) {
+    if (isMobile || (e.target !== e.currentTarget && !columnEl) || e.button !== 0) return;
+    const rect = (columnEl || e.currentTarget).getBoundingClientRect();
 
     function minuteFromEvent(evt) {
       const relY = evt.clientY - rect.top;
@@ -453,31 +876,176 @@ export default function WeekView({
     window.addEventListener('mouseup', onUp);
   }
 
+  /**
+   * Live drag/resize state for a single block/event: whether it's the item
+   * currently in the air (so it can be styled as lifted out of the grid),
+   * and — while it's being resized — the height and end time it should
+   * render at instead of its packed ones. Neighbours deliberately keep
+   * their packed positions during a resize; nothing repacks until the
+   * resize is committed.
+   */
+  function itemLiveState(item) {
+    const isDragging = dragState?.type === item.type && dragState.id === item.data.id;
+    const isResizing = resizePreview?.type === item.type && resizePreview.id === item.data.id;
+    const height = isResizing
+      ? Math.max(MIN_BLOCK_HEIGHT_PX, (resizePreview.endMin - timeToMinutes(item.data.startTime)) * pxPerMin)
+      : item.height;
+    return {
+      isDragging,
+      isResizing,
+      height,
+      endTime: isResizing ? minutesToTime(resizePreview.endMin) : item.data.endTime,
+      // A box resized down to a sliver has room for exactly one line, and
+      // mid-resize the live time is the more useful one — so the title gives
+      // way to it there, the same trade-off renderGhost makes.
+      liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
+      // Normally a two-line render (title + time) is purely a function of
+      // this box's own height (TWO_LINE_MIN_HEIGHT). A box tagged `tightGap`
+      // (see foldSequentialItems) sits close enough to its neighbour at this
+      // zoom that a full two-line render would look cramped/collide-adjacent
+      // — but that degrade only makes sense while this box is ALSO still
+      // short (below TIGHT_GAP_HEIGHT_CEILING); a box tall enough to have
+      // its own visible room to spare should keep its time line regardless
+      // of a close neighbour. A live resize always overrides this (the user
+      // is actively looking at this one box, and neighbours aren't repacked
+      // until the resize commits — see this function's own doc comment).
+      showTimeLine: isResizing
+        ? true
+        : height >= TWO_LINE_MIN_HEIGHT && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
+      // Between the compact floor and the full-size one, the title renders at
+      // a smaller type size instead of the item being folded into a chip (see
+      // COMPACT_BLOCK_HEIGHT_PX). Shrinking the text slightly beats hiding the
+      // title behind "3 tasks"; below the compact floor the layout has already
+      // clustered it, so this band is the only place it applies.
+      isCompact: !isResizing && height < MIN_BLOCK_HEIGHT_PX,
+    };
+  }
+
+  /**
+   * The dashed "this is where it lands" box, shared by the drag-to-create
+   * and drag-to-move previews — labelled with the live snapped time range,
+   * which is the point of it: the browser's own drag image is a frozen
+   * snapshot taken at dragstart, so this ghost is the only thing that can
+   * tell the user what time they're actually about to drop on. Below
+   * TWO_LINE_MIN_HEIGHT there's only room for one line, and the time is
+   * the more useful of the two (same trade-off the blocks themselves make).
+   */
+  function renderGhost(startMin, endMin, label) {
+    const height = Math.max(20, (endMin - startMin) * pxPerMin);
+    const timeText = `${minutesToTime(startMin)}–${minutesToTime(endMin)}`;
+    return (
+      <div className="cal-event-ghost" style={{ top: timeToY(minutesToTime(startMin)), height }}>
+        {height >= TWO_LINE_MIN_HEIGHT && <div className="cal-block-title">{label}</div>}
+        <div className="cal-block-time">{timeText}</div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className="week-grid"
-      ref={gridRef}
+    // A single flex-column wrapper — CalendarPage's own wrapping div lays
+    // WeekView out as one flex ROW child (sized via .week-grid's flex:1).
+    // position:relative so the empty-filter overlay below can cover just
+    // this component's own grid, not the whole page.
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
+      {showEmptyFilterOverlay && (
+        <div className="calendar-empty-filter-overlay">
+          <div className="calendar-empty-filter-message">
+            <p>Nothing matches your filters.</p>
+            <button type="button" className="btn btn-primary" onClick={onClearFilter}>
+              Clear filters
+            </button>
+          </div>
+        </div>
+      )}
+      <div
+        className={`week-grid ${isMobile && dayCount === 1 ? 'is-single-day-mobile' : ''}`}
+        ref={gridRef}
       style={{
-        gridTemplateRows: `auto ${gridHeight}px`,
+        gridTemplateRows: hasAllDayEvents ? `auto auto ${gridHeight}px` : `auto ${gridHeight}px`,
         gridTemplateColumns: `56px repeat(${dayCount}, 1fr)`,
         '--hour-height': `${pxPerMin * 60}px`,
       }}
     >
       {zoomHint && <div className="zoom-hint">{zoomHint}</div>}
-      <div className="time-gutter-cell" />
+      {/* Mobile Day view: the toolbar title above already spells out this
+          single day's full date, so the day-header row's own dow/dom
+          duplicated it directly underneath (see is-single-day-mobile's CSS
+          for the header cells this hides). The gutter cell that would
+          otherwise sit empty in that row instead gets a compact "Aug 5"
+          label — still useful there since it's the one place in the grid a
+          user glancing at just the time column sees which day they're on. */}
+      <div className="time-gutter-cell">
+        {isMobile && dayCount === 1 && <span className="time-gutter-date">{formatShortDate(days[0])}</span>}
+      </div>
       {days.map((day, i) => (
-        <div key={day} className={`day-header ${day === todayIso ? 'today' : ''} ${i === days.length - 1 ? 'is-last-col' : ''}`}>
+        <div
+          key={day}
+          className={`day-header ${day === todayIso ? 'today' : ''} ${i === days.length - 1 ? 'is-last-col' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelectDay?.(day)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onSelectDay?.(day);
+            }
+          }}
+        >
           <div className="dow">{DOW_LABELS[dayOfWeek(day)]}</div>
           <div className="dom">{day.slice(8, 10)}</div>
         </div>
       ))}
+
+      {/* All-day row, between the day headers and the time grid so a chip
+          reads under the date it belongs to. Sticky rather than a sibling
+          above .week-grid (which is the scroll container): the grid opens
+          anchored to the morning, so a non-sticky row here would already be
+          scrolled out of view on load — the one place a user looks for
+          today's holiday. `top` clears the sticky day headers, whose height
+          is measured rather than assumed since it changes with the mobile
+          single-day variant. Rendered only when there's something in it, so a
+          calendar with no all-day events is unchanged. */}
+      {hasAllDayEvents && (
+        <>
+          <div className="week-allday-gutter" style={{ top: dayHeaderHeight }}>
+            All day
+          </div>
+          {days.map((day) => (
+            <div key={`allday-${day}`} className="week-allday-cell" style={{ top: dayHeaderHeight }}>
+              {(allDayByDay.get(day) || []).map((evt) => (
+                <button
+                  key={evt.id}
+                  type="button"
+                  className={`week-allday-chip ${evt.isFreeTime ? 'is-free' : ''}`}
+                  onClick={() => onSelectEvent?.(evt)}
+                  title={
+                    evt.spanStartDate
+                      ? `${evt.title} (all day, ${evt.spanStartDate} to ${evt.spanEndDate})`
+                      : `${evt.title} (all day)`
+                  }
+                >
+                  {evt.title}
+                </button>
+              ))}
+            </div>
+          ))}
+        </>
+      )}
 
       <div style={{ position: 'relative', height: gridHeight }}>
         {hourMarks.map((m) => (
           <div
             key={m}
             className="time-label"
-            style={{ position: 'absolute', top: Math.max(0, (m - GRID_START_MIN) * pxPerMin - 6), right: 0 }}
+            style={{
+              position: 'absolute',
+              top: Math.round((m - GRID_START_MIN) * pxPerMin),
+              right: 0,
+              // Every label is centered on its own hour line except the very
+              // first, which would sit half above the top of the grid and get
+              // clipped — that edge is now reachable (00:00), so it matters.
+              transform: m === GRID_START_MIN ? 'none' : 'translateY(-50%)',
+            }}
           >
             {minutesToTime(m)}
           </div>
@@ -485,11 +1053,12 @@ export default function WeekView({
       </div>
 
       {days.map((day) => {
-        const dayBlocks = dayBlocksByDay.get(day) || [];
-        const dayEvents = eventsByDay.get(day) || [];
+        const dayItems = dayItemsByDay.get(day) || [];
         return (
           <div
             key={day}
+            data-day={day}
+            ref={(el) => { dayColumnRefs.current[day] = el; }}
             className={`day-column ${dragOverDay === day ? 'is-dragover' : ''}`}
             style={{ height: gridHeight }}
             onDragOver={(e) => handleDragOverDay(e, day)}
@@ -497,44 +1066,68 @@ export default function WeekView({
             onDrop={(e) => handleDropOnDay(e, day)}
             onMouseDown={(e) => handleColumnMouseDown(e, day)}
           >
+            {(routinesByDay.get(day) || []).map((r) => {
+              const top = timeToY(r.startTime);
+              const height = Math.max(1, timeToY(r.endTime) - top);
+              const showRoutineTime = height >= TWO_LINE_MIN_HEIGHT;
+              return (
+                <div
+                  key={r.id}
+                  className="cal-routine-block"
+                  style={{ top, height }}
+                  /* Full name on hover for the half-width block, without
+                     waiting out the marquee. */
+                  title={`${r.label} · ${r.startTime}–${r.endTime}`}
+                  onMouseDown={(e) => handleColumnMouseDown(e, day, dayColumnRefs.current[day])}
+                >
+                  <span className="cal-routine-block-label">
+                    {/* Marquee rather than a bare ellipsis: the block is half a
+                        column wide now (see calendar.css), so a longer routine
+                        name no longer fits. MarqueeText measures real overflow
+                        and only animates when there is some, and its animation
+                        is plain CSS so it already collapses under
+                        prefers-reduced-motion and the Animations toggle. */}
+                    <MarqueeText text={r.label} />
+                    {!showRoutineTime && (
+                      <span className="cal-routine-block-time">
+                        {' '}
+                        {r.startTime}–{r.endTime}
+                      </span>
+                    )}
+                  </span>
+                  {showRoutineTime && (
+                    <span className="cal-routine-block-time">
+                      {r.startTime}–{r.endTime}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+
             {showNowLine && day === todayIso && (
               <div className="now-line" style={{ top: timeToY(minutesToTime(nowMinutes)) }}>
                 <span className="now-line-dot" />
               </div>
             )}
 
-            {createDrag && createDrag.day === day && (
-              <div
-                className="cal-event-ghost"
-                style={{
-                  top: timeToY(minutesToTime(Math.min(createDrag.startMin, createDrag.currentMin))),
-                  height: Math.max(
-                    20,
-                    (Math.max(createDrag.startMin, createDrag.currentMin) - Math.min(createDrag.startMin, createDrag.currentMin)) * pxPerMin
-                  ),
-                }}
-              >
-                Block time
-              </div>
-            )}
+            {createDrag &&
+              createDrag.day === day &&
+              renderGhost(
+                Math.min(createDrag.startMin, createDrag.currentMin),
+                Math.max(createDrag.startMin, createDrag.currentMin),
+                'New event'
+              )}
 
-            {dayEvents.map((evt) => (
-              <div
-                key={evt.id}
-                className={`cal-event ${evt.isFreeTime ? 'free-time' : ''} ${evt.source === 'manual' ? 'manual' : ''}`}
-                style={{ top: timeToY(evt.startTime), height: Math.max(20, timeToY(evt.endTime) - timeToY(evt.startTime)) }}
-                title={evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title}
-                onClick={() => onSelectEvent?.(evt)}
-              >
-                {evt.title}
-              </div>
-            ))}
+            {dragPreview &&
+              dragPreview.day === day &&
+              renderGhost(dragPreview.startMin, dragPreview.startMin + dragPreview.duration, 'Move here')}
 
-            {dayBlocks.map((item) => {
+            {dayItems.map((item) => {
               const { lane, totalLanes } = item;
-              // Blocks side-by-side within an overlap group — see
-              // layoutDayBlocks above. totalLanes is 1 for the common case
-              // (no overlap), so this is a no-op then.
+              // Items side-by-side within an overlap group — see
+              // layoutDayItems above. totalLanes is 1 for the common case
+              // (no overlap, or a lone item next to a collapsed cluster chip),
+              // so this is a no-op then.
               const laneWidthPct = 100 / totalLanes;
               const laneStyle =
                 totalLanes > 1
@@ -543,105 +1136,319 @@ export default function WeekView({
 
               if (item.kind === 'cluster') {
                 const clusterKey = `${day}_${item.start}`;
-                const totalMinutes = item.blocks.reduce(
-                  (sum, b) => sum + (timeToMinutes(b.endTime) - timeToMinutes(b.startTime)),
-                  0
-                );
                 // top/height are pre-packed by computeDayPositions so this
                 // box can never overlap whatever comes before/after it in
-                // its lane, regardless of how many short items are chained.
+                // its lane, regardless of how many items are chained.
                 const { top, height } = item;
                 // Below TWO_LINE_MIN_HEIGHT there isn't room for both the
                 // title and time-range lines, so the time line is dropped
                 // rather than left to clip into the block below.
                 const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
                 const isOpen = openCluster?.key === clusterKey;
+                const hasEvent = item.items.some((it) => it.type === 'event');
+                const titleLines = clusterLabel(item.items, taskById, clusterMaxTitleLines(height, showTimeLine));
+                const fullTitleList = item.items.map((it) => clusterItemTitle(it, taskById)).join(', ');
+                const totalMinutes = item.items
+                  .filter((it) => it.type === 'block')
+                  .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);
+                const openThisCluster = (rect) => setOpenCluster({ key: clusterKey, rect, items: item.items });
+                // Every underlying item's selection key — clicking a cluster
+                // chip in selection mode selects ALL of them at once (see
+                // this feature's MonthView/cluster note), not just the chip.
+                const clusterKeys = item.items.map((it) => makeSelectionKey(it.type, it.data.id));
+                const clusterAllSelected = selectionMode && clusterKeys.every((k) => selectedKeys?.has(k));
+                // Toggle behavior: if every underlying item is already
+                // selected, clicking again deselects them all; otherwise
+                // selects everything the chip represents in one go (see this
+                // feature's MonthView/cluster note — "clicking a cluster/
+                // overflow chip in selection mode selects ALL items it
+                // represents at once").
+                const toggleClusterSelection = () => {
+                  if (clusterAllSelected) clusterKeys.forEach((k) => onToggleSelectKey?.(k));
+                  else onSelectManyKeys?.(clusterKeys);
+                };
                 return (
                   <div
                     key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''}`}
+                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (isOpen) {
-                        setOpenCluster(null);
-                      } else {
-                        setOpenCluster({ key: clusterKey, rect: e.currentTarget.getBoundingClientRect(), blocks: item.blocks });
+                      if (selectionMode) {
+                        toggleClusterSelection();
+                        return;
                       }
+                      if (isOpen) setOpenCluster(null);
+                      else openThisCluster(e.currentTarget.getBoundingClientRect());
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        if (isOpen) {
-                          setOpenCluster(null);
-                        } else {
-                          setOpenCluster({ key: clusterKey, rect: e.currentTarget.getBoundingClientRect(), blocks: item.blocks });
+                        if (selectionMode) {
+                          toggleClusterSelection();
+                          return;
                         }
+                        if (isOpen) setOpenCluster(null);
+                        else openThisCluster(e.currentTarget.getBoundingClientRect());
                       }
                     }}
-                    title={`${item.blocks.length} short tasks · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
+                    title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
-                    <div className="cal-block-title">{item.blocks.length} short tasks</div>
+                    {selectionMode && (
+                      <input
+                        type="checkbox"
+                        className="bulk-select-checkbox"
+                        checked={clusterAllSelected}
+                        onChange={toggleClusterSelection}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select ${fullTitleList}`}
+                      />
+                    )}
+                    <div className="cal-cluster-title-stack">
+                      {titleLines.map((line, i) => (
+                        <div className="cal-cluster-title-line" key={i}>
+                          {line}
+                        </div>
+                      ))}
+                    </div>
                     {showTimeLine && (
                       <div className="cal-block-time">
-                        {minutesToTime(item.start)}–{minutesToTime(item.end)} · {formatHours(totalMinutes / 60)}
+                        {minutesToTime(item.start)}–{minutesToTime(item.end)}
+                        {totalMinutes > 0 && !hasEvent ? ` · ${formatHours(totalMinutes / 60)}` : ''}
                       </div>
                     )}
                   </div>
                 );
               }
 
-              const { block, top, height } = item;
+              if (item.type === 'event') {
+                const evt = item.data;
+                const { top } = item;
+                const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
+                const evtKey = makeSelectionKey('event', evt.id);
+                const evtSelected = selectionMode && !!selectedKeys?.has(evtKey);
+                // Drag AND resize are both suppressed while selection mode is
+                // active — see this feature's DRAG CONFLICT note.
+                const dragSuppressed = isMobile || evt.canEdit === false || selectionMode;
+                return (
+                  <div
+                    key={evt.id}
+                    id={`event-${evt.id}`}
+                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
+                    style={{ top, height, ...laneStyle }}
+                    // Desktop gets the richer HoverPreviewCard instead (see
+                    // below) — mobile has no hover, so it keeps the native
+                    // title tooltip (which does nothing there anyway, but
+                    // costs nothing to leave as an accessibility fallback).
+                    title={isMobile ? (evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title) : undefined}
+                    draggable={!dragSuppressed}
+                    onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
+                    onDragEnd={dragSuppressed ? undefined : endDrag}
+                    // Unlike List/Board (where reparent-drag is a secondary,
+                    // less-central gesture), Calendar's touch-drag-to-
+                    // reschedule is a core existing interaction — long-press
+                    // here keeps driving THAT (unchanged) rather than being
+                    // repurposed to enter selection mode, so entering
+                    // selection mode on Calendar's mobile view is reachable
+                    // only via the explicit Select toolbar button (see this
+                    // feature's report for this judgment call). Suppressed
+                    // entirely once selectionMode is active, same as the
+                    // drag handlers above.
+                    onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
+                    onClick={() => {
+                      if (selectionMode) {
+                        onToggleSelectKey?.(evtKey);
+                        return;
+                      }
+                      onSelectEvent?.(evt);
+                    }}
+                    onMouseEnter={
+                      isMobile
+                        ? undefined
+                        : (e) =>
+                            scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
+                              title: evt.title,
+                              timeText: `${evt.startTime}–${evt.endTime}`,
+                            })
+                    }
+                    onMouseLeave={isMobile ? undefined : cancelHoverPreview}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (selectionMode) {
+                          onToggleSelectKey?.(evtKey);
+                          return;
+                        }
+                        onSelectEvent?.(evt);
+                      }
+                    }}
+                  >
+                    {selectionMode && (
+                      <input
+                        type="checkbox"
+                        className="bulk-select-checkbox"
+                        checked={evtSelected}
+                        onChange={() => onToggleSelectKey?.(evtKey)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select ${evt.title}`}
+                      />
+                    )}
+                    {/* A read-only (subscribed/shared) event previously had no
+                        visual cue at all — the only way to discover it wasn't
+                        yours to move was to try dragging it and have nothing
+                        happen. Reuses .lock-indicator's look (same "protected"
+                        idiom as a locked task block) as a static badge, not a
+                        button — there's nothing to toggle here. */}
+                    {evt.canEdit === false && !selectionMode && (
+                      <span className="lock-indicator" title="Read-only — you can't edit or move this event">
+                        <Lock size={11} />
+                      </span>
+                    )}
+                    {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
+                    {showTimeLine && (
+                      <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
+                        {evt.startTime}–{endTime}
+                      </div>
+                    )}
+                    {evt.canEdit !== false && !selectionMode && (
+                      <div
+                        className="resize-handle"
+                        onMouseDown={(e) => handleResizeStart(e, item)}
+                        onTouchStart={(e) => handleResizeStart(e, item)}
+                      />
+                    )}
+                  </div>
+                );
+              }
+
+              const block = item.data;
+              const { top } = item;
+              const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
               const task = taskById[block.taskId];
               if (!task) return null;
-              const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
+              // A sub-task's block displays its PARENT task's name as the primary
+              // label — the parent is the user-facing "goal", the sub-task is just
+              // the concrete step — with the actual sub-task title only revealed
+              // once the block is opened (see BlockDetailModal). displayTitle is
+              // what's shown on the block itself; the real task.title is still what
+              // hover/hint text and the detail modal show.
+              const parentTask = task.parentId ? taskById[task.parentId] : null;
+              const displayTitle = parentTask?.title || task.title;
+              const blockKey = makeSelectionKey('block', block.id);
+              const blockSelected = selectionMode && !!selectedKeys?.has(blockKey);
+              // Drag AND resize are both suppressed while selection mode is
+              // active — see this feature's DRAG CONFLICT note.
+              const dragSuppressed = isMobile || block.isLocked || selectionMode;
               return (
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''}`}
+                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
                   style={{
                     top,
                     height,
                     borderLeftColor: priorityColor(task.priority),
                     ...laneStyle,
                   }}
-                  draggable={!isMobile && !block.isLocked}
-                  onDragStart={isMobile ? undefined : (e) => handleDragStart(e, block)}
-                  onClick={() => onSelectBlock?.(block)}
+                  draggable={!dragSuppressed}
+                  onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
+                  onDragEnd={dragSuppressed ? undefined : endDrag}
+                  // See the event render's matching comment above: Calendar's
+                  // touch-drag-to-reschedule stays the long-press gesture
+                  // here; entering selection mode is via the toolbar button
+                  // only. Suppressed entirely once selectionMode is active.
+                  onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
+                  onClick={() => {
+                    if (selectionMode) {
+                      onToggleSelectKey?.(blockKey);
+                      return;
+                    }
+                    onSelectBlock?.(block);
+                  }}
+                  onMouseEnter={
+                    isMobile
+                      ? undefined
+                      : (e) =>
+                          scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
+                            title: displayTitle,
+                            timeText: `${block.startTime}–${block.endTime}`,
+                            priority: task.priority,
+                            projectName:
+                              task.projectId === NO_SCHEDULE_PROJECT_ID
+                                ? NO_SCHEDULE_PROJECT_LABEL
+                                : projectById[task.projectId]?.name,
+                            isPassive: block.isPassive,
+                          })
+                  }
+                  onMouseLeave={isMobile ? undefined : cancelHoverPreview}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
+                      if (selectionMode) {
+                        onToggleSelectKey?.(blockKey);
+                        return;
+                      }
                       onSelectBlock?.(block);
                     }
                   }}
-                  title={`${task.title}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`}
+                  // Desktop gets the richer HoverPreviewCard instead (see
+                  // below) — mobile keeps this as its native tooltip fallback.
+                  // Both surface displayTitle (the parent's name for a sub-task
+                  // block) rather than the real sub-task title — that's only
+                  // revealed once the block is opened (see BlockDetailModal).
+                  title={
+                    isMobile
+                      ? `${displayTitle}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`
+                      : undefined
+                  }
                 >
-                  <button
-                    className="lock-indicator"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleBlockLock(block.id);
-                    }}
-                    title={block.isLocked ? 'Unlock block (allow rebalancing)' : 'Lock block (protect from rebalancing)'}
-                  >
-                    {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
-                  </button>
-                  <div className="cal-block-title">
-                    {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
-                    {task.title}
-                  </div>
-                  {showTimeLine && (
-                    <div className="cal-block-time">
-                      {block.startTime}–{block.endTime}
+                  {selectionMode ? (
+                    <input
+                      type="checkbox"
+                      className="bulk-select-checkbox"
+                      checked={blockSelected}
+                      onChange={() => onToggleSelectKey?.(blockKey)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${displayTitle}`}
+                    />
+                  ) : (
+                    <button
+                      className="lock-indicator"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBlockLock(block.id);
+                      }}
+                      title={block.isLocked ? 'Unlock block (allow rebalancing)' : 'Lock block (protect from rebalancing)'}
+                    >
+                      {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                    </button>
+                  )}
+                  {!liveTimeOnly && (
+                    <div className="cal-block-title">
+                      {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
+                      {displayTitle}
                     </div>
                   )}
-                  {!isMobile && !block.isLocked && (
-                    <div className="resize-handle" onMouseDown={(e) => handleResizeStart(e, block)} />
+                  {/* Mid-resize this is the live readout of the new end time
+                      (see itemLiveState), highlighted so the change is
+                      obvious — otherwise it's the block's own time range. */}
+                  {showTimeLine && (
+                    <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
+                      {block.startTime}–{endTime}
+                    </div>
+                  )}
+                  {!block.isLocked && !selectionMode && (
+                    <div
+                      className="resize-handle"
+                      onMouseDown={(e) => handleResizeStart(e, item)}
+                      onTouchStart={(e) => handleResizeStart(e, item)}
+                    />
                   )}
                 </div>
               );
@@ -658,28 +1465,48 @@ export default function WeekView({
             style={{ position: 'fixed', ...computeClusterPopoverStyle(openCluster.rect) }}
             onClick={(e) => e.stopPropagation()}
           >
-            {openCluster.blocks.map((b) => {
-              const t = taskById[b.taskId];
-              if (!t) return null;
+            {openCluster.items.map((it) => {
+              if (it.type === 'block') {
+                const t = taskById[it.data.taskId];
+                if (!t) return null;
+                return (
+                  <button
+                    key={`block-${it.data.id}`}
+                    className="cal-cluster-popover-item"
+                    onClick={() => {
+                      setOpenCluster(null);
+                      onSelectBlock?.(it.data);
+                    }}
+                  >
+                    <span className="cal-cluster-popover-time">
+                      {it.data.startTime}–{it.data.endTime}
+                    </span>
+                    <span className="cal-cluster-popover-title">{t.title}</span>
+                  </button>
+                );
+              }
               return (
                 <button
-                  key={b.id}
+                  key={`event-${it.data.id}`}
                   className="cal-cluster-popover-item"
                   onClick={() => {
                     setOpenCluster(null);
-                    onSelectBlock?.(b);
+                    onSelectEvent?.(it.data);
                   }}
                 >
                   <span className="cal-cluster-popover-time">
-                    {b.startTime}–{b.endTime}
+                    {it.data.startTime}–{it.data.endTime}
                   </span>
-                  <span className="cal-cluster-popover-title">{t.title}</span>
+                  <span className="cal-cluster-popover-title">{it.data.title}</span>
                 </button>
               );
             })}
           </div>,
           document.body
         )}
+      </div>
+
+      {hoverPreview && <HoverPreviewCard {...hoverPreview} />}
     </div>
   );
 }

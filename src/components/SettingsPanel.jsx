@@ -1,511 +1,226 @@
 /**
- * SettingsPanel — configure fixed routines (sleep/meals/commute), global
- * SchedulingRules (buffer days, work-day window, pacing), and toggle
- * "Free Time / Ignore" overrides on recurring calendar events.
+ * SettingsPanel — layout shell for the Settings tab: the "jump to section"
+ * search, the desktop sticky rail (see .settings-layout in global.css), and
+ * the 13 section components under Settings/sections/. Each section owns its
+ * own state and calls whatever hooks (useScheduler/useAuth/etc.) it needs
+ * directly, rather than this shell threading ~50 props down — this file is
+ * purely navigation plumbing, with zero knowledge of what any section
+ * actually configures.
  */
 
-import React, { useState } from 'react';
-import { RefreshCw, Pause, Circle, Check, HelpCircle, AlertTriangle, KeyRound, ExternalLink, Trash2, Sun, Moon, LogIn, LogOut, CloudCog } from 'lucide-react';
-import { useScheduler } from '../context/SchedulerContext';
-import { useTheme } from '../context/ThemeContext';
-import { useAuth } from '../context/AuthContext';
-import { clearAllPersisted } from '../utils/persistence';
-import RoutineTimeline from './Settings/RoutineTimeline';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
+import AccountSection from './Settings/sections/AccountSection';
+import IntegrationsSection from './Settings/sections/IntegrationsSection';
+import SchedulingSection from './Settings/sections/SchedulingSection';
+import RoutinesSection from './Settings/sections/RoutinesSection';
+import AppearanceSection from './Settings/sections/AppearanceSection';
+import TagsSection from './Settings/sections/TagsSection';
+import TemplatesSection from './Settings/sections/TemplatesSection';
+import TrashSection from './Settings/sections/TrashSection';
+import NotificationsSection from './Settings/sections/NotificationsSection';
+import InstallAppSection from './Settings/sections/InstallAppSection';
+import HelpSection from './Settings/sections/HelpSection';
+import ShortcutsSection from './Settings/sections/ShortcutsSection';
+import VersionsSection from './Settings/sections/VersionsSection';
+import BackupsSection from './Settings/sections/BackupsSection';
+import DangerZoneSection from './Settings/sections/DangerZoneSection';
 
-const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// One entry per section component below, in the same top-to-bottom order —
+// drives the settings search dropdown's suggestions and its scroll target
+// (see sectionRefs). Keep this in sync if a section is added/renamed/reordered.
+// installApp is a genuine special case: InstallAppSection renders null on
+// desktop / already-installed (the rail only shows on desktop — see
+// .settings-rail's own breakpoint — so on desktop these two conditions are
+// mutually exclusive: the rail can never be visible while InstallAppSection
+// renders real content). Left in the rail/search unfiltered, that meant a
+// permanently dead "Install app" link/search-result whenever the rail was
+// visible at all — clicking it scrolled nowhere with zero feedback. Filtered
+// out of the rail and search results via `visibleSections` below (not out of
+// this array itself, so the IntersectionObserver/scroll-tracking effects
+// further down — which already tolerate a missing ref via `.filter(Boolean)`
+// — don't need their own separate list).
+const SETTINGS_SECTIONS = [
+  { id: 'account', label: 'Account & sync' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'scheduling', label: 'Scheduling rules' },
+  { id: 'routines', label: 'Fixed routines' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'tags', label: 'Tags' },
+  { id: 'templates', label: 'Templates' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'installApp', label: 'Install app' },
+  { id: 'help', label: 'Help' },
+  { id: 'shortcuts', label: 'Keyboard shortcuts' },
+  { id: 'versions', label: 'Versions' },
+  { id: 'trash', label: 'Recently deleted' },
+  { id: 'backups', label: 'Backups' },
+  { id: 'dangerZone', label: 'Danger zone' },
+];
 
 /** @param {{ onOpenTour: () => void }} props — replays the app-level guided tour (see App.jsx), which needs to be able to switch tabs as it advances. */
-export default function SettingsPanel({ onOpenTour }) {
-  const [showTokenInput, setShowTokenInput] = useState(false);
-  const [tokenDraft, setTokenDraft] = useState('');
-  const { theme, setTheme } = useTheme();
-  const { user, authLoading, login, logout } = useAuth();
-  const {
-    routines,
-    setRoutines,
-    rules,
-    setRules,
-    events,
-    setEventIgnored,
-    setAllRecurringIgnored,
-    connectGoogleCalendar,
-    googleConnected,
-    pushToGoogleCalendar,
-    isSyncing,
-    todoistEnabled,
-    setTodoistApiToken,
-    taskSyncEnabled,
-    setTaskSyncEnabled,
-    syncActive,
-    syncNow,
-    clearAllData,
-  } = useScheduler();
+export default function SettingsPanel({ onOpenTour, settingsSectionRequest, activeProjectId, onNavigateToTasks }) {
+  const isMobile = useIsMobile();
+  // See SETTINGS_SECTIONS' own comment above for why installApp is excluded
+  // here specifically (rail + search), not from SETTINGS_SECTIONS itself.
+  const visibleSections = SETTINGS_SECTIONS.filter((s) => s.id !== 'installApp' || isMobile);
+  const [sectionQuery, setSectionQuery] = useState('');
+  const [isSectionSearchFocused, setIsSectionSearchFocused] = useState(false);
+  const sectionSearchRef = useRef(null);
+  const sectionRefs = useRef({});
+  // Which section the desktop rail highlights. Tracked by observing the
+  // section elements rather than by scroll offset maths, so it stays correct
+  // regardless of each card's own height (they vary a lot — Integrations is
+  // several hundred px, Versions is one row).
+  const [currentSection, setCurrentSection] = useState(SETTINGS_SECTIONS[0].id);
 
-  function submitToken(e) {
-    e.preventDefault();
-    if (!tokenDraft.trim()) return;
-    setTodoistApiToken(tokenDraft.trim());
+  useEffect(() => {
+    function handlePointerDown(e) {
+      if (sectionSearchRef.current && !sectionSearchRef.current.contains(e.target)) setIsSectionSearchFocused(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  const matchingSections = sectionQuery.trim()
+    ? visibleSections.filter((s) => s.label.toLowerCase().includes(sectionQuery.trim().toLowerCase()))
+    : [];
+  const showSectionDropdown = isSectionSearchFocused && matchingSections.length > 0;
+
+  function goToSection(id) {
+    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setSectionQuery('');
+    setIsSectionSearchFocused(false);
   }
 
-  function updateRoutine(id, updates) {
-    setRoutines((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
-  }
+  // Component remounts on every navigation into the Settings tab (see the
+  // `{tab === 'settings' && <SettingsPanel ... />}` guard in App.jsx), so this
+  // fires fresh each time a caller elsewhere requests a section via
+  // requestSettingsSection.
+  useEffect(() => {
+    if (settingsSectionRequest?.section) goToSection(settingsSectionRequest.section);
+  }, [settingsSectionRequest?.requestId]);
 
-  function addRoutine(startTime, endTime) {
-    const id = `rt_${Date.now()}`;
-    setRoutines((prev) => [
-      ...prev,
-      { id, label: 'New routine', startTime, endTime, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], isActive: true },
-    ]);
-    return id;
-  }
+  // Highlight whichever section is nearest the top of the viewport in the
+  // desktop rail. rootMargin's large negative bottom shrinks the observed
+  // band to roughly the top fifth of the viewport, so the "current" section
+  // is the one being read rather than whichever merely happens to be visible
+  // — without it, a short card near the bottom of a tall viewport can win
+  // over the one actually under the reader's eye.
+  //
+  // This band can only answer for a section that can actually be scrolled up
+  // into it, which the trailing cards couldn't until .settings-content grew a
+  // viewport's worth of bottom padding (see global.css). That padding is what
+  // makes this one rule enough — there used to be a second effect here that
+  // force-selected the LAST section once the container hit max scroll, which
+  // meant every section between the band's reach and the end (Versions,
+  // Backups) could never be highlighted at all.
+  useEffect(() => {
+    const elements = SETTINGS_SECTIONS.map((s) => sectionRefs.current[s.id]).filter(Boolean);
+    if (elements.length === 0 || typeof IntersectionObserver === 'undefined') return undefined;
 
-  function removeRoutine(id) {
-    setRoutines((prev) => prev.filter((r) => r.id !== id));
-  }
-
-  const recurringEvents = events.filter((e) => e.seriesId);
-  const allRecurringIgnored = recurringEvents.length > 0 && recurringEvents.every((e) => e.isFreeTime);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // The LAST section to have entered the band wins, not the first.
+        // Picking the topmost intersecting card looks right but isn't: a short
+        // card that merely extends down into the band (Help, at 121px) always
+        // has a smaller `top` than the card actually being scrolled to, so it
+        // won every comparison and "Keyboard shortcuts" could never become
+        // current. Largest `top` = most recently entered = what the reader has
+        // just arrived at, which is also what scrollIntoView('start') puts
+        // there.
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.boundingClientRect.top - a.boundingClientRect.top)[0];
+        if (!visible) return;
+        const id = SETTINGS_SECTIONS.find((s) => sectionRefs.current[s.id] === visible.target)?.id;
+        if (id) setCurrentSection(id);
+      },
+      { rootMargin: '-64px 0px -80% 0px' }
+    );
+    elements.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
-      <div className="card" data-tour="account-card">
-        <h3 style={{ marginTop: 0 }}>Account &amp; sync</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
-          Sign in to sync your tasks, boards, and settings across every device you use TaskFlow on. Also optional —
-          without signing in, TaskFlow stays exactly as it works today: saved only to this browser.
-        </p>
-        {!authLoading && user ? (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-              {user.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
-                />
-              ) : (
-                <span
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: '50%',
-                    background: 'var(--color-accent-solid-bg)',
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  {(user.displayName || user.email || '?')[0].toUpperCase()}
-                </span>
-              )}
-              <div>
-                <div style={{ fontSize: 13.5, fontWeight: 600 }}>{user.displayName || 'Signed in'}</div>
-                {user.email && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{user.email}</div>}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button className="btn" onClick={syncNow} disabled={isSyncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <CloudCog size={14} />
-                {isSyncing ? 'Syncing…' : 'Sync now'}
-              </button>
-              <button
-                className="btn"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)' }}
-                onClick={logout}
-              >
-                <LogOut size={14} />
-                Sign out
-              </button>
-            </div>
-            <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 10, marginBottom: 0 }}>
-              Your data syncs automatically shortly after each change. "Sync now" pulls down anything saved from
-              another device since you opened TaskFlow here — useful right after making changes elsewhere.
-            </p>
-          </>
-        ) : (
-          <button
-            className="btn btn-primary"
-            onClick={login}
-            disabled={authLoading}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <LogIn size={14} />
-            Sign in with Google
-          </button>
-        )}
-      </div>
-
-      <div className="card" data-tour="integrations-card">
-        <h3 style={{ marginTop: 0 }}>Integrations</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 16 }}>
-          TaskFlow works fully standalone with local sample tasks — connecting Todoist and Google Calendar is
-          optional. See the tutorial (Help, below) for a step-by-step walkthrough of both.
-        </p>
-
-        <h4
-          style={{
-            margin: '0 0 10px',
-            fontSize: 12,
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-            color: 'var(--color-text-secondary)',
-          }}
-        >
-          Calendar
-        </h4>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn" onClick={connectGoogleCalendar} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            {googleConnected ? (
-              <>
-                <Check size={13} /> Google Calendar connected
-              </>
-            ) : (
-              'Connect Google Calendar'
-            )}
-          </button>
-          <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
-            {isSyncing ? 'Syncing…' : 'Push scheduled blocks to Google Calendar'}
-          </button>
-        </div>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 10 }}>
-          Connect Google Calendar to push scheduled blocks to it with one click — it asks Google directly for
-          permission, TaskFlow never sees your Google password.
-        </p>
-
-        <div
-          style={{
-            marginTop: 18,
-            paddingTop: 16,
-            borderTop: '1px solid var(--color-border)',
-          }}
-        >
-          <h4
-            style={{
-              margin: '0 0 10px',
-              fontSize: 12,
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: 0.5,
-              color: 'var(--color-text-secondary)',
-            }}
-          >
-            Todoist
-          </h4>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-            <span
-              className={`badge ${syncActive ? 'low' : 'medium'}`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                background: syncActive ? 'rgba(79, 191, 139, 0.15)' : undefined,
-                color: syncActive ? 'var(--color-success)' : undefined,
-              }}
-            >
-              {syncActive ? (
-                <>
-                  <RefreshCw size={12} /> Todoist two-way sync active
-                </>
-              ) : todoistEnabled ? (
-                <>
-                  <Pause size={12} /> Todoist sync paused
-                </>
-              ) : (
-                <>
-                  <Circle size={12} /> Standalone mode (local sample tasks)
-                </>
-              )}
+    <>
+      <div className="settings-search-bar-wrap">
+        <div className="settings-search-bar-backdrop" aria-hidden="true" />
+        <div className="search-bar settings-search-bar" ref={sectionSearchRef}>
+          <div className="search-bar-field">
+            <span className="search-bar-icon">
+              <Search size={14} />
             </span>
+            <input
+              type="text"
+              className="search-bar-input"
+              value={sectionQuery}
+              onChange={(e) => setSectionQuery(e.target.value)}
+              onFocus={() => setIsSectionSearchFocused(true)}
+              placeholder="Search settings…"
+              aria-label="Search settings"
+            />
           </div>
-          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 0, marginBottom: 10 }}>
-            {syncActive
-              ? 'Editing a Todoist-sourced task, its subtasks, or a Board section here updates Todoist immediately. Fields with no Todoist equivalent (lock state, chunk sizes) stay app-only.'
-              : todoistEnabled
-                ? 'Task sync is paused — edits here stay in TaskFlow only and are not pushed to Todoist until you turn sync back on below.'
-                : 'Connect Todoist below to sync your real tasks instead of the samples.'}
-          </p>
-          {todoistEnabled ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <KeyRound size={13} /> Todoist token connected
-                </span>
-                <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowTokenInput((v) => !v)}>
-                  Change token
-                </button>
-                <button
-                  className="btn"
-                  style={{ fontSize: 12, color: 'var(--color-danger)' }}
-                  onClick={() => {
-                    if (window.confirm('Disconnect Todoist? Tasks will fall back to sample data until you reconnect.')) {
-                      setTodoistApiToken(null);
-                    }
-                  }}
-                >
-                  Disconnect
-                </button>
-              </div>
-              {showTokenInput && (
-                <form onSubmit={submitToken} style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <input
-                    type="password"
-                    placeholder="Paste new Todoist API token"
-                    value={tokenDraft}
-                    onChange={(e) => setTokenDraft(e.target.value)}
-                    style={{ flex: 1 }}
-                    autoFocus
-                  />
-                  <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }}>
-                    Save
+          {showSectionDropdown && (
+            <div className="search-bar-dropdown">
+              <div className="search-bar-dropdown-group">
+                {matchingSections.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="search-bar-dropdown-item"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => goToSection(s.id)}
+                  >
+                    {s.label}
                   </button>
-                </form>
-              )}
-            </>
-          ) : (
-            <>
-              <p style={{ fontSize: 12.5, marginTop: 0, marginBottom: 8 }}>
-                Optional: connect your own Todoist account to sync your real tasks in place of the samples.
-              </p>
-              <form onSubmit={submitToken} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <input
-                  type="password"
-                  placeholder="Paste your Todoist API token"
-                  value={tokenDraft}
-                  onChange={(e) => setTokenDraft(e.target.value)}
-                  style={{ flex: 1, minWidth: 220 }}
-                />
-                <button type="submit" className="btn btn-primary" disabled={!tokenDraft.trim()}>
-                  Connect Todoist
-                </button>
-              </form>
-              <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', marginTop: 8, marginBottom: 0 }}>
-                Get yours from{' '}
-                <a
-                  href="https://app.todoist.com/app/settings/integrations/developer"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
-                >
-                  Todoist → Settings → Integrations → Developer <ExternalLink size={11} />
-                </a>{' '}
-                and copy the "API token" field. It's saved only in this browser (never sent anywhere but directly to
-                Todoist) — see the tutorial for a step-by-step walkthrough.
-              </p>
-            </>
-          )}
-
-          {todoistEnabled && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 14 }}>
-              <input
-                type="checkbox"
-                checked={taskSyncEnabled}
-                onChange={(e) => setTaskSyncEnabled(e.target.checked)}
-              />
-              <span style={{ fontSize: 13 }}>
-                Keep syncing task changes to Todoist
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', fontWeight: 400, marginTop: 2 }}>
-                  Turn this off to import your Todoist tasks once and manage everything from TaskFlow afterward — new
-                  edits, completions, and deletions stay local and won't touch your Todoist account.
-                </div>
-              </span>
-            </label>
-          )}
-        </div>
-      </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Scheduling rules</h3>
-        <div className="form-row">
-          <label>Buffer days (finish this many days before due date)</label>
-          <input
-            type="number"
-            min="0"
-            value={rules.bufferDays}
-            onChange={(e) => setRules({ ...rules, bufferDays: Number(e.target.value) })}
-          />
-        </div>
-        <div className="form-row-split">
-          <div className="form-row" style={{ flex: 1 }}>
-            <label>Work day start</label>
-            <input type="time" value={rules.workDayStart} onChange={(e) => setRules({ ...rules, workDayStart: e.target.value })} />
-          </div>
-          <div className="form-row" style={{ flex: 1 }}>
-            <label>Work day end</label>
-            <input type="time" value={rules.workDayEnd} onChange={(e) => setRules({ ...rules, workDayEnd: e.target.value })} />
-          </div>
-        </div>
-        <div className="form-row">
-          <label>Max deep-work hours per day</label>
-          <input
-            type="number"
-            min="1"
-            max="16"
-            value={rules.maxDailyDeepWorkHours}
-            onChange={(e) => setRules({ ...rules, maxDailyDeepWorkHours: Number(e.target.value) })}
-          />
-        </div>
-        <div className="form-row">
-          <label>Planning horizon (weeks)</label>
-          <input
-            type="number"
-            min="1"
-            max="12"
-            value={rules.horizonWeeks}
-            onChange={(e) => setRules({ ...rules, horizonWeeks: Number(e.target.value) })}
-          />
-        </div>
-        <div className="form-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <input
-            type="checkbox"
-            id="frontload"
-            checked={rules.frontLoadUrgent}
-            onChange={(e) => setRules({ ...rules, frontLoadUrgent: e.target.checked })}
-          />
-          <label htmlFor="frontload" style={{ margin: 0 }}>
-            Front-load urgent/high-priority tasks near their deadline
-          </label>
-        </div>
-      </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Fixed routines</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6 }}>
-          These are subtracted from every day's capacity before tasks are scheduled.
-        </p>
-        <p className="form-hint" style={{ marginBottom: 8 }}>
-          Drag on empty space to block out a new routine, drag a block to move it, drag its top/bottom edge to
-          resize — click its dot to pause/resume, click its label to rename.
-        </p>
-        <RoutineTimeline routines={routines} onAdd={addRoutine} onUpdate={updateRoutine} onRemove={removeRoutine} />
-      </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Calendar event overrides</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6 }}>
-          Mark recurring events (lectures, optional meetings) as "Free Time" so tasks can be scheduled over them.
-          {googleConnected && ' Events are pulled from your primary calendar plus every calendar you subscribe to (e.g. a shared lecture timetable).'}
-        </p>
-        {recurringEvents.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <button
-              className="btn"
-              style={{ fontSize: 12 }}
-              onClick={() => setAllRecurringIgnored(!allRecurringIgnored)}
-            >
-              {allRecurringIgnored ? 'Stop ignoring all repeating events' : 'Ignore all repeating events'}
-            </button>
-            <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
-              {recurringEvents.length} repeating event{recurringEvents.length === 1 ? '' : 's'} in the current horizon
-            </span>
-          </div>
-        )}
-        <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-          {[...events]
-            .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime))
-            .map((e) => (
-              <div key={e.id} className="settings-row" style={{ borderBottom: '1px solid var(--color-border)' }}>
-                <span style={{ flex: 1, fontSize: 13, minWidth: 0 }}>
-                  {e.title}{' '}
-                  <span style={{ color: 'var(--color-text-secondary)' }}>
-                    ({e.date} {e.startTime}–{e.endTime}
-                    {e.calendarName && e.calendarName !== 'primary' ? ` · ${e.calendarName}` : ''})
-                  </span>
-                </span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexShrink: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={e.isFreeTime}
-                    onChange={() => setEventIgnored(e, !e.isFreeTime, 'this')}
-                  />
-                  Treat as free time
-                </label>
+                ))}
               </div>
-            ))}
-          {events.length === 0 && (
-            <p style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>No calendar events in the current planning horizon.</p>
+            </div>
           )}
         </div>
       </div>
 
-      <div className="card" data-tour="appearance-card">
-        <h3 style={{ marginTop: 0 }}>Appearance</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
-          Switch between a warm off-white and a warm charcoal theme. Your choice is saved on this device.
-        </p>
-        <div className="theme-toggle" role="group" aria-label="Color theme" data-tour="appearance-toggle">
-          <button
-            type="button"
-            className={`theme-toggle-option ${theme === 'light' ? 'active' : ''}`}
-            aria-pressed={theme === 'light'}
-            onClick={() => setTheme('light')}
-          >
-            <Sun size={14} />
-            Light
-          </button>
-          <button
-            type="button"
-            className={`theme-toggle-option ${theme === 'dark' ? 'active' : ''}`}
-            aria-pressed={theme === 'dark'}
-            onClick={() => setTheme('dark')}
-          >
-            <Moon size={14} />
-            Dark
-          </button>
+      <div className="settings-layout">
+        {/* Desktop-only jump rail (hidden under 1024px — see global.css); the
+            sticky search bar above stays the way in on narrower viewports. */}
+        <nav className="settings-rail" aria-label="Settings sections">
+          {visibleSections.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`settings-rail-link ${currentSection === s.id ? 'is-current' : ''}`}
+              aria-current={currentSection === s.id ? 'true' : undefined}
+              onClick={() => goToSection(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings-content">
+          <AccountSection sectionRef={(el) => (sectionRefs.current.account = el)} />
+          <IntegrationsSection sectionRef={(el) => (sectionRefs.current.integrations = el)} />
+          <SchedulingSection sectionRef={(el) => (sectionRefs.current.scheduling = el)} />
+          <RoutinesSection sectionRef={(el) => (sectionRefs.current.routines = el)} />
+          <AppearanceSection sectionRef={(el) => (sectionRefs.current.appearance = el)} />
+          <TagsSection sectionRef={(el) => (sectionRefs.current.tags = el)} />
+          <TemplatesSection
+            sectionRef={(el) => (sectionRefs.current.templates = el)}
+            activeProjectId={activeProjectId}
+            onNavigateToTasks={onNavigateToTasks}
+          />
+          <NotificationsSection sectionRef={(el) => (sectionRefs.current.notifications = el)} />
+          <InstallAppSection sectionRef={(el) => (sectionRefs.current.installApp = el)} />
+          <HelpSection sectionRef={(el) => (sectionRefs.current.help = el)} onOpenTour={onOpenTour} />
+          <ShortcutsSection sectionRef={(el) => (sectionRefs.current.shortcuts = el)} />
+          <VersionsSection sectionRef={(el) => (sectionRefs.current.versions = el)} />
+          <TrashSection sectionRef={(el) => (sectionRefs.current.trash = el)} />
+          <BackupsSection sectionRef={(el) => (sectionRefs.current.backups = el)} />
+          <DangerZoneSection sectionRef={(el) => (sectionRefs.current.dangerZone = el)} />
         </div>
       </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Help</h3>
-        <button className="btn" onClick={onOpenTour} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <HelpCircle size={14} />
-          Replay guided tour
-        </button>
-      </div>
-
-      <div className="card" data-tour="danger-zone-card">
-        <h3 style={{ marginTop: 0 }}>Danger zone</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -6, marginBottom: 10 }}>
-          Clears every task and board (including the sample "Work / Writing / Personal" data new accounts start
-          with) so you can start from a blank slate. Routines, scheduling rules, and your Todoist/Google Calendar
-          connections are left untouched.
-        </p>
-        <button
-          className="btn"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)' }}
-          onClick={() => {
-            if (window.confirm('Clear all tasks and boards? This cannot be undone.')) {
-              clearAllData();
-            }
-          }}
-        >
-          <Trash2 size={14} />
-          Clear all data (tasks & boards)
-        </button>
-
-        <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 16, marginBottom: -6 }}>
-          Wipes every locally-saved TaskFlow setting (tasks, blocks, routines, rules, events) from this browser and
-          reloads. Todoist/Google Calendar accounts themselves are untouched — this only clears what's cached here.
-        </p>
-        <button
-          className="btn"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-danger)', marginTop: 10 }}
-          onClick={() => {
-            if (window.confirm('Reset all local TaskFlow data? This cannot be undone.')) {
-              clearAllPersisted();
-              window.location.reload();
-            }
-          }}
-        >
-          <AlertTriangle size={14} />
-          Reset local data
-        </button>
-      </div>
-    </div>
+    </>
   );
 }

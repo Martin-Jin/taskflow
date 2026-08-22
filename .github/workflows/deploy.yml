@@ -18,9 +18,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -35,14 +35,26 @@ jobs:
       # identify the OAuth client, not a credential, and Google's own
       # "Authorized JavaScript origins" restriction is what actually secures
       # them (set it to https://<owner>.github.io in Cloud Console).
+      # VITE_AI_QUICKADD_WORKER_URL is likewise just a URL, not a credential —
+      # the Worker itself is bring-your-own-key (BYOK): each visitor pastes
+      # their own Anthropic/Gemini API key into Settings, so nothing here
+      # costs the app owner anything. Lock the Worker's ALLOWED_ORIGIN down to
+      # this Pages origin anyway (see cloudflare-worker/README.md) so other
+      # sites can't use it as a free CORS relay.
+      # VITE_CALENDAR_AUTH_WORKER_URL points at the same Worker's Calendar
+      # OAuth routes (see cloudflare-worker/src/googleCalendarAuthRoutes.js) —
+      # also just a URL, the real secrets (GOOGLE_CLIENT_SECRET, the Firestore
+      # service account) live only as Worker secrets, never here.
       - name: Build
         env:
           GH_PAGES: true
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
+          VITE_AI_QUICKADD_WORKER_URL: ${{ secrets.VITE_AI_QUICKADD_WORKER_URL }}
+          VITE_CALENDAR_AUTH_WORKER_URL: ${{ secrets.VITE_CALENDAR_AUTH_WORKER_URL }}
         run: npm run build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
@@ -53,5 +65,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # NOTE: do not add a `timeout:` input here hoping to survive a slow Pages
+      # queue — 600000ms (10 min) is this action's hard MAXIMUM, not just its
+      # default. A larger value is silently clamped with
+      # "timeout value is greater than the allowed maximum", so it changes
+      # nothing; tried and reverted 2026-08-07. When a deployment sits in
+      # deployment_queued past 10 min the action cancels it and the run fails,
+      # and there is no repo-side knob for that — it's a GitHub Pages service
+      # problem. Re-run the job once Pages is healthy. See TODO.md's
+      # "Deploy slowness" note for the full diagnosis.
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

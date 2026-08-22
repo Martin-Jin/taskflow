@@ -1,24 +1,41 @@
 {
   "name": "taskflow",
   "private": true,
-  "version": "1.0.0",
+  "version": "9.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:unit": "vitest run",
+    "test:rules": "firebase emulators:exec --only firestore \"vitest run --config vitest.rules.config.js\"",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
-    "firebase": "^12.16.0",
-    "lucide-react": "^1.26.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "@tiptap/extension-link": "^3.30.2",
+    "@tiptap/extension-placeholder": "^3.30.2",
+    "@tiptap/extension-task-item": "^3.30.2",
+    "@tiptap/extension-task-list": "^3.30.2",
+    "@tiptap/react": "^3.30.2",
+    "@tiptap/starter-kit": "^3.30.2",
+    "firebase": "^12.17.1",
+    "framer-motion": "^13.1.1",
+    "lucide-react": "^1.32.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tiptap-markdown": "^0.9.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^6.4.3"
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "@playwright/test": "^1.62.1",
+    "@vitejs/plugin-react": "^6.0.5",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
-    "esbuild@0.21.5": true
+    "esbuild@0.21.5": true,
+    "protobufjs@7.6.5": true,
+    "firebase@12.16.0": true,
+    "@firebase/util@1.15.1": true
   }
 }

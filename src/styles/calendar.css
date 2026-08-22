@@ -28,78 +28,291 @@
   align-items: center;
 }
 
+/* Prev/Today/Next nav and the Google Calendar refresh button (desktop and
+   mobile) read as plain icon/text controls rather than bordered buttons —
+   no visible border or fill, just the icon/text and its hover state, since
+   this cluster sits right next to the date title/other ghost controls
+   rather than needing to look like a distinct action (contrast
+   .btn-primary's Re-balance/New event, which do). */
+.calendar-nav-prev,
+.calendar-nav-next,
+.calendar-today-btn,
+.calendar-refresh-btn,
+.calendar-refresh-btn-mobile {
+  border-color: transparent;
+  background: transparent;
+}
+
+.calendar-nav-prev:hover:not(:disabled),
+.calendar-nav-next:hover:not(:disabled),
+.calendar-today-btn:hover:not(:disabled),
+.calendar-refresh-btn:hover:not(:disabled),
+.calendar-refresh-btn-mobile:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
 .calendar-toolbar-title {
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 600;
-  min-width: 200px;
 }
 
-.view-switch {
+/* Wraps the date/range title button + its dropdown so the dropdown can
+   anchor to this specific element (position: relative) regardless of how
+   the toolbar's own flex row wraps around it. */
+.calendar-title-wrap {
+  position: relative;
+}
+
+.calendar-toolbar-title-btn {
   display: flex;
-  background: var(--color-bg-surface);
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
-  overflow: hidden;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
 }
 
-.view-switch button {
+.calendar-toolbar-title-btn:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.calendar-toolbar-title-btn .chevron {
+  color: var(--color-text-secondary);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-toolbar-title-btn.is-open .chevron {
+  transform: rotate(180deg);
+}
+
+/* Date-picker dropdown — see CalendarDatePickerDropdown.jsx. Positioned by
+   its portal wrapper in CalendarPage.jsx (useMenuPosition: anchored under
+   the title button on desktop, or centered-with-backdrop on mobile — see
+   that hook and .menu-popover-centered/.menu-popover-backdrop in
+   global.css) — this class only owns the panel's own visual styling. */
+.calendar-date-picker-dropdown {
+  z-index: 200;
+  width: min(320px, 94vw);
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 10px;
+  animation: dropdown-in var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-date-picker-months {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-date-picker-months::-webkit-scrollbar {
+  display: none;
+}
+
+.calendar-date-picker-month-tab {
+  flex-shrink: 0;
   background: transparent;
   border: none;
-  padding: 6px 12px;
-  font-size: 12.5px;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
   color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.calendar-date-picker-month-tab.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.calendar-date-picker-dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+
+.calendar-date-picker-dow {
+  text-align: center;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+}
+
+.calendar-date-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-date-picker-day {
+  background: none;
+  border: none;
+  border-radius: 999px;
+  aspect-ratio: 1;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.calendar-date-picker-day:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.calendar-date-picker-day.is-outside {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
+.calendar-date-picker-day.is-today {
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.calendar-date-picker-day.is-selected {
+  background: var(--color-accent-solid-bg);
+  color: #fff;
+}
+
+/* Hamburger view-switcher menu — replaces the old segmented Day/Week/Month
+   button group with a Google-Calendar-mobile-style dropdown, now that Day/
+   3 Day/Week/Month is one option too many to comfortably fit as tabs on a
+   phone width. */
+.calendar-view-menu-wrap {
+  position: relative;
+}
+
+.calendar-view-menu-trigger {
+  background: transparent;
+  border-color: transparent;
+}
+
+.calendar-view-menu-trigger:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+}
+
+/* Positioned via useMenuPosition (src/hooks/useMenuPosition.js) — portaled
+   to document.body and given an inline `position: fixed` + left/top when
+   anchored, or the `.menu-popover-centered` class (see global.css) when the
+   anchored spot wouldn't fit the viewport (always the case on mobile, via
+   forceCentered). z-index has to clear .modal-overlay's (160) now that this
+   renders at the document.body level rather than in-flow inside the toolbar. */
+.calendar-view-menu {
+  z-index: 200;
+  min-width: 130px;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  animation: dropdown-in var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-view-menu button {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+}
+
+.calendar-view-menu button:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.calendar-view-menu button.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 
 @media (max-width: 639px) {
-  /* The toolbar's date-nav group, view switch, and action buttons together
-     are too wide for a phone in one row — previously this just overflowed
-     the viewport (Block time / Re-balance schedule ran off-screen with no
-     way to reach them). Let each group wrap onto its own row instead — and
-     give every one of those rows the same full width + centered content, so
-     they read as a consistent stack instead of some rows spanning edge to
-     edge while others (short on content) hug the left with a chunk of
-     empty space or dead background trailing off to one side. */
-  .calendar-toolbar-title {
-    min-width: 0;
-  }
-
-  /* .calendar-toolbar's own rows (left-group, actions-group, Today) are each
-     full-width EXCEPT the new solo Today row below, which is only as wide as
-     its label — space-between (the desktop default) would shove a lone item
-     like that to the row's edge instead of centering it. */
+  /* Mobile reads as one cohesive full-screen surface — inspired by Google
+     Calendar's mobile layout: a distinctly colored app-bar strip (hamburger,
+     date title, trailing icon actions) sitting flush atop the grid, both
+     bled edge-to-edge, rather than the old plain background-less toolbar
+     floating above a separately inset, rounded-card grid below it. Negative
+     side-margins undo .main-content's own page padding; zero bottom margin
+     on the toolbar keeps it flush against the grid (see .week-grid/
+     .month-grid's own matching edge-to-edge override further below) instead
+     of leaving a page-padding-sized gap between the two surfaces. */
   .calendar-toolbar {
-    justify-content: center;
+    justify-content: flex-start;
+    margin: calc(var(--space-3) * -1) calc(var(--space-3) * -1) 0;
+    padding: 8px var(--space-3);
+    background: var(--color-bg-surface-raised);
+    border-bottom: 1px solid var(--color-border);
   }
 
   .calendar-toolbar-left {
     width: 100%;
-    justify-content: center;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 4px;
   }
 
-  /* Today (rendered separately below as .calendar-today-btn-solo on mobile,
-     see CalendarPage.jsx) is absent from this row here, so what's left
-     re-orders into a plain "< Date >" — arrows flanking the date — instead
-     of the arrows-then-date-at-the-end order desktop uses. */
-  .calendar-nav-prev {
-    order: 1;
+  /* Google Calendar's mobile bar keeps the date as the largest, most
+     prominent element after the hamburger — bumped up from the shared
+     desktop size (which sits comfortably next to prev/today/next arrows
+     that don't exist here). min-width: 0 + truncation lets it shrink first
+     (rather than pushing Today/refresh off the edge of the bar) on the
+     narrowest phones or longest titles (e.g. Week view's date-range label). */
+  .calendar-title-wrap {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .calendar-toolbar-title-btn {
+    padding: 4px 8px 4px 4px;
+    min-width: 0;
   }
 
   .calendar-toolbar-title {
-    order: 2;
+    font-size: 17px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .calendar-nav-next {
-    order: 3;
+  /* Pushes Today + refresh + filter to the bar's right edge as a single
+     trailing cluster, rather than centered/wrapped onto their own row below
+     (see CalendarPage.jsx for why they live in .calendar-toolbar-left on
+     mobile, wrapped in their own flex container). margin-left: auto lives
+     on this wrapper only — putting it on each child individually instead
+     splits the leftover space between every auto margin present, opening a
+     gap between Today and whatever follows it rather than bunching them
+     together. */
+  .calendar-toolbar-trailing {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
   }
 
-  /* Today's own row, directly under the date — pulled out of the date-nav
-     row above (where it used to crowd in next to the arrows) so that row
-     can read as a clean "< Date >" and Today gets a clear tap target of its
-     own instead of competing for space. Only rendered at all once the user
-     has navigated away from today (see isViewingToday in CalendarPage.jsx). */
-  .calendar-today-btn-solo {
+  .calendar-today-btn-solo,
+  .calendar-refresh-btn-mobile,
+  .calendar-filter-trigger {
     width: auto;
-    align-self: center;
   }
 
   .calendar-toolbar-actions {
@@ -108,40 +321,54 @@
     row-gap: var(--space-2);
     justify-content: center;
   }
-
-  .calendar-toolbar-actions .view-switch {
-    flex: 1 1 100%;
-  }
-
-  /* Four labeled tabs (Active/Completed/All/No due date) don't reliably
-     fit a narrow phone width without wrapping oddly — scroll horizontally
-     instead, same pattern as a native segmented control. */
-  .view-switch {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    /* Centers the tabs when they fit the row (the common case) instead of
-       leaving them left-aligned against a full-width background that
-       trails off empty to the right. `safe` falls back to start-aligned
-       if they ever don't fit, so an overflowing set never clips at both
-       ends instead of just scrolling. */
-    justify-content: safe center;
-  }
-
-  .view-switch::-webkit-scrollbar {
-    display: none;
-  }
-
-  .view-switch button {
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
 }
 
-.view-switch button.active {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-weight: 600;
+/* Floating "New event" button, replacing the old inline toolbar button on
+   both mobile and desktop — deliberately matches TaskListPanel's "Add task"
+   FAB (see .add-task-btn in tasklist.css) rather than inventing new FAB
+   styling: same size/radius/shadow/safe-area handling, just always
+   floating here (Add task only floats below 640px; every calendar view
+   already needs the toolbar space back on all widths since the old button
+   is gone). */
+.calendar-fab {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-elevated);
+}
+
+/* The main FAB expands into a speed-dial of mini-FABs (see CalendarPage.jsx):
+   mobile gets "Re-balance schedule" + "New event" (that toolbar button is
+   removed from the mobile toolbar to save vertical space) as a floating
+   pair rather than the old dropdown menu list. Positioning mirrors
+   .add-task-fab-group in tasklist.css: the group itself carries the fixed
+   bottom-right placement so the main button no longer needs its own,
+   letting it stack in normal flow with the mini-FABs above it (DOM order =
+   mini-FABs, then main button — top-to-bottom the way they should read). */
+.calendar-fab-group {
+  position: fixed;
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.calendar-fab-group .calendar-fab {
+  position: static;
+}
+
+@media (max-width: 639px) {
+  /* Clear the fixed mobile bottom-tab-bar, same offset .add-task-btn uses. */
+  .calendar-fab-group {
+    bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
+  }
 }
 
 .week-grid {
@@ -160,6 +387,86 @@
   display: contents;
 }
 
+/* Clickable — jumps into Day view on this date (see WeekView's onSelectDay),
+   matching MonthView's own day-number cells. */
+/* All-day row. These are cells of .week-grid itself (one gutter + one per
+   day), sticky just below the day headers — see WeekView for why they're
+   pinned rather than scrolling away. `top` comes from the component as an
+   inline style, since the header height it has to clear is measured. */
+.week-allday-gutter,
+.week-allday-cell {
+  position: sticky;
+  z-index: 1; /* under .day-header's 2, so headers stay on top when scrolling */
+  background: var(--color-bg-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.week-allday-gutter {
+  /* Sentence case, no letter-spacing: uppercase "ALL DAY" with tracking
+     overran the 56px time gutter and clipped to "LL DAY" at mobile widths. */
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  padding: 6px 6px 6px 2px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  /* Matches .week-allday-cell's floor so the label sits level with the chips
+     rather than being pushed to the top of a taller row. */
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.week-allday-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-left: 1px solid var(--color-border);
+  min-width: 0;
+  /* Bounded so a day with many all-day events can't push the time grid off
+     screen — it scrolls within the cell instead.
+     min-height is load-bearing, not cosmetic: `overflow-y: auto` gives a box a
+     min-content height of ZERO, so the `auto` grid row this sits in collapsed
+     to a few pixels whenever the grid was height-constrained (every mobile
+     viewport), leaving legible-width chips 6px tall. */
+  min-height: 1.75rem;
+  max-height: 4.5rem;
+  overflow-y: auto;
+}
+
+.week-allday-chip {
+  /* Not a .btn: this is a label that happens to be clickable, and .btn's
+     border/padding would make a row of them read as a toolbar. */
+  border: none;
+  border-radius: 4px;
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent-border) 22%, transparent));
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  padding: 3px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--motion-emphasis-duration, 0.12s) ease;
+}
+
+.week-allday-chip:hover {
+  background: color-mix(in srgb, var(--color-accent-border) 38%, transparent);
+}
+
+/* A "Free" all-day event (Google's transparency, e.g. a birthday from a
+   holiday calendar) doesn't consume capacity, so it reads quieter than one
+   that actually blocks the day. */
+.week-allday-chip.is-free {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
 .day-header {
   position: sticky;
   top: 0;
@@ -169,6 +476,17 @@
   text-align: center;
   border-bottom: 1px solid var(--color-border);
   border-left: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.day-header:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.day-header:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: -2px;
 }
 
 .day-header .dow {
@@ -198,6 +516,40 @@
   background: var(--color-bg-surface-raised);
   z-index: 3;
   border-top-left-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+/* Mobile Day view: the toolbar title above already shows this single day's
+   full date (see CalendarPage's calendar-toolbar-title), so the day-header
+   cell's own dow/dom repeating it directly underneath is pure duplication —
+   Week/3 Day keep that text since there it's the only place each of the
+   several visible days is labeled. The gutter cell (otherwise empty in this
+   row) shows a compact "Aug 5" label instead — still useful as the one
+   place a user looking at just the time column sees which day they're on —
+   sized/wrapped to fit the existing 56px-wide gutter column rather than
+   widening it (see WeekView's gridTemplateColumns), with line-breaking
+   allowed since "Aug" and the day number can't always fit on one line at
+   that width in every locale/font. */
+.week-grid.is-single-day-mobile .day-header {
+  padding: 0;
+}
+
+.week-grid.is-single-day-mobile .day-header .dow,
+.week-grid.is-single-day-mobile .day-header .dom {
+  display: none;
+}
+
+.time-gutter-date {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-align: center;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  padding: 0 2px;
 }
 
 .time-label {
@@ -235,7 +587,110 @@
   border-left: 3px solid;
   background: var(--color-bg-surface-raised);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.12s ease;
+  /* "emphasis" role (see global.css) — pickup/drop is a self-contained
+     state change on this element, not a mount/unmount. */
+  transition: box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
+}
+
+/* Routine (Fixed-availability) background: purely informational, and
+   mousedown is forwarded to the underlying day-column's own
+   drag-to-block-out gesture (see WeekView's handleColumnMouseDown call
+   here) rather than truly ignoring clicks. Deliberately much quieter than
+   .cal-block/.cal-event (no border, shadow, or saturated fill) so it reads
+   as "unavailable" without competing with real scheduled items for
+   attention. The label/time used to be opacity:0 until hover — reads fine
+   on desktop, but leaves a routine block permanently blank (no equivalent
+   reveal gesture) on touch, so a first-time mobile viewer had no way to
+   learn what the muted gray rectangle even was. Shown at a muted opacity
+   always now, brightening on hover as a lighter-touch affordance instead
+   of the sole way to read it. */
+.cal-routine-block {
+  position: absolute;
+  left: 0;
+  /* Full column width. Half-width was tried as a way to stop a routine reading
+     as the main event, and it worked, but at the cost of squeezing the label
+     and pushing task blocks around. Hiding the label until hover (below)
+     solves the same problem better: the block becomes a plain tinted band,
+     which is what "unavailable" should look like, and it keeps its full width
+     so it doesn't distort anything sharing the column. */
+  right: 0;
+  background: color-mix(in srgb, var(--color-border) 55%, transparent);
+  overflow: hidden;
+  /* Roomier left inset: the label used to sit almost flush against the
+     column's own left edge/gridline, which made it read as part of the axis
+     rather than as content inside the block. */
+  padding: 3px 7px 3px 10px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+  z-index: 0;
+  cursor: grab;
+}
+
+/* Halving the width halves the room for the label, so a name that fit before
+   can now overflow. MarqueeText handles that — it measures real overflow, so
+   short names (the common case) never animate at all.
+   ON HOVER ONLY, though, and that part is not optional. A week view holds ~45
+   routine blocks; letting every overflowing one scroll continuously is exactly
+   the "ambient drift" the design rules reject, and it would burn a phone's
+   battery to no purpose. Paused, the marquee rests at the start of its text
+   with the plain ellipsis showing; pointing at a block runs it, which makes the
+   motion a response to the user rather than decoration. With animations off
+   globally the duration collapses to ~0 anyway, so this is inert there. */
+.cal-routine-block-label .marquee-text {
+  max-width: 100%;
+}
+
+.cal-routine-block .marquee-text-inner {
+  animation-play-state: paused;
+}
+
+.cal-routine-block:hover .marquee-text-inner,
+.cal-routine-block:focus-within .marquee-text-inner {
+  animation-play-state: running;
+}
+
+.cal-routine-block-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.cal-routine-block-time {
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+/* HIDDEN UNTIL HOVER, on pointer devices only. A routine is the same handful
+   of blocks repeated across all seven columns, so their labels are the most
+   repetitive text on the screen and read as clutter rather than information —
+   the band itself already says "unavailable", which is the part that matters
+   at a glance.
+   Gated on `hover: hover` because a touch device has no hover to reveal
+   anything with: leaving the label permanently hidden there would make a
+   routine an unexplained tinted rectangle, which is exactly the bug an earlier
+   `opacity: 0` version of this rule caused. Touch keeps the label visible at a
+   muted opacity instead. */
+.cal-routine-block-label,
+.cal-routine-block-time {
+  opacity: 0.75;
+}
+
+@media (hover: hover) {
+  .cal-routine-block-label,
+  .cal-routine-block-time {
+    opacity: 0;
+  }
+
+  .cal-routine-block:hover .cal-routine-block-label,
+  .cal-routine-block:hover .cal-routine-block-time,
+  .cal-routine-block:focus-within .cal-routine-block-label,
+  .cal-routine-block:focus-within .cal-routine-block-time {
+    opacity: 1;
+  }
 }
 
 .cal-block:hover {
@@ -245,28 +700,55 @@
 
 .cal-block:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 1px;
+  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
   z-index: 5;
 }
 
-.cal-block.dragging {
-  opacity: 0.5;
+/* The item currently being dragged. With native HTML5 DnD (mouse) the
+   browser drags a frozen snapshot and leaves the real element sitting in
+   the grid, and the touch long-press path never moves the element either —
+   so in both cases this is the "you picked this up" cue: lifted (scaled up,
+   nudged up a couple px, shadow raised) and faded while .cal-event-ghost
+   shows where it will land. Settling back down on drop is the same
+   transition running in reverse (see the base .cal-block/.cal-event rule
+   above) rather than a snap. */
+.cal-block.is-dragging,
+.cal-event.is-dragging {
+  opacity: 0.3;
+  transform: scale(1.03) translateY(-2px);
+  box-shadow: var(--shadow-elevated);
+  z-index: 3;
+}
+
+/* Being resized by its bottom edge (see WeekView's resizePreview): outlined
+   and raised above its neighbours, with the 15-minute height steps eased so
+   the edge follows the pointer smoothly instead of jumping. The transition
+   only exists while this class is on, so it can't affect a height change
+   from anything else (zooming the time axis, say). */
+.cal-block.is-resizing,
+.cal-event.is-resizing {
+  box-shadow: 0 0 0 1px var(--color-accent-border), var(--shadow-card);
+  transition: box-shadow 0.12s ease, height 0.09s linear;
+  z-index: 7;
+}
+
+/* The live start–end readout while dragging/resizing — accented so it's
+   readable as "this is what it's becoming", not the block's saved time. */
+.cal-block-time.is-live {
+  color: var(--color-accent);
+  font-weight: 600;
 }
 
 .cal-block.locked {
   cursor: not-allowed;
 }
 
-.cal-block.passive {
-  border-left-style: dashed;
-  background: repeating-linear-gradient(
-    135deg,
-    var(--color-bg-surface-raised),
-    var(--color-bg-surface-raised) 8px,
-    var(--color-bg-surface) 8px,
-    var(--color-bg-surface) 16px
-  );
-}
+/* No dashed border / stripe here on purpose, despite once having one — that
+   idiom is now reserved for .cal-event.free-time/.month-chip-event.free-time
+   ("scheduler-ignored") below, and .cal-cluster's own dashed border a folded
+   group of items — a passive task sharing either look made all three
+   indistinguishable at a glance. The Wind icon in the title (WeekView) is
+   passive's own, unshared signal instead. */
 
 .cal-cluster {
   border-left-style: dashed;
@@ -281,8 +763,24 @@
   box-shadow: 0 0 0 1px var(--color-accent-soft), var(--shadow-card);
 }
 
-.cal-cluster .cal-block-title {
+/* Vertical stack of each contained item's title (one per line) instead of a
+   single comma-joined line — see WeekView's clusterLabel/clusterMaxTitleLines.
+   overflow:hidden here is a backstop only: clusterMaxTitleLines already sizes
+   the line count to the chip's own pixel height, so this shouldn't normally
+   need to clip anything itself. */
+.cal-cluster-title-stack {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding-right: 7px;
+}
+
+.cal-cluster-title-line {
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Flyout listing the individual short tasks folded into a cluster chip —
@@ -358,6 +856,74 @@
   text-overflow: ellipsis;
 }
 
+/* Desktop-only hover preview for a truncated block/event title (see
+   WeekView's hoverPreview state + HoverPreviewCard) — a fixed-position
+   portal to <body> so it escapes the scrolling week/day grid rather than
+   being clipped inside it, positioned near the hovered item's own rect.
+   pointer-events: none is the important bit: the card can visually sit on
+   top of neighbouring blocks without ever stealing a click meant for them.
+   The fade-in is gated for free by the data-animations='off'/
+   prefers-reduced-motion rules in global.css, same as every other
+   animation here. */
+.cal-hover-preview {
+  z-index: 1000;
+  pointer-events: none;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+  animation: hover-preview-in var(--duration-fast) var(--ease-standard);
+}
+
+@keyframes hover-preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+.cal-hover-preview-title {
+  font-weight: 600;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.cal-hover-preview-parent {
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--color-text-secondary);
+}
+
+.cal-hover-preview-time {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+
+.cal-hover-preview-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+
+.cal-hover-preview-priority {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-hover-preview-project {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-bg-surface-hover);
+}
+
 .cal-block-title {
   font-weight: 600;
   white-space: nowrap;
@@ -374,6 +940,34 @@
   margin-top: 1px;
 }
 
+/* COMPACT: a box tall enough to show its title, but only at a smaller type
+   size (see COMPACT_BLOCK_HEIGHT_PX in calendarLayout.js). This band used to
+   fold into an anonymous "N tasks" chip — shrinking the text a little is a
+   much better trade than hiding the title entirely. Only the type and the
+   vertical padding shrink; the left inset and the accent rail stay put so a
+   compact box still lines up with its full-size neighbours.
+   Deliberately NOT smaller than this: below the compact floor the layout
+   clusters instead, because there's no font size that makes 12px of height
+   readable. */
+.cal-block.is-compact,
+.cal-event.is-compact {
+  font-size: 10px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.cal-block.is-compact .cal-block-title,
+.cal-event.is-compact .cal-block-title {
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+
+/* Base look for a writable Google-sourced event — a solid card (not the
+   diagonal-stripe/dashed "blocked out" texture this used to have) with a
+   colored left border, so it reads as a clickable item like .cal-block
+   rather than an inert placeholder. Hover/focus elevation mirrors
+   .cal-block:hover's box-shadow/z-index bump for the same reason. */
 .cal-event {
   position: absolute;
   left: 3px;
@@ -381,6 +975,44 @@
   border-radius: 6px;
   padding: 4px 7px;
   font-size: 11px;
+  background: var(--color-bg-surface-raised);
+  border-left: 3px solid var(--color-accent-border);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-sm);
+  /* "emphasis" role (see global.css) — pickup/drop is a self-contained
+     state change on this element, not a mount/unmount. */
+  transition: box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
+    opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
+  overflow: hidden;
+}
+
+.cal-event:hover {
+  box-shadow: var(--shadow-card);
+  z-index: 5;
+}
+
+.cal-event:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
+  z-index: 5;
+}
+
+/* Read-only (the user only has reader/freeBusyReader access to this event's
+   calendar on Google, e.g. a subscribed lecture timetable) — still clickable
+   to view details, so it keeps the hover/focus feedback above, but a
+   lighter diagonal texture is a legitimate "look but don't touch" cue here
+   specifically (unlike the plain base style, which should read as fully
+   interactive). */
+/* Read-only events (subscribed calendars) visually match regular events now.
+   The previous striped read-only styling has been moved to the scheduler
+   "ignored" / free-time style so stripes indicate scheduler-ignored events only. */
+.cal-event.is-readonly {
+  cursor: pointer;
+}
+
+.cal-event.free-time {
+  /* Scheduler-ignored / Treat as free time — visually a muted striped texture */
   background: repeating-linear-gradient(
     45deg,
     var(--color-bg-surface-hover),
@@ -388,31 +1020,28 @@
     var(--color-bg-surface) 4px,
     var(--color-bg-surface) 8px
   );
-  border: 1px dashed var(--color-border-strong);
+  border-left-style: dashed;
   color: var(--color-text-secondary);
-  overflow: hidden;
+  opacity: 0.95;
 }
 
-.cal-event.free-time {
-  opacity: 0.5;
-  border-style: dotted;
+/* CalendarEvents get full drag/resize parity with ScheduledBlocks (see
+   WeekView) — this class layers the grab cursor + lane-positioning support
+   on top of .cal-event's existing dashed/striped look without touching its
+   colors. */
+.cal-event-item {
+  cursor: grab;
 }
 
-.cal-event.manual {
+.cal-event-item.is-mobile {
   cursor: pointer;
-  background: repeating-linear-gradient(
-    45deg,
-    color-mix(in srgb, var(--color-danger) 12%, transparent),
-    color-mix(in srgb, var(--color-danger) 12%, transparent) 4px,
-    var(--color-bg-surface) 4px,
-    var(--color-bg-surface) 8px
-  );
-  border-color: var(--color-danger);
-  color: var(--color-text-primary);
 }
 
-/* Drag-to-block-out-time ghost preview, shown while the mouse is held down
-   on empty grid space (see WeekView.handleColumnMouseDown). */
+/* Ghost preview of where something will land: shown while the mouse is held
+   down on empty grid space to block out time, and while an existing block/
+   event is being dragged to a new slot (see WeekView.renderGhost). Carries
+   the live snapped start–end time, so both the label and the time line
+   inherit the accent color rather than their usual muted/padded look. */
 .cal-event-ghost {
   position: absolute;
   left: 3px;
@@ -421,10 +1050,21 @@
   padding: 4px 7px;
   font-size: 11px;
   background: var(--color-accent-soft);
-  border: 1px dashed var(--color-accent-border);
+  border: 2px dashed var(--color-accent);
   color: var(--color-accent);
+  overflow: hidden;
   pointer-events: none;
-  z-index: 4;
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+  z-index: 8;
+}
+
+.cal-event-ghost .cal-block-title {
+  padding-right: 0;
+}
+
+.cal-event-ghost .cal-block-time {
+  color: inherit;
+  font-weight: 600;
 }
 
 /* Live current-time indicator, mirroring Google Calendar's own "now" line —
@@ -456,6 +1096,22 @@
   right: 0;
   height: 5px;
   cursor: ns-resize;
+}
+
+@media (max-width: 639px) {
+  /* A 5px strip is fine for a mouse pointer but far too thin to reliably
+     grab with a finger — extend the actual touch target to ~24px via a
+     transparent pseudo-element rather than growing the visible strip
+     itself, so the resize affordance doesn't visually dominate short
+     blocks/events on a small screen. */
+  .resize-handle::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -10px;
+    bottom: -10px;
+  }
 }
 
 /*
@@ -492,6 +1148,16 @@
 .cal-block.locked .lock-indicator {
   background: var(--color-accent-soft);
   color: var(--color-accent);
+}
+
+/* Read-only event badge — same tint as a locked task block (same
+   "protected" meaning), but a static <span> rather than a <button>: there's
+   no toggle here, so no hover/pointer affordance suggesting one. */
+.cal-event.is-readonly .lock-indicator {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  cursor: default;
+  opacity: 1;
 }
 
 .cal-block.is-mobile {
@@ -536,6 +1202,15 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /* Grid rows don't clip a child that outgrows them — an overflowing cell
+     bleeds its extra chips down into the row below instead of being
+     contained, since minmax(100px, 1fr) is just a sizing hint, not a cap.
+     min-height: 0 lets this flex column actually shrink to the grid row's
+     size instead of growing past it; overflow: hidden clips whatever still
+     doesn't fit (see .month-cell-items below for how the "+N more" chip
+     stays visible even then). */
+  min-height: 0;
+  overflow: hidden;
 }
 
 .month-cell.is-outside {
@@ -550,6 +1225,7 @@
 
 .month-cell-daynum {
   align-self: flex-start;
+  flex-shrink: 0;
   background: none;
   border: none;
   font-size: 12.5px;
@@ -565,6 +1241,13 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  /* The chip list is the part allowed to shrink/clip when a cell is too
+     short to fit MAX_VISIBLE_ITEMS chips + the "+N more" chip (the day
+     number above never shrinks) — see .month-chip-more below for how the
+     overflow indicator itself stays pinned in view even then. */
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .month-chip {
@@ -580,10 +1263,33 @@
   text-align: left;
 }
 
+/* Writable Google-sourced event chip — solid/accent-bordered like a task
+   chip so it reads as clickable, matching the .cal-event restyle in week/day
+   view rather than the old dashed "blocked out" look. */
 .month-chip-event {
+  border-left-color: var(--color-accent-border);
+  color: var(--color-text-primary);
+}
+
+/* Read-only (reader/freeBusyReader access only, e.g. a subscribed lecture
+   timetable) — still clickable to view details, but the dashed border +
+   muted text is the same "look but don't touch" cue .cal-event.is-readonly
+   uses in week/day view. */
+/* Subscribed/read-only month chips intentionally match the regular look; the
+   striped/dashed "ignored" treatment is reserved for series marked free-time.
+   No override rule needed here (kept out of the ruleset to avoid an empty block). */
+
+.month-chip-event.free-time {
   border-left-style: dashed;
   border-left-color: var(--color-border-strong);
   color: var(--color-text-secondary);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-bg-surface-hover),
+    var(--color-bg-surface-hover) 4px,
+    var(--color-bg-surface) 4px,
+    var(--color-bg-surface) 8px
+  );
 }
 
 .month-chip-cluster {
@@ -597,10 +1303,31 @@
   background: none;
   color: var(--color-text-secondary);
   font-weight: 600;
+  /* Guarantees this overflow indicator always renders at full height even
+     when the cell is too short for everything above it — .month-cell-items
+     (a sibling flex item, not a parent of this button) is the one that
+     shrinks/clips instead. */
+  flex-shrink: 0;
 }
 
 .month-chip-more:hover {
   color: var(--color-accent);
+}
+
+/* Bulk-select highlight/checkbox for a month chip (see BulkActionBar/
+   useMultiSelect) — the checkbox sits inline before the title, same idea as
+   List/Board's own row/card checkboxes, sized down to fit this chip's much
+   smaller 10.5px/2-6px footprint. */
+.month-chip.is-selected {
+  box-shadow: inset 0 0 0 2px var(--color-accent-solid-bg);
+  background: var(--color-accent-soft);
+}
+
+.month-chip .bulk-select-checkbox {
+  width: 11px;
+  height: 11px;
+  vertical-align: -1px;
+  margin-right: 3px;
 }
 
 @media (max-width: 639px) {
@@ -624,6 +1351,28 @@
     font-size: var(--text-base);
   }
 
+  /* Bleeds the grid edge-to-edge to match the toolbar above it (see its own
+     mobile override) — squared-off corners (no border-radius) so the two
+     read as one continuous full-screen surface with a distinctly colored
+     header strip on top, rather than a colored bar sitting above a separate
+     rounded card. Only the sides need undoing .main-content's page padding;
+     the top is already flush against the toolbar (which itself has zero
+     bottom margin on mobile) and the bottom safely stays inset from the
+     fixed bottom tab bar. */
+  .week-grid,
+  .month-grid {
+    margin: 0 calc(var(--space-3) * -1);
+    border-radius: 0;
+  }
+
+  /* These corners round to match .week-grid's own border-radius when it's a
+     card — moot now that it's squared off above, and an unmatched rounded
+     corner would look like a stray artifact on an otherwise-square edge. */
+  .time-gutter-cell,
+  .day-header.is-last-col {
+    border-radius: 0;
+  }
+
   .week-grid {
     font-size: var(--text-sm);
   }
@@ -640,4 +1389,229 @@
   .day-header .dom {
     font-size: 17px;
   }
+}
+
+/* -------------------------------------------------------------------- */
+/* Mobile swipe-to-page carousel (CalendarPage) — see the swipe effect  */
+/* there for the drag/settle logic; this is just the 3-page strip.      */
+/* -------------------------------------------------------------------- */
+
+.calendar-swipe-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+}
+
+.calendar-swipe-track {
+  display: flex;
+  width: 300%;
+  flex: none;
+}
+
+/* Each page mirrors CalendarPage's old single-view wrapper (flex column,
+   min-height/min-width 0) so WeekView/MonthView's own `flex: 1` still fills
+   it exactly as when they sat directly in that wrapper. */
+.calendar-swipe-page {
+  flex: 0 0 33.3333%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ----------------------------------------------------------------------
+   CalendarFilterMenu (src/components/Calendar/CalendarFilterMenu.jsx) —
+   reuses .project-actions-dropdown's popover shell (same as ViewFilterMenu/
+   DashboardCustomizeMenu) for the Show/Projects/Tags groups.
+   ---------------------------------------------------------------------- */
+.calendar-filter-trigger {
+  position: relative;
+  border-color: transparent;
+  background: transparent;
+}
+
+.calendar-filter-trigger:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
+.calendar-filter-trigger.is-active {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* Small accent dot signalling an active filter even when the trigger's own
+   icon color change (see .is-active above) might be easy to miss at a
+   glance — matches the app's existing convention of a dot for "something's
+   different here" rather than inventing a badge/count. */
+.calendar-filter-active-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-solid-bg);
+}
+
+.calendar-filter-dropdown {
+  width: 230px;
+}
+
+.calendar-filter-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.calendar-filter-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 2px 8px 4px;
+  cursor: pointer;
+}
+
+.calendar-filter-group-heading {
+  margin: 0;
+}
+
+.calendar-filter-group-summary {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.calendar-filter-chevron {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.calendar-filter-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.calendar-filter-group-body {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.calendar-filter-reset-item {
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 2px;
+  padding-bottom: 9px;
+}
+
+/* Color dot shown per item in the Tags group only (see FilterGroup's
+   `showSwatch` prop) — Projects have no color concept and render no swatch. */
+.calendar-filter-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Type-to-filter box above the Projects group's item list (see FilterGroup's
+   `searchable` prop) — sticky so it stays pinned to the top of the scrolling
+   .calendar-filter-group-body while the (possibly long) item list scrolls
+   underneath it, rather than scrolling away with the list. */
+.calendar-filter-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 2px;
+  background: var(--color-bg-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-filter-search-icon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+/* input[type='text'] (global.css) carries the same specificity as a plain
+   class + attribute selector — matching it here (rather than just
+   .calendar-filter-search-input) so this actually overrides its font-size. */
+input[type='text'].calendar-filter-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 4px 0;
+  color: var(--color-text-primary);
+  /* Matches the surrounding menu rows (.dashboard-customize-item is 13px) so
+     "Search projects…" doesn't read as noticeably larger than "All
+     projects"/"Assignments" etc. below it. Bumped back to 16px only on
+     touch devices (see the (pointer: coarse) override below) — that's the
+     one case this size actually matters functionally, since <16px makes
+     iOS Safari zoom the page in on focus. */
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  input[type='text'].calendar-filter-search-input {
+    font-size: 16px;
+  }
+}
+
+input[type='text'].calendar-filter-search-input:focus {
+  outline: none;
+}
+
+.calendar-filter-no-match {
+  padding: 10px 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.dashboard-customize-item.is-highlighted {
+  background: var(--color-bg-surface-hover);
+}
+
+/* ----------------------------------------------------------------------
+   Empty-filter overlay (see WeekView/MonthView's emptyFilterMessage) — a
+   centered message over the grid, shown only when an active filter hid
+   every block/event that would otherwise be in the visible range. Sits
+   above the grid but lets clicks through to it (pointer-events: none on
+   the overlay itself; only the "Clear filters" button re-enables them) so
+   the empty grid underneath stays usable (e.g. click-to-create-event).
+   ---------------------------------------------------------------------- */
+.calendar-empty-filter-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.calendar-empty-filter-message {
+  pointer-events: auto;
+  background: var(--color-bg-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: min(280px, 90vw);
+}
+
+.calendar-empty-filter-message p {
+  margin: 0 0 8px;
 }

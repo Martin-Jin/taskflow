@@ -9,30 +9,57 @@
  *
  * Composes the existing hand-rolled parsers (findDuePhrase from
  * dateParse.js, findRecurrencePhrase from recurrence.js) plus detectors
- * kept local here since they have no other call site: priority (Todoist's
- * own p1-p4 shorthand only — no "urgent"/"!!" keyword matching), dependency
- * mentions ("after <task>" / "depends on <task>"), a "#project" mention
- * (fuzzy-matched against existing Projects, same idea as dependency), and
- * "@label" mentions (one or more — unlike the other detectors these don't
- * need to resolve against anything that already exists, since a new tag is
- * just created on save).
+ * kept local here since they have no other call site: a plain URL (reusing
+ * utils/linkify.js's regex, becomes the task's `link` field), priority
+ * (Todoist's own p1-p4 shorthand only — no "urgent"/"!!" keyword matching),
+ * dependency mentions ("after <task>" / "depends on <task>"), a "sub of
+ * <task>" / "subtask of <task>" mention (fuzzy-matched against existing
+ * tasks the same way, but sets `parentId` instead of `dependsOn`), its
+ * inverse "unsubtask" (a bare marker, no task name needed, that clears
+ * `parentId`), a "#project" mention (fuzzy-matched against existing
+ * Projects, same idea as dependency) optionally followed by "/ section" (Todoist's own
+ * #Project/Section syntax, fuzzy-matched against that project's Sections), a
+ * standalone "%section" shorthand (a shorter alternative to "#Project/
+ * Section" for when the project doesn't need to be spelled out — searches
+ * every section across every project and can return several ambiguous
+ * candidates instead of resolving to one), "@label" mentions (one or
+ * more — unlike the other detectors these don't need to resolve against
+ * anything that already exists, since a new tag is just created on save),
+ * and "assign to <name>"/"for <name>" (fuzzy-matched against a SHARED task's
+ * collaborators, setting `assignedTo` — see findAssignToPhrase's own doc
+ * comment for why the bare "for" trigger needs a much stricter match than
+ * the others here).
  *
- * Detection runs in sequence — due date, recurrence, priority, duration,
- * "can run unattended", dependency, project, then labels — stripping each
- * match out of the working text
- * before the next detector runs. This keeps the dependency fragment (which
- * captures "everything after the trigger word") free of unrelated phrases
- * that were typed after it, e.g. "after Design review tomorrow p2" leaves
- * a clean "Design review" fragment to match against existing task titles
- * once "tomorrow" and "p2" have already been pulled out. Labels run last so
- * "@name" mentions aren't accidentally swallowed by an earlier detector's
- * fragment capture.
+ * Detection runs in sequence — link, "not before <date>"/earliest date, due
+ * date, recurrence, priority, duration, "can run unattended", "on the
+ * day"/enforce due date, "!noauto" (exclude from auto-schedule), dependency,
+ * "sub of", "unsubtask", "assign to"/"for", project, section shorthand, then
+ * labels — stripping each match out of the working text before the next
+ * detector runs. This keeps the dependency/"sub of"/"assign to" fragment
+ * (which captures "everything after the trigger word", up to the next "@"/
+ * "#" or the end of the string) free of unrelated phrases typed after it,
+ * e.g. "after Design review tomorrow p2" leaves a clean "Design review"
+ * fragment to match against existing task titles once "tomorrow" and "p2"
+ * have already been pulled out — and the same "@"/"#" boundary means a
+ * trailing "#project"/"@label" mention (e.g. "after Design review #Writing")
+ * is left alone for the detectors that run after it, rather than being
+ * swallowed into the dependency/"sub of"/"assign to" match. (The same
+ * bounded-capture tradeoff means two of these trigger phrases typed back to
+ * back with nothing else between them can still swallow one another — e.g.
+ * "assign to Alex after Design review" — a pre-existing characteristic of
+ * this style of detector, not something unique to "assign to".) The
+ * section-shorthand detector runs after "#project" for the same reason: an
+ * explicit "#Project/Section" mention already consumed its own text by the
+ * time "%section" runs, so a "%" appearing only as part of that already-
+ * stripped text can't double-match. Labels run last so "@name" mentions
+ * aren't accidentally swallowed by an earlier detector's fragment capture.
  * ============================================================================
  */
 
-import { findDuePhrase } from './dateParse';
-import { findRecurrencePhrase } from './recurrence';
+import { findDuePhrase, findFixedTimePhrase } from './dateParse';
+import { findRecurrencePhrase, WEEKDAY_LABELS } from './recurrence';
 import { findDurationPhrase } from './durationParser';
+import { URL_PATTERN_SOURCE, needsScheme } from './linkify';
 
 const PRIORITY_LEVELS = { 1: 'urgent', 2: 'high', 3: 'medium', 4: 'low' };
 
@@ -46,6 +73,37 @@ function removeMatch(text, matchedText) {
 /** Exported so callers can strip an individually-accepted match out of a title at save time. */
 export { removeMatch as stripMatchedText };
 
+// Reuses utils/linkify.js's URL pattern (used to render links inside notes
+// text) so the two can't silently drift apart. The non-global regex keeps the
+// single-match title detector simple; the global variant is used for the
+// notes-field multi-link detector below.
+const LINK_REGEX = new RegExp(URL_PATTERN_SOURCE, 'i');
+const LINK_REGEX_GLOBAL = new RegExp(URL_PATTERN_SOURCE, 'gi');
+
+/** Return every URL-like phrase found in text, preserving their indexes. */
+export function findLinkPhrases(text) {
+  if (!text || !text.trim()) return [];
+  const matches = [];
+  LINK_REGEX_GLOBAL.lastIndex = 0;
+  let m;
+  while ((m = LINK_REGEX_GLOBAL.exec(text)) !== null) {
+    const matchedText = m[0];
+    const url = needsScheme(matchedText) ? `https://${matchedText}` : matchedText;
+    matches.push({ url, matchedText, index: m.index });
+  }
+  LINK_REGEX_GLOBAL.lastIndex = 0;
+  return matches;
+}
+
+/** A plain URL typed into the title — becomes the task's `link` field, stripped out of the displayed title. */
+function findLinkPhrase(text) {
+  const m = text.match(LINK_REGEX);
+  if (!m) return null;
+  const matchedText = m[0];
+  const url = needsScheme(matchedText) ? `https://${matchedText}` : matchedText;
+  return { url, matchedText, index: m.index };
+}
+
 function findPriorityPhrase(text) {
   const m = text.match(/\bp([1-4])\b/i);
   if (!m) return null;
@@ -57,6 +115,82 @@ function findUnattendedPhrase(text) {
   const m = text.match(/\bunattended\b/i);
   if (!m) return null;
   return { matchedText: m[0], index: m.index };
+}
+
+/**
+ * A handful of plain-English ways to say "this must happen ON the due date,
+ * not early" — matches the allocator's `enforceDueDate` flag (see
+ * allocator.js: it collapses the whole scheduling window onto the due date
+ * itself instead of allowing earlier placement).
+ */
+function findEnforceDueDatePhrase(text) {
+  const m = text.match(/\b(?:on (?:the|that) day|hard deadline|strict(?:ly)? due|no earlier)\b/i);
+  if (!m) return null;
+  return { matchedText: m[0], index: m.index };
+}
+
+/**
+ * "Not before <date>" and similar deliberately-worded phrases for the
+ * `earliestDate` field (the existing "don't schedule before this day"
+ * checkbox/date-picker in TaskDetailModal — see allocator.js's
+ * getTaskWindow for how it's enforced). Trigger set is restricted to
+ * multi-word phrases so incidental use of "before"/"until" elsewhere in a
+ * title (e.g. "Finish before lunch") never matches, and deliberately
+ * distinct from findEnforceDueDatePhrase's "no earlier" trigger (which means
+ * "on the due date, not early" — a different field entirely).
+ *
+ * Bounded the same way findDependencyPhrase captures its fragment: run
+ * findDuePhrase only on the text immediately after the trigger, up to the
+ * next "@"/"#" or the end of the string, so a resolvable date phrase must be
+ * adjacent to the trigger rather than matching some unrelated date typed
+ * elsewhere in the title. No date found after the trigger -> null (never
+ * guess).
+ */
+function findEarliestDatePhrase(text) {
+  const m = text.match(/\b(?:not (?:start(?:ing)? )?before|don'?t start until|can'?t start before|no sooner than)\b/i);
+  if (!m) return null;
+  const afterTrigger = text.slice(m.index + m[0].length);
+  const fragment = afterTrigger.match(/^[^@#]*/)[0];
+  const dateMatch = findDuePhrase(fragment);
+  if (!dateMatch) return null;
+  const matchedText = text.slice(m.index, m.index + m[0].length + dateMatch.index + dateMatch.matchedText.length);
+  return { iso: dateMatch.iso, matchedText, index: m.index };
+}
+
+/**
+ * "!noauto" (also accepts "!manual") — a bang-prefixed shorthand, distinct
+ * from the "#project"/"@label" mentions, that opts a task out of the
+ * auto-scheduler entirely (matches Task.excludeFromAutoSchedule — see
+ * rebalanceEngine.js's eligibleTasks filter). A "!" prefix keeps it from
+ * colliding with any plain English word a title might otherwise contain.
+ */
+function findExcludeFromAutoSchedulePhrase(text) {
+  const m = text.match(/!(?:noauto|manual)\b/i);
+  if (!m) return null;
+  return { matchedText: m[0], index: m.index };
+}
+
+/**
+ * "in the morning" / "mornings" / "this afternoon" / "in the evening" — a
+ * preferred time of day (matches Task.preferredTimeOfDay; see
+ * utils/timeOfDay.js for the windows and placementCost.js for how softly it's
+ * applied).
+ *
+ * Requires either a leading preposition/determiner ("in the morning", "this
+ * afternoon", "every evening") or the plural form ("mornings"). A bare
+ * "morning" is deliberately NOT matched: "Morning standup notes" and "Good
+ * morning email" are ordinary titles, and silently eating that word — then
+ * quietly biasing the schedule — is worse than missing the hint. The plural
+ * carries the sense on its own, which a singular noun in a title does not.
+ */
+function findTimeOfDayPhrase(text) {
+  const m = text.match(
+    /\b(?:(?:in|on|during)\s+the\s+|this\s+|every\s+|each\s+)(morning|afternoon|evening)\b|\b(mornings|afternoons|evenings)\b/i
+  );
+  if (!m) return null;
+  const word = (m[1] || m[2]).toLowerCase();
+  const period = word.endsWith('s') ? word.slice(0, -1) : word;
+  return { period, matchedText: m[0], index: m.index };
 }
 
 /**
@@ -96,20 +230,288 @@ function matchFragmentAgainstCandidates(fragment, candidates, getName) {
 }
 
 function findDependencyPhrase(text, existingTasks) {
-  const m = text.match(/\b(?:after|depends on)\s+(.+)$/i);
+  // Bounded at the next "@"/"#" (or end of string) rather than swallowing to
+  // the literal end of the text — otherwise a "#project"/"@label" mention
+  // typed *after* the dependency phrase (e.g. "after Design review #Writing")
+  // gets folded into the dependency fragment and never reaches the project/
+  // label detectors that run later in parseTaskText.
+  const m = text.match(/\b(?:after|depends on)\s+([^@#]+?)(?=\s*[@#]|$)/i);
   if (!m || !m[1].trim()) return null;
   const fragment = m[1].trim();
   const task = matchFragmentAgainstCandidates(fragment, existingTasks, (t) => t.title);
   return { task, fragment, matchedText: m[0], index: m.index };
 }
 
-/** "#project" shorthand — single-word fragment (project names can be multi-word, but a hashtag delimiter can't tell where it ends without one). */
-function findProjectPhrase(text, projects) {
-  const m = text.match(/#([a-zA-Z0-9_-]+)/);
+/**
+ * "sub of <task>" / "subtask of <task>" — sets this task's `parentId` to the
+ * fuzzy-matched task, same idea as findDependencyPhrase above just for the
+ * parent/child relationship instead of a scheduling dependency. Bounded at
+ * the next "@"/"#" (or end of string) for the same reason: a "#project"/
+ * "@label" mention typed after the phrase (e.g. "sub of Design review
+ * #Writing") must be left for the project/label detectors that run later in
+ * parseTaskText, not folded into this fragment. The caller (useSmartTaskTitle
+ * / the modal's `fields.subOf`) is responsible for validating the matched
+ * task against taskHierarchy.js's getIneligibleParentIds before applying it —
+ * this detector only resolves a name, it has no notion of cycles or the
+ * 2-level sub-task depth cap.
+ */
+function findSubOfPhrase(text, existingTasks) {
+  const m = text.match(/\b(?:sub of|subtask of)\s+([^@#]+?)(?=\s*[@#]|$)/i);
+  if (!m || !m[1].trim()) return null;
+  const fragment = m[1].trim();
+  const task = matchFragmentAgainstCandidates(fragment, existingTasks, (t) => t.title);
+  return { task, fragment, matchedText: m[0], index: m.index };
+}
+
+/**
+ * "unsubtask" — the inverse of "sub of <task>" above: a bare marker (no task
+ * name to resolve, unlike findSubOfPhrase) meaning "clear this task's
+ * `parentId`". Same shape as findUnattendedPhrase's bare-marker detection.
+ * Matched here rather than as a bare "sub" so a plain word like "sub" typed
+ * elsewhere in a title never accidentally triggers it.
+ */
+function findUnsubtaskPhrase(text) {
+  const m = text.match(/\bunsubtask\b/i);
   if (!m) return null;
-  const fragment = m[1];
+  return { matchedText: m[0], index: m.index };
+}
+
+/**
+ * "assign to <name>" (also accepts "assigned to <name>") or a bare "for
+ * <name>" — sets a SHARED task's `assignedTo` to the matched collaborator's
+ * uid. Only ever invoked with a non-empty `collaborators` list by the caller
+ * (see useSmartTaskTitle.js) when the task's project is actually shared;
+ * there's no one to assign to on a personal task.
+ *
+ * "assign to <name>" is bounded the same way as findDependencyPhrase/
+ * findSubOfPhrase above (capture up to the next "@"/"#" or end of string,
+ * fuzzy-matched via matchFragmentAgainstCandidates) — safe to match loosely
+ * because the trigger phrase itself is unambiguous.
+ *
+ * "for <name>" is a different story: "for" is one of the most common words
+ * in an ordinary English title ("buy milk for the party", "gift for mom's
+ * birthday"), so matching it as loosely as the trigger phrases above would
+ * false-positive constantly (findProjectPhrase drew this same line by
+ * requiring its own bare-word fallback to be introduced by an explicit "#"
+ * sigil — "for" has no such sigil to lean on). Instead this requires the
+ * bounded fragment to be an EXACT, case-insensitive match for one
+ * collaborator's full display name, with substring matching turned off
+ * entirely — otherwise a short name like "Ann" would spuriously match a
+ * fragment like "Annual planning" (matchFragmentAgainstCandidates' substring
+ * check would call that a partial match). An ordinary title ending in "for
+ * <unrelated noun phrase>" therefore never matches unless that phrase
+ * happens to be a collaborator's name verbatim.
+ *
+ * ASYMMETRIC "no match" behavior between the two triggers, unlike
+ * findDependencyPhrase/findSubOfPhrase (which always return a `{task: null,
+ * ...}` detection once their trigger word matches, so the UI can show a "no
+ * match for X" chip): "assign to"/"assigned to" does the same — an
+ * unresolved name after an explicit trigger is still worth surfacing as "no
+ * match", since the user unambiguously meant to assign someone. A bare "for"
+ * with no exact match returns null OUTRIGHT (no detection object at all) —
+ * surfacing "no match" there would mean every ordinary title ending in "for
+ * <anything>" pops a "no match" chip, exactly the noise this stricter branch
+ * exists to avoid.
+ */
+function findAssignToPhrase(text, collaborators) {
+  if (!collaborators || collaborators.length === 0) return null;
+
+  const explicit = text.match(/\bassign(?:ed)? to\s+([^@#]+?)(?=\s*[@#]|$)/i);
+  if (explicit && explicit[1].trim()) {
+    const fragment = explicit[1].trim();
+    const collaborator = matchFragmentAgainstCandidates(fragment, collaborators, (c) => c.displayName);
+    return { collaborator, fragment, matchedText: explicit[0], index: explicit.index };
+  }
+
+  const forMatch = text.match(/\bfor\s+([^@#]+?)(?=\s*[@#]|$)/i);
+  if (forMatch && forMatch[1].trim()) {
+    const fragment = forMatch[1].trim();
+    const f = fragment.toLowerCase();
+    const exactMatches = collaborators.filter((c) => (c.displayName || '').trim().toLowerCase() === f);
+    if (exactMatches.length === 1) {
+      return { collaborator: exactMatches[0], fragment, matchedText: forMatch[0], index: forMatch.index };
+    }
+  }
+
+  return null;
+}
+
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * "#project" shorthand, optionally followed by "/ section" — Todoist's own
+ * "#Project/Section" syntax, tolerant of spaces around the slash ("#Tasks /
+ * section one"). The section fragment, once a "/" is typed, can contain
+ * spaces, running until the next "@"/"#" token or the end of the string.
+ *
+ * The project fragment itself first tries every existing project's FULL
+ * name (longest name first) as a literal, word-bounded prefix of whatever
+ * follows "#" — this is what lets multi-word project names ("Work Trip")
+ * resolve correctly instead of always stopping at the first word, and is
+ * essential for two projects that share a leading word ("Work" / "Work
+ * Trip"): trying the longest name first means "#Work Trip" resolves to
+ * "Work Trip" rather than silently matching the shorter "Work" and leaving
+ * "Trip" behind as stray title text (see useMentionAutocomplete, which
+ * inserts a selected project's full name this way). Only when no project's
+ * full name is spelled out does this fall back to the original single fuzzy
+ * word (matchFragmentAgainstCandidates) — so a typo or abbreviation like
+ * "#Groc" for "Groceries List" still resolves via substring match.
+ */
+function findProjectPhrase(text, projects, sections) {
+  const hashMatch = text.match(/#([^@#]*)/);
+  if (!hashMatch) return null;
+  const tail = hashMatch[1];
+  if (!tail.trim()) return null;
+  const hashIndex = hashMatch.index;
+
+  const byNameLengthDesc = [...projects].sort((a, b) => b.name.length - a.name.length);
+  for (const project of byNameLengthDesc) {
+    const name = project.name.trim();
+    if (!name) continue;
+    const prefixMatch = tail.match(new RegExp(`^${escapeRegExp(name)}(?=\\s|/|$)`, 'i'));
+    if (!prefixMatch) continue;
+
+    const consumed = prefixMatch[0];
+    const rest = tail.slice(consumed.length);
+    const slashLead = rest.match(/^\s*\/\s*/);
+    let sectionFragment;
+    let section = null;
+    let matchedTail = consumed;
+    if (slashLead) {
+      const afterSlash = rest.slice(slashLead[0].length);
+      // Same longest-full-name-first approach as the project match above —
+      // stop at the end of whichever known section name is actually spelled
+      // out, rather than swallowing every character up to the next "@"/"#"/
+      // end of string. Without this bound, once a section resolves, any
+      // further words typed on the same line (a new sentence, another
+      // "#project" mention with no "@"/"#" yet before it, etc.) kept getting
+      // folded into the match and highlighted/stripped as if they were still
+      // part of the section name.
+      const projectSections = sections.filter((s) => s.projectId === project.id);
+      const sectionsByNameLengthDesc = [...projectSections].sort((a, b) => b.name.length - a.name.length);
+      let sectionConsumed = null;
+      for (const candidate of sectionsByNameLengthDesc) {
+        const candidateName = candidate.name.trim();
+        if (!candidateName) continue;
+        const sectionPrefixMatch = afterSlash.match(new RegExp(`^${escapeRegExp(candidateName)}(?=\\s|$)`, 'i'));
+        if (sectionPrefixMatch) {
+          sectionConsumed = sectionPrefixMatch[0];
+          section = candidate;
+          break;
+        }
+      }
+      if (sectionConsumed !== null) {
+        sectionFragment = sectionConsumed.trim() || undefined;
+        matchedTail = consumed + slashLead[0] + sectionConsumed;
+      } else {
+        // No known section name is fully spelled out yet — fall back to a
+        // single fuzzy-matchable word (mirrors the project fallback below)
+        // instead of the unbounded rest-of-string capture.
+        const wordFallback = afterSlash.match(/^[^\s@#]*/);
+        sectionFragment = wordFallback[0].trim() || undefined;
+        matchedTail = consumed + slashLead[0] + wordFallback[0];
+        if (sectionFragment) {
+          section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
+        }
+      }
+    }
+    return { project, section, fragment: name, sectionFragment, matchedText: `#${matchedTail}`, index: hashIndex };
+  }
+
+  const wordMatch = text.match(/#([a-zA-Z0-9_-]+)(?:\s*\/\s*([^@#]+?)(?=\s*[@#]|$))?/);
+  if (!wordMatch) return null;
+  const fragment = wordMatch[1];
   const project = matchFragmentAgainstCandidates(fragment, projects, (p) => p.name);
-  return { project, fragment, matchedText: m[0], index: m.index };
+  const sectionFragment = wordMatch[2] ? wordMatch[2].trim() : undefined;
+  let section = null;
+  if (sectionFragment && project) {
+    const projectSections = sections.filter((s) => s.projectId === project.id);
+    section = matchFragmentAgainstCandidates(sectionFragment, projectSections, (s) => s.name);
+  }
+  return { project, section, fragment, sectionFragment, matchedText: wordMatch[0], index: wordMatch.index };
+}
+
+/**
+ * "%section" shorthand — a shorter alternative to "#Project/Section" (see
+ * findProjectPhrase above) for when the user doesn't want to type the
+ * project name at all, e.g. "%Groceries" instead of "#Home/Groceries".
+ * Searches every section across every project (there's no project context
+ * to scope the search to yet, unlike findProjectPhrase's section match,
+ * which is already narrowed to one project's sections), so this can
+ * legitimately be ambiguous in a way findProjectPhrase's section match never
+ * is: two different projects can each have their own section with the exact
+ * same name (e.g. two projects both have a "Todo" section). Rather than
+ * guessing which project the user meant, an ambiguous match returns every
+ * qualifying candidate (as `{project, section}` pairs) so the caller can
+ * show a disambiguation choice instead of silently picking one — the same
+ * "never guess" philosophy as matchFragmentAgainstCandidates, just unable to
+ * reuse that helper directly since it collapses straight to "one match or
+ * null" and throws away the candidate list a disambiguation UI needs. The
+ * matching rule itself still mirrors matchFragmentAgainstCandidates exactly:
+ * an exact case-insensitive match wins outright only if exactly one section
+ * has that exact name (two sections named identically across two projects
+ * is still "ambiguous", not an auto-win — the whole point is disambiguating
+ * by project), otherwise every substring match (either direction) qualifies
+ * as a candidate.
+ */
+function findSectionShorthandPhrase(text, projects, sections) {
+  const percentMatch = text.match(/%(?!\s)/);
+  if (!percentMatch) return null;
+  const afterPercent = text.slice(percentMatch.index + 1);
+
+  // Prefer stopping at the end of whichever known section name is actually
+  // spelled out (mirrors findProjectPhrase's section match above), so that
+  // once a section resolves, further words typed on the same line aren't
+  // folded into the match. Falls back to a single whitespace-free word when
+  // no known section name is fully typed yet — either way the match always
+  // stops at a space, so typing past it starts a new, unrelated word instead
+  // of continuing to extend this shorthand indefinitely.
+  const sectionsByNameLengthDesc = [...sections].sort((a, b) => b.name.length - a.name.length);
+  let consumed = null;
+  for (const candidate of sectionsByNameLengthDesc) {
+    const candidateName = candidate.name.trim();
+    if (!candidateName) continue;
+    const prefixMatch = afterPercent.match(new RegExp(`^${escapeRegExp(candidateName)}(?=\\s|[@#%]|$)`, 'i'));
+    if (prefixMatch) {
+      consumed = prefixMatch[0];
+      break;
+    }
+  }
+  if (consumed === null) {
+    const wordFallback = afterPercent.match(/^[^\s@#%]*/);
+    consumed = wordFallback[0];
+  }
+  if (!consumed.trim()) return null;
+
+  const fragment = consumed.trim();
+  const matchedText = `%${consumed}`;
+  const index = percentMatch.index;
+  const f = fragment.toLowerCase();
+
+  const exactMatches = [];
+  const partialMatches = [];
+  sections.forEach((s) => {
+    const name = s.name.trim().toLowerCase();
+    if (name === f) exactMatches.push(s);
+    else if (name.length > 0 && (name.includes(f) || f.includes(name))) partialMatches.push(s);
+  });
+
+  const qualifying = exactMatches.length > 0 ? exactMatches : partialMatches;
+
+  if (qualifying.length === 1) {
+    const section = qualifying[0];
+    const project = projects.find((p) => p.id === section.projectId);
+    return { project, section, fragment, matchedText, index, candidates: [] };
+  }
+
+  if (qualifying.length > 1) {
+    const candidates = qualifying.map((s) => ({ section: s, project: projects.find((p) => p.id === s.projectId) }));
+    return { project: null, section: null, fragment, matchedText, index, candidates };
+  }
+
+  return { project: null, section: null, fragment, matchedText, index, candidates: [] };
 }
 
 /**
@@ -127,24 +529,50 @@ function findLabelPhrases(text) {
  * dependency mentions.
  *
  * @param {string} text
- * @param {{existingTasks?: Array<{id: string, title: string}>, projects?: Array<{id: string, name: string}>}} [options]
+ * @param {{existingTasks?: Array<{id: string, title: string}>, projects?: Array<{id: string, name: string}>, sections?: Array<{id: string, name: string, projectId: string}>, collaborators?: Array<{uid: string, displayName: string}>}} [options]
  * @returns {{
  *   cleanedTitle: string,
  *   detected: {
+ *     link?: {url: string, matchedText: string},
  *     dueDate?: {iso: string, matchedText: string},
+ *     fixedTime?: {time: string, matchedText: string},
  *     recurrence?: {rule: {unit: string, count: number}, recurrenceString: string, matchedText: string},
  *     priority?: {level: string, matchedText: string},
+ *     enforceDueDate?: {matchedText: string},
+ *     earliestDate?: {iso: string, matchedText: string},
+ *     excludeFromAutoSchedule?: {matchedText: string},
+ *     preferredTimeOfDay?: {period: 'morning'|'afternoon'|'evening', matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
- *     project?: {project: object|null, fragment: string, matchedText: string},
+ *     subOf?: {task: object|null, fragment: string, matchedText: string},
+ *     assignTo?: {collaborator: {uid: string, displayName: string}|null, fragment: string, matchedText: string},
+ *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
+ *     sectionShorthand?: {project: object|null, section: object|null, fragment: string, matchedText: string, candidates: Array<{project: object|null, section: object}>},
  *     labels?: Array<{name: string, matchedText: string}>,
  *   }
  * }}
  */
-export function parseTaskText(text, { existingTasks = [], projects = [] } = {}) {
+export function parseTaskText(text, { existingTasks = [], projects = [], sections = [], collaborators = [] } = {}) {
   if (!text || !text.trim()) return { cleanedTitle: text || '', detected: {} };
 
   let working = text;
   const detected = {};
+
+  // Runs first — a URL's own text (query strings, paths) could otherwise
+  // confuse the dependency/project detectors below.
+  const linkMatch = findLinkPhrase(working);
+  if (linkMatch) {
+    detected.link = linkMatch;
+    working = removeMatch(working, linkMatch.matchedText);
+  }
+
+  // Runs before the plain due-date detector below: "not before tomorrow"
+  // would otherwise lose its date half to findDuePhrase matching "tomorrow"
+  // on its own first, leaving nothing for the trigger phrase to bind to.
+  const earliestDateMatch = findEarliestDatePhrase(working);
+  if (earliestDateMatch) {
+    detected.earliestDate = earliestDateMatch;
+    working = removeMatch(working, earliestDateMatch.matchedText);
+  }
 
   const dueMatch = findDuePhrase(working);
   if (dueMatch) {
@@ -152,10 +580,25 @@ export function parseTaskText(text, { existingTasks = [], projects = [] } = {}) 
     working = removeMatch(working, dueMatch.matchedText);
   }
 
+  // Independent of the due-date match above — a title can carry a date, a
+  // time, both, or neither (see findFixedTimePhrase's doc comment).
+  const fixedTimeMatch = findFixedTimePhrase(working);
+  if (fixedTimeMatch) {
+    detected.fixedTime = fixedTimeMatch;
+    working = removeMatch(working, fixedTimeMatch.matchedText);
+  }
+
   const recMatch = findRecurrencePhrase(working);
   if (recMatch) {
     const n = Math.max(1, recMatch.rule.count);
-    detected.recurrence = { ...recMatch, recurrenceString: `every ${n} ${recMatch.rule.unit}${n === 1 ? '' : 's'}` };
+    // Weekday-specific matches ("every sat and sun", "every second sun") carry a `days`
+    // array — show which day(s) were detected instead of collapsing to a generic
+    // "every N week(s)" that would silently drop that detail.
+    const recurrenceString =
+      recMatch.rule.days && recMatch.rule.days.length
+        ? `every ${n === 1 ? '' : `${n} `}week${n === 1 ? '' : 's'} on ${recMatch.rule.days.map((d) => WEEKDAY_LABELS[d]).join(', ')}`
+        : `every ${n} ${recMatch.rule.unit}${n === 1 ? '' : 's'}`;
+    detected.recurrence = { ...recMatch, recurrenceString };
     working = removeMatch(working, recMatch.matchedText);
   }
 
@@ -177,16 +620,66 @@ export function parseTaskText(text, { existingTasks = [], projects = [] } = {}) 
     working = removeMatch(working, unattendedMatch.matchedText);
   }
 
+  const enforceDueDateMatch = findEnforceDueDatePhrase(working);
+  if (enforceDueDateMatch) {
+    detected.enforceDueDate = enforceDueDateMatch;
+    working = removeMatch(working, enforceDueDateMatch.matchedText);
+  }
+
+  const excludeFromAutoScheduleMatch = findExcludeFromAutoSchedulePhrase(working);
+  if (excludeFromAutoScheduleMatch) {
+    detected.excludeFromAutoSchedule = excludeFromAutoScheduleMatch;
+    working = removeMatch(working, excludeFromAutoScheduleMatch.matchedText);
+  }
+
+  const timeOfDayMatch = findTimeOfDayPhrase(working);
+  if (timeOfDayMatch) {
+    detected.preferredTimeOfDay = { period: timeOfDayMatch.period, matchedText: timeOfDayMatch.matchedText };
+    working = removeMatch(working, timeOfDayMatch.matchedText);
+  }
+
   const depMatch = findDependencyPhrase(working, existingTasks);
   if (depMatch) {
     detected.dependency = depMatch;
     working = removeMatch(working, depMatch.matchedText);
   }
 
-  const projectMatch = findProjectPhrase(working, projects);
+  const subOfMatch = findSubOfPhrase(working, existingTasks);
+  if (subOfMatch) {
+    detected.subOf = subOfMatch;
+    working = removeMatch(working, subOfMatch.matchedText);
+  }
+
+  const unsubtaskMatch = findUnsubtaskPhrase(working);
+  if (unsubtaskMatch) {
+    detected.unsubtask = unsubtaskMatch;
+    working = removeMatch(working, unsubtaskMatch.matchedText);
+  }
+
+  const assignToMatch = findAssignToPhrase(working, collaborators);
+  if (assignToMatch) {
+    detected.assignTo = assignToMatch;
+    working = removeMatch(working, assignToMatch.matchedText);
+  }
+
+  const projectMatch = findProjectPhrase(working, projects, sections);
   if (projectMatch) {
     detected.project = projectMatch;
     working = removeMatch(working, projectMatch.matchedText);
+  }
+
+  // Runs after findProjectPhrase so an explicit "#Project/Section" mention
+  // already present in the title takes priority: findProjectPhrase has
+  // already stripped its own matched text out of `working` by this point,
+  // so this detector naturally can't re-match a "%"-free fragment it left
+  // behind. It's still possible for a "#Project/Section" mention to be
+  // typed *alongside* an unrelated "%section" elsewhere in the same title
+  // (both can legitimately fire), which is why sectionShorthand is stored
+  // separately from `project` rather than merged into it.
+  const sectionShorthandMatch = findSectionShorthandPhrase(working, projects, sections);
+  if (sectionShorthandMatch) {
+    detected.sectionShorthand = sectionShorthandMatch;
+    working = removeMatch(working, sectionShorthandMatch.matchedText);
   }
 
   const labelMatches = findLabelPhrases(working);

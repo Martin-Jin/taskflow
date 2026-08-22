@@ -19,9 +19,13 @@
  * ============================================================================
  */
 
-import { toISODate, fromISODate, addDays, dayOfWeek } from './dateUtils';
+import { toISODate, fromISODate, addDays, addMonthsClamped, dayOfWeek } from './dateUtils';
+import { BASE_WORD_NUMBERS } from './wordNumbers';
 
-const WEEKDAY_ALIASES = {
+// Exported so fuzzyKeyword-based typo suggestion (see useSmartKeywordSuggest)
+// can reuse the exact same keyword vocabulary this parser matches against,
+// instead of maintaining a second copy that could drift out of sync.
+export const WEEKDAY_ALIASES = {
   sunday: 0,
   sun: 0,
   monday: 1,
@@ -56,7 +60,7 @@ const MONTH_NAMES = [
   'december',
 ];
 
-const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
+export const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
   acc[name] = i;
   acc[name.slice(0, 3)] = i;
   return acc;
@@ -65,27 +69,9 @@ const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
 MONTH_ALIASES.sept = 8;
 
 /** Small word-numbers people type instead of digits: "in a week", "in a couple of days", "in a few months". */
-const WORD_NUMBERS = {
-  a: 1,
-  an: 1,
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  six: 6,
-  seven: 7,
-  eight: 8,
-  nine: 9,
-  ten: 10,
-  couple: 2,
-  few: 3,
-  // Multi-word forms — "a couple"/"a few" read as one count, not "a" (=1) stopping short before "couple".
-  'a couple': 2,
-  'a few': 3,
-};
+export const WORD_NUMBERS = BASE_WORD_NUMBERS;
 
-const UNIT_ALIASES = {
+export const UNIT_ALIASES = {
   day: 'day',
   days: 'day',
   week: 'week',
@@ -103,6 +89,14 @@ function alternation(map) {
     .sort((a, b) => b.length - a.length) // longest-first so "thurs" isn't shadowed by "thu"
     .join('|');
 }
+
+// Bare phrase words this parser matches literally rather than through an
+// alias table above (e.g. "today"/"tomorrow", or words that only mean
+// something as part of a fixed phrase like "next"/"end of"). Exported
+// alongside the tables above so fuzzy typo suggestion covers these too —
+// "month"/"year"/"week"/"fortnight" are deliberately omitted since they're
+// already covered by UNIT_ALIASES.
+export const PHRASE_WORDS = ['today', 'tomorrow', 'yesterday', 'next', 'this', 'weekend', 'end', 'of'];
 
 const WEEKDAY_PATTERN = alternation(WEEKDAY_ALIASES);
 const MONTH_PATTERN = alternation(MONTH_ALIASES);
@@ -135,16 +129,6 @@ function thisWeekdayFrom(fromIso, targetDow) {
 /** Last calendar day of `year`/`monthIndex` (0-11), e.g. lastDayOfMonth(2025, 1) === 28. */
 function lastDayOfMonth(year, monthIndex) {
   return new Date(year, monthIndex + 1, 0).getDate();
-}
-
-/** Add N whole calendar months, clamping the day-of-month so e.g. Jan 31 + 1 month lands on Feb 28/29, not rolling into March. */
-function addMonthsClamped(iso, n) {
-  const date = fromISODate(iso);
-  const targetMonthIndex = date.getMonth() + n;
-  const year = date.getFullYear() + Math.floor(targetMonthIndex / 12);
-  const monthIndex = ((targetMonthIndex % 12) + 12) % 12;
-  const day = Math.min(date.getDate(), lastDayOfMonth(year, monthIndex));
-  return toISODate(new Date(year, monthIndex, day));
 }
 
 /** Add N whole calendar years, clamping Feb 29 -> Feb 28 on non-leap target years. */
@@ -276,7 +260,10 @@ export function findDuePhrase(text, referenceDate = new Date()) {
   }
 
   // Numeric dates: "24/03/2025", "2/3/25", "24-03-2025", "24.03". Year optional.
-  m = s.match(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b/);
+  // Excludes matches immediately followed by a duration unit word ("3.5 hours",
+  // "1.5 hrs") — otherwise a decimal-hour estimate typed into the title gets
+  // misdetected as a "24.03"-style date and never reaches findDurationPhrase.
+  m = s.match(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b(?!\s*(?:h|hrs?|hours?|m|mins?|minutes?)\b)/);
   if (m) {
     const a = Number(m[1]);
     const b = Number(m[2]);
@@ -325,11 +312,80 @@ export function findDuePhrase(text, referenceDate = new Date()) {
     return { iso: thisWeekdayFrom(todayIso, dow), matchedText: m[0], index: m.index };
   }
 
-  m = s.match(new RegExp(`\\b(${WEEKDAY_PATTERN})\\b`));
-  if (m) {
-    const dow = WEEKDAY_ALIASES[m[1]];
-    return { iso: nextWeekdayFrom(todayIso, dow), matchedText: m[0], index: m.index };
+  // A bare weekday mention ("sat", "monday") normally means "the next
+  // occurrence of that day" as a one-off due date — EXCEPT right after a
+  // recurrence lead word ("every sat", "each monday"), where it's part of
+  // a recurrence phrase instead (see recurrence.js's findWeekdayRecurrenceSpan,
+  // which handles multi-day spans like "every sat and every sun"). Without
+  // this guard, this due-date detector — which runs before the recurrence
+  // detector in smartParse.js's pipeline — would grab just the first "sat"
+  // out of that phrase as a due date, leaving recurrence to see only
+  // "every sun" and silently drop Saturday from the rule.
+  const bareWeekdayRe = new RegExp(`\\b(${WEEKDAY_PATTERN})\\b`, 'g');
+  for (const bareMatch of s.matchAll(bareWeekdayRe)) {
+    const before = s.slice(0, bareMatch.index);
+    if (/(?:every|ev|each)!?\s+$/.test(before)) continue;
+    const dow = WEEKDAY_ALIASES[bareMatch[1]];
+    return { iso: nextWeekdayFrom(todayIso, dow), matchedText: bareMatch[0], index: bareMatch.index };
   }
 
   return null;
+}
+
+/**
+ * Find an explicit clock-time mention for a task's `fixedTime` field ("HH:MM"
+ * 24hr — see types/index.js's Task.fixedTime and allocator.js's
+ * placeFixedTimeInDay). Two forms are recognized:
+ *  - "at ..." ("at 12:30", "at 5pm", "at 17:00") — the "at" trigger word
+ *    disambiguates a bare 24-hour hour/minute reading from the duration
+ *    ("3.5 hours"), numeric-date ("24/03"), or priority ("p2") detectors
+ *    elsewhere in the title, none of which use "at".
+ *  - standalone, no "at" ("5pm", "9:10pm") — only recognized when an am/pm
+ *    suffix is present, since without "at" to disambiguate, a bare number
+ *    would collide with those same detectors.
+ * Either way, a FULLY bare hour with no minutes and no am/pm ("at 9", "9")
+ * is never read as a time on its own — it's too ambiguous with an ordinary
+ * number in a title; "9am"/"9pm" (or minutes, "at 9:30") is how a user
+ * signals they mean a clock time.
+ *
+ * Independent of findDuePhrase's due-date detection above: a title can carry
+ * a date, a time, both, or neither.
+ * @param {string} text
+ * @returns {{time: string, matchedText: string, index: number}|null}
+ */
+export function findFixedTimePhrase(text) {
+  if (!text || typeof text !== 'string') return null;
+
+  const atRe = /\bat\s+(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?\b/gi;
+  let m;
+  while ((m = atRe.exec(text))) {
+    const time = parseClockMatch(m[1], m[2], m[3]);
+    if (time) return { time, matchedText: m[0], index: m.index };
+  }
+
+  const bareRe = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gi;
+  while ((m = bareRe.exec(text))) {
+    const time = parseClockMatch(m[1], m[2], m[3]);
+    if (time) return { time, matchedText: m[0], index: m.index };
+  }
+
+  return null;
+}
+
+/** Shared hour/minute/meridiem -> "HH:MM" validation for findFixedTimePhrase's two forms. */
+function parseClockMatch(hourStr, minuteStr, meridiemStr) {
+  let hour = Number(hourStr);
+  const minute = minuteStr ? Number(minuteStr) : 0;
+  const meridiem = meridiemStr ? meridiemStr.toLowerCase() : null;
+  if (minute > 59) return null;
+  if (!minuteStr && !meridiem) return null; // bare hour alone is too ambiguous to read as a time
+
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    hour = meridiem === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+  } else if (hour > 23) {
+    return null;
+  }
+
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }

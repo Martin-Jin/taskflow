@@ -65,30 +65,6 @@ export function totalMinutes(intervals) {
   return intervals.reduce((sum, i) => sum + (i.end - i.start), 0);
 }
 
-/**
- * Trim a sorted list of intervals so their combined duration never exceeds
- * `capMinutes`, dropping/truncating from the end. Used to enforce a daily
- * deep-work cap on the actual free slots handed to the allocator, not just
- * on the summary hour count.
- */
-export function capTotalMinutes(intervals, capMinutes) {
-  const capped = [];
-  let used = 0;
-  for (const iv of intervals) {
-    if (used >= capMinutes) break;
-    const remaining = capMinutes - used;
-    const duration = iv.end - iv.start;
-    if (duration <= remaining) {
-      capped.push(iv);
-      used += duration;
-    } else {
-      capped.push({ start: iv.start, end: iv.start + remaining });
-      used = capMinutes;
-    }
-  }
-  return capped;
-}
-
 /** Convert "HH:MM" interval pairs to minute-based intervals. */
 export function toMinuteIntervals(pairs) {
   return pairs.map((p) => ({ start: timeToMinutes(p.start ?? p.startTime), end: timeToMinutes(p.end ?? p.endTime) }));
@@ -97,4 +73,32 @@ export function toMinuteIntervals(pairs) {
 /** Convert minute-based intervals back to "HH:MM" pairs. */
 export function toTimeIntervals(intervals) {
   return intervals.map((i) => ({ start: minutesToTime(i.start), end: minutesToTime(i.end) }));
+}
+
+/**
+ * The parts of `intervals` that fall OUTSIDE `range` — the complement of
+ * clipping to it.
+ *
+ * Exists for one job: a task with an explicit `fixedTime` may be scheduled
+ * beyond the day's working hours (see capacityEngine's fixedTimeFreeIntervals
+ * and allocator's placeFixedTimeInDay), and the allocator needs those
+ * out-of-hours slices as a SEPARATE pool from the in-hours ones. Keeping them
+ * separate rather than merging is what stops an out-of-hours placement
+ * competing with, or double-booking against, the shared in-hours track every
+ * other task draws from — the two pools are disjoint by construction.
+ *
+ * @param {{start: number, end: number}[]} intervals
+ * @param {{start: number, end: number}} range
+ * @returns {{start: number, end: number}[]} positive-length slices only
+ */
+export function clipOutsideRange(intervals, range) {
+  if (!range) return (intervals || []).map((iv) => ({ ...iv }));
+  const out = [];
+  for (const iv of intervals || []) {
+    // The slice before the range starts.
+    if (iv.start < range.start) out.push({ start: iv.start, end: Math.min(iv.end, range.start) });
+    // ...and the slice after it ends.
+    if (iv.end > range.end) out.push({ start: Math.max(iv.start, range.end), end: iv.end });
+  }
+  return out.filter((iv) => iv.end - iv.start > 0);
 }

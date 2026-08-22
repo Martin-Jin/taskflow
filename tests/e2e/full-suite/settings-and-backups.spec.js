@@ -1,0 +1,1090 @@
+// Full-suite regression coverage for the Settings tab (SettingsPanel.jsx and
+// its 13 extracted Settings/sections/*.jsx components) and its modals:
+// Labels, Manage Projects, Backups, Shortcuts, Changelog, theme toggle,
+// notification settings, the desktop section rail, and the guided tour
+// restart entry point.
+import { test, expect } from '@playwright/test';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import {
+  trackConsoleErrors,
+  gotoApp,
+  gotoTab,
+  openAddTask,
+  closeAnyModal,
+  expectNoErrors,
+  resolveConfirmModal,
+  switchToProject,
+} from './helpers.js';
+
+test.beforeEach(async ({ page }) => {
+  await gotoApp(page);
+});
+
+test('Labels modal: create via @tag, rename, and delete a label', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const tagName = `e2etag${Date.now()}`;
+
+  // Labels are created implicitly by using "@tag" in a task title — there's
+  // no standalone "add label" button in LabelsModal itself.
+  await openAddTask(page);
+  await page.getByPlaceholder('Task name').fill(`E2E label source task @${tagName}`);
+  await page.waitForTimeout(300);
+  await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
+  await page.waitForTimeout(500);
+
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: /view all tags/i }).click();
+  const dialog = page.getByRole('dialog', { name: 'All tags' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(tagName, { exact: true })).toBeVisible();
+
+  // Rename it.
+  const renamedName = `${tagName}-renamed`;
+  await dialog.getByRole('button', { name: `Rename ${tagName}` }).click();
+  const renameInput = dialog.locator('input').first();
+  await renameInput.fill(renamedName);
+  await renameInput.press('Enter');
+  await page.waitForTimeout(300);
+  await expect(dialog.getByText(renamedName, { exact: true })).toBeVisible();
+  await expect(dialog.getByText(tagName, { exact: true })).toHaveCount(0);
+
+  // Delete it — the shared in-app confirm modal is accepted below.
+  await dialog.getByRole('button', { name: `Delete ${renamedName}` }).click();
+  await resolveConfirmModal(page, { confirmLabel: 'Delete' });
+  await page.waitForTimeout(300);
+  await expect(dialog.getByText(renamedName, { exact: true })).toHaveCount(0);
+
+  // Note: LabelsModal's renameLabel (SchedulerContext.jsx) has no
+  // duplicate-name check — renaming to a name that already exists is
+  // allowed today (two distinct label ids can share a display name), so
+  // there's no validation-error UI to assert here.
+
+  await closeAnyModal(page);
+  expectNoErrors(errors);
+});
+
+test('Manage Projects modal: create, rename, appears in Add Task picker, delete reassigns tasks', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const projectName = `E2E Project ${Date.now()}`;
+  const renamedProjectName = `${projectName} Renamed`;
+
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  const addProjectDialog1 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog1.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog1.getByRole('button', { name: /^add project$/i }).click();
+  await page.waitForTimeout(400);
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+
+  // Rename via ProjectActionsMenu ("..." menu on the project row).
+  const projectRow = dialog.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  await projectRow.getByRole('button', { name: `Actions for ${projectName}` }).click();
+  await page.getByRole('menuitem', { name: /rename/i }).or(page.getByText('Rename', { exact: true })).first().click();
+  const renameInput = dialog.getByLabel(`Rename project "${projectName}"`);
+
+  // Escape abandons the rename and leaves the modal open, rather than closing
+  // the modal outright (which is what it used to do — see useEscapeLayer.js).
+  // The abandoned value must not be committed on the way out either.
+  await renameInput.fill('Escaped rename');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Escaped rename', { exact: true })).toHaveCount(0);
+
+  await projectRow.getByRole('button', { name: `Actions for ${projectName}` }).click();
+  await page.getByRole('menuitem', { name: /rename/i }).or(page.getByText('Rename', { exact: true })).first().click();
+  await renameInput.fill(renamedProjectName);
+  await renameInput.press('Enter');
+  await page.waitForTimeout(400);
+  await expect(dialog.getByText(renamedProjectName, { exact: true })).toBeVisible();
+
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  // Verify it appears in the Add Task project picker.
+  await openAddTask(page);
+  const addTaskDialog = page.getByRole('dialog');
+  await addTaskDialog.getByRole('button', { name: 'Project', exact: true }).click();
+  const projectListbox = page.getByRole('listbox', { name: 'Project' });
+  await expect(projectListbox).toBeVisible();
+  await expect(projectListbox.getByRole('option', { name: renamedProjectName })).toBeVisible();
+  // Assign the new task to this project so we can check reassignment after delete.
+  await projectListbox.getByRole('option', { name: renamedProjectName }).click();
+  await page.getByPlaceholder('Task name').fill(`E2E task in ${renamedProjectName}`);
+  await page.waitForTimeout(200);
+  await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
+  await page.waitForTimeout(500);
+
+  // Delete the project — its task(s) should move to Inbox per the
+  // confirm-dialog copy in ManageProjectsModal ("Its tasks will move to Inbox").
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog2 = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(dialog2).toBeVisible();
+  const projectRow2 = dialog2.locator('.sidebar-project-row-wrap', { hasText: renamedProjectName });
+  await projectRow2.getByRole('button', { name: `Actions for ${renamedProjectName}` }).click();
+  await page.getByText('Delete', { exact: true }).first().click();
+  await resolveConfirmModal(page, { expectMessage: /move to Inbox/i, confirmLabel: 'Delete' });
+  await page.waitForTimeout(400);
+  await expect(dialog2.getByText(renamedProjectName, { exact: true })).toHaveCount(0);
+
+  await closeAnyModal(page);
+  // Confirm the task itself survived (reassigned, not deleted) by finding it under All Tasks / search.
+  await gotoTab(page, 'Tasks');
+  await page.getByPlaceholder(/search tasks/i).fill(`E2E task in ${renamedProjectName}`);
+  await page.waitForTimeout(400);
+  await expect(page.getByText(`E2E task in ${renamedProjectName}`, { exact: false }).first()).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Manage Projects modal search is typo-tolerant (same ranker as the Sidebar and Calendar filter)', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eTypoSearch${runId}`;
+
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  const addProjectDialog2 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog2.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog2.getByRole('button', { name: /^add project$/i }).click();
+  await page.waitForTimeout(400);
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+
+  // Dropping the trailing digit is a one-edit-distance typo of the seeded
+  // name — should still surface it via the shared nameSearch.js ranker's
+  // fuzzy tier, same as the Calendar filter's own Projects search box.
+  const searchInput = dialog.getByPlaceholder('Search projects…');
+  await searchInput.fill(projectName.slice(0, -1));
+  await page.waitForTimeout(200);
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+
+  // A query with no plausible match (even fuzzily) shows the "no projects
+  // match" empty state instead of a stale/full list.
+  await searchInput.fill('zzzznomatchzzzz');
+  await page.waitForTimeout(200);
+  await expect(dialog.getByText(projectName, { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText('No projects match.')).toBeVisible();
+
+  await searchInput.fill('');
+  await closeAnyModal(page);
+  expectNoErrors(errors);
+});
+
+test('Manage Projects modal search: Arrow keys move the highlighted row and Enter selects it', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eManageKbd${runId}`;
+
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  const addProjectDialog3 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog3.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog3.getByRole('button', { name: /^add project$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog2 = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(dialog2).toBeVisible();
+  const searchInput = dialog2.getByPlaceholder('Search projects…');
+  await searchInput.fill(projectName);
+  await page.waitForTimeout(200);
+  const row = dialog2.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  await expect(row).toHaveClass(/is-kbd-active/);
+
+  await searchInput.press('Enter');
+  await page.waitForTimeout(400);
+  // Enter picks the highlighted project, same as clicking its row — clicking
+  // a row closes the modal and switches the active Tasks view (pickProject).
+  await expect(dialog2).not.toBeVisible();
+  await gotoTab(page, 'Tasks');
+  // The project title <h2> loses its implicit "heading" role once a project
+  // is active (it becomes role="button" so it's click-to-rename — see
+  // TaskListPanel.jsx) — check by class/text instead of getByRole.
+  await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
+
+  // Escape closes the whole modal here rather than only clearing the query
+  // — useModalA11y's capture-phase Escape handler always wins over this
+  // input's own bubble-phase handler, same as this modal's existing
+  // rename-input Escape (see ManageProjectsModal's own comment on this).
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog3 = page.getByRole('dialog', { name: 'Manage projects' });
+  const searchInput2 = dialog3.getByPlaceholder('Search projects…');
+  await searchInput2.fill(projectName);
+  await page.waitForTimeout(150);
+  await searchInput2.press('Escape');
+  await page.waitForTimeout(150);
+  await expect(dialog3).not.toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Manage Projects modal search works at a mobile viewport (tap-to-select, no stuck highlight)', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const runId = Date.now();
+  const projectName = `E2eManageMobile${runId}`;
+
+  // Create the project at default (desktop) viewport first, via the Projects
+  // page's "Manage projects" button; the mobile viewport switch below then
+  // reaches the same modal via the Tasks page's combined view/filter/project
+  // "⋯" menu instead (mobile has no Sidebar, and folds "See / manage all
+  // projects" into that popover rather than the desktop's inline button next
+  // to the project title — see ViewFilterMenu).
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await dialog.getByRole('button', { name: /^add project$/i }).click();
+  const addProjectDialog4 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog4.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog4.getByRole('button', { name: /^add project$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoTab(page, 'Tasks');
+  await page.getByRole('button', { name: 'View, filter, and project actions' }).click();
+  await page.getByText('See / manage all projects').click();
+  const mobileDialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(mobileDialog).toBeVisible();
+
+  const searchInput = mobileDialog.getByPlaceholder('Search projects…');
+  await searchInput.fill(projectName);
+  await page.waitForTimeout(200);
+  const row = mobileDialog.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  // The keyboard-nav highlight is desktop-relevant, but shouldn't visually
+  // break a touch tap — a plain click on the row (mobile viewports here run
+  // without a touch-enabled browser context, same as every other mobile
+  // test in this suite, so .click() stands in for a tap) must still select
+  // the project regardless of whether it happens to be the keyboard-
+  // highlighted one.
+  await row.getByText(projectName, { exact: true }).click();
+  await page.waitForTimeout(400);
+  await expect(mobileDialog).not.toBeVisible();
+  await expect(page.locator('.taskpage-project-title', { hasText: projectName })).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Tasks page header "See / manage all projects" button opens Manage Projects on desktop, for both All Tasks and a named project', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+
+  await gotoTab(page, 'Tasks');
+  // "All Tasks" (no active project) still gets the button — managing
+  // projects isn't specific to any one project. "See / manage all projects"
+  // is a menuitem (role="menuitem" overrides its implicit button role, see
+  // ProjectActionsItems) inside the "Manage projects"-labeled
+  // ProjectActionsMenu trigger, not a directly-clickable header button.
+  await expect(page.locator('.taskpage-project-title', { hasText: 'All Tasks' })).toBeVisible();
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  await page.getByRole('menuitem', { name: 'See / manage all projects' }).click();
+  await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  // Switch to a real project — the trigger's accessible name becomes
+  // project-specific ("Actions for <name>", see TaskListPanel.jsx) instead
+  // of the generic "Manage projects" used for "All Tasks"/"Inbox", but the
+  // menu it opens still offers this same menuitem regardless. Row 0 is
+  // "All Tasks", row 1 is the "Inbox" pseudo-project, so the first real
+  // project is row 2.
+  const projectLink = page.locator('.task-project-rail-link').nth(2);
+  const projectName = await projectLink.textContent();
+  await projectLink.click();
+  await page.waitForTimeout(300);
+  // Scoped to main — this same label also exists in the sidebar's own copy
+  // of the project row, which would otherwise make this a strict-mode
+  // violation (see CLAUDE.md's "Actions for <project> is ambiguous" note).
+  await page.getByRole('main').getByRole('button', { name: `Actions for ${projectName}` }).click();
+  await page.getByRole('menuitem', { name: 'See / manage all projects' }).click();
+  await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
+  await closeAnyModal(page);
+
+  expectNoErrors(errors);
+});
+
+test('Deleting the project currently selected as the Tasks view falls back to All Tasks', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const projectName = `E2E Active Filter Project ${Date.now()}`;
+
+  // Create a throwaway project and select it as the active Tasks view.
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const manageDialog = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(manageDialog).toBeVisible();
+  await manageDialog.getByRole('button', { name: /^add project$/i }).click();
+  const addProjectDialog5 = page.getByRole('dialog', { name: 'Add project' });
+  await addProjectDialog5.getByPlaceholder('Project name').fill(projectName);
+  await addProjectDialog5.getByRole('button', { name: /^add project$/i }).click();
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(200);
+
+  await gotoTab(page, 'Tasks');
+  await switchToProject(page, projectName);
+  // Confirm it's actually the active selection before deleting it.
+  await expect(page.locator('.taskpage-project-title')).toContainText(projectName);
+
+  // Delete it via Manage Projects while it's still the active view.
+  await gotoTab(page, 'Projects');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
+  const manageDialog2 = page.getByRole('dialog', { name: 'Manage projects' });
+  await expect(manageDialog2).toBeVisible();
+  const projectRow = manageDialog2.locator('.sidebar-project-row-wrap', { hasText: projectName });
+  await projectRow.getByRole('button', { name: `Actions for ${projectName}` }).click();
+  await page.getByText('Delete', { exact: true }).first().click();
+  await resolveConfirmModal(page, { confirmLabel: 'Delete' });
+  await page.waitForTimeout(400);
+  await closeAnyModal(page);
+  await page.waitForTimeout(300);
+
+  // The Tasks page shouldn't error or show a blank state — it should have
+  // gracefully fallen back to "All Tasks" (see TaskListPanel's activeProjectId
+  // effect: `if (!projects.some(...)) onChangeActiveProject(ALL_TASKS_PROJECT_ID)`).
+  await gotoTab(page, 'Tasks');
+  await expect(page.locator('.taskpage-project-title')).toContainText('All Tasks');
+  await expect(page.getByPlaceholder(/search tasks/i)).toBeVisible();
+  const taskRows = page.locator('.task-row, .board-card');
+  await expect(taskRows.first()).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Backups: export/restore round trip preserves tasks and a dashboard note', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const noteTitle = `E2E note ${Date.now()}`;
+
+  // Add a note via Dashboard (per BACKUP_FIELDS covering `notes`, not just tasks).
+  await gotoTab(page, 'Dashboard');
+  const noteAddBtn = page.getByRole('button', { name: /add note/i });
+  if (await noteAddBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await noteAddBtn.click();
+    await page.getByPlaceholder('Title').fill(noteTitle);
+    await page.getByRole('button', { name: /^add$/i }).click();
+    await page.waitForTimeout(300);
+  }
+
+  await gotoTab(page, 'Tasks');
+  const beforeTaskCount = await page.getByRole('button', { name: /^Mark .* complete$/ }).count();
+
+  await gotoTab(page, 'Settings');
+  const downloadPath = path.join(os.tmpdir(), 'taskflow-e2e-settings-backup.json');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: /^download backup$/i }).click(),
+  ]);
+  await download.saveAs(downloadPath);
+
+  const fileInput = page.locator('input[type="file"]');
+  await fileInput.setInputFiles(downloadPath);
+  await resolveConfirmModal(page, { confirmLabel: 'Restore' });
+  await page.waitForTimeout(600);
+
+  await gotoTab(page, 'Tasks');
+  const afterTaskCount = await page.getByRole('button', { name: /^Mark .* complete$/ }).count();
+  expect(afterTaskCount).toBe(beforeTaskCount);
+
+  await gotoTab(page, 'Dashboard');
+  if (await noteAddBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+    // Note card is present — verify the note we added survived the restore.
+    await expect(page.getByText(noteTitle, { exact: true }).first()).toBeVisible();
+  }
+
+  expectNoErrors(errors);
+});
+
+test('Backups: restoring a corrupt/invalid file shows an error and leaves existing data intact', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+
+  // Confirm the seeded "Refactor auth module" task (mockData.js) is present
+  // beforehand so we can assert it survived an aborted restore.
+  await gotoTab(page, 'Tasks');
+  await expect(page.getByText('Refactor auth module', { exact: false }).first()).toBeVisible();
+  const beforeTaskCount = await page.getByRole('button', { name: /^Mark .* complete$/ }).count();
+
+  // Malformed JSON — readBackupFile (backupService.js) rejects with "That
+  // file is not valid JSON." before isValidBackupPayload is ever reached.
+  const malformedPath = path.join(os.tmpdir(), 'taskflow-e2e-malformed-backup.json');
+  await fs.writeFile(malformedPath, '{ this is not valid json');
+
+  await gotoTab(page, 'Settings');
+  const fileInput = page.locator('input[type="file"]');
+  await fileInput.setInputFiles(malformedPath);
+  await resolveConfirmModal(page, { confirmLabel: 'Restore' });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.toast')).toContainText(/not valid JSON|failed to read/i);
+
+  await gotoTab(page, 'Tasks');
+  await expect(page.getByText('Refactor auth module', { exact: false }).first()).toBeVisible();
+  expect(await page.getByRole('button', { name: /^Mark .* complete$/ }).count()).toBe(beforeTaskCount);
+
+  // Well-formed JSON but not a backup shape at all — isValidBackupPayload
+  // (backupService.js) rejects it since it's missing every BACKUP_FIELDS key.
+  const garbagePath = path.join(os.tmpdir(), 'taskflow-e2e-garbage-backup.json');
+  await fs.writeFile(garbagePath, JSON.stringify({ garbage: true }));
+
+  await gotoTab(page, 'Settings');
+  await fileInput.setInputFiles(garbagePath);
+  await resolveConfirmModal(page, { confirmLabel: 'Restore' });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.toast')).toContainText(/invalid backup/i);
+
+  await gotoTab(page, 'Tasks');
+  await expect(page.getByText('Refactor auth module', { exact: false }).first()).toBeVisible();
+  expect(await page.getByRole('button', { name: /^Mark .* complete$/ }).count()).toBe(beforeTaskCount);
+
+  expectNoErrors(errors);
+});
+
+test('Shortcuts modal: lists shortcuts and closes', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: 'View shortcuts' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(dialog).toBeVisible();
+  const shortcutItems = dialog.locator('.missed-tasks-item');
+  await expect(shortcutItems.first()).toBeVisible();
+  expect(await shortcutItems.count()).toBeGreaterThan(0);
+
+  await closeAnyModal(page);
+  await expect(dialog).toHaveCount(0);
+  expectNoErrors(errors);
+});
+
+test('Changelog modal (Versions): shows entries from changelog.js and closes', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const { CURRENT_VERSION, CHANGELOG } = await import('../../../src/changelog.js');
+
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: "What's new" }).click();
+  const dialog = page.getByRole('dialog', { name: "What's new" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(`v${CURRENT_VERSION.split('.').slice(0, 2).join('.')}`, { exact: false }).first()).toBeVisible();
+  // The newest entry (CHANGELOG[0]) may be a patch-level fix collapsed under
+  // its major.minor group's header rather than shown as the group's own
+  // title (see ChangelogModal's grouping doc comment) — a collapsed fix
+  // entry only renders its version/date and change bullets, not its title,
+  // so search by (and assert on) its first change line instead, which also
+  // bypasses the "2 newest groups" cap and auto-expands the matching group.
+  await dialog.getByPlaceholder('Search updates…').fill(CHANGELOG[0].changes[0].slice(0, 40));
+  await expect(dialog.getByText(CHANGELOG[0].changes[0], { exact: true })).toBeVisible();
+
+  await closeAnyModal(page);
+  await expect(dialog).toHaveCount(0);
+  expectNoErrors(errors);
+});
+
+test('Theme toggle: switch to dark, applies data-theme, and persists after reload', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  await page.getByRole('button', { name: 'Light' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  await page.getByRole('button', { name: 'Dark' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  await page.reload();
+  await page.waitForTimeout(500);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  // Restore to light so other tests in this file (and other specs sharing
+  // this same localStorage-backed app) aren't left mid-run in a dark theme.
+  await gotoApp(page);
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: 'Light' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  expectNoErrors(errors);
+});
+
+test('Notification settings: toggles persist after reload', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const inAppCheckbox = page.locator('#notifInApp');
+  const emailCheckbox = page.locator('#notifEmail');
+  const startingSoonCheckbox = page.locator('#notifStartingSoon');
+  const overdueCheckbox = page.locator('#notifOverdue');
+  const dueTodayCheckbox = page.locator('#notifDueToday');
+
+  // #notifEmail is permanently disabled for every account except the one
+  // fixed uid the self-hosted notify-worker sends to (see SettingsPanel.jsx's
+  // EMAIL_NOTIFICATIONS_OWNER_UID / canUseEmailNotifications) — a guest E2E
+  // session can never toggle it, so it's excluded from this test.
+  await expect(emailCheckbox).toBeDisabled();
+
+  const initialInApp = await inAppCheckbox.isChecked();
+  const initialStartingSoon = await startingSoonCheckbox.isChecked();
+  const initialOverdue = await overdueCheckbox.isChecked();
+  const initialDueToday = await dueTodayCheckbox.isChecked();
+
+  // Flip every toggle.
+  await inAppCheckbox.setChecked(!initialInApp);
+  await startingSoonCheckbox.setChecked(!initialStartingSoon);
+  await overdueCheckbox.setChecked(!initialOverdue);
+  await dueTodayCheckbox.setChecked(!initialDueToday);
+  await page.waitForTimeout(300);
+
+  await page.reload();
+  await page.waitForTimeout(500);
+  await gotoTab(page, 'Settings');
+
+  await expect(page.locator('#notifInApp')).toHaveJSProperty('checked', !initialInApp);
+  await expect(page.locator('#notifStartingSoon')).toHaveJSProperty('checked', !initialStartingSoon);
+  await expect(page.locator('#notifOverdue')).toHaveJSProperty('checked', !initialOverdue);
+  await expect(page.locator('#notifDueToday')).toHaveJSProperty('checked', !initialDueToday);
+
+  // Restore original settings so this test is idempotent across reruns and
+  // doesn't leave other specs with unexpected notification state.
+  await page.locator('#notifInApp').setChecked(initialInApp);
+  await page.locator('#notifStartingSoon').setChecked(initialStartingSoon);
+  await page.locator('#notifOverdue').setChecked(initialOverdue);
+  await page.locator('#notifDueToday').setChecked(initialDueToday);
+  await page.waitForTimeout(200);
+
+  expectNoErrors(errors);
+});
+
+test('Settings desktop rail: lists every section, click-to-scroll and scroll-tracking both work, hidden on mobile', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  // All 13 sections (SETTINGS_SECTIONS in SettingsPanel.jsx) are present in
+  // the rail EXCEPT "Install app" — InstallAppSection only ever renders
+  // content on mobile, and the rail only ever shows on desktop, so those two
+  // conditions can never overlap; a rail link there would always scroll
+  // nowhere (see visibleSections in SettingsPanel.jsx). The other 12 are each
+  // backed by their own extracted <Name>Section component under
+  // Settings/sections/ — this is the one thing that would silently drop a
+  // whole section if that extraction ever went wrong.
+  const rail = page.locator('.settings-rail-link');
+  await expect(rail).toHaveCount(14);
+  await expect(rail).toHaveText([
+    'Account & sync',
+    'Integrations',
+    'Scheduling rules',
+    'Fixed routines',
+    'Appearance',
+    'Tags',
+    'Templates',
+    'Notifications',
+    'Help',
+    'Keyboard shortcuts',
+    'Versions',
+    'Recently deleted',
+    'Backups',
+    'Danger zone',
+  ]);
+
+  // Clicking a rail link scrolls its section into view (goToSection) and the
+  // IntersectionObserver picks it up as current — proves both the click path
+  // and the scroll-tracking path survived being split across 13 files.
+  await rail.filter({ hasText: 'Danger zone' }).click();
+  await expect(page.locator('[data-tour="danger-zone-card"]')).toBeInViewport();
+  await expect(rail.filter({ hasText: 'Danger zone' })).toHaveClass(/is-current/);
+
+  await rail.filter({ hasText: 'Account & sync' }).click();
+  await expect(page.locator('[data-tour="account-card"]')).toBeInViewport();
+  await expect(rail.filter({ hasText: 'Account & sync' })).toHaveClass(/is-current/);
+  await expect(rail.filter({ hasText: 'Danger zone' })).not.toHaveClass(/is-current/);
+
+  // Below the tablet breakpoint the rail is hidden entirely (see global.css's
+  // `@media (max-width: 1023px) { .settings-rail { display: none; } }`) —
+  // the sticky search bar is the only way to jump sections there.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.settings-rail')).toBeHidden();
+  await expect(page.locator('.settings-search-bar')).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('Guided tour: restart from Settings shows overlay and can be dismissed', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: /replay guided tour/i }).click();
+  await page.waitForTimeout(400);
+
+  const overlay = page.locator('.guided-tour-overlay');
+  await expect(overlay).toBeVisible();
+
+  await page.getByRole('button', { name: 'Close tour' }).click();
+  await page.waitForTimeout(300);
+  await expect(overlay).toHaveCount(0);
+
+  expectNoErrors(errors);
+});
+
+test('Scheduling rules: an out-of-range number is rejected with a hint instead of silently saved', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const card = page.locator('.settings-card', { hasText: 'Scheduling rules' }).first();
+  // "Max deep-work hours per day" — declared min 1 / max 16.
+  const deepWorkHours = card.locator('input[type=number]').nth(1);
+  const original = await deepWorkHours.inputValue();
+
+  await deepWorkHours.fill('99');
+  await deepWorkHours.blur();
+
+  await expect(page.locator('.field-rejection-hint')).toContainText('between 1 and 16');
+  // The invalid entry is neither accepted nor silently dropped — the field
+  // snaps back to the last value that actually was in range.
+  await expect(deepWorkHours).toHaveValue(original);
+
+  // Clearing the field is invalid too (it used to write 0 through Number('')).
+  await deepWorkHours.fill('');
+  await deepWorkHours.blur();
+  await expect(page.locator('.field-rejection-hint')).toBeVisible();
+  await expect(deepWorkHours).toHaveValue(original);
+
+  // A valid value commits and clears the hint.
+  await deepWorkHours.fill('6');
+  await deepWorkHours.blur();
+  await expect(page.locator('.field-rejection-hint')).toHaveCount(0);
+  await expect(deepWorkHours).toHaveValue('6');
+
+  expectNoErrors(errors);
+});
+
+test('Integrations: a token/key submit button only appears once something is typed', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const card = page.locator('.settings-card', { hasText: 'Integrations' }).first();
+  // The AI-key field rather than the Todoist one: the seeded mock state
+  // already has a Todoist token, so that block renders its "Change token"
+  // branch instead of an empty input.
+  const keyInput = card.getByPlaceholder(/Anthropic API key/i);
+  await keyInput.scrollIntoViewIfNeeded();
+  const saveButton = page.locator('form:has(input[placeholder*="Anthropic API key"])').getByRole('button', { name: 'Save' });
+
+  // Empty field: nothing to submit, so no button at all (it used to sit there
+  // permanently disabled).
+  await expect(saveButton).toHaveCount(0);
+
+  await keyInput.fill('sk-test-key');
+  await expect(saveButton).toBeVisible();
+
+  // Whitespace-only counts as empty.
+  await keyInput.fill('   ');
+  await expect(saveButton).toHaveCount(0);
+
+  expectNoErrors(errors);
+});
+
+test('mobile: the persistent install banner reserves layout space instead of covering page content', async ({ page }) => {
+  // Regression guard. The banner is fixed to the bottom inside
+  // .floating-notifications and, unlike its transient toast neighbours, stays
+  // until dismissed. `.main-content`'s mobile padding only reserved room for
+  // the bottom tab bar, so the last ~60px of every scrollable page sat
+  // permanently underneath the banner with no way to scroll it clear — most
+  // visible in Settings, where real controls ended up under it.
+  const errors = trackConsoleErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoApp(page);
+  await gotoTab(page, 'Settings');
+
+  const banner = page.locator('.install-app-banner');
+  await expect(banner).toBeVisible();
+
+  const bannerHeight = (await banner.boundingBox()).height;
+  const paddingWithBanner = await page.evaluate(
+    () => parseFloat(getComputedStyle(document.querySelector('.main-content')).paddingBottom)
+  );
+  // Room for the bottom bar AND the banner, not just the bar.
+  expect(paddingWithBanner).toBeGreaterThan(bannerHeight);
+
+  // Dismissing it releases the space again rather than stranding the padding.
+  await banner.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(banner).toHaveCount(0);
+  const paddingAfter = await page.evaluate(
+    () => parseFloat(getComputedStyle(document.querySelector('.main-content')).paddingBottom)
+  );
+  expect(paddingAfter).toBeLessThan(paddingWithBanner);
+
+  expectNoErrors(errors);
+});
+
+test('Scheduling rules: per-weekday work hours can be turned on, edited, and turned back off', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const card = page.locator('.settings-card', { hasText: 'Scheduling rules' }).first();
+  const readRules = () => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:rules') || '{}'));
+
+  // Off by default: one start/end pair, no per-day rows. Existing users see
+  // exactly what they saw before.
+  await expect(page.locator('.workhours-row')).toHaveCount(0);
+  expect((await readRules()).workHoursByDay).toBeUndefined();
+
+  await page.locator('#perDayWorkHours').check();
+  await expect(page.locator('.workhours-row')).toHaveCount(7);
+
+  // Seeded from the single pair the user already had, with weekends off —
+  // modelling Saturday as identically available to Tuesday is the bug this
+  // feature exists to fix.
+  await expect(page.locator('.workhours-off-label')).toHaveCount(2);
+  const seeded = await readRules();
+  expect(seeded.workHoursByDay['6'].enabled).toBe(false);
+  expect(seeded.workHoursByDay['1'].enabled).toBe(true);
+  // The baseline scalars survive: notify-worker reads them, and they're the
+  // fallback for any day without an override.
+  expect(seeded.workDayStart).toBeTruthy();
+  expect(seeded.workDayEnd).toBeTruthy();
+
+  // Narrowing one day writes an explicit override for that day only.
+  await page.locator('.workhours-row').first().locator('input[type=time]').first().fill('10:00');
+  await page.waitForTimeout(400);
+  const edited = await readRules();
+  expect(edited.workHoursByDay['1'].start).toBe('10:00');
+  expect(edited.workHoursByDay['2'].start).toBe(seeded.workHoursByDay['2'].start);
+
+  // Turning a day off replaces its inputs with a plain label.
+  const satRow = page.locator('.workhours-row').nth(5);
+  await expect(satRow.locator('input[type=time]')).toHaveCount(0);
+  await satRow.locator('input[type=checkbox]').check();
+  await expect(satRow.locator('input[type=time]')).toHaveCount(2);
+
+  // Switching back off drops the map entirely rather than leaving a stale one
+  // behind — its mere presence is what enables per-day mode.
+  await page.locator('#perDayWorkHours').uncheck();
+  await expect(page.locator('.workhours-row')).toHaveCount(0);
+  expect((await readRules()).workHoursByDay).toBeUndefined();
+  await expect(card.locator('input[type=time]')).toHaveCount(2);
+
+  expectNoErrors(errors);
+});
+
+/**
+ * Every settings section must be reachable in the rail, not just most of them.
+ *
+ * Two separate bugs made the tail unreachable, and both were invisible to any
+ * "does the rail work" spot check: there wasn't enough scroll room below the
+ * last cards for their tops to reach the highlight band at all (so Versions
+ * and Backups could never be current, and a special case force-selected only
+ * the very last section), and scrollIntoView parked a clicked card ABOVE that
+ * band, handing the highlight to the card after it. A loop over every section
+ * is the only assertion that catches either.
+ */
+test('the settings rail highlights every section it can navigate to', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(500);
+
+  const rail = page.locator('.settings-rail');
+  const labels = await rail.locator('.settings-rail-link').allTextContents();
+  expect(labels.length).toBeGreaterThan(8);
+
+  for (const label of labels.map((l) => l.trim())) {
+    await rail.getByRole('button', { name: label, exact: true }).click();
+    await page.waitForTimeout(700);
+    await expect(page.locator('.settings-rail-link.is-current')).toHaveText(label);
+  }
+
+  // Scrolling to the very bottom lands on the last section, which is what the
+  // removed special case used to force unconditionally.
+  await page.evaluate(() => {
+    const el = document.querySelector('.main-content');
+    el.scrollTop = el.scrollHeight;
+  });
+  await page.waitForTimeout(600);
+  await expect(page.locator('.settings-rail-link.is-current')).toHaveText(labels[labels.length - 1].trim());
+
+  expectNoErrors(errors);
+});
+
+test('Settings → Templates lists saved templates and opens the same picker', async ({ page }) => {
+  /* Templates were reachable only via a keyboard shortcut, which made a saved
+     template invisible unless you already knew the shortcut existed. */
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(400);
+
+  const card = page.locator('[data-tour="templates-card"]');
+  await card.scrollIntoViewIfNeeded();
+  // Says so plainly rather than opening an empty picker.
+  await expect(card.getByRole('button', { name: /no templates yet/i })).toBeVisible();
+
+  await page.evaluate(() => {
+    localStorage.setItem('taskflow:v1:taskTemplates', JSON.stringify([
+      { id: 'b', name: 'Zebra process', createdAt: 2, tasks: [{ localId: 'z', title: 'Z', dueDayOffset: 0, parentLocalId: null, dependsOnLocalIds: [] }] },
+      { id: 'a', name: 'Aardvark process', createdAt: 1, tasks: [{ localId: 'a', title: 'A', dueDayOffset: null, parentLocalId: null, dependsOnLocalIds: [] }] },
+    ]));
+  });
+  await page.reload();
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(500);
+  await card.scrollIntoViewIfNeeded();
+  await expect(card.getByRole('button', { name: /view 2 templates/i })).toBeVisible();
+
+  // Same picker as the command palette's — one place the rows are maintained.
+  await card.getByRole('button', { name: /view 2 templates/i }).click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.template-row-name')).toHaveText(['Aardvark process', 'Zebra process']);
+
+  expectNoErrors(errors);
+});
+
+test('Appearance: the sound toggle is not flush against the theme switch', async ({ page }) => {
+  /* The theme toggle is a control GROUP, so it matched none of the
+     "consecutive settings rows" spacing pairings and the row after it sat with
+     a 0px gap while every other row had 12-14px. */
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(400);
+
+  const gap = await page.evaluate(() => {
+    const toggle = document.querySelector('.theme-toggle');
+    const row = toggle.nextElementSibling;
+    return Math.round(row.getBoundingClientRect().top - toggle.getBoundingClientRect().bottom);
+  });
+  expect(gap).toBeGreaterThanOrEqual(8);
+
+  expectNoErrors(errors);
+});
+
+test.describe('Recently deleted (trash/restore)', () => {
+  const trash = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:trash') || '[]'));
+
+  async function openTrashCard(page) {
+    await gotoTab(page, 'Settings');
+    await page.waitForTimeout(400);
+    const card = page.locator('[data-tour="trash-card"]');
+    await card.scrollIntoViewIfNeeded();
+    return card;
+  }
+
+  test('deleting a project files it in the trash, and restoring brings back its sections and tasks', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+
+    await gotoTab(page, 'Projects');
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+    await dialog.locator('.sidebar-project-row-wrap', { hasText: 'Work' }).getByRole('button', { name: 'Actions for Work' }).click();
+    await page.getByText('Delete', { exact: true }).first().click();
+    await resolveConfirmModal(page, { confirmLabel: 'Delete' });
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+
+    // The entry records the sections and the DETACHED TASK IDS, not task copies
+    // — a stored copy would overwrite whatever the user did to them since.
+    const entries = await trash(page);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].kind).toBe('project');
+    expect(entries[0].name).toBe('Work');
+    expect(entries[0].sections.length).toBeGreaterThan(0);
+    expect(entries[0].detached.length).toBeGreaterThan(0);
+
+    const card = await openTrashCard(page);
+    await expect(card.locator('.trash-row-name')).toHaveText(['Work']);
+    await expect(card.locator('.trash-row-meta')).toContainText(/Project · \d+ tasks, \d+ sections · expires in 30 days/);
+
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(800);
+
+    const after = await page.evaluate(() => ({
+      hasWork: JSON.parse(localStorage.getItem('taskflow:v1:projects')).some((p) => p.name === 'Work'),
+      orphanTasks: JSON.parse(localStorage.getItem('taskflow:v1:tasks')).filter((t) => !t.projectId && !t.deletedAt).length,
+    }));
+    expect(after.hasWork).toBe(true);
+    // Every task went back to the project, so none is left sitting in Inbox.
+    expect(after.orphanTasks).toBe(0);
+    // The entry is consumed, not left behind to restore twice.
+    expect(await trash(page)).toHaveLength(0);
+
+    expectNoErrors(errors);
+  });
+
+  test('a task filed elsewhere since the delete is left where it is, and the toast says so', async ({ page }) => {
+    /* THE case that matters: yanking such a task back would silently undo a
+       deliberate move, and would look like a successful restore. */
+    const errors = trackConsoleErrors(page);
+
+    await gotoTab(page, 'Projects');
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+    await dialog.locator('.sidebar-project-row-wrap', { hasText: 'Writing' }).getByRole('button', { name: 'Actions for Writing' }).click();
+    await page.getByText('Delete', { exact: true }).first().click();
+    await resolveConfirmModal(page, { confirmLabel: 'Delete' });
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+
+    const entry = (await trash(page))[0];
+    expect(entry.detached.length).toBeGreaterThan(0);
+    const movedId = entry.detached[0].taskId;
+
+    // Re-file it into another project, as a user would.
+    const movedTo = await page.evaluate((id) => {
+      const key = 'taskflow:v1:tasks';
+      const tasks = JSON.parse(localStorage.getItem(key));
+      const other = JSON.parse(localStorage.getItem('taskflow:v1:projects')).find((p) => p.name !== 'Writing');
+      tasks.find((t) => t.id === id).projectId = other.id;
+      localStorage.setItem(key, JSON.stringify(tasks));
+      return other.id;
+    }, movedId);
+    await page.reload();
+
+    const card = await openTrashCard(page);
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(800);
+
+    const stillMoved = await page.evaluate(
+      (id) => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === id)?.projectId,
+      movedId
+    );
+    expect(stillMoved).toBe(movedTo);
+    // Reported rather than silently skipped.
+    await expect(page.locator('[class*="toast"]').first()).toContainText(/left where/i);
+
+    expectNoErrors(errors);
+  });
+
+  test('a tag comes back on the tasks that carried it', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      localStorage.setItem('taskflow:v1:labels', JSON.stringify([{ id: 'lz', name: 'e2e-trash-tag', color: '#e88' }]));
+      const key = 'taskflow:v1:tasks';
+      const tasks = JSON.parse(localStorage.getItem(key));
+      tasks[0].labelIds = ['lz'];
+      tasks[1].labelIds = ['lz'];
+      localStorage.setItem(key, JSON.stringify(tasks));
+    });
+    await page.reload();
+
+    await gotoTab(page, 'Settings');
+    await page.getByRole('button', { name: /view all tags/i }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: /delete.*e2e-trash-tag/i }).first().click();
+    await resolveConfirmModal(page, { confirmLabel: 'Delete' }).catch(() => {});
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).filter((t) => (t.labelIds || []).includes('lz')).length)).toBe(0);
+
+    const card = await openTrashCard(page);
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(800);
+
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:labels')).some((l) => l.id === 'lz'))).toBe(true);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).filter((t) => (t.labelIds || []).includes('lz')).length)).toBe(2);
+
+    expectNoErrors(errors);
+  });
+
+  test('restoring a section whose project is gone is refused with a reason, keeping the entry', async ({ page }) => {
+    /* A section is only reachable through its project, so it would come back
+       invisible — better to say why than to "succeed" into nothing. */
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      localStorage.setItem('taskflow:v1:trash', JSON.stringify([{
+        id: 'orphan', kind: 'section', name: 'Orphaned column', deletedAt: Date.now(),
+        section: { id: 'sX', name: 'Orphaned column', projectId: 'no-such-project' }, detached: [],
+      }]));
+    });
+    await page.reload();
+
+    const card = await openTrashCard(page);
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(600);
+
+    await expect(page.locator('[class*="toast"]').first()).toContainText(/Restore the project/i);
+    // Kept, so the user can restore the project and try again.
+    expect(await trash(page)).toHaveLength(1);
+
+    expectNoErrors(errors);
+  });
+
+  test('an expired entry is swept on load rather than lingering in synced state', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      const day = 24 * 60 * 60 * 1000;
+      localStorage.setItem('taskflow:v1:trash', JSON.stringify([
+        { id: 'old', kind: 'label', name: 'Ancient', deletedAt: Date.now() - 31 * day, label: { id: 'l1', name: 'x' }, detached: [] },
+        { id: 'new', kind: 'label', name: 'Recent', deletedAt: Date.now() - day, label: { id: 'l2', name: 'y' }, detached: [] },
+      ]));
+    });
+    await page.reload();
+    await page.waitForTimeout(900);
+
+    expect((await trash(page)).map((e) => e.id)).toEqual(['new']);
+
+    const card = await openTrashCard(page);
+    await expect(card.locator('.trash-row-name')).toHaveText(['Recent']);
+
+    expectNoErrors(errors);
+  });
+});
+
+test('fixed routines: a day picker scopes the timeline and new routines to one weekday', async ({ page }) => {
+  /* A routine has always carried daysOfWeek, but nothing could reach it — a
+     new routine always took all seven days, so "gym on Tuesdays" wasn't
+     expressible. */
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(300);
+  const card = page.locator('.settings-card', { has: page.getByRole('heading', { name: 'Fixed routines' }) });
+  await card.scrollIntoViewIfNeeded();
+
+  // Per-day counts, so you can see which days carry extras without clicking each.
+  await expect(card.locator('.routine-day-option')).toHaveCount(8);
+  await expect(card.locator('.routine-day-option').first()).toHaveText(/All days/);
+
+  // Draw a routine with Tuesday selected -> it applies to Tuesday alone.
+  await card.locator('.routine-day-option', { hasText: 'Tuesday' }).click();
+  await page.waitForTimeout(250);
+  const col = card.locator('.routine-timeline-column').first();
+  const box = await col.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 400);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + 460, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+
+  const created = await page.evaluate(() => {
+    const r = JSON.parse(localStorage.getItem('taskflow:v1:routines'));
+    return r[r.length - 1].daysOfWeek;
+  });
+  expect(created).toEqual([2]);
+
+  // In "All days" it's marked, so a Tuesday-only routine can't be mistaken for
+  // a daily one — dragging it would otherwise look like it changed every day.
+  await card.locator('.routine-day-option', { hasText: 'All days' }).click();
+  await page.waitForTimeout(300);
+  await expect(card.locator('.routine-block-days', { hasText: 'Tue' })).toBeVisible();
+
+  expectNoErrors(errors);
+});
+
+test('fixed routines: the day picker is a usable chip row on a phone', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await page.setViewportSize({ width: 375, height: 800 });
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(400);
+  const card = page.locator('.settings-card', { has: page.getByRole('heading', { name: 'Fixed routines' }) });
+  await card.scrollIntoViewIfNeeded();
+
+  // Stacked, not a side column that would squeeze the timeline to nothing.
+  const opt = card.locator('.routine-day-option').first();
+  const box = await opt.boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(40); // holds at the 639px breakpoint
+  expect(await page.evaluate(() => document.body.scrollWidth <= document.body.clientWidth)).toBe(true);
+
+  expectNoErrors(errors);
+});

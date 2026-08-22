@@ -66,9 +66,52 @@
   cursor: pointer;
 }
 
+/* Event/Task segmented toggle atop EventDetailModal's create form — two
+   equal-width tabs, active one highlighted. Flex-based so it naturally
+   shrinks to the modal's own max-width: 92vw on narrow/mobile screens
+   rather than needing its own breakpoint. */
+.segmented-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 12px;
+  background: var(--color-bg-surface-hover);
+  border-radius: var(--radius-md, 8px);
+}
+
+.segmented-toggle-option {
+  flex: 1;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  border-radius: calc(var(--radius-md, 8px) - 3px);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.segmented-toggle-option.is-active {
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
 .form-hint {
   font-size: 11.5px;
   color: var(--color-text-secondary);
+  margin: 4px 0 0;
+}
+
+/* AddTaskModal's "you haven't specified X" callout — a plain .form-hint
+   read as visually identical to the "Smart parse:" reference line right
+   below it, so a real missing-field warning was easy to miss. Distinct
+   color/weight (the same warning token Stats/scheduling conflicts already
+   use) so it reads as something to act on, not just muted help text. */
+.form-hint-warning {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-warning);
   margin: 4px 0 0;
 }
 
@@ -77,6 +120,43 @@
   color: var(--color-danger);
   margin-top: -6px;
   margin-bottom: 14px;
+}
+
+/* Transient, field-scoped rejection message (see FieldRejectionHint) —
+   boxed and icon-led so it reads as "this input, right now", as opposed to
+   .form-error above, which is an unboxed form-level failure line. Tinted
+   rather than solid so it stays quiet next to the input it points at. */
+.field-rejection-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* No margin of its own — every host either sits it in a gap-spaced flex
+     column (.form-row) or supplies its own spacing (see .note-editor-hint). */
+  margin: 0;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-surface));
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--color-danger);
+  animation: field-rejection-hint-in var(--motion-enter-duration, 140ms) var(--motion-enter-ease, ease-out);
+}
+
+.field-rejection-hint svg {
+  flex-shrink: 0;
+}
+
+@keyframes field-rejection-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .form-warning {
@@ -107,8 +187,10 @@
   border: 1px solid transparent;
   font-size: 13.5px;
   font-family: inherit;
-  line-height: normal;
-  white-space: pre;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .smart-title-backdrop {
@@ -118,6 +200,7 @@
   overflow: hidden;
   pointer-events: none;
   color: transparent;
+  min-height: 0;
 }
 
 .smart-title-mark {
@@ -131,6 +214,11 @@
 .smart-title-input {
   position: relative;
   z-index: 1;
+  min-height: 38px;
+  max-height: calc(3 * 1.4em + 16px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  resize: none;
   background: var(--color-bg-page);
   border-radius: var(--radius-sm);
   color: var(--color-text-primary);
@@ -139,6 +227,38 @@
 .smart-title-input:focus {
   border-color: var(--color-accent-border);
   outline: none;
+}
+
+/* ----------------------------------------------------------------------
+   SmartDurationInput — the "Estimated time" field's highlight overlay.
+   Same backdrop technique as SmartTitleInput above, scoped to a single
+   line of text; inset mirrors the negative margin/padding that
+   `.detail-field-value input` applies so the overlay lines up exactly
+   with the visible input box.
+   ---------------------------------------------------------------------- */
+.smart-duration-wrap {
+  position: relative;
+}
+
+.smart-duration-backdrop {
+  position: absolute;
+  inset: -4px -6px;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  padding: 4px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: pre;
+  display: flex;
+  align-items: center;
+}
+
+.smart-duration-mark {
+  background: color-mix(in srgb, var(--color-accent-border) 26%, transparent);
+  border-radius: 3px;
+  color: transparent;
 }
 
 /* ----------------------------------------------------------------------
@@ -157,7 +277,6 @@
 .smart-chip {
   background: var(--color-accent-soft);
   color: var(--color-accent);
-  border-color: transparent;
   padding-right: 4px;
 }
 
@@ -170,6 +289,58 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Wraps a single chip + its optional disambiguation popover so the popover
+   can anchor directly under just that chip rather than the whole row. */
+.smart-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.smart-chip-expandable {
+  cursor: pointer;
+}
+
+/* Disambiguation popover for an "expandable" chip (see SmartChips.jsx) —
+   e.g. "%section" shorthand matching several same-named sections across
+   different projects. Reuses .detail-move-to-popover/.detail-move-to-item's
+   visual language (border/background/shadow/radius) rather than a plain
+   absolutely-positioned list with no matching style. */
+.smart-chip-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  max-width: min(90vw, 280px);
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.smart-chip-popover-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smart-chip-popover-item:hover {
+  background: var(--color-bg-surface-hover);
 }
 
 /* ----------------------------------------------------------------------
@@ -261,7 +432,6 @@
    rules only cover the shared shape.
    ---------------------------------------------------------------------- */
 .chip-label {
-  border-color: transparent;
   padding-right: 4px;
   font-weight: 600;
 }
@@ -284,6 +454,362 @@
    its input chrome (border/background) on hover/focus, so at rest it reads
    like a label + value pair rather than a form.
    ---------------------------------------------------------------------- */
+/* Slim icon-only bar above the two-column body — Todoist keeps its
+   "..."/close controls up here, separate from the title, so the title can
+   live inside `.detail-main` and top-align with the sidebar's first field
+   instead of spanning the full width above both columns. */
+.detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+/* .detail-header-close's own margin-left: auto (below) is for modals where
+   it shares a row with a title and needs to push itself to the far right —
+   here it already sits in a flex-end-justified row with the "..." trigger,
+   so the auto margin would eat all the free space and shove the trigger to
+   the opposite edge instead of leaving it adjacent to Close. */
+.detail-topbar .detail-header-close {
+  margin-left: 0;
+}
+
+.detail-menu {
+  position: relative;
+}
+
+/* Icon-only timer trigger, sitting immediately left of the "..." menu (see
+   TaskDetailModal's detail-topbar) — same relative-positioning role as
+   .detail-menu above, just for the timer popover instead. */
+.detail-timer-trigger-wrap {
+  position: relative;
+}
+
+/* Todoist-style parent/child breadcrumb — only rendered when the open task
+   actually has a parent or sub-tasks (see TaskDetailModal). Sits first in the
+   row (left-aligned); flex:1 lets it fill the remaining space so the "..."
+   trigger and close button stay pinned together on the right, and lets the
+   breadcrumb ellipsis instead of wrapping/pushing them off the row on narrow
+   screens. */
+.detail-hierarchy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+}
+
+.detail-hierarchy-link {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+.detail-hierarchy-link:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.detail-hierarchy-sep {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.detail-hierarchy-current {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-hierarchy-count {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  flex-shrink: 0;
+}
+
+/* "Move to" button — sits at the right end of .detail-hierarchy's flex row,
+   always visible regardless of how much the breadcrumb text truncates (see
+   .detail-hierarchy-link/.detail-hierarchy-current's ellipsis above). Shown
+   even for a standalone task with no parent/children, since that's exactly
+   the case that needs a way to become a sub-task in the first place. */
+.detail-move-to-trigger {
+  flex-shrink: 0;
+  margin-left: auto;
+  border-color: transparent;
+}
+
+/* Positioned via useMenuPosition, same contract as .detail-menu-dropdown/
+   .detail-timer-popover above — anchored on desktop, centered with a
+   .menu-popover-backdrop when it wouldn't fit (always forced centered on
+   mobile). Capped to roughly the same width as the "..." menu. */
+.detail-move-to-popover {
+  z-index: 200;
+  width: 260px;
+  max-width: min(90vw, 280px);
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail-move-to-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.detail-move-to-list {
+  max-height: min(50vh, 280px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-move-to-item {
+  display: block;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-move-to-item:hover,
+.detail-move-to-item.active {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-move-to-item-none {
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.detail-move-to-empty {
+  margin: 4px 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* Positioned via useMenuPosition (src/hooks/useMenuPosition.js) — portaled
+   to document.body and given an inline `position: fixed` + left/top/bottom
+   when anchored, or the `.menu-popover-centered` class (see global.css)
+   when the anchored spot wouldn't fit the viewport. z-index has to clear
+   .modal-overlay's (160) now that this renders at the document.body level
+   rather than in-flow inside the modal. */
+.detail-menu-dropdown {
+  z-index: 200;
+  width: 280px;
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px 10px;
+  list-style: none;
+  margin: 0;
+}
+
+/* Timer trigger's popover — same positioning contract as .detail-menu-dropdown
+   above (useMenuPosition, portaled to document.body), just a plain padded box
+   instead of a menu list since it only ever hosts TaskTimerControl. Sized to
+   fit that control's content rather than a fixed menu width, with a min-width
+   so the "Start timer (25:00)" button/live countdown doesn't wrap awkwardly,
+   and a max-width so it can't overflow a narrow phone viewport when centered. */
+/* Unboxed action inside .detail-timer-popover — see the button's own comment
+   in TaskDetailModal. Keeps .btn's sizing/layout, drops only its chrome. */
+.detail-timer-popover .detail-timer-start {
+  border-color: transparent;
+  background: transparent;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.detail-timer-popover .detail-timer-start:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-timer-popover {
+  z-index: 200;
+  min-width: 200px;
+  max-width: min(90vw, 280px);
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 10px 12px;
+}
+
+/* Inline "log this as time left?" follow-up shown after pausing a timer,
+   right inside .detail-timer-popover above — kept compact (small font,
+   tight spacing, shrunk buttons) since the popover itself is capped at
+   min(90vw, 280px) and this needs to fit below TaskTimerControl without
+   overflowing on a narrow phone. */
+.detail-timer-pause-prompt {
+  margin-top: var(--space-3);
+}
+
+.detail-timer-pause-prompt-text {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+}
+
+.detail-timer-pause-prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.detail-timer-pause-prompt-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 13px;
+}
+
+.detail-timer-pause-prompt-unit {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.detail-timer-pause-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.detail-timer-pause-prompt-actions .btn {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.detail-menu-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px -10px;
+}
+
+/* Non-interactive heading above a grouped run of menu items (currently just
+   the "Assign to" collaborator list) — same horizontal rhythm as
+   .detail-menu-item but not a button, so no hover/cursor affordance. */
+.detail-menu-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+}
+
+.detail-menu-dropdown .detail-field {
+  padding: 8px 0;
+}
+
+.detail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detail-menu-item:hover,
+.detail-menu-item.highlighted {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-menu-item-danger {
+  color: var(--color-danger);
+}
+
+/* "Assign to…" search box (see TaskDetailModal) — an ordinary in-flow row
+   inside .detail-menu-dropdown, not a floating popup: the dropdown is
+   already portaled/scrollable, so the filtered collaborator list below this
+   input just renders as plain .detail-menu-item rows underneath it. */
+.assign-to-search-row {
+  padding: 2px 8px 4px;
+}
+
+/* No box of its own: this already sits inside .detail-menu-dropdown's raised
+   surface, so a bordered, differently-shaded field nested inside it read as
+   two stacked panels. Matches .calendar-filter-search, the app's other
+   search-inside-a-portaled-menu — icon plus a bare input, separated from the
+   rows below by space and the ASSIGN TO label above, not by an outline. */
+.assign-to-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.assign-to-search-icon {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.assign-to-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.assign-to-search-input:focus {
+  outline: none;
+}
+
+.assign-to-empty {
+  padding: 7px 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* AddTaskModal's header — title input + close button on one row, close
+   pinned to the top-right corner instead of stacking under the title
+   (there's no separate .detail-topbar here like TaskDetailModal has). */
 .detail-header {
   display: flex;
   align-items: flex-start;
@@ -291,9 +817,134 @@
   margin-bottom: 4px;
 }
 
+/* Title row now lives at the top of `.detail-main`, so it starts at the
+   same height as the sidebar's first field (see `.detail-body`'s flex row)
+   instead of sitting above the two-column split. */
+.detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+/* Inline Save/Cancel, shown right under the description once title/notes/
+   any sidebar field actually differs from the last save — replaces a
+   permanent footer bar (see TaskDetailModal's `isDirty`). Sits snug against
+   .detail-editbox right below it rather than floating with a gap. Also
+   hosts the "Apply to all sub-tasks" button (shown whenever this task has
+   sub-tasks, independent of mainDirty) — flex-end still reads fine with
+   just that one button when Save/Cancel aren't shown. */
+.detail-save-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: 10px -10px 14px;
+}
+
 .detail-title-wrap {
   flex: 1;
   min-width: 0;
+}
+
+/* Wraps the title + link badge + description into one Todoist-style box —
+   reads as plain text at rest, reveals its border/background as soon as
+   either the title or the description is focused (:focus-within), so the
+   two fields feel like one editable surface instead of two separate boxes. */
+.detail-editbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  margin: 0 -10px;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+.detail-editbox:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-editbox:focus-within {
+  background: var(--color-bg-page);
+  border-color: var(--color-accent-border);
+}
+
+.detail-editbox .detail-notes-textarea {
+  margin: 0;
+  width: 100%;
+}
+
+/* Description row — an icon sized/positioned to match the title checkbox
+   and subtask checkboxes (same 20px box, same left column) instead of the
+   description just reading as unlabeled text beneath the title. */
+.smart-notes-wrap {
+  position: relative;
+}
+
+.smart-notes-backdrop,
+.smart-notes-wrap .detail-notes-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.smart-notes-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  min-height: 0;
+}
+
+.smart-notes-mark {
+  background: color-mix(in srgb, var(--color-accent-border) 26%, transparent);
+  border-radius: 3px;
+  color: transparent;
+  pointer-events: auto;
+}
+
+.smart-notes-wrap .detail-notes-textarea {
+  position: relative;
+  z-index: 1;
+  min-height: 34px;
+  max-height: calc(3 * 1.4em + 12px);
+  overflow: hidden;
+}
+
+.detail-notes-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.detail-notes-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+}
+
+.detail-notes-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-editbox .detail-notes-textarea:hover,
+.detail-editbox .detail-notes-textarea:focus {
+  background: transparent;
+  border-color: transparent;
 }
 
 .detail-title-wrap .smart-title-backdrop,
@@ -308,29 +959,72 @@
   background: transparent;
 }
 
-.detail-title-wrap .smart-title-input:focus {
-  background: var(--color-bg-page);
-  border-color: var(--color-accent-border);
-}
-
 .detail-header-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin-left: auto;
+  border-radius: 999px;
   background: transparent;
   border-color: transparent;
 }
-
+ 
 .detail-header-close:hover:not(:disabled) {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
 }
+ 
+.detail-header-close svg {
+  display: block;
+}
 
-.detail-sync-note {
-  font-size: 11.5px;
-  color: var(--color-text-secondary);
-  margin: -6px 0 14px 6px;
-  display: flex;
+/* The task's `link` field (a URL detected in the title via smart-parse,
+   see utils/smartParse.js) — shown as a small dismissible pill under the
+   title, matching the "chip" look elsewhere, since a task carries at most
+   one link and it isn't worth a full sidebar field of its own. */
+.detail-link-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: -2px 0 10px 6px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-surface-hover);
+  font-size: 12px;
+}
+
+.detail-link-badge-open {
+  display: inline-flex;
   align-items: center;
   gap: 5px;
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.detail-link-badge-open:hover {
+  text-decoration: underline;
+}
+
+.detail-link-badge-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+}
+
+.detail-link-badge-remove:hover {
+  background: var(--color-bg-surface-raised);
+  color: var(--color-text-primary);
 }
 
 .detail-body {
@@ -347,31 +1041,52 @@
   flex-direction: column;
 }
 
-/* The description field is the first row in the main column — let it grow
-   to soak up whatever height the sidebar's field list ends up needing, so
-   the two columns end at the same height instead of leaving a gap under a
-   short description next to a long sidebar. */
-.detail-main > .form-row:first-child {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.detail-main > .form-row:first-child textarea {
-  flex: 1;
-}
-
-.detail-main > .form-row textarea {
-  background: var(--color-bg-page);
+/* Description — Todoist-style: reads as plain text at rest (one line tall,
+   no border/background), grows with its content via useAutosizeTextarea,
+   and only reveals a border once the user actually clicks into it. A
+   standalone class (rather than a `.detail-main` descendant selector) since
+   a sub-task swapped into the same TaskDetailModal instance shares this same
+   field. */
+.detail-notes-textarea {
+  background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  resize: none; /* grows to fit content instead — see useAutosizeTextarea */
-  min-height: 140px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  width: calc(100% + 16px);
+  resize: none;
+  min-height: 34px;
+  max-height: calc(3 * 1.4em + 12px);
   overflow: hidden;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
 }
 
-.detail-main > .form-row textarea:focus {
+/* Grows much taller before scrolling than the shared 3-line default above
+   (matches the maxLines:20 passed to useAutosizeTextarea in both
+   EventDetailModal and TaskDetailModal) — a synced event's Google Calendar
+   description, or a task's own notes, is often a long block of text worth
+   seeing in full without extra scrolling.
+   Also repeated as `.smart-notes-wrap .detail-notes-textarea-tall`: plain
+   `.detail-notes-textarea-tall` (specificity 0,1,0) loses to
+   `.smart-notes-wrap .detail-notes-textarea`'s own 3-line max-height
+   (0,2,0, above) when TaskDetailModal's notes field — always wrapped in
+   `.smart-notes-wrap` for its highlighted-mention backdrop — carries both
+   classes; without the higher-specificity pair here, that 3-line cap won
+   regardless of maxLines:20 already being passed to the hook. */
+.detail-notes-textarea-tall,
+.smart-notes-wrap .detail-notes-textarea-tall {
+  max-height: calc(20 * 1.4em + 12px);
+}
+
+.detail-notes-textarea:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.detail-notes-textarea:focus {
+  background: var(--color-bg-page);
   border-color: var(--color-accent-border);
   outline: none;
 }
@@ -391,10 +1106,54 @@
 .form-row.form-row-compact-notes textarea {
   flex: none;
   min-height: 60px;
+  max-height: calc(3 * 1.4em + 12px);
   background: transparent;
   border-color: transparent;
   resize: none;
   overflow: hidden;
+  line-height: 1.4;
+}
+
+/* Read-only rendered preview of any URLs found in a notes/description
+   field — the textarea above stays plain text (can't embed live <a> tags
+   inside an editable control), so this surfaces clickable links just below
+   it as dismissible pills. */
+.notes-link-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.notes-link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 7px 4px 6px;
+  border-radius: 999px;
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.notes-link-pill-favicon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.notes-link-pill-link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.notes-link-pill-link:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
 }
 
 .form-row.form-row-compact-notes textarea:hover {
@@ -445,10 +1204,27 @@
 
 .addtask-pill-panel {
   background: var(--color-bg-page);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 10px 12px;
   margin-bottom: 10px;
+}
+
+/* A pill panel holds exactly one control, sized to fill it (its date input,
+   its label search). The priority picker replacing that panel's native
+   <select> matches them rather than keeping SelectMenu's default inline-chip
+   size — and unlike the pickers in a DetailField row, it keeps a real border,
+   since a borderless ghost control alone on a panel reads as static text
+   (and 1.4.11 wants the boundary either way). */
+.addtask-pill-panel > .select-menu {
+  display: flex;
+  width: 100%;
+}
+
+.addtask-pill-panel > .select-menu .select-menu-trigger {
+  width: 100%;
+  justify-content: space-between;
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
 }
 
 .addtask-more-panel {
@@ -465,9 +1241,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-4);
 }
 
 /* ----------------------------------------------------------------------
@@ -503,12 +1277,21 @@
 
 .select-menu-trigger:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: 1px;
+  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
 }
 
 .select-menu-trigger[aria-expanded='true'] {
   background: var(--color-bg-surface-hover);
   border-color: var(--color-border);
+}
+
+.select-menu-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.select-menu-trigger:disabled:hover {
+  background: transparent;
 }
 
 .select-menu-value {
@@ -530,7 +1313,6 @@
      that value or the modal renders on top of the popup. */
   z-index: 200;
   background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-elevated);
   max-height: 220px;
@@ -538,6 +1320,14 @@
   padding: 4px;
   margin: 0;
   list-style: none;
+  animation: select-menu-in var(--duration-fast) var(--ease-decelerate);
+}
+
+@keyframes select-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }
 
 .select-menu-option {
@@ -564,11 +1354,148 @@
   font-weight: 600;
 }
 
+.select-menu-option.is-disabled {
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.select-menu-option.is-disabled:hover {
+  background: transparent;
+}
+
+.select-menu-option.has-separator-before {
+  margin-top: var(--space-3);
+}
+
+/* ----------------------------------------------------------------------
+   MentionDropdown — the live "@"/"#" popup shown while typing in
+   SmartTitleInput. Same portaled-to-body treatment as .select-menu-dropdown
+   (and the same stacking-context reasoning), anchored to the trigger
+   character's measured position instead of a fixed trigger element.
+   ---------------------------------------------------------------------- */
+.mention-dropdown {
+  width: max-content;
+  min-width: 160px;
+  max-width: 280px;
+  z-index: 200;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  margin: 0;
+  list-style: none;
+}
+
+.mention-dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mention-dropdown-option:hover,
+.mention-dropdown-option.highlighted {
+  background: var(--color-bg-surface-hover);
+}
+
+.mention-dropdown-option svg {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.mention-dropdown-create {
+  color: var(--color-accent);
+}
+
+/* ----------------------------------------------------------------------
+   KeywordSuggestPopup — the "did you mean?" typo popup shown while typing
+   in SmartTitleInput. Same portaled/anchored treatment as .mention-dropdown,
+   but a single compact row rather than a list, since there's usually just
+   one candidate.
+   ---------------------------------------------------------------------- */
+.keyword-suggest-popup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, calc(100vw - 16px));
+  flex-wrap: wrap;
+  z-index: 200;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-elevated);
+  padding: 6px 8px;
+}
+
+.keyword-suggest-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.keyword-suggest-option {
+  padding: 4px 9px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.keyword-suggest-option:hover,
+.keyword-suggest-option.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast, #fff);
+}
+
+.keyword-suggest-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  white-space: nowrap;
+  margin-left: auto;
+}
+
 .detail-sidebar {
-  width: 230px;
+  width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+}
+
+.detail-more-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+.detail-more-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.detail-more-toggle svg {
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 /* Used by modals with no two-column split (Block/Event detail) — the
@@ -579,14 +1506,9 @@
 
 .detail-field {
   padding: 9px 0;
-  border-bottom: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: 5px;
-}
-
-.detail-field:last-child {
-  border-bottom: none;
 }
 
 .detail-field-label {
@@ -599,7 +1521,8 @@
 }
 
 .detail-field-value select,
-.detail-field-value input:not([type='checkbox']) {
+.detail-field-value input:not([type='checkbox']),
+.detail-field-value .detail-recurrence-toggle {
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -612,12 +1535,34 @@
 }
 
 .detail-field-value select:hover,
-.detail-field-value input:not([type='checkbox']):hover {
+.detail-field-value input:not([type='checkbox']):hover,
+.detail-field-value .detail-recurrence-toggle:hover {
   background: var(--color-bg-surface-hover);
 }
 
+/* SelectMenu used in place of a native <select> (e.g. the Project field —
+   see TaskDetailModal.jsx) needs its own override rather than matching the
+   ".detail-field-value select" rule above, since its markup is a <div><button>
+   pair, not a real <select> — otherwise it'd keep SelectMenu's own smaller,
+   inline "chip" look instead of matching this sidebar's other full-width,
+   ghost-background rows. */
+.detail-field-value .select-menu {
+  display: flex;
+  width: calc(100% + 12px);
+  margin: -4px -6px;
+}
+
+.detail-field-value .select-menu-trigger {
+  width: 100%;
+  justify-content: space-between;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
 .detail-field-value select:focus,
-.detail-field-value input:not([type='checkbox']):focus {
+.detail-field-value input:not([type='checkbox']):focus,
+.detail-field-value .detail-recurrence-toggle:focus {
   background: var(--color-bg-page);
   border-color: var(--color-accent-border);
   outline: none;
@@ -628,6 +1573,38 @@
   color: var(--color-text-primary);
 }
 
+/* Repeat field — a plain-looking row (no checkbox) matching Due date/
+   Priority's "click to edit" feel: tapping it while off reveals the
+   count+unit editor below; an explicit X in that editor (see
+   .detail-field-inline) is the only way back to "Does not repeat", since
+   the row itself no longer toggles once it's showing the editor. */
+.detail-recurrence-toggle {
+  display: block;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.detail-recurrence-toggle:disabled {
+  cursor: default;
+  color: var(--color-text-secondary);
+}
+
+.detail-recurrence-toggle-active {
+  cursor: default;
+}
+
+.detail-recurrence-clear {
+  flex-shrink: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+.detail-recurrence-clear:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
 .detail-field-inline {
   display: flex;
   align-items: center;
@@ -636,8 +1613,9 @@
 
 /* ----------------------------------------------------------------------
    Subtask checklist rows — used inside TaskDetailModal's Sub-tasks field.
-   The whole row (minus its own checkbox/delete controls) opens
-   SubtaskDetailModal on click, mirroring a top-level task row.
+   The whole row (minus its own checkbox/delete controls) swaps this same
+   TaskDetailModal instance over to that child task on click (see
+   `activeTaskId` in TaskDetailModal.jsx).
    ---------------------------------------------------------------------- */
 .subtask-list {
   display: flex;
@@ -647,9 +1625,13 @@
 
 .subtask-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 5px 6px;
+  /* Cancel the horizontal padding (kept for the hover highlight's inset)
+     so the checkbox itself lands flush with the title/description icon
+     column above, instead of sitting 6px further right than they do. */
+  margin: 0 -6px;
   border-radius: var(--radius-sm);
   transition: background var(--duration-fast) var(--ease-standard);
 }
@@ -658,23 +1640,55 @@
   background: var(--color-bg-surface-hover);
 }
 
-.subtask-row-title {
+.subtask-row > input[type='checkbox'] {
+  margin-top: 1px;
+  flex-shrink: 0;
+  /* Match the title/subtask-caption checkbox's 20px box at every viewport
+     width (native checkbox defaults vary by platform/browser). */
+  width: 20px;
+  height: 20px;
+}
+
+.subtask-row-title-wrap {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   background: none;
   border: none;
   text-align: left;
-  padding: 0;
-  font-size: 13px;
-  color: var(--color-text-primary);
+  padding: 2px 0;
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.subtask-row-title.completed {
+.subtask-row-title {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.subtask-row-title-wrap.completed .subtask-row-title {
   text-decoration: line-through;
+  opacity: 0.55;
+}
+
+/* Subtask description preview — clamped to 2 lines, ellipsized, so a long
+   description doesn't blow out the checklist row height (full text is
+   still readable by opening the sub-task itself). */
+.subtask-row-notes {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.35;
+}
+
+.subtask-row-title-wrap.completed .subtask-row-notes {
   opacity: 0.55;
 }
 
@@ -696,16 +1710,64 @@
   opacity: 1;
 }
 
+/* Touch devices have no hover state, so a hover-only reveal makes this
+   button permanently invisible (and unreachable by a single tap) — keep it
+   visible at rest wherever there's no real pointer to hover with. */
+@media (hover: none) {
+  .subtask-row-remove {
+    opacity: 1;
+  }
+}
+
 .subtask-add-row {
   display: flex;
+  align-items: flex-start;
   gap: 6px;
   margin-top: 4px;
+}
+
+/* SmartTitleInput's own wrap has no intrinsic width — stretch it to fill
+   the row next to the Add button, same role the old plain textarea's
+   inline `flex: 1` played. */
+.subtask-add-row .smart-title-wrap {
+  flex: 1;
+}
+
+/* Without this, the row's default flex stretch grows the button to match
+   the textarea's height as it wraps to more lines. */
+.subtask-add-row .btn {
+  flex-shrink: 0;
+}
+
+.subtask-add-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.subtask-add-trigger:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
 }
 
 .subtask-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+}
+
+.subtask-header-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .subtask-hide-completed {
@@ -721,6 +1783,253 @@
   color: var(--color-text-primary);
 }
 
+/* "Select" toggle for the sub-task list's own bulk-select (see
+   BulkActionBar/useMultiSelect) reuses .subtask-hide-completed's plain-text-
+   button look; .is-active highlights it while selection mode is on, same
+   idea as the page-level Select toggles' btn-primary state. */
+.subtask-hide-completed.is-active {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.subtask-row.is-selected {
+  box-shadow: inset 0 0 0 2px var(--color-accent-solid-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.comment-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.comment-row .account-avatar {
+  flex-shrink: 0;
+}
+
+.comment-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comment-text {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Shared-task comment author name (Collaborative Projects, Phase 3) — absent
+   for personal-task comments, which have no author fields to render. */
+.comment-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* An @-mention rendered inside comment text, visibly distinct from the
+   surrounding body — see utils/commentMentions.js's parseCommentBody. */
+.comment-mention {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.comment-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.comment-remove {
+  flex-shrink: 0;
+  opacity: 0;
+  background: transparent;
+  border-color: transparent;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.comment-row:hover .comment-remove,
+.comment-remove:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .comment-remove {
+    opacity: 1;
+  }
+}
+
+.comment-attachment-thumb {
+  display: inline-block;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+  max-width: 220px;
+}
+
+.comment-attachment-thumb img {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+}
+
+.comment-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  text-decoration: none;
+  max-width: fit-content;
+}
+
+.comment-attachment-file:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.comment-attachment-file-size {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.comment-pending-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: var(--color-bg-page);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.comment-pending-file button {
+  display: flex;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.comment-pending-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+/* Positioning context for the @-mention dropdown (Collaborative Projects,
+   Phase 3) — anchored above the input bar rather than at the caret's exact
+   pixel position, unlike SmartTitleInput's MentionDropdown/backdrop-overlay
+   setup: the comment composer is a single-line input near the bottom of the
+   modal, so a caret-precise popup isn't worth duplicating that heavier
+   measuring machinery for. */
+.comment-input-bar-wrapper {
+  position: relative;
+}
+
+/* Shown in place of the composer for viewer-role collaborators (Phase 3 fix)
+   — a deliberate permission state, not an error, so it's styled muted/neutral
+   rather than reusing .form-warning's danger-colored treatment. */
+.comment-viewonly-note {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+}
+
+.comment-viewonly-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.comment-mention-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-width: min(280px, 100%);
+  margin-bottom: 4px;
+}
+
+.comment-mention-dropdown .account-avatar {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+
+.comment-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comment-input-bar input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.attachment-lightbox {
+  position: fixed;
+  inset: 0;
+  /* Above .modal-overlay (160, global.css) and its own detail-modal content. */
+  z-index: 500;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.attachment-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-sm);
+}
+
+.attachment-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.attachment-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 @media (max-width: 639px) {
   .detail-body {
     flex-direction: column;
@@ -732,6 +2041,33 @@
 
   .detail-sync-note {
     margin-left: 0;
+  }
+
+  /* A fixed label-beside-value column (as used on wider viewports) doesn't
+     leave enough room for labels like "Estimated hours" next to a usable
+     value width at phone sizes, so fields go back to stacking label above
+     value here, flush with the label/icon above (same left edge as every
+     other column in the modal — title checkbox, subtask checkboxes,
+     description icon). */
+  .detail-field {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .detail-field-label {
+    padding-top: 0;
+  }
+
+  /* Tighter header row at phone widths — the "..." trigger and close button
+     already eat into the row, so trim the breadcrumb further and drop the
+     sub-task count text down to just the icon-adjacent number. */
+  .detail-hierarchy {
+    font-size: 11px;
+    gap: 3px;
+  }
+
+  .detail-hierarchy-link {
+    max-width: 38%;
   }
 }
 
@@ -804,11 +2140,17 @@
   background: var(--color-bg-surface-raised);
   border-left: 3px solid var(--color-accent-border);
   border-radius: 6px;
-  padding: 3px 6px;
+  /* Roomier left inset: the label and time used to sit almost against the
+     accent rail, which read as the text being part of the rail rather than
+     content inside the block. */
+  padding: 0 6px 0 10px;
   font-size: 11.5px;
   box-shadow: var(--shadow-sm);
   cursor: grab;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .routine-block.inactive {
@@ -821,24 +2163,14 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
-}
-
-.routine-block-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid var(--color-accent-border);
-  background: var(--color-accent-solid-bg);
   flex-shrink: 0;
-  padding: 0;
-  cursor: pointer;
 }
 
-.routine-block.inactive .routine-block-dot {
-  background: transparent;
-  border-color: var(--color-border-strong);
-}
-
+/* No button chrome: this is the routine's NAME that happens to be clickable
+   to rename, not a button. (A regex cleaning up the removed dot's rules ate
+   this selector's `.routine-block-label` and left it scoped to `.inactive`,
+   so an active routine's name rendered with the browser's default button box
+   and background.) */
 .routine-block-label {
   flex: 1;
   min-width: 0;
@@ -867,6 +2199,9 @@
   outline: none;
 }
 
+/* Pause/resume, sharing the delete button's shape so the two read as one
+   action group at the block's trailing edge (see RoutineTimeline). */
+.routine-block-action,
 .routine-block-remove {
   flex-shrink: 0;
   width: 18px;
@@ -875,19 +2210,50 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-standard);
+  transition: opacity var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.routine-block-remove:hover {
+  color: var(--color-text-primary);
 }
 
 .routine-block:hover .routine-block-remove,
-.routine-block-remove:focus-visible {
+.routine-block:hover .routine-block-action,
+.routine-block-remove:focus-visible,
+.routine-block-action:focus-visible {
   opacity: 1;
+}
+
+.routine-block-action:hover {
+  color: var(--color-text-primary);
+}
+
+/* A PAUSED routine keeps its control visible and tinted, unlike the
+   hover-revealed actions above: paused is a state, and the old leading dot
+   showed it permanently. Hiding it until hover would leave no way to see that
+   a routine is switched off — the resume affordance and the state indicator
+   are the same element here, so it can't be hover-only. */
+.routine-block.inactive .routine-block-action {
+  opacity: 1;
+  color: var(--color-warning);
 }
 
 .routine-block-time {
   color: var(--color-text-secondary);
   font-size: 10px;
   margin-top: 1px;
+}
+
+.routine-block-time-inline {
+  margin-top: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .routine-block-edge {
@@ -904,4 +2270,692 @@
 
 .routine-block-edge-bottom {
   bottom: 0;
+}
+
+/* ----------------------------------------------------------------------
+   AIQuickAddModal — provider toggle, screenshot drop zone/preview.
+   Reuses .modal/.form-row/.form-hint/.form-error/.addtask-footer from
+   elsewhere in this file rather than duplicating the modal shell.
+   ---------------------------------------------------------------------- */
+/* Width now comes from Modal.jsx's default size="md" (also 480px). */
+
+.modal-ai-quickadd textarea {
+  resize: none; /* height auto-grows via useAutosizeTextarea; no manual drag handle */
+}
+
+.ai-quickadd-provider-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+  /* Compensates for .select-menu-trigger's own 8px left padding, so the
+     "Claude"/"Gemini" label text lines up with the plain paragraph text
+     above/below this row instead of looking indented relative to it. */
+  margin-left: -8px;
+}
+
+/* Deliberately left at SelectMenu's default ghost/transparent trigger look
+   (no visible border/background at rest) rather than a bordered "chip" —
+   a visible box here fights the -8px margin above (the box edge would hang
+   left of the surrounding paragraph text instead of the text itself lining
+   up), and every other SelectMenu in the app already looks like this. */
+
+/* Custom context scope's event date-range sub-filter (AIQuickAddModal) —
+   plain native date inputs (this app has no reusable date-range picker
+   component to reach for instead, see aiContextService's DEFAULT_EVENT_RANGE_DAYS
+   for the default window these fall back to). Wraps on narrow widths rather
+   than clipping/overflowing the modal. */
+.ai-quickadd-daterange-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.ai-quickadd-daterange-row input[type='date'] {
+  width: auto;
+  flex: 1 1 130px;
+  min-width: 0;
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.ai-quickadd-daterange-row input[type='date']:focus {
+  border-color: var(--color-accent-border);
+  outline: none;
+}
+
+.ai-quickadd-help-btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.ai-quickadd-help-btn:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  border-color: transparent;
+}
+
+.ai-quickadd-dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.ai-quickadd-dropzone:hover,
+.ai-quickadd-dropzone.is-dragover {
+  border-color: var(--color-accent-border);
+  color: var(--color-text-primary);
+}
+
+.ai-quickadd-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-quickadd-attachment-item {
+  position: relative;
+}
+
+.ai-quickadd-attachment-item img {
+  max-width: 120px;
+  max-height: 120px;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.ai-quickadd-attachment-file {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 120px;
+  height: 120px;
+  padding: 8px;
+  background: var(--color-bg-page);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+.ai-quickadd-attachment-file span {
+  max-width: 100%;
+  font-size: 11px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-quickadd-attachment-item .btn-icon {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(10, 11, 15, 0.65);
+  color: #fff;
+}
+
+/* ----------------------------------------------------------------------
+   AIPlanConfirmModal — per-operation accept/reject checklist shown before
+   any AI Assistant change is applied. Reuses the same modal shell classes
+   as AIQuickAddModal above.
+   ---------------------------------------------------------------------- */
+/* Width now comes from Modal.jsx's size="lg" (modal-size-lg, also 560px);
+   max-width loosened past the base .modal's 92vw cap for narrow desktop
+   windows where 92vw would otherwise clip this modal's fixed width. */
+.modal-ai-plan-confirm {
+  max-width: 100%;
+}
+
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  color: var(--color-text-primary);
+}
+
+.ai-plan-select-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.ai-plan-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--color-bg-page);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.ai-plan-group + .ai-plan-group {
+  margin-top: 10px;
+}
+
+.ai-plan-group-heading {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+}
+
+.ai-plan-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.ai-plan-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.ai-plan-item input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.ai-plan-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.ai-plan-item-desc {
+  word-break: break-word;
+}
+
+.ai-plan-item.is-destructive .ai-plan-item-desc {
+  color: var(--color-danger);
+}
+
+.ai-plan-item.is-invalid {
+  cursor: default;
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+}
+
+.ai-plan-item.is-invalid .ai-plan-item-desc {
+  color: var(--color-text-secondary);
+  text-decoration: line-through;
+}
+
+.ai-plan-item-error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+
+/* ----------------------------------------------------------------------
+   Template picker (NewFromTemplateModal) — a radio list where each row is
+   also the delete target. Space and tone separate the rows rather than
+   dividers (direction rule 1), and the selected row is marked by its
+   surface, not a border, so selecting one doesn't shift the layout.
+   ---------------------------------------------------------------------- */
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Bounded so a full 30-template list scrolls inside the modal instead of
+     pushing the date/project fields and the Create button off-screen. */
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: var(--space-4);
+}
+
+.template-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  padding-right: 4px;
+}
+
+.template-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.template-row.is-selected {
+  background: var(--color-accent-soft);
+}
+
+.template-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  background: none;
+  border: none;
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.template-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Overrides .form-hint's own block margins — it's an inline meta line here,
+   not a paragraph under a field. */
+.template-row-meta {
+  margin: 0;
+}
+
+/* ----------------------------------------------------------------------
+   Recently deleted (TrashSection) — one row per recoverable delete. Same
+   shape as the template picker's rows, but each row carries two actions
+   (restore, delete permanently) rather than being a selection.
+   ---------------------------------------------------------------------- */
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Capped at MAX_TRASH_ENTRIES, so a full list scrolls inside the card
+     instead of pushing the rest of Settings down. */
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: var(--space-3);
+}
+
+.trash-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.trash-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.trash-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.trash-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Overrides .form-hint's block margins — an inline meta line, not a paragraph. */
+.trash-row-meta {
+  margin: 0;
+}
+
+/* At phone width the two actions would squeeze the name to nothing, so the
+   row stacks and the buttons sit under it at full hit-target size. */
+@media (max-width: 639px) {
+  .trash-row {
+    flex-wrap: wrap;
+  }
+
+  .trash-row-main {
+    flex-basis: 100%;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   Weekly review (WeeklyReviewModal + WeeklyReviewCard). Sections are
+   separated by space rather than rules (direction rule 1), and each row's
+   actions sit at its trailing edge.
+   ---------------------------------------------------------------------- */
+.weekly-review-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.weekly-review-card-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.weekly-review-card-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.weekly-review-card-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.review-section {
+  margin-bottom: var(--space-5);
+}
+
+/* The first section sat straight under the header's date line with only the
+   header's own 2px on top of it, so "Finished" read as part of the date. */
+.review-section:first-of-type {
+  margin-top: var(--space-3);
+}
+
+.review-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* The count reads as data, not decoration — it's why you're looking. */
+.review-section-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-section-empty {
+  margin: 0;
+}
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Bounded so a long carried-over list scrolls rather than pushing the
+     capacity verdict — the thing you need to see — off the screen. */
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.review-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.review-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.review-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.review-row-title {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-row-meta {
+  margin: 0;
+}
+
+/* ONE bordered group per row, not three bordered buttons. The border itself
+   can't go — .btn's 1px boundary is what satisfies WCAG 1.4.11's 3:1 non-text
+   contrast, since the button fill sits too close in tone to the surfaces it's
+   on (CLAUDE.md marks it load-bearing). But three of them per row, times
+   fifteen rows, is what made this screen read as a wall of boxes. A segmented
+   group keeps a real boundary around the controls and 1px dividers between
+   them, so every segment still has a visible edge, at a third of the ink. */
+.review-row-actions {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.review-row-actions > .btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.review-row-actions > .btn + .btn {
+  border-left: 1px solid var(--color-border);
+}
+
+.review-row-actions > .btn:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+/* Inset so the ring doesn't get clipped by the group's own overflow: hidden. */
+.review-row-actions > .btn:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: -2px;
+}
+
+/* The quiet way back into a review already done for the week — link weight,
+   not a card, so it doesn't compete with the prompt it replaces. Full-width
+   and a real touch target, since it sits in the dashboard's side column and
+   that column is the full page width on a phone. */
+.weekly-review-reopen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.weekly-review-reopen:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* The verdict line. Tone carries the answer, so it reads before the words do. */
+.review-fit {
+  margin: 0;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.review-fit-fits {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.review-fit-tight {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+
+.review-fit-over {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+/* At phone width the three actions would crush the title, so rows stack. */
+@media (max-width: 639px) {
+  .review-row {
+    flex-wrap: wrap;
+  }
+
+  .review-row-main {
+    flex-basis: 100%;
+  }
+}
+
+/* ----------------------------------------------------------------------
+   Fixed routines: the 24h timeline with a day picker beside it
+   (RoutinesSection). Two columns on desktop, stacked on a phone where a
+   side column would squeeze the timeline to nothing.
+   ---------------------------------------------------------------------- */
+.routines-layout {
+  display: grid;
+  grid-template-columns: 1fr minmax(150px, 190px);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.routine-day-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.routine-day-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* A real touch target — this is a list of eight small controls, exactly
+     where hit areas quietly shrink. */
+  min-height: 34px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.routine-day-option:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Selected state carries a border as well as a fill: the fill alone is close
+   enough in tone to the hover state to be ambiguous about which is current. */
+.routine-day-option.is-selected {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-border);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.routine-day-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.routine-day-note {
+  margin: var(--space-2) 0 0;
+}
+
+/* Marks a routine that doesn't apply to every day, and doubles as the
+   "not this day" control when the timeline is scoped to one weekday. */
+.routine-block-days {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 100px;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.routine-block-days-action {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.routine-block-days-action:hover {
+  background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+  color: var(--color-danger);
+}
+
+@media (max-width: 639px) {
+  .routines-layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Horizontal chip row on a phone: eight stacked full-width rows would push
+     the timeline off the screen entirely. */
+  .routine-day-picker {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .routine-day-option {
+    min-height: 40px;
+    border-color: var(--color-border);
+  }
+
+  .routine-day-note {
+    flex-basis: 100%;
+    margin-top: 0;
+  }
 }

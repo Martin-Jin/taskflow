@@ -8,14 +8,14 @@
  * it belongs to has rendered.
  *
  * Auto-launched once on a new visitor's first session (see App.jsx's
- * `hasSeenTutorial` flag) and replayable anytime from Settings or the
- * topbar help icon.
+ * `hasSeenTutorial` flag) and replayable anytime from Settings.
  */
 
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { GUIDED_TOUR_STEPS } from './guidedTourSteps';
 
 const SPOTLIGHT_PADDING = 6;
@@ -30,38 +30,64 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-/** Where to place the tooltip for a given target rect, flipping to the opposite side if it would overflow the viewport. */
+/**
+ * Where to place the tooltip for a given target rect, flipping to the
+ * opposite side if it would overflow the viewport. For 'top'/'bottom', the
+ * final clamp is bounded to whichever side of the rect the tooltip landed on
+ * (not the full viewport) — otherwise a rect taller than the available space
+ * (common on short mobile viewports, e.g. a settings card scrolled to
+ * center) would get clamped right back on top of the spotlighted element.
+ */
 function computeTooltipPosition(rect, placement, tooltipHeight) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
-  if (!rect) {
+  if (!rect || placement === 'center') {
     return { top: vh / 2 - tooltipHeight / 2, left: vw / 2 - TOOLTIP_WIDTH / 2 };
   }
 
   let top;
   let left;
+  let minTop = EDGE_MARGIN;
+  let maxTop = vh - tooltipHeight - EDGE_MARGIN;
+
   switch (placement) {
     case 'right':
       left = rect.right + GAP;
       top = rect.top + rect.height / 2 - tooltipHeight / 2;
       if (left + TOOLTIP_WIDTH > vw - EDGE_MARGIN) left = rect.left - TOOLTIP_WIDTH - GAP;
       break;
-    case 'top':
-      top = rect.top - tooltipHeight - GAP;
+    case 'top': {
+      const spaceAbove = rect.top - GAP - EDGE_MARGIN;
+      const spaceBelow = vh - rect.bottom - GAP - EDGE_MARGIN;
       left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-      if (top < EDGE_MARGIN) top = rect.bottom + GAP;
+      if (spaceAbove >= tooltipHeight || spaceAbove >= spaceBelow) {
+        top = rect.top - tooltipHeight - GAP;
+        maxTop = Math.max(minTop, rect.top - GAP - tooltipHeight);
+      } else {
+        top = rect.bottom + GAP;
+        minTop = Math.min(maxTop, rect.bottom + GAP);
+      }
       break;
+    }
     case 'bottom':
-    default:
-      top = rect.bottom + GAP;
+    default: {
+      const spaceBelow = vh - rect.bottom - GAP - EDGE_MARGIN;
+      const spaceAbove = rect.top - GAP - EDGE_MARGIN;
       left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-      if (top + tooltipHeight > vh - EDGE_MARGIN) top = rect.top - tooltipHeight - GAP;
+      if (spaceBelow >= tooltipHeight || spaceBelow >= spaceAbove) {
+        top = rect.bottom + GAP;
+        minTop = Math.min(maxTop, rect.bottom + GAP);
+      } else {
+        top = rect.top - tooltipHeight - GAP;
+        maxTop = Math.max(minTop, rect.top - GAP - tooltipHeight);
+      }
       break;
+    }
   }
 
   return {
-    top: clamp(top, EDGE_MARGIN, vh - tooltipHeight - EDGE_MARGIN),
+    top: clamp(top, minTop, maxTop),
     left: clamp(left, EDGE_MARGIN, vw - TOOLTIP_WIDTH - EDGE_MARGIN),
   };
 }
@@ -69,12 +95,35 @@ function computeTooltipPosition(rect, placement, tooltipHeight) {
 export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange, onFinish }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onFinish);
   const tooltipRef = useModalA11y(requestClose);
+  const isMobile = useIsMobile();
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState(null);
+  // True only while a scroll/resize-driven reposition is in flight — see the
+  // tracking effect below. Suppresses the spotlight's CSS transition for
+  // those updates (an animated move to a brand-new step still gets it).
+  const [isTracking, setIsTracking] = useState(false);
   // Corrected to the tooltip's real rendered height below, once it's known —
   // starts as a guess so the very first position computation has something
   // to work with before that measurement effect has run.
   const [tooltipHeight, setTooltipHeight] = useState(TOOLTIP_HEIGHT_ESTIMATE);
+  // Which way the last goNext/goBack moved — read by the desktopOnly skip
+  // effect below so skipping continues in the same direction the visitor
+  // was already navigating, instead of always skipping forward.
+  const skipDirection = useRef('next');
+
+  // Steps flagged `desktopOnly` (for a control with no mobile equivalent at
+  // all) skip past themselves as soon as they'd become current on a mobile
+  // viewport — otherwise the locate effect below would just time out and
+  // fall back to a spotlight-less tooltip describing a control the visitor
+  // can't reach. No current step uses this flag, but the mechanism stays in
+  // place for a future desktop-only feature.
+  useEffect(() => {
+    if (!isMobile) return;
+    const step = GUIDED_TOUR_STEPS[stepIndex];
+    if (!step.desktopOnly) return;
+    setStepIndex((i) => clamp(i + (skipDirection.current === 'back' ? -1 : 1), 0, GUIDED_TOUR_STEPS.length - 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIndex, isMobile]);
 
   const step = GUIDED_TOUR_STEPS[stepIndex];
   const isFirst = stepIndex === 0;
@@ -107,6 +156,7 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       const el = document.querySelector(step.selector);
       if (el) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setIsTracking(false);
         setRect(el.getBoundingClientRect());
       } else if (attempts < LOCATE_MAX_ATTEMPTS) {
         attempts += 1;
@@ -116,6 +166,7 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       }
     }
     setRect(null);
+    setIsTracking(false);
     locate();
     return () => {
       cancelled = true;
@@ -129,20 +180,31 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
   // `setRect` (and re-render) per scroll event.
   useEffect(() => {
     let frameRequested = false;
+    let idleTimer;
     function reposition() {
       if (frameRequested) return;
       frameRequested = true;
       requestAnimationFrame(() => {
         frameRequested = false;
         const el = document.querySelector(step.selector);
-        if (el) setRect(el.getBoundingClientRect());
+        if (el) {
+          setIsTracking(true);
+          setRect(el.getBoundingClientRect());
+        }
       });
+      // Scroll events fire in bursts; only flip the tracking flag back off
+      // once a burst has actually gone quiet, so the transition stays
+      // suppressed for the whole gesture rather than flickering back on
+      // between frames.
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => setIsTracking(false), 150);
     }
     window.addEventListener('resize', reposition);
     window.addEventListener('scroll', reposition, true);
     return () => {
       window.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition, true);
+      clearTimeout(idleTimer);
     };
   }, [step.selector]);
 
@@ -160,21 +222,32 @@ export default function GuidedTour({ currentTab, tabs, onTabChange, onViewChange
       requestClose();
       return;
     }
+    skipDirection.current = 'next';
     setStepIndex((i) => i + 1);
   }
 
   function goBack() {
+    skipDirection.current = 'back';
     setStepIndex((i) => Math.max(0, i - 1));
   }
 
-  const tooltipPos = computeTooltipPosition(rect, step.placement, tooltipHeight);
+  // On mobile, nav steps target the bottom tab bar, and the very first step
+  // targets the brand mark in the corner of the topbar — both are small,
+  // edge-anchored elements with no room on their `right`/`left` side for a
+  // 300px tooltip, so computeTooltipPosition's overflow fallback just flips
+  // it back on top of the element it's supposed to be explaining. Center the
+  // tooltip on screen instead for these; the spotlight still highlights the
+  // real element.
+  const isEdgeAnchoredMobileStep =
+    isMobile && (step.selector.startsWith('[data-tour="nav-') || step.selector === '[data-tour="brand"]');
+  const tooltipPos = computeTooltipPosition(rect, isEdgeAnchoredMobileStep ? 'center' : step.placement, tooltipHeight);
 
   return (
     <div className={`guided-tour-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       {!rect && <div className="guided-tour-dim" />}
       {rect && (
         <div
-          className="guided-tour-spotlight"
+          className={`guided-tour-spotlight ${isTracking ? 'guided-tour-spotlight--tracking' : ''}`}
           style={{
             top: rect.top - SPOTLIGHT_PADDING,
             left: rect.left - SPOTLIGHT_PADDING,

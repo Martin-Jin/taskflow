@@ -1,0 +1,906 @@
+import { describe, it, expect } from 'vitest';
+import {
+  parseRecurrenceRule,
+  computeNextDueDate,
+  computeFirstMatchingDueDate,
+  computeRecurringRescheduleUpdate,
+  computeRecurrenceSyncUpdates,
+  computeEnforceDueDateSyncUpdates,
+  generateTaskOccurrences,
+  expandTaskOccurrences,
+  findRecurrencePhrase,
+  buildRecurrenceString,
+  resolveCurrentOccurrenceDueDate,
+  MAX_RECURRENCE_COUNT,
+} from '../../src/utils/recurrence';
+import { isBlockTaskCompleted } from '../../src/utils/missedTasks';
+
+describe('parseRecurrenceRule', () => {
+  it('parses a plain weekly rule', () => {
+    expect(parseRecurrenceRule('every week')).toEqual({ unit: 'week', count: 1 });
+  });
+
+  it('parses a numeric monthly rule', () => {
+    expect(parseRecurrenceRule('every 3 months')).toEqual({ unit: 'month', count: 3 });
+  });
+
+  it('parses a numeric yearly rule', () => {
+    expect(parseRecurrenceRule('every 2 years')).toEqual({ unit: 'year', count: 2 });
+  });
+
+  it('parses a specific-weekday-list recurrence ("every mon, wed, fri")', () => {
+    expect(parseRecurrenceRule('every mon, wed, fri')).toEqual({ unit: 'week', count: 1, days: [1, 3, 5] });
+  });
+
+  it('parses "every N week(s) on <weekday list>" (round-trip shape)', () => {
+    expect(parseRecurrenceRule('every 2 weeks on Mon, Wed')).toEqual({ unit: 'week', count: 2, days: [1, 3] });
+  });
+
+  it('parses "every other week" as every-2-weeks', () => {
+    expect(parseRecurrenceRule('every other week')).toEqual({ unit: 'week', count: 2 });
+  });
+
+  it('parses "every weekday" as Mon-Fri', () => {
+    expect(parseRecurrenceRule('every weekday')).toEqual({ unit: 'week', count: 1, days: [1, 2, 3, 4, 5] });
+  });
+
+  it('parses "every second sunday" as biweekly on Sunday', () => {
+    expect(parseRecurrenceRule('every second sunday')).toEqual({ unit: 'week', count: 2, days: [0] });
+  });
+
+  it('parses bare adverbial forms with no leading "every"', () => {
+    expect(parseRecurrenceRule('monthly')).toEqual({ unit: 'month', count: 1 });
+    expect(parseRecurrenceRule('fortnightly')).toEqual({ unit: 'week', count: 2 });
+  });
+
+  it('clamps a huge count to MAX_RECURRENCE_COUNT', () => {
+    expect(parseRecurrenceRule('every 5000 days')).toEqual({ unit: 'day', count: MAX_RECURRENCE_COUNT });
+  });
+
+  it('returns null for an unparseable string', () => {
+    expect(parseRecurrenceRule('sometime soon')).toBeNull();
+  });
+
+  it('returns null for non-string input', () => {
+    expect(parseRecurrenceRule(null)).toBeNull();
+    expect(parseRecurrenceRule(undefined)).toBeNull();
+    expect(parseRecurrenceRule(42)).toBeNull();
+  });
+
+  it('returns null when a weekday recurrence phrase is not at the very start of the string', () => {
+    // parseRecurrenceRule's contract is "does the WHOLE string represent a
+    // recurrence" — a weekday phrase buried later in a longer string (unlike
+    // findRecurrencePhrase, which searches anywhere) should not match.
+    expect(parseRecurrenceRule('call bob every monday sometime')).toBeNull();
+  });
+
+  it('parses a weekday recurrence when it is the whole string', () => {
+    expect(parseRecurrenceRule('every monday')).toEqual({ unit: 'week', count: 1, days: [1] });
+  });
+});
+
+describe('computeNextDueDate', () => {
+  it('advances by a plain day count', () => {
+    expect(computeNextDueDate('2026-07-31', 'every day')).toBe('2026-08-01');
+  });
+
+  it('advances a week correctly across a month boundary', () => {
+    expect(computeNextDueDate('2026-07-28', 'every week')).toBe('2026-08-04');
+  });
+
+  it('rolls a monthly recurrence from Jan 31 into Feb 28 (non-leap year)', () => {
+    expect(computeNextDueDate('2025-01-31', 'every month')).toBe('2025-02-28');
+  });
+
+  it('rolls a monthly recurrence from Jan 31 into Feb 29 (leap year)', () => {
+    expect(computeNextDueDate('2024-01-31', 'every month')).toBe('2024-02-29');
+  });
+
+  it('rolls month-end date over successive months without re-anchoring to the clamped day', () => {
+    // Recurrence math should re-derive from the ORIGINAL date each time, not
+    // drift downward permanently once clamped into a short month.
+    const afterFeb = computeNextDueDate('2025-01-31', 'every month'); // -> 2025-02-28
+    const afterMar = computeNextDueDate(afterFeb, 'every month'); // advancing from the (clamped) Feb 28
+    expect(afterMar).toBe('2025-03-28');
+  });
+
+  it('advances a yearly recurrence, including across a leap day', () => {
+    expect(computeNextDueDate('2024-02-29', 'every year')).toBe('2025-02-28');
+  });
+
+  it('falls back to +1 day when the recurrence string does not parse', () => {
+    expect(computeNextDueDate('2026-07-31', 'not a recurrence')).toBe('2026-08-01');
+  });
+
+  it('falls back to +1 day when the recurrence string is missing', () => {
+    expect(computeNextDueDate('2026-07-31', null)).toBe('2026-08-01');
+  });
+
+  it('advances a Mon/Wed weekday rule from Monday to the same week\'s Wednesday', () => {
+    // 2026-08-03 is a Monday.
+    expect(computeNextDueDate('2026-08-03', 'every week on Mon, Wed')).toBe('2026-08-05');
+  });
+
+  it('advances a Mon/Wed weekday rule from Wednesday to the following week\'s Monday', () => {
+    // 2026-08-05 is a Wednesday; next matching day wraps to the following Monday.
+    expect(computeNextDueDate('2026-08-05', 'every week on Mon, Wed')).toBe('2026-08-10');
+  });
+
+  it('advances an every-2-weeks-on-Monday rule by a full 2-week cycle after wrapping', () => {
+    // 2026-08-03 is a Monday; only day in the list, so wrap uses the 2-week interval.
+    expect(computeNextDueDate('2026-08-03', 'every 2 weeks on Mon')).toBe('2026-08-17');
+  });
+});
+
+describe('computeFirstMatchingDueDate', () => {
+  it('returns the anchor unchanged for a plain (non-weekday-specific) rule', () => {
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week')).toBe('2026-08-06');
+  });
+
+  it('returns the anchor unchanged when it already matches a weekday-specific rule', () => {
+    // 2026-08-06 is a Thursday.
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week on Thu')).toBe('2026-08-06');
+  });
+
+  it('snaps forward to the nearest matching weekday, same week, when the anchor does not match', () => {
+    // 2026-08-06 is a Thursday; "every week on Mon, Wed, Fri" -> next match is Friday 08-07.
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week on Mon, Wed, Fri')).toBe('2026-08-07');
+  });
+
+  it('handles a non-consecutive weekday rule like "every Wed and Sun"', () => {
+    // 2026-08-06 is a Thursday; "every week on Wed, Sun" -> next match wraps to Sunday 08-09.
+    expect(computeFirstMatchingDueDate('2026-08-06', 'every week on Wed, Sun')).toBe('2026-08-09');
+  });
+
+  it('falls back to the anchor when the recurrence string does not parse', () => {
+    expect(computeFirstMatchingDueDate('2026-08-06', 'not a recurrence')).toBe('2026-08-06');
+  });
+});
+
+describe('computeRecurringRescheduleUpdate', () => {
+  // Regression coverage for the bug where rescheduling a recurring task's
+  // (or sub-task's) due date back onto an occurrence already recorded as
+  // done left it showing completed forever — see SchedulerContext.updateTask.
+
+  it('drops a completedDates entry on/after the new due date when rescheduling back onto it', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: ['2026-08-06'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-06' })).toEqual({
+      completedDates: [],
+    });
+  });
+
+  it('keeps completedDates entries strictly before the new due date', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-10', completedDates: ['2026-08-03', '2026-08-06'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-06' })).toEqual({
+      completedDates: ['2026-08-03'],
+    });
+  });
+
+  it('is a no-op for a non-recurring task', () => {
+    const task = { isRecurring: false, dueDate: '2026-08-07', completedDates: ['2026-08-07'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-06' })).toEqual({});
+  });
+
+  it('is a no-op when the update does not touch dueDate', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: ['2026-08-07'] };
+    expect(computeRecurringRescheduleUpdate(task, { title: 'Renamed' })).toEqual({});
+  });
+
+  it('is a no-op when dueDate is set to the same value', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: ['2026-08-07'] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '2026-08-07' })).toEqual({});
+  });
+
+  it('falls back to the existing dueDate when the update tries to clear it', () => {
+    const task = { isRecurring: true, dueDate: '2026-08-07', completedDates: [] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '' })).toEqual({ dueDate: '2026-08-07' });
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: null })).toEqual({ dueDate: '2026-08-07' });
+  });
+
+  it('leaves dueDate alone when the recurring task never had one (valid pre-existing state)', () => {
+    const task = { isRecurring: true, dueDate: null, completedDates: [] };
+    expect(computeRecurringRescheduleUpdate(task, { dueDate: '' })).toEqual({});
+  });
+
+  // Regression coverage for the bug where moving a single occurrence of a
+  // Mon/Wed/Fri task onto an off-pattern day (e.g. Thursday) re-anchored the
+  // WHOLE series onto that day — since generateTaskOccurrences still filters
+  // by the same weekdays, the series then generated no nearby occurrences at
+  // all, so the scheduler silently dropped it and its remaining hours showed
+  // as 0. See rebalanceEngine.js's expandRecurringTasks / expandTaskOccurrences.
+  describe('off-pattern single-occurrence moves', () => {
+    const mwfTask = {
+      isRecurring: true,
+      dueDate: '2026-08-07', // Friday
+      recurrenceRule: { unit: 'week', count: 1, days: [1, 3, 5] }, // Mon/Wed/Fri
+      completedDates: [],
+    };
+
+    it('records an override and keeps the series anchored when moved off-pattern', () => {
+      expect(computeRecurringRescheduleUpdate(mwfTask, { dueDate: '2026-08-06' })).toEqual({
+        dueDate: '2026-08-07',
+        overrides: { '2026-08-07': { date: '2026-08-06' } },
+      });
+    });
+
+    it('merges into any pre-existing overrides rather than replacing them', () => {
+      const withOverrides = { ...mwfTask, overrides: { '2026-07-31': { date: '2026-08-01' } } };
+      expect(computeRecurringRescheduleUpdate(withOverrides, { dueDate: '2026-08-06' })).toEqual({
+        dueDate: '2026-08-07',
+        overrides: {
+          '2026-07-31': { date: '2026-08-01' },
+          '2026-08-07': { date: '2026-08-06' },
+        },
+      });
+    });
+
+    it('re-anchors normally (no override) when moved to an on-pattern date', () => {
+      expect(computeRecurringRescheduleUpdate(mwfTask, { dueDate: '2026-08-10' })).toEqual({
+        completedDates: [],
+      });
+    });
+  });
+
+  // Regression coverage for the bug where manually rescheduling a monthly (or
+  // day/year, or plain-weekly-with-no-days) recurring task's due date got
+  // silently reverted back to the old date instantly: since those rules have
+  // no weekday filter, generateTaskOccurrences never finds the new date among
+  // the old anchor's occurrences, so the (mistaken) off-pattern check used to
+  // treat any manual edit as a single-occurrence exception and snap dueDate
+  // back — see SchedulerContext.updateTask's planSeriesReanchor call, which is
+  // the one actually meant to handle a manual due-date move for these rules.
+  describe('rules with no weekday filter never treat a manual move as off-pattern', () => {
+    it('re-anchors normally (no override) for a monthly task moved to any date', () => {
+      const monthlyTask = {
+        isRecurring: true,
+        dueDate: '2026-08-06',
+        recurrenceRule: { unit: 'month', count: 1 },
+        completedDates: [],
+      };
+      expect(computeRecurringRescheduleUpdate(monthlyTask, { dueDate: '2026-08-07' })).toEqual({
+        completedDates: [],
+      });
+    });
+
+    it('re-anchors normally (no override) for a plain weekly task (no specific days) moved to any date', () => {
+      const weeklyTask = {
+        isRecurring: true,
+        dueDate: '2026-08-06',
+        recurrenceRule: { unit: 'week', count: 1, days: null },
+        completedDates: [],
+      };
+      expect(computeRecurringRescheduleUpdate(weeklyTask, { dueDate: '2026-08-07' })).toEqual({
+        completedDates: [],
+      });
+    });
+  });
+});
+
+describe('resolveCurrentOccurrenceDueDate', () => {
+  // Regression coverage for the bug where a "Repeats every week on Sun, Mon,
+  // Wed, Fri" task's due date, manually moved to an off-pattern day (e.g.
+  // Thursday), never appeared to "stick": computeRecurringRescheduleUpdate's
+  // off-pattern branch (see above) deliberately leaves `task.dueDate` pinned
+  // to the series' pattern anchor and stashes the real move in `overrides`
+  // instead — correct for the scheduler (expandTaskOccurrences already
+  // consults `overrides`), but every plain `task.dueDate` reader (the task
+  // detail modal's due-date field and its "Scheduled" block list) kept
+  // showing the stale pre-move date since nothing else consulted the
+  // override. This resolver is that missing piece.
+  const mwfTask = {
+    isRecurring: true,
+    dueDate: '2026-08-05', // Wednesday — the pattern anchor
+    recurrenceRule: { unit: 'week', count: 1, days: [0, 1, 3, 5] }, // Sun/Mon/Wed/Fri
+  };
+
+  it('returns the plain dueDate when there is no override for it', () => {
+    expect(resolveCurrentOccurrenceDueDate(mwfTask)).toBe('2026-08-05');
+  });
+
+  it('returns the moved-to date when the current occurrence has an active override', () => {
+    const moved = { ...mwfTask, overrides: { '2026-08-05': { date: '2026-08-06' } } };
+    expect(resolveCurrentOccurrenceDueDate(moved)).toBe('2026-08-06');
+  });
+
+  it('ignores an override keyed by a DIFFERENT (past or future) occurrence date', () => {
+    const otherOverride = { ...mwfTask, overrides: { '2026-07-29': { date: '2026-07-30' } } };
+    expect(resolveCurrentOccurrenceDueDate(otherOverride)).toBe('2026-08-05');
+  });
+
+  it('falls back to dueDate for a deleted override rather than surfacing a dropped occurrence', () => {
+    const deleted = { ...mwfTask, overrides: { '2026-08-05': { deleted: true } } };
+    expect(resolveCurrentOccurrenceDueDate(deleted)).toBe('2026-08-05');
+  });
+
+  it('is a no-op for a non-recurring task', () => {
+    expect(resolveCurrentOccurrenceDueDate({ isRecurring: false, dueDate: '2026-08-05' })).toBe('2026-08-05');
+  });
+
+  it('returns null for a task with no due date at all', () => {
+    expect(resolveCurrentOccurrenceDueDate({ isRecurring: true, dueDate: null })).toBeNull();
+    expect(resolveCurrentOccurrenceDueDate(null)).toBeNull();
+  });
+
+  it('is unaffected by a task with no overrides map at all', () => {
+    expect(resolveCurrentOccurrenceDueDate({ isRecurring: true, dueDate: '2026-08-05' })).toBe('2026-08-05');
+  });
+
+  // The end-to-end sequence the bug report described: override the due date
+  // off-pattern, then complete that occurrence — the completion should
+  // consume the override (SchedulerContext.completeTask drops the overrides
+  // entry keyed by the closed-out occurrenceDate) and roll forward to the
+  // next PATTERN occurrence, since a one-off move doesn't change the series.
+  it('reflects the override up until the occurrence is completed, then the series resumes its own pattern', () => {
+    const movedThenAdvanced = {
+      ...mwfTask,
+      overrides: {}, // completeTask deletes the entry for the closed-out occurrenceDate
+      dueDate: '2026-08-07', // advanced to the next Sun/Mon/Wed/Fri occurrence (Friday)
+    };
+    expect(resolveCurrentOccurrenceDueDate(movedThenAdvanced)).toBe('2026-08-07');
+  });
+});
+
+describe('generateTaskOccurrences', () => {
+  it('returns [] when the task has no recurrenceRule', () => {
+    expect(generateTaskOccurrences({ dueDate: '2026-07-01' }, '2026-07-01', '2026-07-31')).toEqual([]);
+  });
+
+  it('returns [] when the range ends before the first occurrence', () => {
+    const task = { dueDate: '2026-08-15', recurrenceRule: { unit: 'day', count: 1 } };
+    expect(generateTaskOccurrences(task, '2026-07-01', '2026-07-31')).toEqual([]);
+  });
+
+  it('generates every daily occurrence within range, including the range end boundary', () => {
+    const task = { dueDate: '2026-07-01', recurrenceRule: { unit: 'day', count: 1 } };
+    const occurrences = generateTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual(['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04', '2026-07-05']);
+  });
+
+  it('generates weekly occurrences for a specific weekday list', () => {
+    // dueDate 2026-07-01 is a Wednesday; days [1,3,5] = Mon/Wed/Fri.
+    const task = { dueDate: '2026-07-01', recurrenceRule: { unit: 'week', count: 1, days: [1, 3, 5] } };
+    const occurrences = generateTaskOccurrences(task, '2026-07-01', '2026-07-14');
+    expect(occurrences).toEqual(['2026-07-01', '2026-07-03', '2026-07-06', '2026-07-08', '2026-07-10', '2026-07-13']);
+  });
+
+  it('includes the first occurrence (task.dueDate) when it falls exactly on the range start', () => {
+    const task = { dueDate: '2026-07-10', recurrenceRule: { unit: 'day', count: 2 } };
+    const occurrences = generateTaskOccurrences(task, '2026-07-10', '2026-07-10');
+    expect(occurrences).toEqual(['2026-07-10']);
+  });
+
+  it('excludes occurrences that fall after the range end', () => {
+    const task = { dueDate: '2026-07-01', recurrenceRule: { unit: 'day', count: 3 } };
+    // Occurrences would be 07-01, 07-04, 07-07 ... range ends just before 07-07.
+    const occurrences = generateTaskOccurrences(task, '2026-07-01', '2026-07-06');
+    expect(occurrences).toEqual(['2026-07-01', '2026-07-04']);
+  });
+
+  it('handles monthly recurrence rolling from a month-end date into shorter months', () => {
+    // NOTE: each occurrence is computed independently from the ORIGINAL
+    // anchor date (task.dueDate), not chained from the previous (possibly
+    // clamped) occurrence like computeNextDueDate does. So March lands back
+    // on the 31st (its own full month) rather than staying clamped at 28 —
+    // a real behavioral difference from computeNextDueDate's sequential
+    // "complete one at a time" semantics; see final report.
+    const task = { dueDate: '2025-01-31', recurrenceRule: { unit: 'month', count: 1 } };
+    const occurrences = generateTaskOccurrences(task, '2025-01-01', '2025-04-30');
+    expect(occurrences).toEqual(['2025-01-31', '2025-02-28', '2025-03-31', '2025-04-30']);
+  });
+
+  it('maps a yearly rule onto a 12*count-month interval', () => {
+    const task = { dueDate: '2024-02-29', recurrenceRule: { unit: 'year', count: 1 } };
+    const occurrences = generateTaskOccurrences(task, '2024-01-01', '2026-12-31');
+    expect(occurrences).toEqual(['2024-02-29', '2025-02-28', '2026-02-28']);
+  });
+});
+
+describe('expandTaskOccurrences', () => {
+  it('behaves identically to generateTaskOccurrences when there are no overrides (backward compatible)', () => {
+    const task = { dueDate: '2026-07-01', recurrenceRule: { unit: 'day', count: 1 } };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-02', date: '2026-07-02' },
+      { originalDate: '2026-07-03', date: '2026-07-03' },
+      { originalDate: '2026-07-04', date: '2026-07-04' },
+      { originalDate: '2026-07-05', date: '2026-07-05' },
+    ]);
+  });
+
+  it('moves a single occurrence off-pattern to its overridden date without touching the others', () => {
+    // Mon/Wed/Fri task; move the 2026-07-06 (Monday) occurrence to Thursday 2026-07-09.
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'week', count: 1, days: [1, 3, 5] },
+      overrides: { '2026-07-06': { date: '2026-07-09' } },
+    };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-10');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-03', date: '2026-07-03' },
+      { originalDate: '2026-07-08', date: '2026-07-08' },
+      { originalDate: '2026-07-06', date: '2026-07-09' },
+      { originalDate: '2026-07-10', date: '2026-07-10' },
+    ]);
+  });
+
+  it('includes an occurrence moved INTO the requested range even though its original date is outside it', () => {
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'day', count: 1 },
+      overrides: { '2026-06-29': { date: '2026-07-02' } },
+    };
+    // 2026-06-29 isn't a valid occurrence of this daily task anchored 2026-07-01
+    // anyway, so use a task whose pattern legitimately includes a date outside
+    // the query range but moved into it.
+    const weekdayTask = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'week', count: 1, days: [3] }, // every Wednesday
+      overrides: { '2026-06-24': { date: '2026-07-02' } }, // a Wed before the query range, moved into it
+    };
+    expect(expandTaskOccurrences(weekdayTask, '2026-07-01', '2026-07-08')).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-06-24', date: '2026-07-02' },
+      { originalDate: '2026-07-08', date: '2026-07-08' },
+    ]);
+  });
+
+  it('excludes an occurrence moved OUT of the requested range', () => {
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'day', count: 1 },
+      overrides: { '2026-07-03': { date: '2026-07-20' } },
+    };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-02', date: '2026-07-02' },
+      { originalDate: '2026-07-04', date: '2026-07-04' },
+      { originalDate: '2026-07-05', date: '2026-07-05' },
+    ]);
+  });
+
+  it('drops an occurrence entirely when its override sets deleted: true', () => {
+    const task = {
+      dueDate: '2026-07-01',
+      recurrenceRule: { unit: 'day', count: 1 },
+      overrides: { '2026-07-03': { deleted: true } },
+    };
+    const occurrences = expandTaskOccurrences(task, '2026-07-01', '2026-07-05');
+    expect(occurrences).toEqual([
+      { originalDate: '2026-07-01', date: '2026-07-01' },
+      { originalDate: '2026-07-02', date: '2026-07-02' },
+      { originalDate: '2026-07-04', date: '2026-07-04' },
+      { originalDate: '2026-07-05', date: '2026-07-05' },
+    ]);
+  });
+
+  // Regression coverage for the "Sleep routine" double-scheduling bug: a
+  // recurring parent's due-date edit cascades a temporary override onto each
+  // recurring descendant (computeRecurringDescendantDueDateOverrides in
+  // recurrenceState.js), keyed by the descendant's OWN (still-overdue)
+  // dueDate and pointing at the parent's new date. If the descendant's own
+  // daily/weekly pattern independently reaches that same new date on its own
+  // (which it always does for an overdue daily task, since "every 1 day"
+  // naturally walks forward through every date including today), the pattern
+  // date and the override's destination collide — without dedup this would
+  // surface as TWO entries resolving to the same `date`, and
+  // rebalanceEngine.js's expandRecurringTasks would schedule the real task
+  // twice for that day (two separate block sets, exactly what the user saw).
+  describe('collapsing a pattern-date/override collision (overdue-descendant cascade)', () => {
+    it('returns exactly one entry for today when an overdue daily descendant\'s override points at the same date its own pattern already reaches', () => {
+      // Descendant is a daily task still anchored on a past due date
+      // (2026-08-10); its own "every 1 day" pattern naturally reaches
+      // 2026-08-12 ("today") on its own. The parent's due-date cascade wrote
+      // an override keyed by the OLD due date pointing at the same "today".
+      const descendant = {
+        dueDate: '2026-08-10',
+        recurrenceRule: { unit: 'day', count: 1 },
+        overrides: { '2026-08-10': { date: '2026-08-12' } },
+      };
+      const occurrences = expandTaskOccurrences(descendant, '2026-08-12', '2026-08-12');
+      expect(occurrences).toEqual([{ originalDate: '2026-08-12', date: '2026-08-12' }]);
+    });
+
+    it('still surfaces every other naturally-occurring date around the collapsed collision', () => {
+      const descendant = {
+        dueDate: '2026-08-10',
+        recurrenceRule: { unit: 'day', count: 1 },
+        overrides: { '2026-08-10': { date: '2026-08-12' } },
+      };
+      const occurrences = expandTaskOccurrences(descendant, '2026-08-10', '2026-08-13');
+      // 2026-08-10 (the override's source key) is consumed by the override,
+      // not emitted as its own pattern-date entry — it only resolves once,
+      // to 2026-08-12, and 08-11/08-13 are untouched pattern dates.
+      expect(occurrences).toEqual([
+        { originalDate: '2026-08-11', date: '2026-08-11' },
+        { originalDate: '2026-08-12', date: '2026-08-12' },
+        { originalDate: '2026-08-13', date: '2026-08-13' },
+      ]);
+    });
+
+    it('does not collapse two different overrides that happen to land on the same date as each other (no natural pattern entry involved)', () => {
+      // Neither override's destination matches a natural pattern date here
+      // (weekly Mon/Wed task; both overrides moved distant occurrences onto
+      // the same Thursday) — dedup only kicks in against a natural pattern
+      // entry, so this rarer case is expected to keep just one of the two
+      // (whichever is encountered first), not silently duplicate either.
+      const task = {
+        dueDate: '2026-07-01', // Wednesday
+        recurrenceRule: { unit: 'week', count: 1, days: [1, 3] }, // Mon/Wed
+        overrides: {
+          '2026-07-06': { date: '2026-07-09' }, // Monday -> Thursday
+          '2026-07-08': { date: '2026-07-09' }, // Wednesday -> same Thursday
+        },
+      };
+      const occurrences = expandTaskOccurrences(task, '2026-07-09', '2026-07-09');
+      expect(occurrences).toHaveLength(1);
+      expect(occurrences[0].date).toBe('2026-07-09');
+    });
+  });
+});
+
+describe('findRecurrencePhrase', () => {
+  it('finds a recurrence phrase anywhere inside a longer title', () => {
+    const result = findRecurrencePhrase('pay rent every month please');
+    expect(result).not.toBeNull();
+    expect(result.rule).toEqual({ unit: 'month', count: 1 });
+    expect(result.matchedText).toBe('every month');
+  });
+
+  it('returns null when no recurrence phrase is present', () => {
+    expect(findRecurrencePhrase('buy groceries tomorrow')).toBeNull();
+  });
+
+  it('returns null for non-string input', () => {
+    expect(findRecurrencePhrase(null)).toBeNull();
+  });
+
+  it('finds a bare adverbial form anywhere in the text', () => {
+    const result = findRecurrencePhrase('take out trash weekly on Tuesdays');
+    expect(result).not.toBeNull();
+    expect(result.rule.unit).toBe('week');
+  });
+});
+
+describe('computeRecurrenceSyncUpdates', () => {
+  it('returns an empty map when no tasks are recurring', () => {
+    const tasks = [{ id: 'p1' }, { id: 's1', parentId: 'p1' }];
+    expect(computeRecurrenceSyncUpdates(tasks).size).toBe(0);
+  });
+
+  it('returns an empty map when a parent/sub-task chain already agrees on recurrence', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1', isRecurring: true, recurrenceString: 'every week' },
+    ];
+    expect(computeRecurrenceSyncUpdates(tasks).size).toBe(0);
+  });
+
+  it('propagates a recurring parent\'s cadence down onto a non-recurring sub-task', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(1);
+    expect(updates.get('s1')).toEqual({
+      isRecurring: true,
+      recurrenceString: 'every week',
+      recurrenceRule: { unit: 'week', count: 1 },
+    });
+  });
+
+  it('propagates a recurring sub-task\'s cadence up onto its non-recurring parent', () => {
+    const tasks = [
+      { id: 'p1' },
+      { id: 's1', parentId: 'p1', isRecurring: true, recurrenceString: 'every month' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(1);
+    expect(updates.get('p1')).toEqual({
+      isRecurring: true,
+      recurrenceString: 'every month',
+      recurrenceRule: { unit: 'month', count: 1 },
+    });
+  });
+
+  it('prefers the nearest recurring ANCESTOR over a recurring descendant when both exist', () => {
+    // p1 is recurring "every week"; sub-task s1 is not recurring, but its own
+    // child gs1 is recurring "every day". s1 should adopt the parent's cadence.
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1' },
+      { id: 'gs1', parentId: 's1', isRecurring: true, recurrenceString: 'every day' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1')).toEqual({
+      isRecurring: true,
+      recurrenceString: 'every week',
+      recurrenceRule: { unit: 'week', count: 1 },
+    });
+  });
+
+  it('falls back to a recurring descendant when no ancestor is recurring, walking 2 levels deep', () => {
+    const tasks = [
+      { id: 'p1' },
+      { id: 's1', parentId: 'p1' },
+      { id: 'gs1', parentId: 's1', isRecurring: true, recurrenceString: 'every 3 days' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(2);
+    expect(updates.get('p1').recurrenceString).toBe('every 3 days');
+    expect(updates.get('s1').recurrenceString).toBe('every 3 days');
+  });
+
+  it('sets isRecurring on a propagated task even when it has no dueDate of its own', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1', dueDate: null },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').isRecurring).toBe(true);
+  });
+
+  it('propagates the recurring relative\'s dueDate onto the synced task', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').dueDate).toBe('2026-08-10');
+  });
+
+  it('does not set a dueDate when the recurring relative has none of its own', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week', dueDate: null },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').dueDate).toBeUndefined();
+  });
+
+  // Unlike enforceDueDate (a persistent "the ancestor's date always wins"
+  // constraint — see computeEnforceDueDateSyncUpdates), recurrence syncing
+  // is a deliberate ONE-TIME seed: once a sub-task is recurring, its due
+  // date advances on its own via its own occurrence cadence (completeTask),
+  // so a LATER change to the ancestor's dueDate must NOT keep cascading down
+  // — `if (task.isRecurring) continue` intentionally skips it on every
+  // subsequent run. Confirms that design holds rather than assuming it.
+  it('does not cascade a later ancestor dueDate change onto an already-recurring sub-task (recurrence is a one-time seed, not an ongoing mirror)', () => {
+    let tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week', dueDate: '2026-08-06' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    let updates = computeRecurrenceSyncUpdates(tasks);
+    tasks = tasks.map((t) => ({ ...t, ...updates.get(t.id) }));
+    expect(tasks.find((t) => t.id === 's1').dueDate).toBe('2026-08-06');
+
+    tasks = tasks.map((t) => (t.id === 'p1' ? { ...t, dueDate: '2026-08-13' } : t));
+    updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('snaps the propagated dueDate to the first date actually matching a weekday-specific rule', () => {
+    // p1's own dueDate (2026-08-06, a Thursday) doesn't itself fall on Wed/Sun
+    // -- the sub-task's synced dueDate must land on a day the rule allows.
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week on Wed, Sun', dueDate: '2026-08-06' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.get('s1').dueDate).toBe('2026-08-09'); // next Sunday
+  });
+
+  it('leaves an already-recurring task untouched even if a relative has a different cadence', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 's1', parentId: 'p1', isRecurring: true, recurrenceString: 'every day' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('does not propagate across unrelated tasks or sibling sub-tasks with no shared recurring relative', () => {
+    const tasks = [
+      { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+      { id: 'p2' },
+      { id: 's1', parentId: 'p2' },
+    ];
+    const updates = computeRecurrenceSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('guards against a corrupted parentId cycle instead of looping forever', () => {
+    const tasks = [
+      { id: 'a', parentId: 'b', isRecurring: true, recurrenceString: 'every day' },
+      { id: 'b', parentId: 'a' },
+    ];
+    expect(() => computeRecurrenceSyncUpdates(tasks)).not.toThrow();
+  });
+
+  // Regression coverage: a sub-task migrated from the old embedded-Subtask
+  // model (migrateSubtasksToTasks.js) that was `isCompleted: true` at
+  // migration time comes out with `remainingHours: 0` and `isRecurring:
+  // false`. If its parent later becomes recurring, this sync used to set
+  // isRecurring/dueDate but leave remainingHours stuck at 0 forever, since
+  // this path isn't completeTask's occurrence-advance (the only other place
+  // that resets it) — showing the sub-task (and any parent rolling its hours
+  // up, see taskHierarchy.js's getEffectiveRemainingHours) as permanently
+  // "0m remaining" even though the new occurrence hasn't started yet.
+  describe('resetting a stale remainingHours/isCompleted when a task newly becomes recurring', () => {
+    it('resets remainingHours to estimatedHours for a task with remainingHours stuck at 0', () => {
+      const tasks = [
+        { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+        { id: 's1', parentId: 'p1', estimatedHours: 0.5, remainingHours: 0 },
+      ];
+      const updates = computeRecurrenceSyncUpdates(tasks);
+      expect(updates.get('s1').remainingHours).toBe(0.5);
+    });
+
+    it('clears a leftover isCompleted flag and resets remainingHours', () => {
+      const tasks = [
+        { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+        { id: 's1', parentId: 'p1', estimatedHours: 0.5, remainingHours: 0.5, isCompleted: true },
+      ];
+      const updates = computeRecurrenceSyncUpdates(tasks);
+      expect(updates.get('s1').isCompleted).toBe(false);
+      expect(updates.get('s1').remainingHours).toBe(0.5);
+    });
+
+    it('leaves remainingHours untouched when it is already a healthy positive value', () => {
+      const tasks = [
+        { id: 'p1', isRecurring: true, recurrenceString: 'every week' },
+        { id: 's1', parentId: 'p1', estimatedHours: 1, remainingHours: 1 },
+      ];
+      const updates = computeRecurrenceSyncUpdates(tasks);
+      expect(updates.get('s1').remainingHours).toBeUndefined();
+      expect(updates.get('s1').isCompleted).toBeUndefined();
+    });
+  });
+});
+
+describe('computeEnforceDueDateSyncUpdates', () => {
+  it('returns an empty map when no ancestor enforces its due date', () => {
+    const tasks = [{ id: 'p1' }, { id: 's1', parentId: 'p1' }];
+    expect(computeEnforceDueDateSyncUpdates(tasks).size).toBe(0);
+  });
+
+  it('propagates enforceDueDate and copies the ancestor dueDate onto an undated sub-task', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.size).toBe(1);
+    expect(updates.get('s1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10', dueDateInherited: true });
+  });
+
+  it('cascades a LATER change to the ancestor dueDate onto a sub-task that inherited it, even though the sub-task is already enforcing', () => {
+    // First sync: s1 inherits p1's dueDate and is marked dueDateInherited.
+    let tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+    ];
+    let updates = computeEnforceDueDateSyncUpdates(tasks);
+    tasks = tasks.map((t) => ({ ...t, ...updates.get(t.id) }));
+    expect(tasks.find((t) => t.id === 's1')).toMatchObject({
+      enforceDueDate: true,
+      dueDate: '2026-08-10',
+      dueDateInherited: true,
+    });
+
+    // Ancestor's dueDate changes — the sub-task is now already enforcing,
+    // but since its date is still marked inherited, it must re-sync to the
+    // new date rather than being skipped as "already enforcing".
+    tasks = tasks.map((t) => (t.id === 'p1' ? { ...t, dueDate: '2026-08-17' } : t));
+    updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.get('s1')).toEqual({ dueDate: '2026-08-17' });
+  });
+
+  it('does not cascade an ancestor dueDate change onto a sub-task whose own dueDate was set explicitly (not inherited)', () => {
+    // Simulates: user directly edited s1's dueDate at some point, which
+    // clears dueDateInherited (see updateTask in SchedulerContext.jsx).
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-17' },
+      { id: 's1', parentId: 'p1', enforceDueDate: true, dueDate: '2026-08-05', dueDateInherited: false },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.has('s1')).toBe(false);
+  });
+
+  it('does not propagate when the enforcing ancestor has no dueDate of its own', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: null },
+      { id: 's1', parentId: 'p1' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('forces enforceDueDate on a sub-task with its own dueDate, without overwriting that date', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1', dueDate: '2026-08-05' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.get('s1')).toEqual({ enforceDueDate: true });
+  });
+
+  it('propagates through a non-enforcing intermediate parent down to a grandchild', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1' },
+      { id: 'gs1', parentId: 's1' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.get('gs1')).toEqual({ enforceDueDate: true, dueDate: '2026-08-10', dueDateInherited: true });
+  });
+
+  it('leaves an already-enforcing descendant untouched', () => {
+    const tasks = [
+      { id: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 's1', parentId: 'p1', enforceDueDate: true, dueDate: '2026-08-05' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.has('s1')).toBe(false);
+  });
+
+  it('does not propagate upward from an enforcing descendant onto its parent', () => {
+    const tasks = [
+      { id: 'p1' },
+      { id: 's1', parentId: 'p1', enforceDueDate: true, dueDate: '2026-08-10' },
+    ];
+    const updates = computeEnforceDueDateSyncUpdates(tasks);
+    expect(updates.size).toBe(0);
+  });
+
+  it('guards against a corrupted parentId cycle instead of looping forever', () => {
+    const tasks = [
+      { id: 'a', parentId: 'b', enforceDueDate: true, dueDate: '2026-08-10' },
+      { id: 'b', parentId: 'a' },
+    ];
+    expect(() => computeEnforceDueDateSyncUpdates(tasks)).not.toThrow();
+  });
+});
+
+describe('buildRecurrenceString', () => {
+  it('builds a singular day string', () => {
+    expect(buildRecurrenceString(1, 'day')).toBe('every 1 day');
+  });
+
+  it('builds a plural week string', () => {
+    expect(buildRecurrenceString(2, 'week')).toBe('every 2 weeks');
+  });
+
+  it('builds a weekday-specific string when days are given', () => {
+    expect(buildRecurrenceString(1, 'week', [1, 3, 5])).toBe('every week on Mon, Wed, Fri');
+  });
+
+  it('builds a plural weekday-specific string when count > 1', () => {
+    expect(buildRecurrenceString(2, 'week', [1, 3])).toBe('every 2 weeks on Mon, Wed');
+  });
+
+  it('clamps an out-of-range count when building', () => {
+    expect(buildRecurrenceString(0, 'month')).toBe('every 1 month');
+    expect(buildRecurrenceString(999999, 'day')).toBe(`every ${MAX_RECURRENCE_COUNT} days`);
+  });
+
+  it('round-trips build -> parse for a plain numeric rule', () => {
+    const str = buildRecurrenceString(3, 'month');
+    expect(parseRecurrenceRule(str)).toEqual({ unit: 'month', count: 3 });
+  });
+
+  it('round-trips build -> parse for a weekday-specific rule', () => {
+    const str = buildRecurrenceString(2, 'week', [1, 3, 5]);
+    expect(parseRecurrenceRule(str)).toEqual({ unit: 'week', count: 2, days: [1, 3, 5] });
+  });
+
+  it('round-trips build -> parse -> build for a single-count weekday rule', () => {
+    const str = buildRecurrenceString(1, 'week', [0, 6]);
+    const rule = parseRecurrenceRule(str);
+    expect(rule).toEqual({ unit: 'week', count: 1, days: [0, 6] });
+    expect(buildRecurrenceString(rule.count, rule.unit, rule.days)).toBe(str);
+  });
+});

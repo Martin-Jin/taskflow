@@ -39,6 +39,14 @@
     width var(--duration-base) var(--ease-standard), height var(--duration-base) var(--ease-standard);
 }
 
+/* Applied only while a scroll/resize-driven reposition is in flight (see
+   GuidedTour.jsx) — the animated transition above is great for a step-advance
+   jump to a new target, but during an active scroll it forces a mid-transition
+   repaint of this box-shadow (which covers the full viewport) on every tick. */
+.guided-tour-spotlight--tracking {
+  transition: none;
+}
+
 .guided-tour-tooltip {
   position: fixed;
   width: 300px;
@@ -103,17 +111,3 @@
   justify-content: center;
 }
 
-.help-icon-btn {
-  position: relative;
-}
-
-.help-icon-unread-dot {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-accent-border);
-  border: 1.5px solid var(--color-bg-surface);
-}

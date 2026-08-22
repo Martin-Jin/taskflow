@@ -2,10 +2,8 @@
  * AddTaskModal — creates a new task, laid out to match TaskDetailModal's
  * Todoist-style structure (title header, free-text main column, metadata
  * sidebar) minus the fields that only make sense once a task exists
- * (sub-tasks, lock state). Local-only by default; when Todoist sync is
- * active, offers an "Also create in Todoist" checkbox (which requires
- * picking a project, per Todoist's own requirement that every task belongs
- * to one).
+ * (sub-tasks, lock state). Always local-only — Todoist tasks only ever
+ * enter TaskFlow via the one-time import in Settings, never created here.
  *
  * A due date is OPTIONAL. Undated tasks still show up in the Tasks list
  * and Board view (matching Todoist, where an undated task is completely
@@ -20,8 +18,10 @@
  * calendar capacity. The user can lengthen it right here before saving, or
  * later from the task detail modal.
  *
- * SMART PARSE: covers due date, estimated hours, "unattended", recurrence,
- * dependency ("after X"), priority ("p1"-"p4"), plus "#project" and "@tag".
+ * SMART PARSE: covers a plain URL (becomes the task's `link` field), due
+ * date, estimated hours, "unattended", "!noauto" (exclude from auto-
+ * schedule), recurrence, dependency ("after X"), priority ("p1"-"p4"),
+ * plus "#project" and "@tag".
  * Every field but priority/project/labels reads plain English — no leading
  * symbol needed. Priority stays p1-p4 only (deliberately not inferred from
  * bare words like "high"/"low" — too easy to mistake an unrelated word in
@@ -35,49 +35,69 @@
  * to reliably parse it back later.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Repeat,
   Wind,
   CalendarClock,
+  CalendarCheck,
   CalendarX2,
   Flag,
   Link2,
-  HelpCircle,
+  Lock,
   Folder,
   Layers,
   Tag,
   Clock,
   MoreHorizontal,
+  Ban,
   X,
+  Sunrise,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { useAuth } from '../../context/AuthContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
-import { RECURRENCE_UNITS, buildRecurrenceString } from '../../utils/recurrence';
+import { linkLabel } from '../../utils/linkify';
+import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { formatHours } from '../../utils/formatHours';
+import { computeEffectiveRole, getAssignableCollaborators, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
+import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
+import { isAtMaxSubtaskDepth } from '../../utils/taskHierarchy';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
-import { useSmartTaskTitle } from '../../hooks/useSmartTaskTitle';
+import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import DependencyPicker from '../Common/DependencyPicker';
+import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
+import NumberField from '../Common/NumberField';
+import { TIME_OF_DAY_OPTIONS, TIME_OF_DAY_LABELS } from '../../utils/timeOfDay';
 import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
+import SmartDurationInput from '../Common/SmartDurationInput';
+import SmartParseGuideModal from './SmartParseGuideModal';
 
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes
 
-export default function AddTaskModal({ onClose, initialProjectId = '', initialSectionId = '' }) {
-  const { addTask, tasks, sections, projects, labels, getOrCreateLabelIds, syncActive } = useScheduler();
+export default function AddTaskModal({ onClose, initialProjectId = '', initialSectionId = '', initialTitle = '', initialNotes = '' }) {
+  const { addTask, tasks, sections, projects, sharedProjects, labels, getOrCreateLabelIds } = useScheduler();
+  const { user } = useAuth();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
-  const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
+  /* initialTitle/initialNotes carry content shared into the app from
+     elsewhere (the PWA share target — see App.jsx's useSharedContentIntent).
+     Seeding `title` state rather than bypassing it means smart-parse runs over
+     the shared text exactly as if it had been typed, so a shared "call dentist
+     tomorrow p2" arrives with its date/priority chips already detected, and a
+     shared URL is lifted into the `link` field. */
+  const [title, setTitle] = useState(initialTitle);
+  const [link, setLink] = useState('');
+  const [notes, setNotes] = useState(initialNotes);
   const notesRef = useRef(null);
-  useAutosizeTextarea(notesRef, notes);
+  useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
   const [estimatedHours, setEstimatedHours] = useState(DEFAULT_ESTIMATED_HOURS);
   const [hasEditedHours, setHasEditedHours] = useState(false);
   const [priority, setPriority] = useState('medium');
@@ -88,18 +108,57 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   const [hasEditedRecurrence, setHasEditedRecurrence] = useState(false);
   const [recurrenceCount, setRecurrenceCount] = useState(1);
   const [recurrenceUnit, setRecurrenceUnit] = useState('month');
+  const [recurrenceDays, setRecurrenceDays] = useState(null);
   const [projectId, setProjectId] = useState(initialProjectId || '');
-  const [hasEditedProject, setHasEditedProject] = useState(!!initialProjectId);
+  // Pre-filled from the view the modal was opened from (e.g. a project's task
+  // list, a board column) — that's a default, not a user edit, so it must not
+  // block smart-parse from overriding it when the title mentions "#project".
+  const [hasEditedProject, setHasEditedProject] = useState(false);
   const [sectionId, setSectionId] = useState(initialSectionId || '');
+  const [hasEditedSection, setHasEditedSection] = useState(false);
   const [dependsOn, setDependsOn] = useState([]);
   const [hasEditedDependencies, setHasEditedDependencies] = useState(false);
+  // Draft parent id from a smart-parsed "sub of <task>"/"subtask of <task>"
+  // title mention — there's no widget to edit this directly (a brand-new
+  // task has no "move to" picker of its own), so null just means "not set"
+  // rather than needing a separate hasEdited flag like the fields above.
+  const [parentTaskId, setParentTaskId] = useState(null);
+  // Draft assignee from a smart-parsed "assign to <name>"/"for <name>" title
+  // mention (see the collaborators-gated `assignTo` field below) — like
+  // parentTaskId above, there's no manual widget for this in AddTaskModal, so
+  // null just means "not set" rather than needing a separate hasEdited flag.
+  const [assignedTo, setAssignedTo] = useState(null);
   const [isPassive, setIsPassive] = useState(false);
+  const [preferredTimeOfDay, setPreferredTimeOfDay] = useState('');
+  const [hasEditedPreferredTimeOfDay, setHasEditedPreferredTimeOfDay] = useState(false);
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
+  const [enforceDueDate, setEnforceDueDate] = useState(false);
+  const [hasEditedEnforceDueDate, setHasEditedEnforceDueDate] = useState(false);
+  const [excludeFromAutoSchedule, setExcludeFromAutoSchedule] = useState(false);
+  const [hasEditedExcludeFromAutoSchedule, setHasEditedExcludeFromAutoSchedule] = useState(false);
+  const [fixedTime, setFixedTime] = useState('');
+  // "Fixed time" has no value to speak of while the checkbox is checked but
+  // no time has been picked yet — fixedTimeEnabled tracks the checkbox
+  // itself (separate from the "HH:MM" value) so that state is distinguishable
+  // from "not fixed at all", and hasEditedFixedTime is a dedicated
+  // manual-edit flag (unlike the other fields above, `fixedTime` alone can't
+  // serve as its own "untouched" signal: a smart-parse-applied time is a
+  // non-empty value too, so re-detecting a *different* time phrase later in
+  // the same title would otherwise never be able to overwrite it).
+  const [fixedTimeEnabled, setFixedTimeEnabled] = useState(false);
+  const [hasEditedFixedTime, setHasEditedFixedTime] = useState(false);
   const [earliestDate, setEarliestDate] = useState('');
+  const [hasEditedEarliestDate, setHasEditedEarliestDate] = useState(false);
   const [labelIds, setLabelIds] = useState([]);
   const [error, setError] = useState('');
+  // Set the first time the user types into the title, and never cleared —
+  // gates the "missing info" hint below so it doesn't show on a fresh,
+  // untouched modal (only once the user has actually started filling it in,
+  // even if they later clear the title back to empty).
+  const [hasTypedTitle, setHasTypedTitle] = useState(false);
   const [openField, setOpenField] = useState(null); // 'date' | 'priority' | 'labels' | null
   const [moreOpen, setMoreOpen] = useState(false);
+  const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
 
   function togglePill(field) {
     setOpenField((prev) => (prev === field ? null : field));
@@ -113,21 +172,86 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
   const availableSections = sections.filter((s) => !projectId || s.projectId === projectId);
 
+  // A viewer-role collaborator can look at a shared project but not create
+  // tasks in it — same read-only precedent as TaskDetailModal's comment
+  // composer and BoardView's section editing (both gated the same way via
+  // computeEffectiveRole). Rules already refuse the write server-side; this
+  // keeps the UI from offering one that would just fail.
+  function isViewerOnlyProject(id) {
+    const project = projects.find((p) => p.id === id);
+    if (!project?.sharedProjectId) return false;
+    return computeEffectiveRole(sharedProjects[project.sharedProjectId], user?.uid) === 'viewer';
+  }
+  const isSelectedProjectViewerOnly = !!projectId && isViewerOnlyProject(projectId);
+
+  // Collaborators to offer for a smart-parsed "assign to"/"for" mention (see
+  // the `assignTo` field below) — only meaningful once the selected project
+  // actually resolves to a shared one the user can create tasks in at all
+  // (a viewer can't add tasks here regardless — see isSelectedProjectViewerOnly
+  // above — so there's no point detecting an assignment that could never be
+  // saved). `null` for the live-presence param (unlike TaskDetailModal, this
+  // modal doesn't subscribe to viewersByProject) just falls through
+  // resolveOwnerProfile's own fallback chain to the project doc's denormalized
+  // owner name, or a generic label — never a crash.
+  const selectedProject = projects.find((p) => p.id === projectId);
+  const selectedSharedProject = selectedProject?.sharedProjectId ? sharedProjects[selectedProject.sharedProjectId] : null;
+  const assignableCollaborators = useMemo(() => {
+    if (!selectedSharedProject || isSelectedProjectViewerOnly) return [];
+    const ownerProfile = resolveOwnerProfile(selectedSharedProject, null, selectedSharedProject.ownerId);
+    return getAssignableCollaborators({
+      ownerId: selectedSharedProject.ownerId,
+      collaborators: selectedSharedProject.collaborators,
+      ownerDisplayName: ownerProfile.displayName,
+      ownerPhotoURL: ownerProfile.photoURL,
+    });
+  }, [selectedSharedProject, isSelectedProjectViewerOnly]);
+
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);
     if (sectionId && !sections.find((s) => s.id === sectionId && s.projectId === newProjectId)) {
       setSectionId('');
     }
+    // A previously smart-parse-detected assignment only makes sense for the
+    // project it was detected against (a different/personal project's
+    // collaborator list has no relation to this uid) — drop it here rather
+    // than risk carrying a stale uid over to an unrelated project. There's no
+    // manual "Assign to" widget in this modal to re-set it from, unlike
+    // TaskDetailModal, so this is the only place it needs clearing.
+    if (assignedTo) setAssignedTo(null);
   }
 
-  const { smartDetected, handleTitleChange: handleSmartTitleChange, dismissSmartChip, buildFinalTitle } = useSmartTaskTitle({
+  const {
+    smartDetected,
+    handleTitleChange: handleSmartTitleChange,
+    dismissSmartChip,
+    applySmartChipCandidate,
+    buildFinalTitle,
+  } = useSmartTaskTitle({
     tasks,
     projects,
+    sections,
+    collaborators: assignableCollaborators,
     fields: {
+      link: {
+        isUntouched: () => true,
+        apply: (match) => setLink(match.url),
+        revert: () => setLink(''),
+      },
       dueDate: {
         isUntouched: () => !hasEditedDueDate,
         apply: (match) => setDueDate(match.iso),
         revert: () => setDueDate(''),
+      },
+      fixedTime: {
+        isUntouched: () => !hasEditedFixedTime,
+        apply: (match) => {
+          setFixedTime(match.time);
+          setFixedTimeEnabled(true);
+        },
+        revert: () => {
+          setFixedTime('');
+          setFixedTimeEnabled(false);
+        },
       },
       recurrence: {
         isUntouched: () => !hasEditedRecurrence,
@@ -135,11 +259,15 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           setIsRecurring(true);
           setRecurrenceCount(match.rule.count);
           setRecurrenceUnit(match.rule.unit);
+          setRecurrenceDays(match.rule.days || null);
           // A recurring task needs a starting due date — default to today if
           // the user hasn't set (or typed) one, matching Todoist's own behavior.
           if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
         },
-        revert: () => setIsRecurring(false),
+        revert: () => {
+          setIsRecurring(false);
+          setRecurrenceDays(null);
+        },
       },
       priority: {
         isUntouched: () => !hasEditedPriority,
@@ -156,6 +284,33 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         apply: () => setIsPassive(true),
         revert: () => setIsPassive(false),
       },
+      enforceDueDate: {
+        isUntouched: () => !hasEditedEnforceDueDate,
+        apply: (match, detected) => {
+          setEnforceDueDate(true);
+          // Same reasoning as recurrence above — "enforce due date" is inert
+          // without a due date (see the `enforceDueDate: enforceDueDate &&
+          // !!dueDate` guard at save time below), so a bare "on the day"
+          // mention needs one too, or the flag would silently no-op on save.
+          if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
+        },
+        revert: () => setEnforceDueDate(false),
+      },
+      earliestDate: {
+        isUntouched: () => !hasEditedEarliestDate,
+        apply: (match) => setEarliestDate(match.iso),
+        revert: () => setEarliestDate(''),
+      },
+      excludeFromAutoSchedule: {
+        isUntouched: () => !hasEditedExcludeFromAutoSchedule,
+        apply: () => setExcludeFromAutoSchedule(true),
+        revert: () => setExcludeFromAutoSchedule(false),
+      },
+      preferredTimeOfDay: {
+        isUntouched: () => !hasEditedPreferredTimeOfDay,
+        apply: (match) => setPreferredTimeOfDay(match.period),
+        revert: () => setPreferredTimeOfDay(''),
+      },
       dependency: {
         isUntouched: () => !hasEditedDependencies,
         apply: (match) => {
@@ -165,12 +320,62 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           if (entry.task) setDependsOn((prev) => prev.filter((id) => id !== entry.task.id));
         },
       },
+      subOf: {
+        isUntouched: () => parentTaskId === null,
+        apply: (match) => {
+          if (!match.task) return;
+          // A brand-new task has no id/descendants of its own yet, so the
+          // only real check needed is the matched task's own depth — it
+          // can't already be a cycle, and can't already be a descendant of
+          // itself (see taskHierarchy.js's getIneligibleParentIds, which a
+          // pre-existing task would need instead).
+          if (isAtMaxSubtaskDepth(match.task, tasks)) return;
+          setParentTaskId(match.task.id);
+        },
+        revert: () => setParentTaskId(null),
+      },
+      assignTo: {
+        isUntouched: () => assignedTo === null,
+        apply: (match) => {
+          if (match.collaborator) setAssignedTo(match.collaborator.uid);
+        },
+        revert: () => setAssignedTo(null),
+      },
       project: {
         isUntouched: () => !hasEditedProject,
         apply: (match) => {
           if (match.project) handleProjectChange(match.project.id);
+          // Guarded separately from the project's own touch-flag: a user
+          // could leave the project itself smart-parse-driven while still
+          // manually overriding just the section from the dropdown, and a
+          // later keystroke re-running this same detection shouldn't clobber
+          // that manual section choice.
+          if (match.section && !hasEditedSection) setSectionId(match.section.id);
         },
-        revert: () => handleProjectChange(''),
+        revert: () => {
+          handleProjectChange('');
+          if (!hasEditedSection) setSectionId('');
+        },
+      },
+      // Standalone "%section" shorthand — same untouched guard as `project`
+      // above (both write to the same projectId/sectionId state, so a
+      // manual project/section choice must block either trigger equally).
+      // An ambiguous match (match.candidates non-empty) is left alone here:
+      // it has no single project/section to apply yet, and is instead
+      // resolved later via applySmartChipCandidate once the user picks one
+      // from the chip's disambiguation popover.
+      sectionShorthand: {
+        isUntouched: () => !hasEditedProject,
+        apply: (match) => {
+          if (match.section) {
+            handleProjectChange(match.project.id);
+            setSectionId(match.section.id);
+          }
+        },
+        revert: () => {
+          handleProjectChange('');
+          if (!hasEditedSection) setSectionId('');
+        },
       },
     },
   });
@@ -178,30 +383,21 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   function handleTitleChange(value) {
     setTitle(value);
     handleSmartTitleChange(value);
+    if (!hasTypedTitle) setHasTypedTitle(true);
   }
 
-  const smartChips = [
-    smartDetected.dueDate && { type: 'dueDate', icon: CalendarClock, label: `Due ${formatDisplayDate(smartDetected.dueDate.iso)}` },
-    smartDetected.recurrence && { type: 'recurrence', icon: Repeat, label: `Repeats ${smartDetected.recurrence.recurrenceString}` },
-    smartDetected.priority && { type: 'priority', icon: Flag, label: `${PRIORITY_LABELS[smartDetected.priority.level]} priority` },
-    smartDetected.estimatedHours && { type: 'estimatedHours', icon: Clock, label: `Est. ${formatHours(smartDetected.estimatedHours.hours)}` },
-    smartDetected.unattended && { type: 'unattended', icon: Wind, label: 'Can run unattended' },
-    smartDetected.dependency &&
-      (smartDetected.dependency.task
-        ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }
-        : { type: 'dependency', icon: HelpCircle, label: `No match for "${smartDetected.dependency.fragment}"` }),
-    smartDetected.project &&
-      (smartDetected.project.project
-        ? { type: 'project', icon: Folder, label: `Project: ${smartDetected.project.project.name}` }
-        : { type: 'project', icon: HelpCircle, label: `No project match for "${smartDetected.project.fragment}"` }),
-    ...(smartDetected.labels || []).map((m) => ({
-      type: 'labels',
-      key: `labels:${m.matchedText}`,
-      icon: Tag,
-      label: `#${m.name}`,
-      match: m,
-    })),
-  ].filter(Boolean);
+  const smartChips = buildSmartChips(smartDetected);
+
+  const missingFields = [];
+  if (!projectId) missingFields.push('a project');
+  if (!dueDate) missingFields.push('a due date');
+  // hasEditedHours alone means "the user manually touched this field" (it's
+  // what gates smart-parse from overwriting a deliberate edit — see
+  // estimatedHours.isUntouched above) — it stays false when smart-parse
+  // itself set the duration via a detected chip, which used to make this
+  // hint claim "no duration" even with an "Est. Nh" chip visibly applied.
+  // A duration counts as specified either way.
+  if (!hasEditedHours && !smartDetected.estimatedHours) missingFields.push('a duration');
 
   function handleNotesBlur() {
     const parsed = parseDurationHours(notes);
@@ -214,6 +410,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   }
 
   function handleSubmit() {
+    if (isSelectedProjectViewerOnly) return; // UI already hides/disables this path — defense in depth.
     if (!title.trim()) {
       setError('Give the task a title.');
       return;
@@ -222,33 +419,53 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       setError('A recurring task needs a starting due date.');
       return;
     }
+    if (fixedTimeEnabled && !fixedTime) {
+      setError('Pick a time, or turn off "Fixed time".');
+      return;
+    }
 
     const section = sections.find((s) => s.id === sectionId);
     const pendingLabelNames = (smartDetected.labels || []).map((m) => m.name);
     const finalLabelIds = [...new Set([...labelIds, ...(pendingLabelNames.length ? getOrCreateLabelIds(pendingLabelNames) : [])])];
 
     addTask({
-      title: buildFinalTitle(title),
+      // If the title was nothing but a smart-parsed link, stripping it
+      // leaves an empty string — fall back to the link's hostname (already
+      // used for its chip label) rather than saving a blank/raw-URL title.
+      title: buildFinalTitle(title, link ? linkLabel(link) : undefined),
+      link: link || null,
       notes,
       estimatedHours: Number(estimatedHours) || DEFAULT_ESTIMATED_HOURS,
       priority,
       dueDate: dueDate || null,
       isRecurring: isRecurring && !!dueDate,
-      recurrenceString: isRecurring && dueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit) : null,
+      recurrenceString: isRecurring && dueDate ? buildRecurrenceString(recurrenceCount, recurrenceUnit, recurrenceDays) : null,
       projectId: projectId || null,
       sectionId: sectionId || null,
       sectionName: section ? section.name : null,
       dependsOn,
+      parentId: parentTaskId || null,
       isPassive,
+      // Omitted rather than stored as '' when unset, so a task without a
+      // preference carries no field at all (see placementCost's zero-cost path).
+      ...(preferredTimeOfDay ? { preferredTimeOfDay } : {}),
+      enforceDueDate: enforceDueDate && !!dueDate,
+      excludeFromAutoSchedule,
+      fixedTime: fixedTimeEnabled && fixedTime ? fixedTime : null,
       earliestDate: earliestDate || null,
       labelIds: finalLabelIds,
-      syncToTodoist: syncActive,
+      // Omitted entirely (rather than set to null) unless smart-parse actually
+      // detected one against THIS project's own collaborators — see
+      // types/index.js's Task.assignedTo doc comment on why it stays absent
+      // on a personal (non-shared) task.
+      ...(assignedTo ? { assignedTo } : {}),
     });
     requestClose();
   }
 
   return (
-    <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
+    <>
+      <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
         className="modal modal-detail"
         onClick={(e) => e.stopPropagation()}
@@ -268,6 +485,10 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
               smartDetected={smartDetected}
               onDismiss={dismissSmartChip}
               placeholder="Task name"
+              projects={projects}
+              sections={sections}
+              labels={labels}
+              onEnter={handleSubmit}
             />
           </div>
           <button className="btn btn-icon detail-header-close" onClick={requestClose} aria-label="Close">
@@ -277,11 +498,33 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
         {error && <p className="form-error">{error}</p>}
 
-        <p className="form-hint" style={{ marginTop: -6, marginBottom: 10, paddingLeft: 7 }}>
-          Smart parse: due dates, p1–p4, duration, "unattended", #project, @tag, "every month"
-        </p>
+        {hasTypedTitle && missingFields.length > 0 && (
+          <p className="form-hint-warning" style={{ marginTop: -6, paddingLeft: 7 }}>
+            Note: you haven't specified {missingFields.join(', ')}.
+          </p>
+        )}
 
-        <SmartChips chips={smartChips} onDismiss={dismissSmartChip} />
+        <button
+          type="button"
+          className="form-hint"
+          onClick={() => setShowSmartParseGuide(true)}
+          style={{
+            marginTop: -6,
+            marginBottom: 10,
+            paddingLeft: 7,
+            background: 'none',
+            border: 'none',
+            textAlign: 'left',
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+          }}
+        >
+          Smart parse: links, due dates, "not before Friday", "at 5pm", p1–p4, duration, "unattended", "on the day", "!noauto",
+          #project, @tag, "every month"
+        </button>
+
+        <SmartChips chips={smartChips} onDismiss={dismissSmartChip} onSelectCandidate={applySmartChipCandidate} />
 
         <div className="form-row form-row-compact-notes">
           <textarea
@@ -291,6 +534,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             onChange={(e) => setNotes(e.target.value)}
             onBlur={handleNotesBlur}
             placeholder="Description (optional)"
+            maxLength={10000}
           />
         </div>
 
@@ -306,7 +550,17 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           </button>
           <button
             type="button"
-            className={`addtask-pill ${isRecurring || isPassive || !!earliestDate || dependsOn.length > 0 ? 'is-set' : ''}`}
+            className={`addtask-pill ${
+              isRecurring ||
+              isPassive ||
+              enforceDueDate ||
+              excludeFromAutoSchedule ||
+              !!earliestDate ||
+              !!preferredTimeOfDay ||
+              dependsOn.length > 0
+                ? 'is-set'
+                : ''
+            }`}
             onClick={() => setMoreOpen((v) => !v)}
             aria-label="More options"
             title="More options"
@@ -332,19 +586,16 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
         {openField === 'priority' && (
           <div className="addtask-pill-panel">
-            <select
+            <SelectMenu
+              ariaLabel="Priority"
               autoFocus
               value={priority}
-              onChange={(e) => {
+              onChange={(next) => {
                 setHasEditedPriority(true);
-                setPriority(e.target.value);
+                setPriority(next);
               }}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
+              options={['low', 'medium', 'high', 'urgent'].map((value) => ({ value, label: PRIORITY_LABELS[value] }))}
+            />
           </div>
         )}
 
@@ -365,25 +616,27 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         {moreOpen && (
           <div className="addtask-pill-panel addtask-more-panel">
             <DetailField icon={Layers} label="Section">
-              <select value={sectionId} onChange={(e) => setSectionId(e.target.value)} disabled={!projectId}>
-                <option value="">No section</option>
-                {availableSections.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              <SelectMenu
+                ariaLabel="Section"
+                value={sectionId}
+                onChange={(next) => {
+                  setSectionId(next);
+                  setHasEditedSection(true);
+                }}
+                options={[
+                  { value: '', label: 'No section' },
+                  ...availableSections.map((s) => ({ value: s.id, label: s.name })),
+                ]}
+                disabled={!projectId}
+              />
             </DetailField>
 
-            <DetailField icon={Clock} label="Estimated hours">
-              <input
-                type="number"
-                min="0.0833"
-                step="0.0833"
-                value={estimatedHours}
-                onChange={(e) => {
+            <DetailField icon={Clock} label="Estimated time">
+              <SmartDurationInput
+                hours={Number(estimatedHours) || 0}
+                onChange={(h) => {
                   setHasEditedHours(true);
-                  setEstimatedHours(e.target.value);
+                  setEstimatedHours(h);
                 }}
               />
             </DetailField>
@@ -399,42 +652,105 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                     setIsRecurring(e.target.checked);
                   }}
                 />
-                {isRecurring ? `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}` : 'Does not repeat'}
+                {isRecurring
+                  ? recurrenceDays && recurrenceDays.length > 0
+                    ? `Every ${recurrenceCount === 1 ? '' : `${recurrenceCount} `}week${recurrenceCount === 1 ? '' : 's'} on ${recurrenceDays
+                        .map((d) => WEEKDAY_LABELS[d])
+                        .join(', ')}`
+                    : `Every ${recurrenceCount} ${recurrenceUnit}${recurrenceCount === 1 ? '' : 's'}`
+                  : 'Does not repeat'}
               </label>
-              {isRecurring && (
+              {isRecurring && !(recurrenceDays && recurrenceDays.length > 0) && (
                 <div className="detail-field-inline" style={{ marginTop: 6 }}>
-                  <input
-                    type="number"
-                    min="1"
+                  <NumberField
+                    min={1}
+                    max={MAX_RECURRENCE_COUNT}
                     step="1"
                     value={recurrenceCount}
-                    onChange={(e) => {
+                    onCommit={(v) => {
                       setHasEditedRecurrence(true);
-                      setRecurrenceCount(Math.max(1, Number(e.target.value) || 1));
+                      setRecurrenceCount(v);
+                      setRecurrenceDays(null);
                     }}
                     style={{ width: 56 }}
                   />
-                  <select
-                    value={recurrenceUnit}
-                    onChange={(e) => {
-                      setHasEditedRecurrence(true);
-                      setRecurrenceUnit(e.target.value);
-                    }}
-                    style={{ flex: 1 }}
-                  >
-                    {RECURRENCE_UNITS.map((u) => (
-                      <option key={u.value} value={u.value}>
-                        {u.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <SelectMenu
+                      ariaLabel="Repeat unit"
+                      value={recurrenceUnit}
+                      onChange={(next) => {
+                        setHasEditedRecurrence(true);
+                        setRecurrenceUnit(next);
+                        setRecurrenceDays(null);
+                      }}
+                      options={RECURRENCE_UNITS}
+                    />
+                  </div>
                 </div>
               )}
               {!dueDate && <p className="form-hint">Needs a due date first.</p>}
             </DetailField>
 
+            <DetailField icon={CalendarCheck} label="Enforce due date">
+              <label className="form-checkbox-row" style={{ cursor: dueDate ? 'pointer' : 'not-allowed' }}>
+                <input
+                  type="checkbox"
+                  checked={enforceDueDate}
+                  disabled={!dueDate}
+                  onChange={(e) => {
+                    setHasEditedEnforceDueDate(true);
+                    setEnforceDueDate(e.target.checked);
+                  }}
+                />
+                Must be done on due date
+              </label>
+              <p className="form-hint">
+                {dueDate
+                  ? "Task won't be scheduled earlier — all remaining work is forced onto the due date."
+                  : 'Set a due date first to enable this.'}
+              </p>
+            </DetailField>
+
+            <DetailField icon={Clock} label="Fixed time">
+              <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={fixedTimeEnabled}
+                  onChange={(e) => {
+                    setHasEditedFixedTime(true);
+                    setFixedTimeEnabled(e.target.checked);
+                    if (!e.target.checked) setFixedTime('');
+                  }}
+                />
+                {fixedTimeEnabled ? (fixedTime ? `At ${fixedTime}` : 'Pick a time') : 'Not fixed'}
+              </label>
+              {fixedTimeEnabled && (
+                <>
+                  <input
+                    type="time"
+                    value={fixedTime}
+                    onChange={(e) => {
+                      setHasEditedFixedTime(true);
+                      setFixedTime(e.target.value);
+                    }}
+                    style={{ marginTop: 6 }}
+                  />
+                  <p className="form-hint">Scheduled blocks for this task will always start at this time.</p>
+                </>
+              )}
+            </DetailField>
+
             {dependencyOptions.length > 0 && (
-              <DetailField icon={Link2} label="Depends on">
+              <DetailField
+                icon={Link2}
+                label="Depends on"
+                labelExtra={
+                  <HelpTooltip label="What does this do?">
+                    A blocked task can't be marked complete or auto-scheduled until every task it depends on is done
+                    first.
+                  </HelpTooltip>
+                }
+              >
                 <DependencyPicker
                   options={dependencyOptions}
                   selectedIds={dependsOn}
@@ -451,11 +767,43 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 <input
                   type="checkbox"
                   checked={!!earliestDate}
-                  onChange={(e) => setEarliestDate(e.target.checked ? toISODate(new Date()) : '')}
+                  onChange={(e) => {
+                    setHasEditedEarliestDate(true);
+                    setEarliestDate(e.target.checked ? toISODate(new Date()) : '');
+                  }}
                 />
                 {earliestDate ? formatDisplayDate(earliestDate) : 'Not locked'}
               </label>
-              {earliestDate && <input type="date" value={earliestDate} onChange={(e) => setEarliestDate(e.target.value)} style={{ marginTop: 6 }} />}
+              {earliestDate && (
+                <>
+                  <input
+                    type="date"
+                    value={earliestDate}
+                    onChange={(e) => {
+                      setHasEditedEarliestDate(true);
+                      setEarliestDate(e.target.value);
+                    }}
+                    style={{ marginTop: 6 }}
+                  />
+                  <p className="form-hint">The scheduler won't place blocks before this date, overriding its usual pacing.</p>
+                </>
+              )}
+            </DetailField>
+
+            <DetailField icon={Sunrise} label="Preferred time">
+              <SelectMenu
+                ariaLabel="Preferred time of day"
+                value={preferredTimeOfDay || ''}
+                onChange={(next) => {
+                  setHasEditedPreferredTimeOfDay(true);
+                  setPreferredTimeOfDay(next);
+                }}
+                options={[
+                  { value: '', label: 'No preference' },
+                  ...TIME_OF_DAY_OPTIONS.map((period) => ({ value: period, label: TIME_OF_DAY_LABELS[period] })),
+                ]}
+              />
+              <p className="form-hint">A nudge, not a rule — the scheduler prefers this part of the day but will still use another slot rather than leave the work unplanned.</p>
             </DetailField>
 
             <DetailField icon={Wind} label="Unattended">
@@ -470,8 +818,35 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                 />
                 Can run unattended
               </label>
+              <p className="form-hint">e.g. laundry — can overlap other scheduled work.</p>
+            </DetailField>
+
+            <DetailField icon={Ban} label="Auto-schedule">
+              <label className="form-checkbox-row" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={excludeFromAutoSchedule}
+                  onChange={(e) => {
+                    setHasEditedExcludeFromAutoSchedule(true);
+                    setExcludeFromAutoSchedule(e.target.checked);
+                  }}
+                />
+                {excludeFromAutoSchedule ? 'Excluded from auto-schedule' : 'Included in auto-schedule'}
+              </label>
+              <p className="form-hint">
+                {excludeFromAutoSchedule
+                  ? "Re-balance schedule will skip this task — you can still drag it onto the calendar manually."
+                  : 'Re-balance schedule can place and move this task like any other.'}
+              </p>
             </DetailField>
           </div>
+        )}
+
+        {isSelectedProjectViewerOnly && (
+          <p className="comment-viewonly-note" style={{ margin: '0 20px' }}>
+            <Lock size={13} aria-hidden="true" />
+            <span>Adding tasks needs edit access on this project — ask the owner for editor access.</span>
+          </p>
         )}
 
         <div className="addtask-footer">
@@ -486,8 +861,19 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             options={[
               { value: '', label: 'Inbox' },
               ...projects
-                .filter((p) => p.name.trim().toLowerCase() !== 'inbox')
+                // A viewer-role shared project is excluded here too — not just
+                // disabled on submit — so it's never even offered as a place
+                // to (attempt to) add a task. The current selection is left in
+                // even if it's viewer-only (e.g. opened from a Board column on
+                // such a project) so the dropdown doesn't silently change out
+                // from under the user; the note+disabled button above/below
+                // cover that case instead.
+                .filter((p) => p.name.trim().toLowerCase() !== 'inbox' && (p.id === projectId || !isViewerOnlyProject(p.id)))
                 .map((p) => ({ value: p.id, label: p.name })),
+              // A synthetic, always-available destination (never a real Project
+              // record — see projectConstants.js) — visually set apart from the
+              // real project list above since it isn't one.
+              { value: NO_SCHEDULE_PROJECT_ID, label: NO_SCHEDULE_PROJECT_LABEL, separatorBefore: true },
             ]}
           />
 
@@ -495,12 +881,14 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             <button className="btn" onClick={requestClose}>
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={handleSubmit}>
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={isSelectedProjectViewerOnly}>
               Add task
             </button>
           </div>
         </div>
       </div>
     </div>
+    {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
+    </>
   );
 }

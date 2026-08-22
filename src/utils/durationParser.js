@@ -25,23 +25,18 @@
  * ============================================================================
  */
 
+import { BASE_WORD_NUMBERS } from './wordNumbers';
+
+// Shares dateParse.js's base word-to-number vocabulary (a/an/one/.../ten,
+// couple, few) and layers on duration-specific forms: "half"/"half an" (no
+// equivalent when counting whole weeks/months) and "couple of" (this parser's
+// unit always follows directly, e.g. "a couple of hours", so the "of" needs
+// its own entry here).
 const WORD_NUMBERS = {
+  ...BASE_WORD_NUMBERS,
   half: 0.5,
   'half an': 0.5,
-  a: 1,
-  an: 1,
-  one: 1,
-  two: 2,
-  three: 3,
-  four: 4,
-  five: 5,
-  six: 6,
-  seven: 7,
-  eight: 8,
-  couple: 2,
   'couple of': 2,
-  few: 3,
-  'a few': 3,
 };
 
 /** Normalize a numeric token: handles ".", "," decimals and simple "a/b" fractions. */
@@ -74,8 +69,17 @@ function parseNumberToken(token) {
 const HOUR_UNIT = /(?:hours?|hrs?|h)(?=[^a-z]|$)/i;
 const MINUTE_UNIT = /(?:minutes?|mins?|m)(?=[^a-z]|$)/i;
 
-// A leading approximation marker some people prefix estimates with.
-const APPROX_PREFIX = /(?:~|approx(?:imately)?\.?|about|est(?:imate[d]?)?:?\s*)?\s*/i;
+// Plain-word form of the two patterns above, for fuzzy typo suggestion
+// (useSmartKeywordSuggest) — kept in sync by hand since the regexes above
+// use "s?" shorthand rather than a list this could be generated from.
+export const DURATION_UNIT_WORDS = ['hour', 'hours', 'hr', 'hrs', 'minute', 'minutes', 'min', 'mins'];
+
+// A leading approximation marker some people prefix estimates with. Each
+// word alternative needs a leading \b — without it, "est" (an abbreviation
+// for "estimate") would also match mid-word inside unrelated text like
+// "test 5 min" or "quickest 20 min", swallowing part of the title into the
+// duration match.
+const APPROX_PREFIX = /(?:~|\bapprox(?:imately)?\.?|\babout|\best(?:imate[d]?)?:?\s*)?\s*/i;
 
 /**
  * Try to find an explicit "<number> <unit>" duration mention in free text.
@@ -148,9 +152,9 @@ function matchWordDuration(text) {
 export function findDurationPhrase(text) {
   if (!text || typeof text !== 'string') return null;
   const numeric = matchNumericDuration(text);
-  if (numeric) return { hours: roundToQuarterHour(numeric.hours), matchedText: numeric.matchedText, index: numeric.index };
+  if (numeric) return { hours: roundToNearestMinute(numeric.hours), matchedText: numeric.matchedText, index: numeric.index };
   const worded = matchWordDuration(text);
-  if (worded) return { hours: roundToQuarterHour(worded.hours), matchedText: worded.matchedText, index: worded.index };
+  if (worded) return { hours: roundToNearestMinute(worded.hours), matchedText: worded.matchedText, index: worded.index };
   return null;
 }
 
@@ -170,12 +174,12 @@ export function extractDurationHours(text) {
 }
 
 /**
- * Round to the nearest 15 minutes — matches the granularity the scheduler
- * already works in. Floors at one quarter-hour rather than 0: callers only
- * ever pass a confidently-matched positive duration (e.g. "5 min"), and a
- * result of 0 would be indistinguishable from "no duration found" at the
- * call site, silently discarding a real (if very short) estimate.
+ * Round to the nearest whole minute. Floors at one minute rather than 0:
+ * callers only ever pass a confidently-matched positive duration (e.g.
+ * "5 min"), and a result of 0 would be indistinguishable from "no duration
+ * found" at the call site, silently discarding a real (if very short)
+ * estimate.
  */
-function roundToQuarterHour(hours) {
-  return Math.max(0.25, Math.round(hours * 4) / 4);
+function roundToNearestMinute(hours) {
+  return Math.max(1 / 60, Math.round(hours * 60) / 60);
 }
