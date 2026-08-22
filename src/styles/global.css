@@ -505,9 +505,20 @@ select:focus-visible,
     grid-template-areas: 'main';
   }
 
+  /* --install-banner-height is set on <html> by InstallAppBanner while that
+     banner is actually on screen, and removed when it isn't (see that file).
+     It defaults to 0px, so this reduces to "clear the bottom tab bar" in the
+     normal case — the banner is persistent rather than transient, so without
+     this the bottom of every scrollable page sat permanently underneath it
+     with no way to scroll it clear. Transient toasts deliberately do NOT get
+     the same treatment: they're momentary, and reserving space for one would
+     make the whole page jump every time a notification fired. */
   .app-shell.is-mobile .main-content {
     padding: var(--space-3);
-    padding-bottom: calc(var(--bottom-bar-height) + var(--space-3) + env(safe-area-inset-bottom, 0));
+    padding-bottom: calc(
+      var(--bottom-bar-height) + var(--space-3) + var(--install-banner-height, 0px) +
+        env(safe-area-inset-bottom, 0)
+    );
   }
 
   .app-shell.is-mobile.no-topbar .main-content {

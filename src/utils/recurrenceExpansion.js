@@ -40,7 +40,15 @@ const DAY_CODE_TO_INDEX = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 // Safety valve for a malformed rule with no COUNT/UNTIL and a huge range, or
 // a COUNT far larger than any real UI would set — not a spec requirement,
 // just a guard against a runaway loop. ~2 years of daily occurrences.
-const MAX_OCCURRENCES = 730;
+//
+// Exported so the UI that lets someone type a COUNT can cap its input at the
+// same number (EventDetailModal's "Repeat ... After N occurrences" field).
+// It used to hardcode its own 730, which meant the two could drift: raise this
+// and the UI would still refuse the extra occurrences, raise the UI and the
+// expansion would silently truncate to fewer occurrences than were asked for.
+// Note this is a count of OCCURRENCES, unrelated to recurrence.js's
+// MAX_RECURRENCE_COUNT, which caps the recurrence INTERVAL ("every N days").
+export const MAX_OCCURRENCES = 730;
 
 /**
  * Parse a bare RRULE parameter string (semicolon-separated KEY=VALUE pairs,

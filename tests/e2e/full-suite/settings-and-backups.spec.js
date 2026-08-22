@@ -672,3 +672,36 @@ test('Integrations: a token/key submit button only appears once something is typ
 
   expectNoErrors(errors);
 });
+
+test('mobile: the persistent install banner reserves layout space instead of covering page content', async ({ page }) => {
+  // Regression guard. The banner is fixed to the bottom inside
+  // .floating-notifications and, unlike its transient toast neighbours, stays
+  // until dismissed. `.main-content`'s mobile padding only reserved room for
+  // the bottom tab bar, so the last ~60px of every scrollable page sat
+  // permanently underneath the banner with no way to scroll it clear — most
+  // visible in Settings, where real controls ended up under it.
+  const errors = trackConsoleErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoApp(page);
+  await gotoTab(page, 'Settings');
+
+  const banner = page.locator('.install-app-banner');
+  await expect(banner).toBeVisible();
+
+  const bannerHeight = (await banner.boundingBox()).height;
+  const paddingWithBanner = await page.evaluate(
+    () => parseFloat(getComputedStyle(document.querySelector('.main-content')).paddingBottom)
+  );
+  // Room for the bottom bar AND the banner, not just the bar.
+  expect(paddingWithBanner).toBeGreaterThan(bannerHeight);
+
+  // Dismissing it releases the space again rather than stranding the padding.
+  await banner.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(banner).toHaveCount(0);
+  const paddingAfter = await page.evaluate(
+    () => parseFloat(getComputedStyle(document.querySelector('.main-content')).paddingBottom)
+  );
+  expect(paddingAfter).toBeLessThan(paddingWithBanner);
+
+  expectNoErrors(errors);
+});
