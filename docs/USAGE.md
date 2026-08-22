@@ -133,7 +133,8 @@ project you create.
 
 A flat, sortable, searchable/filterable list — add, edit, complete, delete, and lock tasks
 (adding requires a due date); open a task to edit every field, manage
-subtasks, set dependencies, mark it as able to run unattended, force
+subtasks, set dependencies, mark it as able to run unattended, say which part
+of the day it should prefer, force
 it to be scheduled entirely on its due date ("Enforce due date"), or
 exclude it from Re-balance schedule entirely (from the task's "⋯" menu,
 or when adding it) so it's only ever scheduled by dragging it onto the
@@ -292,7 +293,8 @@ after `due:`.
 Typing naturally into the Title field — e.g. *"Call dentist tomorrow p2
 every month after Book appointment"* — auto-detects a due date, Todoist's
 `p1`–`p4` priority shorthand, a recurrence rule, an estimated duration
-(`"~2 hours"`, `"45 min"`), whether it "can run unattended", an earliest
+(`"~2 hours"`, `"45 min"`), whether it "can run unattended", a preferred time
+of day (`"in the morning"`, `"this afternoon"`, `"evenings"`), an earliest
 schedulable date (`"not before Friday"`, `"don't start until tomorrow"`,
 `"can't start before March 3"`), `!noauto` / `!manual` to exclude the task
 from Re-balance schedule, a plain URL, a dependency, a `sub of`/`subtask of`

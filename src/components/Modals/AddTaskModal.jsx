@@ -52,6 +52,7 @@ import {
   MoreHorizontal,
   Ban,
   X,
+  Sunrise,
 } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
@@ -71,6 +72,7 @@ import HelpTooltip from '../Common/HelpTooltip';
 import LabelPicker from '../Common/LabelPicker';
 import DetailField from '../Common/DetailField';
 import NumberField from '../Common/NumberField';
+import { TIME_OF_DAY_OPTIONS, TIME_OF_DAY_LABELS } from '../../utils/timeOfDay';
 import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
@@ -127,6 +129,8 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   // null just means "not set" rather than needing a separate hasEdited flag.
   const [assignedTo, setAssignedTo] = useState(null);
   const [isPassive, setIsPassive] = useState(false);
+  const [preferredTimeOfDay, setPreferredTimeOfDay] = useState('');
+  const [hasEditedPreferredTimeOfDay, setHasEditedPreferredTimeOfDay] = useState(false);
   const [hasEditedPassive, setHasEditedPassive] = useState(false);
   const [enforceDueDate, setEnforceDueDate] = useState(false);
   const [hasEditedEnforceDueDate, setHasEditedEnforceDueDate] = useState(false);
@@ -302,6 +306,11 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         apply: () => setExcludeFromAutoSchedule(true),
         revert: () => setExcludeFromAutoSchedule(false),
       },
+      preferredTimeOfDay: {
+        isUntouched: () => !hasEditedPreferredTimeOfDay,
+        apply: (match) => setPreferredTimeOfDay(match.period),
+        revert: () => setPreferredTimeOfDay(''),
+      },
       dependency: {
         isUntouched: () => !hasEditedDependencies,
         apply: (match) => {
@@ -437,6 +446,9 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       dependsOn,
       parentId: parentTaskId || null,
       isPassive,
+      // Omitted rather than stored as '' when unset, so a task without a
+      // preference carries no field at all (see placementCost's zero-cost path).
+      ...(preferredTimeOfDay ? { preferredTimeOfDay } : {}),
       enforceDueDate: enforceDueDate && !!dueDate,
       excludeFromAutoSchedule,
       fixedTime: fixedTimeEnabled && fixedTime ? fixedTime : null,
@@ -539,7 +551,13 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           <button
             type="button"
             className={`addtask-pill ${
-              isRecurring || isPassive || enforceDueDate || excludeFromAutoSchedule || !!earliestDate || dependsOn.length > 0
+              isRecurring ||
+              isPassive ||
+              enforceDueDate ||
+              excludeFromAutoSchedule ||
+              !!earliestDate ||
+              !!preferredTimeOfDay ||
+              dependsOn.length > 0
                 ? 'is-set'
                 : ''
             }`}
@@ -778,6 +796,25 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                   <p className="form-hint">The scheduler won't place blocks before this date, overriding its usual pacing.</p>
                 </>
               )}
+            </DetailField>
+
+            <DetailField icon={Sunrise} label="Preferred time">
+              <select
+                value={preferredTimeOfDay || ''}
+                onChange={(e) => {
+                  setHasEditedPreferredTimeOfDay(true);
+                  setPreferredTimeOfDay(e.target.value);
+                }}
+                aria-label="Preferred time of day"
+              >
+                <option value="">No preference</option>
+                {TIME_OF_DAY_OPTIONS.map((period) => (
+                  <option key={period} value={period}>
+                    {TIME_OF_DAY_LABELS[period]}
+                  </option>
+                ))}
+              </select>
+              <p className="form-hint">A nudge, not a rule — the scheduler prefers this part of the day but will still use another slot rather than leave the work unplanned.</p>
             </DetailField>
 
             <DetailField icon={Wind} label="Unattended">

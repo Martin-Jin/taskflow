@@ -390,3 +390,40 @@ describe('findLinkPhrases', () => {
     expect(findLinkPhrases('   ')).toEqual([]);
   });
 });
+
+describe('parseTaskText — preferred time of day', () => {
+  it('detects "in the morning" and strips it from the title', () => {
+    const { cleanedTitle, detected } = parseTaskText('Write the report in the morning');
+    expect(detected.preferredTimeOfDay?.period).toBe('morning');
+    expect(cleanedTitle.trim()).toBe('Write the report');
+  });
+
+  it('detects the other periods and the plural forms', () => {
+    expect(parseTaskText('Gym this afternoon').detected.preferredTimeOfDay?.period).toBe('afternoon');
+    expect(parseTaskText('Read in the evening').detected.preferredTimeOfDay?.period).toBe('evening');
+    expect(parseTaskText('Standup every morning').detected.preferredTimeOfDay?.period).toBe('morning');
+    expect(parseTaskText('Emails mornings').detected.preferredTimeOfDay?.period).toBe('morning');
+    expect(parseTaskText('Walk evenings').detected.preferredTimeOfDay?.period).toBe('evening');
+  });
+
+  it('does NOT claim a bare "morning" in an ordinary title', () => {
+    /* The deliberate restriction: "Morning standup notes" is a name, not a
+       preference. Eating that word and then quietly biasing the schedule is
+       worse than missing the hint entirely. */
+    const { cleanedTitle, detected } = parseTaskText('Morning standup notes');
+    expect(detected.preferredTimeOfDay).toBeUndefined();
+    expect(cleanedTitle).toBe('Morning standup notes');
+  });
+
+  it('does not claim "morning" inside a longer word', () => {
+    expect(parseTaskText('Good morningside walk').detected.preferredTimeOfDay).toBeUndefined();
+  });
+
+  it('combines with other detectors without swallowing them', () => {
+    const { cleanedTitle, detected } = parseTaskText('Call dentist tomorrow p2 in the morning');
+    expect(detected.preferredTimeOfDay?.period).toBe('morning');
+    expect(detected.priority?.level).toBe('high');
+    expect(detected.dueDate?.iso).toBeTruthy();
+    expect(cleanedTitle.trim()).toBe('Call dentist');
+  });
+});
