@@ -275,6 +275,11 @@ One page of cards, each covering one area:
 - **Templates** — every saved template, with what each one contains. Use or
   delete one from here, or reach the same picker with `Ctrl+K` → "New from
   template".
+- **Recently deleted** — put back a project, board section or tag deleted in
+  the last 30 days. Their tasks were never deleted (they moved to Inbox, or
+  lost the tag), so restoring reconnects the ones you haven't since moved or
+  deleted yourself, and says how many it left alone. Shared projects can't be
+  restored. Tasks and scheduled blocks use undo (`Ctrl+Z`) instead.
 - **Backups** — export, import, and cloud snapshots. See
   [Backups](SYNC-AND-SHARING.md#backups).
 - **Appearance** — the light/dark theme switch.

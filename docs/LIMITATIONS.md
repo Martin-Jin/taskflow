@@ -66,10 +66,15 @@ to be filled.
   events get the same Undo-toast affordance through a parallel mechanism
   (editing, dragging, or resizing one — including reverting the matching
   Google Calendar push — can be undone), but they're not part of the same
-  transactional stack as tasks/blocks. Board sections, Todoist projects, and
-  labels live in their own `useState` and are not undoable at all —
-  renaming/deleting a Board column or clearing all data cannot currently be
-  undone, only the task-side effects of those actions can. Tasks in shared
+  transactional stack as tasks/blocks. Board sections, projects, and labels
+  live in their own `useState` and are still not part of the undo stack —
+  **deleting** one is recoverable for 30 days from Settings → Recently deleted
+  instead (see [Usage](USAGE.md#settings)), but *renaming* a project/section/
+  label, and clearing all data, cannot be undone. A restore is also
+  best-effort by design: it reconnects the tasks that were detached, but
+  deliberately leaves alone any you've since deleted or filed elsewhere. A
+  shared project can't be restored at all — its tasks live on the server and
+  deleting one gives up access. Tasks in shared
   projects are deliberately excluded from undo/redo too — undoing only
   affects your own data, since restoring an old snapshot could otherwise
   revert a collaborator's concurrent edits.

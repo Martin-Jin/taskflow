@@ -574,7 +574,7 @@ test('Settings desktop rail: lists every section, click-to-scroll and scroll-tra
   // Settings/sections/ — this is the one thing that would silently drop a
   // whole section if that extraction ever went wrong.
   const rail = page.locator('.settings-rail-link');
-  await expect(rail).toHaveCount(13);
+  await expect(rail).toHaveCount(14);
   await expect(rail).toHaveText([
     'Account & sync',
     'Integrations',
@@ -587,6 +587,7 @@ test('Settings desktop rail: lists every section, click-to-scroll and scroll-tra
     'Help',
     'Keyboard shortcuts',
     'Versions',
+    'Recently deleted',
     'Backups',
     'Danger zone',
   ]);
@@ -857,4 +858,176 @@ test('Appearance: the sound toggle is not flush against the theme switch', async
   expect(gap).toBeGreaterThanOrEqual(8);
 
   expectNoErrors(errors);
+});
+
+test.describe('Recently deleted (trash/restore)', () => {
+  const trash = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:trash') || '[]'));
+
+  async function openTrashCard(page) {
+    await gotoTab(page, 'Settings');
+    await page.waitForTimeout(400);
+    const card = page.locator('[data-tour="trash-card"]');
+    await card.scrollIntoViewIfNeeded();
+    return card;
+  }
+
+  test('deleting a project files it in the trash, and restoring brings back its sections and tasks', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+
+    await gotoTab(page, 'Projects');
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+    await dialog.locator('.sidebar-project-row-wrap', { hasText: 'Work' }).getByRole('button', { name: 'Actions for Work' }).click();
+    await page.getByText('Delete', { exact: true }).first().click();
+    await resolveConfirmModal(page, { confirmLabel: 'Delete' });
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+
+    // The entry records the sections and the DETACHED TASK IDS, not task copies
+    // — a stored copy would overwrite whatever the user did to them since.
+    const entries = await trash(page);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].kind).toBe('project');
+    expect(entries[0].name).toBe('Work');
+    expect(entries[0].sections.length).toBeGreaterThan(0);
+    expect(entries[0].detached.length).toBeGreaterThan(0);
+
+    const card = await openTrashCard(page);
+    await expect(card.locator('.trash-row-name')).toHaveText(['Work']);
+    await expect(card.locator('.trash-row-meta')).toContainText(/Project · \d+ tasks, \d+ sections · expires in 30 days/);
+
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(800);
+
+    const after = await page.evaluate(() => ({
+      hasWork: JSON.parse(localStorage.getItem('taskflow:v1:projects')).some((p) => p.name === 'Work'),
+      orphanTasks: JSON.parse(localStorage.getItem('taskflow:v1:tasks')).filter((t) => !t.projectId && !t.deletedAt).length,
+    }));
+    expect(after.hasWork).toBe(true);
+    // Every task went back to the project, so none is left sitting in Inbox.
+    expect(after.orphanTasks).toBe(0);
+    // The entry is consumed, not left behind to restore twice.
+    expect(await trash(page)).toHaveLength(0);
+
+    expectNoErrors(errors);
+  });
+
+  test('a task filed elsewhere since the delete is left where it is, and the toast says so', async ({ page }) => {
+    /* THE case that matters: yanking such a task back would silently undo a
+       deliberate move, and would look like a successful restore. */
+    const errors = trackConsoleErrors(page);
+
+    await gotoTab(page, 'Projects');
+    await page.getByRole('button', { name: 'Manage projects' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Manage projects' });
+    await dialog.locator('.sidebar-project-row-wrap', { hasText: 'Writing' }).getByRole('button', { name: 'Actions for Writing' }).click();
+    await page.getByText('Delete', { exact: true }).first().click();
+    await resolveConfirmModal(page, { confirmLabel: 'Delete' });
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+
+    const entry = (await trash(page))[0];
+    expect(entry.detached.length).toBeGreaterThan(0);
+    const movedId = entry.detached[0].taskId;
+
+    // Re-file it into another project, as a user would.
+    const movedTo = await page.evaluate((id) => {
+      const key = 'taskflow:v1:tasks';
+      const tasks = JSON.parse(localStorage.getItem(key));
+      const other = JSON.parse(localStorage.getItem('taskflow:v1:projects')).find((p) => p.name !== 'Writing');
+      tasks.find((t) => t.id === id).projectId = other.id;
+      localStorage.setItem(key, JSON.stringify(tasks));
+      return other.id;
+    }, movedId);
+    await page.reload();
+
+    const card = await openTrashCard(page);
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(800);
+
+    const stillMoved = await page.evaluate(
+      (id) => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === id)?.projectId,
+      movedId
+    );
+    expect(stillMoved).toBe(movedTo);
+    // Reported rather than silently skipped.
+    await expect(page.locator('[class*="toast"]').first()).toContainText(/left where/i);
+
+    expectNoErrors(errors);
+  });
+
+  test('a tag comes back on the tasks that carried it', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      localStorage.setItem('taskflow:v1:labels', JSON.stringify([{ id: 'lz', name: 'e2e-trash-tag', color: '#e88' }]));
+      const key = 'taskflow:v1:tasks';
+      const tasks = JSON.parse(localStorage.getItem(key));
+      tasks[0].labelIds = ['lz'];
+      tasks[1].labelIds = ['lz'];
+      localStorage.setItem(key, JSON.stringify(tasks));
+    });
+    await page.reload();
+
+    await gotoTab(page, 'Settings');
+    await page.getByRole('button', { name: /view all tags/i }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: /delete.*e2e-trash-tag/i }).first().click();
+    await resolveConfirmModal(page, { confirmLabel: 'Delete' }).catch(() => {});
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).filter((t) => (t.labelIds || []).includes('lz')).length)).toBe(0);
+
+    const card = await openTrashCard(page);
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(800);
+
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:labels')).some((l) => l.id === 'lz'))).toBe(true);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).filter((t) => (t.labelIds || []).includes('lz')).length)).toBe(2);
+
+    expectNoErrors(errors);
+  });
+
+  test('restoring a section whose project is gone is refused with a reason, keeping the entry', async ({ page }) => {
+    /* A section is only reachable through its project, so it would come back
+       invisible — better to say why than to "succeed" into nothing. */
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      localStorage.setItem('taskflow:v1:trash', JSON.stringify([{
+        id: 'orphan', kind: 'section', name: 'Orphaned column', deletedAt: Date.now(),
+        section: { id: 'sX', name: 'Orphaned column', projectId: 'no-such-project' }, detached: [],
+      }]));
+    });
+    await page.reload();
+
+    const card = await openTrashCard(page);
+    await card.getByRole('button', { name: 'Restore', exact: true }).click();
+    await page.waitForTimeout(600);
+
+    await expect(page.locator('[class*="toast"]').first()).toContainText(/Restore the project/i);
+    // Kept, so the user can restore the project and try again.
+    expect(await trash(page)).toHaveLength(1);
+
+    expectNoErrors(errors);
+  });
+
+  test('an expired entry is swept on load rather than lingering in synced state', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      const day = 24 * 60 * 60 * 1000;
+      localStorage.setItem('taskflow:v1:trash', JSON.stringify([
+        { id: 'old', kind: 'label', name: 'Ancient', deletedAt: Date.now() - 31 * day, label: { id: 'l1', name: 'x' }, detached: [] },
+        { id: 'new', kind: 'label', name: 'Recent', deletedAt: Date.now() - day, label: { id: 'l2', name: 'y' }, detached: [] },
+      ]));
+    });
+    await page.reload();
+    await page.waitForTimeout(900);
+
+    expect((await trash(page)).map((e) => e.id)).toEqual(['new']);
+
+    const card = await openTrashCard(page);
+    await expect(card.locator('.trash-row-name')).toHaveText(['Recent']);
+
+    expectNoErrors(errors);
+  });
 });

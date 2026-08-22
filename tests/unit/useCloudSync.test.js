@@ -135,6 +135,7 @@ describe('isValidBackupPayload', () => {
     shortcutBindings: {},
     savedViews: [],
     taskTemplates: [],
+    trash: [],
     events: [],
     sharedProjectIds: [],
   };

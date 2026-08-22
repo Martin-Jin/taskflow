@@ -102,6 +102,13 @@ import {
 import { planPostponeUpdate } from '../utils/rescheduleHistory';
 import { planTemplateInstantiation } from '../utils/taskTemplates';
 import {
+  buildProjectTrashEntry,
+  buildSectionTrashEntry,
+  buildLabelTrashEntry,
+  pruneTrash,
+  planTrashRestore,
+} from '../utils/trash';
+import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
   fetchProjects as fetchTodoistProjects,
@@ -697,6 +704,17 @@ export function SchedulerProvider({ children }) {
     localNonUndoEditIdRef
   );
 
+  /* Recoverable deletes of projects/sections/labels (see utils/trash.js).
+     Undo covers only tasks and blocks, so these were permanent; this is the
+     safety net. Synced like the collections above — the misclick and the
+     recovery needn't happen on the same device — and genuinely PRUNED rather
+     than merely capped, since unlike a saved view or a template a trash entry
+     has a natural shelf life (TRASH_RETENTION_DAYS). */
+  const [trash, setTrash, setTrashRaw] = useLocalEditTrackedState(
+    usePersistedState('trash', []),
+    localNonUndoEditIdRef
+  );
+
   // When the last one-time Todoist import ran, and how many tasks it
   // touched — shown as a status line in Settings so a re-import isn't a
   // total mystery each time ("last imported 3 tasks, 2 days ago").
@@ -1087,6 +1105,24 @@ export function SchedulerProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Trash retention sweep, alongside the two task sweeps above: drop trash
+  // entries past TRASH_RETENTION_DAYS (and anything over the cap) once per
+  // load. rememberDeletion prunes on every delete too, but an entry that aged
+  // out while the app was closed needs this — otherwise an expired entry would
+  // sit in the synced document until the user happened to delete something
+  // else. Deliberately not a commit(): `trash` is its own collection outside
+  // the undo stack, and a retention sweep isn't a user action to undo.
+  useEffect(() => {
+    setTrash((prev) => {
+      const pruned = pruneTrash(prev, Date.now());
+      // Referential equality guard — returning a fresh array unconditionally
+      // would mark local state dirty on every load and trigger a needless
+      // cloud push.
+      return pruned.length === (prev || []).length ? prev : pruned;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---- Initial data load ---------------------------------------------------
   // Google Calendar's own silent re-auth/pull now runs inside
   // useGoogleCalendarSync (below), so there's nothing left to block on here —
@@ -1286,6 +1322,7 @@ export function SchedulerProvider({ children }) {
       shortcutBindings,
       savedViews,
       taskTemplates,
+      trash,
       sharedProjectIds,
     }),
     [
@@ -1304,6 +1341,7 @@ export function SchedulerProvider({ children }) {
       shortcutBindings,
       savedViews,
       taskTemplates,
+      trash,
       sharedProjectIds,
     ]
   );
@@ -1418,6 +1456,7 @@ export function SchedulerProvider({ children }) {
     setShortcutBindings: setShortcutBindingsRaw,
     setSavedViews: setSavedViewsRaw,
     setTaskTemplates: setTaskTemplatesRaw,
+    setTrash: setTrashRaw,
     setSharedProjectIds: setSharedProjectIdsRaw,
     theme,
     setTheme,
@@ -2673,6 +2712,75 @@ export function SchedulerProvider({ children }) {
     [labels]
   );
 
+  // ---- Trash: recoverable deletes of projects/sections/labels --------------
+  // See utils/trash.js for what an entry stores and why restore is
+  // best-effort. Everything here is deliberately OUTSIDE the undo stack:
+  // `trash` is its own persisted collection, so a delete stays recoverable
+  // across a reload (which is the whole reason this isn't just undo).
+
+  /**
+   * Files a captured deletion, pruning in the same pass.
+   *
+   * Pruning here as well as on load matters: a delete spree has to be capped
+   * immediately rather than at the next load, and an entry that aged out while
+   * the app was closed has to disappear on the next delete even if the load
+   * sweep somehow missed it. Tolerates null so each caller can hand over
+   * whatever its builder returned (a shared project yields none).
+   */
+  const rememberDeletion = useCallback((entry) => {
+    if (!entry) return;
+    setTrash((prev) => pruneTrash([entry, ...(prev || [])], Date.now()));
+  }, [setTrash]);
+
+  /** Drops one entry without restoring it ("delete permanently"). */
+  const discardTrashEntry = useCallback((entryId) => {
+    setTrash((prev) => (prev || []).filter((e) => e.id !== entryId));
+  }, [setTrash]);
+
+  /**
+   * Puts a deleted project/section/label back, along with whatever of its
+   * tasks can still be re-attached.
+   *
+   * The decision of what to re-attach lives in planTrashRestore (pure, and
+   * unit-tested against the cases that matter — a task deleted since, a task
+   * filed elsewhere since). This function only applies the plan: the row(s) go
+   * through their own setters, and every task edit lands in ONE commit so the
+   * restore is a single undoable action rather than one per task.
+   *
+   * @returns {{ok: boolean, error?: string, reattached?: number, skipped?: number}}
+   */
+  const restoreFromTrash = useCallback(
+    (entryId) => {
+      const entry = (trash || []).find((e) => e.id === entryId);
+      const plan = planTrashRestore(entry, { tasks, projects, sections, labels });
+      if (!plan.ok) return plan;
+
+      if (plan.projects.length > 0) setProjects((prev) => [...prev, ...plan.projects]);
+      if (plan.sections.length > 0) setSections((prev) => [...prev, ...plan.sections]);
+      if (plan.labels.length > 0) setLabels((prev) => [...prev, ...plan.labels]);
+
+      if (plan.taskUpdates.length > 0) {
+        const updatesByTaskId = new Map(plan.taskUpdates.map((u) => [u.taskId, u.updates]));
+        const nowIso = new Date().toISOString();
+        // Function form — see addTask's comment — so this builds on current
+        // state rather than the closure's snapshot.
+        commit(
+          (current) => ({
+            tasks: current.tasks.map((t) =>
+              updatesByTaskId.has(t.id) ? { ...t, ...updatesByTaskId.get(t.id), updatedAt: nowIso } : t
+            ),
+            blocks: current.blocks,
+          }),
+          `Restored "${entry.name}"`
+        );
+      }
+
+      discardTrashEntry(entryId);
+      return { ok: true, reattached: plan.reattached, skipped: plan.skipped };
+    },
+    [trash, tasks, projects, sections, labels, setProjects, setSections, setLabels, commit, discardTrashEntry]
+  );
+
   /** Rename a Label — purely local (labels have no Todoist equivalent). Every task referencing it by id picks up the new name automatically since nothing denormalizes a label's name onto the task itself. */
   const renameLabel = useCallback((labelId, name) => {
     const trimmed = name.trim();
@@ -2683,13 +2791,17 @@ export function SchedulerProvider({ children }) {
   /** Delete a Label and strip it out of every task's labelIds — goes through commit() (not a bare setState) so removing a tag from every task it's attached to is itself one undoable action. */
   const deleteLabel = useCallback(
     (labelId) => {
+      // Captured BEFORE the delete: the entry records which tasks are about to
+      // have this tag stripped, which is unknowable afterwards.
+      const label = labels.find((l) => l.id === labelId);
+      if (label) rememberDeletion(buildLabelTrashEntry({ label, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') }));
       setLabels((prev) => prev.filter((l) => l.id !== labelId));
       const newTasks = tasks.map((t) =>
         t.labelIds?.includes(labelId) ? { ...t, labelIds: t.labelIds.filter((id) => id !== labelId) } : t
       );
       if (newTasks.some((t, i) => t !== tasks[i])) commit({ tasks: newTasks, blocks }, `Deleted tag`);
     },
-    [tasks, blocks, commit]
+    [tasks, blocks, commit, labels, rememberDeletion]
   );
 
   // ---- Todoist: one-time import ---------------------------------------------
@@ -2866,6 +2978,13 @@ export function SchedulerProvider({ children }) {
       const project = projects.find((p) => p.id === projectId);
       const sharedId = project?.sharedProjectId;
 
+      // Captured before anything is removed. Returns null for a shared project
+      // — its tasks live in Firestore and are discarded outright below, so
+      // there'd be nothing to rebuild from (see utils/trash.js).
+      rememberDeletion(
+        buildProjectTrashEntry({ project, sections, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') })
+      );
+
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
       setSections((prev) => prev.filter((s) => s.projectId !== projectId));
 
@@ -2925,7 +3044,7 @@ export function SchedulerProvider({ children }) {
         `Deleted project`
       );
     },
-    [commit, projects, user, sharedProjects, noteSharedProjectDeleted]
+    [commit, projects, sections, tasks, user, sharedProjects, noteSharedProjectDeleted, rememberDeletion]
   );
 
   /**
@@ -3283,6 +3402,13 @@ export function SchedulerProvider({ children }) {
       // ambiguous (undo/restore/cloud pull all replace it wholesale), so only
       // an explicit delete call may issue a remote delete.
       if (section && isSharedSection(section)) noteSharedSectionDeleted(sectionId);
+      // A shared section is deliberately not captured: restoring it locally
+      // would not recreate the Firestore document its collaborators read, so
+      // the row would come back pointing at nothing (same reasoning as a
+      // shared project — see utils/trash.js).
+      if (section && !isSharedSection(section)) {
+        rememberDeletion(buildSectionTrashEntry({ section, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') }));
+      }
       setSections((prev) => prev.filter((s) => s.id !== sectionId));
       // Tasks in the deleted section fall back to "No Section", matching
       // what Todoist does (and matching this app's own local behavior before
@@ -3301,7 +3427,7 @@ export function SchedulerProvider({ children }) {
         `Deleted section`
       );
     },
-    [commit, sections, noteSharedSectionDeleted]
+    [commit, sections, tasks, noteSharedSectionDeleted, rememberDeletion]
   );
 
   // ---- Block CRUD (manual drag/resize/lock) --------------------------------
@@ -4018,6 +4144,9 @@ export function SchedulerProvider({ children }) {
       taskTemplates,
       setTaskTemplates,
       instantiateTemplate,
+      trash,
+      restoreFromTrash,
+      discardTrashEntry,
       setSearchQuery,
       undo,
       redo,
@@ -4128,6 +4257,9 @@ export function SchedulerProvider({ children }) {
       taskTemplates,
       setTaskTemplates,
       instantiateTemplate,
+      trash,
+      restoreFromTrash,
+      discardTrashEntry,
       undo,
       redo,
       runRebalance,

@@ -2570,3 +2570,62 @@
 .template-row-meta {
   margin: 0;
 }
+
+/* ----------------------------------------------------------------------
+   Recently deleted (TrashSection) — one row per recoverable delete. Same
+   shape as the template picker's rows, but each row carries two actions
+   (restore, delete permanently) rather than being a selection.
+   ---------------------------------------------------------------------- */
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Capped at MAX_TRASH_ENTRIES, so a full list scrolls inside the card
+     instead of pushing the rest of Settings down. */
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: var(--space-3);
+}
+
+.trash-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.trash-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.trash-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.trash-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Overrides .form-hint's block margins — an inline meta line, not a paragraph. */
+.trash-row-meta {
+  margin: 0;
+}
+
+/* At phone width the two actions would squeeze the name to nothing, so the
+   row stacks and the buttons sit under it at full hit-target size. */
+@media (max-width: 639px) {
+  .trash-row {
+    flex-wrap: wrap;
+  }
+
+  .trash-row-main {
+    flex-basis: 100%;
+  }
+}

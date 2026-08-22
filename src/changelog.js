@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '9.0.0',
+    date: '2026-08-22',
+    title: 'Deleting a project is no longer permanent',
+    changes: [
+      'Deleted a project, board section or tag by mistake? Settings → Recently deleted brings it back, for 30 days. This was the one place in TaskFlow where a single click destroyed something with no way back — undo has always covered tasks and blocks, but never the structure around them.',
+      'Restoring is honest about what it can do. Your tasks were never deleted — they moved to Inbox or lost the tag — so a restore reconnects them, except for any you’ve since deleted or filed somewhere else, which are deliberately left where they are. It tells you how many it left alone rather than quietly overwriting your decisions.',
+      'A project comes back with its board sections and each task in the column it was in. Entries expire after 30 days, and they sync, so you can undo a mistake made on your laptop from your phone. Shared projects can’t be restored — their tasks live on the server, and deleting one gives up your access to it.',
+    ],
+  },
+  {
     version: '8.9.0',
     date: '2026-08-22',
     title: 'Templates you can actually find, and a fixed Settings rail',

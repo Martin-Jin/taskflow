@@ -37,6 +37,7 @@ function makeSampleState() {
     taskTemplates: [
       { id: 'tpl1', name: 'Release', createdAt: 1, tasks: [{ localId: 'a', title: 'Kickoff', dueDayOffset: 0 }] },
     ],
+    trash: [{ id: 'tr1', kind: 'label', name: 'urgent', deletedAt: 1, label: { id: 'l1', name: 'urgent' }, detached: [] }],
     events: [{ id: 'e1', title: 'Standup', date: '2026-07-31' }],
     sharedProjectIds: ['sp1'],
   };
