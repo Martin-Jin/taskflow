@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.3.0',
+    date: '2026-08-22',
+    title: 'Save a search you keep repeating',
+    changes: [
+      'Searches can be saved with a name and picked again from the view/filter menu. "Overdue and urgent across every project" is worth asking daily and had to be retyped every time.',
+      'A saved view is simply a named search, so it understands every filter the search box does — and any filter added later works in a view you saved today without you touching it.',
+      'Your views sync across your devices and are included in backups, unlike a one-off filter choice which stays on the device you set it on.',
+    ],
+  },
+  {
     version: '8.2.0',
     date: '2026-08-22',
     title: 'Find out whether your estimates are any good',

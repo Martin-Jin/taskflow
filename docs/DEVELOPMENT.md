@@ -433,7 +433,8 @@ See `src/types/index.js` for full JSDoc typedefs.
 | `ScheduledBlock` | A concrete dated/timed slice of a `Task` on the calendar |
 | `FixedRoutine` | Recurring non-negotiable time (sleep, meals, commute) |
 | `CalendarEvent` | External (Google) or manual event; `isFreeTime` enables the "ignore" override |
-| `SchedulingRules` | Global config: buffer days, work-day window, pacing, horizon |
+| `SchedulingRules` | Global config: buffer days, work hours (per-weekday via `workHoursByDay`), pacing, horizon |
+| `SavedView` | A named search query (`{id, name, query, createdAt}`) — synced and backed up, capped at `MAX_SAVED_VIEWS` |
 | `DayCapacity` | Derived per-day free-time snapshot the allocator consumes |
 | `HistoryEntry` | One Undo/Redo snapshot (full tasks+blocks state) |
 

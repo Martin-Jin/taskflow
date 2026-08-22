@@ -663,6 +663,17 @@ export function SchedulerProvider({ children }) {
     usePersistedState('shortcutBindings', {}),
     localNonUndoEditIdRef
   );
+  /* Named search queries (see utils/savedViews.js). Synced rather than
+     device-local, unlike the anonymous view/filter SELECTION beside it: a
+     one-off filter choice is transient UI state, but a view the user bothered
+     to name is data they'd be annoyed to lose and would expect to find on
+     their phone. Per CLAUDE.md's Backups rule that makes it a BACKUP_FIELDS
+     entry with a matching path in every sync function. */
+  const [savedViews, setSavedViews, setSavedViewsRaw] = useLocalEditTrackedState(
+    usePersistedState('savedViews', []),
+    localNonUndoEditIdRef
+  );
+
   // When the last one-time Todoist import ran, and how many tasks it
   // touched — shown as a status line in Settings so a re-import isn't a
   // total mystery each time ("last imported 3 tasks, 2 days ago").
@@ -1250,6 +1261,7 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
+      savedViews,
       sharedProjectIds,
     }),
     [
@@ -1266,6 +1278,7 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
+      savedViews,
       sharedProjectIds,
     ]
   );
@@ -1375,6 +1388,7 @@ export function SchedulerProvider({ children }) {
     setNotificationSettings: setNotificationSettingsRaw,
     setNotes: setNotesRaw,
     setShortcutBindings: setShortcutBindingsRaw,
+    setSavedViews: setSavedViewsRaw,
     setSharedProjectIds: setSharedProjectIdsRaw,
     theme,
     setTheme,
@@ -3862,6 +3876,8 @@ export function SchedulerProvider({ children }) {
       setNotes,
       shortcutBindings,
       setShortcutBindings,
+      savedViews,
+      setSavedViews,
       setSearchQuery,
       undo,
       redo,
@@ -3966,6 +3982,8 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
+      savedViews,
+      setSavedViews,
       undo,
       redo,
       runRebalance,

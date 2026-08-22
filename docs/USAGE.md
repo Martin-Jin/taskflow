@@ -295,6 +295,13 @@ Date values use the same natural-language parser as the title field (see
 [Smart task titles](#smart-task-titles)), so anything that works there works
 after `due:`.
 
+**Saved views.** Once a search is one you'll want again, open the view/filter
+menu and pick **Save current search as a view**, give it a name, and it joins a
+**Views** list in that same menu. Picking one puts its query back in the search
+box. A saved view is just a named query, so it picks up any filter above
+automatically. They sync across your devices and are included in backups —
+unlike a one-off filter choice, which stays on the device you made it on.
+
 ## Smart task titles
 
 Typing naturally into the Title field — e.g. *"Call dentist tomorrow p2

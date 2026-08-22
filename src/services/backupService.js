@@ -50,6 +50,7 @@ export const BACKUP_FIELDS = [
   'theme',
   'notes',
   'shortcutBindings',
+  'savedViews',
   'events',
   'sharedProjectIds',
 ];
@@ -89,6 +90,24 @@ export const BACKUP_FIELDS = [
  */
 
 /**
+ * Fields a valid backup may legitimately OMIT.
+ *
+ * `isValidBackupPayload` otherwise demands every BACKUP_FIELDS key, which is
+ * what lets it reject an unrelated JSON file rather than restoring mostly-
+ * undefined state. That rule has a trap: any field added to BACKUP_FIELDS
+ * after a backup was taken makes that backup retroactively invalid, so adding
+ * a field silently breaks every file a user already has. Anything added later
+ * belongs here, and `applyBackupPayload` treats an absent field as "leave
+ * whatever's there untouched" like any other missing key.
+ *
+ * Not a migration list — these are permanently valid shapes, so nothing here
+ * needs retiring later.
+ *   - `events` joined BACKUP_FIELDS after launch.
+ *   - `savedViews` was added 2026-08-22.
+ */
+export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews']);
+
+/**
  * Expected runtime shape per BACKUP_FIELDS entry — used both by
  * isValidBackupPayload (reject a payload outright) and by
  * useCloudSync.js's applyRemoteData/applyBackupPayload (fall back to the
@@ -106,6 +125,7 @@ export const FIELD_TYPES = {
   labels: 'array',
   routines: 'array',
   rules: 'object',
+  savedViews: 'array',
   soundEnabled: 'boolean',
   soundVolume: 'number',
   animationsEnabled: 'boolean',
@@ -180,18 +200,15 @@ export function buildBackupPayload(state) {
  * notesModel.js's migrateLinksToNotes, which applyBackupPayload/
  * applyRemoteData call on such a payload.
  *
- * `events` is exempt from the "every field must be present" rule (not a
- * migration, so no cleanup needed later): backups taken before `events`
- * joined BACKUP_FIELDS simply won't have it, and that's a permanently valid
- * shape, not a legacy format to eventually retire — applyBackupPayload
- * treats an absent `events` as "leave whatever's there untouched" like any
- * other missing-from-payload field.
+ * Fields in OPTIONAL_BACKUP_FIELDS are exempt from the "every field must be
+ * present" rule — see that constant for why, and add to it whenever a new
+ * field joins BACKUP_FIELDS.
  */
 export function isValidBackupPayload(payload) {
   if (!payload || typeof payload !== 'object') return false;
   return BACKUP_FIELDS.every((field) => {
     if (field in payload) return isValidFieldValue(field, payload[field]);
-    if (field === 'events') return true;
+    if (OPTIONAL_BACKUP_FIELDS.has(field)) return true;
     // Legacy pre-Notes backup: accept a present-but-differently-shaped
     // `pinnedLinks` in place of `notes` (see the migration note above) — its
     // own shape is checked by migrateLinksToNotes at apply time, not here.

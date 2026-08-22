@@ -651,3 +651,57 @@ test('search operators filter structurally, and plain text still works as before
   await input.fill('');
   expectNoErrors(errors);
 });
+
+test('saved views: save a search, apply it, and delete it', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await gotoTab(page, 'Tasks');
+
+  const openMenu = () =>
+    page.getByRole('button', { name: /change view or filter|view, filter, and project actions/i }).click();
+  const search = page.locator('.search-bar-input').first();
+  const readStored = () => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:savedViews') || '[]'));
+
+  // Nothing to save and nothing saved: no Views group at all, rather than an
+  // empty heading.
+  await openMenu();
+  await expect(page.locator('.dashboard-customize-heading', { hasText: 'Views' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await search.fill('is:overdue p1');
+  await page.waitForTimeout(400);
+  await openMenu();
+  const saveItem = page.getByRole('menuitem', { name: /save current search/i });
+  await expect(saveItem).toBeVisible();
+  await saveItem.click();
+
+  // Validation lives in buildSavedView, so the modal refuses a blank name
+  // rather than saving an unnameable view.
+  await page.getByRole('button', { name: 'Save view' }).click();
+  await expect(page.locator('.field-rejection-hint')).toContainText(/name/i);
+
+  await page.locator('#saved-view-name').fill('E2E overdue urgent');
+  await page.getByRole('button', { name: 'Save view' }).click();
+  await page.waitForTimeout(400);
+  expect((await readStored()).map((v) => v.query)).toContain('is:overdue p1');
+
+  // Applying it writes the query back into the search box — a saved view IS a
+  // named query, so there's no separate filter state to restore.
+  await search.fill('');
+  await page.waitForTimeout(300);
+  await openMenu();
+  await page.locator('.saved-view-apply', { hasText: 'E2E overdue urgent' }).click();
+  await page.waitForTimeout(400);
+  await expect(search).toHaveValue('is:overdue p1');
+
+  // Already-saved query: no duplicate offer.
+  await openMenu();
+  await expect(page.getByRole('menuitem', { name: /save current search/i })).toHaveCount(0);
+
+  await page.locator('.saved-view-delete').first().click();
+  await page.waitForTimeout(400);
+  expect(await readStored()).toEqual([]);
+
+  await search.fill('');
+  expectNoErrors(errors);
+});
