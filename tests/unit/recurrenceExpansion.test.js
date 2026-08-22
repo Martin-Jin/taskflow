@@ -8,6 +8,7 @@ import {
   rebaseRuleForSplit,
   expandRecurringEvent,
   expandEventsForRange,
+  MAX_OCCURRENCES,
 } from '../../src/utils/recurrenceExpansion';
 
 describe('parseRRule', () => {
@@ -242,5 +243,35 @@ describe('expandEventsForRange', () => {
     const plain = { id: 'p1', date: '2026-07-02', startTime: '11:00', endTime: '12:00' };
     const results = expandEventsForRange([recurring, plain], '2026-07-01', '2026-07-02');
     expect(results.map((r) => r.id)).toEqual(['r1::2026-07-01', 'r1::2026-07-02', 'p1']);
+  });
+});
+
+describe('MAX_OCCURRENCES — the shared cap between the expander and the UI', () => {
+  // This constant is public because EventDetailModal's "Repeat ... After N
+  // occurrences" field caps its input at the same number. It used to hardcode
+  // its own copy of 730, so the two could silently disagree: a COUNT above the
+  // cap is truncated here rather than rejected, which would have meant the user
+  // asking for more occurrences than they ever got, with nothing saying so.
+  it('is the number the UI is allowed to offer', () => {
+    expect(MAX_OCCURRENCES).toBe(730);
+  });
+
+  it('truncates a COUNT larger than the cap rather than looping forever', () => {
+    const rule = { freq: 'DAILY', interval: 1, byDay: null, count: MAX_OCCURRENCES + 500 };
+    // A range wide enough that COUNT, not the range, is what ends the loop.
+    const dates = generateRuleOccurrences('2026-01-01', rule, '2026-01-01', '2032-01-01');
+    expect(dates.length).toBe(MAX_OCCURRENCES);
+  });
+
+  it('generates every occurrence when COUNT sits exactly at the cap', () => {
+    const rule = { freq: 'DAILY', interval: 1, byDay: null, count: MAX_OCCURRENCES };
+    const dates = generateRuleOccurrences('2026-01-01', rule, '2026-01-01', '2032-01-01');
+    expect(dates.length).toBe(MAX_OCCURRENCES);
+  });
+
+  it('stops a rule with no COUNT and no UNTIL from running away over a huge range', () => {
+    const rule = { freq: 'DAILY', interval: 1, byDay: null, count: null, until: null };
+    const dates = generateRuleOccurrences('2026-01-01', rule, '2026-01-01', '2060-01-01');
+    expect(dates.length).toBe(MAX_OCCURRENCES);
   });
 });

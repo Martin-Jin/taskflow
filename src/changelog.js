@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '7.5.1',
+    date: '2026-08-22',
+    title: 'The install banner stops hiding the bottom of the page',
+    changes: [
+      'On phones, the "Install TaskFlow" banner sits at the bottom until you dismiss it — but nothing reserved room for it, so the last stretch of every scrollable page stayed underneath it however far you scrolled. Most noticeable in Settings, where real buttons ended up out of reach. The page now makes room for it, and gives that room back the moment you dismiss it.',
+      'The "repeat until N occurrences" limit on an event now comes from the same place the calendar uses when working out those occurrences. The two numbers happened to match, but nothing kept them matching — so a change to one could have left you asking for more repeats than you actually got.',
+    ],
+  },
+  {
     version: '7.5.0',
     date: '2026-08-22',
     title: 'Every number box now means what it says',

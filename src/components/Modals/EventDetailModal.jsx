@@ -36,7 +36,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import Modal from '../Common/Modal';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { timeToMinutes } from '../../utils/dateUtils';
-import { buildRRuleString, parseRRule } from '../../utils/recurrenceExpansion';
+import { buildRRuleString, parseRRule, MAX_OCCURRENCES } from '../../utils/recurrenceExpansion';
 import { findRecurrencePhrase, WEEKDAY_LABELS, expandTaskOccurrences, deriveRecurrenceRule } from '../../utils/recurrence';
 import { stripMatchedText } from '../../utils/smartParse';
 import DetailField from '../Common/DetailField';
@@ -621,7 +621,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                       {repeatEndType === 'count' && (
                         <NumberField
                           min={1}
-                          max={730}
+                          max={MAX_OCCURRENCES}
                           step="1"
                           value={repeatCount}
                           disabled={isReadOnly || !repeatControlsApply}
