@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '9.4.0',
+    date: '2026-08-23',
+    title: 'Calendar: short events cluster, and small blocks keep their titles',
+    changes: [
+      'Fixed short calendar events rendering as unreadable slivers instead of grouping together. Only tasks were ever eligible to cluster, so three 10-minute events sat at 10-17px each with no title you could read, while three identical task blocks correctly grouped into one chip. Whether something can stand on its own is a question of how many pixels it gets, not which kind of thing it is.',
+      'One-hour events still never group — that over-grouping was fixed previously and there are now tests pinning both directions, so neither can come back silently.',
+      'A block that is slightly too short for its title now shows it at a marginally smaller size rather than disappearing into an anonymous "N tasks" chip. Below that it still groups, because no font size makes 12 pixels readable.',
+      'A chip holding calendar events now says "3 items" rather than "3 tasks".',
+      'Fixed routines in Settings: the pause control moved off the coloured dot beside the name and sits with Delete at the block’s edge, a paused routine stays visibly paused, and the day badge reads "All days" instead of "Not this day".',
+    ],
+  },
+  {
     version: '9.3.0',
     date: '2026-08-23',
     title: 'Routines per weekday, and quieter routine blocks',

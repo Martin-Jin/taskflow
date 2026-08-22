@@ -923,6 +923,28 @@
   margin-top: 1px;
 }
 
+/* COMPACT: a box tall enough to show its title, but only at a smaller type
+   size (see COMPACT_BLOCK_HEIGHT_PX in calendarLayout.js). This band used to
+   fold into an anonymous "N tasks" chip — shrinking the text a little is a
+   much better trade than hiding the title entirely. Only the type and the
+   vertical padding shrink; the left inset and the accent rail stay put so a
+   compact box still lines up with its full-size neighbours.
+   Deliberately NOT smaller than this: below the compact floor the layout
+   clusters instead, because there's no font size that makes 12px of height
+   readable. */
+.cal-block.is-compact,
+.cal-event.is-compact {
+  font-size: 10px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.cal-block.is-compact .cal-block-title,
+.cal-event.is-compact .cal-block-title {
+  font-size: 10px;
+  line-height: 1.25;
+}
+
 
 /* Base look for a writable Google-sourced event — a solid card (not the
    diagonal-stripe/dashed "blocked out" texture this used to have) with a

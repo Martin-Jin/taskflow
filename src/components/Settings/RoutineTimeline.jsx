@@ -7,7 +7,8 @@
  *   - Click the trash icon -> removes the routine (hidden for a protected
  *     routine, e.g. Sleep — it can still be dragged/resized/paused, just
  *     not deleted, see FixedRoutine.isProtected).
- *   - Click the label -> rename inline; click the dot -> toggle active.
+ *   - Click the label -> rename inline; the pause/resume and delete icon
+ *     buttons at the block's trailing edge handle active state and removal.
  *   - `selectedDay` scopes the column to one weekday (see RoutinesSection's
  *     day picker). In "all days" mode a routine that does NOT apply to every
  *     day is marked, because otherwise a Tuesday-only routine is
@@ -17,7 +18,7 @@
  * block out time, edge-drag to resize) so the gesture feels familiar.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Pause, Play } from 'lucide-react';
 import { timeToMinutes, minutesToTime } from '../../utils/dateUtils';
 import { WEEKDAY_NAMES } from '../../utils/workHours';
 
@@ -198,13 +199,6 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove, s
             >
               <div className="routine-block-edge routine-block-edge-top" onMouseDown={(e) => handleResizeStart(e, r, 'top')} />
               <div className="routine-block-row">
-                <button
-                  type="button"
-                  className="routine-block-dot"
-                  title={r.isActive ? 'Active — click to pause' : 'Paused — click to activate'}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => onUpdate(r.id, { isActive: !r.isActive })}
-                />
                 {editingId === r.id ? (
                   <input
                     className="routine-block-label-input"
@@ -246,20 +240,39 @@ export default function RoutineTimeline({ routines, onAdd, onUpdate, onRemove, s
                     {r.daysOfWeek.length === 1 ? WEEKDAY_NAMES[r.daysOfWeek[0]].slice(0, 3) : `${r.daysOfWeek.length} days`}
                   </span>
                 )}
-                {/* In single-day mode, one control to take this routine off
-                    this day without opening anything. Hidden for a protected
-                    routine, which must keep applying every day. */}
+                {/* In single-day mode, a badge saying what this routine's scope
+                    actually IS — "All days" for a daily routine, the day count
+                    otherwise. Clicking it takes the routine off this day, so
+                    the label describes the state rather than the action: a
+                    routine showing "All days" is the common case, and reading
+                    "Not this day" on it was actively misleading. Hidden for a
+                    protected routine, which must keep applying every day. */}
                 {selectedDay !== null && !r.isProtected && onToggleRoutineDay && (
                   <button
                     type="button"
                     className="routine-block-days routine-block-days-action"
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => onToggleRoutineDay(r.id, selectedDay)}
-                    title={`Stop applying "${r.label}" on ${WEEKDAY_NAMES[selectedDay]}`}
+                    title={`Applies on ${(r.daysOfWeek || []).map((d) => WEEKDAY_NAMES[d]).join(', ')} — click to stop applying on ${WEEKDAY_NAMES[selectedDay]}`}
                   >
-                    Not this day
+                    {(r.daysOfWeek || []).length >= 7 ? 'All days' : `${(r.daysOfWeek || []).length} days`}
                   </button>
                 )}
+                {/* Pause/resume, moved off the leading dot. As a coloured dot in
+                    front of the name it read as decoration — the one thing the
+                    design rules say a dot should never be — and gave no hint it
+                    was a control. As an icon beside Delete it sits with the
+                    block's other action and states which it is. */}
+                <button
+                  type="button"
+                  className="routine-block-action"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => onUpdate(r.id, { isActive: !r.isActive })}
+                  aria-label={r.isActive ? `Pause ${r.label}` : `Resume ${r.label}`}
+                  title={r.isActive ? 'Active — click to pause' : 'Paused — click to resume'}
+                >
+                  {r.isActive ? <Pause size={12} /> : <Play size={12} />}
+                </button>
                 {!r.isProtected && (
                   <button
                     type="button"

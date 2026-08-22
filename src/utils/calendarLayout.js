@@ -61,6 +61,25 @@ export const CLUSTER_MAX_GAP_MIN = 30;
 export const MIN_BLOCK_HEIGHT_PX = 26;
 export const BLOCK_GAP_PX = 2;
 
+// The same floor, recomputed for a DELIBERATELY SMALLER type size. A box in
+// this band renders its title at .cal-block.is-compact's reduced font
+// (10px/~13.5px line + tighter padding, see calendar.css) rather than folding
+// into an anonymous chip — shrinking the text slightly is a much better trade
+// than hiding the title behind "3 tasks", and it's only worth doing down to
+// the point where the smaller type is still comfortably readable.
+//
+// Derived the same way MIN_BLOCK_HEIGHT_PX is, from the compact rule's own
+// metrics, which is why the two must move together if either type size
+// changes. Below THIS, there is no font size left that helps and folding is
+// the honest answer.
+//
+// Every "can this stand on its own?" decision uses this floor, not the
+// full-size one: an item that can render compactly does not need to be
+// clustered. packLane's minimum height for a `cluster` box deliberately keeps
+// using MIN_BLOCK_HEIGHT_PX — a chip is a summary of things that couldn't be
+// shown, so it has to be fully legible at normal size.
+export const COMPACT_BLOCK_HEIGHT_PX = 20;
+
 // Within an overlap group (see layoutDayItems), an item whose OWN true
 // proportional height (at the current zoom) would already clear
 // MIN_BLOCK_HEIGHT_PX always gets its own visible side-by-side lane, however
@@ -77,7 +96,7 @@ export const BLOCK_GAP_PX = 2;
 // Applies to a whole `kind: 'cluster'` run's own span, not its individual
 // blocks — a cluster is already one unit by the time layoutDayItems sees it.
 export function isLegibleAlone(durationMin, pxPerMin) {
-  return durationMin * pxPerMin >= MIN_BLOCK_HEIGHT_PX;
+  return durationMin * pxPerMin >= COMPACT_BLOCK_HEIGHT_PX;
 }
 
 // Two individually "legible enough to stand alone" (see isLegibleAlone)
@@ -145,9 +164,9 @@ export const MAX_SIDE_BY_SIDE_LANES = 2;
  * current pxPerMin, so raising pxPerMin can only shrink every cutoff below:
  *   - minVisibleMin: an item's OWN duration below this renders thinner than
  *     MIN_BLOCK_HEIGHT_PX and is a fold-candidate purely for being too short
- *     to read on its own (only ever applies to blocks — an event's title
- *     always deserves its own box regardless of duration, so events are
- *     never fold-candidates on this basis alone).
+ *     to read on its own. Applies to events and blocks alike — see
+ *     isTooShortAlone on why the earlier blocks-only rule left short events
+ *     rendering as unreadable slivers. Passive blocks are still exempt.
  *   - minGapMin: a real gap to the next item below this looks like an
  *     outright collision at this zoom, so the two items fold into one chip
  *     regardless of either item's own duration (applies to blocks and
@@ -176,7 +195,7 @@ export const MAX_SIDE_BY_SIDE_LANES = 2;
  * distinct bug from the sequential-crowding this function exists to solve.
  */
 export function foldSequentialItems(items, pxPerMin) {
-  const minVisibleMin = Math.max(SHORT_BLOCK_MAX_MIN, MIN_BLOCK_HEIGHT_PX / pxPerMin);
+  const minVisibleMin = Math.max(SHORT_BLOCK_MAX_MIN, COMPACT_BLOCK_HEIGHT_PX / pxPerMin);
   const minGapMin = COLLISION_GAP_PX / pxPerMin;
   const tightGapMin = TIGHT_GAP_PX / pxPerMin;
   // Ceiling on how far apart two too-short-alone items can be and still fold
@@ -199,8 +218,20 @@ export function foldSequentialItems(items, pxPerMin) {
   // based exemption of its own — it only carries forward whichever items
   // were already inside it; whether it can still absorb another item is
   // decided by the gap check below, same as an exempt single would be.
+  // Applies to events as well as blocks. It used to require
+  // `type === 'block'`, on the reasoning that "an event's title always
+  // deserves its own box regardless of duration" — true in intent, false in
+  // effect: measured in the real DOM, three 10-minute events rendered at
+  // 10-17px each and never folded, while three equivalent task blocks
+  // correctly clustered. A 10-minute event at the lowest zoom is 5.5px, which
+  // is not a box with a title in it, it's a line. Whether something can stand
+  // on its own is a question of pixels, exactly like every other decision in
+  // this file, and it does not depend on which of the two kinds it is.
+  // Passive blocks keep their exemption (they're background by nature and
+  // always keep a tappable box), and CHIP_EXEMPT_MIN still protects anything
+  // with real height — see the 1-hour-events regression test.
   function isTooShortAlone(single) {
-    return single.type === 'block' && !single.data.isPassive && single.end - single.start < minVisibleMin;
+    return !single.data.isPassive && single.end - single.start < minVisibleMin;
   }
   function isExempt(entry) {
     return entry.kind === 'single' && entry.end - entry.start >= CHIP_EXEMPT_MIN;

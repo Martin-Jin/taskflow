@@ -146,7 +146,14 @@ function clusterLabel(items, taskById, maxLines) {
   // a "+N more" summary of everything else — unless maxLines is 1, in which
   // case there's no room for even one whole title alongside the summary, so
   // the summary alone becomes the only line.
-  if (maxLines <= 1) return [`${titles.length} tasks`];
+  // "items" rather than "tasks" once a cluster can hold calendar events too
+  // (see calendarLayout's isTooShortAlone) — a chip summarising two events and
+  // a task calling itself "3 tasks" is simply wrong. Still says "tasks" when
+  // that's all it holds, which is the common case and the more concrete word.
+  if (maxLines <= 1) {
+    const noun = items.every((it) => it.type === 'block') ? 'tasks' : 'items';
+    return [`${titles.length} ${noun}`];
+  }
   const shown = titles.slice(0, maxLines - 1).map(truncate);
   const remaining = titles.length - shown.length;
   return [...shown, `+${remaining} more`];
@@ -905,6 +912,12 @@ export default function WeekView({
       showTimeLine: isResizing
         ? true
         : height >= TWO_LINE_MIN_HEIGHT && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
+      // Between the compact floor and the full-size one, the title renders at
+      // a smaller type size instead of the item being folded into a chip (see
+      // COMPACT_BLOCK_HEIGHT_PX). Shrinking the text slightly beats hiding the
+      // title behind "3 tasks"; below the compact floor the layout has already
+      // clustered it, so this band is the only place it applies.
+      isCompact: !isResizing && height < MIN_BLOCK_HEIGHT_PX,
     };
   }
 
@@ -1213,7 +1226,7 @@ export default function WeekView({
               if (item.type === 'event') {
                 const evt = item.data;
                 const { top } = item;
-                const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine } = itemLiveState(item);
+                const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
                 const evtKey = makeSelectionKey('event', evt.id);
                 const evtSelected = selectionMode && !!selectedKeys?.has(evtKey);
                 // Drag AND resize are both suppressed while selection mode is
@@ -1223,7 +1236,7 @@ export default function WeekView({
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
+                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     // Desktop gets the richer HoverPreviewCard instead (see
                     // below) — mobile has no hover, so it keeps the native
@@ -1314,7 +1327,7 @@ export default function WeekView({
 
               const block = item.data;
               const { top } = item;
-              const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine } = itemLiveState(item);
+              const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
               const task = taskById[block.taskId];
               if (!task) return null;
               // A sub-task's block displays its PARENT task's name as the primary
@@ -1334,7 +1347,7 @@ export default function WeekView({
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
+                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
                   style={{
                     top,
                     height,

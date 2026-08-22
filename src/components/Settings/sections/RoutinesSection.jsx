@@ -85,7 +85,7 @@ export default function RoutinesSection({ sectionRef }) {
       <p className="settings-hint">These are subtracted from a day's capacity before tasks are scheduled.</p>
       <p className="form-hint" style={{ marginBottom: 8 }}>
         Drag on empty space to block out a new routine, drag a block to move it, drag its top/bottom edge to
-        resize — click its dot to pause/resume, click its label to rename.
+        resize — click its label to rename, and use the pause/delete buttons on a block to switch it off or remove it.
       </p>
 
       <div className="routines-layout">

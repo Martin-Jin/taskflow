@@ -630,7 +630,10 @@ describe('cluster label (vertical stack of real event titles instead of a generi
     const titles = items.map((it) => it.data.title || 'Untitled');
     const truncate = (t) => (t.length > LINE_CHAR_BUDGET ? `${t.slice(0, LINE_CHAR_BUDGET - 1)}…` : t);
     if (titles.length <= maxLines) return titles.map(truncate);
-    if (maxLines <= 1) return [`${titles.length} tasks`];
+    if (maxLines <= 1) {
+      const noun = items.every((it) => it.type === 'block') ? 'tasks' : 'items';
+      return [`${titles.length} ${noun}`];
+    }
     const shown = titles.slice(0, maxLines - 1).map(truncate);
     return [...shown, `+${titles.length - shown.length} more`];
   }
@@ -672,8 +675,23 @@ describe('cluster label (vertical stack of real event titles instead of a generi
   });
 
   it('falls back to a single summary line when there is only room for one line total', () => {
-    const items = [{ data: { title: 'Standup' } }, { data: { title: 'Review' } }, { data: { title: 'Retro' } }];
+    const items = [
+      { type: 'block', data: { title: 'Standup' } },
+      { type: 'block', data: { title: 'Review' } },
+      { type: 'block', data: { title: 'Retro' } },
+    ];
     expect(clusterLabel(items, 1)).toEqual(['3 tasks']);
+  });
+
+  it('says "items", not "tasks", once a cluster can also hold calendar events', () => {
+    // Short events fold now too (see isTooShortAlone), so a chip summarising
+    // two events and a task calling itself "3 tasks" would simply be wrong.
+    const mixed = [
+      { type: 'block', data: { title: 'Standup' } },
+      { type: 'event', data: { title: 'Review' } },
+      { type: 'event', data: { title: 'Retro' } },
+    ];
+    expect(clusterLabel(mixed, 1)).toEqual(['3 items']);
   });
 
   describe('clusterMaxTitleLines', () => {
@@ -692,5 +710,73 @@ describe('cluster label (vertical stack of real event titles instead of a generi
       const withTimeLine = clusterMaxTitleLines(50, true);
       expect(withTimeLine).toBeLessThan(withoutTimeLine);
     });
+  });
+});
+
+describe('short EVENTS fold like short blocks (both directions pinned)', () => {
+  // The reported bug, measured in the real DOM before being fixed here: three
+  // 10-minute events rendered at 10-17px each and never folded, because the
+  // fold-on-own-duration test only ever applied to `type: 'block'`. A 10-minute
+  // event at 0.55px/min is 5.5px — not a box, a line — so "an event's title
+  // always deserves its own box" was true in intent and false in effect.
+  const shortRun = () => [event('E1', 540, 550), event('E2', 555, 565), event('E3', 570, 580)];
+
+  it('folds a run of unreadably short events at low zoom', () => {
+    const folded = foldSequentialItems(shortRun(), 0.55);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).toBe('cluster');
+    expect(folded[0].items).toHaveLength(3);
+  });
+
+  it('folds them at max zoom too, where 10 minutes is still only 12.5px', () => {
+    // 10min * 1.25 = 12.5px, well under MIN_BLOCK_HEIGHT_PX (26).
+    const folded = foldSequentialItems(shortRun(), 1.25);
+    expect(folded[0].kind).toBe('cluster');
+  });
+
+  it('does NOT fold 1-hour events, at any zoom — the regression that already happened once', () => {
+    // Three back-to-back 1-hour events with zero gap. Each is 33px even at the
+    // lowest zoom: clearly displayable on its own, and folding them into an
+    // anonymous chip is the exact over-clustering this must not reintroduce.
+    const hours = [event('H1', 540, 600), event('H2', 600, 660), event('H3', 660, 720)];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const folded = foldSequentialItems(hours, pxPerMin);
+      expect(folded).toHaveLength(3);
+      expect(folded.every((f) => f.kind === 'single')).toBe(true);
+    }
+  });
+
+  it('does not fold a 30-minute event that already clears the legibility floor', () => {
+    // 30min at 1.25 = 37.5px > 26px. Two of them, adjacent.
+    const folded = foldSequentialItems([event('A', 540, 570), event('B', 570, 600)], 1.25);
+    expect(folded).toHaveLength(2);
+  });
+
+  it('never folds an event long enough to stand alone with a short one beside it', () => {
+    // A 5-minute event right before a 90-minute one: legitimate back-to-back
+    // scheduling, and the long event must keep its own box.
+    const folded = foldSequentialItems([event('tiny', 540, 545), event('long', 545, 635)], 1.25);
+    expect(folded.some((f) => f.kind === 'single' && f.data.id === 'long')).toBe(true);
+  });
+
+  it('still never folds items that overlap in time, events included', () => {
+    // That's layoutDayItems' lane-packing job, not this function's.
+    const folded = foldSequentialItems([event('A', 540, 575), event('B', 550, 585)], 1.25);
+    expect(folded).toHaveLength(2);
+  });
+
+  it('keeps the monotonic-zoom property for events', () => {
+    // More pixel room can only ever mean less folding, never more.
+    const items = shortRun();
+    const counts = [0.55, 0.65, 0.8, 1.0, 1.25].map((p) => foldSequentialItems(items, p).length);
+    for (let i = 1; i < counts.length; i += 1) expect(counts[i]).toBeGreaterThanOrEqual(counts[i - 1]);
+  });
+
+  it('mixes short blocks and short events into the same cluster', () => {
+    // A user doesn't distinguish "task" from "calendar event" when three
+    // unreadable slivers sit on top of each other.
+    const folded = foldSequentialItems([block('B1', 540, 550), event('E1', 555, 565)], 1.25);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).toBe('cluster');
   });
 });
