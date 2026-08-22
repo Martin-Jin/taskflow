@@ -8,21 +8,33 @@
  * what didn't exist was a moment where the app puts them together and asks you
  * to decide something.
  *
- * A ROLLING 7 DAYS, NOT A CALENDAR WEEK, and that's a deliberate choice. A
- * calendar-week review has a dead zone: run it on Monday morning and you'd be
- * shown a week that is one day old and empty, or forced to pick "which week did
- * you mean?" in a UI whose whole point is to be one screen. A rolling window is
- * always populated, needs no week-boundary setting (the app has none), and can
- * be labelled honestly — "the last 7 days", "the next 7 days" — rather than
- * implying a calendar boundary it isn't using.
+ * THE WINDOW IS A REAL WEEK, per rules.weekStartsOn (Sunday or Monday), which
+ * is what makes the review agree with every other week-based view. It stops at
+ * TODAY rather than the end of the week: the rest of the week hasn't happened,
+ * and counting it would mean reporting on the future.
+ *
+ * ON THE FIRST DAY OF THE WEEK IT REVIEWS THE WEEK JUST FINISHED. That's the
+ * dead zone a calendar-week review has, and it's not hypothetical — the first
+ * version of this shipped on a Sunday with Sunday-start weeks, so "this week"
+ * was a single day old and every real slip fell into "carried over" instead of
+ * "slipped". Rolling back one week when today is the week's first day removes
+ * the dead zone without adding a mode or a date picker, and it lands on the
+ * right answer for the moment people actually do a weekly review: the start of
+ * a week, looking back at the last one.
  *
  * THE THREE BUCKETS DO NOT OVERLAP, which matters because a task appearing
  * twice would make the counts meaningless:
- *   - finished   — completed inside the window
- *   - slipped    — still open, was due inside the window
- *   - carriedOver — still open, was due BEFORE the window (older debt)
- * An open task due in the future is in none of them: it hasn't slipped, and
- * telling you about it is what the Tasks list is for.
+ *   - finished    — completed on any day of this week so far
+ *   - slipped     — still open, was due this week on a day that has PASSED
+ *   - carriedOver — still open, was due before this week (older debt)
+ *
+ * A TASK DUE TODAY HAS NOT SLIPPED, and getting this wrong is what made the
+ * first version report fifteen "missed" tasks at breakfast on the day they were
+ * due. The day isn't over. This matches the app's own long-standing definition
+ * of overdue (utils/overdueTasks.js: strictly `dueDate < today`), so the review
+ * and the rest of the app can't disagree about what's late. A task due today,
+ * or later this week, is in none of the buckets — telling you about it is what
+ * the Tasks list is for.
  *
  * WHY THERE IS NO "SHRINK" ACTION, despite the original sketch listing one.
  * Reschedule, complete and drop are all genuinely one tap. Changing an estimate
@@ -33,7 +45,7 @@
  * ============================================================================
  */
 
-import { addDays, diffDays, dayOfWeek } from './dateUtils';
+import { addDays, diffDays, dayOfWeek, startOfWeek } from './dateUtils';
 import { computeEstimateAccuracy } from './estimateAccuracy';
 
 /** Days in the window. Not configurable — a "weekly" review with a tunable period is just a report. */
@@ -49,19 +61,21 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * section reports.
  *
  * Pure, and takes `todayIso` rather than reading the clock, so every boundary
- * case (a task completed exactly 7 days ago, one due today) is testable.
+ * case (a task completed on the week's first day, one due today) is testable.
  *
- * @param {{tasks: import('../types').Task[], todayIso: string}} input
+ * @param {{tasks: import('../types').Task[], todayIso: string, weekStartsOn?: 0|1}} input
  * @returns {{windowStart: string, windowEnd: string, nextWindowStart: string, nextWindowEnd: string,
  *   finished: object[], slipped: object[], carriedOver: object[],
  *   finishedHours: number, accuracy: object, carriedOverHours: number, slippedHours: number}}
  */
-export function computeWeeklyReview({ tasks, todayIso }) {
-  // Inclusive window: today counts, and so does the day 6 days back — 7 days
-  // total. `windowStart` is also the boundary that separates "slipped" from
-  // the older "carried over" debt.
-  const windowStart = addDays(todayIso, -(REVIEW_WINDOW_DAYS - 1));
-  const windowEnd = todayIso;
+export function computeWeeklyReview({ tasks, todayIso, weekStartsOn = 0 }) {
+  const thisWeekStart = startOfWeek(todayIso, weekStartsOn);
+  // See the header: on the week's first day there is no "this week" to review
+  // yet, so review the one that just ended instead.
+  const reviewingPreviousWeek = thisWeekStart === todayIso;
+  const windowStart = reviewingPreviousWeek ? addDays(thisWeekStart, -REVIEW_WINDOW_DAYS) : thisWeekStart;
+  // Never past today, and never past the reviewed week's own last day.
+  const windowEnd = reviewingPreviousWeek ? addDays(thisWeekStart, -1) : todayIso;
   const nextWindowStart = addDays(todayIso, 1);
   const nextWindowEnd = addDays(todayIso, REVIEW_WINDOW_DAYS);
 
@@ -77,7 +91,13 @@ export function computeWeeklyReview({ tasks, todayIso }) {
   });
 
   const open = all.filter((t) => !t.isCompleted);
-  const slipped = open.filter((t) => t.dueDate && t.dueDate >= windowStart && t.dueDate <= windowEnd);
+  // Bounded by BOTH the window and today: a task due today still has the day
+  // to run, which is the app's own definition of overdue (see the header). The
+  // `< todayIso` clause is what does the work when the window is the current
+  // week; `<= windowEnd` when it's the previous one.
+  const slipped = open.filter(
+    (t) => t.dueDate && t.dueDate >= windowStart && t.dueDate <= windowEnd && t.dueDate < todayIso
+  );
   const carriedOver = open.filter((t) => t.dueDate && t.dueDate < windowStart);
 
   const hoursOf = (list, field) => list.reduce((sum, t) => sum + (Number(t[field]) || 0), 0);
@@ -85,6 +105,8 @@ export function computeWeeklyReview({ tasks, todayIso }) {
   return {
     windowStart,
     windowEnd,
+    // Lets the UI say "last week" rather than "this week" when it rolled back.
+    reviewingPreviousWeek,
     nextWindowStart,
     nextWindowEnd,
     finished,
@@ -143,6 +165,19 @@ export function isReviewDue({ lastReviewedAt, nowMs, hasAnythingToReview }) {
   if (!hasAnythingToReview) return false;
   if (!lastReviewedAt) return true;
   return nowMs - lastReviewedAt >= REVIEW_NUDGE_INTERVAL_DAYS * MS_PER_DAY;
+}
+
+/**
+ * The PROMPT is what goes away once a review is done; the review itself stays
+ * openable. Two different questions, so two functions — conflating them is what
+ * made a closed review unreachable except through the command palette, which
+ * nobody discovers.
+ *
+ * @param {object} review
+ * @returns {boolean} whether the review has anything worth opening
+ */
+export function canOpenReview(review) {
+  return hasReviewContent(review);
 }
 
 /**

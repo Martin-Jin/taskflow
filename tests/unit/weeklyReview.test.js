@@ -20,18 +20,67 @@ import {
 } from '../../src/utils/weeklyReview';
 
 const TODAY = '2026-08-22'; // a Saturday
+// Every day of the Sunday-start week EXCEPT its first day, for the no-rollback case.
+const WEEK_AFTER_START = ['2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20', '2026-08-21', '2026-08-22'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const done = (over) => ({ id: 'd', title: 'done', isCompleted: true, completedAt: `${TODAY}T10:00:00.000Z`, ...over });
 const open = (over) => ({ id: 'o', title: 'open', isCompleted: false, remainingHours: 1, ...over });
 
 describe('computeWeeklyReview — the window', () => {
-  it('reports an inclusive 7-day window ending today, and the next 7 days', () => {
-    const r = computeWeeklyReview({ tasks: [], todayIso: TODAY });
-    expect(r.windowStart).toBe('2026-08-16');
-    expect(r.windowEnd).toBe('2026-08-22');
-    expect(r.nextWindowStart).toBe('2026-08-23');
-    expect(r.nextWindowEnd).toBe('2026-08-29');
+  it('runs from the start of the user’s week to today, and looks 7 days ahead', () => {
+    // TODAY is a Saturday. Sunday-start (the default) makes the week begin
+    // last Sunday; Monday-start makes it begin last Monday.
+    const sunday = computeWeeklyReview({ tasks: [], todayIso: TODAY });
+    expect(sunday.windowStart).toBe('2026-08-16');
+    expect(sunday.windowEnd).toBe(TODAY);
+    expect(sunday.nextWindowStart).toBe('2026-08-23');
+    expect(sunday.nextWindowEnd).toBe('2026-08-29');
+
+    const monday = computeWeeklyReview({ tasks: [], todayIso: TODAY, weekStartsOn: 1 });
+    expect(monday.windowStart).toBe('2026-08-17');
+  });
+
+  it('reviews the week just finished when today is the first day of the week', () => {
+    // The dead zone, and it bit for real: shipped on a Sunday with Sunday-start
+    // weeks, "this week" was one day old and every real slip fell into
+    // "carried over" instead of "slipped".
+    const sun = computeWeeklyReview({ tasks: [], todayIso: '2026-08-16' });
+    expect(sun.reviewingPreviousWeek).toBe(true);
+    expect(sun.windowStart).toBe('2026-08-09');
+    expect(sun.windowEnd).toBe('2026-08-15'); // the day before, not today
+    const mon = computeWeeklyReview({ tasks: [], todayIso: '2026-08-17', weekStartsOn: 1 });
+    expect(mon.reviewingPreviousWeek).toBe(true);
+    expect(mon.windowStart).toBe('2026-08-10');
+    expect(mon.windowEnd).toBe('2026-08-16');
+  });
+
+  it('does not roll back on any other day of the week', () => {
+    for (const iso of WEEK_AFTER_START) {
+      expect(computeWeeklyReview({ tasks: [], todayIso: iso }).reviewingPreviousWeek).toBe(false);
+    }
+  });
+
+  it('on the first day of the week, yesterday’s slip is SLIPPED, not carried over', () => {
+    // The exact misreport: with no rollback, windowStart === today, so
+    // yesterday fell below it and was filed as older debt.
+    const r = computeWeeklyReview({ tasks: [open({ id: 'y', dueDate: '2026-08-15' })], todayIso: '2026-08-16' });
+    expect(r.slipped.map((t) => t.id)).toEqual(['y']);
+    expect(r.carriedOver).toEqual([]);
+  });
+
+  it('does NOT treat a task due today as slipped', () => {
+    // THE bug this replaced: fifteen tasks due today were reported as missed
+    // at breakfast on the day they were due. The day isn't over, and this is
+    // the app's own definition of overdue (utils/overdueTasks.js).
+    const r = computeWeeklyReview({ tasks: [open({ id: 'dueToday', dueDate: TODAY })], todayIso: TODAY });
+    expect(r.slipped).toHaveLength(0);
+    expect(r.carriedOver).toHaveLength(0);
+  });
+
+  it('treats a task due yesterday as slipped', () => {
+    const r = computeWeeklyReview({ tasks: [open({ id: 'y', dueDate: '2026-08-21' })], todayIso: TODAY });
+    expect(r.slipped.map((t) => t.id)).toEqual(['y']);
   });
 
   it('counts a task completed on either boundary day', () => {
@@ -67,7 +116,7 @@ describe('computeWeeklyReview — the window', () => {
 describe('computeWeeklyReview — the three buckets never overlap', () => {
   const tasks = [
     done({ id: 'finished' }),
-    open({ id: 'slippedToday', dueDate: TODAY }),
+    open({ id: 'dueToday', dueDate: TODAY }),
     open({ id: 'slippedStart', dueDate: '2026-08-16' }),
     open({ id: 'carried', dueDate: '2026-08-15' }),
     open({ id: 'ancient', dueDate: '2026-07-01' }),
@@ -78,7 +127,7 @@ describe('computeWeeklyReview — the three buckets never overlap', () => {
   it('sorts each task into at most one bucket', () => {
     const r = computeWeeklyReview({ tasks, todayIso: TODAY });
     expect(r.finished.map((t) => t.id)).toEqual(['finished']);
-    expect(r.slipped.map((t) => t.id)).toEqual(['slippedToday', 'slippedStart']);
+    expect(r.slipped.map((t) => t.id)).toEqual(['slippedStart']);
     expect(r.carriedOver.map((t) => t.id)).toEqual(['carried', 'ancient']);
     const all = [...r.finished, ...r.slipped, ...r.carriedOver].map((t) => t.id);
     expect(new Set(all).size).toBe(all.length);
@@ -90,13 +139,15 @@ describe('computeWeeklyReview — the three buckets never overlap', () => {
     const all = [...r.finished, ...r.slipped, ...r.carriedOver].map((t) => t.id);
     expect(all).not.toContain('future');
     expect(all).not.toContain('undated');
+    // Nor one due today — it still has the day to run.
+    expect(all).not.toContain('dueToday');
   });
 
   it('sums remaining hours per bucket, and tracked hours for what got done', () => {
     const r = computeWeeklyReview({
       tasks: [
         done({ id: 'a', actualHours: 2.5, estimatedHours: 2 }),
-        open({ id: 'b', dueDate: TODAY, remainingHours: 3 }),
+        open({ id: 'b', dueDate: '2026-08-21', remainingHours: 3 }),
         open({ id: 'c', dueDate: '2026-08-01', remainingHours: 1.5 }),
       ],
       todayIso: TODAY,
@@ -108,7 +159,7 @@ describe('computeWeeklyReview — the three buckets never overlap', () => {
   });
 
   it('tolerates missing hour fields instead of producing NaN', () => {
-    const r = computeWeeklyReview({ tasks: [done({}), open({ dueDate: TODAY })], todayIso: TODAY });
+    const r = computeWeeklyReview({ tasks: [done({}), open({ dueDate: '2026-08-21' })], todayIso: TODAY });
     expect(r.finishedHours).toBe(0);
     expect(Number.isNaN(r.slippedHours)).toBe(false);
   });

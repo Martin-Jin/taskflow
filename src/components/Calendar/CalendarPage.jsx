@@ -23,7 +23,7 @@ import EventDetailModal from '../Modals/EventDetailModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import BulkActionBar from '../Common/BulkActionBar';
-import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
+import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, startOfWeek, toISODate } from '../../utils/dateUtils';
 import { expandEventsForRange, resolveEventId } from '../../utils/recurrenceExpansion';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -38,10 +38,7 @@ import { DEFAULT_CALENDAR_FILTER, filterCalendarItems, isCalendarFilterActive, n
 import { isBlockTaskCompleted } from '../../utils/missedTasks';
 import HelpTooltip from '../Common/HelpTooltip';
 
-function getWeekStart(iso) {
-  const dow = dayOfWeek(iso);
-  return addDays(iso, -dow); // Sunday-start week
-}
+
 
 // Fraction of the viewport's width a drag must cross before release commits
 // to the next/prev page instead of springing back to the current one —
@@ -91,6 +88,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
     tasks,
     projects,
     labels,
+    rules,
     runRebalance,
     isLoading,
     googleConnected,
@@ -411,7 +409,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
   // Day/3 Day are anchored directly at anchorDate (so "today" as the anchor
   // shows "today, tomorrow, day after" for 3 Day, matching Google Calendar's
   // own 3-day view) — only Week snaps back to its Sunday start.
-  const rangeStart = view === 'week' ? getWeekStart(anchorDate) : anchorDate;
+  const rangeStart = view === 'week' ? startOfWeek(anchorDate, rules.weekStartsOn) : anchorDate;
   const rangeEnd = addDays(rangeStart, dayCount - 1);
   const monthStart = startOfMonth(anchorDate);
   const todayISO = toISODate(new Date());

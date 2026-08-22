@@ -631,6 +631,11 @@
  * @typedef {Object} SchedulingRules
  * Global configuration governing how the engine allocates hours.
  * @property {number} bufferDays              - Days before due date the task should be *finished* by (default 1).
+ * @property {0|1} [weekStartsOn]            - Which day a week starts on for every week-based view: 0 = Sunday (the
+ *                                             default, and what the app did before this was configurable), 1 = Monday.
+ *                                             Read through utils/dateUtils' startOfWeek/getWeekRange rather than by
+ *                                             open-coding `-dayOfWeek(iso)`. Absent on any rules object saved before
+ *                                             this existed, which is why every reader defaults it to 0 — no migration.
  * @property {string} workDayStart            - "HH:MM" earliest hour work can be scheduled.
  * @property {string} workDayEnd              - "HH:MM" latest hour work can be scheduled.
  * @property {Object<number, {start?: string, end?: string, enabled?: boolean}>} [workHoursByDay]

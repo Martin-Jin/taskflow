@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '9.2.0',
+    date: '2026-08-23',
+    title: 'Pick your first day of the week, and a fixed weekly review',
+    changes: [
+      'New setting: first day of the week, Sunday or Monday (Settings → Scheduling rules). It drives the Calendar’s week view, the weekly review, and every “this week” figure on the Dashboard and Stats — previously all of those were hardcoded to Sunday.',
+      'Fixed the weekly review calling tasks “slipped” when they were due today and the day had barely started. A task due today hasn’t slipped; it now sits in no bucket until the day is actually over, matching what the rest of the app means by overdue.',
+      'The weekly review also now reviews the week that just ended when you open it on the first day of a new week, instead of showing you a week that’s a few hours old and empty.',
+      'Once you’ve closed a review, a quiet “View this week’s review” row under the progress rings keeps it one click away — previously the prompt disappearing was the only way in, short of the command palette.',
+      'Lighter row actions in the review (one bordered group instead of three separate buttons) and more breathing room under its date line.',
+    ],
+  },
+  {
     version: '9.1.0',
     date: '2026-08-22',
     title: 'A weekly review that ties it all together',

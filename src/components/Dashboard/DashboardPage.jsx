@@ -16,7 +16,7 @@ function greetingForHour(hour) {
   return 'Good evening';
 }
 
-export default function DashboardPage({ onSelectProject, onOpenCalendar, weeklyReview, onOpenWeeklyReview }) {
+export default function DashboardPage({ onSelectProject, onOpenCalendar, weeklyReview, weeklyReviewDue, onOpenWeeklyReview }) {
   const { user } = useAuth();
   const [greeting, setGreeting] = useState(() => greetingForHour(new Date().getHours()));
 
@@ -34,7 +34,10 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar, weeklyR
     setWidgets((prev) => ({ ...prev, [key]: prev[key] === false }));
   }
   const showMain = widgets.nowNext !== false || widgets.todayAgenda !== false;
-  const showSide = widgets.notes !== false || widgets.progressRings !== false;
+  const showSide =
+    widgets.notes !== false ||
+    widgets.progressRings !== false ||
+    (widgets.weeklyReview !== false && !!weeklyReview && !weeklyReviewDue);
 
   return (
     <div className="dashboard-page">
@@ -51,8 +54,8 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar, weeklyR
 
       {/* Above the stats strip: it's a prompt to act, and it's only here at
           all when a review is actually due (App.jsx passes null otherwise). */}
-      {widgets.weeklyReview !== false && weeklyReview && (
-        <WeeklyReviewCard review={weeklyReview} onOpen={onOpenWeeklyReview} />
+      {widgets.weeklyReview !== false && weeklyReview && weeklyReviewDue && (
+        <WeeklyReviewCard review={weeklyReview} onOpen={onOpenWeeklyReview} variant="prompt" />
       )}
 
       {widgets.stats !== false && <DashboardStats onSelectProject={onSelectProject} onOpenCalendar={onOpenCalendar} />}
@@ -69,6 +72,11 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar, weeklyR
             <div className="dashboard-grid-side">
               {widgets.notes !== false && <NotesCard />}
               {widgets.progressRings !== false && <ProgressRings />}
+              {/* The quiet way back in once the prompt has been dismissed for
+                  the week — see WeeklyReviewCard's two variants. */}
+              {widgets.weeklyReview !== false && weeklyReview && !weeklyReviewDue && (
+                <WeeklyReviewCard review={weeklyReview} onOpen={onOpenWeeklyReview} variant="quiet" />
+              )}
             </div>
           )}
         </div>

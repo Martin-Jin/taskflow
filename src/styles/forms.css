@@ -2666,6 +2666,12 @@
   margin-bottom: var(--space-5);
 }
 
+/* The first section sat straight under the header's date line with only the
+   header's own 2px on top of it, so "Finished" read as part of the date. */
+.review-section:first-of-type {
+  margin-top: var(--space-3);
+}
+
 .review-section-title {
   display: flex;
   align-items: center;
@@ -2733,11 +2739,69 @@
   margin: 0;
 }
 
+/* ONE bordered group per row, not three bordered buttons. The border itself
+   can't go — .btn's 1px boundary is what satisfies WCAG 1.4.11's 3:1 non-text
+   contrast, since the button fill sits too close in tone to the surfaces it's
+   on (CLAUDE.md marks it load-bearing). But three of them per row, times
+   fifteen rows, is what made this screen read as a wall of boxes. A segmented
+   group keeps a real boundary around the controls and 1px dividers between
+   them, so every segment still has a visible edge, at a third of the ink. */
 .review-row-actions {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
   flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.review-row-actions > .btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.review-row-actions > .btn + .btn {
+  border-left: 1px solid var(--color-border);
+}
+
+.review-row-actions > .btn:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+/* Inset so the ring doesn't get clipped by the group's own overflow: hidden. */
+.review-row-actions > .btn:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: -2px;
+}
+
+/* The quiet way back into a review already done for the week — link weight,
+   not a card, so it doesn't compete with the prompt it replaces. Full-width
+   and a real touch target, since it sits in the dashboard's side column and
+   that column is the full page width on a phone. */
+.weekly-review-reopen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.weekly-review-reopen:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
 }
 
 /* The verdict line. Tone carries the answer, so it reads before the words do. */

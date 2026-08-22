@@ -487,7 +487,10 @@ function AppShell() {
             <DashboardPage
               onSelectProject={selectProject}
               onOpenCalendar={() => setTab('calendar')}
-              weeklyReview={weekly.nudgeVisible ? weekly.review : null}
+              /* The review is passed whenever it has content; `weeklyReviewDue`
+                 decides prompt vs. quiet reopen row (see WeeklyReviewCard). */
+              weeklyReview={weekly.canOpen ? weekly.review : null}
+              weeklyReviewDue={weekly.nudgeVisible}
               onOpenWeeklyReview={() => setShowWeeklyReview(true)}
             />
           )}

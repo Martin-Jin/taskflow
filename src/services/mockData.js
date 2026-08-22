@@ -542,6 +542,10 @@ export function getDefaultRoutines() {
 export function getDefaultRules() {
   return {
     bufferDays: 1,
+    // 0 = Sunday, 1 = Monday. Sunday is the default because that's what every
+    // week-based view did before this was configurable — a returning user's
+    // calendar must not silently shift under them.
+    weekStartsOn: 0,
     workDayStart: '07:00',
     workDayEnd: '23:00',
     maxDailyDeepWorkHours: 8,

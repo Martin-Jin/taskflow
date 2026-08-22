@@ -121,11 +121,11 @@ export default function WeeklyReviewModal({
               <section className="review-section">
                 <h4 className="review-section-title">
                   <AlertTriangle size={14} aria-hidden="true" />
-                  Slipped this week
+                  {review.reviewingPreviousWeek ? 'Slipped last week' : 'Slipped this week'}
                   <span className="review-section-count">{review.slipped.length}</span>
                 </h4>
                 {review.slipped.length === 0 ? (
-                  <p className="form-hint review-section-empty">Nothing due in the last 7 days is still open.</p>
+                  <p className="form-hint review-section-empty">Nothing overdue from that week.</p>
                 ) : (
                   <div className="review-list">
                     {review.slipped.map((task) => (
@@ -146,7 +146,7 @@ export default function WeeklyReviewModal({
                 ) : (
                   <>
                     <p className="form-hint review-section-empty">
-                      Due before this week and still open — {formatHours(review.carriedOverHours)} of work.
+                      Due before that week and still open — {formatHours(review.carriedOverHours)} of work.
                       {oldestNote ? ` ${oldestNote}` : ''}
                     </p>
                     <div className="review-list">

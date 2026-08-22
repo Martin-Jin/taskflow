@@ -14,7 +14,7 @@ import { AlertTriangle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { computeEstimateAccuracy, computeAccuracyByProject, describeAccuracy, accuracyHeadline, MIN_RELIABLE_SAMPLE } from '../../utils/estimateAccuracy';
 import { computeHorizonCapacity } from '../../algorithms/capacityEngine';
-import { addDays, dayOfWeek, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
+import { addDays, getWeekRange, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
 import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
 import { getOverdueTasks } from '../../utils/overdueTasks';
 import BarChart from './BarChart';
@@ -60,8 +60,9 @@ export default function StatsDashboard() {
     // all, so this only sums the ones that do rather than assuming 0.
     const totalActualHours = tasks.reduce((sum, t) => sum + (typeof t.actualHours === 'number' ? t.actualHours : 0), 0);
 
-    const weekStart = addDays(today, -dayOfWeek(today));
-    const weekEnd = addDays(weekStart, 6);
+    // Was open-coded Sunday-start maths; goes through the shared helper now so
+    // it honours rules.weekStartsOn like every other week-based view.
+    const { weekStart, weekEnd } = getWeekRange(today, rules.weekStartsOn);
 
     const scheduledToday = blocks.filter((b) => b.date === today).reduce((sum, b) => sum + b.durationHours, 0);
     const scheduledThisWeek = blocks

@@ -258,8 +258,10 @@ One screen answering "how did last week go, and does next week fit?". It opens
 from a Dashboard prompt when a review is due, or any time from the command
 palette (`Ctrl+K` → "Weekly review").
 
-Four sections, over a **rolling 7 days** rather than a calendar week — so it's
-always populated and never asks which week you meant:
+Four sections, over a real week — Sunday- or Monday-started, per **Settings →
+Scheduling rules → First day of the week**. On the first day of your week it
+reviews the week that just ended, so there's never a version of this screen
+with nothing in it:
 
 - **Finished** — what you completed, hours tracked, and how your estimates did.
 - **Slipped this week** — still open, was due in the last 7 days.
@@ -275,8 +277,13 @@ having the actions here rather than in the task list. There's deliberately no
 "shrink the estimate" action — that's a number, not a tap, and belongs in the
 task itself.
 
+A task due **today** is in none of the buckets — the day isn't over, so it
+hasn't slipped.
+
 Closing the review is what marks it done, so the Dashboard prompt goes quiet
-for a week. The prompt only appears when there's actually something to look at.
+for a week. The prompt only appears when there's actually something to look at;
+once it's gone, a quiet "View this week's review" row under the progress rings
+keeps the report one click away.
 
 ## Settings
 
@@ -286,7 +293,9 @@ One page of cards, each covering one area:
   [Sync, backups, and sharing](SYNC-AND-SHARING.md).
 - **Integrations** — connect Todoist, Google Calendar, and your AI Quick Add
   API key. See [Integrations](INTEGRATIONS.md).
-- **Scheduling rules** — buffer days, work hours, max daily hours, planning
+- **Scheduling rules** — first day of the week (Sunday or Monday, used by the
+  Calendar's week view, the weekly review, and every "this week" figure),
+  buffer days, work hours, max daily hours, planning
   horizon, and front-loading. Work hours are the same every day by default;
   tick **Different hours on different days** to give each weekday its own, or
   to mark a day as not working (weekends start off when you switch it on). The

@@ -89,10 +89,24 @@ export function dayOfWeek(iso) {
   return fromISODate(iso).getDay();
 }
 
-/** The Sun–Sat week containing `todayIso`, as `{ weekStart, weekEnd }` ISO dates (inclusive). */
-export function getWeekRange(todayIso) {
-  const weekStart = addDays(todayIso, -dayOfWeek(todayIso));
-  return { weekStart, weekEnd: addDays(weekStart, 6) };
+/** The week containing `todayIso`, as `{ weekStart, weekEnd }` ISO dates (inclusive). `weekStartsOn` is 0 for Sunday (the default) or 1 for Monday — see rules.weekStartsOn. */
+export function getWeekRange(todayIso, weekStartsOn = 0) {
+  return { weekStart: startOfWeek(todayIso, weekStartsOn), weekEnd: addDays(startOfWeek(todayIso, weekStartsOn), 6) };
+}
+
+/**
+ * First day of the week containing `iso`, honouring the user's week-start
+ * preference (see rules.weekStartsOn — 0 = Sunday, 1 = Monday).
+ *
+ * The modulo is what makes it work for either start without a branch: shifting
+ * the day-of-week by the configured start and wrapping gives "how many days
+ * into the week we are", which is exactly what to subtract. A plain
+ * `-dayOfWeek(iso)` (what this used to be, Sunday-only) lands a Monday-start
+ * user on the wrong day for six days out of seven.
+ */
+export function startOfWeek(iso, weekStartsOn = 0) {
+  const offset = (dayOfWeek(iso) - weekStartsOn + 7) % 7;
+  return addDays(iso, -offset);
 }
 
 /** Returns an array of ISO date strings, `count` days starting at `startIso` inclusive. */

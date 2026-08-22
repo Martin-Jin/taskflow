@@ -70,13 +70,13 @@ function MiniRing({ label, emptyMessage, percent, completedHours, totalHours }) 
 }
 
 export default function ProgressRings() {
-  const { blocks } = useScheduler();
+  const { blocks, rules } = useScheduler();
 
   const { todayProgress, weekProgress } = useMemo(() => {
     const now = new Date();
     const today = toISODate(now);
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    const { weekStart, weekEnd } = getWeekRange(today);
+    const { weekStart, weekEnd } = getWeekRange(today, rules.weekStartsOn);
     return {
       todayProgress: computeRangeProgress(blocks, (b) => b.date === today, today, nowMinutes),
       weekProgress: computeRangeProgress(blocks, (b) => b.date >= weekStart && b.date <= weekEnd, today, nowMinutes),

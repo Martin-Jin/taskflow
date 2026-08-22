@@ -6,6 +6,7 @@
 
 import React from 'react';
 import { useScheduler } from '../../../context/SchedulerContext';
+import SelectMenu from '../../Common/SelectMenu';
 import NumberField from '../../Common/NumberField';
 import { WEEKDAY_ORDER, WEEKDAY_NAMES, hasPerDayWorkHours, seedPerDayWorkHours } from '../../../utils/workHours';
 
@@ -48,6 +49,25 @@ export default function SchedulingSection({ sectionRef }) {
       <div className="form-row">
         <label>Buffer days (finish this many days before due date)</label>
         <NumberField min={0} value={rules.bufferDays} onCommit={(v) => setRules({ ...rules, bufferDays: v })} />
+      </div>
+      <div className="form-row">
+        <label htmlFor="weekStartsOn">First day of the week</label>
+        {/* Lives in `rules` rather than a new setting of its own: it's already
+            synced and backed up, and every reader gets it from the same place
+            as the work-hours rules it sits beside. Defaults to Sunday, which
+            is what every week-based view did before this was configurable. */}
+        <SelectMenu
+          ariaLabel="First day of the week"
+          value={String(rules.weekStartsOn ?? 0)}
+          onChange={(next) => setRules({ ...rules, weekStartsOn: Number(next) })}
+          options={[
+            { value: '0', label: 'Sunday' },
+            { value: '1', label: 'Monday' },
+          ]}
+        />
+        <p className="form-hint">
+          Used by the Calendar's week view, the weekly review, and every "this week" figure on the Dashboard and Stats.
+        </p>
       </div>
       {perDay ? (
         /* Per-day mode. One row per weekday rather than seven pairs of

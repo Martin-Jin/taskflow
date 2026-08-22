@@ -408,10 +408,13 @@ test.describe('Weekly review', () => {
   /** A realistic week: finished work, slips, old debt, and something due next week. */
   async function seedWeek(page) {
     await page.evaluate(() => {
+      // LOCAL date, not toISOString(): the app derives "today" from the local
+      // clock (toISODate), so a UTC-based seed is a day off for any positive
+      // UTC offset — at UTC+12 every "due today" task seeds as due yesterday.
       const iso = (offset) => {
         const d = new Date();
         d.setDate(d.getDate() + offset);
-        return d.toISOString().slice(0, 10);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       };
       const base = {
         isCompleted: false, isLocked: false, estimatedHours: 2, remainingHours: 2, priority: 'medium',
@@ -438,7 +441,9 @@ test.describe('Weekly review', () => {
 
     // The nudge states the counts, because those are the reason to open it.
     const card = page.locator('.weekly-review-card');
-    await expect(card).toContainText('1 slipped this week');
+    // Wording flips to "last week" on the first day of a week (the review
+    // then covers the week that just ended), so match either.
+    await expect(card).toContainText(/1 slipped (this|last) week/);
     await expect(card).toContainText('1 carried over');
     await card.getByRole('button', { name: 'Review' }).click();
     await page.waitForTimeout(400);
@@ -446,7 +451,7 @@ test.describe('Weekly review', () => {
     const dialog = page.getByRole('dialog', { name: 'Weekly review' });
     await expect(dialog).toContainText('1 task done');
     // Each task appears in exactly one bucket.
-    const slipped = dialog.locator('.review-section', { has: page.getByText('Slipped this week') });
+    const slipped = dialog.locator('.review-section', { has: page.getByText(/Slipped (this|last) week/) });
     await expect(slipped.locator('.review-row-title')).toHaveText(['WR slipped thing']);
     const carried = dialog.locator('.review-section', { has: page.getByText('Carried over') });
     await expect(carried.locator('.review-row-title')).toHaveText(['WR ancient debt']);
@@ -476,11 +481,14 @@ test.describe('Weekly review', () => {
     await page.waitForTimeout(700);
 
     // The moved task left the slipped bucket and its hours joined next week.
-    await expect(dialog.locator('.review-section', { has: page.getByText('Slipped this week') }).locator('.review-row')).toHaveCount(0);
+    await expect(dialog.locator('.review-section', { has: page.getByText(/Slipped (this|last) week/) }).locator('.review-row')).toHaveCount(0);
     expect(await dialog.locator('.review-fit').textContent()).not.toBe(before);
 
     const moved = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'wr_slip'));
-    const today = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+    const today = await page.evaluate(() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
     expect(moved.dueDate > today).toBe(true);
     // Moving a deadline out IS a postponement, so the counter picks it up.
     expect(moved.postponeCount).toBe(1);
@@ -515,6 +523,70 @@ test.describe('Weekly review', () => {
     await page.waitForTimeout(400);
 
     await expect(page.getByRole('dialog', { name: 'Weekly review' })).toContainText(/Nothing finished, slipped or outstanding/);
+
+    expectNoErrors(errors);
+  });
+
+  test('a closed review stays reachable from a quiet row under the progress rings', async ({ page }) => {
+    /* The prompt going away must not take the review with it — before this,
+       a closed review was only reachable from the command palette, which
+       nobody discovers. */
+    const errors = trackConsoleErrors(page);
+    await seedWeek(page);
+    await gotoTab(page, 'Dashboard');
+
+    await page.locator('.weekly-review-card').getByRole('button', { name: 'Review' }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('dialog', { name: 'Weekly review' }).getByRole('button', { name: 'Done', exact: true }).click();
+    await page.waitForTimeout(600);
+
+    // Prompt gone, quiet row in its place.
+    await expect(page.locator('.weekly-review-card')).toHaveCount(0);
+    const reopen = page.locator('.weekly-review-reopen');
+    await expect(reopen).toBeVisible();
+    await reopen.click();
+    await expect(page.getByRole('dialog', { name: 'Weekly review' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // And it's a real touch target at phone width, where it spans the column.
+    await page.setViewportSize({ width: 375, height: 720 });
+    await page.waitForTimeout(500);
+    await reopen.scrollIntoViewIfNeeded();
+    const box = await reopen.boundingBox();
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(await page.evaluate(() => document.body.scrollWidth <= document.body.clientWidth)).toBe(true);
+    await reopen.click();
+    await expect(page.getByRole('dialog', { name: 'Weekly review' })).toBeVisible();
+
+    expectNoErrors(errors);
+  });
+
+  test('the first-day-of-week setting moves the review window and the calendar', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoTab(page, 'Settings');
+    await page.waitForTimeout(300);
+
+    await page.getByRole('button', { name: 'First day of the week' }).click();
+    await page.getByRole('option', { name: 'Monday', exact: true }).click();
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:rules')).weekStartsOn)).toBe(1);
+
+    // The calendar's week view starts on Monday now.
+    await gotoTab(page, 'Calendar');
+    await page.waitForTimeout(700);
+    const labels = await page.locator('.dow').allTextContents();
+    if (labels.length === 7) expect(labels[0]).toBe('MON');
+
+    // And back to Sunday, which is the default.
+    await gotoTab(page, 'Settings');
+    await page.getByRole('button', { name: 'First day of the week' }).click();
+    await page.getByRole('option', { name: 'Sunday', exact: true }).click();
+    await page.waitForTimeout(400);
+    await gotoTab(page, 'Calendar');
+    await page.waitForTimeout(700);
+    const back = await page.locator('.dow').allTextContents();
+    if (back.length === 7) expect(back[0]).toBe('SUN');
 
     expectNoErrors(errors);
   });

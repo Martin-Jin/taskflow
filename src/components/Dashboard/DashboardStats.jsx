@@ -72,7 +72,7 @@ function StatTile({ label, value, accent, onClick }) {
 }
 
 export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
-  const { tasks, blocks } = useScheduler();
+  const { tasks, blocks, rules } = useScheduler();
   const [openPopup, setOpenPopup] = useState(null); // null | 'scheduledToday' | 'overdueMissed' | 'completedToday'
   const [editingTaskId, setEditingTaskId] = useState(null);
 
@@ -125,7 +125,7 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
       ...getMissedTaskItems(tasks, blocks).map((item) => ({ ...item, kind: 'missed' })),
     ];
 
-    const { weekStart, weekEnd } = getWeekRange(today);
+    const { weekStart, weekEnd } = getWeekRange(today, rules.weekStartsOn);
     const hoursThisWeek = blocks
       .filter((b) => b.date >= weekStart && b.date <= weekEnd)
       .reduce((sum, b) => sum + b.durationHours, 0);

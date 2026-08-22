@@ -32,6 +32,7 @@ import {
   planMoveToNextWeek,
   isReviewDue,
   hasReviewContent,
+  canOpenReview,
   REVIEW_WINDOW_DAYS,
 } from '../utils/weeklyReview';
 
@@ -43,7 +44,10 @@ export function useWeeklyReview() {
   const [lastReviewedAt, setLastReviewedAt] = usePersistedState('lastWeeklyReviewAt', null);
 
   const todayIso = toISODate(new Date());
-  const review = useMemo(() => computeWeeklyReview({ tasks, todayIso }), [tasks, todayIso]);
+  const review = useMemo(
+    () => computeWeeklyReview({ tasks, todayIso, weekStartsOn: rules.weekStartsOn }),
+    [tasks, todayIso, rules.weekStartsOn]
+  );
 
   const { committedHours, freeHours } = useMemo(() => {
     const capacity = computeHorizonCapacity(review.nextWindowStart, REVIEW_WINDOW_DAYS, {
@@ -99,6 +103,9 @@ export function useWeeklyReview() {
 
   return {
     review,
+    // Whether there's anything worth opening at all, as opposed to whether a
+    // review is DUE — the dashboard needs both (see WeeklyReviewCard).
+    canOpen: canOpenReview(review),
     todayIso,
     committedHours,
     freeHours,
