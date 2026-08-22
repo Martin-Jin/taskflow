@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '7.7.0',
+    date: '2026-08-22',
+    title: 'All-day events finally show up',
+    changes: [
+      'All-day events from Google Calendar are imported for the first time. They were skipped entirely before — which meant the scheduler would happily fill eight hours of work on a day you were on a plane, at a conference, or on leave.',
+      'They appear in a new all-day row pinned under the day headers, not as a 24-hour block that would bury everything else on that day. A multi-day event shows on each day it covers.',
+      'Whether one actually blocks your day follows Google’s own Free/Busy marking, so a booked day of leave flattens that day’s capacity while a birthday from a holiday calendar leaves it alone. You can still override either way with "Free Time".',
+      'All-day events are read-only in TaskFlow for now — editing and deleting stay on Google’s side, since sending one back would rewrite it as a timed event.',
+    ],
+  },
+  {
     version: '7.6.0',
     date: '2026-08-22',
     title: 'Share into TaskFlow, and see your dependencies',

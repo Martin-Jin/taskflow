@@ -500,6 +500,28 @@ export function getMockEvents() {
       googleEventId: null,
       source: 'manual',
     },
+    {
+      /* An all-day event, so the sample data shows the calendar's all-day
+         strip rather than leaving that feature invisible until someone
+         connects a real Google Calendar with a holiday on it.
+         Deliberately isFreeTime: true — the "Free" marking a birthday or a
+         holiday-calendar entry carries on Google (see googleCalendarService's
+         transparency mapping). A busy one would zero that day's capacity,
+         which would quietly change what the seeded scheduler demo produces.
+         Spans two days (endDate) so the multi-day expansion path is
+         exercised by the sample data too. */
+      id: 'evt_conference',
+      title: 'Design Conference',
+      date: addDays(base, 1),
+      endDate: addDays(base, 2),
+      startTime: '00:00',
+      endTime: '23:59',
+      isAllDay: true,
+      isFreeTime: true,
+      isRecurring: false,
+      googleEventId: null,
+      source: 'manual',
+    },
   ];
 }
 

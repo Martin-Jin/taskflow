@@ -571,6 +571,17 @@
  * @property {string} startTime              - "HH:MM"
  * @property {string} endTime                - "HH:MM"
  * @property {boolean} isFreeTime            - If true, scheduler treats this as available (ignore/override rule).
+ * @property {boolean} [isAllDay]           - True for an all-day event (Google's `start.date` rather than `start.dateTime`).
+ *                                            Stored with startTime '00:00'/endTime '23:59' so the capacity engine and
+ *                                            calendar layout need no special case, but rendered in WeekView's all-day row
+ *                                            rather than as a full-height block. `isFreeTime` defaults from Google's own
+ *                                            `transparency` for these (a booked day of leave blocks the day, a birthday
+ *                                            from a holiday calendar doesn't), and `canEdit` is forced false because the
+ *                                            push path only knows how to write timed events.
+ * @property {string} [endDate]             - Inclusive last day of a MULTI-day all-day event. Stored once and expanded into
+ *                                            one instance per covered day at display/capacity time (see
+ *                                            recurrenceExpansion.expandMultiDayEvent) — NOT as N rows, because
+ *                                            mergePulledGoogleEvents keys local events by googleEventId in a Map.
  * @property {boolean} isRecurring
  * @property {string|null} googleEventId
  * @property {string} [calendarId]           - Google calendarId this event came from (primary or a subscribed calendar).

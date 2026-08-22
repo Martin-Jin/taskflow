@@ -104,7 +104,11 @@ matter how many short tasks land close together. Hold Ctrl and scroll (or
 pinch on a trackpad) over the grid to zoom the time axis in/out — more room
 at a higher zoom means less clustering, never more. The grid spans the whole
 day, 00:00 to 24:00, so nothing can ever sit above the top of it; it just opens
-scrolled to the morning so the overnight hours aren't taking up the viewport. Month view shows a
+scrolled to the morning so the overnight hours aren't taking up the viewport.
+All-day events (holidays, leave, travel, a conference) get their own row
+pinned under the day headers rather than a block in the grid — one that tall
+would bury every real appointment on that day. A multi-day one appears on
+each day it covers. Month view shows a
 density overview (chips per day, clustering short tasks, "+N more" on busy
 days) and clicking a day drills into Day view for the full time grid,
 matching how most calendar apps handle month → day navigation. Tap the

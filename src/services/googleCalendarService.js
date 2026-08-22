@@ -611,11 +611,18 @@ export async function fetchEvents(startIso, endIso) {
   const excludedOriginalDatesByMaster = new Map(); // `${calendarId}::${recurringEventId}` -> Set<"YYYY-MM-DD">
   for (const e of flatItems) {
     if (!e.recurringEventId) continue;
-    const originalStart = e.originalStartTime?.dateTime;
-    if (!originalStart) continue; // all-day instance exception — out of scope, this app is timed-events-only (see the filter below)
+    // An all-day instance exception carries `originalStartTime.date` (a plain
+    // "YYYY-MM-DD") where a timed one carries `.dateTime`. Both are handled:
+    // the plain date is used as-is rather than via `new Date()`, which would
+    // read it as UTC midnight and land on the previous day west of Greenwich.
+    const originalStartDateTime = e.originalStartTime?.dateTime;
+    const originalStartDate = e.originalStartTime?.date;
+    if (!originalStartDateTime && !originalStartDate) continue;
     const key = `${e.__calendarId}::${e.recurringEventId}`;
     if (!excludedOriginalDatesByMaster.has(key)) excludedOriginalDatesByMaster.set(key, new Set());
-    excludedOriginalDatesByMaster.get(key).add(toISODate(new Date(originalStart)));
+    excludedOriginalDatesByMaster
+      .get(key)
+      .add(originalStartDateTime ? toISODate(new Date(originalStartDateTime)) : originalStartDate);
   }
 
   const events = flatItems
@@ -636,18 +643,34 @@ export async function fetchEvents(startIso, endIso) {
     // date was already captured into excludedOriginalDatesByMaster above,
     // before this filter drops the tombstone itself.
     .filter((e) => e.status !== 'cancelled')
-    .filter((e) => e.start?.dateTime) // skip all-day events for time-blocking purposes
+    // All-day events (start.date rather than start.dateTime) used to be
+    // dropped here as "not time-blocking". They are exactly the entries that
+    // should flatten a day's capacity though — a public holiday, PTO, travel,
+    // a conference — so they're now mapped below with isAllDay set. Anything
+    // with NEITHER shape is malformed and still dropped.
+    .filter((e) => e.start?.dateTime || e.start?.date)
     .filter((e) => {
-      const key = `${e.iCalUID || e.id}::${e.start.dateTime}`;
+      const key = `${e.iCalUID || e.id}::${e.start.dateTime || e.start.date}`;
       if (seenEventKeys.has(key)) return false;
       seenEventKeys.add(key);
       return true;
     })
     .map((e) => {
+      const isAllDay = !e.start.dateTime;
+
+      /* An all-day event's start/end are plain "YYYY-MM-DD" strings and must
+         NOT go through `new Date()` — that reads them as UTC midnight, which
+         is the previous day in any negative UTC offset, silently shifting
+         every holiday a day earlier for users west of Greenwich. Google's
+         `end.date` is also EXCLUSIVE (a single day on the 1st ends on the
+         2nd), so the inclusive last day is one day back. */
+      const allDayStartIso = isAllDay ? e.start.date : null;
+      const allDayEndIso = isAllDay ? addDays(e.end?.date || addDays(e.start.date, 1), -1) : null;
+
       // Parse via Date objects rather than string-slicing — see the
       // function doc comment above for why this matters.
-      const start = new Date(e.start.dateTime);
-      const end = new Date(e.end.dateTime);
+      const start = isAllDay ? null : new Date(e.start.dateTime);
+      const end = isAllDay ? null : new Date(e.end.dateTime);
       const pad2 = (n) => String(n).padStart(2, '0');
 
       const id = `gcal_${e.__calendarId}_${e.id}`;
@@ -712,10 +735,30 @@ export async function fetchEvents(startIso, endIso) {
       return {
         id,
         title: e.summary || '(no title)',
-        date: toISODate(start),
-        startTime: `${pad2(start.getHours())}:${pad2(start.getMinutes())}`,
-        endTime: `${pad2(end.getHours())}:${pad2(end.getMinutes())}`,
-        isFreeTime: false,
+        date: isAllDay ? allDayStartIso : toISODate(start),
+        /* An all-day event is given real times rather than a special case, so
+           every existing consumer — the capacity engine's busy intervals, the
+           calendar's layout maths, the agenda — keeps working unchanged. 23:59
+           rather than 24:00 matches the convention the seeded overnight sleep
+           routine already uses. */
+        startTime: isAllDay ? '00:00' : `${pad2(start.getHours())}:${pad2(start.getMinutes())}`,
+        endTime: isAllDay ? '23:59' : `${pad2(end.getHours())}:${pad2(end.getMinutes())}`,
+        ...(isAllDay ? { isAllDay: true } : {}),
+        /* Inclusive last day, present only on a MULTI-day all-day event.
+           Expanded into one instance per covered day at display/capacity time
+           (see recurrenceExpansion.expandEventsForRange) rather than stored as
+           N rows: mergePulledGoogleEvents keys local events by googleEventId
+           in a Map, so one Google event splitting into several local rows
+           would collapse back to one and break deletion detection. */
+        ...(isAllDay && allDayEndIso > allDayStartIso ? { endDate: allDayEndIso } : {}),
+        /* Google's own Free/Busy marking, which is the difference between a
+           holiday-calendar birthday (transparent — shouldn't touch capacity)
+           and a booked day of leave (opaque — should flatten it). Only
+           consulted for all-day events: timed events have always counted as
+           busy here regardless of transparency, and changing that would
+           silently re-plan existing users' schedules. The user can still flip
+           either kind with the existing "Free Time" control. */
+        isFreeTime: isAllDay ? e.transparency === 'transparent' : false,
         isRecurring: !!e.recurrence,
         googleEventId: e.id,
         calendarId: e.__calendarId,
@@ -729,7 +772,12 @@ export async function fetchEvents(startIso, endIso) {
         // shared as 'reader'/'freeBusyReader' (e.g. a university timetable)
         // are view-only on Google's side, so TaskFlow must not offer full
         // edit controls for events sourced from them either.
-        canEdit: e.__accessRole === 'owner' || e.__accessRole === 'writer',
+        /* All-day events are deliberately read-only regardless of access role:
+           buildEventResource only knows how to emit `start.dateTime`, so
+           pushing an edit would rewrite the all-day event as a timed one on
+           the user's real calendar. Making them editable requires teaching the
+           push path the `start.date` shape first. */
+        canEdit: isAllDay ? false : e.__accessRole === 'owner' || e.__accessRole === 'writer',
         googleUpdatedAt: e.updated,
         localUpdatedAt: null,
         // Set only on events this app itself created from a ScheduledBlock —

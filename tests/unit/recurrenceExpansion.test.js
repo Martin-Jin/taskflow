@@ -9,6 +9,7 @@ import {
   expandRecurringEvent,
   expandEventsForRange,
   MAX_OCCURRENCES,
+  expandMultiDayEvent,
 } from '../../src/utils/recurrenceExpansion';
 
 describe('parseRRule', () => {
@@ -273,5 +274,99 @@ describe('MAX_OCCURRENCES — the shared cap between the expander and the UI', (
     const rule = { freq: 'DAILY', interval: 1, byDay: null, count: null, until: null };
     const dates = generateRuleOccurrences('2026-01-01', rule, '2026-01-01', '2060-01-01');
     expect(dates.length).toBe(MAX_OCCURRENCES);
+  });
+});
+
+describe('expandMultiDayEvent — all-day events spanning several days', () => {
+  // A multi-day all-day event is stored as ONE row with date..endDate and
+  // expanded per day here, for the same reason recurring events are:
+  // mergePulledGoogleEvents keys local events by googleEventId in a Map, so
+  // one Google event materialised as several rows would collapse back to one.
+  const conference = {
+    id: 'gcal_primary_conf',
+    title: 'Design Conference',
+    date: '2026-09-01',
+    endDate: '2026-09-03',
+    startTime: '00:00',
+    endTime: '23:59',
+    isAllDay: true,
+    isFreeTime: false,
+    googleEventId: 'conf',
+  };
+
+  it('emits one instance per covered day, inclusive of both ends', () => {
+    const out = expandMultiDayEvent(conference, '2026-08-01', '2026-09-30');
+    expect(out.map((e) => e.date)).toEqual(['2026-09-01', '2026-09-02', '2026-09-03']);
+  });
+
+  it('clips to the requested range without losing the span it belongs to', () => {
+    const out = expandMultiDayEvent(conference, '2026-09-02', '2026-09-02');
+    expect(out).toHaveLength(1);
+    expect(out[0].date).toBe('2026-09-02');
+    // The instance still knows the whole span, so the UI can say "1-3 Sept"
+    // on a day that is neither the first nor the last.
+    expect(out[0].spanStartDate).toBe('2026-09-01');
+    expect(out[0].spanEndDate).toBe('2026-09-03');
+  });
+
+  it('returns nothing when the span misses the range entirely', () => {
+    expect(expandMultiDayEvent(conference, '2026-10-01', '2026-10-31')).toEqual([]);
+    expect(expandMultiDayEvent(conference, '2026-01-01', '2026-01-31')).toEqual([]);
+  });
+
+  it('gives each instance a distinct id but keeps the stored googleEventId', () => {
+    const out = expandMultiDayEvent(conference, '2026-09-01', '2026-09-30');
+    expect(new Set(out.map((e) => e.id)).size).toBe(3);
+    // Identity for sync purposes is the Google id, which must NOT be per-day —
+    // that's the whole reason these aren't stored as separate rows.
+    expect(out.every((e) => e.googleEventId === 'conf')).toBe(true);
+  });
+
+  it('drops endDate from each instance so re-expanding is not recursive', () => {
+    const out = expandMultiDayEvent(conference, '2026-09-01', '2026-09-30');
+    expect(out.every((e) => e.endDate === undefined)).toBe(true);
+    // Feeding the output back through must be a no-op rather than fanning out.
+    expect(expandEventsForRange(out, '2026-09-01', '2026-09-30')).toHaveLength(3);
+  });
+
+  it('carries the busy/free marking onto every instance', () => {
+    const out = expandMultiDayEvent({ ...conference, isFreeTime: true }, '2026-09-01', '2026-09-30');
+    expect(out.every((e) => e.isFreeTime === true)).toBe(true);
+    expect(out.every((e) => e.startTime === '00:00' && e.endTime === '23:59')).toBe(true);
+  });
+});
+
+describe('expandEventsForRange — routing between recurrence and multi-day spans', () => {
+  it('expands a single-day all-day event as itself, untouched', () => {
+    const holiday = { id: 'h', title: 'Holiday', date: '2026-09-01', startTime: '00:00', endTime: '23:59', isAllDay: true };
+    expect(expandEventsForRange([holiday], '2026-09-01', '2026-09-30')).toEqual([holiday]);
+  });
+
+  it('routes a multi-day span through the span expander', () => {
+    const span = { id: 's', title: 'Leave', date: '2026-09-01', endDate: '2026-09-02', startTime: '00:00', endTime: '23:59', isAllDay: true };
+    expect(expandEventsForRange([span], '2026-09-01', '2026-09-30')).toHaveLength(2);
+  });
+
+  it('lets recurrence win when an event somehow has both', () => {
+    // Documented precedence: a repeating multi-day event is treated as
+    // single-day occurrences, which under-reports busy time rather than
+    // blocking days the user is actually free.
+    const both = {
+      id: 'b',
+      title: 'Odd one',
+      date: '2026-09-01',
+      endDate: '2026-09-03',
+      startTime: '00:00',
+      endTime: '23:59',
+      isAllDay: true,
+      recurrenceRule: 'FREQ=WEEKLY;COUNT=2',
+    };
+    const out = expandEventsForRange([both], '2026-09-01', '2026-09-30');
+    expect(out.map((e) => e.date)).toEqual(['2026-09-01', '2026-09-08']);
+  });
+
+  it('ignores an endDate that is not actually after the start date', () => {
+    const sameDay = { id: 'x', title: 'One day', date: '2026-09-01', endDate: '2026-09-01', startTime: '00:00', endTime: '23:59' };
+    expect(expandEventsForRange([sameDay], '2026-09-01', '2026-09-30')).toEqual([sameDay]);
   });
 });

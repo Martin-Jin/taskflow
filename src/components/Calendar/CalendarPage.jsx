@@ -24,7 +24,7 @@ import TaskDetailModal from '../Modals/TaskDetailModal';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import BulkActionBar from '../Common/BulkActionBar';
 import { addDays, addMonths, dayOfWeek, formatDisplayDate, formatMonthLabel, startOfMonth, toISODate } from '../../utils/dateUtils';
-import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
+import { expandEventsForRange, resolveEventId } from '../../utils/recurrenceExpansion';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -134,7 +134,7 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
         const { masterId, occurrenceDate, isVirtual } = resolveEventId(id);
         const master = events.find((e) => e.id === masterId);
         if (!master) continue;
-        const resolved = isVirtual ? expandRecurringEvent(master, occurrenceDate, occurrenceDate)[0] : master;
+        const resolved = isVirtual ? expandEventsForRange([master], occurrenceDate, occurrenceDate)[0] : master;
         if (resolved) items.push({ kind: 'event', id, event: resolved });
       }
     }
@@ -398,7 +398,11 @@ export default function CalendarPage({ dayJumpRequest, onOpenSearch, onProjectCr
     const master = events.find((e) => e.id === masterId);
     if (!master) return null;
     if (!isVirtual) return master;
-    const [occurrence] = expandRecurringEvent(master, occurrenceDate, occurrenceDate);
+    // expandEventsForRange rather than expandRecurringEvent directly: a
+    // virtual id can now belong to a multi-day all-day span as well as an
+    // RRULE series, and that function is the one place that knows which
+    // expander applies.
+    const [occurrence] = expandEventsForRange([master], occurrenceDate, occurrenceDate);
     return occurrence || null; // this occurrence was deleted (scope:'this' delete) since being displayed
   }, [selectedEventId, events]);
 

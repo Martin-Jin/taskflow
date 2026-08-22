@@ -104,6 +104,12 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // (no `canEdit` field at all) or mock data must still be treated as fully
   // editable, so this deliberately checks `=== false` rather than `!canEdit`.
   const isReadOnly = !isCreate && event.canEdit === false;
+  /* An all-day event stores 00:00-23:59 so the capacity engine can treat it as
+     a full busy day (see googleCalendarService's mapping). Those aren't times
+     the user chose, so showing them as editable inputs invites an edit that
+     would leave isAllDay set on an event that no longer covers the day. Google
+     ones are already read-only; this covers a locally-created one too. */
+  const isAllDayEvent = !isCreate && !!event.isAllDay;
 
   const [title, setTitle] = useState(event?.title || '');
   const [description, setDescription] = useState(event?.description || '');
@@ -534,12 +540,22 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                 <p className="form-hint">Moving the date only applies to a single occurrence — set "Apply to" to "This event" first.</p>
               )}
             </DetailField>
-            <DetailField icon={Clock} label="Start time">
-              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={isReadOnly} />
-            </DetailField>
-            <DetailField icon={Clock} label="End time">
-              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
-            </DetailField>
+            {isAllDayEvent ? (
+              <DetailField icon={Clock} label="Time">
+                <p className="form-hint" style={{ margin: 0 }}>
+                  All day{event.spanEndDate ? ` — ${event.spanStartDate} to ${event.spanEndDate}` : ''}
+                </p>
+              </DetailField>
+            ) : (
+              <>
+                <DetailField icon={Clock} label="Start time">
+                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={isReadOnly} />
+                </DetailField>
+                <DetailField icon={Clock} label="End time">
+                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={isReadOnly} />
+                </DetailField>
+              </>
+            )}
             {!isCreate && event.seriesId && (
               <DetailField icon={ListTree} label="Apply to">
                 <select value={scope} onChange={(e) => setScope(e.target.value)}>

@@ -281,12 +281,21 @@ export default function WeekView({
         start: timeToMinutes(b.startTime),
         end: timeToMinutes(b.endTime),
       }));
-      const eventItems = (eventsByDay.get(day) || []).map((e) => ({
-        type: 'event',
-        data: e,
-        start: timeToMinutes(e.startTime),
-        end: timeToMinutes(e.endTime),
-      }));
+      /* All-day events are deliberately kept OUT of the time grid. They carry
+         00:00-23:59 so the capacity engine can treat them as a full busy day
+         (see googleCalendarService's mapping), but rendered as a block that
+         would be a full-height column swallowing every real appointment on
+         that day. They also used to drag the grid's initial scroll position to
+         midnight, since that anchors on the earliest visible item. They render
+         in the strip above the grid instead — see allDayByDay below. */
+      const eventItems = (eventsByDay.get(day) || [])
+        .filter((e) => !e.isAllDay)
+        .map((e) => ({
+          type: 'event',
+          data: e,
+          start: timeToMinutes(e.startTime),
+          end: timeToMinutes(e.endTime),
+        }));
       const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
       map.set(day, computeDayPositions(layoutDayItems(merged, pxPerMin), pxPerMin));
     }
@@ -299,6 +308,33 @@ export default function WeekView({
      starts before DEFAULT_SCROLL_MIN, so an early-morning event isn't hidden
      above the fold — the whole point of extending the grid upward. Left alone
      afterwards, so a user's own scrolling is never yanked back. */
+  const allDayByDay = useMemo(() => {
+    const map = new Map();
+    for (const day of days) {
+      const allDay = (eventsByDay.get(day) || []).filter((e) => e.isAllDay);
+      if (allDay.length) map.set(day, allDay);
+    }
+    return map;
+  }, [days, eventsByDay]);
+
+  const hasAllDayEvents = allDayByDay.size > 0;
+
+  /* Height of the sticky day-header row, so the all-day row can stick
+     directly beneath it. Measured because it isn't a constant: the mobile
+     single-day variant hides the dow/dom text (see is-single-day-mobile),
+     which changes the row's height. */
+  const [dayHeaderHeight, setDayHeaderHeight] = useState(0);
+  useEffect(() => {
+    if (!hasAllDayEvents) return undefined;
+    const el = gridRef.current?.querySelector('.day-header');
+    if (!el) return undefined;
+    const measure = () => setDayHeaderHeight(el.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasAllDayEvents, dayCount, isMobile]);
+
   const earliestItemMin = useMemo(() => {
     let earliest = Infinity;
     for (const day of days) {
@@ -911,7 +947,7 @@ export default function WeekView({
         className={`week-grid ${isMobile && dayCount === 1 ? 'is-single-day-mobile' : ''}`}
         ref={gridRef}
       style={{
-        gridTemplateRows: `auto ${gridHeight}px`,
+        gridTemplateRows: hasAllDayEvents ? `auto auto ${gridHeight}px` : `auto ${gridHeight}px`,
         gridTemplateColumns: `56px repeat(${dayCount}, 1fr)`,
         '--hour-height': `${pxPerMin * 60}px`,
       }}
@@ -945,6 +981,42 @@ export default function WeekView({
           <div className="dom">{day.slice(8, 10)}</div>
         </div>
       ))}
+
+      {/* All-day row, between the day headers and the time grid so a chip
+          reads under the date it belongs to. Sticky rather than a sibling
+          above .week-grid (which is the scroll container): the grid opens
+          anchored to the morning, so a non-sticky row here would already be
+          scrolled out of view on load — the one place a user looks for
+          today's holiday. `top` clears the sticky day headers, whose height
+          is measured rather than assumed since it changes with the mobile
+          single-day variant. Rendered only when there's something in it, so a
+          calendar with no all-day events is unchanged. */}
+      {hasAllDayEvents && (
+        <>
+          <div className="week-allday-gutter" style={{ top: dayHeaderHeight }}>
+            All day
+          </div>
+          {days.map((day) => (
+            <div key={`allday-${day}`} className="week-allday-cell" style={{ top: dayHeaderHeight }}>
+              {(allDayByDay.get(day) || []).map((evt) => (
+                <button
+                  key={evt.id}
+                  type="button"
+                  className={`week-allday-chip ${evt.isFreeTime ? 'is-free' : ''}`}
+                  onClick={() => onSelectEvent?.(evt)}
+                  title={
+                    evt.spanStartDate
+                      ? `${evt.title} (all day, ${evt.spanStartDate} to ${evt.spanEndDate})`
+                      : `${evt.title} (all day)`
+                  }
+                >
+                  {evt.title}
+                </button>
+              ))}
+            </div>
+          ))}
+        </>
+      )}
 
       <div style={{ position: 'relative', height: gridHeight }}>
         {hourMarks.map((m) => (
