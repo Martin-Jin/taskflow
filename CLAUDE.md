@@ -190,6 +190,32 @@ changelog" for the same rule in the contributor docs.
   new one — and remove that migration code once it's no longer needed (see
   code review checklist below).
 
+### Adding a field to TaskDetailModal's sidebar/⋯ menu
+
+`TaskDetailModal.jsx` autosaves those fields on a debounce, reconciled against
+external changes. A new field must appear in **all seven** of these or it
+misbehaves — and the failure is not local to the field:
+
+1. local state + setter;
+2. the initial `initialSnapshotRef.current` build;
+3. the re-seed effect (both the snapshot AND a `setX(task.x)` reset);
+4. the reconcile effect's `taskValues`, `setters` **and** `localValues` — all
+   three, since it iterates `Object.keys(taskValues)` and indexes the others;
+5. `sidebarDirty`, or an edit never triggers a save;
+6. the `commitChanges` payload, or the edit is never persisted;
+7. **the post-save `initialSnapshotRef` rebuild inside `commitChanges`.**
+
+Miss 6 or 7 and the field stays dirty after its own save, so the debounce
+re-arms forever: a write loop that pegs the CPU and kills the browser. It
+surfaces as *unrelated* tests timing out with "Target page has been closed" and
+the E2E suite running minutes longer — nothing pointing at the field. A targeted
+test run passes while the full suite fails.
+
+Verify by counting `localStorage` writes to `:tasks` around an edit: exactly one
+per user action, and zero while idle afterwards. A functional assertion alone
+passes happily with the loop running behind it (see
+tasks-and-smart-parse.spec.js's "without a write loop" test).
+
 ### Cross-cutting concerns: sync, presence, and project state
 
 The app has several interconnected systems that are easy to break when making
