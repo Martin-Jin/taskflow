@@ -147,9 +147,10 @@ work* from its "⋯" menu ("Save as template"): the sub-tasks, their estimates,
 their dependencies and their relative spacing. Due dates are stored as
 **offsets, not fixed dates**, so a template captured in March works just as
 well in September — you pick a start date each time you use one, the earliest
-task lands on it, and everything else keeps its original spacing. Reach for a
-saved template with "New from template" in the command palette (`Ctrl+K`),
-which is also where you delete ones you no longer want.
+task lands on it, and everything else keeps its original spacing. Reach a saved
+template from **Settings → Templates**, or with "New from template" in the
+command palette (`Ctrl+K`) — both open the same picker, which is also where you
+delete ones you no longer want.
 
 Not captured: the project (you choose one per use, so a template works across
 projects), recurrence, comments, and anything already scheduled or completed.
@@ -271,6 +272,9 @@ One page of cards, each covering one area:
 - **Notifications** — which task events notify you, and over which channel.
   See [Notifications](INTEGRATIONS.md#notifications).
 - **Tags** — every tag in use across all tasks, with how many tasks carry each.
+- **Templates** — every saved template, with what each one contains. Use or
+  delete one from here, or reach the same picker with `Ctrl+K` → "New from
+  template".
 - **Backups** — export, import, and cloud snapshots. See
   [Backups](SYNC-AND-SHARING.md#backups).
 - **Appearance** — the light/dark theme switch.

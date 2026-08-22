@@ -574,7 +574,7 @@ test('Settings desktop rail: lists every section, click-to-scroll and scroll-tra
   // Settings/sections/ — this is the one thing that would silently drop a
   // whole section if that extraction ever went wrong.
   const rail = page.locator('.settings-rail-link');
-  await expect(rail).toHaveCount(12);
+  await expect(rail).toHaveCount(13);
   await expect(rail).toHaveText([
     'Account & sync',
     'Integrations',
@@ -582,6 +582,7 @@ test('Settings desktop rail: lists every section, click-to-scroll and scroll-tra
     'Fixed routines',
     'Appearance',
     'Tags',
+    'Templates',
     'Notifications',
     'Help',
     'Keyboard shortcuts',
@@ -765,6 +766,95 @@ test('Scheduling rules: per-weekday work hours can be turned on, edited, and tur
   await expect(page.locator('.workhours-row')).toHaveCount(0);
   expect((await readRules()).workHoursByDay).toBeUndefined();
   await expect(card.locator('input[type=time]')).toHaveCount(2);
+
+  expectNoErrors(errors);
+});
+
+/**
+ * Every settings section must be reachable in the rail, not just most of them.
+ *
+ * Two separate bugs made the tail unreachable, and both were invisible to any
+ * "does the rail work" spot check: there wasn't enough scroll room below the
+ * last cards for their tops to reach the highlight band at all (so Versions
+ * and Backups could never be current, and a special case force-selected only
+ * the very last section), and scrollIntoView parked a clicked card ABOVE that
+ * band, handing the highlight to the card after it. A loop over every section
+ * is the only assertion that catches either.
+ */
+test('the settings rail highlights every section it can navigate to', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(500);
+
+  const rail = page.locator('.settings-rail');
+  const labels = await rail.locator('.settings-rail-link').allTextContents();
+  expect(labels.length).toBeGreaterThan(8);
+
+  for (const label of labels.map((l) => l.trim())) {
+    await rail.getByRole('button', { name: label, exact: true }).click();
+    await page.waitForTimeout(700);
+    await expect(page.locator('.settings-rail-link.is-current')).toHaveText(label);
+  }
+
+  // Scrolling to the very bottom lands on the last section, which is what the
+  // removed special case used to force unconditionally.
+  await page.evaluate(() => {
+    const el = document.querySelector('.main-content');
+    el.scrollTop = el.scrollHeight;
+  });
+  await page.waitForTimeout(600);
+  await expect(page.locator('.settings-rail-link.is-current')).toHaveText(labels[labels.length - 1].trim());
+
+  expectNoErrors(errors);
+});
+
+test('Settings → Templates lists saved templates and opens the same picker', async ({ page }) => {
+  /* Templates were reachable only via a keyboard shortcut, which made a saved
+     template invisible unless you already knew the shortcut existed. */
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(400);
+
+  const card = page.locator('[data-tour="templates-card"]');
+  await card.scrollIntoViewIfNeeded();
+  // Says so plainly rather than opening an empty picker.
+  await expect(card.getByRole('button', { name: /no templates yet/i })).toBeVisible();
+
+  await page.evaluate(() => {
+    localStorage.setItem('taskflow:v1:taskTemplates', JSON.stringify([
+      { id: 'b', name: 'Zebra process', createdAt: 2, tasks: [{ localId: 'z', title: 'Z', dueDayOffset: 0, parentLocalId: null, dependsOnLocalIds: [] }] },
+      { id: 'a', name: 'Aardvark process', createdAt: 1, tasks: [{ localId: 'a', title: 'A', dueDayOffset: null, parentLocalId: null, dependsOnLocalIds: [] }] },
+    ]));
+  });
+  await page.reload();
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(500);
+  await card.scrollIntoViewIfNeeded();
+  await expect(card.getByRole('button', { name: /view 2 templates/i })).toBeVisible();
+
+  // Same picker as the command palette's — one place the rows are maintained.
+  await card.getByRole('button', { name: /view 2 templates/i }).click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.template-row-name')).toHaveText(['Aardvark process', 'Zebra process']);
+
+  expectNoErrors(errors);
+});
+
+test('Appearance: the sound toggle is not flush against the theme switch', async ({ page }) => {
+  /* The theme toggle is a control GROUP, so it matched none of the
+     "consecutive settings rows" spacing pairings and the row after it sat with
+     a 0px gap while every other row had 12-14px. */
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.waitForTimeout(400);
+
+  const gap = await page.evaluate(() => {
+    const toggle = document.querySelector('.theme-toggle');
+    const row = toggle.nextElementSibling;
+    return Math.round(row.getBoundingClientRect().top - toggle.getBoundingClientRect().bottom);
+  });
+  expect(gap).toBeGreaterThanOrEqual(8);
 
   expectNoErrors(errors);
 });

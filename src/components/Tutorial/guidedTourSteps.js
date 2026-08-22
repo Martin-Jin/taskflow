@@ -123,6 +123,19 @@ export const GUIDED_TOUR_STEPS = [
     body: 'TaskFlow ships with a warm off-white light theme and a warm charcoal dark theme, both built around the same teal accent. Switch anytime — your choice is remembered on this device.',
   },
   {
+    // Anchored on the Settings card rather than the palette itself: the
+    // command palette is keyboard-summoned (and its mobile FAB only exists on
+    // some tabs), so there's no element to spotlight that reliably sits in the
+    // DOM — pointing at one would silently fall back to a tooltip with no
+    // spotlight. The Templates card is always there and is the other route to
+    // the same feature, so the step teaches both at once.
+    tab: 'settings',
+    selector: '[data-tour="templates-card"]',
+    placement: 'top',
+    title: 'Repeat a whole process',
+    body: 'Save any task with sub-tasks as a reusable template from its "⋯" menu — sub-tasks, estimates, dependencies, and the spacing between their due dates. Because the dates are stored as spacing rather than fixed dates, you pick a start date each time and the rest keeps its gaps. Reuse one from here, or press Ctrl+K for the command palette (jump to any task, project or event, and run actions) and pick "New from template".',
+  },
+  {
     tab: 'settings',
     selector: '[data-tour="danger-zone-card"]',
     placement: 'top',
