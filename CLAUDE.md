@@ -528,6 +528,23 @@ gitignored working file.
 - Before adding new code, check whether an existing utility/component/hook
   already does this and can be reused or extended instead of duplicated.
 - One-time/migration code has been removed once it's no longer needed.
+  **Due now: the `src/migrations/` sweep.** `migrateBlockedTimeToEvents`,
+  `migrateRecurrenceConsistency`, `migrateStaleRecurringRemainingHours` and
+  `migrateSubtasksToTasks` all carry "SAFE TO DELETE after ~2026-09" headers;
+  `migrateRecurrenceState` has its own criterion, so check it in the same pass.
+  Deleting one means removing the file, its test, its call site in
+  `SchedulerContext.jsx`, and its `*MigrationDone` persisted flag.
+  Two things to know before doing it, so the decision isn't re-derived:
+  (1) each header says to wait until "telemetry/support shows no remaining
+  users" — **this app has no telemetry**, so that criterion can never actually
+  be satisfied and the date is the only usable signal; (2) the guard flags are
+  device-local `localStorage`, not synced, so "already migrated" is per-browser.
+  The residual risk of deleting is therefore a device that has never loaded a
+  post-migration build — including someone restoring a pre-migration backup —
+  no longer getting backfilled. Decide against that, not against telemetry.
+  `ensureProtectedSleepRoutine` was deliberately moved OUT of `src/migrations/`
+  (it's a permanent invariant, now in `src/utils/`) so this sweep can't take it
+  — don't move it back.
 - No dead code left behind by the change itself — old components, props,
   branches, or imports that this change made obsolete (not just migration
   code) have been deleted, not left unreferenced.
