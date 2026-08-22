@@ -217,3 +217,55 @@ describe('computeDayCapacity — all-day events', () => {
     expect(result.totalAvailableHours).toBe(8);
   });
 });
+
+describe('computeDayCapacity — per-weekday work hours', () => {
+  /* The scheduling half of utils/workHours.js. 2026-07-01 is a Wednesday,
+     2026-07-04 a Saturday — matching the dates the rest of this file uses. */
+  it('applies a weekday override instead of the baseline window', () => {
+    const rules = { ...baseRules, workHoursByDay: { 3: { start: '10:00', end: '14:00' } } };
+    const result = computeDayCapacity('2026-07-01', { rules, routines: [], events: [], blocks: [] });
+    expect(result.totalAvailableHours).toBe(4);
+    expect(result.freeIntervals).toEqual([{ start: '10:00', end: '14:00' }]);
+  });
+
+  it('leaves other weekdays on the baseline window', () => {
+    const rules = { ...baseRules, workHoursByDay: { 3: { start: '10:00', end: '14:00' } } };
+    // Thursday has no override.
+    const result = computeDayCapacity('2026-07-02', { rules, routines: [], events: [], blocks: [] });
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('gives a day marked not-working zero capacity', () => {
+    // This is the whole point: a Saturday the user does not work must not be
+    // modelled as identically available to a Tuesday.
+    const rules = { ...baseRules, workHoursByDay: { 6: { start: '09:00', end: '17:00', enabled: false } } };
+    const result = computeDayCapacity('2026-07-04', { rules, routines: [], events: [], blocks: [] });
+    expect(result.totalAvailableHours).toBe(0);
+    expect(result.freeIntervals).toEqual([]);
+  });
+
+  it('still carves busy time out of an overridden window', () => {
+    const rules = { ...baseRules, workHoursByDay: { 3: { start: '10:00', end: '14:00' } } };
+    const events = [{ date: '2026-07-01', startTime: '11:00', endTime: '12:00' }];
+    const result = computeDayCapacity('2026-07-01', { rules, routines: [], events, blocks: [] });
+    expect(result.freeIntervals).toEqual([
+      { start: '10:00', end: '11:00' },
+      { start: '12:00', end: '14:00' },
+    ]);
+  });
+
+  it('reports the overridden bounds as the day workWindow', () => {
+    // allocator.js reads workWindow to tell "this slot is taken" apart from
+    // "this slot was never inside working hours" — so it has to follow the
+    // override too, or a fixed-time task would be judged against the wrong day.
+    const rules = { ...baseRules, workHoursByDay: { 3: { start: '10:00', end: '14:00' } } };
+    const result = computeDayCapacity('2026-07-01', { rules, routines: [], events: [], blocks: [] });
+    expect(result.workWindow).toEqual({ start: 10 * 60, end: 14 * 60 });
+  });
+
+  it('behaves identically to the old scalars when no map is present', () => {
+    const withMap = computeDayCapacity('2026-07-01', { rules: { ...baseRules, workHoursByDay: {} }, routines: [], events: [], blocks: [] });
+    const without = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events: [], blocks: [] });
+    expect(withMap).toEqual(without);
+  });
+});

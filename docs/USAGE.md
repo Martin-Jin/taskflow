@@ -223,8 +223,11 @@ One page of cards, each covering one area:
   [Sync, backups, and sharing](SYNC-AND-SHARING.md).
 - **Integrations** — connect Todoist, Google Calendar, and your AI Quick Add
   API key. See [Integrations](INTEGRATIONS.md).
-- **Scheduling rules** — buffer days, work-day window, max daily hours,
-  planning horizon, and front-loading.
+- **Scheduling rules** — buffer days, work hours, max daily hours, planning
+  horizon, and front-loading. Work hours are the same every day by default;
+  tick **Different hours on different days** to give each weekday its own, or
+  to mark a day as not working (weekends start off when you switch it on). The
+  scheduler plans nothing at all on a day marked not working.
 - **Routines** — fixed recurring commitments, edited on a drag-based 24-hour
   timeline: drag empty space to add one, drag a block to move it, drag its edge
   to resize, click to rename, pause, or delete it. You can also mark calendar

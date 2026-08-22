@@ -24,11 +24,22 @@ JavaScript — no React, no DOM, fully unit-testable in isolation.
 
 ### 1. Capacity (`capacityEngine.js`)
 
-For every day in the planning horizon, start with the configured work-day
-window (e.g. 07:00–23:00) and subtract active fixed routines for that
-day-of-week (sleep, meals, commute), calendar events not marked "Free
-Time", and locked scheduled blocks already committed. What's left is that
-day's free capacity, as a sorted list of open time intervals.
+For every day in the planning horizon, start with that day's work-hours
+window and subtract active fixed routines for that day-of-week (sleep, meals,
+commute), calendar events not marked "Free Time", and locked scheduled blocks
+already committed. What's left is that day's free capacity, as a sorted list of
+open time intervals.
+
+The window comes from `utils/workHours.js`'s `resolveWorkWindow`, never from
+`rules.workDayStart`/`workDayEnd` directly: those two are the baseline, and
+`rules.workHoursByDay` optionally overrides them per weekday. The map is absent
+on any rules object saved before per-day hours existed, which resolves to the
+baseline for all seven days — that's why the feature needed no migration. A day
+marked `enabled: false` resolves to a zero-length window, so "day off" costs the
+engine no special case; it falls out of the interval subtraction as zero
+capacity. The scalars are deliberately kept rather than replaced, because
+`notify-worker` reads `rules.workDayStart` to time its due-today digest and
+deploys independently of the app.
 
 ### 2. Allocation (`allocator.js`)
 

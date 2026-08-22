@@ -2410,6 +2410,64 @@ h4 + .settings-hint {
 /* Vertical rhythm between consecutive toggle rows, replacing the assorted
    inline marginTop values (10px/12px) those rows carried individually. */
 .settings-toggle-row + .settings-toggle-row,
+/* Per-weekday work hours (Settings → Scheduling rules). A row per day rather
+   than seven labelled start/end pairs — at mobile width the repeated labels
+   are what makes that unreadable. The times column shrinks before the day
+   name does, since "Mon" is what makes a row scannable. */
+.workhours-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+
+.workhours-heading {
+  margin: 0;
+}
+
+.workhours-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 4px 0;
+  min-height: 32px;
+}
+
+.workhours-day {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  min-width: 4.5rem;
+  flex: 0 0 auto;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.workhours-row.is-off .workhours-day span {
+  color: var(--color-text-secondary);
+}
+
+.workhours-times {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workhours-times input {
+  min-width: 0;
+}
+
+.workhours-dash {
+  color: var(--color-text-secondary);
+}
+
+.workhours-off-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
 /* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
    only carry a bottom margin, so a hint following a button row, a toggle, or
    a bare inline button ran flush into it. Every "control, then explanation"

@@ -611,6 +611,14 @@
  * @property {number} bufferDays              - Days before due date the task should be *finished* by (default 1).
  * @property {string} workDayStart            - "HH:MM" earliest hour work can be scheduled.
  * @property {string} workDayEnd              - "HH:MM" latest hour work can be scheduled.
+ * @property {Object<number, {start?: string, end?: string, enabled?: boolean}>} [workHoursByDay]
+ *                                           - Optional per-weekday override of the two fields above, keyed 0=Sunday..6=Saturday
+ *                                             (same convention as FixedRoutine.daysOfWeek). Absent — the state of every rules
+ *                                             object saved before this existed — means every day uses workDayStart/workDayEnd,
+ *                                             so there is no migration. `enabled: false` marks a day not-working, which
+ *                                             resolves to a zero-length window rather than a special case downstream. Always
+ *                                             read via utils/workHours.js's resolveWorkWindow, never indexed directly; the
+ *                                             scalars stay authoritative as the fallback and are what notify-worker reads.
  * @property {number} maxDailyDeepWorkHours    - Cap on total scheduled task-hours per day, to avoid burnout.
  * @property {number} horizonWeeks             - How many weeks ahead the scheduler plans across.
  * @property {boolean} frontLoadUrgent         - If true, urgent/high priority tasks are packed near their due dates first.
