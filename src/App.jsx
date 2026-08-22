@@ -54,6 +54,7 @@ import { useJoinFlow } from './hooks/useJoinFlow';
 import { readJoinToken } from './utils/joinFlow';
 import GuidedTour from './components/Tutorial/GuidedTour';
 import DashboardPage from './components/Dashboard/DashboardPage';
+import { useWeeklyReview } from './hooks/useWeeklyReview';
 import ProjectsPage from './components/Projects/ProjectsPage';
 import { ALL_TASKS_PROJECT_ID, INBOX_PROJECT_ID } from './utils/projectConstants';
 import { CURRENT_VERSION } from './changelog';
@@ -68,11 +69,13 @@ import {
   Sparkles,
   StickyNote,
   FileStack,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useAIQuickAddGate } from './hooks/useAIQuickAddGate';
 import AIQuickAddModal from './components/Modals/AIQuickAddModal';
 import NoteEditorModal from './components/Modals/NoteEditorModal';
 import NewFromTemplateModal from './components/Modals/NewFromTemplateModal';
+import WeeklyReviewModal from './components/Modals/WeeklyReviewModal';
 import AddTaskModal from './components/Modals/AddTaskModal';
 import { useNoteMutations } from './hooks/useNoteMutations';
 import { useSharedContentIntent } from './hooks/useSharedContentIntent';
@@ -158,6 +161,10 @@ function AppShell() {
   // nothing just because it is.
   const [showStandaloneNoteEditor, setShowStandaloneNoteEditor] = useState(false);
   const [showNewFromTemplate, setShowNewFromTemplate] = useState(false);
+  const [showWeeklyReview, setShowWeeklyReview] = useState(false);
+  // Owned here rather than in either entry point, so the Dashboard card and the
+  // command palette open the same thing with the same data.
+  const weekly = useWeeklyReview();
   const { createNote: createNoteFromPalette } = useNoteMutations();
 
   /* Content shared into the app from outside it (the PWA share target) or a
@@ -419,6 +426,9 @@ function AppShell() {
     // Listed unconditionally, unlike the AI entry above: with no templates saved
     // the modal explains how to make one, which is the only place that's taught.
     { id: 'newFromTemplate', label: 'New from template', icon: FileStack, run: () => setShowNewFromTemplate(true) },
+    // Always listed, unlike the Dashboard card, which only appears when a
+    // review is actually due — the palette is how you reach it on purpose.
+    { id: 'weeklyReview', label: 'Weekly review', icon: ClipboardCheck, run: () => setShowWeeklyReview(true) },
     { id: 'rebalance', label: 'Re-balance schedule', run: runRebalance },
     { id: 'toggleTheme', label: 'Toggle light/dark theme', run: toggleTheme },
     { id: 'manageProjects', label: 'Manage projects', run: () => openManageProjects() },
@@ -473,7 +483,14 @@ function AppShell() {
           key={tab}
           className={`tab-panel ${tab === 'calendar' || (tab === 'tasks' && taskView === 'board') ? 'tab-panel-fill' : ''}`}
         >
-          {tab === 'dashboard' && <DashboardPage onSelectProject={selectProject} onOpenCalendar={() => setTab('calendar')} />}
+          {tab === 'dashboard' && (
+            <DashboardPage
+              onSelectProject={selectProject}
+              onOpenCalendar={() => setTab('calendar')}
+              weeklyReview={weekly.nudgeVisible ? weekly.review : null}
+              onOpenWeeklyReview={() => setShowWeeklyReview(true)}
+            />
+          )}
           {tab === 'calendar' && (
             <CalendarPage
               dayJumpRequest={calendarDayRequest}
@@ -637,6 +654,23 @@ function AppShell() {
         <NoteEditorModal
           onCreate={(title, body) => createNoteFromPalette(title, body)}
           onClose={() => setShowStandaloneNoteEditor(false)}
+        />
+      )}
+      {showWeeklyReview && (
+        <WeeklyReviewModal
+          review={weekly.review}
+          todayIso={weekly.todayIso}
+          committedHours={weekly.committedHours}
+          freeHours={weekly.freeHours}
+          onMoveToNextWeek={weekly.moveToNextWeek}
+          onCompleteTask={weekly.completeFromReview}
+          onDropTask={weekly.dropFromReview}
+          onClose={() => {
+            // Closing IS finishing the review — there's no separate "done"
+            // state to track, so this is what silences the nudge for a week.
+            weekly.markReviewed();
+            setShowWeeklyReview(false);
+          }}
         />
       )}
       {showNewFromTemplate && (

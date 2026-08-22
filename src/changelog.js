@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '9.1.0',
+    date: '2026-08-22',
+    title: 'A weekly review that ties it all together',
+    changes: [
+      'New: a Weekly review — one screen showing what you finished, what slipped, what’s still carried over from before, and whether the next 7 days actually fit the time you have. Every one of those numbers already existed somewhere in TaskFlow; what didn’t exist was a moment where the app puts them together and asks you to decide something.',
+      'Each outstanding task has three one-tap actions: move to next week (same weekday, and never a date in the past however overdue it was), mark done, or delete. The capacity verdict updates as you act — that’s why the actions are here rather than in the task list.',
+      'It uses a rolling 7 days rather than a calendar week, so it’s always worth opening and never asks which week you meant. A Dashboard prompt appears when a review is due and only when there’s something to see; otherwise reach it any time with Ctrl+K → “Weekly review”. Hide the prompt from the dashboard’s customize menu if you’d rather not be nudged.',
+    ],
+  },
+  {
     version: '9.0.0',
     date: '2026-08-22',
     title: 'Deleting a project is no longer permanent',

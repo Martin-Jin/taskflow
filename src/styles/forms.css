@@ -2629,3 +2629,147 @@
     flex-basis: 100%;
   }
 }
+
+/* ----------------------------------------------------------------------
+   Weekly review (WeeklyReviewModal + WeeklyReviewCard). Sections are
+   separated by space rather than rules (direction rule 1), and each row's
+   actions sit at its trailing edge.
+   ---------------------------------------------------------------------- */
+.weekly-review-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.weekly-review-card-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.weekly-review-card-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.weekly-review-card-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.review-section {
+  margin-bottom: var(--space-5);
+}
+
+.review-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* The count reads as data, not decoration — it's why you're looking. */
+.review-section-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-section-empty {
+  margin: 0;
+}
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Bounded so a long carried-over list scrolls rather than pushing the
+     capacity verdict — the thing you need to see — off the screen. */
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.review-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.review-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.review-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.review-row-title {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-row-meta {
+  margin: 0;
+}
+
+.review-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* The verdict line. Tone carries the answer, so it reads before the words do. */
+.review-fit {
+  margin: 0;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.review-fit-fits {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.review-fit-tight {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+
+.review-fit-over {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+}
+
+/* At phone width the three actions would crush the title, so rows stack. */
+@media (max-width: 639px) {
+  .review-row {
+    flex-wrap: wrap;
+  }
+
+  .review-row-main {
+    flex-basis: 100%;
+  }
+}

@@ -246,9 +246,30 @@ describe('applyBackupPayload field coverage (static source cross-check)', () => 
     const fullSource = readFileSync(hookPath, 'utf-8');
     const start = fullSource.indexOf('const applyBackupPayload = useCallback');
     expect(start).toBeGreaterThan(-1);
-    // Grab a generous slice following the function start — enough to cover
-    // its whole body without needing to parse balanced braces.
-    applyBackupPayloadSource = fullSource.slice(start, start + 3000);
+    // Read to the end of the function by matching braces, rather than taking a
+    // fixed-size slice. A fixed slice (3000 chars) silently began FAILING when
+    // this function grew past it: the last field it handled fell outside the
+    // window, so the test reported a missing branch that was actually there —
+    // a false alarm that costs a debugging session to dismiss, and would
+    // eventually train someone to widen the number without looking.
+    let depth = 0;
+    let end = start;
+    let seenFirstBrace = false;
+    for (let i = start; i < fullSource.length; i += 1) {
+      const ch = fullSource[i];
+      if (ch === '{') {
+        depth += 1;
+        seenFirstBrace = true;
+      } else if (ch === '}') {
+        depth -= 1;
+        if (seenFirstBrace && depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
+    }
+    expect(end).toBeGreaterThan(start);
+    applyBackupPayloadSource = fullSource.slice(start, end);
   });
 
   it('has an `in payload` check for every BACKUP_FIELDS entry (except tasks/blocks, handled via a combined check)', () => {
