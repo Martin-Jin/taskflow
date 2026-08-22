@@ -333,3 +333,48 @@ test('notes: an untitled, empty new note closes freely — nothing to lose', asy
 
   expectNoErrors(errors);
 });
+
+test('Stats: estimate accuracy explains itself when empty, and reports with a sample size once there is data', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await gotoTab(page, 'Stats');
+
+  /* Seeded data has no timer-tracked completions, so the panel must say what
+     to do rather than render a meaningless 0 or a bare ratio. actualHours is
+     only ever set by completing a task with a running timer. */
+  await expect(page.locator('.stats-accuracy-empty')).toBeVisible();
+  await expect(page.locator('.stats-accuracy-verdict')).toHaveCount(0);
+
+  await page.addInitScript(([prefix]) => {
+    const existing = JSON.parse(localStorage.getItem(prefix + 'tasks') || '[]');
+    const projectId = existing.find((t) => t.projectId)?.projectId || null;
+    const timed = [1, 2, 3, 4, 5, 6].map((i) => ({
+      id: `e2e-acc-${i}`,
+      title: `E2E timed task ${i}`,
+      estimatedHours: 1,
+      actualHours: 2, // consistently double, so the ratio is unambiguous
+      projectId,
+      priority: 'medium',
+      dueDate: '2026-01-01',
+      isCompleted: true,
+      remainingHours: 0,
+      dependsOn: [],
+      labelIds: [],
+    }));
+    localStorage.setItem(prefix + 'tasks', JSON.stringify([...existing, ...timed]));
+  }, ['taskflow:v1:']);
+  await page.reload();
+  await page.waitForTimeout(800);
+  await gotoTab(page, 'Stats');
+
+  // 6h estimated vs 12h actual → exactly 2.0x, phrased as a sentence rather
+  // than a bare ratio the reader has to interpret.
+  await expect(page.locator('.stats-accuracy-verdict')).toHaveText(/2\.0× longer than you estimate/);
+  // Sample size is never omitted: a ratio from two tasks looks like one from fifty.
+  await expect(page.locator('.stats-accuracy-sample')).toContainText('6 timed tasks');
+  await expect(page.locator('.stats-accuracy-detail').first()).toContainText('6.0h estimated, 12.0h actually spent');
+  // And it states plainly that it changes nothing on its own.
+  await expect(page.locator('.stats-accuracy-card')).toContainText(/nothing here changes your estimates/i);
+
+  expectNoErrors(errors);
+});

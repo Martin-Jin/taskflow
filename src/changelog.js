@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.2.0',
+    date: '2026-08-22',
+    title: 'Find out whether your estimates are any good',
+    changes: [
+      'Stats has a new Estimate accuracy panel: what you estimated versus what tasks actually took, overall and broken down by project. Since bad estimates are the reason most schedules come out wrong, this is the one number that can make every future plan better rather than just the current one.',
+      'It only counts tasks you finished with the timer running, because that is the only thing that records a real figure — so it always tells you how many tasks a number came from, and greys out a project that has too few to mean anything yet.',
+      'It reports and nothing more. Your estimates and your schedule are left exactly as you set them.',
+    ],
+  },
+  {
     version: '8.1.0',
     date: '2026-08-22',
     title: 'Tell it when you would rather do something',

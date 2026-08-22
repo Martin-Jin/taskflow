@@ -12,6 +12,7 @@
 import React, { useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
+import { computeEstimateAccuracy, computeAccuracyByProject, describeAccuracy, accuracyHeadline, MIN_RELIABLE_SAMPLE } from '../../utils/estimateAccuracy';
 import { computeHorizonCapacity } from '../../algorithms/capacityEngine';
 import { addDays, dayOfWeek, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
 import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
@@ -142,6 +143,13 @@ export default function StatsDashboard() {
       .map(([label, value], i) => ({ label, value, color: PALETTE[i % PALETTE.length] }));
   }, [blocks, tasks, projects]);
 
+  /* Estimate accuracy (see utils/estimateAccuracy.js). Only tasks completed
+     with a running timer carry an actual, so this is often empty — the panel
+     below says so rather than rendering a zero, and always shows the sample
+     size next to any figure. */
+  const accuracy = useMemo(() => computeEstimateAccuracy(tasks), [tasks]);
+  const accuracyByProject = useMemo(() => computeAccuracyByProject(tasks, projects), [tasks, projects]);
+
   return (
     <div>
       <h3 className="stats-section-title" style={{ marginTop: 0 }}>Time &amp; hours</h3>
@@ -191,6 +199,63 @@ export default function StatsDashboard() {
           </ul>
         </div>
       )}
+
+      <h3 className="stats-section-title">Estimate accuracy</h3>
+      <div className="card stats-accuracy-card">
+        {accuracy.sampleSize === 0 ? (
+          <p className="stats-accuracy-empty">
+            Nothing to compare yet. Run the timer on a task and log the time when you complete it, and this will start
+            showing how your estimates hold up.
+          </p>
+        ) : (
+          <>
+            <div className="stats-accuracy-headline">
+              <span className="stats-accuracy-verdict">{accuracyHeadline(accuracy.ratio)}</span>
+              {/* Sample size is never optional here. A ratio from two tasks
+                  looks identical to one from fifty, and acting on the first is
+                  how someone stops trusting the panel. */}
+              <span className="stats-accuracy-sample">
+                from {accuracy.sampleSize} timed task{accuracy.sampleSize === 1 ? '' : 's'}
+                {!accuracy.isReliable && ` — too few to read much into yet (${MIN_RELIABLE_SAMPLE}+ gives a clearer picture)`}
+              </span>
+            </div>
+            <p className="stats-accuracy-detail">
+              {accuracy.totalEstimated.toFixed(1)}h estimated, {accuracy.totalActual.toFixed(1)}h actually spent.
+            </p>
+
+            {accuracyByProject.length > 1 && (
+              <div className="table-scroll">
+                <table className="stats-accuracy-table">
+                  <thead>
+                    <tr>
+                      <th>Project</th>
+                      <th>Estimated</th>
+                      <th>Actual</th>
+                      <th>Difference</th>
+                      <th>Tasks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accuracyByProject.map((row) => (
+                      <tr key={row.projectId || 'none'} className={row.isReliable ? '' : 'is-thin-sample'}>
+                        <td>{row.projectName}</td>
+                        <td className="num">{row.totalEstimated.toFixed(1)}h</td>
+                        <td className="num">{row.totalActual.toFixed(1)}h</td>
+                        <td className="num">{describeAccuracy(row.ratio)}</td>
+                        <td className="num">{row.sampleSize}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p className="stats-accuracy-detail">
+              Shown for reference only — nothing here changes your estimates or your schedule automatically.
+            </p>
+          </>
+        )}
+      </div>
 
       <div className="stats-charts-row">
         <div className="card stats-chart-card" style={{ flex: '2 1 420px' }}>
