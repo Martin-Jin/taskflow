@@ -4,6 +4,7 @@ import { usePersistedState } from '../../hooks/usePersistedState';
 import NowNextCard from './NowNextCard';
 import TodayAgenda from './TodayAgenda';
 import DashboardStats from './DashboardStats';
+import WeeklyReviewCard from './WeeklyReviewCard';
 import NotesCard from './NotesCard';
 import ProgressRings from './ProgressRings';
 import DashboardCustomizeMenu from './DashboardCustomizeMenu';
@@ -15,7 +16,7 @@ function greetingForHour(hour) {
   return 'Good evening';
 }
 
-export default function DashboardPage({ onSelectProject, onOpenCalendar }) {
+export default function DashboardPage({ onSelectProject, onOpenCalendar, weeklyReview, onOpenWeeklyReview }) {
   const { user } = useAuth();
   const [greeting, setGreeting] = useState(() => greetingForHour(new Date().getHours()));
 
@@ -47,6 +48,12 @@ export default function DashboardPage({ onSelectProject, onOpenCalendar }) {
         </div>
         <DashboardCustomizeMenu widgets={widgets} onToggleWidget={toggleWidget} />
       </div>
+
+      {/* Above the stats strip: it's a prompt to act, and it's only here at
+          all when a review is actually due (App.jsx passes null otherwise). */}
+      {widgets.weeklyReview !== false && weeklyReview && (
+        <WeeklyReviewCard review={weeklyReview} onOpen={onOpenWeeklyReview} />
+      )}
 
       {widgets.stats !== false && <DashboardStats onSelectProject={onSelectProject} onOpenCalendar={onOpenCalendar} />}
 

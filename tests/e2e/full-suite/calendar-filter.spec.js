@@ -40,6 +40,19 @@ function filterMenu(page) {
 async function ensureBlocksScheduled(page) {
   await page.getByRole('button', { name: 'Re-balance schedule', exact: true }).click();
   await page.waitForTimeout(600);
+  if ((await page.locator('.cal-block').count()) > 0) return;
+  // Rebalance places work in the next AVAILABLE capacity, which isn't
+  // necessarily the week on screen: run this late on a Saturday and every new
+  // block lands next week (the work day is over, and Saturday is the last day
+  // of the Sunday-started week view), so the visible window legitimately shows
+  // none. That made these tests fail every Saturday evening for a reason that
+  // had nothing to do with what they test. Step forward until the blocks come
+  // into view instead of assuming they're already here.
+  for (let i = 0; i < 3; i += 1) {
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.waitForTimeout(400);
+    if ((await page.locator('.cal-block').count()) > 0) return;
+  }
 }
 
 test.describe('Calendar filter menu', () => {

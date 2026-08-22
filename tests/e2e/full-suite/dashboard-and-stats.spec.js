@@ -403,3 +403,119 @@ test('loading skeletons never replace a genuine empty state', async ({ page }) =
 
   expectNoErrors(errors);
 });
+
+test.describe('Weekly review', () => {
+  /** A realistic week: finished work, slips, old debt, and something due next week. */
+  async function seedWeek(page) {
+    await page.evaluate(() => {
+      const iso = (offset) => {
+        const d = new Date();
+        d.setDate(d.getDate() + offset);
+        return d.toISOString().slice(0, 10);
+      };
+      const base = {
+        isCompleted: false, isLocked: false, estimatedHours: 2, remainingHours: 2, priority: 'medium',
+        dependsOn: [], minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([
+        { ...base, id: 'wr_done', title: 'WR finished thing', isCompleted: true, completedAt: new Date(Date.now() - 2 * 86400000).toISOString(), actualHours: 3 },
+        { ...base, id: 'wr_slip', title: 'WR slipped thing', dueDate: iso(-3) },
+        { ...base, id: 'wr_old', title: 'WR ancient debt', dueDate: iso(-40), postponeCount: 4 },
+        { ...base, id: 'wr_next', title: 'WR due next week', dueDate: iso(3), remainingHours: 6 },
+      ]));
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([]));
+      localStorage.removeItem('taskflow:v1:lastWeeklyReviewAt');
+    });
+    await page.reload();
+    await page.waitForTimeout(700);
+  }
+
+  test('the dashboard nudge opens a review with three non-overlapping buckets and a capacity verdict', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await seedWeek(page);
+    await gotoTab(page, 'Dashboard');
+
+    // The nudge states the counts, because those are the reason to open it.
+    const card = page.locator('.weekly-review-card');
+    await expect(card).toContainText('1 slipped this week');
+    await expect(card).toContainText('1 carried over');
+    await card.getByRole('button', { name: 'Review' }).click();
+    await page.waitForTimeout(400);
+
+    const dialog = page.getByRole('dialog', { name: 'Weekly review' });
+    await expect(dialog).toContainText('1 task done');
+    // Each task appears in exactly one bucket.
+    const slipped = dialog.locator('.review-section', { has: page.getByText('Slipped this week') });
+    await expect(slipped.locator('.review-row-title')).toHaveText(['WR slipped thing']);
+    const carried = dialog.locator('.review-section', { has: page.getByText('Carried over') });
+    await expect(carried.locator('.review-row-title')).toHaveText(['WR ancient debt']);
+    // The task due NEXT week is in neither — it hasn't slipped.
+    await expect(dialog.getByText('WR due next week')).toHaveCount(0);
+    // The chronically-pushed one is flagged where the decision gets made.
+    await expect(carried.locator('.badge.postponed')).toHaveText(/pushed 4/);
+    // And the verdict is rendered with a tone class, not just text.
+    await expect(dialog.locator('.review-fit')).toHaveClass(/review-fit-(fits|tight|over)/);
+
+    expectNoErrors(errors);
+  });
+
+  test('"Next week" moves a task, updates the verdict live, and closing silences the nudge', async ({ page }) => {
+    /* The capacity line changing as you act is the whole reason the actions
+       live on this screen rather than in the Tasks list. */
+    const errors = trackConsoleErrors(page);
+    await seedWeek(page);
+    await gotoTab(page, 'Dashboard');
+    await page.locator('.weekly-review-card').getByRole('button', { name: 'Review' }).click();
+    await page.waitForTimeout(400);
+
+    const dialog = page.getByRole('dialog', { name: 'Weekly review' });
+    const before = await dialog.locator('.review-fit').textContent();
+
+    await dialog.locator('.review-row').first().getByRole('button', { name: /Next week/ }).click();
+    await page.waitForTimeout(700);
+
+    // The moved task left the slipped bucket and its hours joined next week.
+    await expect(dialog.locator('.review-section', { has: page.getByText('Slipped this week') }).locator('.review-row')).toHaveCount(0);
+    expect(await dialog.locator('.review-fit').textContent()).not.toBe(before);
+
+    const moved = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'wr_slip'));
+    const today = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+    expect(moved.dueDate > today).toBe(true);
+    // Moving a deadline out IS a postponement, so the counter picks it up.
+    expect(moved.postponeCount).toBe(1);
+
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    await page.waitForTimeout(600);
+    // Closing is what "I did my review" means, so the card goes for a week.
+    await expect(page.locator('.weekly-review-card')).toHaveCount(0);
+
+    expectNoErrors(errors);
+  });
+
+  test('the review is reachable from the command palette even with no nudge, and says when there is nothing to do', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.evaluate(() => {
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([]));
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([]));
+    });
+    await page.reload();
+    await gotoTab(page, 'Dashboard');
+    // Nothing to review, so no nudge — a prompt onto an empty screen would
+    // teach people to ignore prompts.
+    await expect(page.locator('.weekly-review-card')).toHaveCount(0);
+
+    await page.evaluate(() => document.activeElement?.blur?.());
+    await page.keyboard.press('Control+K');
+    const palette = page.getByRole('dialog', { name: 'Command palette' });
+    await expect(palette).toBeVisible();
+    await page.getByLabel('Command palette search').fill('weekly');
+    await page.waitForTimeout(300);
+    await palette.getByRole('option', { name: 'Weekly review' }).click();
+    await page.waitForTimeout(400);
+
+    await expect(page.getByRole('dialog', { name: 'Weekly review' })).toContainText(/Nothing finished, slipped or outstanding/);
+
+    expectNoErrors(errors);
+  });
+});

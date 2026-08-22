@@ -252,6 +252,32 @@ figure), so it always shows how many tasks a number came from, and dims a
 project that hasn't got enough of them to mean much yet. It's reporting only —
 nothing there changes your estimates or your schedule.
 
+## Weekly review
+
+One screen answering "how did last week go, and does next week fit?". It opens
+from a Dashboard prompt when a review is due, or any time from the command
+palette (`Ctrl+K` → "Weekly review").
+
+Four sections, over a **rolling 7 days** rather than a calendar week — so it's
+always populated and never asks which week you meant:
+
+- **Finished** — what you completed, hours tracked, and how your estimates did.
+- **Slipped this week** — still open, was due in the last 7 days.
+- **Carried over** — still open, was due *before* that. Older debt, flagged
+  with a "pushed N×" badge where it applies.
+- **Next 7 days** — the work due against the time actually available, as a
+  plain verdict: it fits, it's tight, or something has to move.
+
+Each outstanding task has three one-tap actions: **Next week** (same weekday,
+one week on — never a date in the past, however overdue it was), **mark done**,
+and **delete**. The capacity verdict updates as you act, which is the point of
+having the actions here rather than in the task list. There's deliberately no
+"shrink the estimate" action — that's a number, not a tap, and belongs in the
+task itself.
+
+Closing the review is what marks it done, so the Dashboard prompt goes quiet
+for a week. The prompt only appears when there's actually something to look at.
+
 ## Settings
 
 One page of cards, each covering one area:

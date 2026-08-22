@@ -8,6 +8,7 @@
  */
 
 export const DASHBOARD_WIDGETS = [
+  { key: 'weeklyReview', label: 'Weekly review prompt' },
   { key: 'stats', label: 'Quick stats' },
   { key: 'nowNext', label: 'Right now / up next' },
   { key: 'todayAgenda', label: "Today's agenda" },
