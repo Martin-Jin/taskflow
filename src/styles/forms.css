@@ -2166,7 +2166,12 @@
   flex-shrink: 0;
 }
 
-.routine-block.inactive .routine-block-label {
+/* No button chrome: this is the routine's NAME that happens to be clickable
+   to rename, not a button. (A regex cleaning up the removed dot's rules ate
+   this selector's `.routine-block-label` and left it scoped to `.inactive`,
+   so an active routine's name rendered with the browser's default button box
+   and background.) */
+.routine-block-label {
   flex: 1;
   min-width: 0;
   text-align: left;

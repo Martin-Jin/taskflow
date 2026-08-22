@@ -74,3 +74,31 @@ export function toMinuteIntervals(pairs) {
 export function toTimeIntervals(intervals) {
   return intervals.map((i) => ({ start: minutesToTime(i.start), end: minutesToTime(i.end) }));
 }
+
+/**
+ * The parts of `intervals` that fall OUTSIDE `range` — the complement of
+ * clipping to it.
+ *
+ * Exists for one job: a task with an explicit `fixedTime` may be scheduled
+ * beyond the day's working hours (see capacityEngine's fixedTimeFreeIntervals
+ * and allocator's placeFixedTimeInDay), and the allocator needs those
+ * out-of-hours slices as a SEPARATE pool from the in-hours ones. Keeping them
+ * separate rather than merging is what stops an out-of-hours placement
+ * competing with, or double-booking against, the shared in-hours track every
+ * other task draws from — the two pools are disjoint by construction.
+ *
+ * @param {{start: number, end: number}[]} intervals
+ * @param {{start: number, end: number}} range
+ * @returns {{start: number, end: number}[]} positive-length slices only
+ */
+export function clipOutsideRange(intervals, range) {
+  if (!range) return (intervals || []).map((iv) => ({ ...iv }));
+  const out = [];
+  for (const iv of intervals || []) {
+    // The slice before the range starts.
+    if (iv.start < range.start) out.push({ start: iv.start, end: Math.min(iv.end, range.start) });
+    // ...and the slice after it ends.
+    if (iv.end > range.end) out.push({ start: Math.max(iv.start, range.end), end: iv.end });
+  }
+  return out.filter((iv) => iv.end - iv.start > 0);
+}

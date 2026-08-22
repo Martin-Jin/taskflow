@@ -717,41 +717,98 @@ describe('allocateTasks: timeShifted -- fixed-time same-day fallback is always f
   });
 });
 
-// Regression coverage: a fixedTime slot outside working hours entirely (not
-// occupied by anything -- just never in bounds) must be reported as a
-// distinct, specific reason instead of falling through to generic
-// no_capacity, so the UI can say "outside your working hours" rather than a
-// vague capacity message.
-describe('allocateTasks: fixed_time_outside_hours', () => {
-  it('reports fixed_time_outside_hours when the pinned time is before the work day starts', () => {
-    // A multi-day window (dueDate two days out, no enforceDueDate) where
-    // EVERY day's pinned time is outside working hours -- windowStart !==
-    // windowEnd, so the same-day fallback (Change 2, single-day-window only)
-    // never engages, and the task genuinely can't be placed anywhere in its
-    // window: a clean `overflow`-reported `fixed_time_outside_hours`.
+// A fixedTime is the user naming the hour something happens, which is a more
+// specific instruction than the general work window -- so it is allowed to
+// fall OUTSIDE working hours (a 21:00 gym session used to silently never be
+// scheduled at all). What it must NOT override is time that is genuinely
+// occupied: routines (sleep included), calendar events and existing blocks are
+// still subtracted, so the specific failure reasons still fire where they
+// should. Both directions are pinned below.
+describe('allocateTasks: a fixedTime may fall outside working hours', () => {
+  it('places a pinned time BEFORE the work day starts, rather than overflowing', () => {
     const capacityMap = computeHorizonCapacity('2026-07-01', 2, { routines: [], blocks: [], rules: baseRules, events: [] });
     const task = {
       id: 'early', title: 'Too early', estimatedHours: 1, remainingHours: 1,
       dueDate: '2026-07-02', fixedTime: '06:00', // workDayStart is 09:00
     };
 
-    const { overflow } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
+    const { blocks, overflow } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
 
-    expect(overflow).toHaveLength(1);
-    expect(overflow[0].reason.type).toBe('fixed_time_outside_hours');
+    expect(overflow).toHaveLength(0);
+    expect(blocks.length).toBeGreaterThan(0);
+    // Asserting the pinned START, not the block count: a multi-day window
+    // paces the hours across its days, so the task can legitimately produce
+    // one block per day — every one of them at the time the user pinned.
+    expect(blocks.every((b) => b.startTime === '06:00')).toBe(true);
   });
 
-  it('reports fixed_time_outside_hours when the pinned time is at/after the work day ends', () => {
+  it('places a pinned time AFTER the work day ends', () => {
     const capacityMap = computeHorizonCapacity('2026-07-01', 2, { routines: [], blocks: [], rules: baseRules, events: [] });
     const task = {
       id: 'late', title: 'Too late', estimatedHours: 1, remainingHours: 1,
       dueDate: '2026-07-02', fixedTime: '18:00', // workDayEnd is 17:00
     };
 
-    const { overflow } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
+    const { blocks, overflow } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
 
-    expect(overflow).toHaveLength(1);
-    expect(overflow[0].reason.type).toBe('fixed_time_outside_hours');
+    expect(overflow).toHaveLength(0);
+    expect(blocks.length).toBeGreaterThan(0);
+    // Asserting the pinned START, not the block count: a multi-day window
+    // paces the hours across its days, so the task can legitimately produce
+    // one block per day — every one of them at the time the user pinned.
+    expect(blocks.every((b) => b.startTime === '18:00')).toBe(true);
+  });
+
+  it('refuses to schedule inside a routine, even out of hours -- sleep is not negotiable', () => {
+    // THE guard on this change. Relaxing the work-window bounds must not also
+    // relax routines, or a 03:00 fixed time would land inside the protected
+    // sleep routine every night.
+    const routines = [
+      { id: 'rt1', label: 'Sleep', startTime: '23:00', endTime: '23:59', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], isActive: true },
+      { id: 'rt2', label: 'Sleep (overnight)', startTime: '00:00', endTime: '07:00', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], isActive: true },
+    ];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines, blocks: [], rules: baseRules, events: [] });
+    const task = {
+      id: 'nightowl', title: 'Not at 3am', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-01', enforceDueDate: true, fixedTime: '03:00',
+    };
+
+    const { blocks } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    // May be unplaced, or shifted by the same-day fallback -- never AT 03:00.
+    expect(blocks.every((b) => b.startTime !== '03:00')).toBe(true);
+  });
+
+  it('refuses to double-book an out-of-hours calendar event', () => {
+    // An evening meeting is a real commitment; the pin is out of hours AND
+    // occupied, so it must not simply overlap it.
+    const events = [{ id: 'ev_evening', date: '2026-07-01', startTime: '18:00', endTime: '20:00' }];
+    const capacityMap = computeHorizonCapacity('2026-07-01', 2, { routines: [], blocks: [], rules: baseRules, events });
+    const task = {
+      id: 'clash', title: 'Clashes with dinner', estimatedHours: 1, remainingHours: 1,
+      dueDate: '2026-07-02', fixedTime: '18:00',
+    };
+
+    const { blocks } = allocateTasks([task], capacityMap, { ...baseRules, bufferDays: 0 }, '2026-07-01');
+
+    expect(blocks.every((b) => !(b.date === '2026-07-01' && b.startTime === '18:00'))).toBe(true);
+  });
+
+  it('does not hand out-of-hours capacity to an ordinary task', () => {
+    // Only an explicit fixedTime earns the relaxed bounds. A normal task with
+    // a full day of work to do must still stop at the work window.
+    const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
+    const task = {
+      id: 'greedy', title: 'Lots to do', estimatedHours: 20, remainingHours: 20,
+      dueDate: '2026-07-01', enforceDueDate: true, maxChunkHours: 24,
+    };
+
+    const { blocks } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
+
+    for (const b of blocks) {
+      expect(b.startTime >= '09:00').toBe(true);
+      expect(b.endTime <= '17:00').toBe(true);
+    }
   });
 
   it('still reports fixed_time_conflict (not outside_hours) when the pinned time IS within working hours but occupied', () => {
@@ -769,13 +826,10 @@ describe('allocateTasks: fixed_time_outside_hours', () => {
     expect(overflow[0].reason.conflictingItem.id).toBe('ev1');
   });
 
-  it('a single-day-window fixedTime task with an outside-hours pinned time still gets rescued by the same-day fallback and reported as fixed_time_shifted, not overflow', () => {
-    // Single-day window (today === dueDate under a 1-day horizon) DOES allow
-    // the same-day fallback to engage (see allowSameDayFallback) regardless
-    // of WHY the pinned slot failed -- an outside-hours bounds issue is no
-    // different from an occupied-slot conflict here. So this ends up fully
-    // placed (via ordinary first-fit) and flagged via `timeShifted`, not
-    // reported as unplaced `overflow`.
+  it('lands a single-day-window out-of-hours pin exactly on its time, with no shift', () => {
+    // This used to need rescuing by the same-day fallback and was reported as
+    // fixed_time_shifted -- i.e. "we moved your task". It simply happens when
+    // the user asked now, so nothing is shifted and nothing is reported.
     const capacityMap = computeHorizonCapacity('2026-07-01', 1, { routines: [], blocks: [], rules: baseRules, events: [] });
     const task = {
       id: 'early_singleday', title: 'Too early, single day', estimatedHours: 1, remainingHours: 1,
@@ -785,8 +839,8 @@ describe('allocateTasks: fixed_time_outside_hours', () => {
     const { blocks, overflow, timeShifted } = allocateTasks([task], capacityMap, baseRules, '2026-07-01');
 
     expect(overflow).toHaveLength(0);
+    expect(timeShifted).toHaveLength(0);
     expect(blocks).toHaveLength(1);
-    expect(timeShifted).toHaveLength(1);
-    expect(timeShifted[0].reason.type).toBe('fixed_time_shifted');
+    expect(blocks[0].startTime).toBe('06:00');
   });
 });

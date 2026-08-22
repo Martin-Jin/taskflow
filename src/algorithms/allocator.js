@@ -151,6 +151,7 @@
 
 import { addDays, diffDays, dateRange, timeToMinutes, minutesToTime } from '../utils/dateUtils';
 import { getDependentsMap } from '../utils/dependencyUtils';
+import { clipOutsideRange } from '../utils/intervalUtils';
 
 const PRIORITY_WEIGHT = { urgent: 4, high: 3, medium: 2, low: 1 };
 // "Close enough to zero" threshold for hour comparisons below. Placements
@@ -748,14 +749,26 @@ function placeFixedTimeInDay(hours, dayFreeIntervals, maxChunkHours, fixedStartM
  * chunk size is otherwise only bounded below by MIN_CHUNK_HOURS (5 min, with
  * a shorter-total exception — see placeHoursInDay).
  */
-function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, chunkState, allowSameDayFallback = false, workWindow, fallbackUsedTracker) {
+function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuffix = '', dayBusyIntervals, gapMins, conflictTracker, chunkState, allowSameDayFallback = false, workWindow, fallbackUsedTracker, outsideHoursIntervals) {
   const maxChunkHours = task.maxChunkHours ?? 4;
+  // A fixed time OUTSIDE the day's working hours draws from the out-of-hours
+  // pool instead of the shared in-hours track. Setting a fixed time names the
+  // hour something happens, which is a more specific instruction than the
+  // general work window — so it wins over the window, and a 21:00 gym session
+  // stops silently never being scheduled. It does NOT win over routines,
+  // calendar events or existing blocks: those are already subtracted from both
+  // pools, so this can't double-book a meeting or schedule inside protected
+  // sleep. The two pools are disjoint, so nothing else can take this time and
+  // this can't take anything else's.
+  const usesOutsideHours =
+    !!task.fixedTime && !!outsideHoursIntervals && isOutsideWorkingHours(timeToMinutes(task.fixedTime), workWindow);
+  const fixedIntervals = usesOutsideHours ? outsideHoursIntervals : dayIntervals;
   // Floor the min-chunk check against the task's true total remaining hours,
   // not `hours` (which may already be a shrunk-down leftover from an earlier
   // pass) — see placeHoursInDay's floorHours comment.
   const floorHours = task.remainingHours;
   const result = task.fixedTime
-    ? placeFixedTimeInDay(hours, dayIntervals, maxChunkHours, timeToMinutes(task.fixedTime), chunkState, floorHours, dayBusyIntervals, gapMins, workWindow)
+    ? placeFixedTimeInDay(hours, fixedIntervals, maxChunkHours, timeToMinutes(task.fixedTime), chunkState, floorHours, dayBusyIntervals, gapMins, workWindow)
     : placeHoursInDay(hours, dayIntervals, maxChunkHours, chunkState, floorHours);
   let { placedHours, placements } = result;
   const { conflict, outsideWorkingHours } = result;
@@ -874,10 +887,21 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
   // or with non-passive placements for capacity — see PASSIVE TASK PLACEMENT
   // in the module doc comment.
   const passiveTemplate = new Map();
+  // Out-of-working-hours free time, usable ONLY by a task with an explicit
+  // fixedTime (see placeAndRecordBlocks). A separate, disjoint pool rather than
+  // being merged into workingFree: everything else must keep respecting the
+  // work window, and disjointness is what guarantees an out-of-hours placement
+  // can never double-book against the shared in-hours track.
+  const outsideHoursFree = new Map();
   for (const [date, cap] of capacityMap.entries()) {
     const minuteIntervals = cap.freeIntervals.map((iv) => ({ start: timeToMinutes(iv.start), end: timeToMinutes(iv.end) }));
     workingFree.set(date, minuteIntervals.map((iv) => ({ ...iv })));
     passiveTemplate.set(date, minuteIntervals.map((iv) => ({ ...iv })));
+    const allDay = (cap.fixedTimeFreeIntervals || []).map((iv) => ({
+      start: timeToMinutes(iv.start),
+      end: timeToMinutes(iv.end),
+    }));
+    outsideHoursFree.set(date, clipOutsideRange(allDay, cap.workWindow));
   }
 
   const prioritized = prioritizeTasks(tasks, today, rules.bufferDays, taskById);
@@ -1002,7 +1026,12 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       const placedHours = placeAndRecordBlocks(
         task, date, cappedHours, dayIntervals, newBlocks, idSuffix,
         capacityMap.get(date)?.busyIntervals, gapMins, conflictTracker, chunkState, singleDayWindow,
-        capacityMap.get(date)?.workWindow, fallbackUsedTracker
+        capacityMap.get(date)?.workWindow, fallbackUsedTracker,
+        // Only ever consulted for a fixedTime task pinned outside the day's
+        // working hours — see placeAndRecordBlocks. Passive tasks keep their
+        // own isolated template and are excluded, since a passive task has no
+        // fixed time to honour and shouldn't gain out-of-hours capacity.
+        task.isPassive ? undefined : outsideHoursFree.get(date)
       );
       if (!task.isPassive && budget != null) dailyBudgetMins.set(date, budget - Math.round(placedHours * 60));
       return placedHours;

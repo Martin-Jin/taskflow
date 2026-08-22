@@ -36,8 +36,13 @@ function describeReason(reason, task) {
       return `Couldn't schedule${timeLabel} — conflicts with "${item.label}" (${formatTime12h(item.start)}–${formatTime12h(item.end)}).`;
     }
     case 'fixed_time_outside_hours': {
+      // A fixed time outside working hours is now scheduled there quite
+      // happily (see allocator's placeFixedTimeInDay), so this reason no
+      // longer means "outside your hours" — the only way it still fires is a
+      // pinned time that has already gone by today, where nothing occupies
+      // the slot and the day's usable range starts after it.
       const timeLabel = task?.fixedTime ? ` (${formatTime12h(task.fixedTime)})` : '';
-      return `This time${timeLabel} is outside your working hours.`;
+      return `This time${timeLabel} has already passed today.`;
     }
     case 'fixed_time_shifted': {
       const item = reason.conflictingItem;

@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '9.5.0',
+    date: '2026-08-23',
+    title: 'A fixed time now beats your working hours',
+    changes: [
+      'A task with a fixed time can now be scheduled outside your working hours — a 9pm gym session used to silently never get scheduled at all, because the work window filtered it out before the scheduler ever considered it. Setting a fixed time is a more specific instruction than the general "these are my hours" rule, so it wins.',
+      'It still can’t override anything genuinely occupied: sleep and every other routine, a real calendar event, and anything already on your calendar are all still respected, so a late fixed time can’t land inside sleep or double-book a meeting.',
+      'Routine blocks in the calendar are full width again, with their name and time hidden until you point at them — the earlier half-width version fixed the same clutter but squeezed the label and nudged neighbouring blocks; hiding the label until hover keeps the block’s full size while cutting the same repetition.',
+      'Fixed a leftover styling bug in Settings → Fixed routines where an active routine’s name rendered inside a boxed button instead of as plain text.',
+    ],
+  },
+  {
     version: '9.4.1',
     date: '2026-08-23',
     title: 'Stats no longer warns about a buffer that doesn’t exist',

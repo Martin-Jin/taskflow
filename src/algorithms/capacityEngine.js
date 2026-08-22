@@ -19,6 +19,18 @@ import { dayOfWeek, timeToMinutes, dateRange } from '../utils/dateUtils';
 import { resolveWorkWindow } from '../utils/workHours';
 import { subtractIntervals, toTimeIntervals, totalMinutes } from '../utils/intervalUtils';
 
+const MINUTES_IN_DAY = 24 * 60;
+
+/**
+ * Earliest minute a fixed-time placement may use on `date`: midnight normally,
+ * but the current wall-clock time on the real today — the same never-schedule-
+ * into-the-past rule the work window itself gets from nowClamp. Relaxing the
+ * work-hours bounds must not also relax that.
+ */
+function dayStartBound(ctx, date) {
+  return ctx.nowClamp && date === ctx.nowClamp.date ? ctx.nowClamp.minutes : 0;
+}
+
 /**
  * Build the list of busy minute-intervals for a single day from fixed
  * routines + calendar events + already-placed scheduled blocks.
@@ -94,6 +106,23 @@ export function computeDayCapacity(date, ctx) {
   const paddedBusy = gap > 0 ? busy.map((iv) => ({ start: iv.start - gap, end: iv.end + gap })) : busy;
   const freeMinuteIntervals = subtractIntervals(workWindow, paddedBusy);
   const positive = freeMinuteIntervals.filter((iv) => iv.end - iv.start > 0);
+
+  // The same subtraction over the WHOLE day rather than the work window, for
+  // one caller only: a task with an explicit `fixedTime`. Setting a fixed time
+  // is the user naming the hour something happens, which is a more specific
+  // instruction than the general "these are my working hours" — so the fixed
+  // time is allowed to fall outside the window, and a 21:00 gym session stops
+  // silently never being scheduled.
+  //
+  // It is NOT a licence to schedule anywhere: routines (sleep included),
+  // calendar events and existing blocks are all still subtracted, because
+  // those are time that genuinely isn't available — overriding them would
+  // double-book against a real commitment or put work at 3am inside the
+  // protected sleep routine. Only the working-hours BOUNDS are relaxed.
+  // See allocator.js's placeFixedTimeInDay, the only consumer.
+  const allDayFree = subtractIntervals({ start: dayStartBound(ctx, date), end: MINUTES_IN_DAY }, paddedBusy).filter(
+    (iv) => iv.end - iv.start > 0
+  );
   // totalAvailableHours (the summary stat consumed e.g. by StatsDashboard's
   // "free time this week" figure) is capped to the deep-work-hours-per-day
   // rule, but freeIntervals themselves are deliberately left UNCAPPED here.
@@ -118,6 +147,11 @@ export function computeDayCapacity(date, ctx) {
     totalAvailableHours,
     allocatedHours: 0,
     freeIntervals: toTimeIntervals(positive),
+    // Free time across the whole day, work-hours bounds ignored — for
+    // fixedTime placement only (see allDayFree above). Deliberately a separate
+    // field rather than widening freeIntervals: every other placement pass
+    // must keep respecting the work window.
+    fixedTimeFreeIntervals: toTimeIntervals(allDayFree),
     // Raw (unpadded) tagged busy intervals, in minutes-since-midnight, kept
     // separately from the freeIntervals math above purely so the allocator
     // can identify what's occupying a `fixedTime` task's target slot when

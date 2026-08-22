@@ -609,15 +609,13 @@
 .cal-routine-block {
   position: absolute;
   left: 0;
-  /* HALF the column, not all of it. A routine is background information, but
-     at full width it reads as the main event — on a day with nothing else
-     scheduled it looked exactly like a booked block, and beside a real block
-     it was the wider of the two. Half leaves the rest of the column visibly
-     free, which is what "available" should look like, and gives task blocks
-     room to be read alongside it.
-     Left-anchored rather than centred so every routine in a column shares an
-     edge; a ragged left edge across several routines reads as noise. */
-  right: 50%;
+  /* Full column width. Half-width was tried as a way to stop a routine reading
+     as the main event, and it worked, but at the cost of squeezing the label
+     and pushing task blocks around. Hiding the label until hover (below)
+     solves the same problem better: the block becomes a plain tinted band,
+     which is what "unavailable" should look like, and it keeps its full width
+     so it doesn't distort anything sharing the column. */
+  right: 0;
   background: color-mix(in srgb, var(--color-border) 55%, transparent);
   overflow: hidden;
   /* Roomier left inset: the label used to sit almost flush against the
@@ -659,21 +657,40 @@
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
-  opacity: 0.75;
   transition: opacity var(--duration-fast) var(--ease-standard);
-}
-
-.cal-routine-block:hover .cal-routine-block-label {
-  opacity: 1;
 }
 
 .cal-routine-block-time {
-  opacity: 0.75;
   transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
-.cal-routine-block:hover .cal-routine-block-time {
-  opacity: 1;
+/* HIDDEN UNTIL HOVER, on pointer devices only. A routine is the same handful
+   of blocks repeated across all seven columns, so their labels are the most
+   repetitive text on the screen and read as clutter rather than information —
+   the band itself already says "unavailable", which is the part that matters
+   at a glance.
+   Gated on `hover: hover` because a touch device has no hover to reveal
+   anything with: leaving the label permanently hidden there would make a
+   routine an unexplained tinted rectangle, which is exactly the bug an earlier
+   `opacity: 0` version of this rule caused. Touch keeps the label visible at a
+   muted opacity instead. */
+.cal-routine-block-label,
+.cal-routine-block-time {
+  opacity: 0.75;
+}
+
+@media (hover: hover) {
+  .cal-routine-block-label,
+  .cal-routine-block-time {
+    opacity: 0;
+  }
+
+  .cal-routine-block:hover .cal-routine-block-label,
+  .cal-routine-block:hover .cal-routine-block-time,
+  .cal-routine-block:focus-within .cal-routine-block-label,
+  .cal-routine-block:focus-within .cal-routine-block-time {
+    opacity: 1;
+  }
 }
 
 .cal-block:hover {
