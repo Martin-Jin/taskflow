@@ -22,10 +22,11 @@
  * bothering to measure a corner menu that rarely has room on a phone
  * screen).
  *
- * Also owns the close-on-outside-click / close-on-Escape wiring every one
- * of these menus already needed individually — clicking the centered
- * mode's backdrop lands here too, since the backdrop is neither the anchor
- * nor the menu itself.
+ * Also owns the close-on-outside-click wiring every one of these menus
+ * already needed individually — clicking the centered mode's backdrop lands
+ * here too, since the backdrop is neither the anchor nor the menu itself.
+ * Close-on-Escape is delegated to useEscapeLayer, so an open menu inside a
+ * modal beats the modal to the keypress.
  *
  * The initial style for a not-yet-measured menu is off-screen and hidden
  * rather than guessed, so the very first paint (post-measurement, thanks to
@@ -34,6 +35,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEscapeLayer } from './useEscapeLayer';
 
 const VIEWPORT_MARGIN = 8;
 
@@ -101,6 +103,13 @@ export function useMenuPosition({ isOpen, anchorRef, onClose, computeAnchored, f
     };
   }, [isOpen, forceCentered]);
 
+  // Escape goes through the shared layer stack rather than a listener of this
+  // hook's own. An open menu is usually inside a modal, and the modal is a
+  // layer too — registering here (only while open, so this lands above the
+  // modal) is what makes one Escape close just the menu instead of throwing
+  // away the draft behind it.
+  useEscapeLayer(isOpen, onClose);
+
   useEffect(() => {
     if (!isOpen) return undefined;
     function handlePointerDown(e) {
@@ -108,14 +117,9 @@ export function useMenuPosition({ isOpen, anchorRef, onClose, computeAnchored, f
       if (menuRef.current?.contains(e.target)) return;
       onClose();
     }
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') onClose();
-    }
     document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen, onClose]);
 

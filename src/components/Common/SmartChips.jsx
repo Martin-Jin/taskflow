@@ -27,10 +27,16 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 
 export default function SmartChips({ chips, onDismiss, onSelectCandidate }) {
   const [openChipKey, setOpenChipKey] = useState(null);
   const rowRef = useRef(null);
+
+  // Escape collapses the open chip, not the modal this row sits in. A plain
+  // document listener lost that race — the modal's own layer stops propagation
+  // before any other document listener runs (see useEscapeLayer).
+  useEscapeLayer(!!openChipKey, () => setOpenChipKey(null));
 
   useEffect(() => {
     if (!openChipKey) return undefined;
@@ -38,14 +44,9 @@ export default function SmartChips({ chips, onDismiss, onSelectCandidate }) {
       if (rowRef.current?.contains(e.target)) return;
       setOpenChipKey(null);
     }
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') setOpenChipKey(null);
-    }
     document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [openChipKey]);
 

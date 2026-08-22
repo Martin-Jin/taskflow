@@ -265,6 +265,11 @@ atomic, undoable action, triggered via keyboard shortcut (`Ctrl+Z` /
 `Ctrl+Shift+Z` by default, rebindable from Settings) rather than a topbar
 button — see `useKeyboardShortcuts.js`.
 
+**Escape** — closes the innermost thing you have open, one layer at a time.
+With a dropdown, a picker or an autocomplete open inside a window, the first
+Escape closes just that and leaves your draft alone; a second closes the
+window. In the calendar filter it clears the project/tag search first.
+
 **Command palette** — `Ctrl+K` (rebindable from Settings) opens a Linear/
 Todoist-style "jump to anything" search across Views, Projects, Tasks,
 Calendar events, and quick actions (Add task, Add note, Quick Add with AI,

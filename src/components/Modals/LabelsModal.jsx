@@ -10,6 +10,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Tag, Pencil, Trash2, Check } from 'lucide-react';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import Modal from '../Common/Modal';
 import EmptyState from '../Common/EmptyState';
 import { useScheduler } from '../../context/SchedulerContext';
@@ -20,6 +21,14 @@ export default function LabelsModal({ onClose }) {
   const confirm = useConfirm();
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState('');
+
+  // Escape cancels the in-progress rename rather than closing the whole modal.
+  // Unmounting the input skips its onBlur, so the abandoned value is dropped
+  // instead of committed — which is the point.
+  useEscapeLayer(!!editingId, () => {
+    setEditingId(null);
+    setEditValue('');
+  });
 
   const labelsWithCounts = useMemo(() => {
     const countByLabelId = new Map();
@@ -76,10 +85,8 @@ export default function LabelsModal({ onClose }) {
                       e.preventDefault();
                       commitRename();
                     }
-                    if (e.key === 'Escape') {
-                      setEditingId(null);
-                      setEditValue('');
-                    }
+                    // Escape cancels the rename via the escape layer registered
+                    // above — a keydown here never sees it (see useEscapeLayer).
                   }}
                   style={{ flex: 1, minWidth: 0 }}
                 />

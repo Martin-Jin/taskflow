@@ -110,7 +110,7 @@ test.describe('Task CRUD', () => {
 
     // Priority pill (2nd pill) -> urgent (p1).
     await pills.nth(1).click();
-    await page.locator('.addtask-pill-panel select').selectOption('urgent');
+    await chooseSelectMenuOption(page, 'Priority', 'Urgent');
     await pills.nth(1).click();
 
     // Labels pill (3rd pill) -> create + select a new label.
@@ -130,9 +130,9 @@ test.describe('Task CRUD', () => {
 
     // More options -> Section + Estimated time.
     await pills.nth(3).click();
-    const sectionSelect = page.locator('.addtask-more-panel select').first();
-    if (await sectionSelect.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await sectionSelect.selectOption({ label: 'Planning' }).catch(() => {});
+    const sectionPicker = page.locator('.addtask-more-panel').getByRole('button', { name: 'Section', exact: true });
+    if (await sectionPicker.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await chooseSelectMenuOption(page, 'Section', 'Planning').catch(() => {});
     }
     const durationInput = page.locator('.smart-duration-input');
     await durationInput.click();
@@ -179,6 +179,41 @@ test.describe('Task CRUD', () => {
 });
 
 test.describe('Sub-tasks', () => {
+  test('Escape cancels the add-sub-task row without closing the task modal', async ({ page }) => {
+    /* Escape used to close TaskDetailModal outright here, taking the typed
+       sub-task title with it — the add row's own handler never ran, because the
+       modal claimed the keypress first. Now the innermost surface wins, so the
+       first press collapses just this row (see src/hooks/useEscapeLayer.js). */
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Subtask Escape ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await searchAndOpen(page, title);
+    const addSubtaskBtn = page.getByRole('button', { name: /add sub-task/i });
+    await addSubtaskBtn.click();
+    await expect(page.locator('.subtask-add-wrap')).toBeVisible();
+    await page.keyboard.type('abandoned child');
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    // The row is gone, the modal is not, and nothing was saved.
+    await expect(page.locator('.subtask-add-wrap')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(addSubtaskBtn).toBeVisible();
+    await expect(page.getByText('abandoned child')).toHaveCount(0);
+
+    // Only now does Escape reach the modal.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    expectNoErrors(errors);
+  });
+
   test('adds a sub-task, completes it, and the parent reflects the count', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
@@ -1494,7 +1529,8 @@ test.describe('Preferred time of day', () => {
     await expect(page.locator('.smart-chip-row')).toContainText(/prefers morning/i);
 
     await page.getByRole('button', { name: 'More options' }).click();
-    await expect(page.getByLabel('Preferred time of day')).toHaveValue('morning');
+    // A SelectMenu, not a native <select> — read the displayed label.
+    expect(await selectMenuLabel(page, 'Preferred time of day')).toBe('Morning');
 
     const pills = page.locator('.addtask-pill');
     await pills.nth(0).click();

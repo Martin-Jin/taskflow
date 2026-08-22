@@ -74,9 +74,8 @@ function LabelPicker({ labels, selectedIds, onChange, onCreateLabel, placeholder
       }
       return;
     }
-    if (e.key === 'Escape') {
-      inputRef.current?.blur();
-    }
+    // Escape is handled by useComboboxMultiSelect's escape layer, not here —
+    // a keydown on this input never sees it (see useEscapeLayer).
   }
 
   return (

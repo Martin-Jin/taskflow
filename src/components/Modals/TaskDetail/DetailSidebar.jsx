@@ -35,6 +35,7 @@ import { WEEKDAY_LABELS, MAX_RECURRENCE_COUNT, RECURRENCE_UNITS } from '../../..
 import { isSharedProject } from '../../../utils/sharedProjectAccess';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../../utils/projectConstants';
 import DetailField from '../../Common/DetailField';
+import { useEscapeLayer } from '../../../hooks/useEscapeLayer';
 import SelectMenu from '../../Common/SelectMenu';
 import LabelPicker from '../../Common/LabelPicker';
 import SmartDurationInput from '../../Common/SmartDurationInput';
@@ -83,6 +84,11 @@ export default function DetailSidebar({
   onCommitRepeatEditText,
   recentCompletionCount,
 }) {
+  // Escape abandons the free-text repeat edit instead of closing the whole task
+  // modal. Unmounting the input skips its onBlur, so the unfinished phrase is
+  // discarded rather than committed — which is what cancelling means.
+  useEscapeLayer(repeatEditText !== null, () => onRepeatEditTextChange(null));
+
   return (
     <div className="detail-sidebar">
       <DetailField icon={Folder} label="Project">
@@ -216,7 +222,6 @@ export default function DetailSidebar({
               onBlur={onCommitRepeatEditText}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') e.currentTarget.blur();
-                if (e.key === 'Escape') onRepeatEditTextChange(null);
               }}
               disabled={isReadOnlyViewer}
             />

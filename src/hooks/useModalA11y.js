@@ -12,17 +12,20 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { registerEscapeLayer } from './useEscapeLayer';
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// Modals can nest (e.g. TaskDetailModal's own "..." menu opening
-// SmartParseGuideModal on top of it — a sub-task's TaskDetailModal instead
-// reuses the same modal in place, see that component's doc comment). Every
-// open modal's close handler lives here in mount order, so Escape can always
-// resolve to "close only the topmost one" instead of every open handler
-// racing to interpret the same keypress.
-const openModalStack = [];
+// Escape is NOT handled here. Modals can nest (e.g. TaskDetailModal's own
+// "..." menu opening SmartParseGuideModal on top of it — a sub-task's
+// TaskDetailModal instead reuses the same modal in place, see that
+// component's doc comment), and so can the popups and inline edits inside
+// them, so "which of you closes?" is one question with one answer. It lives
+// in useEscapeLayer, which this hook registers a layer with below. A modal
+// used to be the only thing that could claim Escape, which meant a dropdown
+// or a half-typed label inside one couldn't dismiss itself without
+// discarding the entire draft — see that file's header.
 
 export function useModalA11y(onClose) {
   const modalRef = useRef(null);
@@ -40,20 +43,13 @@ export function useModalA11y(onClose) {
   useEffect(() => {
     const modalEl = modalRef.current;
     const previouslyFocused = document.activeElement;
-    const entry = { onClose: () => onCloseRef.current() };
-    openModalStack.push(entry);
+    const unregisterEscapeLayer = registerEscapeLayer(() => onCloseRef.current());
 
     const focusable = () => Array.from(modalEl?.querySelectorAll(FOCUSABLE_SELECTOR) || []);
     const first = focusable()[0];
     (first || modalEl)?.focus();
 
     function handleKeyDown(e) {
-      if (e.key === 'Escape') {
-        if (openModalStack[openModalStack.length - 1] !== entry) return;
-        e.stopPropagation();
-        onCloseRef.current();
-        return;
-      }
       if (e.key !== 'Tab') return;
       const items = focusable();
       if (!items.length) return;
@@ -70,15 +66,7 @@ export function useModalA11y(onClose) {
     document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true);
-      // Guard indexOf === -1: Array.prototype.splice treats a negative index
-      // as "count back from the end," so splice(-1, 1) on ANY non-empty stack
-      // would silently remove the topmost entry — someone else's, not this
-      // one — instead of safely no-op'ing when this entry is already gone
-      // (e.g. a double cleanup, or a bug elsewhere in this file letting the
-      // stack fall out of sync with reality). Cheap and correct regardless
-      // of cause, so always check before splicing.
-      const index = openModalStack.indexOf(entry);
-      if (index !== -1) openModalStack.splice(index, 1);
+      unregisterEscapeLayer();
       previouslyFocused?.focus?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

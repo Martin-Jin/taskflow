@@ -531,6 +531,17 @@ gitignored working file.
   new stacking context that re-clips them.
 - **Any new high-z-index surface must be checked against the guided tour
   overlay.** That exact bug already hit `JoinProjectModal` once.
+- **Escape goes through `useEscapeLayer`, never a keydown handler.** One
+  shared stack decides who handles it, and the innermost registered layer
+  wins. A raw `if (e.key === 'Escape')` on an element inside a modal or an
+  anchored menu will NOT fire — the stack listens at document capture and
+  stops propagation, which is the only way a dropdown can beat the modal
+  containing it. Seven such handlers were silently dead before this existed,
+  and the visible symptom was Escape discarding a whole draft task rather
+  than closing the picker the user was looking at. Register with
+  `useEscapeLayer(active, onEscape)` on the state that makes your surface
+  dismissible — not on mount, or it lands *below* its own modal (child
+  effects run before parent ones).
 - **Touch targets must hold at the 639px breakpoint.** Consolidated toolbars
   are where hit areas quietly shrink.
 

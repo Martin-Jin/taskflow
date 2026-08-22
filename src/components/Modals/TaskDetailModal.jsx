@@ -117,6 +117,7 @@ import NumberField from '../Common/NumberField';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { useSmartTaskTitle, buildSmartChips } from '../../hooks/useSmartTaskTitle';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import DependencyPicker from '../Common/DependencyPicker';
@@ -355,6 +356,15 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // near menuOpen) so reopening it always starts from a blank search rather
   // than the previous session's leftover query/highlight.
   const [assignSearchQuery, setAssignSearchQuery] = useState('');
+
+  // A two-stage Escape in the "..." menu's assignee search: the first press
+  // clears the query, and with the query empty this layer is gone so the next
+  // one closes the menu. Has to be a layer, not a keydown branch — the menu
+  // itself is a layer and would otherwise take the keypress (see useEscapeLayer).
+  useEscapeLayer(!!assignSearchQuery, () => {
+    setAssignSearchQuery('');
+    setAssignHighlight(0);
+  });
   const [assignHighlight, setAssignHighlight] = useState(0);
 
   // The owner has no entry in `collaborators` (see SharedProject typedef) —
@@ -2015,14 +2025,6 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                                     e.preventDefault();
                                     if (assignHighlight === 0) chooseAssignee(null);
                                     else chooseAssignee(assignSearchMatches[assignHighlight - 1]);
-                                  } else if (e.key === 'Escape' && assignSearchQuery) {
-                                    // Clear the search first; a second Escape (query already
-                                    // empty) falls through to useMenuPosition's own listener
-                                    // and closes the whole "..." menu.
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setAssignSearchQuery('');
-                                    setAssignHighlight(0);
                                   }
                                 }}
                               />
@@ -2226,6 +2228,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
                       <li role="none">
                         <DetailField icon={Sunrise} label="Preferred time">
+                          {/* Deliberately a native <select>, unlike the same
+                              field in AddTaskModal and every picker in the
+                              sidebar. SelectMenu portals its listbox to
+                              document.body, which puts it outside this "..."
+                              menu — so useMenuPosition's outside-click check
+                              would read choosing an option as a click away and
+                              close the whole menu underneath it. Any picker
+                              added inside this menu has the same constraint. */}
                           <select
                             value={preferredTimeOfDay}
                             onChange={(e) => setPreferredTimeOfDay(e.target.value)}

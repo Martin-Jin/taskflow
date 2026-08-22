@@ -13,6 +13,7 @@
 import React, { useRef, useState } from 'react';
 import { Plus, Search, Pin, Inbox as InboxIcon, Layers } from 'lucide-react';
 import Modal from '../Common/Modal';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { useProjectSearch } from '../../hooks/useProjectSearch';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
@@ -41,6 +42,14 @@ export default function ManageProjectsModal({
   const confirm = useConfirm();
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+
+  // Escape cancels the in-progress rename rather than closing the whole modal.
+  // Unmounting the input skips its onBlur, so the abandoned value is dropped
+  // instead of committed — which is the point.
+  useEscapeLayer(!!renamingId, () => {
+    setRenamingId(null);
+    setRenameValue('');
+  });
   // pickProject is called from useProjectSearch's keyboard-nav onSelect, wired
   // up before Modal's render-prop (the only place requestClose is exposed)
   // runs — so requestClose is captured into this ref during render instead
@@ -156,10 +165,8 @@ export default function ManageProjectsModal({
                           e.preventDefault();
                           commitRename();
                         }
-                        if (e.key === 'Escape') {
-                          setRenamingId(null);
-                          setRenameValue('');
-                        }
+                        // Escape cancels the rename via the escape layer registered
+                        // near this component's state (see useEscapeLayer).
                       }}
                     />
                   ) : (

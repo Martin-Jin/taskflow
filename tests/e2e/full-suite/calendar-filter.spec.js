@@ -434,4 +434,36 @@ test.describe('Calendar filter menu — Projects search', () => {
     expectNoErrors(errors);
     await context.close();
   });
+
+  test('Escape clears the search first, and only then closes the menu', async ({ page }) => {
+    /* A two-stage Escape, and the ordering is the assertion: the search box
+       claims the first press, the menu the second. Both surfaces want the same
+       key, so this only works because they register with the shared layer
+       stack — see src/hooks/useEscapeLayer.js. */
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    const runId = Date.now();
+    await seedExtraProjects(page, runId);
+
+    await gotoTab(page, 'Calendar');
+    await openFilterMenu(page);
+    await filterMenu(page).getByRole('button', { name: /^Projects/ }).click();
+    await page.waitForTimeout(150);
+
+    const searchInput = page.locator('.calendar-filter-search-input');
+    await searchInput.click();
+    await searchInput.fill('alpha');
+    await expect(searchInput).toHaveValue('alpha');
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await expect(searchInput).toHaveValue('');
+    await expect(filterMenu(page)).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await expect(page.getByRole('menu')).toHaveCount(0);
+
+    expectNoErrors(errors);
+  });
 });

@@ -26,6 +26,7 @@
  */
 
 import { useState } from 'react';
+import { useEscapeLayer } from './useEscapeLayer';
 import { useCaretActiveSpan, spliceTextAndMoveCaret } from './useCaretActiveSpan';
 import { rankByNameSearch, scoreNameMatchStrict } from '../utils/nameSearch';
 
@@ -142,6 +143,13 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
 
   const isOpen = !!span && (matches.length > 0 || showCreateOption);
 
+  // Escape dismisses this popup, and only this popup. It goes through the
+  // shared layer stack because the title field usually sits inside a modal,
+  // and a plain keydown branch here never fired — one Escape with the
+  // suggestion list open discarded the whole draft instead (see
+  // src/hooks/useEscapeLayer.js).
+  useEscapeLayer(isOpen, dismiss);
+
   /** Splice `insertText` in place of the active trigger span, then move the caret right after it. */
   function selectMatch(insertText) {
     if (!span) return;
@@ -187,11 +195,8 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
       setHighlightedIndex((i) => Math.max(i - 1, 0));
       return true;
     }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      dismiss();
-      return true;
-    }
+    // Escape is claimed by the escape layer registered above, so a keydown
+    // on the input never sees it (see useEscapeLayer).
     if (e.key === 'Tab') {
       // Cycles the highlight instead of accepting — matches
       // useSmartKeywordSuggest's Tab-cycles/Enter-accepts split, so the two

@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '8.6.0',
+    date: '2026-08-22',
+    title: 'Escape closes what you are looking at',
+    changes: [
+      'Pressing Escape now closes the innermost thing you have open, not everything at once. Dismissing a dropdown or a half-typed tag inside the Add task window used to discard the whole draft task in one keypress — including the title you had just written. A second Escape closes the window itself, as before.',
+      'Every Escape-to-cancel in the app works again as a result: abandoning a project or tag rename leaves the list open instead of shutting it, cancelling an unfinished sub-task keeps the task open, and closing a "#project" / "@tag" suggestion list no longer takes your comment or title with it.',
+      'Two-stage where it should be: in the calendar filter and the assignee picker, Escape clears what you typed first and only closes the menu on a second press.',
+      'The Add task window’s Priority, Section, Repeat unit and Preferred time pickers now match the ones in task detail — properly themed menus instead of the browser’s own grey dropdowns.',
+    ],
+  },
+  {
     version: '8.5.0',
     date: '2026-08-22',
     title: 'The sidebar keeps what you pin',
