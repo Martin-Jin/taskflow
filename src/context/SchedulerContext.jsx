@@ -99,6 +99,7 @@ import {
   applyUpwardCompletionCascade,
   getAllDescendants,
 } from '../utils/taskHierarchy';
+import { planPostponeUpdate } from '../utils/rescheduleHistory';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -217,6 +218,16 @@ function sanitizeTaskFields(fields, fallback) {
       ? sanitized.dependsOn.filter((id) => typeof id === 'string')
       : fallback.dependsOn;
   }
+  // The postponement counter is DERIVED — planPostponeUpdate owns it, and it's
+  // applied after this sanitizer runs (see updateTask). Dropping it from any
+  // incoming update makes that ownership structural instead of a convention:
+  // several callers pass update objects they didn't fully author (bulkEditEngine
+  // spreads a caller-supplied patch, and aiPlanService's contentFields is a
+  // DENY-list, so a model emitting `postponeCount` would otherwise write it
+  // straight through). A future "reset this count" affordance would need to
+  // bypass this rather than route through updateTask.
+  delete sanitized.postponeCount;
+  delete sanitized.lastPostponedAt;
   return sanitized;
 }
 
@@ -1815,6 +1826,16 @@ export function SchedulerProvider({ children }) {
               merged = { ...merged, ...planSeriesReanchor(merged, merged.dueDate) };
               recurringParentDueDateChanged = true;
             }
+            // Count a user-moved deadline. Deliberately keyed off the
+            // PRE-edit task `t` and the raw `updates`, not `merged` — by this
+            // point merged has been through the reopen, re-anchor and
+            // recurring-reschedule rewrites above, any of which can change
+            // dueDate for reasons that are not the user pushing a deadline.
+            // Only the task being edited passes through here: the enforcing-
+            // ancestor and recurring-descendant cascades below are applied in
+            // their own pass over `nextTasks`, so one user action stays one
+            // increment. See utils/rescheduleHistory.js for what counts.
+            merged = { ...merged, ...planPostponeUpdate(t, updates, merged.updatedAt) };
             // Covers a task that just BECAME recurring (or gained its first
             // due date) — it needs an anchor before anything can derive from it.
             return { ...merged, ...ensureRecurrenceAnchor(merged) };

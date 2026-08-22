@@ -1645,6 +1645,16 @@ select:focus-visible,
   color: var(--color-text-secondary);
 }
 
+/* "pushed N×" — a task whose deadline the user keeps moving out (see
+   utils/rescheduleHistory.js). Warning, not danger: it's advisory, and a red
+   pill would read as an error the user has to fix rather than a pattern worth
+   noticing. Only ever rendered past POSTPONE_BADGE_THRESHOLD, so it stays rare
+   enough to mean something. */
+.badge.postponed {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
 /* Tag/Label pill on a task row — reuses .badge's shape, colored per-Label
    via inline style (see TaskListPanel.jsx), so it only needs to override
    the priority badge's bold letter-spacing for a plain label name. */

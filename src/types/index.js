@@ -181,6 +181,22 @@
  * @property {number} maxChunkHours          - Largest allowed contiguous block per day (default 4h) - encourages context-switching breaks.
  * @property {string} createdAt              - ISO datetime.
  * @property {string} updatedAt              - ISO datetime.
+ * @property {number} [postponeCount]        - How many times the user has moved this task's existing due date to a
+ *                                              LATER date. A deliberately narrow definition — not a general edit
+ *                                              count — and the exclusions are the design: see
+ *                                              utils/rescheduleHistory.js's `planPostponeUpdate`, which owns the
+ *                                              rule and is the only thing that writes this. Absent/undefined for
+ *                                              any task that has never been postponed (never rendered as "0 times",
+ *                                              per direction rule 3), and always absent on recurring tasks, whose
+ *                                              due date is designed to move. Stored as a bare counter rather than a
+ *                                              history array on purpose: this document is rewritten in full on every
+ *                                              cross-device and shared-project push, so an unbounded list here would
+ *                                              need its own retention policy. Last-writer-wins like every other
+ *                                              field, so two collaborators postponing at once can lose a count —
+ *                                              acceptable for a soft signal, and not worth a counter CRDT.
+ * @property {string} [lastPostponedAt]      - ISO datetime of the most recent postponement counted in
+ *                                              `postponeCount` (shares that update's `updatedAt` value). Absent
+ *                                              whenever `postponeCount` is.
  * @property {string|null} [sectionId]       - Todoist Section id this task lives in (board view column), or null.
  * @property {string|null} [sectionName]     - Denormalized section display name, or null for "No Section".
  * @property {string} [parentId]             - Id of this task's parent, if this task is a sub-task of another.

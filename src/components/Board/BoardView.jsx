@@ -94,7 +94,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink, GripVertical } from 'lucide-react';
+import { Plus, X, Circle, Repeat, Wind, SquareCheck, Ban, ExternalLink, GripVertical, History } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCompleteTask } from '../../context/CompleteTaskContext';
@@ -116,6 +116,7 @@ import { formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { formatHours } from '../../utils/formatHours';
 import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
+import { shouldShowPostponeBadge, describePostponeCount } from '../../utils/rescheduleHistory';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 import { getEffectiveRemainingHours, isCheckedForListDisplay } from '../../utils/taskHierarchy';
 import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../../utils/boardColumnOrder';
@@ -647,8 +648,16 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
             <Badge variant={task.priority}>{task.priority}</Badge>
+            {/* Same threshold and reasoning as the List row's badge — someone
+                who works in Board would otherwise never see the one signal
+                that a card keeps getting pushed. */}
+            {shouldShowPostponeBadge(task) && (
+              <Badge variant="postponed" icon={History}>
+                {describePostponeCount(task)}
+              </Badge>
+            )}
           </div>
         </div>
       </motion.div>

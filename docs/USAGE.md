@@ -142,6 +142,16 @@ calendar yourself. Making
 a task recurring automatically makes its parent (or sub-tasks) recurring
 too, since they represent the steps toward the same repeating goal — no
 need to set it on both sides yourself.
+**"Pushed N×"** — if you move a task's due date to a later date three or more
+times, the row (and its Board card) picks up a quiet amber badge counting the
+pushes, with the date of the most recent one on hover. It's the app's only
+signal that a task is stuck rather than merely late, and it's deliberately
+narrow: pulling a date *earlier* doesn't count, nor does giving an undated task
+its first date, nor the scheduler moving your work blocks around — only a
+deadline you set and then moved out. Recurring tasks never show it, since
+advancing the date is how they work. Nothing appears below three pushes; almost
+everything gets pushed once.
+
 Every task also has a Todoist-style **comment thread** (up to 200
 comments per task) — post text, a file (image, PDF, or common office
 doc, 10MB max), or both; image attachments show as a clickable

@@ -62,6 +62,7 @@ import {
   CornerUpLeft,
   PanelLeftClose,
   PanelLeftOpen,
+  History,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
@@ -95,6 +96,7 @@ import { useReparentDrag, UNPARENT_TARGET_ID } from '../hooks/useReparentDrag';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useTaskBulkEditActions } from '../hooks/useTaskBulkEditActions';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
+import { shouldShowPostponeBadge, describePostponeCount } from '../utils/rescheduleHistory';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
@@ -1156,6 +1158,21 @@ const TaskRow = React.memo(function TaskRow({
               Medium/high/urgent still render since those are a deliberate
               upward choice worth surfacing. */}
           {task.priority !== 'low' && <Badge variant={task.priority}>{task.priority}</Badge>}
+          {/* Only past the threshold, and never as "pushed 0×" — the absence
+              of this badge is the signal that nothing is stuck (direction
+              rule 3). The title carries the date, since the count alone
+              says a task keeps slipping but not since when. */}
+          {shouldShowPostponeBadge(task) && (
+            <span
+              title={`You've moved this task's due date ${task.postponeCount} times${
+                task.lastPostponedAt ? `, most recently ${formatDisplayDate(task.lastPostponedAt.slice(0, 10))}` : ''
+              }. Worth rescoping or dropping it?`}
+            >
+              <Badge variant="postponed" icon={History}>
+                {describePostponeCount(task)}
+              </Badge>
+            </span>
+          )}
           {(() => {
             const resolvedLabels = (task.labelIds || []).map((id) => labelById.get(id)).filter(Boolean);
             const visibleLabels = resolvedLabels.slice(0, MAX_VISIBLE_LABEL_PILLS);
