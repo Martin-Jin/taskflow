@@ -119,6 +119,7 @@ import { priorityColor } from '../../utils/priorityColor';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
 import { getEffectiveRemainingHours, isCheckedForListDisplay } from '../../utils/taskHierarchy';
 import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../../utils/boardColumnOrder';
+import { sortByBoardOrder, planBoardReorder } from '../../utils/boardCardOrder';
 import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
 
 // Card reorder/removal motion — see CARD MOTION above. Mirrors
@@ -305,7 +306,9 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
       const columnTasks = filterTasksByStatus(filterTasksByProject(tasks, selectedProjectId).filter((t) => !t.parentId), filter)
         .filter((t) => (col.id === null ? !t.sectionId : t.sectionId === col.id))
         .filter((t) => taskMatchesQuery(t, searchQuery, labels));
-      return { ...col, tasks: columnTasks };
+      // Hand-ranked order (see utils/boardCardOrder.js). Cards never dragged
+      // into a position have no rank and keep their natural order at the end.
+      return { ...col, tasks: sortByBoardOrder(columnTasks) };
     });
 
     // Only show the synthetic "No Section" column when there's actually an
@@ -355,6 +358,80 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   // `text/plain` task-id payload handleColumnDrop below reads back), so one
   // gesture can end either as a section move or as a reparent depending on
   // which drop target it lands on — see DRAG SEMANTICS.
+  /* Which inter-card gap a card is currently hovering, as
+     `${columnId}:${index}`. Reordering needs its own drop targets because
+     card-ON-card already means something else here — dropping a card on
+     another makes it a sub-task (see useReparentDrag) — so the two gestures
+     are separated the way Linear separates them: onto a card reparents, into
+     the gap between cards reorders. */
+  const [dragOverGap, setDragOverGap] = useState(null);
+
+  const gapKey = (col, index) => `${col.id ?? 'none'}:${index}`;
+
+  function handleGapDragOver(e, col, index) {
+    // Stop the column body underneath from also claiming this as a plain
+    // move-to-section drop, which would drop the position information.
+    e.preventDefault();
+    e.stopPropagation();
+    if (isSectionsReadOnly || select.selectionMode) return;
+    if (dragColumnId || e.dataTransfer.types.includes(COLUMN_DRAG_TYPE)) return;
+    setDragOverGap(gapKey(col, index));
+    setDragOverColumnId(undefined);
+  }
+
+  function handleGapDrop(e, col, index) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverGap(null);
+    setDragOverColumnId(undefined);
+    reparent.endDrag();
+    if (isSectionsReadOnly || select.selectionMode) return;
+    if (dragColumnId || e.dataTransfer.types.includes(COLUMN_DRAG_TYPE)) return;
+
+    const taskId = e.dataTransfer.getData('text/plain');
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const column = columns.find((c) => c.id === col.id);
+    const writes = planBoardReorder(column?.tasks || [], taskId, index);
+
+    // A card dragged in from another column needs its section changed as well
+    // as its rank; one moving within a column only needs the rank. Both are
+    // one updateTask per changed card — see boardCardOrder.js on why the
+    // dense rewrite is the right trade at this scale.
+    if (task.sectionId !== col.id) {
+      updateTask(taskId, {
+        sectionId: col.id,
+        sectionName: col.isNoSection ? null : col.name,
+        boardOrder: writes.find((w) => w.id === taskId)?.boardOrder ?? 0,
+      });
+    }
+    for (const w of writes) {
+      if (w.id === taskId && task.sectionId !== col.id) continue; // already applied above
+      updateTask(w.id, { boardOrder: w.boardOrder });
+    }
+  }
+
+  /* Thin, normally-invisible strip between two cards. Only a drop target while
+     a card drag is actually in flight, so it never eats an ordinary click on
+     the column. Not rendered at all on mobile, which has no drag gesture to
+     hook into (the same reason cross-column moves are desktop-only there — a
+     card's Section field is the mobile path). */
+  function renderDropGap(col, index) {
+    if (isMobile || isSectionsReadOnly || select.selectionMode) return null;
+    const key = gapKey(col, index);
+    return (
+      <div
+        key={`gap-${key}`}
+        className={`board-card-dropgap ${dragOverGap === key ? 'is-active' : ''} ${reparent.draggedId ? 'is-armed' : ''}`}
+        onDragOver={(e) => handleGapDragOver(e, col, index)}
+        onDragLeave={() => setDragOverGap((cur) => (cur === key ? null : cur))}
+        onDrop={(e) => handleGapDrop(e, col, index)}
+        aria-hidden="true"
+      />
+    );
+  }
+
   function handleColumnDragOver(e, col) {
     e.preventDefault();
     setDragOverColumnId(col.id);
@@ -363,6 +440,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
   function handleColumnDrop(e, col) {
     e.preventDefault();
     setDragOverColumnId(undefined);
+    setDragOverGap(null);
     reparent.endDrag();
     if (isSectionsReadOnly) return; // Defense in depth — cards aren't draggable for viewers in the first place.
     // Both of Board's native-HTML5-DnD systems (card reparent, column-to-
@@ -378,7 +456,17 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
     if (dragColumnId || e.dataTransfer.types.includes(COLUMN_DRAG_TYPE)) return;
     const taskId = e.dataTransfer.getData('text/plain');
     const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.sectionId === col.id) return; // no-op: dropped back on its current section
+    if (!task) return;
+    if (task.sectionId === col.id) {
+      // Dropped back into its own column, but on the body rather than a gap —
+      // i.e. the empty space below the cards. Reads as "put it at the end",
+      // which is what every Kanban does; it used to be a silent no-op.
+      const column = columns.find((c) => c.id === col.id);
+      for (const w of planBoardReorder(column?.tasks || [], taskId, column?.tasks.length ?? 0)) {
+        updateTask(w.id, { boardOrder: w.boardOrder });
+      }
+      return;
+    }
     updateTask(taskId, { sectionId: col.id, sectionName: col.isNoSection ? null : col.name });
   }
 
@@ -721,7 +809,15 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
                 onDragLeave={isMobile ? undefined : () => setDragOverColumnId(undefined)}
                 onDrop={isMobile ? undefined : (e) => handleColumnDrop(e, col)}
               >
-                <AnimatePresence initial={false}>{col.tasks.map((task) => renderCard(task))}</AnimatePresence>
+                <AnimatePresence initial={false}>
+                  {col.tasks.map((task, index) => (
+                    <React.Fragment key={task.id}>
+                      {renderDropGap(col, index)}
+                      {renderCard(task)}
+                    </React.Fragment>
+                  ))}
+                </AnimatePresence>
+                {col.tasks.length > 0 && renderDropGap(col, col.tasks.length)}
                 {col.tasks.length === 0 && <div className="board-column-empty">No tasks{searchQuery ? ' match your search' : ''}.</div>}
               </div>
 

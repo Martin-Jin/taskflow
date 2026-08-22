@@ -159,6 +159,11 @@ leading "No Section" column (or a flat list if the project has no
 Sections yet). Rename/delete columns, add sections, drag cards between
 them on desktop/tablet (on mobile, open a card and change its Section
 field instead, since there's no drag gesture to hook into). Columns
+Cards can also be
+reordered *within* a column by dragging one into the gap between two others —
+dropping onto a card itself is the separate "make this a sub-task" gesture.
+That hand-ranked order is saved with the task, so it follows you across devices
+and is shared with collaborators on a shared board. Columns
 themselves can be dragged into a different order by the grip handle in
 their header — that order is remembered per project on this device only
 (it isn't pushed to Todoist or synced across devices), and the leading

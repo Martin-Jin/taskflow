@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '7.8.0',
+    date: '2026-08-22',
+    title: 'Reorder cards inside a board column',
+    changes: [
+      'Board cards can be dragged up and down within their own column, not just between columns. Hand-ranking is the one call an auto-scheduler cannot make for you, so it was an odd thing to be missing.',
+      'Drop a card into the gap between two others to reorder it; dropping it straight onto another card still makes it a sub-task, as before. A thin highlight shows where it will land.',
+      'The order is saved on the task, so it follows you to your other devices and everyone sees the same board on a shared project.',
+    ],
+  },
+  {
     version: '7.7.0',
     date: '2026-08-22',
     title: 'All-day events finally show up',
