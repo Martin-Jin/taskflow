@@ -20,6 +20,9 @@
  *   2. DUE-DATE — reward for finishing early (linear in slack days), penalty
  *      that ESCALATES (quadratic) the further past the due date a task's
  *      last chunk lands. Both scaled by priorityMultiplier.
+ *   3. TIME-OF-DAY — for a task with a `preferredTimeOfDay`, a penalty per
+ *      hour placed outside that window. Soft by design: it nudges this
+ *      search, it never constrains the allocator (see utils/timeOfDay.js).
  *
  * Priority is a MULTIPLIER on those two terms, never an independent cost —
  * there is deliberately no separate "this task is unplaced" cost line here;
@@ -30,7 +33,8 @@
  * ============================================================================
  */
 
-import { diffDays } from '../utils/dateUtils';
+import { diffDays, timeToMinutes } from '../utils/dateUtils';
+import { minutesOutsidePreference } from '../utils/timeOfDay';
 
 /**
  * Tunable per-priority cost multiplier. Fractional (not integer weights like
@@ -57,6 +61,23 @@ function priorityMultiplier(task) {
 // magic number inline) so it's easy to retune independently of the due-date
 // term's own constants below.
 export const FRAG_DAY_PENALTY = 3;
+
+/**
+ * Cost per HOUR of a task's work placed outside its preferred time of day.
+ *
+ * Deliberately weaker than FRAG_DAY_PENALTY (3 per extra day): a preference is
+ * a preference, so it should decide a close call and lose to a real scheduling
+ * concern. At 1.0/hour a typical 1-2 hour block in the wrong half of the day
+ * costs less than spreading that task across one extra day, so the search will
+ * never shred a task chasing a nicer hour. The two only cross over at 3+ hours
+ * of misplaced work, where preferring the right window genuinely is the bigger
+ * win — that crossover is intended, not an accident of the numbers.
+ *
+ * An earlier 1.5 made a 2-hour block exactly equal to one day of
+ * fragmentation, and an exact tie is the one value to avoid: it's resolved by
+ * whichever move the search happens to try first.
+ */
+export const TIME_OF_DAY_PENALTY_PER_HOUR = 1.0;
 
 // Any individual chunk shorter than this (minutes) incurs an additional
 // small-chunk penalty on top of the day-count term above — a task split into
@@ -127,6 +148,29 @@ function dueDateCost(task, lastDate, dueDate) {
 }
 
 /**
+ * Time-of-day cost for one task: penalty per hour placed outside its preferred
+ * window. Zero for the overwhelmingly common case of no preference set, so
+ * this term costs nothing for tasks that don't use it.
+ *
+ * Charged on real overlap rather than "does the block start in the window", so
+ * a long block that straddles the boundary pays only for the part that spills
+ * — otherwise a 3-hour morning task starting at 11:00 would score the same as
+ * one starting at 20:00, and the search would have no gradient to follow.
+ */
+function timeOfDayCost(task, taskBlocks) {
+  if (!task?.preferredTimeOfDay || taskBlocks.length === 0) return 0;
+  const mult = priorityMultiplier(task);
+  let outsideMins = 0;
+  for (const b of taskBlocks) {
+    outsideMins += minutesOutsidePreference(
+      { startMinute: timeToMinutes(b.startTime), endMinute: timeToMinutes(b.endTime) },
+      task.preferredTimeOfDay
+    );
+  }
+  return (outsideMins / 60) * TIME_OF_DAY_PENALTY_PER_HOUR * mult;
+}
+
+/**
  * Evaluate the total cost of a candidate placement.
  *
  * @param {import('../types').ScheduledBlock[]} blocks - ALL blocks under consideration for this evaluation (only
@@ -137,7 +181,7 @@ function dueDateCost(task, lastDate, dueDate) {
  *   (own or borrowed from an ancestor) — pass allocator.js's `resolveDueDate` bound to the caller's `taskById`, or
  *   any equivalent. Kept as an injected function rather than importing allocator.js directly, to avoid a circular
  *   dependency between allocator.js and this module.
- * @returns {{ total: number, byTask: Map<string, {fragmentation: number, dueDate: number, total: number}> }}
+ * @returns {{ total: number, byTask: Map<string, {fragmentation: number, dueDate: number, timeOfDay: number, total: number}> }}
  */
 export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn) {
   const blocksByTask = new Map();
@@ -154,8 +198,9 @@ export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn) {
     const fragmentation = fragmentationCost(task, taskBlocks, days);
     const dueDate = resolveDueDateFn ? resolveDueDateFn(task) : task.dueDate || null;
     const due = dueDateCost(task, lastDate, dueDate);
-    const taskTotal = fragmentation + due;
-    byTask.set(task.id, { fragmentation, dueDate: due, total: taskTotal });
+    const timeOfDay = timeOfDayCost(task, taskBlocks);
+    const taskTotal = fragmentation + due + timeOfDay;
+    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, total: taskTotal });
     total += taskTotal;
   }
 

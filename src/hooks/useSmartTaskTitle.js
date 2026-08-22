@@ -39,6 +39,7 @@ import {
   Clock,
   Link as LinkIcon,
   Ban,
+  Sunrise,
   CornerUpRight,
   CornerUpLeft,
   ListFilter,
@@ -48,6 +49,7 @@ import { parseTaskText, stripMatchedText } from '../utils/smartParse';
 import { formatDisplayDate, formatTime12h } from '../utils/dateUtils';
 import { linkLabel } from '../utils/linkify';
 import { PRIORITY_LABELS } from '../utils/priorityColor';
+import { TIME_OF_DAY_LABELS } from '../utils/timeOfDay';
 import { formatHours } from '../utils/formatHours';
 
 const SCALAR_FIELD_TYPES = [
@@ -61,6 +63,7 @@ const SCALAR_FIELD_TYPES = [
   'enforceDueDate',
   'earliestDate',
   'excludeFromAutoSchedule',
+  'preferredTimeOfDay',
   'dependency',
   'subOf',
   'unsubtask',
@@ -242,6 +245,11 @@ export function buildSmartChips(smartDetected) {
       label: `Not before ${formatDisplayDate(smartDetected.earliestDate.iso)}`,
     },
     smartDetected.excludeFromAutoSchedule && { type: 'excludeFromAutoSchedule', icon: Ban, label: 'Excluded from auto-schedule' },
+    smartDetected.preferredTimeOfDay && {
+      type: 'preferredTimeOfDay',
+      icon: Sunrise,
+      label: `Prefers ${TIME_OF_DAY_LABELS[smartDetected.preferredTimeOfDay.period]?.toLowerCase() || smartDetected.preferredTimeOfDay.period}`,
+    },
     smartDetected.dependency &&
       (smartDetected.dependency.task
         ? { type: 'dependency', icon: Link2, label: `After: ${smartDetected.dependency.task.title}` }

@@ -134,6 +134,12 @@
  * @property {string} [projectId]            - Todoist project id, if synced.
  * @property {'todoist'|'manual'} source     - Where the task originated.
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.
+ * @property {'morning'|'afternoon'|'evening'} [preferredTimeOfDay]
+ *                                           - Optional "this belongs in the morning" hint. SOFT: it adds a per-hour cost for
+ *                                             work placed outside the window (placementCost.js's timeOfDayCost) so the
+ *                                             refinement pass prefers a matching slot, but never constrains the allocator —
+ *                                             a hard constraint would produce unschedulable tasks with no visible reason.
+ *                                             Window boundaries live in utils/timeOfDay.js.
  * @property {number} [boardOrder]          - Hand-ranked position within its Board column, ascending. Absent on any task
  *                                            never dragged into place, which sorts after ranked ones (see
  *                                            utils/boardCardOrder.js). Lives on the Task rather than device-local storage

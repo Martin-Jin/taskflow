@@ -169,6 +169,13 @@ const TASK_CONTENT_FIELDS = [
     description: 'ISO date (YYYY-MM-DD) the task is due, resolved relative to the reference date in context.md.',
   },
   {
+    name: 'preferredTimeOfDay',
+    type: 'string',
+    enum: ['morning', 'afternoon', 'evening'],
+    description:
+      'The part of the day the user prefers to work this task, if they said so ("in the morning", "afternoons", "evening run"). This is a soft nudge for the scheduler, NOT a fixed appointment — use fixedTime instead if the task has to start at a specific clock time. Omit entirely when no preference was expressed; do not guess one from the nature of the task.',
+  },
+  {
     name: 'enforceDueDate',
     type: 'boolean',
     description:

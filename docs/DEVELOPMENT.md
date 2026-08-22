@@ -134,7 +134,7 @@ the greedy result as a starting point (a "seed") and searches for a
 lower-cost rearrangement of it.
 
 **`placementCost.js`** is a pure function that scores a candidate
-placement — lower is better. Two terms, both scaled by a per-priority
+placement — lower is better. Three terms, all scaled by a per-priority
 multiplier (`PRIORITY_MULTIPLIER`: `urgent 1.4, high 1.2, medium 1.0, low
 0.8` — fractional, not the allocator's integer scoring weights, since this
 is a gentler nudge rather than a strict ordering rule):
@@ -148,6 +148,17 @@ is a gentler nudge rather than a strict ordering rule):
   the due date, or a penalty that grows quadratically (not flatly) with
   days late if a task's last chunk lands after its due date, so being a
   little late costs much less than being very late.
+- **Time of day** — `TIME_OF_DAY_PENALTY_PER_HOUR` for each hour of a task's
+  work placed outside its `preferredTimeOfDay` window (see
+  `utils/timeOfDay.js`), and zero for the common case of no preference set.
+  Charged on real overlap rather than "does the block start in the window",
+  which is what gives the search a gradient to follow — without it a 3-hour
+  morning task starting at 11:00 scores the same as one starting at 20:00 and
+  no move looks like an improvement. Deliberately weaker than one day of
+  fragmentation for a typical 1–2 hour block, so a preference decides a close
+  call but never justifies shredding a task across days to chase a nicer hour.
+  The preference is soft by design and never reaches the allocator: a hard
+  constraint would produce unschedulable tasks with no visible reason.
 
 There's deliberately no separate "unplaced" cost term — an unplaced task
 already surfaces through the allocator's own `overflow` reporting, and

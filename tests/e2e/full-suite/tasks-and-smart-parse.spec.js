@@ -1478,3 +1478,56 @@ test.describe('Validation edge cases', () => {
     expectNoErrors(errors);
   });
 });
+
+test.describe('Preferred time of day', () => {
+  test('smart-parses "in the morning", fills the picker, and saves it on the task', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E morning task ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(`${title} in the morning`);
+    await page.waitForTimeout(500);
+
+    // Surfaced as a dismissible chip like every other detected field, rather
+    // than applied silently.
+    await expect(page.locator('.smart-chip-row')).toContainText(/prefers morning/i);
+
+    await page.getByRole('button', { name: 'More options' }).click();
+    await expect(page.getByLabel('Preferred time of day')).toHaveValue('morning');
+
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click();
+    await page.locator('.addtask-pill-panel input[type="date"]').fill('2027-02-01');
+    await pills.nth(0).click();
+    await page.getByRole('dialog').getByRole('button', { name: /^add task$/i }).click();
+    await page.waitForTimeout(600);
+
+    const saved = await page.evaluate(
+      (t) => JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').find((x) => x.title === t),
+      title
+    );
+    // The phrase is consumed into the field, not left in the title.
+    expect(saved.preferredTimeOfDay).toBe('morning');
+
+    expectNoErrors(errors);
+  });
+
+  test('a bare "Morning" in a title is left alone', async ({ page }) => {
+    /* The deliberate restriction: "Morning standup" is a name, not a
+       preference. Quietly eating that word and biasing the schedule would be
+       worse than missing the hint. */
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    await page.getByPlaceholder('Task name').fill(`Morning standup notes ${RUN_ID}`);
+    await page.waitForTimeout(500);
+    // Count rather than not.toContainText: with no chips at all the row
+    // element doesn't exist, and a negated text assertion needs one to inspect.
+    await expect(page.getByRole('dialog').getByText(/prefers (morning|afternoon|evening)/i)).toHaveCount(0);
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+});

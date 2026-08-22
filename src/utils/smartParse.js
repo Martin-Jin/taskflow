@@ -171,6 +171,29 @@ function findExcludeFromAutoSchedulePhrase(text) {
 }
 
 /**
+ * "in the morning" / "mornings" / "this afternoon" / "in the evening" — a
+ * preferred time of day (matches Task.preferredTimeOfDay; see
+ * utils/timeOfDay.js for the windows and placementCost.js for how softly it's
+ * applied).
+ *
+ * Requires either a leading preposition/determiner ("in the morning", "this
+ * afternoon", "every evening") or the plural form ("mornings"). A bare
+ * "morning" is deliberately NOT matched: "Morning standup notes" and "Good
+ * morning email" are ordinary titles, and silently eating that word — then
+ * quietly biasing the schedule — is worse than missing the hint. The plural
+ * carries the sense on its own, which a singular noun in a title does not.
+ */
+function findTimeOfDayPhrase(text) {
+  const m = text.match(
+    /\b(?:(?:in|on|during)\s+the\s+|this\s+|every\s+|each\s+)(morning|afternoon|evening)\b|\b(mornings|afternoons|evenings)\b/i
+  );
+  if (!m) return null;
+  const word = (m[1] || m[2]).toLowerCase();
+  const period = word.endsWith('s') ? word.slice(0, -1) : word;
+  return { period, matchedText: m[0], index: m.index };
+}
+
+/**
  * Fuzzy-match a captured fragment against a list of named candidates
  * (existing tasks for "after/depends on <fragment>", Projects for
  * "#fragment"). An exact (case-insensitive) match wins outright; otherwise
@@ -518,6 +541,7 @@ function findLabelPhrases(text) {
  *     enforceDueDate?: {matchedText: string},
  *     earliestDate?: {iso: string, matchedText: string},
  *     excludeFromAutoSchedule?: {matchedText: string},
+ *     preferredTimeOfDay?: {period: 'morning'|'afternoon'|'evening', matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
  *     subOf?: {task: object|null, fragment: string, matchedText: string},
  *     assignTo?: {collaborator: {uid: string, displayName: string}|null, fragment: string, matchedText: string},
@@ -606,6 +630,12 @@ export function parseTaskText(text, { existingTasks = [], projects = [], section
   if (excludeFromAutoScheduleMatch) {
     detected.excludeFromAutoSchedule = excludeFromAutoScheduleMatch;
     working = removeMatch(working, excludeFromAutoScheduleMatch.matchedText);
+  }
+
+  const timeOfDayMatch = findTimeOfDayPhrase(working);
+  if (timeOfDayMatch) {
+    detected.preferredTimeOfDay = { period: timeOfDayMatch.period, matchedText: timeOfDayMatch.matchedText };
+    working = removeMatch(working, timeOfDayMatch.matchedText);
   }
 
   const depMatch = findDependencyPhrase(working, existingTasks);

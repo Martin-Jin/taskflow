@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '8.1.0',
+    date: '2026-08-22',
+    title: 'Tell it when you would rather do something',
+    changes: [
+      'A task can now prefer a part of the day — morning, afternoon or evening — and the scheduler will try to place its work there. Set it from the picker in a task’s details, or just type it: "write the report in the morning", "gym evenings".',
+      'It is a nudge, not a rule. The scheduler prefers the window you asked for but will still use another slot rather than leave work unplanned, and it will never spread a task across extra days just to chase a nicer hour.',
+      'AI Quick Add can set it too, when you actually say so — it will not guess a preference from the kind of task.',
+      'Note: a bare "Morning" in a title is left alone, so "Morning standup notes" stays a name rather than quietly becoming a scheduling instruction.',
+      'For now the preference is set when you create a task (or by typing it, or via AI). Changing it on a task you already made is coming separately.',
+    ],
+  },
+  {
     version: '8.0.1',
     date: '2026-08-22',
     title: 'Two small fixes',
