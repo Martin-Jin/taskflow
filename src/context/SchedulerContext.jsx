@@ -100,6 +100,7 @@ import {
   getAllDescendants,
 } from '../utils/taskHierarchy';
 import { planPostponeUpdate } from '../utils/rescheduleHistory';
+import { planTemplateInstantiation } from '../utils/taskTemplates';
 import {
   fetchTasks as fetchTodoistTasks,
   fetchSections as fetchTodoistSections,
@@ -682,6 +683,17 @@ export function SchedulerProvider({ children }) {
      entry with a matching path in every sync function. */
   const [savedViews, setSavedViews, setSavedViewsRaw] = useLocalEditTrackedState(
     usePersistedState('savedViews', []),
+    localNonUndoEditIdRef
+  );
+
+  /* Reusable shapes of work (see utils/taskTemplates.js). Synced for the same
+     reason savedViews is — a template someone built by hand is data, not a UI
+     preference — so it carries a BACKUP_FIELDS entry and a path through every
+     sync function. Bounded at both levels (MAX_TEMPLATES, and
+     MAX_TEMPLATE_TASKS per template) rather than time-pruned: a named template
+     is meant to be kept until deleted. */
+  const [taskTemplates, setTaskTemplates, setTaskTemplatesRaw] = useLocalEditTrackedState(
+    usePersistedState('taskTemplates', []),
     localNonUndoEditIdRef
   );
 
@@ -1273,6 +1285,7 @@ export function SchedulerProvider({ children }) {
       notes,
       shortcutBindings,
       savedViews,
+      taskTemplates,
       sharedProjectIds,
     }),
     [
@@ -1290,6 +1303,7 @@ export function SchedulerProvider({ children }) {
       notes,
       shortcutBindings,
       savedViews,
+      taskTemplates,
       sharedProjectIds,
     ]
   );
@@ -1403,6 +1417,7 @@ export function SchedulerProvider({ children }) {
     setNotes: setNotesRaw,
     setShortcutBindings: setShortcutBindingsRaw,
     setSavedViews: setSavedViewsRaw,
+    setTaskTemplates: setTaskTemplatesRaw,
     setSharedProjectIds: setSharedProjectIdsRaw,
     theme,
     setTheme,
@@ -1726,6 +1741,103 @@ export function SchedulerProvider({ children }) {
       return newTask;
     },
     [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects, sharedProjects, user]
+  );
+
+  /**
+   * Creates every task in a template instantiation as ONE transaction (see
+   * utils/taskTemplates.js).
+   *
+   * Not a loop over addTask, and that's the whole reason this exists. addTask
+   * is safe to call repeatedly — its commit is in function form — but each call
+   * is its own undo entry and its own add sound, so instantiating an eight-task
+   * template would leave the user pressing Ctrl+Z eight times to take it back
+   * and hearing eight chimes on the way in. Instantiating a template is one
+   * user action, so the creation is one history entry.
+   *
+   * "One entry" is not the same as "one Ctrl+Z", and that's pre-existing: the
+   * debounced rebalance this queues afterwards commits its own entry, exactly
+   * as it does for a single addTask with a due date, so undoing a fresh
+   * instantiation takes two presses — one for the re-plan, one for the tasks.
+   * Not worked around here; how rebalance interacts with history is a
+   * cross-cutting question and this is not the place to answer it.
+   *
+   * The plan arrives with ids already assigned and parent/dependency
+   * references already resolved between them (planTemplateInstantiation), so
+   * this only has to run each task through the same buildNewTaskObject
+   * defaults and shared-project tagging addTask applies, then commit the lot.
+   *
+   * Owns the planning step too (rather than taking a pre-built plan) so id
+   * generation never leaks out of this file — the plan's parent and dependency
+   * references are real task ids, and those have to come from the same
+   * generateLocalId sequence every other creation path uses.
+   *
+   * @param {object} template - a saved template (see utils/taskTemplates.js)
+   * @param {{anchorDate: string|null, projectId?: string|null, sectionId?: string|null}} options
+   * @returns {object[]} the created tasks
+   */
+  const instantiateTemplate = useCallback(
+    (template, options) => {
+      const plannedTasks = planTemplateInstantiation(
+        template,
+        { ...options, validLabelIds: new Set(labels.map((l) => l.id)) },
+        () => generateLocalId('task')
+      );
+      if (!plannedTasks || plannedTasks.length === 0) return [];
+      const templateName = template?.name || 'template';
+
+      // Same viewer refusal as addTask, checked once for the whole batch since
+      // every task in an instantiation lands in the same project.
+      const targetProjectId = plannedTasks[0].projectId;
+      const owningProject = targetProjectId ? projects.find((p) => p.id === targetProjectId) : null;
+      if (owningProject?.sharedProjectId) {
+        const role = computeEffectiveRole(sharedProjects[owningProject.sharedProjectId], user?.uid);
+        if (role === 'viewer') {
+          throw new Error('Adding tasks needs edit access on this project — ask the owner for editor access.');
+        }
+      }
+
+      const created = plannedTasks.map((planned) => {
+        // `id` is already decided (the plan's own references point at it), so
+        // it's passed through rather than generated here.
+        const { id, ...input } = planned;
+        const built = buildNewTaskObject(input, id);
+        // Preserve the plan's resolved references: buildNewTaskObject defaults
+        // `dependsOn` to [] and knows nothing of parentId, and sanitizeNewTaskFields
+        // would drop a dependency id it can't see in isolation.
+        const withRefs = { ...built, dependsOn: planned.dependsOn || [] };
+        if (planned.parentId) withRefs.parentId = planned.parentId;
+        return owningProject?.sharedProjectId
+          ? { ...withRefs, sharedProjectId: owningProject.sharedProjectId }
+          : withRefs;
+      });
+
+      commit((current) => {
+        const nextTasks = [...current.tasks, ...created];
+        // Same two cascades addTask runs, for the same reasons — a template's
+        // tasks can land under an enforcing ancestor if the chosen project
+        // already has one, and the parent/child recurrence invariant has to
+        // hold for a freshly-created subtree too.
+        const recurrenceSyncUpdates = computeRecurrenceSyncUpdates(nextTasks);
+        const enforceDueDateSyncUpdates = reanchorRecurringEnforceDueDateUpdates(
+          nextTasks,
+          computeEnforceDueDateSyncUpdates(nextTasks)
+        );
+        const syncedTasks =
+          recurrenceSyncUpdates.size === 0 && enforceDueDateSyncUpdates.size === 0
+            ? nextTasks
+            : nextTasks.map((t) => ({
+                ...t,
+                ...recurrenceSyncUpdates.get(t.id),
+                ...enforceDueDateSyncUpdates.get(t.id),
+              }));
+        return { tasks: syncedTasks, blocks: current.blocks };
+      }, `Created ${created.length} task${created.length === 1 ? '' : 's'} from "${templateName}"`);
+
+      if (soundEnabled) playAddSound(soundVolume);
+      if (created.some((t) => t.dueDate) && rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
+      return created;
+    },
+    [commit, soundEnabled, soundVolume, queueDueDateRebalance, rules.autoRescheduleEnabled, projects, sharedProjects, user, labels]
   );
 
   /**
@@ -3903,6 +4015,9 @@ export function SchedulerProvider({ children }) {
       setShortcutBindings,
       savedViews,
       setSavedViews,
+      taskTemplates,
+      setTaskTemplates,
+      instantiateTemplate,
       setSearchQuery,
       undo,
       redo,
@@ -4010,6 +4125,9 @@ export function SchedulerProvider({ children }) {
       shortcutBindings,
       savedViews,
       setSavedViews,
+      taskTemplates,
+      setTaskTemplates,
+      instantiateTemplate,
       undo,
       redo,
       runRebalance,

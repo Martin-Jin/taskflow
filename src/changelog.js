@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.8.0',
+    date: '2026-08-22',
+    title: 'Save a whole shape of work, not just one task',
+    changes: [
+      'Any task with sub-tasks can now be saved as a template from its “⋯” menu — the sub-tasks, their estimates, their dependencies, and the spacing between their due dates. Recurrence handled “this task, again”; nothing handled “this whole process, again”, so a repeating piece of work had to be rebuilt by hand every time.',
+      'Due dates are stored as spacing rather than fixed dates, so a template you captured in March works in September. Pick a start date when you use one and the first task lands there, with everything else keeping its original gaps — the modal tells you the resulting date range before it creates anything.',
+      'Use one with “New from template” in the command palette (Ctrl+K), where you also choose which project the new tasks go into and delete templates you’re done with. Templates sync and back up like everything else; you can keep up to 30.',
+    ],
+  },
+  {
     version: '8.7.0',
     date: '2026-08-22',
     title: 'TaskFlow now notices when you keep pushing something',

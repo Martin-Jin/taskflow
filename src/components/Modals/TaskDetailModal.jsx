@@ -79,6 +79,7 @@ import {
   Trash2,
   Link as LinkIcon,
   Sparkles,
+  FileStack,
   Timer,
   Pause,
   Play,
@@ -142,6 +143,7 @@ import {
   computeEnforcingAncestor,
 } from '../../utils/taskValidation';
 import SmartParseGuideModal from './SmartParseGuideModal';
+import SaveTemplateModal from './SaveTemplateModal';
 import CommentThread from './TaskDetail/CommentThread';
 import SubtaskList from './TaskDetail/SubtaskList';
 import DetailSidebar from './TaskDetail/DetailSidebar';
@@ -214,6 +216,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     setNotification,
     sharedProjects,
     viewersByProject,
+    taskTemplates,
+    setTaskTemplates,
   } = useScheduler();
 
   // Which task this modal instance currently displays. Starts as the task it
@@ -339,6 +343,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // it's a small follow-up to the pause action, not a separate flow.
   const [pauseLogPrompt, setPauseLogPrompt] = useState(null);
   const [showSmartParseGuide, setShowSmartParseGuide] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [notesLinkMatches, setNotesLinkMatches] = useState(() => getInitialNoteLinks(task));
   const [isNotesFocused, setIsNotesFocused] = useState(false);
 
@@ -2121,6 +2126,21 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                         </button>
                       </li>
 
+                      <li role="none">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="detail-menu-item"
+                          onClick={() => {
+                            setShowSaveTemplate(true);
+                            setMenuOpen(false);
+                          }}
+                        >
+                          <FileStack size={14} aria-hidden="true" />
+                          Save as template
+                        </button>
+                      </li>
+
                       <li role="none" className="detail-menu-divider" />
 
                       {dependencyOptions.length > 0 && (
@@ -2497,6 +2517,20 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       </Modal>
 
       {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
+      {showSaveTemplate && (
+        <SaveTemplateModal
+          rootTask={task}
+          /* The whole subtree, root first — getAllDescendants' order is
+             unspecified, so buildTemplateFromTasks re-layers it itself. */
+          subtreeTasks={[task, ...getAllDescendants(task.id, tasks)]}
+          existingTemplates={taskTemplates}
+          onSave={(template) => {
+            setTaskTemplates((prev) => [...prev, template]);
+            setNotification({ type: 'success', message: `Saved "${template.name}" as a template.` });
+          }}
+          onClose={() => setShowSaveTemplate(false)}
+        />
+      )}
     </>
   );
 }

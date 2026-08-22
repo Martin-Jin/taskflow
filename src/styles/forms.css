@@ -2508,3 +2508,65 @@
   color: var(--color-danger);
 }
 
+
+/* ----------------------------------------------------------------------
+   Template picker (NewFromTemplateModal) — a radio list where each row is
+   also the delete target. Space and tone separate the rows rather than
+   dividers (direction rule 1), and the selected row is marked by its
+   surface, not a border, so selecting one doesn't shift the layout.
+   ---------------------------------------------------------------------- */
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Bounded so a full 30-template list scrolls inside the modal instead of
+     pushing the date/project fields and the Create button off-screen. */
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: var(--space-4);
+}
+
+.template-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  padding-right: 4px;
+}
+
+.template-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.template-row.is-selected {
+  background: var(--color-accent-soft);
+}
+
+.template-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  background: none;
+  border: none;
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.template-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Overrides .form-hint's own block margins — it's an inline meta line here,
+   not a paragraph under a field. */
+.template-row-meta {
+  margin: 0;
+}
