@@ -37,6 +37,17 @@
  * missing a bar, rather than looking like a bug. Tasks whose dependencies
  * are met but simply haven't been through Re-balance yet still don't show
  * (nothing has been decided about them), matching the existing behavior.
+ *
+ * Dependencies are ALSO drawn, as elbow connectors from a prerequisite's bar
+ * end to its dependent's bar start — the arrow is what makes a chain visible,
+ * and finding the one task holding up five others is the question a Gantt is
+ * usually open to answer. The geometry is MEASURED off the rendered bars
+ * (see the useEffect below) rather than recomputed from offsets: bars are
+ * positioned in percentages of a track whose width depends on the horizontal
+ * scroll container, and row heights vary (a sub-task row carries an extra
+ * subtitle line), so duplicating that maths here would be a second source of
+ * truth that silently drifts. An edge whose prerequisite has no row at all
+ * (unscheduled, or outside the 28-day horizon) is simply not drawn.
  * ============================================================================
  */
 
@@ -57,8 +68,36 @@ import {
 import HoverPreviewCard from '../Calendar/HoverPreviewCard';
 
 const HORIZON_DAYS = 28;
+// How far a connector runs horizontally out of a bar before turning. Also the
+// per-edge stagger when one task has several prerequisites, so their vertical
+// segments don't land on top of each other.
+const CONNECTOR_ELBOW_PX = 9;
 const LABEL_COL_WIDTH_DESKTOP = 220;
 const LABEL_COL_WIDTH_MOBILE = 140;
+
+/**
+ * Elbow path for one dependency connector, in grid pixel coordinates.
+ *
+ * The normal case runs right out of the prerequisite, turns once vertically,
+ * and arrives at the dependent's left edge. The scheduler orders dependents
+ * after their prerequisites, so that's what usually applies — but it isn't
+ * guaranteed on screen: a manually-dragged block, or an overdue task whose bar
+ * is stretched to its due date, can leave the dependent starting to the LEFT
+ * of where its prerequisite ends. A single elbow would then double back
+ * through both bars, so that case routes around the outside instead.
+ */
+function connectorPath({ x1, y1, x2, y2, stagger }) {
+  const out = CONNECTOR_ELBOW_PX + stagger;
+  if (x2 >= x1 + out * 2) {
+    const turn = x1 + out;
+    return `M ${x1} ${y1} H ${turn} V ${y2} H ${x2}`;
+  }
+  // Route around: out of the prerequisite, vertically to halfway between the
+  // two rows, back to just before the dependent, then in.
+  const midY = (y1 + y2) / 2;
+  const back = x2 - out;
+  return `M ${x1} ${y1} H ${x1 + out} V ${midY} H ${back} V ${y2} H ${x2}`;
+}
 
 export default function GanttChart({ activeProjectId, filter = 'all' }) {
   const { tasks, blocks, projects, runRebalance, isLoading } = useScheduler();
@@ -73,6 +112,10 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
   // same delayed-show/cancel pattern as WeekView's own hoverPreview state.
   const [hoverPreview, setHoverPreview] = useState(null);
   const hoverTimer = useRef(null);
+  // Rendered bar element per task id, and the grid they're measured against —
+  // both consumed by the dependency-connector effect further down.
+  const barRefs = useRef(new Map());
+  const gridRef = useRef(null);
   function scheduleHoverPreview(rect, content) {
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setHoverPreview({ rect, ...content }), 350);
@@ -150,6 +193,62 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
       .filter(Boolean);
   }, [activeTasks, blocksByTaskId, taskById, today]);
 
+  /* Dependency connectors. `barRefs` collects the rendered bar element per
+     task id (populated by the ref callbacks below); this then measures them
+     relative to the grid, so the paths come from real layout rather than a
+     re-derivation of the percentage positioning. Re-measured on any resize of
+     the grid, which covers window resize, the label column changing width at
+     the mobile breakpoint, and rows appearing/disappearing. */
+  const [connectors, setConnectors] = useState([]);
+
+  /* Stable-per-render ref callback keyed by task id. Deletes on unmount so a
+     task that stops having a row can't leave a detached node behind for the
+     measurement pass to read stale geometry from. */
+  function registerBar(taskId) {
+    return (el) => {
+      if (el) barRefs.current.set(taskId, el);
+      else barRefs.current.delete(taskId);
+    };
+  }
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return undefined;
+
+    function measure() {
+      const gridRect = grid.getBoundingClientRect();
+      const next = [];
+      for (const { task } of rows) {
+        const toEl = barRefs.current.get(task.id);
+        if (!toEl) continue;
+        const deps = task.dependsOn || [];
+        deps.forEach((depId, i) => {
+          const fromEl = barRefs.current.get(depId);
+          // No row for the prerequisite (unscheduled, completed-and-skipped,
+          // or off-horizon) means there is nothing to draw from.
+          if (!fromEl) return;
+          const from = fromEl.getBoundingClientRect();
+          const to = toEl.getBoundingClientRect();
+          next.push({
+            id: `${depId}->${task.id}`,
+            x1: from.right - gridRect.left,
+            y1: from.top + from.height / 2 - gridRect.top,
+            x2: to.left - gridRect.left,
+            y2: to.top + to.height / 2 - gridRect.top,
+            // Stagger only matters when a task has more than one prerequisite.
+            stagger: deps.length > 1 ? i * 4 : 0,
+          });
+        });
+      }
+      setConnectors(next);
+    }
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, [rows, labelColWidth]);
+
   if (rows.length === 0) {
     return (
       <div className="card gantt-empty-state">
@@ -184,7 +283,7 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
         </div>
       </div>
 
-      <div className="gantt-grid">
+      <div className="gantt-grid" ref={gridRef}>
         {rows.map(({ task, firstDate, lastDate, hoursByDate, blocked, waitingOn }) => {
           const startOffset = Math.max(0, diffDays(today, firstDate));
           const endOffset = Math.min(HORIZON_DAYS - 1, diffDays(today, lastDate));
@@ -237,6 +336,7 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
                 </div>
                 {blocked ? (
                   <div
+                    ref={registerBar(task.id)}
                     className="gantt-bar gantt-bar-blocked"
                     style={{
                       left: `${(startOffset / HORIZON_DAYS) * 100}%`,
@@ -247,6 +347,7 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
                   />
                 ) : (
                   <div
+                    ref={registerBar(task.id)}
                     className={`gantt-bar ${task.isPassive ? 'gantt-bar-passive' : ''}`}
                     style={{
                       left: `${(startOffset / HORIZON_DAYS) * 100}%`,
@@ -260,6 +361,28 @@ export default function GanttChart({ activeProjectId, filter = 'all' }) {
             </div>
           );
         })}
+        {connectors.length > 0 && (
+          <svg className="gantt-connectors" aria-hidden="true">
+            <defs>
+              {/* One shared arrowhead; `context-stroke` keeps it the same
+                  colour as the path without hardcoding a token here. */}
+              <marker
+                id="gantt-dep-arrow"
+                viewBox="0 0 6 6"
+                refX="5"
+                refY="3"
+                markerWidth="5"
+                markerHeight="5"
+                orient="auto-start-reverse"
+              >
+                <path d="M0,0 L6,3 L0,6 z" fill="context-stroke" />
+              </marker>
+            </defs>
+            {connectors.map((c) => (
+              <path key={c.id} d={connectorPath(c)} markerEnd="url(#gantt-dep-arrow)" />
+            ))}
+          </svg>
+        )}
         <div
           className="gantt-bar-today-line"
           style={{ left: `${labelColWidth}px`, top: 0, bottom: 0 }}

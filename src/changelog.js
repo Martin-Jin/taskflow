@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '7.6.0',
+    date: '2026-08-22',
+    title: 'Share into TaskFlow, and see your dependencies',
+    changes: [
+      'TaskFlow now shows up in your phone\u2019s share sheet once installed. Send it a link, a paragraph, or a page you\u2019re reading and it opens a new task \u2014 parsed the same way as if you had typed it, so "call the dentist tomorrow p2" arrives with the date and priority already filled in, and a shared link becomes the task\u2019s link.',
+      'Long-pressing the installed app icon now offers "Add task" and "Add note" directly.',
+      'The Gantt view draws dependency arrows. It always knew which task was waiting on which \u2014 it just made you read it \u2014 so a chain of work, and the one task holding up several others, now reads at a glance.',
+    ],
+  },
+  {
     version: '7.5.1',
     date: '2026-08-22',
     title: 'The install banner stops hiding the bottom of the page',

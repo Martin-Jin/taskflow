@@ -28,6 +28,20 @@ with the exact steps for their platform; it's also always available from
 for the underlying setup and `src/utils/installPrompt.js` for how the
 Android/Chrome native install prompt is captured and re-triggered.
 
+Installing also wires up two shortcuts into the app from outside it:
+
+- **Share to TaskFlow.** TaskFlow appears in your phone's share sheet, so a
+  link, a selection of text, or a page you're reading can be sent straight
+  into a new task. The shared text goes through the same natural-language
+  parsing as typing it yourself (see [Smart task titles](#smart-task-titles)),
+  so sharing "call the dentist tomorrow p2" arrives with its due date and
+  priority already detected, and a shared URL becomes the task's link. A long
+  block of shared text lands in the notes field instead of becoming an unwieldy
+  title.
+- **Home-screen shortcuts.** Long-pressing the installed icon offers
+  **Add task** and **Add note** directly, skipping the trip through the app's
+  own navigation.
+
 This is a manifest-only PWA — there is deliberately **no service worker**
 (nothing under `navigator.serviceWorker`, no Workbox/`vite-plugin-pwa`).
 Installing just gives a chrome-less launch icon; there's no offline caching
@@ -153,6 +167,11 @@ sub-tasks gets no row of its own — each sub-task gets its own row
 instead, with the parent named as a subtitle), bar spans from first
 scheduled block to due date, colored by priority; blocked tasks get a
 hollow dashed marker, passive tasks get a striped overlay.
+
+Dependencies are drawn as arrows from a prerequisite's bar to the bar of
+whatever is waiting on it, so a chain — and the one task holding up several
+others — reads at a glance. A prerequisite that has no bar of its own (not
+scheduled, or outside the 4-week horizon) simply has no arrow to draw.
 
 ## Projects
 

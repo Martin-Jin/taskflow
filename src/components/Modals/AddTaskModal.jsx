@@ -79,15 +79,21 @@ import SmartParseGuideModal from './SmartParseGuideModal';
 
 const DEFAULT_ESTIMATED_HOURS = 5 / 60; // 5 minutes
 
-export default function AddTaskModal({ onClose, initialProjectId = '', initialSectionId = '' }) {
+export default function AddTaskModal({ onClose, initialProjectId = '', initialSectionId = '', initialTitle = '', initialNotes = '' }) {
   const { addTask, tasks, sections, projects, sharedProjects, labels, getOrCreateLabelIds } = useScheduler();
   const { user } = useAuth();
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const modalRef = useModalA11y(requestClose);
 
-  const [title, setTitle] = useState('');
+  /* initialTitle/initialNotes carry content shared into the app from
+     elsewhere (the PWA share target — see App.jsx's useSharedContentIntent).
+     Seeding `title` state rather than bypassing it means smart-parse runs over
+     the shared text exactly as if it had been typed, so a shared "call dentist
+     tomorrow p2" arrives with its date/priority chips already detected, and a
+     shared URL is lifted into the `link` field. */
+  const [title, setTitle] = useState(initialTitle);
   const [link, setLink] = useState('');
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(initialNotes);
   const notesRef = useRef(null);
   useAutosizeTextarea(notesRef, notes, { maxLines: 3 });
   const [estimatedHours, setEstimatedHours] = useState(DEFAULT_ESTIMATED_HOURS);
