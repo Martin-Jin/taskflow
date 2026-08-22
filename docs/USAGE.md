@@ -142,6 +142,20 @@ calendar yourself. Making
 a task recurring automatically makes its parent (or sub-tasks) recurring
 too, since they represent the steps toward the same repeating goal — no
 need to set it on both sides yourself.
+**Templates** — a task with sub-tasks can be saved as a reusable *shape of
+work* from its "⋯" menu ("Save as template"): the sub-tasks, their estimates,
+their dependencies and their relative spacing. Due dates are stored as
+**offsets, not fixed dates**, so a template captured in March works just as
+well in September — you pick a start date each time you use one, the earliest
+task lands on it, and everything else keeps its original spacing. Reach for a
+saved template with "New from template" in the command palette (`Ctrl+K`),
+which is also where you delete ones you no longer want.
+
+Not captured: the project (you choose one per use, so a template works across
+projects), recurrence, comments, and anything already scheduled or completed.
+Templates sync and back up with the rest of your data. You can keep up to 30,
+each holding up to 100 tasks.
+
 **"Pushed N×"** — if you move a task's due date to a later date three or more
 times, the row (and its Board card) picks up a quiet amber badge counting the
 pushes, with the date of the most recent one on hover. It's the app's only

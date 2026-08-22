@@ -215,6 +215,7 @@ export function computeFingerprint(source) {
     notes: source.notes,
     shortcutBindings: source.shortcutBindings,
     savedViews: source.savedViews,
+    taskTemplates: source.taskTemplates,
     sharedProjectIds: source.sharedProjectIds,
   };
   return canonicalStringify(relevant);
@@ -593,6 +594,9 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
   if ('savedViews' in remoteData) {
     plan.savedViews = pickValid('savedViews', remoteData.savedViews, localState.savedViews);
   }
+  if ('taskTemplates' in remoteData) {
+    plan.taskTemplates = pickValid('taskTemplates', remoteData.taskTemplates, localState.taskTemplates);
+  }
   if ('sharedProjectIds' in remoteData) {
     plan.sharedProjectIds = pickValid('sharedProjectIds', remoteData.sharedProjectIds, localState.sharedProjectIds);
   }
@@ -644,7 +648,7 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/soundEnabled/soundVolume/
  *   animationsEnabled/notificationSettings/notes/shortcutBindings/savedViews/
- *   sharedProjectIds) — a plain object recomputed whenever any of those
+ *   taskTemplates/sharedProjectIds) — a plain object recomputed whenever any of those
  *   fields changes, purely so the push-scheduling effect below has
  *   something to depend on. Deliberately excludes `events` — see
  *   backupService.js's BACKUP_FIELDS doc comment.
@@ -683,6 +687,7 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  * @param {Function} deps.setNotes - RAW/untracked setter for notes
  * @param {Function} deps.setShortcutBindings - RAW/untracked setter for shortcutBindings
  * @param {Function} deps.setSavedViews - RAW/untracked setter for savedViews
+ * @param {Function} deps.setTaskTemplates - RAW/untracked setter for taskTemplates
  * @param {Function} deps.setSharedProjectIds - RAW/untracked setter for sharedProjectIds
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
@@ -743,6 +748,7 @@ export function useCloudSync({
   setNotes,
   setShortcutBindings,
   setSavedViews,
+  setTaskTemplates,
   setSharedProjectIds,
   theme,
   setTheme,
@@ -1171,6 +1177,7 @@ export function useCloudSync({
       savePersisted('shortcutBindings', plan.shortcutBindings);
     }
     if ('savedViews' in plan) setSavedViews(plan.savedViews);
+    if ('taskTemplates' in plan) setTaskTemplates(plan.taskTemplates);
     if ('sharedProjectIds' in plan) setSharedProjectIds(plan.sharedProjectIds);
 
     // Did the per-task merge actually produce a task set different from what
@@ -1232,6 +1239,8 @@ export function useCloudSync({
     setNotificationSettings,
     setNotes,
     setShortcutBindings,
+    setSavedViews,
+    setTaskTemplates,
     setSharedProjectIds,
   ]);
 
@@ -1282,6 +1291,9 @@ export function useCloudSync({
     if ('savedViews' in payload) {
       setSavedViews(pickValid('savedViews', payload.savedViews, stateRef.current.savedViews));
     }
+    if ('taskTemplates' in payload) {
+      setTaskTemplates(pickValid('taskTemplates', payload.taskTemplates, stateRef.current.taskTemplates));
+    }
     if ('sharedProjectIds' in payload) {
       setSharedProjectIds(pickValid('sharedProjectIds', payload.sharedProjectIds, stateRef.current.sharedProjectIds));
     }
@@ -1301,6 +1313,8 @@ export function useCloudSync({
     theme,
     setNotes,
     setShortcutBindings,
+    setSavedViews,
+    setTaskTemplates,
     setSharedProjectIds,
     events,
     setEvents,

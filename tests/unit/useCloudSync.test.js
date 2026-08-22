@@ -134,6 +134,7 @@ describe('isValidBackupPayload', () => {
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
     savedViews: [],
+    taskTemplates: [],
     events: [],
     sharedProjectIds: [],
   };

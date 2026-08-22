@@ -67,10 +67,12 @@ import {
   Search,
   Sparkles,
   StickyNote,
+  FileStack,
 } from 'lucide-react';
 import { useAIQuickAddGate } from './hooks/useAIQuickAddGate';
 import AIQuickAddModal from './components/Modals/AIQuickAddModal';
 import NoteEditorModal from './components/Modals/NoteEditorModal';
+import NewFromTemplateModal from './components/Modals/NewFromTemplateModal';
 import AddTaskModal from './components/Modals/AddTaskModal';
 import { useNoteMutations } from './hooks/useNoteMutations';
 import { useSharedContentIntent } from './hooks/useSharedContentIntent';
@@ -155,6 +157,7 @@ function AppShell() {
   // DashboardPage's widget toggles), and the palette shouldn't silently do
   // nothing just because it is.
   const [showStandaloneNoteEditor, setShowStandaloneNoteEditor] = useState(false);
+  const [showNewFromTemplate, setShowNewFromTemplate] = useState(false);
   const { createNote: createNoteFromPalette } = useNoteMutations();
 
   /* Content shared into the app from outside it (the PWA share target) or a
@@ -200,6 +203,9 @@ function AppShell() {
     schedulingConflicts,
     schedulingConflictsModalOpen,
     setSchedulingConflictsModalOpen,
+    taskTemplates,
+    setTaskTemplates,
+    instantiateTemplate,
   } = useScheduler();
 
   // Shared by the sidebar, List view, and Board view — selecting a project
@@ -410,6 +416,9 @@ function AppShell() {
         ]
       : []),
     { id: 'addNote', label: 'Add note', icon: StickyNote, run: () => setShowStandaloneNoteEditor(true) },
+    // Listed unconditionally, unlike the AI entry above: with no templates saved
+    // the modal explains how to make one, which is the only place that's taught.
+    { id: 'newFromTemplate', label: 'New from template', icon: FileStack, run: () => setShowNewFromTemplate(true) },
     { id: 'rebalance', label: 'Re-balance schedule', run: runRebalance },
     { id: 'toggleTheme', label: 'Toggle light/dark theme', run: toggleTheme },
     { id: 'manageProjects', label: 'Manage projects', run: () => openManageProjects() },
@@ -621,6 +630,25 @@ function AppShell() {
         <NoteEditorModal
           onCreate={(title, body) => createNoteFromPalette(title, body)}
           onClose={() => setShowStandaloneNoteEditor(false)}
+        />
+      )}
+      {showNewFromTemplate && (
+        <NewFromTemplateModal
+          templates={taskTemplates}
+          projects={projects}
+          /* The pseudo-projects (All Tasks / Inbox) aren't real destinations,
+             so they fall back to Inbox rather than being preselected. */
+          activeProjectId={projects.some((p) => p.id === activeProjectId) ? activeProjectId : ''}
+          onInstantiate={(template, options) => {
+            const created = instantiateTemplate(template, options);
+            setTab('tasks');
+            setNotification({
+              type: 'success',
+              message: `Created ${created.length} task${created.length === 1 ? '' : 's'} from "${template.name}".`,
+            });
+          }}
+          onDeleteTemplate={(id) => setTaskTemplates((prev) => prev.filter((t) => t.id !== id))}
+          onClose={() => setShowNewFromTemplate(false)}
         />
       )}
       {sharedIntent?.kind === 'task' && (

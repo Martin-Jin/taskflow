@@ -1737,3 +1737,137 @@ test.describe('Postponement counter', () => {
     expectNoErrors(errors);
   });
 });
+
+test.describe('Task templates', () => {
+  /**
+   * The round trip is the assertion. A template stores due dates as day
+   * OFFSETS and parent/dependency links as template-local ids, so the thing
+   * that can silently break is a reference: a rebuilt task pointing at the
+   * ORIGINAL task instead of its new sibling produces a plausible-looking tree
+   * that's quietly wrong, with no error anywhere.
+   */
+  test('saves a subtree as a template, then rebuilds it around a new start date', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    // Seeded directly: building the shape through the UI would be a test of
+    // sub-task creation and date editing, both covered elsewhere in this file.
+    await page.evaluate(() => {
+      const key = 'taskflow:v1:tasks';
+      const all = JSON.parse(localStorage.getItem(key) || '[]');
+      const base = {
+        isCompleted: false, isLocked: false, estimatedHours: 1, remainingHours: 1, priority: 'medium',
+        dependsOn: [], minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      all.push(
+        { ...base, id: 'tplsrc_root', title: 'TPLSRC Ship it', dueDate: '2027-03-01' },
+        { ...base, id: 'tplsrc_draft', title: 'TPLSRC Draft notes', dueDate: '2027-03-04', parentId: 'tplsrc_root' },
+        { ...base, id: 'tplsrc_review', title: 'TPLSRC Review notes', dueDate: '2027-03-11', parentId: 'tplsrc_root', dependsOn: ['tplsrc_draft'] }
+      );
+      localStorage.setItem(key, JSON.stringify(all));
+    });
+    await page.reload();
+    await gotoTab(page, 'Tasks');
+    await page.waitForTimeout(600);
+
+    await searchAndOpen(page, 'TPLSRC Ship it');
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.waitForTimeout(200);
+    await page.getByRole('menuitem', { name: /save as template/i }).click();
+    // The preview states the span before committing — 1 to 11 March inclusive.
+    await expect(page.getByText(/3 tasks over 11 days/)).toBeVisible();
+    await page.getByRole('button', { name: 'Save template', exact: true }).click();
+    await page.waitForTimeout(500);
+    await closeAnyModal(page);
+    await page.getByPlaceholder(/search tasks/i).fill('');
+
+    // Stored as offsets, with no absolute date that would pin it to March.
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:taskTemplates') || '[]'));
+    expect(stored).toHaveLength(1);
+    expect(stored[0].tasks.map((t) => t.dueDayOffset).sort((a, b) => a - b)).toEqual([0, 3, 10]);
+    expect(JSON.stringify(stored[0])).not.toContain('2027-03');
+
+    // Instantiate from the command palette against a different start date.
+    await page.evaluate(() => document.activeElement?.blur?.());
+    await page.keyboard.press('Control+K');
+    const palette = page.getByRole('dialog', { name: 'Command palette' });
+    await expect(palette).toBeVisible();
+    await page.getByLabel('Command palette search').fill('template');
+    await page.waitForTimeout(300);
+    await palette.getByRole('option', { name: 'New from template' }).click();
+    await page.waitForTimeout(400);
+
+    await page.locator('.modal input[type="date"]').first().fill('2027-09-06');
+    await page.waitForTimeout(300);
+    await expect(page.getByText(/first task is due.*Sep 6.*last.*Sep 16/)).toBeVisible();
+    await page.getByRole('button', { name: 'Create 3 tasks', exact: true }).click();
+    await page.waitForTimeout(900);
+
+    // The rebuilt shape: same spacing, and every reference pointing at the NEW
+    // tasks rather than the originals.
+    const rebuilt = await page.evaluate(() => {
+      const all = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]');
+      const byId = new Map(all.map((t) => [t.id, t]));
+      return all
+        .filter((t) => t.title.startsWith('TPLSRC') && !t.id.startsWith('tplsrc_'))
+        .map((t) => ({
+          title: t.title,
+          dueDate: t.dueDate,
+          parent: t.parentId ? byId.get(t.parentId)?.title ?? 'MISSING' : null,
+          deps: (t.dependsOn || []).map((d) => byId.get(d)?.title ?? 'MISSING'),
+        }));
+    });
+    expect(rebuilt).toHaveLength(3);
+    const byTitle = Object.fromEntries(rebuilt.map((t) => [t.title, t]));
+    expect(byTitle['TPLSRC Ship it'].dueDate).toBe('2027-09-06');
+    expect(byTitle['TPLSRC Draft notes'].dueDate).toBe('2027-09-09');
+    expect(byTitle['TPLSRC Review notes'].dueDate).toBe('2027-09-16');
+    expect(byTitle['TPLSRC Draft notes'].parent).toBe('TPLSRC Ship it');
+    expect(byTitle['TPLSRC Ship it'].parent).toBeNull();
+    // The dependency must resolve to the NEW draft, not the seeded one.
+    expect(byTitle['TPLSRC Review notes'].deps).toEqual(['TPLSRC Draft notes']);
+
+    expectNoErrors(errors);
+  });
+
+  test('the picker explains how to make one when there are none, and lists them alphabetically', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    async function openPicker() {
+      await page.evaluate(() => document.activeElement?.blur?.());
+      await page.keyboard.press('Control+K');
+      const palette = page.getByRole('dialog', { name: 'Command palette' });
+      await expect(palette).toBeVisible();
+      await page.getByLabel('Command palette search').fill('template');
+      await page.waitForTimeout(300);
+      await palette.getByRole('option', { name: 'New from template' }).click();
+      await page.waitForTimeout(400);
+    }
+
+    // Empty state teaches the only route in — there is no other way to make one.
+    await openPicker();
+    await expect(page.getByText(/Save as template/)).toBeVisible();
+    await closeAnyModal(page);
+
+    await page.evaluate(() => {
+      localStorage.setItem('taskflow:v1:taskTemplates', JSON.stringify([
+        { id: 'b', name: 'Zebra process', createdAt: 2, tasks: [{ localId: 'z', title: 'Z', dueDayOffset: 0, parentLocalId: null, dependsOnLocalIds: [] }] },
+        { id: 'a', name: 'Aardvark process', createdAt: 1, tasks: [{ localId: 'a', title: 'A', dueDayOffset: null, parentLocalId: null, dependsOnLocalIds: [] }] },
+      ]));
+    });
+    await page.reload();
+    await gotoTab(page, 'Tasks');
+    await page.waitForTimeout(500);
+
+    await openPicker();
+    // Alphabetical, not by creation order — a list you search by name
+    // shouldn't reorder itself (same rule as saved views and the sidebar).
+    await expect(page.locator('.template-row-name')).toHaveText(['Aardvark process', 'Zebra process']);
+    // An undated template says so rather than implying dates it doesn't have.
+    await expect(page.getByText('1 task, no due dates')).toBeVisible();
+
+    expectNoErrors(errors);
+  });
+});
