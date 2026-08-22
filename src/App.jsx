@@ -511,7 +511,14 @@ function AppShell() {
             />
           )}
           {tab === 'stats' && <StatsDashboard />}
-          {tab === 'settings' && <SettingsPanel onOpenTour={openTour} settingsSectionRequest={settingsSectionRequest} />}
+          {tab === 'settings' && (
+            <SettingsPanel
+              onOpenTour={openTour}
+              settingsSectionRequest={settingsSectionRequest}
+              activeProjectId={activeProjectId}
+              onNavigateToTasks={() => setTab('tasks')}
+            />
+          )}
         </div>
       </main>
 

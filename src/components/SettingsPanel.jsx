@@ -17,6 +17,7 @@ import SchedulingSection from './Settings/sections/SchedulingSection';
 import RoutinesSection from './Settings/sections/RoutinesSection';
 import AppearanceSection from './Settings/sections/AppearanceSection';
 import TagsSection from './Settings/sections/TagsSection';
+import TemplatesSection from './Settings/sections/TemplatesSection';
 import NotificationsSection from './Settings/sections/NotificationsSection';
 import InstallAppSection from './Settings/sections/InstallAppSection';
 import HelpSection from './Settings/sections/HelpSection';
@@ -46,6 +47,7 @@ const SETTINGS_SECTIONS = [
   { id: 'routines', label: 'Fixed routines' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'tags', label: 'Tags' },
+  { id: 'templates', label: 'Templates' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'installApp', label: 'Install app' },
   { id: 'help', label: 'Help' },
@@ -56,7 +58,7 @@ const SETTINGS_SECTIONS = [
 ];
 
 /** @param {{ onOpenTour: () => void }} props — replays the app-level guided tour (see App.jsx), which needs to be able to switch tabs as it advances. */
-export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
+export default function SettingsPanel({ onOpenTour, settingsSectionRequest, activeProjectId, onNavigateToTasks }) {
   const isMobile = useIsMobile();
   // See SETTINGS_SECTIONS' own comment above for why installApp is excluded
   // here specifically (rail + search), not from SETTINGS_SECTIONS itself.
@@ -104,15 +106,31 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
   // is the one being read rather than whichever merely happens to be visible
   // — without it, a short card near the bottom of a tall viewport can win
   // over the one actually under the reader's eye.
+  //
+  // This band can only answer for a section that can actually be scrolled up
+  // into it, which the trailing cards couldn't until .settings-content grew a
+  // viewport's worth of bottom padding (see global.css). That padding is what
+  // makes this one rule enough — there used to be a second effect here that
+  // force-selected the LAST section once the container hit max scroll, which
+  // meant every section between the band's reach and the end (Versions,
+  // Backups) could never be highlighted at all.
   useEffect(() => {
     const elements = SETTINGS_SECTIONS.map((s) => sectionRefs.current[s.id]).filter(Boolean);
     if (elements.length === 0 || typeof IntersectionObserver === 'undefined') return undefined;
 
     const observer = new IntersectionObserver(
       (entries) => {
+        // The LAST section to have entered the band wins, not the first.
+        // Picking the topmost intersecting card looks right but isn't: a short
+        // card that merely extends down into the band (Help, at 121px) always
+        // has a smaller `top` than the card actually being scrolled to, so it
+        // won every comparison and "Keyboard shortcuts" could never become
+        // current. Largest `top` = most recently entered = what the reader has
+        // just arrived at, which is also what scrollIntoView('start') puts
+        // there.
         const visible = entries
           .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+          .sort((a, b) => b.boundingClientRect.top - a.boundingClientRect.top)[0];
         if (!visible) return;
         const id = SETTINGS_SECTIONS.find((s) => sectionRefs.current[s.id] === visible.target)?.id;
         if (id) setCurrentSection(id);
@@ -121,31 +139,6 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
     );
     elements.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  });
-
-  // The band above only ever asks "what's near the TOP of the viewport" —
-  // that geometrically can't answer for the trailing section(s) once the
-  // page has scrolled as far as it can and there's no more room below them
-  // to push their top up into that band (e.g. Danger Zone, the shortest,
-  // last card: the observed band sits at ~64-144px from the viewport top,
-  // but at max scroll its own top can still be several hundred px down).
-  // Rather than trying to out-tune the band for every possible content
-  // height, this is the direct fix: once the settings scroll container is
-  // at (or within a couple of rounding px of) its own max scroll position,
-  // the last section unconditionally wins — matching what a reader would
-  // actually call "current" once they've scrolled all the way down.
-  useEffect(() => {
-    const scrollEl = sectionRefs.current[SETTINGS_SECTIONS[0].id]?.closest('.main-content');
-    if (!scrollEl) return undefined;
-    const lastId = SETTINGS_SECTIONS[SETTINGS_SECTIONS.length - 1].id;
-
-    function handleScroll() {
-      const atBottom = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 2;
-      if (atBottom) setCurrentSection(lastId);
-    }
-    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll(); // covers landing already-scrolled (e.g. via settingsSectionRequest)
-    return () => scrollEl.removeEventListener('scroll', handleScroll);
   });
 
   return (
@@ -211,6 +204,11 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest }) {
           <RoutinesSection sectionRef={(el) => (sectionRefs.current.routines = el)} />
           <AppearanceSection sectionRef={(el) => (sectionRefs.current.appearance = el)} />
           <TagsSection sectionRef={(el) => (sectionRefs.current.tags = el)} />
+          <TemplatesSection
+            sectionRef={(el) => (sectionRefs.current.templates = el)}
+            activeProjectId={activeProjectId}
+            onNavigateToTasks={onNavigateToTasks}
+          />
           <NotificationsSection sectionRef={(el) => (sectionRefs.current.notifications = el)} />
           <InstallAppSection sectionRef={(el) => (sectionRefs.current.installApp = el)} />
           <HelpSection sectionRef={(el) => (sectionRefs.current.help = el)} onOpenTour={onOpenTour} />

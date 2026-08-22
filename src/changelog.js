@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.9.0',
+    date: '2026-08-22',
+    title: 'Templates you can actually find, and a fixed Settings rail',
+    changes: [
+      'Templates now have their own card in Settings, listing everything you’ve saved. Until now they were reachable only by pressing Ctrl+K, which meant a template you’d just saved was invisible unless you already knew the shortcut — saving one could feel like it had thrown the work away. The guided tour covers them now too, and mentions the command palette, which it never had.',
+      'Fixed the Settings rail skipping sections. Scrolling or clicking your way to Backups highlighted “Danger zone” instead, and the last few sections could never be marked as current at all — there was no page left to scroll them into view with. Every section now highlights correctly, including the last one.',
+      'Fixed the “Sound effects” toggle sitting flush against the light/dark switch in Appearance, with no gap where every other row has one.',
+    ],
+  },
+  {
     version: '8.8.0',
     date: '2026-08-22',
     title: 'Save a whole shape of work, not just one task',

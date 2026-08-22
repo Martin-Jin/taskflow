@@ -2335,6 +2335,23 @@ input.search-bar-input {
   flex-direction: column;
   gap: var(--space-5);
   min-width: 0;
+  /* TRAILING SCROLL ROOM, and it's load-bearing for the rail highlight.
+     The rail marks whichever section's top sits in a reading band near the
+     top of the viewport (see SettingsPanel's IntersectionObserver). A
+     section can only reach that band if there's enough content below it to
+     scroll it up there — so without this, the last two or three cards were
+     permanently unreachable: at max scroll their tops still sat hundreds of
+     px below the band, and clicking "Backups" in the rail scrolled to it
+     while lighting up "Danger zone" instead.
+     The room the final card needs is one viewport minus its own height minus
+     the band's 64px offset — 254 + 72 + a margin, hence 340. Measured, and
+     it lands the last card's top at 66px at every viewport height (the
+     padding scales with 100vh while the card height doesn't). The band is
+     ~96px deep, so the last card can grow or shrink by that much before this
+     needs revisiting; if Danger zone gains content, re-check that scrolling
+     to the bottom still highlights it. Making the rule uniform for every
+     section is the point — the tail used to be exempt from it. */
+  padding-bottom: calc(100vh - 340px);
 }
 
 /* Extra horizontal breathing room beyond the base .card's uniform 16px —
@@ -2346,6 +2363,14 @@ input.search-bar-input {
 .settings-card {
   padding-left: var(--space-6);
   padding-right: var(--space-6);
+  /* Clears the sticky settings search bar when the rail scrolls to a section,
+     and — less obviously — lines scrollIntoView up with the rail-highlight
+     band. That band starts 64px down (see SettingsPanel's rootMargin), but
+     scrollIntoView('start') parks the card's top at 0, i.e. ABOVE the band,
+     which put the NEXT card inside it instead: clicking "Help" highlighted
+     "Keyboard shortcuts". Landing just inside the band makes the clicked card
+     the one that's current. Keep this in step with that rootMargin. */
+  scroll-margin-top: 72px;
 }
 
 /* Deliberate breathing room above a card's own title, replacing the flat
@@ -2423,6 +2448,10 @@ h4 + .settings-hint {
 /* Vertical rhythm between consecutive toggle rows, replacing the assorted
    inline marginTop values (10px/12px) those rows carried individually. */
 .settings-toggle-row + .settings-toggle-row,
+/* ...and after the theme toggle, which is a control group rather than a
+   toggle row, so it matched none of the pairings below and left "Sound
+   effects" sitting flush against the Light/Dark pills. */
+.theme-toggle + .settings-toggle-row,
 /* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
    only carry a bottom margin, so a hint following a button row, a toggle, or
    a bare inline button ran flush into it. Every "control, then explanation"
