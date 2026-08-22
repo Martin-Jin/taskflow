@@ -1815,6 +1815,34 @@ input.search-bar-input {
   border-radius: var(--radius-md);
 }
 
+/* Operator vocabulary, shown only while the search input is focused and empty
+   (see SearchBar's showOperatorHint). Not a listbox option — it's static help,
+   so it sits outside the keyboard-navigable items. */
+.search-bar-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.search-bar-hint-label {
+  margin-right: 1px;
+}
+
+.search-bar-hint-token {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-bg-surface-hover);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
 .search-bar-dropdown {
   position: absolute;
   left: 0;

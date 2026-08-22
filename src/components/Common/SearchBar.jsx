@@ -47,9 +47,10 @@ import { Search, X, Folder, Tag, CheckSquare, Calendar } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { rankByNameSearch } from '../../utils/nameSearch';
+import { parseSearchQuery, taskMatchesParsedQuery, SEARCH_OPERATOR_HINTS } from '../../utils/searchQuery';
 import Badge from './Badge';
 
-export default function SearchBar({ placeholder = 'Search tasks, @tag, or a project…', onSelectProject, onSelectTask, onSelectEvent }) {
+export default function SearchBar({ placeholder = 'Search tasks, or filter with due:, p1, @tag…', onSelectProject, onSelectTask, onSelectEvent }) {
   const { searchQuery, setSearchQuery, projects, labels, tasks, events } = useScheduler();
   const [isFocused, setIsFocused] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
@@ -111,12 +112,12 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
   // one.
   const inTaskSuggestionMode = !activeWordIsProject && !activeWordIsTag && trimmedQuery.length > 0;
   const matchingTasks = inTaskSuggestionMode
-    ? tasks.filter((t) => (showCompleted || !t.isCompleted) && taskMatchesQuery(t, trimmedQuery, labels)).slice(0, 5)
+    ? tasks.filter((t) => (showCompleted || !t.isCompleted) && taskMatchesQuery(t, trimmedQuery, labels, projects)).slice(0, 5)
     : [];
   const hasHiddenCompletedMatches =
     !showCompleted &&
     inTaskSuggestionMode &&
-    tasks.some((t) => t.isCompleted && taskMatchesQuery(t, trimmedQuery, labels));
+    tasks.some((t) => t.isCompleted && taskMatchesQuery(t, trimmedQuery, labels, projects));
   // Master events only — matched the same way Tasks are (whole trimmed query,
   // same default-suggestion gating), never expanded into per-occurrence
   // results (see recurrenceExpansion.js's doc comment on expandRecurringEvent)
@@ -125,9 +126,16 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
   const matchingEvents = inTaskSuggestionMode
     ? events.filter((e) => eventMatchesQuery(e, trimmedQuery)).slice(0, 5)
     : [];
+  /* An empty focused input shows nothing but the operator hint (see the
+     dropdown below). Deliberately only when EMPTY: an operator language nobody
+     knows about is barely worth having, but a panel that reappears on every
+     keystroke that happens to match nothing would be noise. */
+  const showOperatorHint = isFocused && !searchQuery.trim();
+
   const showDropdown =
     isFocused &&
-    (matchingProjects.length > 0 ||
+    (showOperatorHint ||
+      matchingProjects.length > 0 ||
       matchingLabels.length > 0 ||
       matchingTasks.length > 0 ||
       matchingEvents.length > 0 ||
@@ -225,6 +233,16 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
 
       {showDropdown && (
         <div className="search-bar-dropdown" id="search-bar-listbox" role="listbox" ref={listRef}>
+          {showOperatorHint && (
+            <div className="search-bar-hint">
+              <span className="search-bar-hint-label">Filter with</span>
+              {SEARCH_OPERATOR_HINTS.map((hint) => (
+                <code key={hint} className="search-bar-hint-token">
+                  {hint}
+                </code>
+              ))}
+            </div>
+          )}
           {(matchingTasks.length > 0 || hasHiddenCompletedMatches) && (
             <div className="search-bar-dropdown-group">
               <div className="search-bar-dropdown-label">Tasks</div>
@@ -353,11 +371,12 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
 
 /**
  * Shared filter predicate: does this task match the given search query?
- * Whitespace-separated tokens starting with "@" (e.g. "@errand") are
- * matched against the task's Label names instead of title/notes text, and
- * are required (AND'd) rather than merely one-of, since they read as an
- * explicit filter rather than free text; any remaining non-"@" text is
- * matched against title/notes/section (OR'd).
+ *
+ * The grammar lives in utils/searchQuery.js — `@tag`, `#project`, `p1`-`p4`,
+ * `due:<date>`, `is:overdue`, `is:done`, `no:date` and friends, with anything
+ * left over matched as plain text against title/notes/section. A query with no
+ * operators behaves exactly as it always did. `projects` is only needed to
+ * resolve `#project`; callers without it simply can't use that one operator.
  *
  * NOTE: this used to also match a task via its embedded `subtasks[].title`
  * (the old nested-array Subtask model). Now that a sub-task is just another
@@ -368,26 +387,9 @@ export default function SearchBar({ placeholder = 'Search tasks, @tag, or a proj
  * in the visible/top-level set — see TaskListPanel's own doc comment for
  * that trade-off).
  */
-export function taskMatchesQuery(task, query, labels = []) {
+export function taskMatchesQuery(task, query, labels = [], projects = []) {
   if (!query || !query.trim()) return true;
-  const tokens = query.trim().toLowerCase().split(/\s+/);
-  const tagTokens = tokens.filter((t) => t.length > 1 && t.startsWith('@')).map((t) => t.slice(1));
-  const textTokens = tokens.filter((t) => !t.startsWith('@'));
-
-  if (tagTokens.length > 0) {
-    const taskLabelNames = (task.labelIds || [])
-      .map((id) => labels.find((l) => l.id === id)?.name?.toLowerCase())
-      .filter(Boolean);
-    const matchesEveryTag = tagTokens.every((tag) => taskLabelNames.some((name) => name.includes(tag)));
-    if (!matchesEveryTag) return false;
-  }
-
-  if (textTokens.length === 0) return true;
-  const q = textTokens.join(' ');
-  if (task.title?.toLowerCase().includes(q)) return true;
-  if (task.notes?.toLowerCase().includes(q)) return true;
-  if (task.sectionName?.toLowerCase().includes(q)) return true;
-  return false;
+  return taskMatchesParsedQuery(task, parseSearchQuery(query), { labels, projects });
 }
 
 /**

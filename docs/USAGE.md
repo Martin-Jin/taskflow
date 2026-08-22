@@ -9,6 +9,7 @@
 - [Stats](#stats)
 - [Settings](#settings)
 - [Undo / redo and the command palette](#undo--redo-and-the-command-palette)
+- [Searching and filtering](#searching-and-filtering)
 - [Smart task titles](#smart-task-titles)
 
 ## Layout and mobile
@@ -254,6 +255,34 @@ Todoist-style "jump to anything" search across Views, Projects, Tasks,
 Calendar events, and quick actions (Add task, Add note, Quick Add with AI,
 Re-balance schedule, Toggle light/dark theme, Manage projects); Arrow keys
 + Enter pick a result without touching the mouse.
+
+## Searching and filtering
+
+The search box above the task list matches plain text against a task's title,
+notes, and section — type part of what you remember and it narrows as you go.
+
+It also understands **filters**, for asking a structured question rather than
+recalling a name:
+
+| Filter | Finds |
+|---|---|
+| `p1` `p2` `p3` `p4` | tasks at that priority (several means "any of these") |
+| `@tag` | tasks carrying that tag (several means "all of these") |
+| `#project` | tasks in that project (several means "any of these") |
+| `due:today` | tasks due on a date — also `due:tomorrow`, `due:friday`, `due:2026-09-01`, `due:end of month` |
+| `is:overdue` | past their due date and not done |
+| `is:done` / `is:open` | finished, or not |
+| `no:date` `no:project` `no:label` `no:section` | tasks missing that field |
+
+Filters combine, and combine with plain text: `p1 #work deck` means "urgent,
+in Work, mentioning deck". Anything the box doesn't recognise as a filter is
+searched for literally, so a task actually called "Overdue invoices" is still
+findable by typing exactly that — every filter carries a `:` or a leading
+sigil precisely so it can never swallow an ordinary word.
+
+Date values use the same natural-language parser as the title field (see
+[Smart task titles](#smart-task-titles)), so anything that works there works
+after `due:`.
 
 ## Smart task titles
 

@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '7.9.0',
+    date: '2026-08-22',
+    title: 'Search can answer questions now',
+    changes: [
+      'The task search box takes filters as well as text: p1, @tag, #project, due:today, is:overdue, is:done, no:date and a few more. They combine with each other and with plain text, so "p1 #work deck" means urgent, in Work, mentioning deck.',
+      'Dates after due: use the same natural language the title field does — due:tomorrow, due:friday, due:end of month all work.',
+      'Focus the empty search box and it now lists the filters, since a syntax nobody knows about is not much use.',
+      'Ordinary searching is unchanged. Every filter needs a colon or a leading @/#/p, so a task genuinely called "Overdue invoices" is still found by typing exactly that.',
+    ],
+  },
+  {
     version: '7.8.0',
     date: '2026-08-22',
     title: 'Reorder cards inside a board column',

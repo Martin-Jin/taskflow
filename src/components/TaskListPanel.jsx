@@ -484,7 +484,7 @@ export default function TaskListPanel({
       const held = projectTasks.filter((t) => t.isCompleted && pendingCollapseIds.has(t.id) && !alreadyIncluded.has(t.id));
       if (held.length) list = [...list, ...held];
     }
-    list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels));
+    list = list.filter((t) => taskMatchesQuery(t, searchQuery, labels, projects));
     return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
   }, [tasks, activeProjectId, filter, searchQuery, labels, pendingCollapseIds]);
 
