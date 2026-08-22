@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.0.0',
+    date: '2026-08-22',
+    title: 'Your week is not seven identical days',
+    changes: [
+      'Work hours can now differ by day of the week, and a day can be marked as not working at all. Until now a single start and end time applied to all seven days, so Saturday was modelled as exactly as available as Tuesday — which is the biggest single reason a schedule could come back looking wrong.',
+      'Find it under Settings → Scheduling rules → "Different hours on different days". Switching it on starts from the hours you already had, with weekends off, and the scheduler plans nothing at all on a day you mark as not working.',
+      'Nothing changes unless you turn it on: leave it off and every day keeps using the single pair of times exactly as before.',
+    ],
+  },
+  {
     version: '7.9.0',
     date: '2026-08-22',
     title: 'Search can answer questions now',

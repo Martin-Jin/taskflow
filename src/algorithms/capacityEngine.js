@@ -16,6 +16,7 @@
  */
 
 import { dayOfWeek, timeToMinutes, dateRange } from '../utils/dateUtils';
+import { resolveWorkWindow } from '../utils/workHours';
 import { subtractIntervals, toTimeIntervals, totalMinutes } from '../utils/intervalUtils';
 
 /**
@@ -68,8 +69,14 @@ function collectBusyIntervals(date, { routines, events, blocks }) {
  */
 export function computeDayCapacity(date, ctx) {
   const { rules } = ctx;
-  let workStart = timeToMinutes(rules.workDayStart);
-  const workEnd = timeToMinutes(rules.workDayEnd);
+  /* Per-weekday window (see utils/workHours.js). Resolves to the plain
+     workDayStart/workDayEnd pair unless this weekday has an override, so rules
+     saved before per-day hours existed behave exactly as they did. A day marked
+     not-working resolves to a zero-length window, which the interval maths
+     below already turns into zero capacity — no "day off" branch needed. */
+  const dayWindow = resolveWorkWindow(rules, date);
+  let workStart = timeToMinutes(dayWindow.start);
+  const workEnd = timeToMinutes(dayWindow.end);
   // Never schedule into the past: on the real "today" (see rebalanceEngine's
   // nowClamp), push the work window's start forward to the current
   // wall-clock time — e.g. if it's already 5pm, don't open up any capacity

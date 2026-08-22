@@ -705,3 +705,53 @@ test('mobile: the persistent install banner reserves layout space instead of cov
 
   expectNoErrors(errors);
 });
+
+test('Scheduling rules: per-weekday work hours can be turned on, edited, and turned back off', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+
+  const card = page.locator('.settings-card', { hasText: 'Scheduling rules' }).first();
+  const readRules = () => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:rules') || '{}'));
+
+  // Off by default: one start/end pair, no per-day rows. Existing users see
+  // exactly what they saw before.
+  await expect(page.locator('.workhours-row')).toHaveCount(0);
+  expect((await readRules()).workHoursByDay).toBeUndefined();
+
+  await page.locator('#perDayWorkHours').check();
+  await expect(page.locator('.workhours-row')).toHaveCount(7);
+
+  // Seeded from the single pair the user already had, with weekends off —
+  // modelling Saturday as identically available to Tuesday is the bug this
+  // feature exists to fix.
+  await expect(page.locator('.workhours-off-label')).toHaveCount(2);
+  const seeded = await readRules();
+  expect(seeded.workHoursByDay['6'].enabled).toBe(false);
+  expect(seeded.workHoursByDay['1'].enabled).toBe(true);
+  // The baseline scalars survive: notify-worker reads them, and they're the
+  // fallback for any day without an override.
+  expect(seeded.workDayStart).toBeTruthy();
+  expect(seeded.workDayEnd).toBeTruthy();
+
+  // Narrowing one day writes an explicit override for that day only.
+  await page.locator('.workhours-row').first().locator('input[type=time]').first().fill('10:00');
+  await page.waitForTimeout(400);
+  const edited = await readRules();
+  expect(edited.workHoursByDay['1'].start).toBe('10:00');
+  expect(edited.workHoursByDay['2'].start).toBe(seeded.workHoursByDay['2'].start);
+
+  // Turning a day off replaces its inputs with a plain label.
+  const satRow = page.locator('.workhours-row').nth(5);
+  await expect(satRow.locator('input[type=time]')).toHaveCount(0);
+  await satRow.locator('input[type=checkbox]').check();
+  await expect(satRow.locator('input[type=time]')).toHaveCount(2);
+
+  // Switching back off drops the map entirely rather than leaving a stale one
+  // behind — its mere presence is what enables per-day mode.
+  await page.locator('#perDayWorkHours').uncheck();
+  await expect(page.locator('.workhours-row')).toHaveCount(0);
+  expect((await readRules()).workHoursByDay).toBeUndefined();
+  await expect(card.locator('input[type=time]')).toHaveCount(2);
+
+  expectNoErrors(errors);
+});
