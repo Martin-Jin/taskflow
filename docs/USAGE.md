@@ -216,6 +216,13 @@ selection always asks for confirmation first.
 Live Total Hours Left, Scheduled Today/This Week, Free
 Capacity This Week, and an at-risk-of-missing-buffer callout.
 
+There's also an **Estimate accuracy** panel comparing what you estimated
+against what tasks actually took, overall and per project. It only counts tasks
+you completed with the timer running (that's the only thing that records a real
+figure), so it always shows how many tasks a number came from, and dims a
+project that hasn't got enough of them to mean much yet. It's reporting only —
+nothing there changes your estimates or your schedule.
+
 ## Settings
 
 One page of cards, each covering one area:
