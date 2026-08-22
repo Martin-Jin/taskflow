@@ -399,6 +399,71 @@ test.describe('Gantt view', () => {
     await expect(page.locator('.gantt-row, [class*="gantt"]').first()).toBeVisible({ timeout: 3000 }).catch(() => {});
     expectNoErrors(errors);
   });
+
+  test('draws a dependency connector from a prerequisite bar to its dependent', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    /* Seeded directly rather than built through the UI: this is a RENDERING
+       test, and the alternative is a dozen steps (create two tasks, open the
+       dependency picker, rebalance) to arrive at state the chart just reads.
+       Registering the init script after gotoApp and then reloading is what
+       makes it survive — gotoApp's own script clears every taskflow: key, but
+       its sessionStorage guard makes that a no-op on the second load. */
+    const iso = (offsetDays) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offsetDays);
+      return d.toISOString().slice(0, 10);
+    };
+    await page.addInitScript(
+      ([prefix, today, inOne, inFive, inSeven]) => {
+        localStorage.setItem(
+          prefix + 'tasks',
+          JSON.stringify([
+            { id: 'e2e-dep-a', title: 'E2E prerequisite', estimatedHours: 4, priority: 'high', dueDate: inOne, isCompleted: false, dependsOn: [], labelIds: [] },
+            { id: 'e2e-dep-b', title: 'E2E dependent', estimatedHours: 2, priority: 'medium', dueDate: inSeven, isCompleted: false, dependsOn: ['e2e-dep-a'], labelIds: [] },
+          ])
+        );
+        localStorage.setItem(
+          prefix + 'blocks',
+          JSON.stringify([
+            { id: 'e2e-blk-a', taskId: 'e2e-dep-a', date: today, startTime: '09:00', endTime: '13:00', durationHours: 4, status: 'scheduled' },
+            { id: 'e2e-blk-b', taskId: 'e2e-dep-b', date: inFive, startTime: '09:00', endTime: '11:00', durationHours: 2, status: 'scheduled' },
+          ])
+        );
+      },
+      ['taskflow:v1:', iso(0), iso(1), iso(5), iso(7)]
+    );
+    await page.reload();
+    await page.waitForTimeout(500);
+
+    await gotoTab(page, 'Tasks');
+    await switchTaskView(page, 'Gantt');
+
+    await expect(page.locator('.gantt-row').first()).toBeVisible();
+
+    // One connector per dependency edge. Direct-child selector on purpose:
+    // the shared arrowhead marker is a <path> too, nested in <defs>.
+    const connectors = page.locator('.gantt-connectors > path');
+    await expect(connectors).toHaveCount(1);
+
+    /* The path must actually span the two bars: an elbow starting at the
+       prerequisite's right edge and ending at the dependent's left edge. A
+       degenerate "M 0 0" (the failure mode if the measurement pass ran before
+       layout settled) would still count as one path, so assert the geometry
+       moves left-to-right and changes row.
+       Path shape: "M x1 y1 H turn V y2 H x2". */
+    const d = await connectors.first().getAttribute('d');
+    const numbers = d.match(/-?\d+(\.\d+)?/g).map(Number);
+    const [x1, y1] = numbers;
+    const x2 = numbers[numbers.length - 1];
+    const y2 = numbers[numbers.length - 2];
+    expect(x1).toBeGreaterThan(0);
+    expect(x2).toBeGreaterThan(x1);
+    expect(y2).toBeGreaterThan(y1); // dependent sits on a row below
+
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Calendar', () => {

@@ -94,6 +94,9 @@
   bottom: 8px;
   border-radius: 5px;
   opacity: 0.85;
+  /* Above .gantt-connectors (z-index 1), which is a later sibling of the rows
+     and would otherwise paint its arrows across the bars they point at. */
+  z-index: 2;
 }
 
 .gantt-bar-passive {
@@ -110,6 +113,25 @@
   background: transparent;
   border: 2px dashed;
   opacity: 0.6;
+}
+
+/* Dependency connectors (see GanttChart's connectorPath). Sits above the day
+   columns but below the bars themselves, so an arrow never covers the bar it
+   points at, and is never a pointer target — the bars keep their own tooltips. */
+.gantt-connectors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.gantt-connectors path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--color-text-primary) 42%, transparent);
+  stroke-width: 1.5;
 }
 
 .gantt-bar-today-line {

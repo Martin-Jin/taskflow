@@ -71,7 +71,9 @@ import {
 import { useAIQuickAddGate } from './hooks/useAIQuickAddGate';
 import AIQuickAddModal from './components/Modals/AIQuickAddModal';
 import NoteEditorModal from './components/Modals/NoteEditorModal';
+import AddTaskModal from './components/Modals/AddTaskModal';
 import { useNoteMutations } from './hooks/useNoteMutations';
+import { useSharedContentIntent } from './hooks/useSharedContentIntent';
 
 // Board and Gantt used to be their own top-level tabs; they're now views
 // within the Tasks page (see TaskListPanel's List/Board/Gantt switch). Six
@@ -154,6 +156,20 @@ function AppShell() {
   // nothing just because it is.
   const [showStandaloneNoteEditor, setShowStandaloneNoteEditor] = useState(false);
   const { createNote: createNoteFromPalette } = useNoteMutations();
+
+  /* Content shared into the app from outside it (the PWA share target) or a
+     home-screen shortcut — see useSharedContentIntent. Rendered as App-level
+     modals for the same reason the note editor above is: the intent arrives
+     before any tab is chosen, and neither view's own copy of AddTaskModal is
+     guaranteed to be mounted when it does. */
+  const { intent: sharedIntent, clearIntent: clearSharedIntent } = useSharedContentIntent();
+
+  useEffect(() => {
+    if (sharedIntent?.kind === 'note') {
+      setShowStandaloneNoteEditor(true);
+      clearSharedIntent();
+    }
+  }, [sharedIntent, clearSharedIntent]);
   const isMobile = useIsMobile();
   useSelectAllOnFocus();
   const { toggleTheme } = useTheme();
@@ -605,6 +621,13 @@ function AppShell() {
         <NoteEditorModal
           onCreate={(title, body) => createNoteFromPalette(title, body)}
           onClose={() => setShowStandaloneNoteEditor(false)}
+        />
+      )}
+      {sharedIntent?.kind === 'task' && (
+        <AddTaskModal
+          initialTitle={sharedIntent.title}
+          initialNotes={sharedIntent.notes}
+          onClose={clearSharedIntent}
         />
       )}
       {showStandaloneAIQuickAdd && (
