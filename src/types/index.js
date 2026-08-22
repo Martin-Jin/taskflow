@@ -134,6 +134,11 @@
  * @property {string} [projectId]            - Todoist project id, if synced.
  * @property {'todoist'|'manual'} source     - Where the task originated.
  * @property {boolean} isLocked              - If true, scheduler will NOT move existing blocks for this task.
+ * @property {number} [boardOrder]          - Hand-ranked position within its Board column, ascending. Absent on any task
+ *                                            never dragged into place, which sorts after ranked ones (see
+ *                                            utils/boardCardOrder.js). Lives on the Task rather than device-local storage
+ *                                            — unlike the sibling COLUMN order — so it syncs across devices and is shared
+ *                                            on a shared board; that file explains why the reasoning differs.
  * @property {boolean} [excludeFromAutoSchedule] - If true, the auto-scheduler (rebalanceEngine.js's `eligibleTasks`
  *                                              filter) skips this task entirely — it never gets a block placed or
  *                                              moved by Re-balance schedule, the same carve-out phrasing used for

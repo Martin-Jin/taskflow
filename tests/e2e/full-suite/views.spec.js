@@ -282,14 +282,53 @@ test.describe('Board view', () => {
   // Manual drag-reorder of tasks within the same section/column doesn't
   // exist anywhere in this codebase today — TaskListPanel's rows and
   // BoardView's cards are both purely sorted (by due date/priority/etc,
-  // see filterTasksByStatus) and only animate reordering, they don't accept
-  // a user drag to reprioritize order within a column (BoardView's column
-  // onDrop only ever changes `sectionId`, never a same-column position — see
-  // handleColumnDrop's early-return when `task.sectionId === col.id`; a
-  // card-on-card drop is the separate sub-task reparent gesture, tested
-  // above, not a reorder).
-  // Skipping rather than asserting behavior that isn't implemented.
-  test.skip('drag-reorder two tasks within the same column (no such feature exists yet)', () => {});
+  test('drag-reorder two cards within the same column, and the order survives a reload', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+    await switchToProject(page, 'Work');
+    await switchTaskView(page, 'Board');
+
+    const column = page.locator('.board-column').first();
+    const titles = () => column.locator('.board-card-title').allInnerTexts();
+
+    const before = await titles();
+    // Needs at least two cards to have an order at all.
+    expect(before.length).toBeGreaterThanOrEqual(2);
+
+    /* Aim at the GAP above the first card, not at the card itself — dropping a
+       card onto another card is the sub-task reparent gesture (tested above),
+       so reordering has its own thin drop targets between cards. They're
+       zero-height until a drag is in flight, which is why the drag has to be
+       under way before the gap can be measured. */
+    const last = column.locator('.board-card').last();
+    const lastBox = await last.boundingBox();
+    const firstCardBox = await column.locator('.board-card').first().boundingBox();
+
+    await page.mouse.move(lastBox.x + lastBox.width / 2, lastBox.y + lastBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(lastBox.x + lastBox.width / 2 + 10, lastBox.y + lastBox.height / 2 + 10, { steps: 5 });
+    // Just above the first card's top edge is the gap at index 0.
+    await page.mouse.move(firstCardBox.x + firstCardBox.width / 2, firstCardBox.y + 1, { steps: 10 });
+    await page.waitForTimeout(200);
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+
+    const movedTitle = before[before.length - 1];
+    const after = await titles();
+    expect(after[0]).toBe(movedTitle);
+    // Nothing lost or duplicated by the reorder.
+    expect(after.slice().sort()).toEqual(before.slice().sort());
+
+    // Persisted on the task (boardOrder), not just held in view state.
+    await page.reload();
+    await page.waitForTimeout(1200);
+    await gotoTab(page, 'Tasks');
+    await switchTaskView(page, 'Board');
+    expect((await titles())[0]).toBe(movedTitle);
+
+    expectNoErrors(errors);
+  });
 
   test('Section CRUD: add, rename, and delete a section reassigns its tasks to No Section', async ({ page }) => {
     const errors = trackConsoleErrors(page);

@@ -387,3 +387,28 @@
     max-width: 100%;
   }
 }
+/* Drop target for reordering cards within a column. Zero-height and invisible
+   at rest so it adds no gaps to the column and can't intercept a click; it
+   only opens up once a card drag is in flight (.is-armed, driven by the
+   reparent hook's draggedId) and highlights under the pointer (.is-active).
+   Card-ON-card is a different gesture here — that makes a sub-task — so these
+   gaps are what keep reordering and reparenting from fighting each other. */
+.board-card-dropgap {
+  height: 0;
+  margin: 0;
+  border-radius: 2px;
+  transition: height var(--motion-emphasis-duration, 0.12s) ease, background var(--motion-emphasis-duration, 0.12s) ease;
+}
+
+.board-card-dropgap.is-armed {
+  /* Tall enough to be a reliable pointer target mid-drag without visibly
+     spacing the cards out. */
+  height: 10px;
+  margin: -3px 0;
+}
+
+.board-card-dropgap.is-active {
+  height: 14px;
+  margin: 1px 0;
+  background: var(--color-accent-border);
+}
