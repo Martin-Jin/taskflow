@@ -19,7 +19,7 @@
     "@tiptap/react": "^3.30.2",
     "@tiptap/starter-kit": "^3.30.2",
     "firebase": "^12.17.1",
-    "framer-motion": "^12.43.0",
+    "framer-motion": "^13.1.0",
     "lucide-react": "^1.32.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
