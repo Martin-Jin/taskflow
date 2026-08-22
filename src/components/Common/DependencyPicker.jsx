@@ -64,9 +64,8 @@ function DependencyPicker({ options, selectedIds, onChange, placeholder = 'Searc
       if (target) selectOption(target.id);
       return;
     }
-    if (e.key === 'Escape') {
-      inputRef.current?.blur();
-    }
+    // Escape is handled by useComboboxMultiSelect's escape layer, not here —
+    // a keydown on this input never sees it (see useEscapeLayer).
   }
 
   return (

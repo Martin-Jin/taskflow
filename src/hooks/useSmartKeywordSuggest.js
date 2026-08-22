@@ -24,6 +24,7 @@
  */
 
 import { useState } from 'react';
+import { useEscapeLayer } from './useEscapeLayer';
 import { useCaretActiveSpan, spliceTextAndMoveCaret } from './useCaretActiveSpan';
 import { findActiveWord, findFuzzyKeywordMatches } from '../utils/fuzzyKeyword';
 import { WEEKDAY_ALIASES, MONTH_ALIASES, WORD_NUMBERS, UNIT_ALIASES as DATE_UNIT_ALIASES, PHRASE_WORDS } from '../utils/dateParse';
@@ -53,6 +54,13 @@ export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = f
 
   const matches = !suppress && word ? findFuzzyKeywordMatches(word.word, VOCABULARY) : [];
   const isOpen = matches.length > 0;
+
+  // Escape dismisses this popup, and only this popup. It goes through the
+  // shared layer stack because the title field usually sits inside a modal,
+  // and a plain keydown branch here never fired — one Escape with the
+  // suggestion list open discarded the whole draft instead (see
+  // src/hooks/useEscapeLayer.js).
+  useEscapeLayer(isOpen, dismiss);
   const current = isOpen ? matches[activeIndex % matches.length] : null;
 
   /** Replace the active word with `candidate` and move the caret right after it. */
@@ -79,11 +87,8 @@ export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = f
       applyCandidate(current);
       return true;
     }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      dismiss();
-      return true;
-    }
+    // Escape is claimed by the escape layer registered above, so a keydown
+    // on the input never sees it (see useEscapeLayer).
     return false;
   }
 

@@ -21,6 +21,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useEscapeLayer } from '../../../hooks/useEscapeLayer';
 import { createPortal } from 'react-dom';
 import { Ban, FileIcon, Lock, Loader2, Paperclip, Send, X } from 'lucide-react';
 import { useScheduler, MAX_COMMENTS_PER_TASK } from '../../../context/SchedulerContext';
@@ -81,6 +82,12 @@ export default function CommentThread({ task }) {
   const mentionMatches = mentionSpan ? filterMentionCandidates(mentionSpan.query, mentionCandidates) : [];
   const mentionDropdownOpen = isSharedTask && !!mentionSpan && mentionMatches.length > 0;
 
+  // Escape dismisses the mention dropdown and nothing else. This sits inside
+  // TaskDetailModal, which is itself an escape layer, so it has to register as
+  // a deeper one — otherwise the modal takes the keypress and the half-written
+  // comment goes with it.
+  useEscapeLayer(mentionDropdownOpen, () => setMentionSpan(null));
+
   /** Re-derive the active "@query" span from the input's current caret position. */
   function refreshMentionSpan(nextText) {
     if (!isSharedTask) return;
@@ -117,11 +124,9 @@ export default function CommentThread({ task }) {
         setMentionHighlight((i) => Math.max(i - 1, 0));
         return true;
       }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setMentionSpan(null);
-        return true;
-      }
+      // Escape is claimed by the escape layer below, not here — inside
+      // TaskDetailModal a keydown branch never sees it (see useEscapeLayer),
+      // and one press used to close the modal and lose the comment draft.
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
         selectMention(mentionMatches[mentionHighlight]);

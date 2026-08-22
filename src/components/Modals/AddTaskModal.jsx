@@ -586,19 +586,16 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
         {openField === 'priority' && (
           <div className="addtask-pill-panel">
-            <select
+            <SelectMenu
+              ariaLabel="Priority"
               autoFocus
               value={priority}
-              onChange={(e) => {
+              onChange={(next) => {
                 setHasEditedPriority(true);
-                setPriority(e.target.value);
+                setPriority(next);
               }}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
+              options={['low', 'medium', 'high', 'urgent'].map((value) => ({ value, label: PRIORITY_LABELS[value] }))}
+            />
           </div>
         )}
 
@@ -619,21 +616,19 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         {moreOpen && (
           <div className="addtask-pill-panel addtask-more-panel">
             <DetailField icon={Layers} label="Section">
-              <select
+              <SelectMenu
+                ariaLabel="Section"
                 value={sectionId}
-                onChange={(e) => {
-                  setSectionId(e.target.value);
+                onChange={(next) => {
+                  setSectionId(next);
                   setHasEditedSection(true);
                 }}
+                options={[
+                  { value: '', label: 'No section' },
+                  ...availableSections.map((s) => ({ value: s.id, label: s.name })),
+                ]}
                 disabled={!projectId}
-              >
-                <option value="">No section</option>
-                {availableSections.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              />
             </DetailField>
 
             <DetailField icon={Clock} label="Estimated time">
@@ -679,21 +674,18 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
                     }}
                     style={{ width: 56 }}
                   />
-                  <select
-                    value={recurrenceUnit}
-                    onChange={(e) => {
-                      setHasEditedRecurrence(true);
-                      setRecurrenceUnit(e.target.value);
-                      setRecurrenceDays(null);
-                    }}
-                    style={{ flex: 1 }}
-                  >
-                    {RECURRENCE_UNITS.map((u) => (
-                      <option key={u.value} value={u.value}>
-                        {u.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <SelectMenu
+                      ariaLabel="Repeat unit"
+                      value={recurrenceUnit}
+                      onChange={(next) => {
+                        setHasEditedRecurrence(true);
+                        setRecurrenceUnit(next);
+                        setRecurrenceDays(null);
+                      }}
+                      options={RECURRENCE_UNITS}
+                    />
+                  </div>
                 </div>
               )}
               {!dueDate && <p className="form-hint">Needs a due date first.</p>}
@@ -799,21 +791,18 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
             </DetailField>
 
             <DetailField icon={Sunrise} label="Preferred time">
-              <select
+              <SelectMenu
+                ariaLabel="Preferred time of day"
                 value={preferredTimeOfDay || ''}
-                onChange={(e) => {
+                onChange={(next) => {
                   setHasEditedPreferredTimeOfDay(true);
-                  setPreferredTimeOfDay(e.target.value);
+                  setPreferredTimeOfDay(next);
                 }}
-                aria-label="Preferred time of day"
-              >
-                <option value="">No preference</option>
-                {TIME_OF_DAY_OPTIONS.map((period) => (
-                  <option key={period} value={period}>
-                    {TIME_OF_DAY_LABELS[period]}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: '', label: 'No preference' },
+                  ...TIME_OF_DAY_OPTIONS.map((period) => ({ value: period, label: TIME_OF_DAY_LABELS[period] })),
+                ]}
+              />
               <p className="form-hint">A nudge, not a rule — the scheduler prefers this part of the day but will still use another slot rather than leave the work unplanned.</p>
             </DetailField>
 

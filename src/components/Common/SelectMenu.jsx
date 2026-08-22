@@ -21,6 +21,15 @@
  * switcher passes it since long project names get a fixed max-width there
  * (see tasklist.css's `.taskpage-project-header .select-menu-value`).
  *
+ * `autoFocus` (default off) forwards to the trigger button, for a picker that
+ * IS the reason a panel just opened — AddTaskModal's priority pill, whose
+ * native <select> had it. Don't set it on a picker sitting among other fields.
+ *
+ * Escape is NOT handled here: useMenuPosition registers the open dropdown with
+ * the shared escape-layer stack, which is the only way it can beat the
+ * surrounding modal to the keypress. Focus never leaves the trigger button
+ * while the list is open, so there's nothing to restore afterwards.
+ *
  * An option may set `separatorBefore: true` to get a thin rule drawn above it
  * — used to set a synthetic/pseudo option (e.g. AddTaskModal's "Do Not
  * Auto-Schedule" bucket) visually apart from the real list above it, without
@@ -34,7 +43,7 @@ import { ChevronDown } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import MarqueeText from './MarqueeText';
 
-export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, marquee = false, disabled = false }) {
+export default function SelectMenu({ icon: Icon, value, options, onChange, ariaLabel, marquee = false, disabled = false, autoFocus = false }) {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(() => Math.max(0, options.findIndex((o) => o.value === value)));
   const rootRef = useRef(null);
@@ -88,10 +97,6 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
       e.preventDefault();
       const opt = options[highlightedIndex];
       if (opt) choose(opt.value);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      setIsOpen(false);
-      buttonRef.current?.focus();
     } else if (e.key === 'Tab') {
       setIsOpen(false);
     }
@@ -107,6 +112,8 @@ export default function SelectMenu({ icon: Icon, value, options, onChange, ariaL
         aria-expanded={isOpen}
         aria-label={ariaLabel}
         disabled={disabled}
+        // eslint-disable-next-line jsx-a11y/no-autofocus
+        autoFocus={autoFocus}
         onClick={() => (isOpen ? setIsOpen(false) : open())}
         onKeyDown={handleKeyDown}
       >

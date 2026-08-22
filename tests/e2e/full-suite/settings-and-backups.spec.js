@@ -87,6 +87,19 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   await projectRow.getByRole('button', { name: `Actions for ${projectName}` }).click();
   await page.getByRole('menuitem', { name: /rename/i }).or(page.getByText('Rename', { exact: true })).first().click();
   const renameInput = dialog.getByLabel(`Rename project "${projectName}"`);
+
+  // Escape abandons the rename and leaves the modal open, rather than closing
+  // the modal outright (which is what it used to do — see useEscapeLayer.js).
+  // The abandoned value must not be committed on the way out either.
+  await renameInput.fill('Escaped rename');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(projectName, { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Escaped rename', { exact: true })).toHaveCount(0);
+
+  await projectRow.getByRole('button', { name: `Actions for ${projectName}` }).click();
+  await page.getByRole('menuitem', { name: /rename/i }).or(page.getByText('Rename', { exact: true })).first().click();
   await renameInput.fill(renamedProjectName);
   await renameInput.press('Enter');
   await page.waitForTimeout(400);

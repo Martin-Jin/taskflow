@@ -791,7 +791,8 @@ src/
 │   ├── useSelectAllOnFocus.js     # App-wide "focusing a text field selects its contents" behavior, so an existing value can be replaced by typing
 │   ├── useFieldRejection.js       # One-shot shake + message for a rejected input, so a refusing handler explains itself instead of silently returning
 │   ├── useNoteMutations.js        # Notes create/update/delete over SchedulerContext — shared by NotesCard, the command palette's "Add note", and applyPlan's note operations
-│   ├── useMenuPosition.js         # Anchored-vs-centered popover placement (forceCentered on mobile) + outside-click/Escape wiring
+│   ├── useMenuPosition.js         # Anchored-vs-centered popover placement (forceCentered on mobile) + outside-click wiring; Escape is delegated to useEscapeLayer
+│   ├── useEscapeLayer.js          # One shared stack deciding who handles Escape — the innermost open surface wins, so a dropdown inside a modal dismisses itself instead of discarding the modal's draft; see the file header for why DOM phase ordering can't express this
 │   ├── useKeyboardShortcuts.js    # Global rebindable shortcuts (undo/redo/new task) — bindings in localStorage, editable from Settings → Keyboard shortcuts
 │   ├── useSharedProjectSync.js    # Live multi-writer Firestore sync for shared projects (Phase 1, Collaborative Projects) — subscriptions, diff-and-push, presence heartbeat
 │   ├── useCloudSync.js            # Cross-device Firestore sync (fingerprint/merge/race-guard logic, auto/manual backups) — see "Persistence"

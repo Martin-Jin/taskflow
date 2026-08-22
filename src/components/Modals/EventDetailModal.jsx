@@ -31,6 +31,7 @@
  */
 
 import React, { useRef, useState } from 'react';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { X, CalendarClock, Clock, Type as TitleIcon, ListTree, Ban, AlignLeft, MapPin, Repeat, CheckSquare } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import Modal from '../Common/Modal';
@@ -202,6 +203,13 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // detection stops overwriting their choice.
   const [hasEditedRepeat, setHasEditedRepeat] = useState(false);
   const [detectedRecurrenceMatch, setDetectedRecurrenceMatch] = useState(null);
+
+  // Escape reverts an unfinished repeat phrase to the one the repeat controls
+  // actually hold, instead of closing the whole event modal. Only claims the
+  // keypress while the text differs from that — with nothing to revert, Escape
+  // belongs to the modal (see useEscapeLayer).
+  const committedRepeatText = formatRepeatText(repeatInterval, repeatFreq, repeatByDay);
+  useEscapeLayer(repeatText !== committedRepeatText, () => setRepeatText(committedRepeatText));
 
   function handleTitleChange(value) {
     setTitle(value);
@@ -616,7 +624,6 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
                       onBlur={commitRepeatText}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') e.currentTarget.blur();
-                        if (e.key === 'Escape') setRepeatText(formatRepeatText(repeatInterval, repeatFreq, repeatByDay));
                       }}
                     />
                     <div className="detail-field-inline">

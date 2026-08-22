@@ -25,6 +25,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useEscapeLayer } from '../../../hooks/useEscapeLayer';
 import { ExternalLink, Lock, Plus, X } from 'lucide-react';
 import { useScheduler } from '../../../context/SchedulerContext';
 import { useAuth } from '../../../context/AuthContext';
@@ -340,6 +341,12 @@ export default function SubtaskList({ task, setActiveTaskId }) {
     setIsAddingSubtask(false);
   }
 
+  // Escape collapses the add row back to its trigger rather than closing the
+  // whole task modal. The title field's own mention/keyword autocompletes
+  // register deeper layers while they're open, so Escape unwinds in the order
+  // you'd expect: suggestion list, then this row, then the modal.
+  useEscapeLayer(isAddingSubtask, handleCancelAddSubtask);
+
   return (
     <div className="form-row">
       <div className="subtask-header">
@@ -466,7 +473,6 @@ export default function SubtaskList({ task, setActiveTaskId }) {
         ) : isAddingSubtask ? (
           <div
             className="subtask-add-wrap"
-            onKeyDown={(e) => e.key === 'Escape' && handleCancelAddSubtask()}
             onBlur={(e) => {
               // Collapse the row back to the "Add sub-task" trigger
               // once focus leaves it entirely with nothing typed —

@@ -134,9 +134,21 @@ export async function openAddTask(page) {
   await expect(titleInput).toBeVisible();
 }
 
-export async function closeAnyModal(page) {
-  await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(200);
+/**
+ * Escape resolves to the innermost open surface, not straight to the modal
+ * (see src/hooks/useEscapeLayer.js), so a modal with a popover or picker open
+ * inside it needs more than one press — the first only closes the popover.
+ * Keeps pressing until no dialog is left, rather than assuming a depth.
+ */
+export async function closeAnyModal(page, { maxPresses = 4 } = {}) {
+  // Always presses at least once: callers use this on non-dialog surfaces too
+  // (the calendar filter's role="menu", a popover), so "no dialog open" is not
+  // the same as "nothing to dismiss".
+  for (let i = 0; i < maxPresses; i += 1) {
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.waitForTimeout(200);
+    if ((await page.getByRole('dialog').count()) === 0) return;
+  }
 }
 
 // Every window.confirm() in the app was replaced by an in-app modal

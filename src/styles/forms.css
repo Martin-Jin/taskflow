@@ -1209,6 +1209,24 @@
   margin-bottom: 10px;
 }
 
+/* A pill panel holds exactly one control, sized to fill it (its date input,
+   its label search). The priority picker replacing that panel's native
+   <select> matches them rather than keeping SelectMenu's default inline-chip
+   size — and unlike the pickers in a DetailField row, it keeps a real border,
+   since a borderless ghost control alone on a panel reads as static text
+   (and 1.4.11 wants the boundary either way). */
+.addtask-pill-panel > .select-menu {
+  display: flex;
+  width: 100%;
+}
+
+.addtask-pill-panel > .select-menu .select-menu-trigger {
+  width: 100%;
+  justify-content: space-between;
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
 .addtask-more-panel {
   display: flex;
   flex-direction: column;

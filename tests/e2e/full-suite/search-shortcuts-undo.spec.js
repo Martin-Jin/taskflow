@@ -705,3 +705,63 @@ test('saved views: save a search, apply it, and delete it', async ({ page }) => 
   await search.fill('');
   expectNoErrors(errors);
 });
+
+/**
+ * Escape resolves to the innermost open surface, not always the modal.
+ *
+ * Both halves used to lose the entire draft to a single keypress, because the
+ * modal's Escape handler ran in the capture phase and stopped propagation
+ * before anything inside it could see the event. Now a shared layer stack
+ * decides (see src/hooks/useEscapeLayer.js), so the assertion that matters is
+ * that the FIRST press leaves the modal standing with its title intact.
+ */
+test('Escape closes an open picker inside AddTaskModal before closing the modal', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  const title = 'Escape layering draft';
+
+  await openAddTask(page);
+  await page.getByPlaceholder('Task name').fill(title);
+
+  // A SelectMenu dropdown: the footer project picker.
+  await page.locator('.addtask-footer').getByRole('button', { name: 'Project', exact: true }).click();
+  await expect(page.getByRole('listbox', { name: 'Project' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox', { name: 'Project' })).toHaveCount(0);
+  await expect(page.getByPlaceholder('Task name')).toHaveValue(title);
+
+  // A combobox suggestion list: the label picker, mid-word.
+  await page.locator('.addtask-pill').nth(2).click();
+  const labelInput = page.locator('.addtask-pill-panel input[type="text"]').first();
+  await labelInput.click();
+  await labelInput.fill('half-typed');
+  await page.keyboard.press('Escape');
+  await expect(page.getByPlaceholder('Task name')).toHaveValue(title);
+
+  // Only once nothing inside is open does Escape reach the modal itself.
+  await page.keyboard.press('Escape');
+  await expect(page.getByPlaceholder('Task name')).toHaveCount(0);
+
+  expectNoErrors(errors);
+});
+
+test('AddTaskModal priority/section pickers are SelectMenus, matching the detail sidebar', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await openAddTask(page);
+  await page.getByPlaceholder('Task name').fill('Converged pickers');
+
+  // No native <select> is left anywhere in this modal — the whole point of the
+  // convergence, and the thing a stray new field would silently regress.
+  await expect(page.locator('.modal select')).toHaveCount(0);
+
+  await page.locator('.addtask-pill').nth(1).click();
+  await chooseSelectMenuOption(page, 'Priority', 'Urgent');
+  expect(await selectMenuLabel(page, 'Priority')).toBe('Urgent');
+
+  await page.getByRole('button', { name: 'More options' }).click();
+  expect(await selectMenuLabel(page, 'Preferred time of day')).toBe('No preference');
+  await chooseSelectMenuOption(page, 'Preferred time of day', 'Morning');
+  expect(await selectMenuLabel(page, 'Preferred time of day')).toBe('Morning');
+
+  await closeAnyModal(page);
+  expectNoErrors(errors);
+});

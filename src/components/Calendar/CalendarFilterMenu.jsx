@@ -18,6 +18,7 @@ import { Filter, ChevronDown, Check, Search } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useComboboxMultiSelect } from '../../hooks/useComboboxMultiSelect';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { UNASSIGNED_PROJECT_ID, isCalendarFilterActive } from '../../utils/calendarFilter';
 import { rankByNameSearch } from '../../utils/nameSearch';
@@ -84,16 +85,12 @@ function FilterGroup({ heading, items, selectedIds, onToggle, onReset, resetLabe
     resetKey: query,
   });
 
-  function handleSearchKeyDown(e) {
-    if (e.key === 'Escape' && query) {
-      // First Escape just clears the query; a second (now a no-op query
-      // clear) falls through to the menu's own close-on-Escape handling.
-      e.stopPropagation();
-      setQuery('');
-      return;
-    }
-    handleKeyDown(e);
-  }
+  // First Escape just clears the query; with the query empty this layer is
+  // gone, so a second falls through to the menu's own close-on-Escape. Has to
+  // be a layer rather than a keydown branch below — the menu containing this
+  // group is itself a layer, and it would otherwise take the keypress first
+  // (see src/hooks/useEscapeLayer.js).
+  useEscapeLayer(!!query, () => setQuery(''));
 
   return (
     <div className="calendar-filter-group">
@@ -126,7 +123,7 @@ function FilterGroup({ heading, items, selectedIds, onToggle, onReset, resetLabe
                 placeholder={`Search ${heading.toLowerCase()}…`}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
+                onKeyDown={handleKeyDown}
               />
             </div>
           )}
