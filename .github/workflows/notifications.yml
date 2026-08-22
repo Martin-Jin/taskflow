@@ -13,6 +13,9 @@ on:
   # Lets the workflow be triggered manually from the Actions tab, for testing.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   check-and-send:
     runs-on: ubuntu-latest
