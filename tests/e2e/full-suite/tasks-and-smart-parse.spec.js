@@ -1632,3 +1632,108 @@ test.describe('Preferred time of day', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+test.describe('Postponement counter', () => {
+  /**
+   * The exclusions are what this guards, not the happy path. The counter is
+   * only trustworthy if an ordinary edit doesn't inflate it — and
+   * TaskDetailModal's commitChanges resubmits `dueDate` on EVERY autosave
+   * whether or not the user touched that field, so "a due date arrived in the
+   * update" is not evidence of a postponement. A unit test can't reach that:
+   * it's a property of the real autosave path.
+   */
+  test('counts only a due date the user pushed later, and badges it past the threshold', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Postpone ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click();
+    await page.locator('.addtask-pill-panel input[type="date"]').fill('2027-03-01');
+    await pills.nth(0).click();
+    await submitAddTask(page);
+
+    const readCount = () =>
+      page.evaluate(
+        (t) => JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').find((x) => x.title === t)?.postponeCount ?? null,
+        title
+      );
+
+    // A brand-new task has no history at all — not a stored zero.
+    expect(await readCount()).toBeNull();
+
+    async function editAndClose(action) {
+      await searchAndOpen(page, title);
+      await action();
+      await page.waitForTimeout(1500); // clear the autosave debounce
+      await closeAnyModal(page);
+      await page.getByPlaceholder(/search tasks/i).fill('');
+      await page.waitForTimeout(200);
+    }
+    const setDueDate = (value) => () => page.locator('.detail-sidebar input[type="date"]').first().fill(value);
+
+    // An unrelated edit resubmits the same due date. Must not count.
+    await editAndClose(() => page.locator('.detail-notes-textarea').first().fill('unrelated edit'));
+    expect(await readCount()).toBeNull();
+
+    // Pushed later — counts.
+    await editAndClose(setDueDate('2027-04-01'));
+    expect(await readCount()).toBe(1);
+
+    // Pulled earlier — pulling work forward is not a slip.
+    await editAndClose(setDueDate('2027-03-15'));
+    expect(await readCount()).toBe(1);
+
+    // Below the threshold nothing renders — the absence of a badge is the
+    // signal that nothing is stuck.
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(400);
+    await expect(page.locator('.badge.postponed')).toHaveCount(0);
+    await page.getByPlaceholder(/search tasks/i).fill('');
+
+    await editAndClose(setDueDate('2027-05-01'));
+    await editAndClose(setDueDate('2027-06-01'));
+    expect(await readCount()).toBe(3);
+
+    await page.getByPlaceholder(/search tasks/i).fill(title);
+    await page.waitForTimeout(400);
+    await expect(page.locator('.badge.postponed').first()).toHaveText(/pushed 3/);
+
+    expectNoErrors(errors);
+  });
+
+  test('a recurring task advancing on completion never counts as a slip', async ({ page }) => {
+    /* A recurring task's due date is designed to move, so counting it would
+       make every long-lived routine look chronically postponed. */
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const title = `E2E Recurring Postpone ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(`${title} every day`);
+    const pills = page.locator('.addtask-pill');
+    await pills.nth(0).click();
+    await page.locator('.addtask-pill-panel input[type="date"]').fill('2027-03-01');
+    await pills.nth(0).click();
+    await submitAddTask(page);
+
+    const read = () =>
+      page.evaluate((t) => {
+        const x = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').find((y) => y.title === t);
+        return x ? { isRecurring: !!x.isRecurring, postponeCount: x.postponeCount ?? null } : null;
+      }, title);
+
+    expect((await read()).isRecurring).toBe(true);
+
+    // Even a manual push on a recurring task stays uncounted.
+    await searchAndOpen(page, title);
+    await page.locator('.detail-sidebar input[type="date"]').first().fill('2027-04-01');
+    await page.waitForTimeout(1500);
+    await closeAnyModal(page);
+    expect((await read()).postponeCount).toBeNull();
+
+    expectNoErrors(errors);
+  });
+});

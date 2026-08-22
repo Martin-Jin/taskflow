@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '8.7.0',
+    date: '2026-08-22',
+    title: 'TaskFlow now notices when you keep pushing something',
+    changes: [
+      'Move a task’s due date out three or more times and its row — and its Board card — picks up a quiet "pushed 3×" badge, with the date of the last push on hover. Until now the scheduler just silently re-planned around every slip, so the one pattern worth noticing was the one thing the app never showed you.',
+      'It only counts a deadline you set and then moved later. Pulling a date earlier doesn’t count, nor does giving an undated task its first date, nor Re-balance moving your work blocks around — and editing a task’s title or notes certainly doesn’t. Recurring tasks never show it, since advancing the date is how they work.',
+      'Nothing shows below three pushes. Almost everything gets pushed once, so a badge that common would tell you nothing.',
+    ],
+  },
+  {
     version: '8.6.0',
     date: '2026-08-22',
     title: 'Escape closes what you are looking at',
