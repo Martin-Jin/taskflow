@@ -18,6 +18,7 @@ import RoutinesSection from './Settings/sections/RoutinesSection';
 import AppearanceSection from './Settings/sections/AppearanceSection';
 import TagsSection from './Settings/sections/TagsSection';
 import TemplatesSection from './Settings/sections/TemplatesSection';
+import TrashSection from './Settings/sections/TrashSection';
 import NotificationsSection from './Settings/sections/NotificationsSection';
 import InstallAppSection from './Settings/sections/InstallAppSection';
 import HelpSection from './Settings/sections/HelpSection';
@@ -53,6 +54,7 @@ const SETTINGS_SECTIONS = [
   { id: 'help', label: 'Help' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
   { id: 'versions', label: 'Versions' },
+  { id: 'trash', label: 'Recently deleted' },
   { id: 'backups', label: 'Backups' },
   { id: 'dangerZone', label: 'Danger zone' },
 ];
@@ -214,6 +216,7 @@ export default function SettingsPanel({ onOpenTour, settingsSectionRequest, acti
           <HelpSection sectionRef={(el) => (sectionRefs.current.help = el)} onOpenTour={onOpenTour} />
           <ShortcutsSection sectionRef={(el) => (sectionRefs.current.shortcuts = el)} />
           <VersionsSection sectionRef={(el) => (sectionRefs.current.versions = el)} />
+          <TrashSection sectionRef={(el) => (sectionRefs.current.trash = el)} />
           <BackupsSection sectionRef={(el) => (sectionRefs.current.backups = el)} />
           <DangerZoneSection sectionRef={(el) => (sectionRefs.current.dangerZone = el)} />
         </div>

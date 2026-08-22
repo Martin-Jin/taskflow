@@ -52,6 +52,7 @@ export const BACKUP_FIELDS = [
   'shortcutBindings',
   'savedViews',
   'taskTemplates',
+  'trash',
   'events',
   'sharedProjectIds',
 ];
@@ -106,8 +107,9 @@ export const BACKUP_FIELDS = [
  *   - `events` joined BACKUP_FIELDS after launch.
  *   - `savedViews` was added 2026-08-22.
  *   - `taskTemplates` was added 2026-08-22.
+ *   - `trash` was added 2026-08-22.
  */
-export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews', 'taskTemplates']);
+export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews', 'taskTemplates', 'trash']);
 
 /**
  * Expected runtime shape per BACKUP_FIELDS entry — used both by
@@ -129,6 +131,7 @@ export const FIELD_TYPES = {
   rules: 'object',
   savedViews: 'array',
   taskTemplates: 'array',
+  trash: 'array',
   soundEnabled: 'boolean',
   soundVolume: 'number',
   animationsEnabled: 'boolean',
