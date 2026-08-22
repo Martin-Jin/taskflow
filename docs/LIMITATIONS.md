@@ -23,8 +23,15 @@ to be filled.
   same event changed in both places since the last sync), **Google
   Calendar's version always wins** — a local edit that hasn't been pushed
   yet can be silently overwritten by the next pull.
-- All-day Google Calendar events are not imported or synced — only timed
-  events are.
+- All-day Google Calendar events are imported and affect your capacity, but
+  are **read-only** — you can see one and mark it Free/Busy, but not edit or
+  delete it from TaskFlow, because the outbound sync only knows how to write
+  timed events. Whether an all-day event blocks the day follows Google's own
+  Free/Busy marking: a booked day of leave flattens that day's capacity, a
+  birthday from a holiday calendar doesn't. A multi-day all-day event that also
+  repeats is treated as single-day occurrences — a rare combination, and the
+  safer error (it under-reports busy time rather than blocking days you're
+  actually free).
 - Google Calendar sync keeps a modest rolling window (30 days back, 30 days
   forward, centered on today) fresh automatically in the background — pulls
   don't cover the account's entire calendar every time, since that would

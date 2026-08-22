@@ -152,6 +152,14 @@ for the next automatic poll or accepting local drift — it re-fetches your
 Google events and overwrites any local changes to synced events with
 whatever Google currently has, same as any other pull.
 
+**All-day events** are pulled in too, and shown in the calendar's own all-day
+row rather than as a 24-hour block. Whether one blocks out your day for
+scheduling follows Google's Free/Busy marking on the event itself — so a booked
+day of leave flattens that day's capacity, while a birthday from a holiday
+calendar doesn't. You can override either way with "Free Time" in TaskFlow.
+They're read-only here: TaskFlow can't yet write an all-day event back to
+Google, so editing and deleting stay on Google's side.
+
 **Subscribed calendars not showing up?** Check that you reconnected *after*
 subscribing (TaskFlow lists your subscribed calendars at connect-time),
 that the calendar isn't unchecked in Google Calendar's own sidebar

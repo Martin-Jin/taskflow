@@ -406,7 +406,56 @@ export function expandEventsForRange(events, rangeStartIso, rangeEndIso) {
   const out = [];
   for (const evt of events) {
     if (evt.recurrenceRule) out.push(...expandRecurringEvent(evt, rangeStartIso, rangeEndIso));
+    else if (evt.endDate && evt.endDate > evt.date) out.push(...expandMultiDayEvent(evt, rangeStartIso, rangeEndIso));
     else out.push(evt);
+  }
+  return out;
+}
+
+/**
+ * One instance per day covered by a multi-day event's `date`..`endDate` span
+ * (inclusive), clipped to the requested range.
+ *
+ * Multi-day all-day events (a conference, a week of leave) are STORED as a
+ * single row and expanded here for the same reason recurring events are:
+ * `mergePulledGoogleEvents` keys local events by `googleEventId` in a Map, so
+ * one Google event materialised as several local rows would collapse back to
+ * one and take its siblings' deletion detection with it.
+ *
+ * Each instance keeps the parent's `googleEventId` and gets a virtual
+ * `${masterId}::${date}` id — the SAME convention expandRecurringEvent uses,
+ * so `resolveEventId` resolves one back to its stored row and clicking it
+ * opens the real event. Getting this wrong doesn't fail loudly: the id simply
+ * matches nothing in `events` and the detail modal never opens.
+ *
+ * A recurring multi-day event is NOT handled here: `expandEventsForRange`
+ * checks `recurrenceRule` first, so recurrence wins and the span is ignored.
+ * That combination (a repeating event that also lasts several days) is rare
+ * enough not to justify a two-dimensional expansion, and treating it as
+ * single-day occurrences is the safer wrong answer — it under-reports busy
+ * time rather than blocking days the user is actually free.
+ */
+export function expandMultiDayEvent(event, rangeStartIso, rangeEndIso) {
+  const firstIso = event.date > rangeStartIso ? event.date : rangeStartIso;
+  const lastIso = event.endDate < rangeEndIso ? event.endDate : rangeEndIso;
+  if (firstIso > lastIso) return [];
+
+  const out = [];
+  for (let iso = firstIso; iso <= lastIso; iso = addDays(iso, 1)) {
+    out.push({
+      ...event,
+      // Same `${masterId}::${date}` virtual-id convention recurring
+      // occurrences use, so resolveEventId (and therefore CalendarPage's
+      // click-to-open) resolves one of these back to its stored row.
+      id: `${event.id}::${iso}`,
+      date: iso,
+      // The span belongs to the stored row, not to a single day of it —
+      // leaving it on would make each instance look multi-day in turn and
+      // re-expand if this output were ever fed back through.
+      endDate: undefined,
+      spanStartDate: event.date,
+      spanEndDate: event.endDate,
+    });
   }
   return out;
 }

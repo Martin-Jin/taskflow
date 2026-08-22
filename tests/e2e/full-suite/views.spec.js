@@ -1242,3 +1242,60 @@ test('Calendar: the time grid covers the full day and opens anchored to the morn
 
   expectNoErrors(errors);
 });
+
+test('Calendar: an all-day event renders in the all-day row, not as a block in the time grid', async ({ page }) => {
+  // Seeded mock data carries one multi-day all-day event ("Design Conference",
+  // base+1..base+2 — see mockData.getMockEvents). The point of the row is that
+  // an all-day event must NOT become a 00:00-23:59 block: it stores those times
+  // so the capacity engine can treat it as a full busy day, but rendering that
+  // in the grid would bury every real appointment on the day.
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await gotoTab(page, 'Calendar');
+
+  // Week view, and forward a week if needed — today can be the last day of the
+  // displayed week, which puts base+1 in the next one.
+  const hamburger = page.getByRole('button', { name: /change view/i });
+  await hamburger.click();
+  await page.waitForTimeout(150);
+  await page.getByRole('button', { name: 'Week', exact: true }).click();
+  await page.waitForTimeout(500);
+
+  const chip = page.locator('.week-allday-chip', { hasText: 'Design Conference' });
+  if ((await chip.count()) === 0) {
+    await page.locator('.calendar-toolbar').getByRole('button').nth(2).click();
+    await page.waitForTimeout(600);
+  }
+
+  // Present on each day of its span, and never in the time grid.
+  await expect(chip.first()).toBeVisible();
+  expect(await chip.count()).toBe(2);
+  await expect(page.locator('.cal-event', { hasText: 'Design Conference' })).toHaveCount(0);
+
+  // Pinned below the day headers rather than scrolling away with the grid —
+  // the grid opens anchored to the morning, so a row that scrolled would be
+  // off-screen exactly when it's wanted.
+  await page.evaluate(() => {
+    document.querySelector('.week-grid').scrollTop = 900;
+  });
+  await page.waitForTimeout(300);
+  await expect(chip.first()).toBeVisible();
+  const chipBox = await chip.first().boundingBox();
+  const headerBox = await page.locator('.day-header').first().boundingBox();
+  expect(chipBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 2);
+  // Regression guard for a collapsed row: `overflow-y: auto` on the cell gives
+  // it a min-content height of zero, which squashed the chips to a few pixels
+  // on any height-constrained viewport until a min-height was added.
+  expect(chipBox.height).toBeGreaterThan(12);
+
+  // Opening it offers no editable times — those aren't times the user chose.
+  await chip.first().click();
+  await page.waitForTimeout(400);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('All day', { exact: false }).first()).toBeVisible();
+  await expect(dialog.locator('input[type=time]')).toHaveCount(0);
+  await closeAnyModal(page);
+
+  expectNoErrors(errors);
+});

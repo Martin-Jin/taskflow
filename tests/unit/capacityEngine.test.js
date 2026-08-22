@@ -189,3 +189,31 @@ describe('computeHorizonCapacity', () => {
     expect(map.get('2026-07-03').totalAvailableHours).toBe(8);
   });
 });
+
+describe('computeDayCapacity — all-day events', () => {
+  /* An all-day event carries 00:00-23:59 rather than a special flag, so the
+     busy-interval maths needs no all-day branch at all (see
+     googleCalendarService's mapping). These pin the two outcomes that matter:
+     a BUSY all-day event flattens the day, and a FREE one is ignored. Google's
+     own transparency decides which by default — the difference between a day
+     of booked leave and a birthday on a holiday calendar. */
+  it('a busy all-day event leaves no capacity at all', () => {
+    const events = [{ date: '2026-07-01', startTime: '00:00', endTime: '23:59', isAllDay: true, isFreeTime: false }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events, blocks: [] });
+    expect(result.totalAvailableHours).toBe(0);
+    expect(result.freeIntervals).toEqual([]);
+  });
+
+  it('a free all-day event does not consume any capacity', () => {
+    const events = [{ date: '2026-07-01', startTime: '00:00', endTime: '23:59', isAllDay: true, isFreeTime: true }];
+    const result = computeDayCapacity('2026-07-01', { rules: baseRules, routines: [], events, blocks: [] });
+    expect(result.totalAvailableHours).toBe(8);
+    expect(result.freeIntervals).toEqual([{ start: '09:00', end: '17:00' }]);
+  });
+
+  it('only affects its own day', () => {
+    const events = [{ date: '2026-07-01', startTime: '00:00', endTime: '23:59', isAllDay: true, isFreeTime: false }];
+    const result = computeDayCapacity('2026-07-02', { rules: baseRules, routines: [], events, blocks: [] });
+    expect(result.totalAvailableHours).toBe(8);
+  });
+});

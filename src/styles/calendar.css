@@ -389,6 +389,84 @@
 
 /* Clickable — jumps into Day view on this date (see WeekView's onSelectDay),
    matching MonthView's own day-number cells. */
+/* All-day row. These are cells of .week-grid itself (one gutter + one per
+   day), sticky just below the day headers — see WeekView for why they're
+   pinned rather than scrolling away. `top` comes from the component as an
+   inline style, since the header height it has to clear is measured. */
+.week-allday-gutter,
+.week-allday-cell {
+  position: sticky;
+  z-index: 1; /* under .day-header's 2, so headers stay on top when scrolling */
+  background: var(--color-bg-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.week-allday-gutter {
+  /* Sentence case, no letter-spacing: uppercase "ALL DAY" with tracking
+     overran the 56px time gutter and clipped to "LL DAY" at mobile widths. */
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  padding: 6px 6px 6px 2px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  /* Matches .week-allday-cell's floor so the label sits level with the chips
+     rather than being pushed to the top of a taller row. */
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.week-allday-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-left: 1px solid var(--color-border);
+  min-width: 0;
+  /* Bounded so a day with many all-day events can't push the time grid off
+     screen — it scrolls within the cell instead.
+     min-height is load-bearing, not cosmetic: `overflow-y: auto` gives a box a
+     min-content height of ZERO, so the `auto` grid row this sits in collapsed
+     to a few pixels whenever the grid was height-constrained (every mobile
+     viewport), leaving legible-width chips 6px tall. */
+  min-height: 1.75rem;
+  max-height: 4.5rem;
+  overflow-y: auto;
+}
+
+.week-allday-chip {
+  /* Not a .btn: this is a label that happens to be clickable, and .btn's
+     border/padding would make a row of them read as a toolbar. */
+  border: none;
+  border-radius: 4px;
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent-border) 22%, transparent));
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  padding: 3px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--motion-emphasis-duration, 0.12s) ease;
+}
+
+.week-allday-chip:hover {
+  background: color-mix(in srgb, var(--color-accent-border) 38%, transparent);
+}
+
+/* A "Free" all-day event (Google's transparency, e.g. a birthday from a
+   holiday calendar) doesn't consume capacity, so it reads quieter than one
+   that actually blocks the day. */
+.week-allday-chip.is-free {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
 .day-header {
   position: sticky;
   top: 0;
