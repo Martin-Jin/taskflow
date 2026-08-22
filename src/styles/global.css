@@ -2410,6 +2410,19 @@ h4 + .settings-hint {
 /* Vertical rhythm between consecutive toggle rows, replacing the assorted
    inline marginTop values (10px/12px) those rows carried individually. */
 .settings-toggle-row + .settings-toggle-row,
+/* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
+   only carry a bottom margin, so a hint following a button row, a toggle, or
+   a bare inline button ran flush into it. Every "control, then explanation"
+   pairing in Settings goes through one of these selectors. */
+.settings-actions + .settings-hint,
+.settings-actions + .form-hint,
+.settings-actions + p,
+.settings-toggle-row + .settings-hint,
+.settings-inline + .settings-hint,
+.settings-inline + .form-hint {
+  margin-top: var(--space-3);
+}
+
 /* Per-weekday work hours (Settings → Scheduling rules). A row per day rather
    than seven labelled start/end pairs — at mobile width the repeated labels
    are what makes that unreadable. The times column shrinks before the day
@@ -2468,18 +2481,6 @@ h4 + .settings-hint {
   color: var(--color-text-secondary);
 }
 
-/* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
-   only carry a bottom margin, so a hint following a button row, a toggle, or
-   a bare inline button ran flush into it. Every "control, then explanation"
-   pairing in Settings goes through one of these selectors. */
-.settings-actions + .settings-hint,
-.settings-actions + .form-hint,
-.settings-actions + p,
-.settings-toggle-row + .settings-hint,
-.settings-inline + .settings-hint,
-.settings-inline + .form-hint {
-  margin-top: var(--space-3);
-}
 
 /* Two stacked control rows — typically a status badge row followed by its own
    button row (the AI-key and Todoist blocks in Integrations do this) — also

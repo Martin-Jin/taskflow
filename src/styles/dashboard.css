@@ -250,11 +250,19 @@
   margin-top: calc(var(--space-4) - 8px);
 }
 
+/* A translucent tint rather than --color-bg-surface-hover. This card is
+   deliberately accent-tinted (see .now-next-card above), and that flat neutral
+   token is a warm grey: hovering DROPPED the card's tint and shifted the hue,
+   so the highlight read as a differently-coloured panel sitting on the card
+   rather than the same surface lifting. Compositing over whatever is beneath
+   matches by construction, and keeps matching if the card's own tint changes.
+   The blocks have negative margins spanning nearly the full card, which is why
+   a mismatch here was so obvious — it recoloured most of the card. */
 .now-block.is-openable:hover,
 .now-block.is-openable:focus-visible,
 .next-block.is-openable:hover,
 .next-block.is-openable:focus-visible {
-  background: var(--color-bg-surface-hover);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 }
 
 .now-progress-track {
