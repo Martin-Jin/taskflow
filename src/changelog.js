@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '8.0.1',
+    date: '2026-08-22',
+    title: 'Two small fixes',
+    changes: [
+      'Fixed the "Automatically reschedule" checkbox in Settings → Scheduling rules drifting to the middle of the row instead of lining up with the others. Introduced by yesterday’s per-weekday hours work.',
+      'The "Right now" card no longer changes colour when you hover it. That card is deliberately tinted, but the hover used a plain grey, so moving the mouse over it dropped the tint and recoloured most of the card.',
+    ],
+  },
+  {
     version: '8.0.0',
     date: '2026-08-22',
     title: 'Your week is not seven identical days',
