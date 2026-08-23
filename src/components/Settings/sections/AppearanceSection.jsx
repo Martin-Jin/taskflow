@@ -91,8 +91,6 @@ export default function AppearanceSection({ sectionRef }) {
             onClick={() => handlePresetClick(preset)}
           />
         ))}
-      </div>
-      <div className="accent-custom-row">
         <label htmlFor="accentCustomColor" className="settings-inline" style={{ position: 'relative' }}>
           <input
             type="color"
@@ -104,6 +102,7 @@ export default function AppearanceSection({ sectionRef }) {
         </label>
         <input
           type="text"
+          className="accent-custom-hex"
           value={hexDraft}
           onChange={(e) => handleHexInput(e.target.value)}
           placeholder="#1d9e75"

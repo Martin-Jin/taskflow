@@ -27,7 +27,7 @@ export const CHANGELOG = [
     changes: [
       'A recurring task\'s "time left" and the task list/board\'s "remaining of" figure could disagree with each other for a task with a due date today — the list and board now show the same number the task\'s own detail view does.',
       'Deleting the last sub-task under a task that used to have sub-tasks could leave it with a stuck, too-low "time left" — inherited from when it was still a group of sub-tasks — that also kept it from being auto-scheduled. It now resets to the full estimate, as a fresh single task should.',
-      'A little more breathing room under the accent color picker in Settings → Appearance.',
+      'The custom accent color picker in Settings → Appearance now sits inline with the preset colors instead of on its own row, with a bit more breathing room around the whole group.',
     ],
   },
   {
