@@ -25,6 +25,7 @@ import { TimerProvider } from './context/TimerContext';
 import { CompleteTaskProvider } from './context/CompleteTaskContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import TimerWidget from './components/Common/TimerWidget';
+import BrandMark from './components/Common/BrandMark';
 import CompleteTaskConfirmModal from './components/Common/CompleteTaskConfirmModal';
 import ConfirmModal from './components/Common/ConfirmModal';
 import CalendarRewriteOverlay from './components/Common/CalendarRewriteOverlay';
@@ -469,7 +470,7 @@ function AppShell() {
       {isMobile && tab === 'dashboard' && (
         <header className="topbar">
           <div className="brand" data-tour="brand">
-            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="brand-mark" />
+            <BrandMark className="brand-mark" />
             <span className="brand-name">TaskFlow</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

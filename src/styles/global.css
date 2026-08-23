@@ -777,7 +777,29 @@ select:focus-visible,
    like BoardView's columns, just typographic separation, so it reads as a
    directory rather than a kanban board.
    ---------------------------------------------------------------------- */
+/* Full-bleed wrapper around .projects-page's centered column, so
+   ProjectsPageBackground's canvas can fill the empty space either side of
+   it on a wide screen rather than being clamped to the same 1100px column
+   the actual content uses. */
+.projects-page-wrap {
+  position: relative;
+}
+
+.projects-page-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Inert and behind everything — never above interactive content, never a
+     stacking context real menus/modals need to clear (see CLAUDE.md's note
+     on SelectMenu/MentionDropdown). */
+  pointer-events: none;
+  z-index: 0;
+}
+
 .projects-page {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-6);

@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '9.7.0',
+    date: '2026-08-23',
+    title: 'The logo follows your accent color, and Projects gets a bit of atmosphere',
+    changes: [
+      'The app logo now matches your chosen accent color (theme preset or custom) instead of always being teal — it used to look out of place next to a different accent.',
+      'The Projects page now has a quiet, still backdrop in its empty top-right corner — a small network of accent-colored nodes, matching your current theme and accent. It never moves and stays out of the way of anything you can click.',
+    ],
+  },
+  {
     version: '9.6.1',
     date: '2026-08-23',
     title: 'Fix a stale "time left" after clearing out a task\'s sub-tasks',

@@ -39,6 +39,7 @@ import React, { useState } from 'react';
 import { Inbox, Layers } from 'lucide-react';
 import ProjectActionsMenu from '../Common/ProjectActionsMenu';
 import SharedProjectBadge from '../Common/SharedProjectBadge';
+import BrandMark from '../Common/BrandMark';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { useConfirm } from '../../context/ConfirmContext';
@@ -97,7 +98,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="brand" data-tour="brand">
-        <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="brand-mark" />
+        <BrandMark className="brand-mark" />
         TaskFlow
       </div>
 
