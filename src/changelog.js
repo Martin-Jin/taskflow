@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '9.8.0',
+    date: '2026-08-24',
+    title: 'A second color for the app to work with',
+    changes: [
+      'The tab icon now matches your device\'s light/dark setting instead of always showing a white checkmark — it used to look mismatched against a dark accent square when your device was set to dark.',
+      'A calendar rewrite\'s progress spinner and progress bar now use a distinct second color derived from your accent, instead of the exact same color used for selections and buttons — so "the app is working" and "you selected this" no longer look identical.',
+    ],
+  },
+  {
     version: '9.7.0',
     date: '2026-08-23',
     title: 'The logo follows your accent color, and Projects gets a bit of atmosphere',

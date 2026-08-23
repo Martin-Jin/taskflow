@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { THEME_PRESETS, buildAccentRamp, isValidHexColor, findPreset } from '../../src/utils/themePresets';
+import { THEME_PRESETS, buildAccentRamp, buildSecondaryAccentRamp, isValidHexColor, findPreset } from '../../src/utils/themePresets';
 import { contrastRatio, hexToRgb, rgbToHsl } from '../../src/utils/colorMath';
 
 const LIGHT_BACKGROUNDS = ['#fafaf9', '#ffffff'];
@@ -176,5 +176,50 @@ describe('buildAccentRamp — role/floor independence (regression guard)', () =>
       expect(contrastRatio(light['--color-accent'], bg)).toBeGreaterThanOrEqual(4.5 - 0.01);
     }
     expect(contrastRatio(light['--color-accent-solid-bg'], light['--color-accent-solid-text'])).toBeGreaterThanOrEqual(4.5 - 0.01);
+  });
+});
+
+describe('buildSecondaryAccentRamp — the system-feedback hue (spinner/progress bar)', () => {
+  it('is a distinctly different hue from the primary accent, not just a lighter/darker shade of it', () => {
+    const primaryHue = rgbToHsl(hexToRgb('#1d9e75')).h;
+    const { light } = buildSecondaryAccentRamp('#1d9e75');
+    const secondaryHue = rgbToHsl(hexToRgb(light['--color-accent-secondary'])).h;
+    const diff = Math.min(Math.abs(primaryHue - secondaryHue), 360 - Math.abs(primaryHue - secondaryHue));
+    expect(diff).toBeGreaterThan(60);
+  });
+
+  it('never lands in the danger-red hue band regardless of preset seed', () => {
+    // --color-danger is a red (~hue 355-10). The secondary hue must stay
+    // clearly outside that band for every shipped preset, or a stuck
+    // progress bar would misread as an error state. This test caught a real
+    // bug: a naive fixed +150° offset put `slate` (hue ~209°) right back at
+    // hue ~359° — almost exactly red — which is why clampAwayFromRed exists.
+    for (const preset of THEME_PRESETS) {
+      const { light, dark } = buildSecondaryAccentRamp(preset.seed);
+      for (const value of [light['--color-accent-secondary'], dark['--color-accent-secondary']]) {
+        const hue = rgbToHsl(hexToRgb(value)).h;
+        const distanceFromRed = Math.min(Math.abs(hue - 0), 360 - Math.abs(hue - 0));
+        expect(distanceFromRed).toBeGreaterThanOrEqual(35 - 0.5);
+      }
+    }
+  });
+
+  it('clears the 3:1 non-text contrast floor (WCAG 1.4.11) against page/surface backgrounds in both modes', () => {
+    const adversarialSeeds = ['#fefefe', '#010101', '#808080', '#0000ff', '#ff69b4'];
+    for (const seed of adversarialSeeds) {
+      const { light, dark } = buildSecondaryAccentRamp(seed);
+      for (const bg of LIGHT_BACKGROUNDS) {
+        expect(contrastRatio(light['--color-accent-secondary'], bg)).toBeGreaterThanOrEqual(3 - 0.01);
+      }
+      for (const bg of DARK_BACKGROUNDS) {
+        expect(contrastRatio(dark['--color-accent-secondary'], bg)).toBeGreaterThanOrEqual(3 - 0.01);
+      }
+    }
+  });
+
+  it('every derived value is a well-formed hex color', () => {
+    const { light, dark } = buildSecondaryAccentRamp('#1d9e75');
+    expect(isValidHexColor(light['--color-accent-secondary'])).toBe(true);
+    expect(isValidHexColor(dark['--color-accent-secondary'])).toBe(true);
   });
 });

@@ -22,7 +22,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useAuth } from './AuthContext';
 import { pullUserData, pushUserData, subscribeUserData } from '../services/firestoreSync';
-import { buildAccentRamp, isValidHexColor } from '../utils/themePresets';
+import { buildAccentRamp, buildSecondaryAccentRamp, isValidHexColor } from '../utils/themePresets';
 
 const ThemeContext = createContext(null);
 
@@ -88,6 +88,7 @@ export function ThemeProvider({ children }) {
       '--color-accent-solid-bg-hover',
       '--color-accent-solid-text',
       '--color-accent-soft',
+      '--color-accent-secondary',
     ];
     if (!accentSeed || !isValidHexColor(accentSeed)) {
       // null/invalid means "use the shipped default" — remove any inline
@@ -95,7 +96,8 @@ export function ThemeProvider({ children }) {
       ACCENT_PROPERTIES.forEach((prop) => el.style.removeProperty(prop));
       return;
     }
-    const ramp = buildAccentRamp(accentSeed)[theme === 'dark' ? 'dark' : 'light'];
+    const mode = theme === 'dark' ? 'dark' : 'light';
+    const ramp = { ...buildAccentRamp(accentSeed)[mode], ...buildSecondaryAccentRamp(accentSeed)[mode] };
     Object.entries(ramp).forEach(([prop, value]) => el.style.setProperty(prop, value));
   }, [accentSeed, theme]);
 

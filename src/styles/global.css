@@ -128,6 +128,17 @@
   --color-accent-solid-bg-hover: var(--color-accent-800);
   --color-accent-solid-text: #ffffff;
   --color-accent-soft: var(--color-accent-50);
+  /* A second, distinct hue reserved ONLY for system/progress feedback (the
+     calendar-rewrite spinner + progress bar) — never for anything the user
+     selects or triggers (buttons/nav/checkboxes stay on --color-accent-*).
+     Derived from the accent seed by themePresets.js's
+     buildSecondaryAccentRamp, same mechanism as the rest of this ramp; this
+     literal is that function's own output for the shipped teal default, not
+     an independently hand-picked value — see that function's doc comment
+     for why "the app is working" needed its own hue instead of reusing the
+     accent (a stuck progress bar and a selected calendar block were
+     otherwise the identical color). */
+  --color-accent-secondary: #6a135a;
 
   /* Darkened from an earlier lighter set (kept in dark-theme's own override
      below) so each also clears 4.5:1 as text — these double as .badge text
@@ -186,6 +197,9 @@
      white text on --color-accent-400 fails 4.5:1. */
   --color-accent-solid-text: #14130f;
   --color-accent-soft: var(--color-accent-900);
+  /* See the light theme's own comment above — same secondary hue derived
+     for dark mode by buildSecondaryAccentRamp. */
+  --color-accent-secondary: #c023a4;
 
   --color-priority-urgent: #e8747d;
   --color-priority-high: #e3a15c;
@@ -2241,7 +2255,11 @@ input.search-bar-input {
 }
 
 .calendar-rewrite-spinner {
-  color: var(--color-accent-solid-bg);
+  /* --color-accent-secondary, not the primary accent — this is the app
+     doing something (system feedback), not something the user selected or
+     triggered, so it gets its own hue rather than looking identical to a
+     selected calendar block/board card. See that token's own comment. */
+  color: var(--color-accent-secondary);
   animation: calendar-rewrite-spin 1.1s linear infinite;
   margin-bottom: 12px;
 }
@@ -2276,7 +2294,8 @@ input.search-bar-input {
 .calendar-rewrite-progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--color-accent-solid-bg);
+  /* Same secondary/system-feedback hue as .calendar-rewrite-spinner above. */
+  background: var(--color-accent-secondary);
   transition: width var(--duration-base) var(--ease-standard);
 }
 
