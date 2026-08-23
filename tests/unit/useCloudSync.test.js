@@ -131,6 +131,7 @@ describe('isValidBackupPayload', () => {
     animationsEnabled: true,
     notificationSettings: {},
     theme: 'dark',
+    accentSeed: null,
     notes: { folders: [], notes: [] },
     shortcutBindings: {},
     savedViews: [],

@@ -697,6 +697,11 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.
+ * @param {*} deps.accentSeed - Current custom accent seed color (owned live
+ *   by ThemeContext, see themePresets.js) — rides the exact same path as
+ *   `theme` immediately above: only read here so a backup payload can
+ *   capture it, never part of the live-sync `state`/`stateRef` bundle.
+ * @param {Function} deps.setAccentSeed - Applies a restored backup's accentSeed.
  * @param {Array} deps.events - Current CalendarEvents. Like `theme`, kept
  *   OUT of `state`/`stateRef` (so it never reaches the live-sync fingerprint
  *   or Firestore push/pull) but passed separately purely so backup payloads
@@ -758,6 +763,8 @@ export function useCloudSync({
   setSharedProjectIds,
   theme,
   setTheme,
+  accentSeed,
+  setAccentSeed,
   events,
   setEvents,
   googleConnected,
@@ -1285,6 +1292,11 @@ export function useCloudSync({
       setNotificationSettings({ ...notificationSettings, timezone: getBrowserTimeZone() });
     }
     if ('theme' in payload) setTheme(pickValid('theme', payload.theme, theme));
+    // Absent on a backup taken before `accentSeed` joined BACKUP_FIELDS —
+    // left untouched in that case, same reasoning as `events` above.
+    // `null` is a legitimate value (means "use the shipped default"), so
+    // pickValid's own FIELD_TYPES check must accept it — see backupService.js.
+    if ('accentSeed' in payload) setAccentSeed(pickValid('accentSeed', payload.accentSeed, accentSeed));
     if ('notes' in payload) setNotes(pickValid('notes', payload.notes, stateRef.current.notes));
     else if ('pinnedLinks' in payload) {
       // legacy backup file, see notesModel.js migration note
@@ -1322,6 +1334,8 @@ export function useCloudSync({
     setNotificationSettings,
     setTheme,
     theme,
+    setAccentSeed,
+    accentSeed,
     setNotes,
     setShortcutBindings,
     setSavedViews,
@@ -1745,10 +1759,10 @@ export function useCloudSync({
 
   // ---- Export local backup file --------------------------------------------
   const exportBackup = useCallback(() => {
-    const payload = buildBackupPayload({ ...stateRef.current, theme, events });
+    const payload = buildBackupPayload({ ...stateRef.current, theme, accentSeed, events });
     downloadBackupFile(payload);
     setNotification({ type: 'success', message: 'Backup exported.' });
-  }, [stateRef, theme, events, setNotification]);
+  }, [stateRef, theme, accentSeed, events, setNotification]);
 
   // ---- Import local backup file --------------------------------------------
   // Returns whether the restore actually applied, so callers (SettingsPanel)
@@ -1814,7 +1828,7 @@ export function useCloudSync({
     // `where('automatic', ...) + orderBy('createdAt')` composite query, so a
     // missing Firestore index made every successful backup report failure.)
     try {
-      const payload = buildBackupPayload({ ...stateRef.current, theme, events });
+      const payload = buildBackupPayload({ ...stateRef.current, theme, accentSeed, events });
       await createBackup(user.uid, payload);
     } catch (err) {
       console.error('[useCloudSync] Cloud backup failed', err);
@@ -1836,7 +1850,7 @@ export function useCloudSync({
       // rather than alarming the user about something that isn't lost.
       console.warn('[useCloudSync] Backup saved, but pruning/refreshing the list failed', err);
     }
-  }, [user, stateRef, theme, events, setNotification, pruneBackupPool]);
+  }, [user, stateRef, theme, accentSeed, events, setNotification, pruneBackupPool]);
 
   // ---- Automatic daily cloud backup + retention -----------------------------
   // Runs at most once per day. Unlike createCloudBackup above (a user-initiated
@@ -1854,7 +1868,7 @@ export function useCloudSync({
     if (lastAutoBackupAtRef.current && now - lastAutoBackupAtRef.current < BACKUP_CHECK_INTERVAL_MS) return;
     autoBackupInFlightRef.current = true;
     try {
-      const payload = buildBackupPayload({ ...stateRef.current, theme, events });
+      const payload = buildBackupPayload({ ...stateRef.current, theme, accentSeed, events });
       await createBackup(user.uid, payload, { automatic: true });
       // Stamp the ref immediately (not just the state setter, which only
       // takes effect on this hook's next render) so a same-session re-check
@@ -1876,7 +1890,7 @@ export function useCloudSync({
     } finally {
       autoBackupInFlightRef.current = false;
     }
-  }, [user, cloudSynced, stateRef, theme, events, setLastAutoBackupAt, pruneBackupPool]);
+  }, [user, cloudSynced, stateRef, theme, accentSeed, events, setLastAutoBackupAt, pruneBackupPool]);
 
   // Checks once on mount (covers "app just opened, a day or more has passed")
   // and hourly after that (covers a long-lived tab crossing the day boundary

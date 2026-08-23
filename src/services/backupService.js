@@ -18,7 +18,11 @@ import { downloadTextFile } from '../utils/downloadFile';
  * point-in-time. Note: `theme` is an exception — it's synced live by
  * ThemeContext independently (not pushed/pulled here, see SchedulerContext's
  * cloud-sync comments), but is still included here so point-in-time
- * backups/restores capture it too.
+ * backups/restores capture it too. `accentSeed` (the custom theme-preset
+ * accent color, see themePresets.js) rides the exact same exception: owned
+ * live by ThemeContext alongside `theme`, excluded from live cross-device
+ * sync's `state`/`stateRef` bundle, but captured here for backups/restores.
+ * `null` is its valid "use the shipped default" value, not a missing field.
  *
  * `events` (CalendarEvents — Google Calendar bookings, plus any manual/
  * blocked-time entries) is the other exception, in the opposite direction:
@@ -48,6 +52,7 @@ export const BACKUP_FIELDS = [
   'animationsEnabled',
   'notificationSettings',
   'theme',
+  'accentSeed',
   'notes',
   'shortcutBindings',
   'savedViews',
@@ -108,8 +113,9 @@ export const BACKUP_FIELDS = [
  *   - `savedViews` was added 2026-08-22.
  *   - `taskTemplates` was added 2026-08-22.
  *   - `trash` was added 2026-08-22.
+ *   - `accentSeed` was added 2026-08-23 (theme presets/custom accent).
  */
-export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews', 'taskTemplates', 'trash']);
+export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews', 'taskTemplates', 'trash', 'accentSeed']);
 
 /**
  * Expected runtime shape per BACKUP_FIELDS entry — used both by
@@ -137,6 +143,9 @@ export const FIELD_TYPES = {
   animationsEnabled: 'boolean',
   notificationSettings: 'object',
   theme: 'string',
+  // null is valid here (means "use the shipped default accent") — see
+  // 'nullableString' in isValidFieldValue below.
+  accentSeed: 'nullableString',
   // { folders: [...], notes: [...] } — see notesModel.js's DEFAULT_NOTES.
   notes: 'object',
   shortcutBindings: 'object',
@@ -157,6 +166,11 @@ export function isValidFieldValue(field, value) {
       return typeof value === 'number' && Number.isFinite(value);
     case 'string':
       return typeof value === 'string';
+    // Like 'string', but null is also valid — for fields where null is a
+    // meaningful value in its own right (accentSeed: null means "use the
+    // shipped default accent"), not a missing/invalid one.
+    case 'nullableString':
+      return value === null || typeof value === 'string';
     default:
       return true;
   }

@@ -98,6 +98,7 @@ import {
   canCompact,
   applyUpwardCompletionCascade,
   getAllDescendants,
+  getDirectChildren,
 } from '../utils/taskHierarchy';
 import { planPostponeUpdate } from '../utils/rescheduleHistory';
 import { planTemplateInstantiation } from '../utils/taskTemplates';
@@ -471,8 +472,8 @@ export function SchedulerProvider({ children }) {
   // only read/written here so the backup payload (exportBackup/
   // createCloudBackup, both in useCloudSync) can capture it and a restore
   // (importBackup/restoreCloudBackup, also in useCloudSync) can apply it back.
-  // accentSeed rides along for exactly the same reason — its LIVE cross-device
-  // sync is also owned by ThemeContext directly (see that file), same as theme.
+  // accentSeed (the custom theme-preset accent color, see themePresets.js)
+  // rides the exact same path as theme — see ThemeContext's own doc comment.
   const { theme, setTheme, accentSeed, setAccentSeed } = useTheme();
 
   // tasks/blocks: seeded from whatever was last saved locally (falling back
@@ -1293,11 +1294,12 @@ export function SchedulerProvider({ children }) {
   // hook now — see its own doc comment (src/hooks/useCloudSync.js).
   // `cloudSyncState`/`cloudStateRef` bundle every field the LIVE sync (push/
   // pull/listener/fingerprint) covers — everything BACKUP_FIELDS lists
-  // except `theme` and `events`, both passed to the hook as separate params
-  // instead (see its own JSDoc): `theme` because live sync leaves it to
-  // ThemeContext's own independent sync, and `events` because it's backed up
-  // (point-in-time) but deliberately never live cross-device synced — see
-  // backupService.js's BACKUP_FIELDS doc comment for why.
+  // except `theme`, `accentSeed`, and `events`, all passed to the hook as
+  // separate params instead (see its own JSDoc): `theme`/`accentSeed`
+  // because live sync leaves them to ThemeContext's own independent sync,
+  // and `events` because it's backed up (point-in-time) but deliberately
+  // never live cross-device synced — see backupService.js's BACKUP_FIELDS
+  // doc comment for why.
   const cloudSyncState = useMemo(
     () => ({
       // Personal tasks only. A shared project's content isn't solely this
@@ -2098,6 +2100,29 @@ export function SchedulerProvider({ children }) {
             if (c.attachment) deleteCommentAttachment(c.attachment.path);
           });
       }
+      // If taskId had a parent, and this delete removes that parent's LAST
+      // remaining child, the parent just reverted from a container back to a
+      // plain leaf task — "container" isn't a stored flag (see
+      // getDirectChildren), it's derived live from whether any surviving task
+      // still points at it, so nothing needs fixing there. But
+      // remainingHoursOverride can be stale: DetailSidebar hides "Time left"
+      // entirely for a container (its rollup is read-only, computed from
+      // children), yet nothing ever stopped a timer (TimerWidget's
+      // handleStop, or TaskDetailModal's own Stop/mark-done actions) from
+      // being run against the PARENT while it still had children and writing
+      // a per-occurrence override anyway. That override then sits inert until
+      // the last child is gone, at which point the parent is a leaf again and
+      // getEffectiveRemainingHoursForOccurrence starts reading it as if it
+      // were a deliberate "time left" edit — silently understating (or
+      // zeroing out) remaining hours for however long a stray timer ran while
+      // the field wasn't even meant to be editable, which also starves the
+      // task of capacity in the auto-scheduler. Clearing it here (rather than
+      // trying to stop the write at every timer/logging call site, which
+      // would all need to know about container state) is the one place that
+      // already knows the container-to-leaf transition just happened.
+      const parent = targetTask?.parentId ? tasks.find((t) => t.id === targetTask.parentId) : null;
+      const parentRevertedToLeaf =
+        !!parent && getDirectChildren(parent.id, tasks).every((child) => idsToDelete.has(child.id));
       // Blocks belonging to a deleted task are simply dropped from local state
       // below — they have no Google Calendar presence to clean up (see
       // useGoogleCalendarSync.js's module doc on why blocks aren't synced).
@@ -2118,7 +2143,9 @@ export function SchedulerProvider({ children }) {
       // to the rest of the app; only stateRef/persistence/sync see it.
       commit(
         (current) => ({
-          tasks: tombstoneTasks(current.tasks, idsToDelete, new Date().toISOString()),
+          tasks: tombstoneTasks(current.tasks, idsToDelete, new Date().toISOString()).map((t) =>
+            parentRevertedToLeaf && t.id === parent.id ? { ...t, remainingHoursOverride: {} } : t
+          ),
           blocks: current.blocks.filter((b) => !idsToDelete.has(b.taskId)),
         }),
         `Deleted task`

@@ -27,6 +27,7 @@ import SharedProjectBadge from '../Common/SharedProjectBadge';
 import AddTaskFabGroup from '../Common/AddTaskFabGroup';
 import AIQuickAddModal from '../Modals/AIQuickAddModal';
 import EmptyState from '../Common/EmptyState';
+import ProjectsPageBackground from './ProjectsPageBackground';
 
 /** Tasteful, non-gimmicky rotating subtitles, split by time of day (same three-way split as DashboardPage's greetingForHour). One is picked once per mount below — never re-randomized on re-render. */
 const GREETINGS_BY_PERIOD = {
@@ -294,7 +295,12 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
   const visibleMyProjects = useMemo(() => filterBySearch(myProjects), [myProjects, query, isSearching]);
 
   return (
-    <div className="projects-page">
+    <div className="projects-page-wrap">
+      {/* Full-bleed, behind the centered column below — see
+          ProjectsPageBackground's own doc comment for why this is a static
+          draw rather than an animation. */}
+      <ProjectsPageBackground />
+      <div className="projects-page">
       {/* Sits above the centered hero rather than inside it, so it can align
           to the far right regardless of the hero's own centered text. This is
           now the app's one entry point to ManageProjectsModal (the sidebar's
@@ -403,6 +409,7 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
         />
       )}
       {showAIQuickAdd && <AIQuickAddModal onClose={() => setShowAIQuickAdd(false)} onProjectCreated={onSelectProject} />}
+      </div>
     </div>
   );
 }

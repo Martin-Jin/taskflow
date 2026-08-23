@@ -1,162 +1,194 @@
 /**
  * ============================================================================
- * COLOR MATH — the primitives a custom theme is built on
+ * COLOR MATH
  * ============================================================================
- * Plain sRGB/HSL conversion plus WCAG relative-luminance contrast, used by
- * themePresets.js to turn one user-picked seed color into a full accent ramp
- * and validate it before it's ever applied.
+ * Pure color conversion/contrast helpers, no framework or app dependencies.
+ * Built for theme-presets.js's accent-ramp derivation (see that file's header
+ * for why only the accent hue is customizable at all), but deliberately kept
+ * generic and dependency-free so it's testable in isolation.
  *
- * Nothing here is theme-specific — it doesn't know about `--color-accent` or
- * any app token. That split matters: the contrast MATH must be exactly right
- * (getting relative luminance wrong silently breaks the accessibility floor
- * this whole feature exists to protect), so it's isolated and tested against
- * the WCAG spec's own worked examples, separate from the judgment calls in
- * themePresets.js about what to DO with a failing contrast ratio.
+ * Conventions: hex strings are always 6-digit, lowercase, with a leading '#'
+ * (e.g. '#1d9e75'). RGB channels are 0-255 integers. HSL hue is 0-360, s/l are
+ * 0-100.
  * ============================================================================
  */
 
-/** Clamps a number into [min, max]. */
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
-}
-
-/**
- * @param {string} hex - "#rgb" or "#rrggbb"
- * @returns {{r: number, g: number, b: number}} each channel 0-255
- */
+/** '#RRGGBB' -> { r, g, b } (0-255 each). Accepts 3-digit shorthand too. */
 export function hexToRgb(hex) {
-  const clean = (hex || '').replace('#', '').trim();
-  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
-  const n = parseInt(full, 16);
-  if (full.length !== 6 || Number.isNaN(n)) return { r: 0, g: 0, b: 0 };
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  let h = hex.replace('#', '');
+  if (h.length === 3) {
+    h = h
+      .split('')
+      .map((c) => c + c)
+      .join('');
+  }
+  const num = parseInt(h, 16);
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255,
+  };
 }
 
-/** @returns {string} "#rrggbb", channels clamped and rounded */
+/** { r, g, b } (0-255 each, rounded) -> lowercase '#rrggbb'. */
 export function rgbToHex({ r, g, b }) {
-  const toHex = (c) => clamp(Math.round(c), 0, 255).toString(16).padStart(2, '0');
+  const toHex = (c) => {
+    const clamped = Math.max(0, Math.min(255, Math.round(c)));
+    return clamped.toString(16).padStart(2, '0');
+  };
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-/**
- * @returns {{h: number, s: number, l: number}} h in [0,360), s/l in [0,100]
- */
+/** { r, g, b } (0-255) -> { h: 0-360, s: 0-100, l: 0-100 }. */
 export function rgbToHsl({ r, g, b }) {
-  const rn = r / 255;
-  const gn = g / 255;
-  const bn = b / 255;
-  const max = Math.max(rn, gn, bn);
-  const min = Math.min(rn, gn, bn);
+  const rN = r / 255;
+  const gN = g / 255;
+  const bN = b / 255;
+  const max = Math.max(rN, gN, bN);
+  const min = Math.min(rN, gN, bN);
   const l = (max + min) / 2;
-  if (max === min) return { h: 0, s: 0, l: l * 100 };
-  const d = max - min;
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  let h;
-  if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) * 60;
-  else if (max === gn) h = ((bn - rn) / d + 2) * 60;
-  else h = ((rn - gn) / d + 4) * 60;
+  const delta = max - min;
+
+  let h = 0;
+  let s = 0;
+  if (delta !== 0) {
+    s = delta / (1 - Math.abs(2 * l - 1));
+    switch (max) {
+      case rN:
+        h = ((gN - bN) / delta) % 6;
+        break;
+      case gN:
+        h = (bN - rN) / delta + 2;
+        break;
+      default:
+        h = (rN - gN) / delta + 4;
+    }
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+
   return { h, s: s * 100, l: l * 100 };
 }
 
-/** @param {{h: number, s: number, l: number}} hsl */
+/** { h: 0-360, s: 0-100, l: 0-100 } -> { r, g, b } (0-255, rounded). */
 export function hslToRgb({ h, s, l }) {
-  const sn = clamp(s, 0, 100) / 100;
-  const ln = clamp(l, 0, 100) / 100;
-  if (sn === 0) {
-    const v = ln * 255;
-    return { r: v, g: v, b: v };
+  const sN = s / 100;
+  const lN = l / 100;
+  const c = (1 - Math.abs(2 * lN - 1)) * sN;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = lN - c / 2;
+
+  let rP = 0;
+  let gP = 0;
+  let bP = 0;
+  if (h < 60) {
+    rP = c;
+    gP = x;
+  } else if (h < 120) {
+    rP = x;
+    gP = c;
+  } else if (h < 180) {
+    gP = c;
+    bP = x;
+  } else if (h < 240) {
+    gP = x;
+    bP = c;
+  } else if (h < 300) {
+    rP = x;
+    bP = c;
+  } else {
+    rP = c;
+    bP = x;
   }
-  const hue2rgb = (p, q, t) => {
-    let tt = t;
-    if (tt < 0) tt += 1;
-    if (tt > 1) tt -= 1;
-    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
-    if (tt < 1 / 2) return q;
-    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
-    return p;
-  };
-  const q = ln < 0.5 ? ln * (1 + sn) : ln + sn - ln * sn;
-  const p = 2 * ln - q;
-  const hn = ((h % 360) + 360) % 360 / 360;
+
   return {
-    r: hue2rgb(p, q, hn + 1 / 3) * 255,
-    g: hue2rgb(p, q, hn) * 255,
-    b: hue2rgb(p, q, hn - 1 / 3) * 255,
+    r: (rP + m) * 255,
+    g: (gP + m) * 255,
+    b: (bP + m) * 255,
   };
 }
 
-/**
- * WCAG relative luminance (the exact formula from the spec, not an
- * approximation) — the basis every contrast ratio in this module is built on.
- * @param {{r: number, g: number, b: number}} rgb - 0-255 channels
- * @returns {number} 0 (black) to 1 (white)
- */
-export function relativeLuminance({ r, g, b }) {
-  const linear = (c) => {
-    const cs = c / 255;
-    return cs <= 0.03928 ? cs / 12.92 : ((cs + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+/** Linearizes one sRGB channel (0-255) per the WCAG relative luminance formula. */
+function linearizeChannel(c) {
+  const cN = c / 255;
+  return cN <= 0.03928 ? cN / 12.92 : Math.pow((cN + 0.055) / 1.055, 2.4);
+}
+
+/** WCAG relative luminance (0-1) of a '#rrggbb' color. */
+export function relativeLuminance(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const R = linearizeChannel(r);
+  const G = linearizeChannel(g);
+  const B = linearizeChannel(b);
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
 }
 
 /**
- * WCAG contrast ratio between two colors, 1 (identical) to 21 (black/white).
- * @param {string} hexA
- * @param {string} hexB
+ * WCAG contrast ratio between two colors, always >= 1 (the lighter color's
+ * luminance is placed in the numerator regardless of argument order — the
+ * formula is symmetric in that sense, but this keeps callers from having to
+ * pre-sort themselves). Reference: red #FF0000 on white #FFFFFF is ~3.998:1.
  */
-export function contrastRatio(hexA, hexB) {
-  const lA = relativeLuminance(hexToRgb(hexA));
-  const lB = relativeLuminance(hexToRgb(hexB));
-  const lighter = Math.max(lA, lB);
-  const darker = Math.min(lA, lB);
+export function contrastRatio(hex1, hex2) {
+  const l1 = relativeLuminance(hex1);
+  const l2 = relativeLuminance(hex2);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
   return (lighter + 0.05) / (darker + 0.05);
 }
 
 /**
- * Nudges `hex`'s lightness in HSL space until its contrast against `bgHex`
- * reaches `targetRatio`, preserving hue and saturation.
+ * Binary-searches the HSL lightness of `hex` until its contrast ratio against
+ * `bgHex` reaches `targetRatio`, returning the adjusted hex (hue/saturation
+ * preserved). Returns `hex` unchanged if it already meets the target.
  *
- * Direction is decided once, from the color's OWN starting lightness relative
- * to the background, not re-evaluated each step — a color already close to 50%
- * lightness sits near the inflection point where "does darkening or
- * lightening help contrast against this background" can flip sign as
- * relativeLuminance's curve bends, which would make an iterative "move
- * whichever direction currently helps" search oscillate. Picking direction
- * from the far side (lighten toward white if the color started darker than a
- * mid-gray background's luminance would suggest, darken otherwise) is stable
- * and matches how a designer would actually fix a failing contrast pair.
- *
- * @param {string} hex
- * @param {string} bgHex
- * @param {number} targetRatio
- * @returns {string} hex, guaranteed to reach targetRatio unless already at
- *   the L=0/L=100 extreme (pure black/white can't do better against a given
- *   background — that's a property of the background, not a bug here)
+ * The search DIRECTION (darken vs lighten) is picked ONCE up front, from
+ * whether `bgHex` is lighter or darker than `hex` — never re-decided inside
+ * the loop. Relative luminance is not monotonic in HSL lightness in a way
+ * that's safe to re-probe every iteration near extremes (e.g. a fully
+ * saturated color's luminance curve can flatten close to l=0 or l=100), so
+ * re-deciding "which way is closer" on each step risks oscillating around an
+ * inflection point instead of converging. Deciding once from the background's
+ * relative darkness is a stable, monotonic proxy: moving `hex` away from
+ * `bgHex` in lightness reliably increases contrast for any single starting
+ * point, which is all one call needs.
  */
 export function nudgeForContrast(hex, bgHex, targetRatio) {
   if (contrastRatio(hex, bgHex) >= targetRatio) return hex;
-  const hsl = rgbToHsl(hexToRgb(hex));
-  const bgLum = relativeLuminance(hexToRgb(bgHex));
-  // Darkening always increases contrast against a LIGHT background and
-  // decreases it against a dark one, and vice versa for lightening — this
-  // holds everywhere except exactly at the extremes, which the step loop
-  // below reaches and stops at cleanly regardless.
-  const goingDarker = bgLum > 0.18; // ~L=50% gray's own luminance
-  let lo = goingDarker ? 0 : hsl.l;
-  let hi = goingDarker ? hsl.l : 100;
-  // Binary search on lightness for the boundary meeting targetRatio, rather
-  // than a fixed step size — a fixed step either overshoots (visibly darker/
-  // lighter than necessary) or needs many iterations to land precisely.
-  for (let i = 0; i < 24; i += 1) {
-    const mid = (lo + hi) / 2;
-    const candidate = rgbToHex(hslToRgb({ ...hsl, l: mid }));
-    const meets = contrastRatio(candidate, bgHex) >= targetRatio;
-    if (goingDarker) {
-      if (meets) lo = mid;
-      else hi = mid;
-    } else if (meets) hi = mid;
-    else lo = mid;
+
+  // Background is light -> darken the color (push lightness toward 0).
+  // Background is dark -> lighten the color (push lightness toward 100).
+  // Decided once, up front, from the background alone — never re-derived
+  // inside the loop below (see doc comment on why: re-probing "which way is
+  // closer" every iteration risks oscillating near the luminance curve's
+  // inflection point instead of converging).
+  const bgIsLight = relativeLuminance(bgHex) > 0.5;
+  const extremeL = bgIsLight ? 0 : 100;
+
+  const { h, s, l: startL } = rgbToHsl(hexToRgb(hex));
+  const contrastAtL = (l) => contrastRatio(rgbToHex(hslToRgb({ h, s, l })), bgHex);
+
+  // If even the most extreme lightness can't reach the target (e.g. a very
+  // low-saturation gray can't hit high contrast against a mid-gray bg),
+  // return the most extreme value rather than searching for an unreachable
+  // boundary.
+  if (contrastAtL(extremeL) < targetRatio) {
+    return rgbToHex(hslToRgb({ h, s, l: extremeL }));
   }
-  const finalL = goingDarker ? lo : hi;
-  return rgbToHex(hslToRgb({ ...hsl, l: finalL }));
+
+  // Contrast increases monotonically as l moves from startL toward extremeL
+  // (moving away from the background's own lightness), so a plain bisection
+  // between the two converges on the smallest nudge that clears targetRatio.
+  let a = startL; // known: contrast(a) < targetRatio (checked at function entry)
+  let b = extremeL; // known: contrast(b) >= targetRatio (checked just above)
+  for (let i = 0; i < 40 && Math.abs(a - b) >= 0.01; i += 1) {
+    const mid = (a + b) / 2;
+    if (contrastAtL(mid) >= targetRatio) {
+      b = mid;
+    } else {
+      a = mid;
+    }
+  }
+
+  return rgbToHex(hslToRgb({ h, s, l: b }));
 }

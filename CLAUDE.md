@@ -65,6 +65,58 @@ grep, reading one known file).
   the intermediate steps.
 - Delete the feature branch after it's merged into `main`, unless told otherwise.
 
+### Two remotes: `main-history` vs `origin`/`main` — pushing work forward
+
+This repo has two remotes that are NOT the same history: `taskflow_history`
+(the local working branch `main-history` tracks this, and this is where the
+squash-merge workflow above happens day to day) and `origin` (the deployed
+`taskflow` repo, whose `main` branch has its own separate commit history —
+currently just a few large snapshot commits, e.g. a "Deployment V1.0" dump).
+They share a real common ancestor but have each moved on independently
+since, so `main-history` is NOT simply ahead of `origin/main` — pushing
+`main-history` straight onto `origin/main` would require a force-push and
+would destroy whatever commits are unique to `origin/main`. Don't do that
+without explicit, one-time confirmation from the user for that exact push.
+
+**The normal way to bring the newest `main-history` work to `origin/main`**
+is a cherry-pick onto a throwaway branch based on `origin/main`, not a merge
+or a force-push:
+
+```bash
+git fetch origin
+git checkout -b sync-<short-name> origin/main
+git cherry-pick <sha> --no-commit
+git commit -m "<simplified, user-facing message>"
+git push origin sync-<short-name>:main
+git checkout main-history
+git branch -D sync-<short-name>
+```
+
+- Use `--no-commit` so the commit message can be rewritten short and plain
+  (a squashed `main-history` commit's own message is often "Squashed commit
+  of the following:" plus noise — don't carry that onto `main`).
+- If the cherry-pick conflicts (expected — the two histories can genuinely
+  contain independently-built, overlapping work, not just textual drift),
+  resolve deliberately rather than reflexively taking one side. Check what
+  each side's version actually is before picking — ask the user if it's not
+  obvious which one should win.
+- This lands as a plain fast-forward on `origin/main` (one new commit on top,
+  no merge commit), since the cherry-picked branch is based on `origin/main`'s
+  own tip.
+- **Never push to `origin/main` without the user's go-ahead on that specific
+  push** — prepare the branch/commit and stop there unless told to push.
+
+**Authorship — never become a co-author.** Every commit pushed from this repo
+must show the user as its sole author (and committer). This means:
+- Never add a `Co-Authored-By` trailer to a commit destined for `main-history`
+  *or* `origin/main` unless the user explicitly asks for one.
+- When writing a commit yourself on the user's behalf (a squash-merge, a
+  cherry-pick resolution, an amended message), use a plain `git commit -m
+  "..."` with no trailer — don't reuse the heredoc-with-co-author pattern
+  from an ordinary "create a commit for me" request. The commit's author
+  field is already the user's configured git identity; don't add anything
+  that would make it look shared.
+
 ### Concurrent sessions / worktrees
 
 This repo is often worked on by more than one Claude Code session at once

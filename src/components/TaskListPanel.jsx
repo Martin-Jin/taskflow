@@ -99,7 +99,7 @@ import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { shouldShowPostponeBadge, describePostponeCount } from '../utils/rescheduleHistory';
 import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { getEffectiveEstimatedHours, getEffectiveRemainingHours, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
+import { getEffectiveEstimatedHours, getEffectiveRemainingHours, getEffectiveRemainingHoursForOccurrence, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { resolveCurrentOccurrenceDueDate } from '../utils/recurrence';
 import {
   ALL_TASKS_PROJECT_ID,
@@ -622,7 +622,7 @@ export default function TaskListPanel({
         // resolveCurrentOccurrenceDueDate's doc comment on the taskGroups
         // memo above.
         displayDueDate={resolveCurrentOccurrenceDueDate(task)}
-        effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : task.remainingHours}
+        effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : getEffectiveRemainingHoursForOccurrence(task)}
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
         onOpen={setEditingTaskId}

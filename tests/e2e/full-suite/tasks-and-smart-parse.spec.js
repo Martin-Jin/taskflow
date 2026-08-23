@@ -489,6 +489,107 @@ test.describe('Sub-tasks', () => {
     await closeAnyModal(page);
     expectNoErrors(errors);
   });
+
+  test('deleting a container\'s last sub-task clears a stale remainingHoursOverride left by a timer', async ({ page }) => {
+    // Regression test for SchedulerContext.deleteTask's parentRevertedToLeaf
+    // fix. While a task has children, DetailSidebar hides "Time left"
+    // entirely and shows a read-only rollup instead (getEffectiveEstimatedHours
+    // — see taskHierarchy.js) — but nothing ever stopped a timer (TimerWidget's
+    // handleStop) from running against the parent anyway and writing a
+    // remainingHoursOverride straight onto it. That override then sits inert
+    // until the last child is deleted, at which point the parent reverts to a
+    // plain leaf (containment is derived live from getDirectChildren, not a
+    // stored flag) and "Time left" would silently read the stale overridden
+    // value instead of the full estimate — unless deleteTask clears it.
+    //
+    // A timer can't actually be started against a container task through the
+    // UI: DetailSidebar's "Time left" field (the only place a timer-start
+    // control lives, per TaskDetailModal) is conditionally hidden by
+    // `!isContainer` (see DetailSidebar.jsx), so there's no reachable path to
+    // arm one. The override is therefore seeded directly into localStorage,
+    // in the exact shape TimerWidget.handleStop's
+    // computeRemainingHoursPatchAfterElapsed would have written for a
+    // recurring task (a plain non-recurring task's timer writes straight to
+    // `remainingHours` instead, which deleteTask always overwrites via a
+    // fresh child-count rollup anyway — recurring is the shape that actually
+    // needs deleteTask's explicit clearing fix).
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+
+    const parentTitle = `E2E Stale Override Parent ${RUN_ID}`;
+    const childTitle = `E2E stale override child ${RUN_ID}`;
+    const today = todayIsoLocal();
+
+    await page.evaluate(
+      ({ parentTitle, childTitle, today }) => {
+        const key = 'taskflow:v1:tasks';
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        const base = {
+          isCompleted: false, isLocked: false, priority: 'medium', dependsOn: [],
+          minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        };
+        const parent = {
+          ...base,
+          id: 'e2e_stale_override_parent',
+          title: parentTitle,
+          // While it's a container, "Estimated time" is a rollup of children
+          // (getEffectiveEstimatedHours), not this own value — the child's
+          // estimatedHours below (2h) is what actually needs to show through
+          // both before and after the delete, so the parent's own value here
+          // is otherwise inert until the child is gone.
+          estimatedHours: 2,
+          dueDate: today,
+          isRecurring: true,
+          recurrence: { frequency: 'weekly', interval: 1 },
+          // The stale write a timer stopped against the container would have
+          // left behind — keyed by the occurrence's own due date, same as
+          // computeRemainingHoursPatchAfterElapsed. 0.25h (15m) stands in for
+          // "an hour and 45 minutes already logged", well below the 2h estimate.
+          remainingHoursOverride: { [today]: 0.25 },
+        };
+        const child = {
+          ...base,
+          id: 'e2e_stale_override_child',
+          title: childTitle,
+          parentId: parent.id,
+          estimatedHours: 2,
+          remainingHours: 2,
+        };
+        localStorage.setItem(key, JSON.stringify([...existing, parent, child]));
+      },
+      { parentTitle, childTitle, today }
+    );
+    await page.reload();
+    await page.waitForTimeout(700);
+
+    // Confirm the container state first: "Time left" is hidden, and the
+    // rollup shown for "Estimated time" is the full 2h (not affected by the
+    // override, which only ever pertains to remainingHours).
+    await searchAndOpen(page, parentTitle);
+    await expect(page.locator('.detail-field', { hasText: 'Time left' })).toHaveCount(0);
+    await expect(page.locator('.detail-field', { hasText: 'Estimated time' })).toContainText('2h');
+    await closeAnyModal(page);
+    await page.waitForTimeout(300);
+
+    // Delete the only sub-task — the parent's last child — reverting it to a
+    // plain leaf task.
+    await searchAndOpen(page, childTitle);
+    await page.getByRole('button', { name: /more actions/i }).click();
+    await page.getByRole('menuitem', { name: /delete/i }).click();
+    await page.waitForTimeout(300);
+
+    // The child's own modal closes itself on delete; reopen the parent fresh.
+    await searchAndOpen(page, parentTitle);
+    await expect(page.locator('.detail-hierarchy-link')).toHaveCount(0); // sanity: still top-level itself
+    const timeLeftField = page.locator('.detail-field', { hasText: 'Time left' });
+    await expect(timeLeftField).toBeVisible(); // no longer a container — the field is back
+    // Fixed behavior: reads the full 2h estimate, not the stale 15m override.
+    await expect(timeLeftField.locator('.smart-duration-input')).toHaveValue('2 hours');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
 });
 
 test.describe('Reopening a completed task', () => {

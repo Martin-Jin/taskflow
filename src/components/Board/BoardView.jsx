@@ -118,7 +118,7 @@ import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { priorityColor } from '../../utils/priorityColor';
 import { shouldShowPostponeBadge, describePostponeCount } from '../../utils/rescheduleHistory';
 import { ALL_TASKS_PROJECT_ID, filterTasksByProject, filterTasksByStatus } from '../../utils/projectConstants';
-import { getEffectiveRemainingHours, isCheckedForListDisplay } from '../../utils/taskHierarchy';
+import { getEffectiveRemainingHours, getEffectiveRemainingHoursForOccurrence, isCheckedForListDisplay } from '../../utils/taskHierarchy';
 import { BOARD_COLUMN_ORDER_KEY, applySavedColumnOrder, moveColumn } from '../../utils/boardColumnOrder';
 import { sortByBoardOrder, planBoardReorder } from '../../utils/boardCardOrder';
 import { computeEffectiveRole } from '../../utils/sharedProjectAccess';
@@ -626,7 +626,7 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
             <span>
               {/* A container (has sub-tasks — see subtaskTotal above) shows its rolled-up remaining
                   hours here rather than its own frozen/independent number — see utils/taskHierarchy.js. */}
-              {formatHours(subtaskTotal > 0 ? getEffectiveRemainingHours(task, tasks) : task.remainingHours)} left
+              {formatHours(subtaskTotal > 0 ? getEffectiveRemainingHours(task, tasks) : getEffectiveRemainingHoursForOccurrence(task))} left
               {task.dueDate ? (
                 <span className="board-card-due"> · due {formatDisplayDate(task.dueDate)}</span>
               ) : (

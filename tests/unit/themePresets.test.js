@@ -1,126 +1,180 @@
-/**
- * Coverage for buildAccentRamp — the function standing between "the user
- * picked a color" and "every button in the app is still readable".
- *
- * The interesting cases are the colors a naive ramp would fail on: very
- * light, very dark, and very desaturated (near-gray) seeds. Each of those is
- * a real thing a color picker lets someone type in, and each is exactly the
- * kind of pick that would otherwise ship an unreadable button or an invisible
- * border. A test suite that only checks a "normal" mid-tone seed would miss
- * all of them.
- */
-
 import { describe, it, expect } from 'vitest';
-import { contrastRatio } from '../../src/utils/colorMath';
-import { buildAccentRamp, isValidHexColor, findPreset, THEME_PRESETS } from '../../src/utils/themePresets';
+import { THEME_PRESETS, buildAccentRamp, isValidHexColor, findPreset } from '../../src/utils/themePresets';
+import { contrastRatio, hexToRgb, rgbToHsl } from '../../src/utils/colorMath';
 
-const LIGHT_BG = '#fafaf9';
-const LIGHT_SURFACE = '#ffffff';
-const DARK_BG = '#1c1b17';
-const DARK_SURFACE = '#242320';
+const LIGHT_BACKGROUNDS = ['#fafaf9', '#ffffff'];
+const DARK_BACKGROUNDS = ['#1c1b17', '#242320'];
 
-const SEEDS = {
-  normal: '#1d9e75', // the shipped default
-  veryLight: '#eaffea',
-  veryDark: '#0a0e08',
-  nearGray: '#8a8c88',
-  saturatedBlue: '#2255ee',
-  hotPink: '#ff2ea6',
-};
-
-function assertLightThemeSafe(ramp) {
-  // --color-accent is used as small text — 4.5:1 minimum.
-  expect(contrastRatio(ramp.light['--color-accent'], LIGHT_BG)).toBeGreaterThanOrEqual(4.5 - 0.05);
-  expect(contrastRatio(ramp.light['--color-accent-hover'], LIGHT_BG)).toBeGreaterThanOrEqual(4.5 - 0.05);
-  // --color-accent-border is a lone border/boundary — 3:1 minimum (WCAG 1.4.11).
-  expect(contrastRatio(ramp.light['--color-accent-border'], LIGHT_SURFACE)).toBeGreaterThanOrEqual(3 - 0.05);
-  // White text on the solid button fill — 4.5:1 minimum, the exact failure
-  // mode a raw per-token picker could ship.
-  expect(contrastRatio(ramp.light['--color-accent-solid-text'], ramp.light['--color-accent-solid-bg'])).toBeGreaterThanOrEqual(4.5 - 0.05);
-}
-
-function assertDarkThemeSafe(ramp) {
-  expect(contrastRatio(ramp.dark['--color-accent'], DARK_BG)).toBeGreaterThanOrEqual(4.5 - 0.05);
-  expect(contrastRatio(ramp.dark['--color-accent-hover'], DARK_BG)).toBeGreaterThanOrEqual(4.5 - 0.05);
-  expect(contrastRatio(ramp.dark['--color-accent-border'], DARK_SURFACE)).toBeGreaterThanOrEqual(3 - 0.05);
-  expect(contrastRatio(ramp.dark['--color-accent-solid-text'], ramp.dark['--color-accent-solid-bg'])).toBeGreaterThanOrEqual(4.5 - 0.05);
-}
-
-describe('buildAccentRamp — every seed produces a WCAG-safe theme', () => {
-  for (const [label, seed] of Object.entries(SEEDS)) {
-    it(`meets every contrast floor for a ${label} seed (${seed}), both themes`, () => {
-      const ramp = buildAccentRamp(seed);
-      assertLightThemeSafe(ramp);
-      assertDarkThemeSafe(ramp);
-    });
+/** Asserts every text/border role in one mode's ramp clears its actual WCAG floor. */
+function assertRampMeetsFloors(ramp, backgrounds, soft) {
+  // Text roles: 4.5:1 against every background AND against the mode's own soft fill.
+  for (const bg of [...backgrounds, soft]) {
+    expect(contrastRatio(ramp['--color-accent'], bg)).toBeGreaterThanOrEqual(4.5 - 0.01);
   }
+  for (const bg of backgrounds) {
+    expect(contrastRatio(ramp['--color-accent-hover'], bg)).toBeGreaterThanOrEqual(4.5 - 0.01);
+  }
+  // Border-only role: 3:1 against page/surface (never checked as text).
+  for (const bg of backgrounds) {
+    expect(contrastRatio(ramp['--color-accent-border'], bg)).toBeGreaterThanOrEqual(3 - 0.01);
+  }
+  // Solid bg roles: 4.5:1 against the FIXED solid text painted on top of them, not the page.
+  expect(contrastRatio(ramp['--color-accent-solid-bg'], ramp['--color-accent-solid-text'])).toBeGreaterThanOrEqual(4.5 - 0.01);
+  expect(contrastRatio(ramp['--color-accent-solid-bg-hover'], ramp['--color-accent-solid-text'])).toBeGreaterThanOrEqual(4.5 - 0.01);
+}
 
-  it('meets every contrast floor for every shipped preset', () => {
+describe('THEME_PRESETS', () => {
+  it('has teal first, matching the shipped default accent (--color-accent-400 in global.css)', () => {
+    expect(THEME_PRESETS[0].id).toBe('teal');
+    expect(THEME_PRESETS[0].seed.toLowerCase()).toBe('#1d9e75');
+  });
+
+  it('has at least 6 presets spanning distinct hues', () => {
+    expect(THEME_PRESETS.length).toBeGreaterThanOrEqual(6);
+    const hues = THEME_PRESETS.map((p) => rgbToHsl(hexToRgb(p.seed)).h);
+    // No two presets should share almost the same hue (would defeat "spanning different hues").
+    for (let i = 0; i < hues.length; i += 1) {
+      for (let j = i + 1; j < hues.length; j += 1) {
+        const diff = Math.min(Math.abs(hues[i] - hues[j]), 360 - Math.abs(hues[i] - hues[j]));
+        expect(diff).toBeGreaterThan(15);
+      }
+    }
+  });
+
+  it('every preset has a valid hex seed', () => {
     for (const preset of THEME_PRESETS) {
-      const ramp = buildAccentRamp(preset.seed);
-      assertLightThemeSafe(ramp);
-      assertDarkThemeSafe(ramp);
+      expect(isValidHexColor(preset.seed)).toBe(true);
     }
-  });
-
-  it('produces a complete token set with no missing keys', () => {
-    const ramp = buildAccentRamp(SEEDS.normal);
-    const expectedKeys = [
-      '--color-accent-50', '--color-accent-100', '--color-accent-200', '--color-accent-400',
-      '--color-accent-600', '--color-accent-800', '--color-accent-900',
-      '--color-accent', '--color-accent-hover', '--color-accent-border',
-      '--color-accent-solid-bg', '--color-accent-solid-bg-hover', '--color-accent-solid-text', '--color-accent-soft',
-    ];
-    for (const key of expectedKeys) {
-      expect(ramp.light[key]).toBeTruthy();
-      expect(ramp.dark[key]).toBeTruthy();
-    }
-  });
-
-  it('preserves the seed hue through the derived ramp (a red seed produces a red theme, not a fallback gray)', () => {
-    // A saturated seed's hue should survive into the mid-ramp stops even
-    // after contrast nudging — nudging only moves lightness.
-    const ramp = buildAccentRamp('#e0303a'); // a red
-    const { rgbToHsl, hexToRgb } = require('../../src/utils/colorMath');
-    const hue = rgbToHsl(hexToRgb(ramp.light['--color-accent-200'])).h;
-    expect(hue).toBeGreaterThan(340); // red wraps near 360/0
-    expect(hue < 20 || hue > 340).toBe(true);
-  });
-
-  it('keeps light and dark themes visibly distinct from each other for the same seed', () => {
-    // A degenerate implementation could satisfy every contrast check by
-    // collapsing both themes toward the same safe gray-ish accent.
-    const ramp = buildAccentRamp(SEEDS.normal);
-    expect(ramp.light['--color-accent']).not.toBe(ramp.dark['--color-accent']);
-  });
-});
-
-describe('isValidHexColor', () => {
-  it('accepts 3- and 6-digit hex with or without a leading #', () => {
-    expect(isValidHexColor('#fff')).toBe(true);
-    expect(isValidHexColor('#1d9e75')).toBe(true);
-  });
-
-  it('rejects garbage rather than silently falling back to black', () => {
-    expect(isValidHexColor('not-a-color')).toBe(false);
-    expect(isValidHexColor('#ggg')).toBe(false);
-    expect(isValidHexColor('')).toBe(false);
-    expect(isValidHexColor(null)).toBe(false);
-    expect(isValidHexColor('#12345')).toBe(false);
   });
 });
 
 describe('findPreset', () => {
-  it('finds a known preset by id', () => {
-    expect(findPreset('indigo')?.name).toBe('Indigo');
+  it('finds a preset by id', () => {
+    expect(findPreset('teal')?.seed.toLowerCase()).toBe('#1d9e75');
   });
 
-  it('returns null for an unknown id rather than throwing', () => {
-    expect(findPreset('not-a-real-preset')).toBeNull();
-    expect(findPreset(undefined)).toBeNull();
+  it('returns undefined for an unknown id', () => {
+    expect(findPreset('nonexistent')).toBeUndefined();
+  });
+});
+
+describe('isValidHexColor', () => {
+  it('accepts 6-digit and 3-digit hex colors', () => {
+    expect(isValidHexColor('#1d9e75')).toBe(true);
+    expect(isValidHexColor('#fff')).toBe(true);
+    expect(isValidHexColor('#ABCDEF')).toBe(true);
   });
 
-  it('lists the shipped default first, so it reads as "the current theme" not a random option', () => {
-    expect(THEME_PRESETS[0].id).toBe('teal');
+  it('rejects malformed input', () => {
+    expect(isValidHexColor('1d9e75')).toBe(false); // missing #
+    expect(isValidHexColor('#1d9e7')).toBe(false); // wrong length
+    expect(isValidHexColor('#gggggg')).toBe(false); // invalid hex digits
+    expect(isValidHexColor('red')).toBe(false);
+    expect(isValidHexColor('')).toBe(false);
+    expect(isValidHexColor(null)).toBe(false);
+    expect(isValidHexColor(undefined)).toBe(false);
+    expect(isValidHexColor(123)).toBe(false);
+    expect(isValidHexColor('javascript:alert(1)')).toBe(false);
+  });
+});
+
+describe('buildAccentRamp — shipped presets', () => {
+  for (const preset of THEME_PRESETS) {
+    it(`${preset.id}: light ramp clears every WCAG floor`, () => {
+      const { light } = buildAccentRamp(preset.seed);
+      assertRampMeetsFloors(light, LIGHT_BACKGROUNDS, light['--color-accent-soft']);
+    });
+
+    it(`${preset.id}: dark ramp clears every WCAG floor`, () => {
+      const { dark } = buildAccentRamp(preset.seed);
+      assertRampMeetsFloors(dark, DARK_BACKGROUNDS, dark['--color-accent-soft']);
+    });
+
+    it(`${preset.id}: derived ramp's hue stays close to the seed's hue`, () => {
+      const { light, dark } = buildAccentRamp(preset.seed);
+      const seedHue = rgbToHsl(hexToRgb(preset.seed)).h;
+      // Check the raw ramp stops (100/200/600/800 are never nudged for
+      // contrast in either mode) to isolate "does the ramp preserve hue"
+      // from "did a contrast nudge shift it" — nudging only ever changes
+      // lightness, never hue, but this keeps the assertion meaningful even
+      // if that changes.
+      for (const stop of ['--color-accent-100', '--color-accent-600']) {
+        const hue = rgbToHsl(hexToRgb(light[stop])).h;
+        const diff = Math.min(Math.abs(hue - seedHue), 360 - Math.abs(hue - seedHue));
+        expect(diff).toBeLessThan(2);
+      }
+      for (const stop of ['--color-accent-100', '--color-accent-600']) {
+        const hue = rgbToHsl(hexToRgb(dark[stop])).h;
+        const diff = Math.min(Math.abs(hue - seedHue), 360 - Math.abs(hue - seedHue));
+        expect(diff).toBeLessThan(2);
+      }
+    });
+
+    it(`${preset.id}: light and dark ramps are distinct`, () => {
+      const { light, dark } = buildAccentRamp(preset.seed);
+      expect(light['--color-accent']).not.toBe(dark['--color-accent']);
+      expect(light['--color-accent-solid-text']).not.toBe(dark['--color-accent-solid-text']);
+    });
+  }
+});
+
+describe('buildAccentRamp — adversarial seeds (not preset-picked, deliberately hostile to contrast)', () => {
+  const adversarialSeeds = [
+    '#fefefe', // near-white — barely any room to darken for light-mode text
+    '#010101', // near-black — barely any room to lighten for dark-mode fills
+    '#808080', // desaturated gray — no hue to preserve, minimal saturation
+    '#a0a0a5', // near-gray with a whisper of hue
+    '#0000ff', // fully saturated, very dark-perceived blue
+    '#ff69b4', // hot pink, high saturation + high lightness
+  ];
+
+  for (const seed of adversarialSeeds) {
+    it(`${seed}: light ramp still clears every WCAG floor`, () => {
+      const { light } = buildAccentRamp(seed);
+      assertRampMeetsFloors(light, LIGHT_BACKGROUNDS, light['--color-accent-soft']);
+    });
+
+    it(`${seed}: dark ramp still clears every WCAG floor`, () => {
+      const { dark } = buildAccentRamp(seed);
+      assertRampMeetsFloors(dark, DARK_BACKGROUNDS, dark['--color-accent-soft']);
+    });
+
+    it(`${seed}: light and dark ramps remain distinct even under clamping pressure`, () => {
+      const { light, dark } = buildAccentRamp(seed);
+      expect(light['--color-accent']).not.toBe(dark['--color-accent']);
+    });
+
+    it(`${seed}: every derived value is a well-formed hex color`, () => {
+      const { light, dark } = buildAccentRamp(seed);
+      for (const value of [...Object.values(light), ...Object.values(dark)]) {
+        expect(isValidHexColor(value)).toBe(true);
+      }
+    });
+  }
+});
+
+describe('buildAccentRamp — role/floor independence (regression guard)', () => {
+  // Dark mode's --color-accent, --color-accent-border, and
+  // --color-accent-solid-bg-hover all read from the SAME raw stop (200) in
+  // the shipped ramp (see global.css) but have three different floors
+  // (4.5:1 text, 3:1 border, 4.5:1-vs-solid-text). A naive implementation
+  // that computes one nudged value for "stop 200" and reuses it for all
+  // three roles can satisfy one role while failing another — this pins that
+  // each role is nudged independently.
+  it('dark mode: accent/border/solid-bg-hover can each independently reach their own floor on a low-saturation seed', () => {
+    const { dark } = buildAccentRamp('#8899a0'); // desaturated blue-gray — least room to satisfy multiple floors from one stop
+    for (const bg of DARK_BACKGROUNDS) {
+      expect(contrastRatio(dark['--color-accent'], bg)).toBeGreaterThanOrEqual(4.5 - 0.01);
+      expect(contrastRatio(dark['--color-accent-border'], bg)).toBeGreaterThanOrEqual(3 - 0.01);
+    }
+    expect(contrastRatio(dark['--color-accent-solid-bg-hover'], dark['--color-accent-solid-text'])).toBeGreaterThanOrEqual(4.5 - 0.01);
+  });
+
+  it('light mode: accent-600 (text) and solid-bg-600 (vs solid-text) can independently reach their own floor', () => {
+    const { light } = buildAccentRamp('#8899a0');
+    for (const bg of LIGHT_BACKGROUNDS) {
+      expect(contrastRatio(light['--color-accent'], bg)).toBeGreaterThanOrEqual(4.5 - 0.01);
+    }
+    expect(contrastRatio(light['--color-accent-solid-bg'], light['--color-accent-solid-text'])).toBeGreaterThanOrEqual(4.5 - 0.01);
   });
 });

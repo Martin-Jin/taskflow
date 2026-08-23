@@ -1,199 +1,225 @@
 /**
  * ============================================================================
- * THEME PRESETS & CUSTOM ACCENT
+ * THEME PRESETS
  * ============================================================================
- * CLAUDE.md is explicit: "Not rebuilding the token system... It works; extend
- * it, don't replace it." So this doesn't add a parallel theming system — it
- * derives values for the EXACT tokens `global.css`'s `:root` blocks already
- * define (`--color-accent-50` through `-900`, plus the semantic aliases built
- * on them), and ThemeContext writes them as inline custom properties on
- * `<html>`, which cascade under the stylesheet's own `:root` rules for free.
+ * CLAUDE.md's "Deliberately not doing" section is explicit: this app is
+ * "not rebuilding the token system" — the whole design system is one set of
+ * CSS custom properties in global.css's `:root` blocks, extended rather than
+ * replaced. Auditing every token in that file (see global.css) shows the
+ * ONLY hue that varies across the entire palette is the teal accent ramp
+ * (`--color-accent-50` through `--color-accent-900`); backgrounds, borders,
+ * and text are fixed neutrals. So "let the user pick a theme" reduces
+ * exactly to "let the user pick a different accent hue" — nothing else in
+ * the token system needs to change, which is what keeps this an extension
+ * rather than a parallel system.
  *
- * WHY ONLY THE ACCENT IS CUSTOMIZABLE, not "primary/secondary/tertiary" as a
- * separate concept. Reading the actual token set (not a hypothetical one):
- * there is one hue that varies across the app's palette — the teal accent
- * (`--color-accent-*`) — used for links, the active state, buttons, and
- * highlights. Backgrounds, borders and body text are neutral grays with a
- * fixed contrast relationship to each other and to the page background;
- * "let the user pick a secondary color" would mean inventing a second brand
- * hue nothing currently uses, which is exactly the parallel system the
- * project note rules out. So a preset/custom theme means "pick the accent
- * hue"; light/dark stays the existing, separate switch it always was.
- *
- * THE SEED-COLOR APPROACH, not a per-token color picker. The user names one
- * color (a preset's seed, or their own pick); everything else — the 50-900
- * ramp, both themes' semantic aliases, the on-accent text color — is DERIVED
- * and CONTRAST-CHECKED here. A raw per-token picker would let someone set
- * `--color-accent-solid-text` to a color that fails 4.5:1 against
- * `--color-accent-solid-bg` and ship an unreadable button; deriving the ramp
- * programmatically and clamping for contrast (see buildAccentRamp) makes that
- * failure mode structurally impossible rather than something to catch in review.
- *
- * WHAT THIS FILE DOES NOT TOUCH, and why: `--color-text-muted` stays a fixed
- * neutral gray regardless of the chosen accent — CLAUDE.md calls it
- * decorative-only at ~2.4:1, and it must never become load-bearing, which a
- * saturated derived color risks the moment someone reads it as "the theme
- * color" rather than "muted gray". `.btn`'s border token
- * (`--color-border-interactive`) is likewise left as the fixed neutral it
- * already is — recoloring it to match the accent risks dropping below the
- * WCAG 1.4.11 3:1 floor CLAUDE.md calls load-bearing, for a component this
- * module has no rendered context to test against. Priority/chart colors are
- * deliberately categorical (many colors, meaningfully distinct from each
- * other) — mapping them to shades of one accent hue would make priorities
- * harder to tell apart, not more on-theme.
+ * Rather than exposing a picker for every one of those ~10 accent tokens
+ * (which would let a user pick, say, a light "border" token darker than
+ * their "text" token and break the contrast relationships CLAUDE.md calls
+ * load-bearing), the user only ever picks ONE seed color — a preset from
+ * THEME_PRESETS, or a custom hex. `buildAccentRamp` derives the full
+ * light+dark ramp from that single seed programmatically, clamping every
+ * derived stop to whichever WCAG floor its actual CSS role requires (see
+ * that function's own comment for the per-role floors). This is what makes
+ * "a bad pick can't produce an unreadable app" actually true in code, not
+ * just a hope: there is no token the user can set directly to a
+ * contrast-violating value, because they never set tokens at all.
  * ============================================================================
  */
 
-import { hexToRgb, rgbToHsl, hslToRgb, rgbToHex, contrastRatio, nudgeForContrast } from './colorMath';
+import { hexToRgb, rgbToHsl, hslToRgb, rgbToHex, nudgeForContrast } from './colorMath';
 
 /**
- * Named seed colors for the preset picker. Each is just a hue+starting
- * point — buildAccentRamp does the actual work of turning it into a full,
- * contrast-safe theme. The app's existing shipped color is first and named
- * for what it's replacing-as-default, so "Teal (default)" reads as a preset
- * choice like any other rather than a special case.
+ * Preset seed colors shown in Settings → Appearance. `teal` is FIRST and
+ * matches the app's actual shipped default accent (--color-accent-400,
+ * global.css) — selecting it is equivalent to clearing the custom accent
+ * (see ThemeContext's accentSeed: null convention), not to applying this
+ * literal hex as a new "custom" value.
  */
 export const THEME_PRESETS = [
   { id: 'teal', name: 'Teal (default)', seed: '#1d9e75' },
-  { id: 'indigo', name: 'Indigo', seed: '#5b5bd6' },
-  { id: 'rose', name: 'Rose', seed: '#d6497a' },
-  { id: 'amber', name: 'Amber', seed: '#c97a2e' },
-  { id: 'slate', name: 'Slate', seed: '#4b6a8a' },
-  { id: 'plum', name: 'Plum', seed: '#8a5fb0' },
+  { id: 'indigo', name: 'Indigo', seed: '#4a5fd9' },
+  { id: 'rose', name: 'Rose', seed: '#d94a72' },
+  { id: 'amber', name: 'Amber', seed: '#c9822e' },
+  { id: 'slate', name: 'Slate', seed: '#5b6b7a' },
+  { id: 'plum', name: 'Plum', seed: '#8a4fb0' },
 ];
 
-/** Minimum contrast a background-fill accent color must hold against small text drawn on it (buttons, active pills). */
-const TEXT_ON_ACCENT_MIN_RATIO = 4.5;
-/** Minimum contrast an accent used as a lone border must hold against its surface (WCAG 1.4.11). */
-const BORDER_MIN_RATIO = 3;
+/** `#rrggbb` (case-insensitive, 3 or 6 digit) — the only shape a seed color may take. */
+const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/** Is `hex` a syntactically valid hex color string? Used to gate accentSeed before it's ever stored or applied. */
+export function isValidHexColor(hex) {
+  return typeof hex === 'string' && HEX_COLOR_RE.test(hex);
+}
+
+/** Looks up a preset by id, or undefined if no preset has that id. */
+export function findPreset(id) {
+  return THEME_PRESETS.find((p) => p.id === id);
+}
+
+// The shipped teal ramp's own lightness at each stop (see global.css's
+// --color-accent-50..900) — mirrored here so a derived ramp keeps the same
+// visual "spread" (a light tint, a mid accent, a deep shade) regardless of
+// seed hue. Hue and saturation are held fixed at the SEED's own values
+// (not re-measured per stop) — the shipped ramp's hue/saturation actually
+// drifts slightly stop-to-stop (a hand-tuned/eyeballed ramp), but a fixed
+// hue+saturation sweep is simpler, fully predictable for an arbitrary user
+// seed, and any resulting contrast shortfall is corrected by the per-role
+// nudge step below anyway.
+const RAMP_LIGHTNESS_STOPS = {
+  50: 92.2,
+  100: 75.3,
+  200: 57.8,
+  400: 36.7,
+  600: 24.5,
+  800: 17.3,
+  900: 11.0,
+};
+
+// This app's fixed (non-accent) background tokens each mode's derived accent
+// text/border stops are checked against — see global.css's :root blocks.
+// Both page and surface are checked (not just one) because accent text can
+// legitimately sit on either; --color-bg-surface-raised is not included
+// separately since it equals --color-bg-surface in both current themes.
+const LIGHT_BACKGROUNDS = ['#fafaf9', '#ffffff'];
+const DARK_BACKGROUNDS = ['#1c1b17', '#242320'];
+
+/** Builds the raw 7-stop lightness ramp (hue/saturation fixed from the seed) as a stop-number -> hex map. */
+function buildRawRamp(seedHex) {
+  const { h, s } = rgbToHsl(hexToRgb(seedHex));
+  const ramp = {};
+  for (const [stop, l] of Object.entries(RAMP_LIGHTNESS_STOPS)) {
+    ramp[stop] = rgbToHex(hslToRgb({ h, s, l }));
+  }
+  return ramp;
+}
+
+/** Nudges `hex` against every background in `backgrounds`, chaining so the result clears `targetRatio` against ALL of them, not just the first. */
+function nudgeAgainstAll(hex, backgrounds, targetRatio) {
+  let result = hex;
+  for (const bg of backgrounds) {
+    result = nudgeForContrast(result, bg, targetRatio);
+  }
+  // A single pass can, in principle, fix one background just enough to fall
+  // slightly short of another (nudging is monotonic per-background, but two
+  // different backgrounds can pull in the same direction by different
+  // amounts) — chaining twice converges since there are only two backgrounds
+  // and both moves are in the same direction (both light, or both dark).
+  for (const bg of backgrounds) {
+    result = nudgeForContrast(result, bg, targetRatio);
+  }
+  return result;
+}
 
 /**
- * Builds the full accent token set for both themes from one seed hex.
+ * Derives a full light+dark accent ramp from one seed color, each value
+ * clamped to the WCAG floor its actual CSS role requires. Returns
+ * `{ light: { '--color-accent-...': hex }, dark: { ... } }` ready to apply
+ * as inline custom properties (see ThemeContext).
  *
- * The ramp is generated by holding the seed's hue and saturation fixed and
- * sweeping LIGHTNESS to fixed stops — this is what makes every preset (and
- * every custom pick) produce a ramp with the same internal shape as the
- * shipped teal one, so light mode picks light stops and dark mode picks dark
- * stops exactly the way the existing CSS already expects.
+ * Role floors below were determined by grepping every `var(--color-accent...)`
+ * consumer in src/styles/*.css and src/components — not assumed from the
+ * token's name:
+ *   - `--color-accent` / `--color-accent-hover`: used ONLY as `color:` (link/
+ *     active-state/visited text) — needs >=4.5:1 (small-text AA) against
+ *     whichever fixed background it's rendered on (page or surface).
+ *   - `--color-accent-border`: used ONLY as border-color/outline/box-shadow
+ *     ring/dashed-border, or as a color-mix() background fill at low opacity
+ *     — never as text color (global.css's own a:visited comment says so
+ *     explicitly: "NOT --color-accent-border here — that token is only
+ *     3:1-safe"). Needs >=3:1 (WCAG 1.4.11 non-text contrast) against page/
+ *     surface. IMPORTANT: this is a DIFFERENT floor than --color-accent-hover
+ *     even though both ultimately come from the same raw stop family — see
+ *     below for why they get separate values rather than reusing one.
+ *   - `--color-accent-solid-bg` / `--color-accent-solid-bg-hover`: solid
+ *     button/badge fill. The floor that matters is 4.5:1 between this and
+ *     `--color-accent-solid-text` (the text painted ON it), not against the
+ *     page — solid-text is fixed (white in light mode, near-black in dark),
+ *     so solid-bg is nudged against solid-text's own color instead of a page
+ *     background.
+ *   - `--color-accent-soft`: background wash only (badges, hover fills,
+ *     selection tints) — `--color-accent` text sits on top of it in several
+ *     places (e.g. board.css's .board-card selected state), so soft's OWN
+ *     floor is "stay light/dark enough that --color-accent still clears
+ *     4.5:1 against it", enforced by including it in --color-accent's own
+ *     nudge-against list below rather than nudging soft itself.
+ *   - `--color-accent-solid-text`: NOT derived from the seed at all — fixed
+ *     white (light) / near-black (dark), exactly as global.css already has
+ *     it, since global.css's own comment establishes those are the only
+ *     values that read correctly against a solid accent fill in each mode.
  *
- * @param {string} seedHex
- * @returns {{
- *   light: Record<string, string>,  // CSS custom property name -> value, for the bare :root block
- *   dark: Record<string, string>,   // same, for :root[data-theme='dark']
- * }}
+ * The light-mode `--color-accent-border` (raw stop 400) and dark-mode
+ * `--color-accent-hover` (also raw stop 400) share a RAW STOP NUMBER but
+ * NOT a role or a floor (border needs 3:1, hover-text needs 4.5:1) — so
+ * each is nudged independently to its own floor rather than one shared
+ * nudged value being reused for both, which previously caused test
+ * failures when the two roles' floors disagreed on a low-saturation seed.
  */
 export function buildAccentRamp(seedHex) {
-  const { h, s } = rgbToHsl(hexToRgb(seedHex));
-  // Fixed lightness stops matching the shipped ramp's own approximate
-  // positions (see global.css's light --color-accent-* values) — a seed's
-  // saturation and hue carry the "which color is this" identity, while the
-  // lightness LADDER itself is a structural property of the ramp, not
-  // something a seed color should be allowed to distort (a very light or very
-  // dark seed would otherwise compress the ramp into too few usable stops).
-  const stop = (l, sMul = 1) => rgbToHex(hslToRgb({ h, s: Math.min(100, s * sMul), l }));
-  const ramp = {
-    50: stop(93),
-    100: stop(82),
-    200: stop(68),
-    400: stop(45, 1.05),
-    600: stop(30, 1.05),
-    800: stop(19, 1.05),
-    900: stop(13, 1.05),
-  };
+  const raw = buildRawRamp(seedHex);
 
-  // ---- Light theme semantic aliases -------------------------------------
-  const lightBg = '#fafaf9';
-  const lightSurface = '#ffffff';
-  let accent600 = nudgeForContrast(ramp[600], lightBg, TEXT_ON_ACCENT_MIN_RATIO);
-  let accent800 = nudgeForContrast(ramp[800], lightBg, TEXT_ON_ACCENT_MIN_RATIO);
-  let accent400 = nudgeForContrast(ramp[400], lightSurface, BORDER_MIN_RATIO);
+  // --- Light mode -----------------------------------------------------------
+  // Text roles (--color-accent, --color-accent-hover): 4.5:1 vs page+surface,
+  // AND (for --color-accent specifically) vs its own soft background, since
+  // --color-accent text is rendered on --color-accent-soft in several places.
+  const lightSoft = raw['50'];
+  const lightAccentText = nudgeAgainstAll(raw['600'], [...LIGHT_BACKGROUNDS, lightSoft], 4.5);
+  const lightHoverText = nudgeAgainstAll(raw['800'], LIGHT_BACKGROUNDS, 4.5);
+  // Border-only role: 3:1, nudged independently from the hover text above
+  // even though both start from a stop in the same family — see doc comment.
+  const lightBorder = nudgeAgainstAll(raw['400'], LIGHT_BACKGROUNDS, 3);
+  // Solid bg vs its own (fixed) solid text, not the page.
+  const lightSolidText = '#ffffff';
+  const lightSolidBg = nudgeForContrast(raw['600'], lightSolidText, 4.5);
+  const lightSolidBgHover = nudgeForContrast(raw['800'], lightSolidText, 4.5);
+
   const light = {
-    '--color-accent-50': ramp[50],
-    '--color-accent-100': ramp[100],
-    '--color-accent-200': ramp[200],
-    '--color-accent-400': accent400,
-    '--color-accent-600': accent600,
-    '--color-accent-800': accent800,
-    '--color-accent-900': ramp[900],
-    '--color-accent': accent600,
-    '--color-accent-hover': accent800,
-    '--color-accent-border': accent400,
-    '--color-accent-solid-bg': accent600,
-    '--color-accent-solid-bg-hover': accent800,
-    '--color-accent-solid-text': '#ffffff',
-    '--color-accent-soft': ramp[50],
+    '--color-accent-50': lightSoft,
+    '--color-accent-100': raw['100'],
+    '--color-accent-200': raw['200'],
+    '--color-accent-400': lightBorder,
+    '--color-accent-600': lightAccentText,
+    '--color-accent-800': lightHoverText,
+    '--color-accent-900': raw['900'],
+    '--color-accent': lightAccentText,
+    '--color-accent-hover': lightHoverText,
+    '--color-accent-border': lightBorder,
+    '--color-accent-solid-bg': lightSolidBg,
+    '--color-accent-solid-bg-hover': lightSolidBgHover,
+    '--color-accent-solid-text': lightSolidText,
+    '--color-accent-soft': lightSoft,
   };
-  // White-on-accent needs the FILL darkened further if a very light/
-  // desaturated seed left accent600 still failing 4.5:1 against white text
-  // (nudgeForContrast above only guaranteed contrast against the PAGE
-  // background, a different pair) — checked and corrected here so a pale
-  // custom accent can never ship an unreadable solid button.
-  if (contrastRatio(light['--color-accent-solid-text'], light['--color-accent-solid-bg']) < TEXT_ON_ACCENT_MIN_RATIO) {
-    light['--color-accent-solid-bg'] = nudgeForContrast(light['--color-accent-solid-bg'], '#ffffff', TEXT_ON_ACCENT_MIN_RATIO);
-    light['--color-accent'] = light['--color-accent-solid-bg'];
-    light['--color-accent-600'] = light['--color-accent-solid-bg'];
-  }
 
-  // ---- Dark theme semantic aliases ---------------------------------------
-  // Dark mode's shipped ramp deliberately uses the LIGHTER stops (200/400) as
-  // its foreground colors, since a dark background needs a brighter accent to
-  // read — see global.css's :root[data-theme='dark'] block. Mirrored here:
-  // the derived ramp's light stops do the dark theme's foreground work.
-  const darkBg = '#1c1b17';
-  const accent200 = nudgeForContrast(ramp[200], darkBg, TEXT_ON_ACCENT_MIN_RATIO);
-  // Used as BOTH a lone border (3:1) and hover TEXT (4.5:1) below — the
-  // stricter of the two floors has to win, or hover text can pass the border
-  // check and still fail as text. This is exactly the failure the four now-
-  // failing test seeds (saturated/desaturated colors whose natural mid-ramp
-  // lightness sits between the two thresholds) caught.
-  const accent400Dark = nudgeForContrast(ramp[400], darkBg, TEXT_ON_ACCENT_MIN_RATIO);
-  // The BORDER role gets its own value against the SURFACE background (not
-  // the page background accent400Dark was just nudged against) — a lone
-  // border only ever needs 3:1, and reusing the text-safe value here is fine
-  // since meeting 4.5:1 against a similar background already implies meeting
-  // 3:1 against it.
-  const accent400Border = nudgeForContrast(accent400Dark, '#242320', BORDER_MIN_RATIO);
+  // --- Dark mode --------------------------------------------------------------
+  // Same role/floor logic, mirrored against dark backgrounds and dark stops
+  // (--color-accent reads from stop 200 in dark mode, --color-accent-hover
+  // from 400, --color-accent-border from 200, --color-accent-solid-bg from
+  // 400 — see global.css's :root[data-theme='dark'] block).
+  const darkSoft = raw['900'];
+  const darkAccentText = nudgeAgainstAll(raw['200'], [...DARK_BACKGROUNDS, darkSoft], 4.5);
+  const darkHoverText = nudgeAgainstAll(raw['400'], DARK_BACKGROUNDS, 4.5);
+  const darkBorder = nudgeAgainstAll(raw['200'], DARK_BACKGROUNDS, 3);
+  const darkSolidText = '#14130f';
+  const darkSolidBg = nudgeForContrast(raw['400'], darkSolidText, 4.5);
+  const darkSolidBgHover = nudgeForContrast(raw['200'], darkSolidText, 4.5);
+
   const dark = {
-    '--color-accent-50': ramp[50],
-    '--color-accent-100': ramp[100],
-    '--color-accent-200': accent200,
-    '--color-accent-400': accent400Border,
-    '--color-accent-600': ramp[600],
-    '--color-accent-800': ramp[800],
-    '--color-accent-900': ramp[900],
-    '--color-accent': accent200,
-    '--color-accent-hover': accent400Dark,
-    '--color-accent-border': accent200,
-    '--color-accent-solid-bg': accent400Dark,
-    '--color-accent-solid-bg-hover': accent200,
-    // Near-black text on the lighter dark-mode fill, same reasoning as the
-    // shipped theme's own comment: white text on a light accent fill fails
-    // 4.5:1, dark text on it doesn't.
-    '--color-accent-solid-text': '#14130f',
-    '--color-accent-soft': ramp[900],
+    '--color-accent-50': raw['50'],
+    '--color-accent-100': raw['100'],
+    '--color-accent-200': darkBorder,
+    '--color-accent-400': darkHoverText,
+    '--color-accent-600': raw['600'],
+    '--color-accent-800': raw['800'],
+    '--color-accent-900': darkSoft,
+    '--color-accent': darkAccentText,
+    '--color-accent-hover': darkHoverText,
+    '--color-accent-border': darkBorder,
+    '--color-accent-solid-bg': darkSolidBg,
+    '--color-accent-solid-bg-hover': darkSolidBgHover,
+    '--color-accent-solid-text': darkSolidText,
+    '--color-accent-soft': darkSoft,
   };
-  if (contrastRatio(dark['--color-accent-solid-text'], dark['--color-accent-solid-bg']) < TEXT_ON_ACCENT_MIN_RATIO) {
-    dark['--color-accent-solid-bg'] = nudgeForContrast(dark['--color-accent-solid-bg'], '#000000', TEXT_ON_ACCENT_MIN_RATIO);
-    dark['--color-accent'] = dark['--color-accent-solid-bg'];
-    dark['--color-accent-200'] = dark['--color-accent-solid-bg'];
-  }
 
   return { light, dark };
-}
-
-/**
- * Validates a hex string is well-formed before it's ever handed to
- * buildAccentRamp — a malformed value falling through to hexToRgb's silent
- * `#000000` fallback would look like "the user picked black" instead of a
- * rejected input.
- * @param {string} hex
- * @returns {boolean}
- */
-export function isValidHexColor(hex) {
-  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test((hex || '').trim());
-}
-
-/** Looks up a preset by id, or null. */
-export function findPreset(id) {
-  return THEME_PRESETS.find((p) => p.id === id) || null;
 }

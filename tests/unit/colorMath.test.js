@@ -1,124 +1,141 @@
-/**
- * Coverage for colorMath.js. The contrast formula is an accessibility floor,
- * not a style preference, so it's checked against WCAG's own reference values
- * rather than just round-tripped against itself — a self-consistent but
- * subtly wrong formula would pass every test that only checks conversions
- * against each other.
- */
-
 import { describe, it, expect } from 'vitest';
-import {
-  hexToRgb,
-  rgbToHex,
-  rgbToHsl,
-  hslToRgb,
-  relativeLuminance,
-  contrastRatio,
-  nudgeForContrast,
-} from '../../src/utils/colorMath';
+import { hexToRgb, rgbToHex, rgbToHsl, hslToRgb, relativeLuminance, contrastRatio, nudgeForContrast } from '../../src/utils/colorMath';
 
-describe('hex/rgb round trip', () => {
-  it('parses 6-digit and 3-digit hex the same way', () => {
-    expect(hexToRgb('#ff0000')).toEqual({ r: 255, g: 0, b: 0 });
-    expect(hexToRgb('#f00')).toEqual({ r: 255, g: 0, b: 0 });
-  });
-
-  it('round-trips rgb -> hex -> rgb for a range of colors', () => {
-    for (const hex of ['#000000', '#ffffff', '#1d9e75', '#c23c48', '#123456']) {
+describe('hexToRgb / rgbToHex round-trip', () => {
+  it('round-trips a variety of colors exactly', () => {
+    const colors = ['#000000', '#ffffff', '#1d9e75', '#a35f1c', '#123456', '#abcdef'];
+    for (const hex of colors) {
       expect(rgbToHex(hexToRgb(hex))).toBe(hex);
     }
   });
 
-  it('clamps out-of-range channels rather than producing invalid hex', () => {
-    expect(rgbToHex({ r: 300, g: -10, b: 128 })).toBe('#ff0080');
+  it('parses known channel values', () => {
+    expect(hexToRgb('#ff0000')).toEqual({ r: 255, g: 0, b: 0 });
+    expect(hexToRgb('#00ff00')).toEqual({ r: 0, g: 255, b: 0 });
+    expect(hexToRgb('#0000ff')).toEqual({ r: 0, g: 0, b: 255 });
+  });
+
+  it('clamps and rounds out-of-range/fractional channels', () => {
+    expect(rgbToHex({ r: -5, g: 300, b: 127.6 })).toBe('#00ff80');
   });
 });
 
-describe('rgb/hsl round trip', () => {
-  it('round-trips a range of colors within rounding tolerance', () => {
-    for (const hex of ['#ff0000', '#00ff00', '#0000ff', '#1d9e75', '#c23c48', '#808080']) {
-      const rgb = hexToRgb(hex);
-      const back = hslToRgb(rgbToHsl(rgb));
-      expect(Math.abs(back.r - rgb.r)).toBeLessThanOrEqual(1);
-      expect(Math.abs(back.g - rgb.g)).toBeLessThanOrEqual(1);
-      expect(Math.abs(back.b - rgb.b)).toBeLessThanOrEqual(1);
+describe('rgbToHsl / hslToRgb round-trip', () => {
+  it('round-trips within rounding tolerance for a range of colors', () => {
+    const colors = ['#1d9e75', '#a35f1c', '#226f84', '#c23c48', '#736d60', '#ffffff', '#000000', '#808080'];
+    for (const hex of colors) {
+      const hsl = rgbToHsl(hexToRgb(hex));
+      const back = rgbToHex(hslToRgb(hsl));
+      const { r: r1, g: g1, b: b1 } = hexToRgb(hex);
+      const { r: r2, g: g2, b: b2 } = hexToRgb(back);
+      expect(Math.abs(r1 - r2)).toBeLessThanOrEqual(1);
+      expect(Math.abs(g1 - g2)).toBeLessThanOrEqual(1);
+      expect(Math.abs(b1 - b2)).toBeLessThanOrEqual(1);
     }
   });
 
-  it('identifies pure black, white and gray correctly', () => {
-    expect(rgbToHsl({ r: 0, g: 0, b: 0 }).l).toBe(0);
-    expect(rgbToHsl({ r: 255, g: 255, b: 255 }).l).toBe(100);
-    expect(rgbToHsl({ r: 128, g: 128, b: 128 }).s).toBe(0);
+  it('gray (equal channels) has zero saturation', () => {
+    const { s } = rgbToHsl({ r: 128, g: 128, b: 128 });
+    expect(s).toBeCloseTo(0, 5);
   });
 
-  it('preserves hue and saturation when only lightness changes', () => {
-    const hsl = rgbToHsl(hexToRgb('#1d9e75'));
-    const lighter = hslToRgb({ ...hsl, l: hsl.l + 10 });
-    const hslBack = rgbToHsl(lighter);
-    expect(Math.abs(hslBack.h - hsl.h)).toBeLessThan(1);
-    expect(Math.abs(hslBack.s - hsl.s)).toBeLessThan(2);
+  it('pure red is hue 0, full saturation, 50% lightness', () => {
+    const { h, s, l } = rgbToHsl({ r: 255, g: 0, b: 0 });
+    expect(h).toBeCloseTo(0, 1);
+    expect(s).toBeCloseTo(100, 1);
+    expect(l).toBeCloseTo(50, 1);
   });
 });
 
-describe('relativeLuminance — checked against the WCAG spec, not just itself', () => {
-  it('gives black 0 and white 1', () => {
-    expect(relativeLuminance({ r: 0, g: 0, b: 0 })).toBe(0);
-    expect(relativeLuminance({ r: 255, g: 255, b: 255 })).toBeCloseTo(1, 5);
+describe('relativeLuminance', () => {
+  it('white is 1, black is 0', () => {
+    expect(relativeLuminance('#ffffff')).toBeCloseTo(1, 5);
+    expect(relativeLuminance('#000000')).toBeCloseTo(0, 5);
+  });
+});
+
+describe('contrastRatio', () => {
+  it('matches the WCAG-published reference: red on white is ~3.998:1', () => {
+    expect(contrastRatio('#ff0000', '#ffffff')).toBeCloseTo(3.998, 2);
   });
 
-  it('matches the WCAG worked contrast ratio for pure red vs. white (~4:1)', () => {
-    // This is the standard reference figure quoted in the WCAG 2.x
-    // techniques docs for #FF0000 on #FFFFFF.
-    expect(contrastRatio('#ff0000', '#ffffff')).toBeCloseTo(3.998, 1);
-  });
-
-  it('gives black-on-white the maximum ratio of 21', () => {
+  it('white on black (and vice versa) is 21:1', () => {
+    expect(contrastRatio('#ffffff', '#000000')).toBeCloseTo(21, 1);
     expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 1);
   });
 
-  it('gives identical colors a ratio of exactly 1', () => {
-    expect(contrastRatio('#336699', '#336699')).toBeCloseTo(1, 5);
+  it('a color against itself is 1:1', () => {
+    expect(contrastRatio('#1d9e75', '#1d9e75')).toBeCloseTo(1, 5);
   });
 
   it('is symmetric regardless of argument order', () => {
-    expect(contrastRatio('#1d9e75', '#fafaf9')).toBeCloseTo(contrastRatio('#fafaf9', '#1d9e75'), 10);
+    expect(contrastRatio('#1d9e75', '#fafaf9')).toBeCloseTo(contrastRatio('#fafaf9', '#1d9e75'), 5);
   });
 });
 
 describe('nudgeForContrast', () => {
-  it('leaves a color alone if it already meets the target', () => {
-    expect(nudgeForContrast('#000000', '#ffffff', 4.5)).toBe('#000000');
+  const LIGHT_BG = '#fafaf9'; // this app's --color-bg-page (light)
+  const DARK_BG = '#1c1b17'; // this app's --color-bg-page (dark)
+
+  it('leaves an already-passing color unchanged', () => {
+    // Near-black already clears 4.5:1 against a light background.
+    const color = '#0f6e56';
+    expect(contrastRatio(color, LIGHT_BG)).toBeGreaterThanOrEqual(4.5);
+    expect(nudgeForContrast(color, LIGHT_BG, 4.5)).toBe(color);
   });
 
-  it('darkens a light color against a light background to reach the target', () => {
-    const nudged = nudgeForContrast('#e0ffe0', '#ffffff', 4.5);
-    expect(contrastRatio(nudged, '#ffffff')).toBeGreaterThanOrEqual(4.5 - 0.01);
+  it('nudges a very low-contrast color to reach 4.5:1 on a light background', () => {
+    const color = '#e1f5ee'; // near-white mint, fails badly against a near-white bg
+    const nudged = nudgeForContrast(color, LIGHT_BG, 4.5);
+    expect(contrastRatio(nudged, LIGHT_BG)).toBeGreaterThanOrEqual(4.5 - 0.01);
   });
 
-  it('lightens a dark color against a dark background to reach the target', () => {
-    const nudged = nudgeForContrast('#101010', '#1c1b17', 3);
-    expect(contrastRatio(nudged, '#1c1b17')).toBeGreaterThanOrEqual(3 - 0.01);
+  it('nudges a very low-contrast color to reach 3:1 on a dark background', () => {
+    const color = '#242320'; // close to the dark bg itself
+    const nudged = nudgeForContrast(color, DARK_BG, 3);
+    expect(contrastRatio(nudged, DARK_BG)).toBeGreaterThanOrEqual(3 - 0.01);
   });
 
-  it('preserves hue while nudging, so the result still reads as the same color family', () => {
-    const original = rgbToHsl(hexToRgb('#3355aa'));
-    const nudged = nudgeForContrast('#3355aa', '#3a3a3a', 7);
-    const after = rgbToHsl(hexToRgb(nudged));
-    expect(Math.abs(after.h - original.h)).toBeLessThan(2);
+  it('handles a near-white seed nudged against a light background', () => {
+    const nudged = nudgeForContrast('#fefefe', LIGHT_BG, 4.5);
+    expect(contrastRatio(nudged, LIGHT_BG)).toBeGreaterThanOrEqual(4.5 - 0.01);
   });
 
-  it('reaches any achievable ratio for a saturated mid-tone color on either background', () => {
-    for (const bg of ['#ffffff', '#000000', '#1c1b17', '#fafaf9']) {
-      const nudged = nudgeForContrast('#5588cc', bg, 4.5);
-      expect(contrastRatio(nudged, bg)).toBeGreaterThanOrEqual(4.5 - 0.05);
+  it('handles a near-black seed nudged against a dark background', () => {
+    const nudged = nudgeForContrast('#010101', DARK_BG, 3);
+    expect(contrastRatio(nudged, DARK_BG)).toBeGreaterThanOrEqual(3 - 0.01);
+  });
+
+  it('preserves hue/saturation while only lightness changes', () => {
+    const color = '#3355ee';
+    const { h: hBefore, s: sBefore } = rgbToHsl(hexToRgb(color));
+    const nudged = nudgeForContrast(color, LIGHT_BG, 7);
+    const { h: hAfter, s: sAfter } = rgbToHsl(hexToRgb(nudged));
+    expect(hAfter).toBeCloseTo(hBefore, 0);
+    expect(sAfter).toBeCloseTo(sBefore, 0);
+  });
+
+  it('reaches target ratios for several seed/background pairs', () => {
+    const pairs = [
+      { color: '#5dcaa5', bg: '#fafaf9', target: 4.5 },
+      { color: '#5dcaa5', bg: '#1c1b17', target: 3 },
+      { color: '#c23c48', bg: '#ffffff', target: 4.5 },
+      { color: '#226f84', bg: '#000000', target: 3 },
+      { color: '#b0527a', bg: '#fafaf9', target: 4.5 },
+    ];
+    for (const { color, bg, target } of pairs) {
+      const nudged = nudgeForContrast(color, bg, target);
+      expect(contrastRatio(nudged, bg)).toBeGreaterThanOrEqual(target - 0.01);
     }
   });
 
-  it('does not throw when asked for an unreachable ratio, and gets as close as the extreme allows', () => {
-    // No color reaches 21:1 against a mid-gray background other than the
-    // extremes it can't be pushed past.
-    const nudged = nudgeForContrast('#808080', '#808080', 21);
-    expect(typeof nudged).toBe('string');
-    expect(contrastRatio(nudged, '#808080')).toBeGreaterThan(contrastRatio('#808080', '#808080'));
+  it('gracefully returns the most extreme lightness when the target is unreachable (two similar mid-tone grays)', () => {
+    // Two close-together mid grays can't reach a 21:1 (max possible) ratio no
+    // matter how far lightness is pushed in one direction — this should
+    // return the extreme value on whichever side the background picks,
+    // rather than hang or throw searching for an unreachable boundary.
+    const nudged = nudgeForContrast('#888888', '#777777', 21);
+    expect(() => hexToRgb(nudged)).not.toThrow();
+    expect(contrastRatio(nudged, '#777777')).toBeGreaterThan(contrastRatio('#888888', '#777777'));
   });
 });

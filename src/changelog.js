@@ -21,6 +21,35 @@
 
 export const CHANGELOG = [
   {
+    version: '9.7.0',
+    date: '2026-08-23',
+    title: 'The logo follows your accent color, and Projects gets a bit of atmosphere',
+    changes: [
+      'The app logo now matches your chosen accent color (theme preset or custom) instead of always being teal — it used to look out of place next to a different accent.',
+      'The Projects page now has a quiet, still backdrop in its empty top-right corner — a small network of accent-colored nodes, matching your current theme and accent. It never moves and stays out of the way of anything you can click.',
+    ],
+  },
+  {
+    version: '9.6.1',
+    date: '2026-08-23',
+    title: 'Fix a stale "time left" after clearing out a task\'s sub-tasks',
+    changes: [
+      'A recurring task\'s "time left" and the task list/board\'s "remaining of" figure could disagree with each other for a task with a due date today — the list and board now show the same number the task\'s own detail view does.',
+      'Deleting the last sub-task under a task that used to have sub-tasks could leave it with a stuck, too-low "time left" — inherited from when it was still a group of sub-tasks — that also kept it from being auto-scheduled. It now resets to the full estimate, as a fresh single task should.',
+      'The custom accent color picker in Settings → Appearance now sits inline with the preset colors instead of on its own row, with a bit more breathing room around the whole group.',
+    ],
+  },
+  {
+    version: '9.6.0',
+    date: '2026-08-23',
+    title: 'Theme presets and a custom accent color',
+    changes: [
+      'Settings → Appearance now has 6 accent color presets alongside the light/dark switch, plus a custom color picker for picking your own.',
+      'A custom color is just a starting point — the app derives the full set of lighter and darker shades it needs from it automatically, in both light and dark mode, and nudges anything that would end up too low-contrast (button borders, text) back to a readable level. A very pale or very dark pick still stays fully readable.',
+      'Your accent choice syncs across signed-in devices the same way your light/dark choice already does, and is included in backups.',
+    ],
+  },
+  {
     version: '9.5.0',
     date: '2026-08-23',
     title: 'A fixed time now beats your working hours',

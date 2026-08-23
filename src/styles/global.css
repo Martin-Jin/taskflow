@@ -777,7 +777,29 @@ select:focus-visible,
    like BoardView's columns, just typographic separation, so it reads as a
    directory rather than a kanban board.
    ---------------------------------------------------------------------- */
+/* Full-bleed wrapper around .projects-page's centered column, so
+   ProjectsPageBackground's canvas can fill the empty space either side of
+   it on a wide screen rather than being clamped to the same 1100px column
+   the actual content uses. */
+.projects-page-wrap {
+  position: relative;
+}
+
+.projects-page-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Inert and behind everything — never above interactive content, never a
+     stacking context real menus/modals need to clear (see CLAUDE.md's note
+     on SelectMenu/MentionDropdown). */
+  pointer-events: none;
+  z-index: 0;
+}
+
 .projects-page {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
@@ -1562,6 +1584,85 @@ select:focus-visible,
 .theme-toggle-option.active {
   background: var(--color-accent-solid-bg);
   color: var(--color-accent-solid-text);
+}
+
+/* Settings → Appearance's theme-preset swatches, plus the custom color
+   picker + hex field inline at the end of the same row (the custom picker
+   reads as a 7th option, not a separate control below the presets). Wraps
+   at mobile widths rather than scrolling — this always fits in 2-3 rows at
+   any width. */
+.accent-swatch-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* A round color sample. The visible circle stays a compact, consistent size
+   at every breakpoint (a wall of oversized circles would look like a color
+   palette app, not a settings row); the invisible ::after inset below is
+   what actually satisfies the 44px touch-target minimum on mobile, same
+   "compact visible box, expanded invisible hit area" trick .btn-icon uses. */
+.accent-swatch {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  padding: 0;
+  /* No visible border at rest — space/tone separate the swatch from its
+     surroundings; a ring only appears for the selected state (below) or
+     focus-visible, matching the "borders survive in exactly two roles"
+     design rule. */
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.accent-swatch::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.accent-swatch.selected {
+  box-shadow: 0 0 0 2px var(--color-bg-surface), 0 0 0 4px var(--color-accent-border);
+}
+
+.accent-swatch:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: 3px;
+}
+
+/* The custom-color trigger swatch shows a conic "rainbow" wash instead of a
+   flat fill, so it reads as "pick anything" rather than looking like a
+   seventh flat preset. */
+.accent-swatch-custom {
+  background: conic-gradient(from 180deg, #e0524a, #e0a84a, #dbe04a, #4ae06b, #4ac6e0, #4a5fe0, #a24ae0, #e0524a);
+}
+
+/* Native color-picker swallowed the .theme-toggle-option-style pill treatment
+   (Chromium ignores most non-size styling on <input type="color">) so it's
+   kept small and paired with a plain text field instead, which is where the
+   actual value is visible/editable. A small left margin separates the pair
+   from the preset circles preceding them in the same row, since both are
+   square-ish controls rather than circles and would otherwise read as
+   packed too tightly against the last preset's gap alone. */
+.accent-swatch-row input[type='color'] {
+  width: 36px;
+  height: 36px;
+  padding: 2px;
+  margin-left: var(--space-1);
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: var(--color-bg-page);
+  flex-shrink: 0;
+}
+
+.accent-custom-hex {
+  width: 100px;
+  font-family: var(--font-mono);
+  text-transform: lowercase;
 }
 
 @keyframes card-in {
@@ -2452,6 +2553,10 @@ h4 + .settings-hint {
    toggle row, so it matched none of the pairings below and left "Sound
    effects" sitting flush against the Light/Dark pills. */
 .theme-toggle + .settings-toggle-row,
+/* ...and after the accent swatch/custom-picker row, same reason — it isn't
+   a toggle row either, so "Sound effects" ran flush against the hex input
+   above it. */
+.accent-swatch-row + .settings-toggle-row,
 /* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
    only carry a bottom margin, so a hint following a button row, a toggle, or
    a bare inline button ran flush into it. Every "control, then explanation"
@@ -2461,7 +2566,12 @@ h4 + .settings-hint {
 .settings-actions + p,
 .settings-toggle-row + .settings-hint,
 .settings-inline + .settings-hint,
-.settings-inline + .form-hint {
+.settings-inline + .form-hint,
+/* The theme toggle is a control group like settings-actions above, not a
+   toggle row — without this, "Accent color..." ran flush against the
+   Light/Dark pills the same way "Sound effects" did before the pairing
+   above existed. */
+.theme-toggle + .settings-hint {
   margin-top: var(--space-3);
 }
 
