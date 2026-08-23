@@ -464,6 +464,11 @@
   justify-content: flex-end;
   gap: 2px;
   margin-bottom: 4px;
+  /* .modal-detail is now a flex column (see forms.css's .modal-detail) with
+     .detail-body as the one flexible region below this — without this, a
+     tall .detail-body could still compress this bar under pressure since
+     flex children shrink by default. */
+  flex-shrink: 0;
 }
 
 /* .detail-header-close's own margin-left: auto (below) is for modals where
@@ -1027,11 +1032,47 @@
   color: var(--color-text-primary);
 }
 
+/* .modal-detail overrides the base .modal's own overflow-y: auto (see
+   global.css) — the WHOLE modal scrolling as one unit is what made the
+   left column's long description/sub-tasks/comments push the right
+   column's fields off-screen together with it. Here the modal becomes a
+   fixed-height flex column instead: .detail-topbar stays put, and
+   .detail-body is the one flexible region beneath it, itself hosting two
+   independently-scrolling children (.detail-main/.detail-sidebar below). */
+.modal-detail {
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .detail-body {
   display: flex;
   align-items: stretch;
   gap: var(--space-5);
   margin-top: var(--space-2);
+  /* The one flexible region between the fixed topbar above and the modal's
+     own max-height — min-height: 0 is what lets a flex child actually
+     shrink and hand its overflow down to its own scrolling children below,
+     rather than growing to fit its content and pushing past the modal's
+     bounds (flex items default to min-height: auto, the same trap
+     .detail-main guards against on the cross axis via min-width: 0). */
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-main,
+.detail-sidebar {
+  overflow-y: auto;
+  /* Same hidden-scrollbar treatment as .modal itself (global.css) — a
+     visible track on either inner column would look like two nested
+     scrollbars stacked next to each other. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.detail-main::-webkit-scrollbar,
+.detail-sidebar::-webkit-scrollbar {
+  display: none;
 }
 
 .detail-main {
@@ -2031,8 +2072,22 @@
 }
 
 @media (max-width: 639px) {
+  /* Independent per-column scrolling only makes sense side-by-side — once
+     .detail-body stacks to one column below, revert to the whole modal
+     scrolling as a single unit (the base .modal behavior), or a user would
+     have to fully scroll one section before discovering the other exists. */
+  .modal-detail {
+    overflow-y: auto;
+  }
+
   .detail-body {
     flex-direction: column;
+    min-height: auto;
+  }
+
+  .detail-main,
+  .detail-sidebar {
+    overflow-y: visible;
   }
 
   .detail-sidebar {

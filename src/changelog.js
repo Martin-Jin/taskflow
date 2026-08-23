@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '9.8.1',
+    date: '2026-08-24',
+    title: "A task's fields and its notes now scroll on their own",
+    changes: [
+      "A task's detail view no longer scrolls the description/sub-tasks/comments and the fields sidebar together as one long page — each side now scrolls independently, so a long description doesn't push the due date and priority off-screen.",
+    ],
+  },
+  {
     version: '9.8.0',
     date: '2026-08-24',
     title: 'A second color for the app to work with',
