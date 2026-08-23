@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '9.6.1',
+    date: '2026-08-23',
+    title: 'Fix a stale "time left" after clearing out a task\'s sub-tasks',
+    changes: [
+      'A recurring task\'s "time left" and the task list/board\'s "remaining of" figure could disagree with each other for a task with a due date today — the list and board now show the same number the task\'s own detail view does.',
+      'Deleting the last sub-task under a task that used to have sub-tasks could leave it with a stuck, too-low "time left" — inherited from when it was still a group of sub-tasks — that also kept it from being auto-scheduled. It now resets to the full estimate, as a fresh single task should.',
+      'A little more breathing room under the accent color picker in Settings → Appearance.',
+    ],
+  },
+  {
     version: '9.6.0',
     date: '2026-08-23',
     title: 'Theme presets and a custom accent color',
