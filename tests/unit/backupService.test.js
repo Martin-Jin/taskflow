@@ -31,6 +31,7 @@ function makeSampleState() {
     animationsEnabled: false,
     notificationSettings: { timezone: 'UTC', enabled: true },
     theme: 'dark',
+    accentSeed: '#1d9e75',
     notes: { folders: [], notes: [] },
     shortcutBindings: { addTask: 'n' },
     savedViews: [{ id: 'v1', name: 'Overdue p1', query: 'is:overdue p1' }],
@@ -76,6 +77,26 @@ describe('BACKUP_FIELDS / buildBackupPayload integrity', () => {
     const payload = buildBackupPayload(makeSampleState());
     delete payload.events;
     expect(isValidBackupPayload(payload)).toBe(true);
+  });
+
+  it('accepts a legacy backup that predates accentSeed being added to BACKUP_FIELDS (missing `accentSeed` entirely)', () => {
+    const payload = buildBackupPayload(makeSampleState());
+    delete payload.accentSeed;
+    expect(isValidBackupPayload(payload)).toBe(true);
+  });
+
+  it('accepts accentSeed: null (the "use the shipped default accent" value, not a missing field)', () => {
+    const state = makeSampleState();
+    state.accentSeed = null;
+    const payload = buildBackupPayload(state);
+    expect(payload.accentSeed).toBeNull();
+    expect(isValidBackupPayload(payload)).toBe(true);
+  });
+
+  it('rejects accentSeed with a non-string, non-null value', () => {
+    const payload = buildBackupPayload(makeSampleState());
+    payload.accentSeed = 12345;
+    expect(isValidBackupPayload(payload)).toBe(false);
   });
 
   it('tags the payload with an exportedAt ISO timestamp', () => {
@@ -160,6 +181,16 @@ describe('isValidFieldValue', () => {
 
   it('rejects a non-string for a string-typed field', () => {
     expect(isValidFieldValue('theme', 42)).toBe(false);
+  });
+
+  it('accepts a string OR null for a nullableString-typed field (accentSeed)', () => {
+    expect(isValidFieldValue('accentSeed', '#1d9e75')).toBe(true);
+    expect(isValidFieldValue('accentSeed', null)).toBe(true);
+  });
+
+  it('rejects a non-string, non-null value for a nullableString-typed field', () => {
+    expect(isValidFieldValue('accentSeed', 42)).toBe(false);
+    expect(isValidFieldValue('accentSeed', undefined)).toBe(false);
   });
 
   it('defaults to true for an unknown field (no declared type to check)', () => {

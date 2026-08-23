@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '9.6.0',
+    date: '2026-08-23',
+    title: 'Theme presets and a custom accent color',
+    changes: [
+      'Settings → Appearance now has 6 accent color presets alongside the light/dark switch, plus a custom color picker for picking your own.',
+      'A custom color is just a starting point — the app derives the full set of lighter and darker shades it needs from it automatically, in both light and dark mode, and nudges anything that would end up too low-contrast (button borders, text) back to a readable level. A very pale or very dark pick still stays fully readable.',
+      'Your accent choice syncs across signed-in devices the same way your light/dark choice already does, and is included in backups.',
+    ],
+  },
+  {
     version: '9.5.0',
     date: '2026-08-23',
     title: 'A fixed time now beats your working hours',

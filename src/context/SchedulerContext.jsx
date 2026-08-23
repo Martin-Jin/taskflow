@@ -471,7 +471,9 @@ export function SchedulerProvider({ children }) {
   // only read/written here so the backup payload (exportBackup/
   // createCloudBackup, both in useCloudSync) can capture it and a restore
   // (importBackup/restoreCloudBackup, also in useCloudSync) can apply it back.
-  const { theme, setTheme } = useTheme();
+  // accentSeed (the custom theme-preset accent color, see themePresets.js)
+  // rides the exact same path as theme — see ThemeContext's own doc comment.
+  const { theme, setTheme, accentSeed, setAccentSeed } = useTheme();
 
   // tasks/blocks: seeded from whatever was last saved locally (falling back
   // to mock data on first-ever run). Whether the initial-load effect below
@@ -1291,11 +1293,12 @@ export function SchedulerProvider({ children }) {
   // hook now — see its own doc comment (src/hooks/useCloudSync.js).
   // `cloudSyncState`/`cloudStateRef` bundle every field the LIVE sync (push/
   // pull/listener/fingerprint) covers — everything BACKUP_FIELDS lists
-  // except `theme` and `events`, both passed to the hook as separate params
-  // instead (see its own JSDoc): `theme` because live sync leaves it to
-  // ThemeContext's own independent sync, and `events` because it's backed up
-  // (point-in-time) but deliberately never live cross-device synced — see
-  // backupService.js's BACKUP_FIELDS doc comment for why.
+  // except `theme`, `accentSeed`, and `events`, all passed to the hook as
+  // separate params instead (see its own JSDoc): `theme`/`accentSeed`
+  // because live sync leaves them to ThemeContext's own independent sync,
+  // and `events` because it's backed up (point-in-time) but deliberately
+  // never live cross-device synced — see backupService.js's BACKUP_FIELDS
+  // doc comment for why.
   const cloudSyncState = useMemo(
     () => ({
       // Personal tasks only. A shared project's content isn't solely this
@@ -1460,6 +1463,8 @@ export function SchedulerProvider({ children }) {
     setSharedProjectIds: setSharedProjectIdsRaw,
     theme,
     setTheme,
+    accentSeed,
+    setAccentSeed,
     events,
     setEvents,
     googleConnected,

@@ -1564,6 +1564,84 @@ select:focus-visible,
   color: var(--color-accent-solid-text);
 }
 
+/* Settings → Appearance's theme-preset swatches (theme presets/custom
+   accent). Wraps at mobile widths rather than scrolling — a fixed set of
+   6 presets plus one custom trigger always fits in 2-3 rows at any width. */
+.accent-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* A round color sample. The visible circle stays a compact, consistent size
+   at every breakpoint (a wall of oversized circles would look like a color
+   palette app, not a settings row); the invisible ::after inset below is
+   what actually satisfies the 44px touch-target minimum on mobile, same
+   "compact visible box, expanded invisible hit area" trick .btn-icon uses. */
+.accent-swatch {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  padding: 0;
+  /* No visible border at rest — space/tone separate the swatch from its
+     surroundings; a ring only appears for the selected state (below) or
+     focus-visible, matching the "borders survive in exactly two roles"
+     design rule. */
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.accent-swatch::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.accent-swatch.selected {
+  box-shadow: 0 0 0 2px var(--color-bg-surface), 0 0 0 4px var(--color-accent-border);
+}
+
+.accent-swatch:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: 3px;
+}
+
+/* The custom-color trigger swatch shows a conic "rainbow" wash instead of a
+   flat fill, so it reads as "pick anything" rather than looking like a
+   seventh flat preset. */
+.accent-swatch-custom {
+  background: conic-gradient(from 180deg, #e0524a, #e0a84a, #dbe04a, #4ae06b, #4ac6e0, #4a5fe0, #a24ae0, #e0524a);
+}
+
+.accent-custom-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Native color-picker swallowed the .theme-toggle-option-style pill treatment
+   (Chromium ignores most non-size styling on <input type="color">) so it's
+   kept small and paired with a plain text field instead, which is where the
+   actual value is visible/editable. */
+.accent-custom-row input[type='color'] {
+  width: 36px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: var(--color-bg-page);
+}
+
+.accent-custom-row input[type='text'] {
+  width: 100px;
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+}
+
 @keyframes card-in {
   from {
     opacity: 0;
