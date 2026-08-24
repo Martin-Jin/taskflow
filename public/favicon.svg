@@ -1,10 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Matches the in-app logo's default (unmodified) accent — see
-       BrandMark.jsx and global.css's --color-accent-solid-bg/-text. A
+  <!-- Matches the in-app logo's default (unmodified) accent (see
+       BrandMark.jsx and global.css's accent solid bg/text tokens). A
        favicon can't read the app's own theme state, but an SVG favicon CAN
        react to the OS/browser's prefers-color-scheme, which is the closest
        real equivalent available here. Defaults (no media query matched) to
-       the light-theme pair since that's this file's original color. */
+       the light-theme pair since that's this file's original color.
+       NOTE: XML comments forbid a literal double hyphen anywhere in their
+       body, not just at the close, so do not reintroduce CSS custom
+       property names or two adjacent hyphens in this text, or this file
+       fails to parse as XML and the favicon silently stops rendering. -->
+
   <style>
     .bg { fill: #0f6e56; }
     .tick { stroke: #ffffff; }
