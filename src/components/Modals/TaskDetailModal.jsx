@@ -917,6 +917,10 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // planBlockCompletionFromRemainingHoursEdit for the oldest-first (mark
   // done) / newest-first (un-mark, for a corrective increase) algorithm.
   function handleRemainingHoursChange(hours) {
+    // Defense in depth — the UI already disables this field while a
+    // dependency is incomplete (see DetailSidebar's hasIncompleteDependencies
+    // prop); this stops it even if called some other way.
+    if (incompleteDependencies.length > 0) return;
     if (task.isRecurring && !currentOccurrenceOriginalDate) return; // no due date yet — nothing to key the override by
     setRemainingHoursWithBlockInference(task, hours, taskScheduledBlocks);
   }
@@ -2488,6 +2492,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 taskScheduledBlocks={taskScheduledBlocks}
                 onMarkBlockDone={markBlockDone}
                 onUnmarkBlockDone={unmarkBlockDone}
+                hasIncompleteDependencies={incompleteDependencies.length > 0}
                 priority={priority}
                 onPriorityChange={setPriority}
                 labels={labels}

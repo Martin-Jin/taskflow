@@ -2627,6 +2627,13 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit, setNotification, rebalanceTodayOnly, queueDueDateRebalance, rules.autoRescheduleEnabled]
   );
 
+  // See completeTaskRef's own declaration further up — markBlockDone needs
+  // to call completeTask, defined here, after all of its own remaining-hours
+  // bookkeeping has committed.
+  useEffect(() => {
+    completeTaskRef.current = completeTask;
+  }, [completeTask]);
+
   /**
    * Restore a task out of the completed state (undoes completeTask). Only
    * the single task (plus, for a recurring one, its own upward-cascaded
@@ -3466,6 +3473,13 @@ export function SchedulerProvider({ children }) {
     [commit, sections, tasks, noteSharedSectionDeleted, rememberDeletion]
   );
 
+  // completeTask is defined much further down in this file, but
+  // markBlockDone (just below) needs to call it once a block-completion
+  // drives a task's remaining hours to 0 — same forward-reference-via-ref
+  // pattern this file already uses for runRebalanceRef above. Set via a
+  // useEffect right after completeTask's own definition.
+  const completeTaskRef = useRef(() => {});
+
   // ---- Block CRUD (manual drag/resize/lock) --------------------------------
   const updateBlock = useCallback(
     (blockId, updates) => {
@@ -3518,6 +3532,13 @@ export function SchedulerProvider({ children }) {
       if (!task) return;
       const hasChildren = tasks.some((t) => t.parentId === task.id);
       if (hasChildren) return;
+      // A task waiting on an incomplete dependency can't have its own
+      // remaining hours touched this way either — same rule completeTask
+      // already enforces for completing the whole task, extended here so a
+      // blocked task can't be worked down to 0 hours (which would also
+      // trigger auto-complete below) before its dependency is actually done.
+      const taskById = new Map(tasks.map((t) => [t.id, t]));
+      if (!areDependenciesMet(task, taskById)) return;
       const appliedHours = computeActuallyAppliedHours(task, block.durationHours);
       const taskPatch = computeRemainingHoursPatchAfterElapsed(task, block.durationHours);
       const newTasks = taskPatch ? tasks.map((t) => (t.id === task.id ? { ...t, ...taskPatch } : t)) : tasks;
@@ -3525,6 +3546,15 @@ export function SchedulerProvider({ children }) {
         b.id === blockId ? { ...b, status: 'done', hoursAppliedToRemaining: appliedHours } : b
       );
       commit({ tasks: newTasks, blocks: newBlocks }, `Marked scheduled block done`);
+      // Every scheduled slice of this task's work is now accounted for —
+      // trigger the same completion completeTask would do from the task's
+      // own checkbox, rather than leaving the task sitting at 0 hours left
+      // but still open. Read from the patch directly (not a re-derived
+      // value) so this can't drift from what was actually just committed.
+      const newRemaining = taskPatch
+        ? (taskPatch.remainingHours ?? taskPatch.remainingHoursOverride?.[task.dueDate])
+        : getEffectiveRemainingHoursForOccurrence(task);
+      if (newRemaining <= 0) completeTaskRef.current?.(task.id);
     },
     [tasks, blocks, commit]
   );
@@ -3584,6 +3614,10 @@ export function SchedulerProvider({ children }) {
    */
   const setRemainingHoursWithBlockInference = useCallback(
     (task, newRemaining, blocksForTask) => {
+      // Same dependency lock as markBlockDone above — a task waiting on an
+      // incomplete dependency can't have its "Time left" edited either.
+      const taskById = new Map(tasks.map((t) => [t.id, t]));
+      if (!areDependenciesMet(task, taskById)) return;
       const oldRemaining = getEffectiveRemainingHoursForOccurrence(task);
       const clampedNew = Math.min(Math.max(0, Number(newRemaining) || 0), task.estimatedHours);
       const { toMarkDone, toUnmark } = planBlockCompletionFromRemainingHoursEdit(blocksForTask, oldRemaining, clampedNew);
@@ -3608,6 +3642,9 @@ export function SchedulerProvider({ children }) {
         ? tasks.map((t) => (t.id === task.id ? { ...t, ...remainingHoursPatch } : t))
         : tasks;
       commit({ tasks: newTasks, blocks: newBlocks }, `Updated time left`);
+      // Same auto-complete trigger as markBlockDone: the user's own edit
+      // drove remaining hours all the way to 0, so the task itself is done.
+      if (clampedNew <= 0) completeTaskRef.current?.(task.id);
     },
     [tasks, blocks, commit]
   );

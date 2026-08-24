@@ -4,6 +4,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime, formatDisplayDateTime } from '../../utils/dateUtils';
 import { isBlockMissed, isBlockCompletedLate, isBlockTaskCompleted, isBlockOrTaskDone, isBlockDone } from '../../utils/missedTasks';
+import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { expandEventsForRange, expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
@@ -58,6 +59,14 @@ export default function TodayAgenda() {
           // mark for this slice specifically at that point).
           canToggleBlockDone: !!task && !containerTaskIds.has(task.id) && !isBlockTaskCompleted(b, task),
           isBlockDone: isBlockDone(b),
+          // A task waiting on an incomplete dependency can't be marked done
+          // this way either (same rule as completing the whole task) —
+          // checked here rather than just relying on markBlockDone's own
+          // no-op so the checkbox can render disabled instead of looking
+          // clickable and silently doing nothing. Un-marking an
+          // already-done block stays allowed regardless (see
+          // unmarkBlockDone, which has no such guard).
+          isDependencyBlocked: !!task && !areDependenciesMet(task, taskById),
         };
       });
     const eventItems = expandEventsForRange(events || [], today, today)
@@ -148,10 +157,15 @@ export default function TodayAgenda() {
                   type="checkbox"
                   className="today-agenda-block-checkbox"
                   checked={item.isBlockDone}
+                  disabled={item.isDependencyBlocked && !item.isBlockDone}
                   onClick={(e) => e.stopPropagation()}
                   onChange={() => (item.isBlockDone ? unmarkBlockDone(item.id) : markBlockDone(item.id))}
                   aria-label={item.isBlockDone ? `Mark ${item.title} not done for this scheduled time` : `Mark ${item.title} done for this scheduled time`}
-                  title="Mark this scheduled time done (doesn't complete the whole task)"
+                  title={
+                    item.isDependencyBlocked && !item.isBlockDone
+                      ? "Can't mark done until this task's dependencies are complete"
+                      : "Mark this scheduled time done (doesn't complete the whole task)"
+                  }
                 />
               )}
               {!item.isCompleted && item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}

@@ -629,75 +629,77 @@ test('Stats: a "must be done on due date" task is not flagged as missing its buf
   expectNoErrors(errors);
 });
 
+/* Seeds one task with TWO scheduled blocks today: an earlier one already
+   past its end time (so it starts "Missed" per isBlockMissed) and a later
+   one still upcoming. Both are real task blocks (not calendar events), so
+   TodayAgenda's canToggleBlockDone should offer a checkbox on each — see
+   src/utils/missedTasks.js and SchedulerContext's markBlockDone/
+   unmarkBlockDone. Hoisted to module scope (not just "Marking a scheduled
+   block done"'s own describe) so the auto-complete tests further down can
+   reuse the same two-block fixture. */
+async function seedTaskWithTwoBlocksToday(page, { idPrefix = 'e2e_block_done' } = {}) {
+  await page.evaluate(([prefix]) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    // Earlier block: started an hour ago, ended 30 minutes ago — already
+    // missed. Later block: starts in 2 hours — still upcoming, untouched
+    // by anything this test does to the earlier one.
+    const earlierStart = new Date(now.getTime() - 60 * 60000);
+    const earlierEnd = new Date(now.getTime() - 30 * 60000);
+    const laterStart = new Date(now.getTime() + 120 * 60000);
+    const laterEnd = new Date(now.getTime() + 180 * 60000);
+    const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    const task = {
+      id: `${prefix}_task`,
+      title: 'E2E Multi-Block Task',
+      isCompleted: false,
+      isLocked: false,
+      estimatedHours: 4,
+      remainingHours: 4,
+      priority: 'medium',
+      dependsOn: [],
+      minChunkHours: 0.5,
+      maxChunkHours: 4,
+      source: 'manual',
+      projectId: null,
+      dueDate: todayIso,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const blockEarlier = {
+      id: `${prefix}_earlier`,
+      taskId: task.id,
+      date: todayIso,
+      startTime: hm(earlierStart),
+      endTime: hm(earlierEnd),
+      durationHours: 0.5,
+      isLocked: false,
+      isAutoScheduled: false,
+      status: 'scheduled',
+    };
+    const blockLater = {
+      id: `${prefix}_later`,
+      taskId: task.id,
+      date: todayIso,
+      startTime: hm(laterStart),
+      endTime: hm(laterEnd),
+      durationHours: 1,
+      isLocked: false,
+      isAutoScheduled: false,
+      status: 'scheduled',
+    };
+    const existingTasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]');
+    localStorage.setItem('taskflow:v1:tasks', JSON.stringify([...existingTasks, task]));
+    const existingBlocks = JSON.parse(localStorage.getItem('taskflow:v1:blocks') || '[]');
+    localStorage.setItem('taskflow:v1:blocks', JSON.stringify([...existingBlocks, blockEarlier, blockLater]));
+  }, [idPrefix]);
+  await page.reload();
+  await page.waitForTimeout(700);
+}
+
 test.describe('Marking a scheduled block done', () => {
-  /* Seeds one task with TWO scheduled blocks today: an earlier one already
-     past its end time (so it starts "Missed" per isBlockMissed) and a later
-     one still upcoming. Both are real task blocks (not calendar events), so
-     TodayAgenda's canToggleBlockDone should offer a checkbox on each — see
-     src/utils/missedTasks.js and SchedulerContext's markBlockDone/
-     unmarkBlockDone. */
-  async function seedTaskWithTwoBlocksToday(page, { idPrefix = 'e2e_block_done' } = {}) {
-    await page.evaluate(([prefix]) => {
-      const pad = (n) => String(n).padStart(2, '0');
-      const now = new Date();
-      const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-      // Earlier block: started an hour ago, ended 30 minutes ago — already
-      // missed. Later block: starts in 2 hours — still upcoming, untouched
-      // by anything this test does to the earlier one.
-      const earlierStart = new Date(now.getTime() - 60 * 60000);
-      const earlierEnd = new Date(now.getTime() - 30 * 60000);
-      const laterStart = new Date(now.getTime() + 120 * 60000);
-      const laterEnd = new Date(now.getTime() + 180 * 60000);
-      const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-
-      const task = {
-        id: `${prefix}_task`,
-        title: 'E2E Multi-Block Task',
-        isCompleted: false,
-        isLocked: false,
-        estimatedHours: 4,
-        remainingHours: 4,
-        priority: 'medium',
-        dependsOn: [],
-        minChunkHours: 0.5,
-        maxChunkHours: 4,
-        source: 'manual',
-        projectId: null,
-        dueDate: todayIso,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      const blockEarlier = {
-        id: `${prefix}_earlier`,
-        taskId: task.id,
-        date: todayIso,
-        startTime: hm(earlierStart),
-        endTime: hm(earlierEnd),
-        durationHours: 0.5,
-        isLocked: false,
-        isAutoScheduled: false,
-        status: 'scheduled',
-      };
-      const blockLater = {
-        id: `${prefix}_later`,
-        taskId: task.id,
-        date: todayIso,
-        startTime: hm(laterStart),
-        endTime: hm(laterEnd),
-        durationHours: 1,
-        isLocked: false,
-        isAutoScheduled: false,
-        status: 'scheduled',
-      };
-      const existingTasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]');
-      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([...existingTasks, task]));
-      const existingBlocks = JSON.parse(localStorage.getItem('taskflow:v1:blocks') || '[]');
-      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([...existingBlocks, blockEarlier, blockLater]));
-    }, [idPrefix]);
-    await page.reload();
-    await page.waitForTimeout(700);
-  }
-
   test('a missed block can be marked done from Today\'s agenda without completing the whole task', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
@@ -879,6 +881,428 @@ test.describe('Marking a scheduled block done', () => {
     const earlier = blocks.find((b) => b.id === 'e2e_block_infer_earlier');
     expect(earlier.status).toBe('scheduled');
     expect(earlier.hoursAppliedToRemaining).toBeUndefined();
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+});
+
+test.describe('Auto-completing a task when its scheduled work is fully accounted for', () => {
+  /* Seeds one task with exactly ONE scheduled block today, already past its
+     end time (mirrors seedTaskWithTwoBlocksToday's "earlier" block above, but
+     alone rather than paired with a still-upcoming one) — marking it done
+     should reduce remaining hours straight to 0 and trigger auto-complete. */
+  async function seedTaskWithOneBlockToday(page, { idPrefix = 'e2e_auto_complete', estimatedHours = 1 } = {}) {
+    await page.evaluate(([prefix, hours]) => {
+      const pad = (n) => String(n).padStart(2, '0');
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const start = new Date(now.getTime() - 60 * 60000);
+      const end = new Date(now.getTime() - 5 * 60000);
+      const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+      const task = {
+        id: `${prefix}_task`,
+        title: 'E2E Auto Complete Task',
+        isCompleted: false,
+        isLocked: false,
+        estimatedHours: hours,
+        remainingHours: hours,
+        priority: 'medium',
+        dependsOn: [],
+        minChunkHours: 0.5,
+        maxChunkHours: 4,
+        source: 'manual',
+        projectId: null,
+        dueDate: todayIso,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const block = {
+        id: `${prefix}_block`,
+        taskId: task.id,
+        date: todayIso,
+        startTime: hm(start),
+        endTime: hm(end),
+        durationHours: hours,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+      };
+      const existingTasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]');
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([...existingTasks, task]));
+      const existingBlocks = JSON.parse(localStorage.getItem('taskflow:v1:blocks') || '[]');
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([...existingBlocks, block]));
+    }, [idPrefix, estimatedHours]);
+    await page.reload();
+    await page.waitForTimeout(700);
+  }
+
+  async function openTaskDetail(page, title) {
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill('');
+    await search.fill(title);
+    await page.waitForTimeout(300);
+    await page.getByText(title, { exact: false }).first().click();
+    await page.waitForTimeout(300);
+  }
+
+  test('marking a task\'s only scheduled block done auto-completes the whole task', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithOneBlockToday(page);
+    await openTaskDetail(page, 'E2E Auto Complete Task');
+
+    const scheduledRows = page.locator('.scheduled-block-row-checkable');
+    await expect(scheduledRows).toHaveCount(1);
+    await scheduledRows.first().locator('input[type="checkbox"]').click();
+    await page.waitForTimeout(400);
+
+    // completeTask closes out the whole task, so the title-row checkbox now
+    // shows as checked/completed.
+    const titleCheckbox = page.getByRole('dialog', { name: 'Task details' }).locator('.task-checkbox');
+    await expect(titleCheckbox).toHaveClass(/checked/);
+
+    const task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_auto_complete_task')
+    );
+    expect(task.isCompleted).toBe(true);
+    expect(task.remainingHours).toBe(0);
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('a task with two scheduled blocks does not auto-complete after the first, only after the second, is marked done', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithTwoBlocksToday(page, { idPrefix: 'e2e_auto_two' });
+    await openTaskDetail(page, 'E2E Multi-Block Task');
+
+    const scheduledRows = page.locator('.scheduled-block-row-checkable');
+    await expect(scheduledRows).toHaveCount(2);
+
+    // Mark only the first (earlier) block done — 0.5h of a 4h task. Must NOT
+    // auto-complete yet, since 3.5h of work is still unaccounted for.
+    await scheduledRows.nth(0).locator('input[type="checkbox"]').click();
+    await page.waitForTimeout(400);
+
+    let task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_auto_two_task')
+    );
+    expect(task.isCompleted).toBe(false);
+    await expect(page.getByRole('dialog', { name: 'Task details' }).locator('.task-checkbox')).not.toHaveClass(/checked/);
+
+    // Mark the second (later) block done too. The seed data's two blocks
+    // (0.5h + 1h) still don't cover the full 4h estimate, so the task
+    // correctly remains open — this is the "must not fire early" half of the
+    // requirement; the next test covers a task whose blocks DO fully cover
+    // its estimate, which should complete on the second block.
+    await scheduledRows.nth(1).locator('input[type="checkbox"]').click();
+    await page.waitForTimeout(400);
+
+    task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_auto_two_task')
+    );
+    expect(task.isCompleted).toBe(false);
+    expect(task.remainingHours).toBeCloseTo(2.5, 5);
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('a task whose two blocks cover its FULL estimate auto-completes only once the second block is marked done', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await page.evaluate(() => {
+      const pad = (n) => String(n).padStart(2, '0');
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const earlierStart = new Date(now.getTime() - 60 * 60000);
+      const earlierEnd = new Date(now.getTime() - 30 * 60000);
+      const laterStart = new Date(now.getTime() - 20 * 60000);
+      const laterEnd = new Date(now.getTime() - 5 * 60000);
+      const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+      const task = {
+        id: 'e2e_auto_full_task',
+        title: 'E2E Full Coverage Task',
+        isCompleted: false,
+        isLocked: false,
+        estimatedHours: 1,
+        remainingHours: 1,
+        priority: 'medium',
+        dependsOn: [],
+        minChunkHours: 0.25,
+        maxChunkHours: 4,
+        source: 'manual',
+        projectId: null,
+        dueDate: todayIso,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const blockEarlier = {
+        id: 'e2e_auto_full_earlier',
+        taskId: task.id,
+        date: todayIso,
+        startTime: hm(earlierStart),
+        endTime: hm(earlierEnd),
+        durationHours: 0.5,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+      };
+      const blockLater = {
+        id: 'e2e_auto_full_later',
+        taskId: task.id,
+        date: todayIso,
+        startTime: hm(laterStart),
+        endTime: hm(laterEnd),
+        durationHours: 0.5,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+      };
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([task]));
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([blockEarlier, blockLater]));
+    });
+    await page.reload();
+    await page.waitForTimeout(700);
+    await openTaskDetail(page, 'E2E Full Coverage Task');
+
+    const scheduledRows = page.locator('.scheduled-block-row-checkable');
+    await expect(scheduledRows).toHaveCount(2);
+
+    // First half of the estimate — must not complete yet.
+    await scheduledRows.nth(0).locator('input[type="checkbox"]').click();
+    await page.waitForTimeout(400);
+    let task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_auto_full_task')
+    );
+    expect(task.isCompleted).toBe(false);
+    expect(task.remainingHours).toBeCloseTo(0.5, 5);
+
+    // Second half — remaining hours now hits exactly 0, so the task
+    // auto-completes.
+    await scheduledRows.nth(1).locator('input[type="checkbox"]').click();
+    await page.waitForTimeout(400);
+    task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_auto_full_task')
+    );
+    expect(task.isCompleted).toBe(true);
+    expect(task.remainingHours).toBe(0);
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('reducing "Time left" to 0 directly also auto-completes the task', async ({ page }) => {
+    // Exercises the other code path — setRemainingHoursWithBlockInference,
+    // not markBlockDone — per this feature's own note that both must trigger
+    // the same completion.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithOneBlockToday(page, { idPrefix: 'e2e_auto_timeleft' });
+    await openTaskDetail(page, 'E2E Auto Complete Task');
+
+    // SmartDurationInput's own "clearing the field commits 0" rule (see its
+    // module comment) is the reliable way to drive this to exactly 0 — typing
+    // "0h" doesn't parse to a true zero (findDurationPhrase rounds a matched
+    // duration up to at least one minute, never down to 0).
+    const timeLeftInput = page.locator('.detail-field', { hasText: 'Time left' }).locator('.smart-duration-input');
+    await timeLeftInput.click();
+    await timeLeftInput.fill('');
+    await timeLeftInput.blur();
+    await page.waitForTimeout(400);
+
+    await expect(page.getByRole('dialog', { name: 'Task details' }).locator('.task-checkbox')).toHaveClass(/checked/);
+
+    const task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_auto_timeleft_task')
+    );
+    expect(task.isCompleted).toBe(true);
+    expect(task.remainingHours).toBe(0);
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+});
+
+test.describe('Locking "Time left" and scheduled blocks behind an incomplete dependency', () => {
+  /* Seeds a dependency pair: `dep` (incomplete) and a dependent task with one
+     scheduled block today, `dependsOn: [dep.id]`. areDependenciesMet returns
+     false while `dep` is incomplete, which should disable both "Time left"
+     and the block's own checkbox on every surface that offers one. */
+  async function seedDependencyBlockedTask(page, { idPrefix = 'e2e_dep_lock', depCompleted = false } = {}) {
+    await page.evaluate(([prefix, completed]) => {
+      const pad = (n) => String(n).padStart(2, '0');
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const start = new Date(now.getTime() - 60 * 60000);
+      const end = new Date(now.getTime() - 5 * 60000);
+      const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+      const dep = {
+        id: `${prefix}_dep`,
+        title: 'E2E Dependency Blocker',
+        isCompleted: completed,
+        isLocked: false,
+        estimatedHours: 1,
+        remainingHours: completed ? 0 : 1,
+        priority: 'medium',
+        dependsOn: [],
+        minChunkHours: 0.5,
+        maxChunkHours: 4,
+        source: 'manual',
+        projectId: null,
+        dueDate: todayIso,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const task = {
+        id: `${prefix}_task`,
+        title: 'E2E Dependency Locked Task',
+        isCompleted: false,
+        isLocked: false,
+        estimatedHours: 1,
+        remainingHours: 1,
+        priority: 'medium',
+        dependsOn: [dep.id],
+        minChunkHours: 0.5,
+        maxChunkHours: 4,
+        source: 'manual',
+        projectId: null,
+        dueDate: todayIso,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const block = {
+        id: `${prefix}_block`,
+        taskId: task.id,
+        date: todayIso,
+        startTime: hm(start),
+        endTime: hm(end),
+        durationHours: 1,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+      };
+      const existingTasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]');
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([...existingTasks, dep, task]));
+      const existingBlocks = JSON.parse(localStorage.getItem('taskflow:v1:blocks') || '[]');
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([...existingBlocks, block]));
+    }, [idPrefix, depCompleted]);
+    await page.reload();
+    await page.waitForTimeout(700);
+  }
+
+  async function openTaskDetail(page, title) {
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill('');
+    await search.fill(title);
+    await page.waitForTimeout(300);
+    await page.getByText(title, { exact: false }).first().click();
+    await page.waitForTimeout(300);
+  }
+
+  test('TaskDetailModal disables "Time left" and the block checkbox while a dependency is incomplete, and lifts once it\'s done', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedDependencyBlockedTask(page);
+    await openTaskDetail(page, 'E2E Dependency Locked Task');
+
+    const timeLeftField = page.locator('.detail-field', { hasText: 'Time left' });
+    await expect(timeLeftField.locator('.smart-duration-input')).toBeDisabled();
+    await expect(timeLeftField.getByText("Locked until this task's dependencies are complete.")).toBeVisible();
+
+    const blockCheckbox = page.locator('.scheduled-block-row-checkable input[type="checkbox"]');
+    await expect(blockCheckbox).toHaveCount(1);
+    await expect(blockCheckbox).toBeDisabled();
+    await expect(blockCheckbox).not.toBeChecked();
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // Complete the dependency directly (equivalent to clicking its own
+    // checkbox — this suite already covers that interaction elsewhere, so a
+    // direct localStorage write keeps this test focused on the lock itself).
+    await page.evaluate(() => {
+      const tasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks'));
+      const updated = tasks.map((t) => (t.id === 'e2e_dep_lock_dep' ? { ...t, isCompleted: true, remainingHours: 0 } : t));
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify(updated));
+    });
+    await page.reload();
+    await page.waitForTimeout(700);
+
+    await openTaskDetail(page, 'E2E Dependency Locked Task');
+    await expect(page.locator('.detail-field', { hasText: 'Time left' }).locator('.smart-duration-input')).toBeEnabled();
+    await expect(page.locator('.detail-field', { hasText: 'Time left' }).getByText("Locked until this task's dependencies are complete.")).toHaveCount(0);
+    await expect(page.locator('.scheduled-block-row-checkable input[type="checkbox"]')).toBeEnabled();
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('an already-done block\'s checkbox stays enabled (reversible) even while the dependency is still incomplete', async ({ page }) => {
+    // Defense-in-depth exception per the feature's own rule: only an
+    // UNCHECKED block's checkbox is locked; a done one can still be reversed.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedDependencyBlockedTask(page, { idPrefix: 'e2e_dep_reverse' });
+    // Mark the block done BEFORE introducing the dependency lock, directly in
+    // localStorage (the dependency isn't blocking the write path here — this
+    // is purely about what the checkbox's disabled attribute reflects).
+    await page.evaluate(() => {
+      const blocks = JSON.parse(localStorage.getItem('taskflow:v1:blocks'));
+      const updated = blocks.map((b) =>
+        b.id === 'e2e_dep_reverse_block' ? { ...b, status: 'done', hoursAppliedToRemaining: 1 } : b
+      );
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify(updated));
+      const tasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks'));
+      const updatedTasks = tasks.map((t) => (t.id === 'e2e_dep_reverse_task' ? { ...t, remainingHours: 0 } : t));
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify(updatedTasks));
+    });
+    await page.reload();
+    await page.waitForTimeout(700);
+
+    await openTaskDetail(page, 'E2E Dependency Locked Task');
+    const blockCheckbox = page.locator('.scheduled-block-row-checkable input[type="checkbox"]');
+    await expect(blockCheckbox).toBeChecked();
+    await expect(blockCheckbox).toBeEnabled();
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('Today\'s agenda and the "Overdue & missed" popup also disable a dependency-blocked block\'s checkbox', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedDependencyBlockedTask(page, { idPrefix: 'e2e_dep_dashboard' });
+    await gotoTab(page, 'Dashboard');
+
+    const agenda = page.locator('.today-agenda');
+    await agenda.waitFor({ state: 'visible' });
+    const row = agenda.locator('.today-agenda-item', { hasText: 'E2E Dependency Locked Task' }).first();
+    await row.hover();
+    const agendaCheckbox = row.locator('.today-agenda-block-checkbox');
+    await expect(agendaCheckbox).toBeVisible();
+    await expect(agendaCheckbox).toBeDisabled();
+
+    // Same task/block also renders in the "Overdue & missed" popup (the
+    // seeded block's end time is already in the past — see
+    // seedDependencyBlockedTask), with the same disabled treatment.
+    const strip = page.locator('.dashboard-stats-strip');
+    await strip.waitFor({ state: 'visible' });
+    await strip.locator('.dashboard-stat-tile', { hasText: 'Overdue & missed' }).click();
+    await page.waitForTimeout(300);
+    const dialog = page.getByRole('dialog', { name: 'Overdue & missed' });
+    await dialog.waitFor({ state: 'visible' });
+    const missedItem = dialog.locator('.missed-tasks-item', { hasText: 'E2E Dependency Locked Task' });
+    await expect(missedItem).toBeVisible();
+    await missedItem.hover();
+    await expect(missedItem.locator('.missed-tasks-block-checkbox')).toBeDisabled();
 
     await page.keyboard.press('Escape');
     expectNoErrors(errors);

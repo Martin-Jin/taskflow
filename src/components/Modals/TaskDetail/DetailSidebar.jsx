@@ -60,6 +60,7 @@ export default function DetailSidebar({
   taskScheduledBlocks,
   onMarkBlockDone,
   onUnmarkBlockDone,
+  hasIncompleteDependencies,
   priority,
   onPriorityChange,
   labels,
@@ -154,9 +155,10 @@ export default function DetailSidebar({
                   <input
                     type="checkbox"
                     checked={isDone}
-                    disabled={isReadOnlyViewer}
+                    disabled={isReadOnlyViewer || (hasIncompleteDependencies && !isDone)}
                     onChange={() => (isDone ? onUnmarkBlockDone(b.id) : onMarkBlockDone(b.id))}
                     aria-label={`Mark ${formatDisplayDate(b.date)}, ${formatTime12h(b.startTime)}–${formatTime12h(b.endTime)} as done`}
+                    title={hasIncompleteDependencies && !isDone ? "Can't mark scheduled time done until this task's dependencies are complete" : undefined}
                   />
                   <span className={`form-hint ${isDone ? 'scheduled-block-row-done' : ''}`}>
                     {formatDisplayDate(b.date)}, {formatTime12h(b.startTime)}–{formatTime12h(b.endTime)}
@@ -212,8 +214,11 @@ export default function DetailSidebar({
         <SmartDurationInput
           hours={effectiveRemainingHours}
           onChange={onRemainingHoursChange}
-          disabled={isReadOnlyViewer}
+          disabled={isReadOnlyViewer || hasIncompleteDependencies}
         />
+        {hasIncompleteDependencies && (
+          <p className="form-hint">Locked until this task's dependencies are complete.</p>
+        )}
       </DetailField>
       )}
 

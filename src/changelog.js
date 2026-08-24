@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '10.0.0',
+    date: '2026-08-24',
+    title: 'A task finishes itself once all its scheduled work is done',
+    changes: [
+      'Marking every one of a task\'s scheduled time slices as done — whether one at a time or by reducing "Time left" all the way to zero — now completes the task automatically, the same as ticking it off yourself. A task split across several slices only finishes once every slice is accounted for, not after the first one.',
+      'A task waiting on another task to finish first can no longer have its "Time left" changed or its scheduled slices marked done — the same rule that already stopped you completing it outright now applies to those too, until the thing it\'s waiting on is done.',
+      'Fixed a bug where pressing Enter twice in quick succession while adding a task could create it twice.',
+    ],
+  },
+  {
     version: '9.9.1',
     date: '2026-08-24',
     title: 'The tab icon now follows your accent color too',

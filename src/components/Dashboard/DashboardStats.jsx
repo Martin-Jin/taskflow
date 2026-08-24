@@ -5,11 +5,12 @@ import { toISODate, getWeekRange, formatTime12h as formatTime, formatDisplayDate
 import { formatHours } from '../../utils/formatHours';
 import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
 import { getOverdueTasks } from '../../utils/overdueTasks';
+import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { ALL_TASKS_PROJECT_ID } from '../../utils/projectConstants';
 import StatListModal from './StatListModal';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 
-function StatListItem({ item, taskId, icon: Icon, timeLabel, timeClassName, itemClassName, onOpen, onMarkBlockDone }) {
+function StatListItem({ item, taskId, icon: Icon, timeLabel, timeClassName, itemClassName, onOpen, onMarkBlockDone, isDependencyBlocked }) {
   return (
     <li
       className={`missed-tasks-item is-openable${itemClassName ? ` ${itemClassName}` : ''}`}
@@ -36,10 +37,15 @@ function StatListItem({ item, taskId, icon: Icon, timeLabel, timeClassName, item
         <input
           type="checkbox"
           className="missed-tasks-block-checkbox"
+          disabled={isDependencyBlocked}
           onClick={(e) => e.stopPropagation()}
           onChange={() => onMarkBlockDone(item.id)}
           aria-label={`Mark ${item.title} done for this scheduled time`}
-          title="Mark this scheduled time done (doesn't complete the whole task)"
+          title={
+            isDependencyBlocked
+              ? "Can't mark done until this task's dependencies are complete"
+              : "Mark this scheduled time done (doesn't complete the whole task)"
+          }
         />
       )}
       {Icon && <Icon size={13} className="missed-tasks-icon" aria-hidden="true" />}
@@ -94,6 +100,7 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
   const { tasks, blocks, rules, markBlockDone } = useScheduler();
   const [openPopup, setOpenPopup] = useState(null); // null | 'scheduledToday' | 'overdueMissed' | 'completedToday'
   const [editingTaskId, setEditingTaskId] = useState(null);
+  const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
   function openTaskFromPopup(taskId) {
     setOpenPopup(null);
@@ -227,6 +234,7 @@ export default function DashboardStats({ onSelectProject, onOpenCalendar }) {
                 timeLabel={formatTime(item.startTime)}
                 onOpen={openTaskFromPopup}
                 onMarkBlockDone={markBlockDone}
+                isDependencyBlocked={!areDependenciesMet(taskById.get(item.taskId), taskById)}
               />
             )
           }
