@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '9.9.1',
+    date: '2026-08-24',
+    title: 'The tab icon now follows your accent color too',
+    changes: [
+      'The browser tab icon now matches your chosen accent color right away, the same way the in-app logo already does — it used to only ever show a fixed teal.',
+      'The checkmark inside the logo and the tab icon is now always white, instead of sometimes switching to black depending on the theme.',
+      'Fixed a border that only showed on the top and bottom of a task\'s title/description box when you clicked into it, instead of wrapping all the way around.',
+      'The attach-file and send buttons next to a comment box no longer have a border around them.',
+    ],
+  },
+  {
     version: '9.9.0',
     date: '2026-08-24',
     title: 'Mark a single scheduled slice of a task done',
