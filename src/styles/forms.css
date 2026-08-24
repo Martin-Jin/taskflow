@@ -464,6 +464,11 @@
   justify-content: flex-end;
   gap: 2px;
   margin-bottom: 4px;
+  /* .modal-detail is now a flex column (see forms.css's .modal-detail) with
+     .detail-body as the one flexible region below this — without this, a
+     tall .detail-body could still compress this bar under pressure since
+     flex children shrink by default. */
+  flex-shrink: 0;
 }
 
 /* .detail-header-close's own margin-left: auto (below) is for modals where
@@ -1027,11 +1032,47 @@
   color: var(--color-text-primary);
 }
 
+/* .modal-detail overrides the base .modal's own overflow-y: auto (see
+   global.css) — the WHOLE modal scrolling as one unit is what made the
+   left column's long description/sub-tasks/comments push the right
+   column's fields off-screen together with it. Here the modal becomes a
+   fixed-height flex column instead: .detail-topbar stays put, and
+   .detail-body is the one flexible region beneath it, itself hosting two
+   independently-scrolling children (.detail-main/.detail-sidebar below). */
+.modal-detail {
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .detail-body {
   display: flex;
   align-items: stretch;
   gap: var(--space-5);
   margin-top: var(--space-2);
+  /* The one flexible region between the fixed topbar above and the modal's
+     own max-height — min-height: 0 is what lets a flex child actually
+     shrink and hand its overflow down to its own scrolling children below,
+     rather than growing to fit its content and pushing past the modal's
+     bounds (flex items default to min-height: auto, the same trap
+     .detail-main guards against on the cross axis via min-width: 0). */
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-main,
+.detail-sidebar {
+  overflow-y: auto;
+  /* Same hidden-scrollbar treatment as .modal itself (global.css) — a
+     visible track on either inner column would look like two nested
+     scrollbars stacked next to each other. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.detail-main::-webkit-scrollbar,
+.detail-sidebar::-webkit-scrollbar {
+  display: none;
 }
 
 .detail-main {
@@ -1039,6 +1080,19 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Matches .detail-editbox's own negative side margins (-10px), which let
+     its hover/focus background+border bleed slightly wider than the title/
+     description text inside it — a deliberate "reads as plain text, but
+     the clickable/highlighted area is a bit roomier" effect. That trick
+     only works when there's real padding here for it to bleed INTO: once
+     this became its own scroll container (see .detail-main/.detail-sidebar
+     above), setting overflow-y: auto also makes the browser treat
+     overflow-x as auto (removing "visible" isn't allowed on just one axis
+     per the CSS overflow spec), which clips anything a negative margin
+     pushes past this element's own edge — the exact bug that showed up as
+     .detail-editbox's border only rendering on its top/bottom, never its
+     left/right, once focused. */
+  padding: 0 10px;
 }
 
 /* Description — Todoist-style: reads as plain text at rest (one line tall,
@@ -1502,6 +1556,33 @@
    field list runs full width instead of sitting in a narrow column. */
 .detail-sidebar--full {
   width: 100%;
+}
+
+.scheduled-blocks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Each row is a checkbox + its own date/time text — marks THIS scheduled
+   block done (see SchedulerContext's markBlockDone), independent of
+   completing the whole task. A multi-day task's block for one day finishing
+   doesn't mean the task itself is done, so this is deliberately a separate
+   action from the title-row checkbox above. */
+.scheduled-block-row-checkable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.scheduled-block-row-checkable input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
+.scheduled-block-row-done {
+  text-decoration: line-through;
+  opacity: 0.65;
 }
 
 .detail-field {
@@ -1992,6 +2073,24 @@
   min-width: 0;
 }
 
+/* .btn's own 1px border exists because its background is normally too
+   close in tone to the page/card behind it to read as a button on its own
+   (see global.css's comment on .btn) — but these two sit directly against
+   the comment box, where a border read as a stray outline rather than a
+   clean control. Swapping the border for --color-border-interactive as a
+   solid fill instead keeps the same WCAG 1.4.11 (3:1) boundary contrast
+   without drawing a line around the button. */
+.comment-attach-btn,
+.comment-send-btn {
+  border: none;
+  background: var(--color-border-interactive);
+}
+
+.comment-attach-btn:hover:not(:disabled),
+.comment-send-btn:hover:not(:disabled) {
+  background: var(--color-text-secondary);
+}
+
 .attachment-lightbox {
   position: fixed;
   inset: 0;
@@ -2031,8 +2130,22 @@
 }
 
 @media (max-width: 639px) {
+  /* Independent per-column scrolling only makes sense side-by-side — once
+     .detail-body stacks to one column below, revert to the whole modal
+     scrolling as a single unit (the base .modal behavior), or a user would
+     have to fully scroll one section before discovering the other exists. */
+  .modal-detail {
+    overflow-y: auto;
+  }
+
   .detail-body {
     flex-direction: column;
+    min-height: auto;
+  }
+
+  .detail-main,
+  .detail-sidebar {
+    overflow-y: visible;
   }
 
   .detail-sidebar {

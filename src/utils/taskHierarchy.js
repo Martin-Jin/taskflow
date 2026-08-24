@@ -111,6 +111,97 @@ export function computeRemainingHoursPatchAfterElapsed(task, elapsedHours) {
 }
 
 /**
+ * How many hours `computeRemainingHoursPatchAfterElapsed(task, elapsedHours)`
+ * would ACTUALLY subtract, after its own clamp to [0, estimatedHours] — which
+ * can be less than `elapsedHours` itself if remaining hours was already near
+ * zero. Used by markBlockDone (SchedulerContext.jsx) to record the true
+ * applied amount on the block, so unmarkBlockDone's reversal adds back
+ * exactly that — not the block's own `durationHours`, which could overstate
+ * what was really taken off if remaining hours had less than durationHours
+ * left to give in the first place.
+ */
+export function computeActuallyAppliedHours(task, elapsedHours) {
+  const current = getEffectiveRemainingHoursForOccurrence(task);
+  const clamped = Math.min(Math.max(0, current - elapsedHours), task.estimatedHours);
+  return current - clamped;
+}
+
+/**
+ * The reverse of computeRemainingHoursPatchAfterElapsed: a field patch that
+ * ADDS `hoursToRestore` back onto `task`'s current "Time left", clamped to
+ * never exceed `estimatedHours` (mirroring the forward function's own
+ * never-below-0 clamp). `hoursToRestore` should be whatever
+ * computeActuallyAppliedHours reported at completion time — see
+ * ScheduledBlock.hoursAppliedToRemaining's own doc comment for why that's
+ * stored rather than re-derived from durationHours.
+ */
+export function computeRemainingHoursPatchAfterRestore(task, hoursToRestore) {
+  const current = getEffectiveRemainingHoursForOccurrence(task);
+  const clamped = Math.min(Math.max(0, current + hoursToRestore), task.estimatedHours);
+  if (!task.isRecurring) return { remainingHours: clamped };
+  if (!task.dueDate) return null;
+  return { remainingHoursOverride: { ...(task.remainingHoursOverride || {}), [task.dueDate]: clamped } };
+}
+
+/**
+ * Plans which of `task`'s not-yet-done scheduled blocks a manual "Time
+ * left" EDIT should auto-mark done (or un-mark), given the OLD and NEW
+ * remaining-hours values the user just set directly. Pure/read-only —
+ * returns `{ toMarkDone: [blockId...], toUnmark: [blockId...] }`; the
+ * caller (SchedulerContext's setRemainingHoursWithBlockInference) is what
+ * actually applies these via markBlockDone/unmarkBlockDone so the existing
+ * hoursAppliedToRemaining bookkeeping and undo/commit semantics stay in one
+ * place, not duplicated here.
+ *
+ * FORWARD (newRemaining < oldRemaining — the user logged more work than the
+ * scheduler's own block math had captured): treats the decrease as a pool of
+ * "extra elapsed hours" and walks `blocks` (already assumed sorted oldest
+ * first — see TaskDetailModal's taskScheduledBlocks) marking a block done
+ * only when the pool FULLY covers its own durationHours, oldest first,
+ * stopping the moment the pool can't fully cover the next block. A leftover
+ * partial pool (less than one whole block) is deliberately left as a plain
+ * reduction with no block flagged — ScheduledBlock has no partial-done
+ * state, only fully done or not (ask the user before adding one).
+ *
+ * REVERSE (newRemaining > oldRemaining — the user is correcting an error by
+ * INCREASING time left): walks already-done blocks NEWEST first (undoing
+ * the most recently inferred completion first, mirroring how the forward
+ * direction consumes oldest first) un-marking until the increase is
+ * accounted for or there are no more done blocks to undo.
+ *
+ * Deliberately excludes blocks the user already marked done through the
+ * checkbox UI in the SAME edit — those aren't re-evaluated here, this only
+ * infers NEW completions/reversals from the numeric delta.
+ */
+export function planBlockCompletionFromRemainingHoursEdit(blocks, oldRemaining, newRemaining) {
+  const delta = oldRemaining - newRemaining; // positive = user logged MORE work
+  if (delta > 0) {
+    let pool = delta;
+    const toMarkDone = [];
+    for (const block of blocks) {
+      if (block.status === 'done') continue;
+      if (pool < block.durationHours) break; // partial remainder — leave unflagged, per doc comment above
+      pool -= block.durationHours;
+      toMarkDone.push(block.id);
+      if (pool <= 0) break;
+    }
+    return { toMarkDone, toUnmark: [] };
+  }
+  if (delta < 0) {
+    let pool = -delta; // hours to "un-spend"
+    const doneNewestFirst = blocks.filter((b) => b.status === 'done').slice().reverse();
+    const toUnmark = [];
+    for (const block of doneNewestFirst) {
+      if (pool <= 0) break;
+      toUnmark.push(block.id);
+      pool -= block.hoursAppliedToRemaining ?? block.durationHours;
+    }
+    return { toMarkDone: [], toUnmark };
+  }
+  return { toMarkDone: [], toUnmark: [] };
+}
+
+/**
  * Walk up `task.parentId` (arbitrarily deep — nesting is capped at 2 levels
  * by the UI, but this walk stays general/defensive rather than assuming
  * that) to find the nearest ancestor with its own `dueDate`. Returns null if

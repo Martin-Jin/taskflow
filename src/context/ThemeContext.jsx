@@ -22,7 +22,8 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useAuth } from './AuthContext';
 import { pullUserData, pushUserData, subscribeUserData } from '../services/firestoreSync';
-import { buildAccentRamp, isValidHexColor } from '../utils/themePresets';
+import { buildAccentRamp, buildSecondaryAccentRamp, isValidHexColor } from '../utils/themePresets';
+import { generateFaviconDataUri, applyFaviconDataUri } from '../utils/generateFaviconDataUri';
 
 const ThemeContext = createContext(null);
 
@@ -88,15 +89,22 @@ export function ThemeProvider({ children }) {
       '--color-accent-solid-bg-hover',
       '--color-accent-solid-text',
       '--color-accent-soft',
+      '--color-accent-secondary',
     ];
+    const mode = theme === 'dark' ? 'dark' : 'light';
     if (!accentSeed || !isValidHexColor(accentSeed)) {
       // null/invalid means "use the shipped default" — remove any inline
       // override so global.css's own :root values show through again.
       ACCENT_PROPERTIES.forEach((prop) => el.style.removeProperty(prop));
+      // Shipped default teal's own solid-bg per theme (global.css) — the
+      // favicon still needs a value to draw even with no custom accent, so
+      // it can reflect a plain light/dark switch too, not just a custom pick.
+      applyFaviconDataUri(generateFaviconDataUri(mode === 'dark' ? '#1d9e75' : '#0f6e56'));
       return;
     }
-    const ramp = buildAccentRamp(accentSeed)[theme === 'dark' ? 'dark' : 'light'];
+    const ramp = { ...buildAccentRamp(accentSeed)[mode], ...buildSecondaryAccentRamp(accentSeed)[mode] };
     Object.entries(ramp).forEach(([prop, value]) => el.style.setProperty(prop, value));
+    applyFaviconDataUri(generateFaviconDataUri(ramp['--color-accent-solid-bg']));
   }, [accentSeed, theme]);
 
   useEffect(() => {

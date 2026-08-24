@@ -218,6 +218,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     viewersByProject,
     taskTemplates,
     setTaskTemplates,
+    markBlockDone,
+    unmarkBlockDone,
+    setRemainingHoursWithBlockInference,
   } = useScheduler();
 
   // Which task this modal instance currently displays. Starts as the task it
@@ -907,16 +910,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     task.remainingHoursOverride,
   ]);
 
+  // Routes through setRemainingHoursWithBlockInference (SchedulerContext)
+  // instead of a plain updateTask so a manual decrease/increase here also
+  // infers which of this task's scheduled blocks that edit implies were
+  // completed or un-completed — see taskHierarchy.js's
+  // planBlockCompletionFromRemainingHoursEdit for the oldest-first (mark
+  // done) / newest-first (un-mark, for a corrective increase) algorithm.
   function handleRemainingHoursChange(hours) {
-    const clamped = Math.min(Math.max(0, Number(hours) || 0), task.estimatedHours);
-    if (!task.isRecurring) {
-      updateTask(task.id, { remainingHours: clamped });
-      return;
-    }
-    if (!currentOccurrenceOriginalDate) return; // no due date yet — nothing to key the override by
-    updateTask(task.id, {
-      remainingHoursOverride: { ...(task.remainingHoursOverride || {}), [currentOccurrenceOriginalDate]: clamped },
-    });
+    // Defense in depth — the UI already disables this field while a
+    // dependency is incomplete (see DetailSidebar's hasIncompleteDependencies
+    // prop); this stops it even if called some other way.
+    if (incompleteDependencies.length > 0) return;
+    if (task.isRecurring && !currentOccurrenceOriginalDate) return; // no due date yet — nothing to key the override by
+    setRemainingHoursWithBlockInference(task, hours, taskScheduledBlocks);
   }
 
   // Sections belong to a project — once a project is chosen, only show
@@ -2484,6 +2490,9 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 dueDateError={dueDateError}
                 dueDateRequiredError={dueDateRequiredError}
                 taskScheduledBlocks={taskScheduledBlocks}
+                onMarkBlockDone={markBlockDone}
+                onUnmarkBlockDone={unmarkBlockDone}
+                hasIncompleteDependencies={incompleteDependencies.length > 0}
                 priority={priority}
                 onPriorityChange={setPriority}
                 labels={labels}

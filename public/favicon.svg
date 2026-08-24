@@ -1,4 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="8" fill="#0F6E56"/>
-  <path d="M26.7 8 L12 22.7 L5.3 16" fill="none" stroke="#E1F5EE" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Matches the in-app logo's default (unmodified) accent (see
+       BrandMark.jsx and global.css's accent solid bg tokens). A favicon
+       can't read the app's own theme state, but an SVG favicon CAN react
+       to the OS/browser's prefers-color-scheme, which is the closest real
+       equivalent available here, so the square's fill still switches
+       between the light and dark theme's default teal.
+       The checkmark itself is a FIXED white in every case, matching
+       BrandMark.jsx's own in-app logo, since it's the brand mark's
+       identity rather than something needing its own contrast pairing.
+       NOTE: XML comments forbid a literal double hyphen anywhere in their
+       body, not just at the close, so do not reintroduce CSS custom
+       property names or two adjacent hyphens in this text, or this file
+       fails to parse as XML and the favicon silently stops rendering. -->
+
+  <style>
+    .bg { fill: #0f6e56; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #1d9e75; }
+    }
+  </style>
+  <rect class="bg" width="32" height="32" rx="8"/>
+  <path d="M26.7 8 L12 22.7 L5.3 16" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -223,3 +223,71 @@ export function buildAccentRamp(seedHex) {
 
   return { light, dark };
 }
+
+// How far around the hue wheel the secondary accent sits from the primary
+// seed. Not 180° (a true complement) — on some seeds (e.g. this app's own
+// teal, hue ~160°) an exact complement lands on red/pink, which reads as an
+// error/danger color rather than a second brand color, and would visually
+// clash with --color-danger. 150° keeps it clearly a DIFFERENT hue family
+// (never mistaken for "the same accent, just lighter/darker") for MOST
+// seeds — but a fixed offset alone isn't enough: some starting hues (e.g.
+// slate's ~209°) land the +150° result right back in the red band anyway.
+// clampAwayFromRed (below) is what actually guarantees the exclusion for
+// every possible seed, not this constant by itself.
+const SECONDARY_HUE_OFFSET = 150;
+
+// Red/danger exclusion band, in degrees either side of pure red (hue 0/360)
+// — matches --color-danger's own hue (a WCAG-red, ~355-10°) with a margin,
+// since "close to red" reads as an error state regardless of the exact
+// value. Widened past --color-danger's literal hue on purpose: something
+// that's ALMOST the danger color still misreads as one under a glance.
+const RED_EXCLUSION_HALF_WIDTH = 35;
+
+/** Distance (0-180) between two hues around the wheel, ignoring direction. */
+function hueDistance(a, b) {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+/**
+ * If `hue` falls inside the red exclusion band, pushes it to the NEAREST
+ * edge of that band rather than an arbitrary fallback — keeps the result as
+ * close as possible to the intended offset while still guaranteeing every
+ * output hue reads as "not red", for any input seed whatsoever.
+ */
+function clampAwayFromRed(hue) {
+  if (hueDistance(hue, 0) > RED_EXCLUSION_HALF_WIDTH) return hue;
+  // Push toward whichever edge of the band is nearer — the band spans
+  // [360 - HALF_WIDTH, 360] union [0, HALF_WIDTH] on the wheel.
+  return hue <= 180 ? RED_EXCLUSION_HALF_WIDTH : 360 - RED_EXCLUSION_HALF_WIDTH;
+}
+
+/**
+ * Derives a small "system feedback" ramp — a hue distinct from the primary
+ * accent, used ONLY for UI that represents the app doing something (the
+ * calendar-rewrite spinner/progress bar), never for a role the user
+ * actively picks or triggers (buttons, selection, nav). Keeping those two
+ * meanings on visibly different hues is the actual point: today a stuck
+ * progress bar and a selected calendar block are the identical color, so
+ * "the app is working" and "you selected this" are indistinguishable at a
+ * glance. This is NOT a second user-facing color choice — it's computed
+ * from the same seed as buildAccentRamp, same as how dark mode's stops are
+ * computed from the same seed as light mode's.
+ *
+ * Same hue+saturation-fixed, lightness-swept approach as buildRawRamp, then
+ * clamped to the two floors this ramp's only two roles actually need: 3:1
+ * for the spinner (a graphical object, not text — WCAG 1.4.11) and 3:1 for
+ * the progress fill against the page (also a graphical object, not text it
+ * sits behind).
+ */
+export function buildSecondaryAccentRamp(seedHex) {
+  const { h, s } = rgbToHsl(hexToRgb(seedHex));
+  const secondaryHue = clampAwayFromRed((h + SECONDARY_HUE_OFFSET) % 360);
+  const raw600 = rgbToHex(hslToRgb({ h: secondaryHue, s, l: RAMP_LIGHTNESS_STOPS['600'] }));
+  const raw400 = rgbToHex(hslToRgb({ h: secondaryHue, s, l: RAMP_LIGHTNESS_STOPS['400'] }));
+
+  return {
+    light: { '--color-accent-secondary': nudgeAgainstAll(raw600, LIGHT_BACKGROUNDS, 3) },
+    dark: { '--color-accent-secondary': nudgeAgainstAll(raw400, DARK_BACKGROUNDS, 3) },
+  };
+}

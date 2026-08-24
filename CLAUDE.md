@@ -617,6 +617,22 @@ gitignored working file.
 - Comments are concise, up to date, and in plain English — not exhaustive, just
   enough that a reader understands the file, plus callouts for anything
   non-obvious (unique features, or the reason something was done a specific way).
+  A comment longer than a couple of sentences must be broken into short
+  paragraphs, a bulleted/numbered list, or labelled sub-points — never one dense
+  prose block a reader has to re-read to parse. This applies equally to doc
+  updates (`docs/*.md`), not just inline code comments.
+- Write for someone with no technical background: assume the reader doesn't
+  know what a "hook," "callback," or "race condition" means, and explain what a
+  piece of logic actually does in everyday terms before (or instead of) naming
+  the mechanism. This applies to both code comments and doc updates. Keep full
+  detail — don't cut anything a maintainer would need — just say it plainly
+  rather than skipping the explanation because the term feels self-evident to
+  someone who already knows it.
+- Write it as a real document someone sat down and composed, not a reply typed
+  out in a chat. No "as discussed above," "in this session," "I changed X," or
+  other language that only makes sense as one turn in a conversation — a
+  comment/doc must stand on its own for someone opening the file cold, with no
+  memory of how the change came about.
 - No repeated code or worse-than-necessary implementations where a clearly
   cleaner approach exists in meaningfully fewer lines (skip if the win is minor).
 - Before adding new code, check whether an existing utility/component/hook

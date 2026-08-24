@@ -3,7 +3,8 @@ import { ExternalLink, AlertCircle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { useNowAndNext } from '../../hooks/useNowAndNext';
 import { toISODate, timeToMinutes, formatTime12h as formatTime, formatDisplayDateTime } from '../../utils/dateUtils';
-import { isBlockMissed, isBlockCompletedLate, isBlockTaskCompleted } from '../../utils/missedTasks';
+import { isBlockMissed, isBlockCompletedLate, isBlockTaskCompleted, isBlockOrTaskDone, isBlockDone } from '../../utils/missedTasks';
+import { areDependenciesMet } from '../../utils/dependencyUtils';
 import { expandEventsForRange, expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpansion';
 import TaskDetailModal from '../Modals/TaskDetailModal';
 import EventDetailModal from '../Modals/EventDetailModal';
@@ -13,9 +14,10 @@ import { SkeletonList } from '../Common/Skeleton';
 import { useFirstLoadSkeleton } from '../../hooks/useFirstLoadSkeleton';
 
 export default function TodayAgenda() {
-  const { tasks, blocks, events } = useScheduler();
+  const { tasks, blocks, events, markBlockDone, unmarkBlockDone } = useScheduler();
   const { current } = useNowAndNext(tasks, blocks, events);
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const containerTaskIds = useMemo(() => new Set(tasks.filter((t) => t.parentId).map((t) => t.parentId)), [tasks]);
   const listRef = useRef(null);
   const currentItemRef = useRef(null);
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -46,9 +48,25 @@ export default function TodayAgenda() {
           link: task?.link || null,
           isMissed: isBlockMissed(b, task, today, nowMinutes),
           isDueToday: task?.dueDate === today,
-          isCompleted: isBlockTaskCompleted(b, task),
+          isCompleted: isBlockOrTaskDone(b, task),
           isCompletedLate: isBlockCompletedLate(b, task),
           completedAt: task?.completedAt ?? null,
+          // Whether this row can offer the "mark this scheduled slice done"
+          // checkbox at all: only for a real (non-event) task block, not a
+          // container (its own remainingHours is a read-only rollup — see
+          // markBlockDone's own no-op guard in SchedulerContext.jsx), and
+          // not once the whole TASK is already completed (nothing left to
+          // mark for this slice specifically at that point).
+          canToggleBlockDone: !!task && !containerTaskIds.has(task.id) && !isBlockTaskCompleted(b, task),
+          isBlockDone: isBlockDone(b),
+          // A task waiting on an incomplete dependency can't be marked done
+          // this way either (same rule as completing the whole task) —
+          // checked here rather than just relying on markBlockDone's own
+          // no-op so the checkbox can render disabled instead of looking
+          // clickable and silently doing nothing. Un-marking an
+          // already-done block stays allowed regardless (see
+          // unmarkBlockDone, which has no such guard).
+          isDependencyBlocked: !!task && !areDependenciesMet(task, taskById),
         };
       });
     const eventItems = expandEventsForRange(events || [], today, today)
@@ -134,6 +152,22 @@ export default function TodayAgenda() {
               }
             >
               {isCurrent && <span className="today-agenda-pulse" />}
+              {item.canToggleBlockDone && (
+                <input
+                  type="checkbox"
+                  className="today-agenda-block-checkbox"
+                  checked={item.isBlockDone}
+                  disabled={item.isDependencyBlocked && !item.isBlockDone}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => (item.isBlockDone ? unmarkBlockDone(item.id) : markBlockDone(item.id))}
+                  aria-label={item.isBlockDone ? `Mark ${item.title} not done for this scheduled time` : `Mark ${item.title} done for this scheduled time`}
+                  title={
+                    item.isDependencyBlocked && !item.isBlockDone
+                      ? "Can't mark done until this task's dependencies are complete"
+                      : "Mark this scheduled time done (doesn't complete the whole task)"
+                  }
+                />
+              )}
               {!item.isCompleted && item.isMissed && <AlertCircle size={13} className="today-agenda-missed-icon" aria-hidden="true" />}
               <span className="today-agenda-time">
                 <span className="today-agenda-time-full">

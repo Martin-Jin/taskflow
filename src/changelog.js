@@ -21,6 +21,54 @@
 
 export const CHANGELOG = [
   {
+    version: '10.0.0',
+    date: '2026-08-24',
+    title: 'A task finishes itself once all its scheduled work is done',
+    changes: [
+      'Marking every one of a task\'s scheduled time slices as done — whether one at a time or by reducing "Time left" all the way to zero — now completes the task automatically, the same as ticking it off yourself. A task split across several slices only finishes once every slice is accounted for, not after the first one.',
+      'A task waiting on another task to finish first can no longer have its "Time left" changed or its scheduled slices marked done — the same rule that already stopped you completing it outright now applies to those too, until the thing it\'s waiting on is done.',
+      'Fixed a bug where pressing Enter twice in quick succession while adding a task could create it twice.',
+    ],
+  },
+  {
+    version: '9.9.1',
+    date: '2026-08-24',
+    title: 'The tab icon now follows your accent color too',
+    changes: [
+      'The browser tab icon now matches your chosen accent color right away, the same way the in-app logo already does — it used to only ever show a fixed teal.',
+      'The checkmark inside the logo and the tab icon is now always white, instead of sometimes switching to black depending on the theme.',
+      'Fixed a border that only showed on the top and bottom of a task\'s title/description box when you clicked into it, instead of wrapping all the way around.',
+      'The attach-file and send buttons next to a comment box no longer have a border around them.',
+    ],
+  },
+  {
+    version: '9.9.0',
+    date: '2026-08-24',
+    title: 'Mark a single scheduled slice of a task done',
+    changes: [
+      'A task spread across several days used to show every earlier day as "Missed" forever, even once you\'d actually done that day\'s share of the work — the app only ever checked whether the WHOLE task was finished. You can now mark just one scheduled slice done, separately from completing the task itself, from three places: a checkbox that appears when you hover a row in Today\'s agenda, the same in the "Overdue & missed" list, and a checklist next to a task\'s "Scheduled" times in its details.',
+      'Marking a slice done subtracts exactly that time from "Time left" automatically, and un-marking it restores exactly what was taken off — including if you do it by mistake.',
+      'Manually editing "Time left" now also recognizes when you\'ve covered a whole scheduled slice\'s worth of time and marks it done for you (and un-marks the most recent one if you increase it back to correct a mistake).',
+    ],
+  },
+  {
+    version: '9.8.1',
+    date: '2026-08-24',
+    title: "A task's fields and its notes now scroll on their own",
+    changes: [
+      "A task's detail view no longer scrolls the description/sub-tasks/comments and the fields sidebar together as one long page — each side now scrolls independently, so a long description doesn't push the due date and priority off-screen.",
+    ],
+  },
+  {
+    version: '9.8.0',
+    date: '2026-08-24',
+    title: 'A second color for the app to work with',
+    changes: [
+      'The tab icon now matches your device\'s light/dark setting instead of always showing a white checkmark — it used to look mismatched against a dark accent square when your device was set to dark.',
+      'A calendar rewrite\'s progress spinner and progress bar now use a distinct second color derived from your accent, instead of the exact same color used for selections and buttons — so "the app is working" and "you selected this" no longer look identical.',
+    ],
+  },
+  {
     version: '9.7.0',
     date: '2026-08-23',
     title: 'The logo follows your accent color, and Projects gets a bit of atmosphere',

@@ -7,13 +7,9 @@ into your real free time around your deadlines instead of just sorting a list.
 It runs out of the box on local sample data — every view and every feature
 works with nothing connected, no account, no setup.
 
-```bash
-npm install
-npm run dev
-```
-
-Open **http://localhost:5173**. A guided tour walks you through the main views
-on first load (replay it anytime from **Settings → Help**).
+**[Try it live](https://martin-jin.github.io/taskflow/)**. A guided tour walks
+you through the main views on first load (replay it anytime from
+**Settings → Help**).
 
 ## What it does
 
@@ -33,6 +29,16 @@ on first load (replay it anytime from **Settings → Help**).
 Undo/redo, a `Ctrl+K` command palette, typo-tolerant search, bulk select,
 rebindable keyboard shortcuts, and light/dark themes throughout. Fully
 responsive down to phone width, and installable as a PWA.
+
+## Running locally
+
+```bash
+npm install
+npm run dev
+```
+
+Then open **http://localhost:5173**. See [Development](docs/DEVELOPMENT.md)
+for the full setup, including optional Firebase/Google/Todoist credentials.
 
 ## Documentation
 

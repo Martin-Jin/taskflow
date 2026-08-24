@@ -54,7 +54,15 @@ cached copy.
 
 The default landing tab: a stats strip (due today,
 overdue, hours scheduled this week), **Right now** (the block currently
-in progress, or what's next, with a live countdown), **Today's agenda**,
+in progress, or what's next, with a live countdown), **Today's agenda**
+(hover a row, or open the "Overdue & missed" stat tile, to mark just that
+scheduled slice of a task done — separate from completing the whole task,
+useful for a task spread across several days, since one day's slice being
+missed doesn't mean the task itself was ever due that day. Once every
+scheduled slice of a task is accounted for, the task completes itself,
+same as ticking it off directly. A task waiting on another one to finish
+first can't have its slices marked done, or its "Time left" changed,
+until that other task is complete),
 a pair of **progress rings** (today and this week), and **Notes** —
 folder-organized sticky notes (a title plus a markdown body) for jotting
 anything down. Clicking a note (or "Add note") opens a mini WYSIWYG

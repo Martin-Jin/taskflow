@@ -58,6 +58,9 @@ export default function DetailSidebar({
   dueDateError,
   dueDateRequiredError,
   taskScheduledBlocks,
+  onMarkBlockDone,
+  onUnmarkBlockDone,
+  hasIncompleteDependencies,
   priority,
   onPriorityChange,
   labels,
@@ -145,11 +148,24 @@ export default function DetailSidebar({
       {!isContainer && taskScheduledBlocks.length > 0 && (
         <DetailField icon={CalendarRange} label="Scheduled">
           <div className="scheduled-blocks-list">
-            {taskScheduledBlocks.map((b) => (
-              <p key={b.id} className="form-hint scheduled-block-row">
-                {formatDisplayDate(b.date)}, {formatTime12h(b.startTime)}–{formatTime12h(b.endTime)}
-              </p>
-            ))}
+            {taskScheduledBlocks.map((b) => {
+              const isDone = b.status === 'done';
+              return (
+                <label key={b.id} className="scheduled-block-row scheduled-block-row-checkable">
+                  <input
+                    type="checkbox"
+                    checked={isDone}
+                    disabled={isReadOnlyViewer || (hasIncompleteDependencies && !isDone)}
+                    onChange={() => (isDone ? onUnmarkBlockDone(b.id) : onMarkBlockDone(b.id))}
+                    aria-label={`Mark ${formatDisplayDate(b.date)}, ${formatTime12h(b.startTime)}–${formatTime12h(b.endTime)} as done`}
+                    title={hasIncompleteDependencies && !isDone ? "Can't mark scheduled time done until this task's dependencies are complete" : undefined}
+                  />
+                  <span className={`form-hint ${isDone ? 'scheduled-block-row-done' : ''}`}>
+                    {formatDisplayDate(b.date)}, {formatTime12h(b.startTime)}–{formatTime12h(b.endTime)}
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </DetailField>
       )}
@@ -198,8 +214,11 @@ export default function DetailSidebar({
         <SmartDurationInput
           hours={effectiveRemainingHours}
           onChange={onRemainingHoursChange}
-          disabled={isReadOnlyViewer}
+          disabled={isReadOnlyViewer || hasIncompleteDependencies}
         />
+        {hasIncompleteDependencies && (
+          <p className="form-hint">Locked until this task's dependencies are complete.</p>
+        )}
       </DetailField>
       )}
 

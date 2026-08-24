@@ -411,6 +411,16 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
 
   function handleSubmit() {
     if (isSelectedProjectViewerOnly) return; // UI already hides/disables this path — defense in depth.
+    // requestClose() below doesn't unmount immediately — it waits out the
+    // exit animation (see useAnimatedUnmount's own exitDuration) before
+    // actually calling onClose, so the title field (and its Enter-to-submit
+    // handler) stays live and focused for that whole window. A second Enter
+    // pressed fast enough lands inside it and would otherwise call addTask
+    // again before requestClose's own `if (isClosing) return` guard ever
+    // gets a chance to stop it — this check is what actually has to catch
+    // that, checked BEFORE addTask runs rather than relying on the modal
+    // having visually closed yet.
+    if (isClosing) return;
     if (!title.trim()) {
       setError('Give the task a title.');
       return;
