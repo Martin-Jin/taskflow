@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '9.9.0',
+    date: '2026-08-24',
+    title: 'Mark a single scheduled slice of a task done',
+    changes: [
+      'A task spread across several days used to show every earlier day as "Missed" forever, even once you\'d actually done that day\'s share of the work — the app only ever checked whether the WHOLE task was finished. You can now mark just one scheduled slice done, separately from completing the task itself, from three places: a checkbox that appears when you hover a row in Today\'s agenda, the same in the "Overdue & missed" list, and a checklist next to a task\'s "Scheduled" times in its details.',
+      'Marking a slice done subtracts exactly that time from "Time left" automatically, and un-marking it restores exactly what was taken off — including if you do it by mistake.',
+      'Manually editing "Time left" now also recognizes when you\'ve covered a whole scheduled slice\'s worth of time and marks it done for you (and un-marks the most recent one if you increase it back to correct a mistake).',
+    ],
+  },
+  {
     version: '9.8.1',
     date: '2026-08-24',
     title: "A task's fields and its notes now scroll on their own",

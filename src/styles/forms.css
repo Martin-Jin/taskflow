@@ -1545,6 +1545,33 @@
   width: 100%;
 }
 
+.scheduled-blocks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Each row is a checkbox + its own date/time text — marks THIS scheduled
+   block done (see SchedulerContext's markBlockDone), independent of
+   completing the whole task. A multi-day task's block for one day finishing
+   doesn't mean the task itself is done, so this is deliberately a separate
+   action from the title-row checkbox above. */
+.scheduled-block-row-checkable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.scheduled-block-row-checkable input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
+.scheduled-block-row-done {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
 .detail-field {
   padding: 9px 0;
   display: flex;

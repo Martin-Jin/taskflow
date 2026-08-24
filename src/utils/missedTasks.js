@@ -28,9 +28,34 @@ export function isBlockTaskCompleted(block, task) {
   return !!task.isCompleted;
 }
 
+/**
+ * Was THIS block's own slice of work marked done (see SchedulerContext's
+ * markBlockDone/unmarkBlockDone and ScheduledBlock.status's doc comment),
+ * independent of whether the whole task is complete? A multi-day task's
+ * block for one day being done is exactly the case isBlockTaskCompleted
+ * alone can't express — that's the reason this field/function exists.
+ */
+export function isBlockDone(block) {
+  return block?.status === 'done';
+}
+
+/**
+ * True if the block should read as "done" for display/missed-detection
+ * purposes: either the whole task is completed, OR this specific block was
+ * marked done on its own (see isBlockDone). This is the function every
+ * consumer that used to call isBlockTaskCompleted alone for that purpose
+ * should use instead — isBlockTaskCompleted itself stays as the narrower
+ * "is the TASK completed" check, still needed on its own by
+ * isBlockCompletedLate below (a block-level completion has no completedAt
+ * timestamp to compare against, so "completed late" doesn't apply to it).
+ */
+export function isBlockOrTaskDone(block, task) {
+  return isBlockTaskCompleted(block, task) || isBlockDone(block);
+}
+
 /** Is `block` (joined with its `task`) missed, given `today`/`nowMinutes`? */
 export function isBlockMissed(block, task, today, nowMinutes) {
-  if (!task || isBlockTaskCompleted(block, task)) return false;
+  if (!task || isBlockOrTaskDone(block, task)) return false;
   if (block.date !== today) return false;
   return timeToMinutes(block.endTime) <= nowMinutes;
 }

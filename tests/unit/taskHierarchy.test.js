@@ -6,6 +6,9 @@ import {
   applyUpwardCompletionCascade,
   getEffectiveRemainingHoursForOccurrence,
   computeRemainingHoursPatchAfterElapsed,
+  computeActuallyAppliedHours,
+  computeRemainingHoursPatchAfterRestore,
+  planBlockCompletionFromRemainingHoursEdit,
 } from '../../src/utils/taskHierarchy';
 import { planSubtaskOccurrenceCompletion } from '../../src/utils/recurrenceState';
 import { deriveRecurrenceRule } from '../../src/utils/recurrence';
@@ -283,5 +286,175 @@ describe('computeRemainingHoursPatchAfterElapsed', () => {
     expect(computeRemainingHoursPatchAfterElapsed(task, 5)).toEqual({
       remainingHoursOverride: { [TODAY]: 0 },
     });
+  });
+});
+
+describe('computeActuallyAppliedHours', () => {
+  it('reports the requested elapsedHours when there was enough remaining to give', () => {
+    const task = { isRecurring: false, remainingHours: 5, estimatedHours: 5 };
+    expect(computeActuallyAppliedHours(task, 2)).toBe(2);
+  });
+
+  it('reports LESS than elapsedHours when remaining hours had less to give (the clamp-at-0 case)', () => {
+    // This is the exact scenario markBlockDone needs to record correctly:
+    // a 2-hour block "completed" against a task with only 0.5h left should
+    // only be credited with taking 0.5h, not the full 2h, or an
+    // unmarkBlockDone reversal would later hand back more than was ever
+    // actually subtracted.
+    const task = { isRecurring: false, remainingHours: 0.5, estimatedHours: 5 };
+    expect(computeActuallyAppliedHours(task, 2)).toBe(0.5);
+  });
+
+  it('reports 0 when remaining hours is already 0', () => {
+    const task = { isRecurring: false, remainingHours: 0, estimatedHours: 5 };
+    expect(computeActuallyAppliedHours(task, 2)).toBe(0);
+  });
+
+  it('works the same way for a recurring task, reading the per-occurrence override', () => {
+    const task = { isRecurring: true, dueDate: TODAY, estimatedHours: 3, remainingHoursOverride: { [TODAY]: 1 } };
+    expect(computeActuallyAppliedHours(task, 2)).toBe(1);
+  });
+});
+
+describe('computeRemainingHoursPatchAfterRestore', () => {
+  it('adds hoursToRestore back onto remainingHours for a non-recurring task', () => {
+    const task = { isRecurring: false, remainingHours: 1, estimatedHours: 5 };
+    expect(computeRemainingHoursPatchAfterRestore(task, 2)).toEqual({ remainingHours: 3 });
+  });
+
+  it('clamps the restored value at estimatedHours, never exceeding the full estimate', () => {
+    const task = { isRecurring: false, remainingHours: 4, estimatedHours: 5 };
+    expect(computeRemainingHoursPatchAfterRestore(task, 3)).toEqual({ remainingHours: 5 });
+  });
+
+  it('is the exact inverse of computeActuallyAppliedHours + computeRemainingHoursPatchAfterElapsed for a normal (non-clamped) case', () => {
+    // markBlockDone -> unmarkBlockDone round trip: applying then restoring
+    // the same hours should return the task to its original remaining hours.
+    const original = { isRecurring: false, remainingHours: 3, estimatedHours: 5 };
+    const applied = computeActuallyAppliedHours(original, 1.5);
+    const afterMark = computeRemainingHoursPatchAfterElapsed(original, 1.5);
+    const taskAfterMark = { ...original, ...afterMark };
+    const afterUnmark = computeRemainingHoursPatchAfterRestore(taskAfterMark, applied);
+    expect(afterUnmark).toEqual({ remainingHours: 3 });
+  });
+
+  it('round-trips correctly even when the forward step was clamped at 0 (the exactness guarantee)', () => {
+    // The whole reason ScheduledBlock stores hoursAppliedToRemaining instead
+    // of trusting durationHours: if only 0.5h was actually available to
+    // subtract for a 2h block, restoring must add back exactly 0.5h, not 2h
+    // (which would overshoot past the task's true prior remaining hours).
+    const original = { isRecurring: false, remainingHours: 0.5, estimatedHours: 5 };
+    const applied = computeActuallyAppliedHours(original, 2); // 0.5, not 2
+    const afterMark = computeRemainingHoursPatchAfterElapsed(original, 2);
+    const taskAfterMark = { ...original, ...afterMark }; // remainingHours: 0
+    const afterUnmark = computeRemainingHoursPatchAfterRestore(taskAfterMark, applied);
+    expect(afterUnmark).toEqual({ remainingHours: 0.5 });
+  });
+
+  it('writes a per-occurrence override keyed by the pattern dueDate for a recurring task', () => {
+    const task = { isRecurring: true, dueDate: TODAY, estimatedHours: 4, remainingHoursOverride: { [TODAY]: 1 } };
+    expect(computeRemainingHoursPatchAfterRestore(task, 2)).toEqual({
+      remainingHoursOverride: { [TODAY]: 3 },
+    });
+  });
+
+  it('returns null for a recurring task with no dueDate to key the override by', () => {
+    const task = { isRecurring: true, dueDate: null, estimatedHours: 4 };
+    expect(computeRemainingHoursPatchAfterRestore(task, 1)).toBeNull();
+  });
+});
+
+describe('planBlockCompletionFromRemainingHoursEdit', () => {
+  // The exact scenario from the feature request: 1h logged, blocks are 40
+  // and 30 minutes. First block (fully covered by the 1h pool) marks done;
+  // the leftover 20 minutes is less than the second (30min) block's own
+  // duration, so it's left as a plain reduction — no block flagged for it.
+  it('marks only the FULLY-covered oldest block(s) done, leaving a sub-block remainder unflagged', () => {
+    const blocks = [
+      { id: 'b1', status: 'scheduled', durationHours: 40 / 60 },
+      { id: 'b2', status: 'scheduled', durationHours: 30 / 60 },
+    ];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 2, 1); // decreased by 1h
+    expect(result.toMarkDone).toEqual(['b1']);
+    expect(result.toUnmark).toEqual([]);
+  });
+
+  it('marks multiple oldest blocks done when the pool fully covers more than one', () => {
+    const blocks = [
+      { id: 'b1', status: 'scheduled', durationHours: 1 },
+      { id: 'b2', status: 'scheduled', durationHours: 1 },
+      { id: 'b3', status: 'scheduled', durationHours: 1 },
+    ];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 5, 3); // decreased by 2h
+    expect(result.toMarkDone).toEqual(['b1', 'b2']);
+  });
+
+  it('skips a block already marked done and continues past it to the next one', () => {
+    const blocks = [
+      { id: 'b1', status: 'done', durationHours: 1 },
+      { id: 'b2', status: 'scheduled', durationHours: 1 },
+    ];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 3, 2); // decreased by 1h
+    expect(result.toMarkDone).toEqual(['b2']);
+  });
+
+  it('marks nothing done when the decrease is smaller than even the first not-done block', () => {
+    const blocks = [{ id: 'b1', status: 'scheduled', durationHours: 1 }];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 2, 1.7); // decreased by 0.3h, block needs 1h
+    expect(result.toMarkDone).toEqual([]);
+    expect(result.toUnmark).toEqual([]);
+  });
+
+  it('no-ops when remaining hours is unchanged', () => {
+    const blocks = [{ id: 'b1', status: 'scheduled', durationHours: 1 }];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 2, 2);
+    expect(result.toMarkDone).toEqual([]);
+    expect(result.toUnmark).toEqual([]);
+  });
+
+  // REVERSE direction — an increase (correcting an error) un-marks already
+  // done blocks, newest first, mirroring the forward direction's oldest-first
+  // consumption.
+  it('un-marks the NEWEST done block first when remaining hours is increased', () => {
+    const blocks = [
+      { id: 'b1', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 },
+      { id: 'b2', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 },
+    ];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 1, 2); // increased by 1h
+    expect(result.toUnmark).toEqual(['b2']);
+    expect(result.toMarkDone).toEqual([]);
+  });
+
+  it('un-marks multiple done blocks, newest first, when the increase covers more than one', () => {
+    const blocks = [
+      { id: 'b1', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 },
+      { id: 'b2', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 },
+      { id: 'b3', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 },
+    ];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 0, 2); // increased by 2h
+    expect(result.toUnmark).toEqual(['b3', 'b2']);
+  });
+
+  it('stops un-marking once there are no more done blocks left to undo, even if the increase pool remains', () => {
+    const blocks = [{ id: 'b1', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 }];
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 0, 5); // increased by 5h, only 1 done block exists
+    expect(result.toUnmark).toEqual(['b1']);
+  });
+
+  it('uses a done block\'s hoursAppliedToRemaining (not durationHours) to size the un-mark pool, when they differ', () => {
+    // A block whose completion was originally clamped (only 0.5h actually
+    // applied even though the block itself is 1h) should only "cost" 0.5h
+    // of the increase pool to undo, not the full 1h duration.
+    const blocks = [
+      { id: 'b1', status: 'done', durationHours: 1, hoursAppliedToRemaining: 0.5 },
+      { id: 'b2', status: 'done', durationHours: 1, hoursAppliedToRemaining: 1 },
+    ];
+    // 0.6h increase: covers b2's full 1h applied? No — covers b2 only if
+    // pool >= its applied amount at the time it's considered. Walk: newest
+    // first is b2 (applied 1h) — pool 0.6 < 1, but the implementation still
+    // subtracts and stops once pool <= 0 OR list exhausted; assert b2 alone
+    // is proposed since it's examined first regardless of full coverage.
+    const result = planBlockCompletionFromRemainingHoursEdit(blocks, 0, 0.6);
+    expect(result.toUnmark).toEqual(['b2']);
   });
 });

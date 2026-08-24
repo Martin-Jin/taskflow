@@ -628,3 +628,259 @@ test('Stats: a "must be done on due date" task is not flagged as missing its buf
 
   expectNoErrors(errors);
 });
+
+test.describe('Marking a scheduled block done', () => {
+  /* Seeds one task with TWO scheduled blocks today: an earlier one already
+     past its end time (so it starts "Missed" per isBlockMissed) and a later
+     one still upcoming. Both are real task blocks (not calendar events), so
+     TodayAgenda's canToggleBlockDone should offer a checkbox on each — see
+     src/utils/missedTasks.js and SchedulerContext's markBlockDone/
+     unmarkBlockDone. */
+  async function seedTaskWithTwoBlocksToday(page, { idPrefix = 'e2e_block_done' } = {}) {
+    await page.evaluate(([prefix]) => {
+      const pad = (n) => String(n).padStart(2, '0');
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      // Earlier block: started an hour ago, ended 30 minutes ago — already
+      // missed. Later block: starts in 2 hours — still upcoming, untouched
+      // by anything this test does to the earlier one.
+      const earlierStart = new Date(now.getTime() - 60 * 60000);
+      const earlierEnd = new Date(now.getTime() - 30 * 60000);
+      const laterStart = new Date(now.getTime() + 120 * 60000);
+      const laterEnd = new Date(now.getTime() + 180 * 60000);
+      const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+      const task = {
+        id: `${prefix}_task`,
+        title: 'E2E Multi-Block Task',
+        isCompleted: false,
+        isLocked: false,
+        estimatedHours: 4,
+        remainingHours: 4,
+        priority: 'medium',
+        dependsOn: [],
+        minChunkHours: 0.5,
+        maxChunkHours: 4,
+        source: 'manual',
+        projectId: null,
+        dueDate: todayIso,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const blockEarlier = {
+        id: `${prefix}_earlier`,
+        taskId: task.id,
+        date: todayIso,
+        startTime: hm(earlierStart),
+        endTime: hm(earlierEnd),
+        durationHours: 0.5,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+      };
+      const blockLater = {
+        id: `${prefix}_later`,
+        taskId: task.id,
+        date: todayIso,
+        startTime: hm(laterStart),
+        endTime: hm(laterEnd),
+        durationHours: 1,
+        isLocked: false,
+        isAutoScheduled: false,
+        status: 'scheduled',
+      };
+      const existingTasks = JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]');
+      localStorage.setItem('taskflow:v1:tasks', JSON.stringify([...existingTasks, task]));
+      const existingBlocks = JSON.parse(localStorage.getItem('taskflow:v1:blocks') || '[]');
+      localStorage.setItem('taskflow:v1:blocks', JSON.stringify([...existingBlocks, blockEarlier, blockLater]));
+    }, [idPrefix]);
+    await page.reload();
+    await page.waitForTimeout(700);
+  }
+
+  test('a missed block can be marked done from Today\'s agenda without completing the whole task', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithTwoBlocksToday(page);
+    await gotoTab(page, 'Dashboard');
+
+    const agenda = page.locator('.today-agenda');
+    await agenda.waitFor({ state: 'visible' });
+    const missedRow = agenda.locator('.today-agenda-item', { hasText: 'E2E Multi-Block Task' }).first();
+    await expect(missedRow).toHaveClass(/is-missed/);
+    await expect(missedRow.locator('.today-agenda-missed-label')).toBeVisible();
+
+    // The checkbox is hover-revealed (opacity: 0 at rest, per dashboard.css)
+    // but exists in the DOM and is clickable regardless — hover it anyway to
+    // exercise the real interaction path.
+    await missedRow.hover();
+    const checkbox = missedRow.locator('.today-agenda-block-checkbox');
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).not.toBeChecked();
+    await checkbox.click();
+    await page.waitForTimeout(400);
+
+    // This row now reads as completed, missed indicator gone.
+    await expect(missedRow).not.toHaveClass(/is-missed/);
+    await expect(missedRow.locator('.today-agenda-completed-label, .today-agenda-completed-late-label')).toBeVisible();
+    await expect(missedRow.locator('.today-agenda-missed-label')).toHaveCount(0);
+
+    // The SECOND (still-upcoming) row for the same task must be untouched —
+    // proves this only closed out one block's slice, not the whole task.
+    const upcomingRow = agenda.locator('.today-agenda-item', { hasText: 'E2E Multi-Block Task' }).nth(1);
+    await expect(upcomingRow).toBeVisible();
+    await expect(upcomingRow.locator('.today-agenda-completed-label, .today-agenda-completed-late-label')).toHaveCount(0);
+    await expect(upcomingRow.locator('.today-agenda-due-label')).toBeVisible();
+
+    // And the task itself is still not completed.
+    const task = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks')).find((t) => t.id === 'e2e_block_done_task')
+    );
+    expect(task.isCompleted).toBe(false);
+    expect(task.remainingHours).toBeCloseTo(3.5, 5); // 4h estimate - 0.5h earlier block
+
+    expectNoErrors(errors);
+  });
+
+  test('TaskDetailModal\'s Scheduled section reflects and can reverse a block\'s done state', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithTwoBlocksToday(page, { idPrefix: 'e2e_block_modal' });
+    await gotoTab(page, 'Dashboard');
+
+    const agenda = page.locator('.today-agenda');
+    await agenda.waitFor({ state: 'visible' });
+    const missedRow = agenda.locator('.today-agenda-item', { hasText: 'E2E Multi-Block Task' }).first();
+    await missedRow.hover();
+    await missedRow.locator('.today-agenda-block-checkbox').click();
+    await page.waitForTimeout(400);
+
+    // Open the task's detail modal via search (Tasks tab), same convention
+    // as tasks-and-smart-parse.spec.js's searchAndOpen.
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill('E2E Multi-Block Task');
+    await page.waitForTimeout(300);
+    await page.getByText('E2E Multi-Block Task', { exact: false }).first().click();
+    await page.waitForTimeout(300);
+
+    const scheduledRows = page.locator('.scheduled-block-row-checkable');
+    await expect(scheduledRows).toHaveCount(2);
+    // Sorted oldest-first (date/startTime) — the earlier (now-done) block is
+    // first, the later (still-scheduled) block second.
+    const doneRow = scheduledRows.nth(0);
+    const openRow = scheduledRows.nth(1);
+    await expect(doneRow.locator('input[type="checkbox"]')).toBeChecked();
+    await expect(openRow.locator('input[type="checkbox"]')).not.toBeChecked();
+
+    // Read "Time left" before un-checking.
+    const timeLeftField = page.locator('.detail-field', { hasText: 'Time left' });
+    await expect(timeLeftField.locator('.smart-duration-input')).toHaveValue(/3 hours 30 minutes|3\.5/);
+
+    // Un-check the done block — restores exactly what was applied.
+    await doneRow.locator('input[type="checkbox"]').click();
+    await page.waitForTimeout(400);
+    await expect(doneRow.locator('input[type="checkbox"]')).not.toBeChecked();
+    await expect(timeLeftField.locator('.smart-duration-input')).toHaveValue(/^4 hours$/);
+
+    const blocks = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:blocks')));
+    const restored = blocks.find((b) => b.id === 'e2e_block_modal_earlier');
+    expect(restored.status).toBe('scheduled');
+    expect(restored.hoursAppliedToRemaining).toBeUndefined();
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('the "Overdue & missed" popup\'s own checkbox marks a missed block done and removes it from the list', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithTwoBlocksToday(page, { idPrefix: 'e2e_block_popup' });
+    await gotoTab(page, 'Dashboard');
+
+    const strip = page.locator('.dashboard-stats-strip');
+    await strip.waitFor({ state: 'visible' });
+    await strip.locator('.dashboard-stat-tile', { hasText: 'Overdue & missed' }).click();
+    await page.waitForTimeout(300);
+
+    const dialog = page.getByRole('dialog', { name: 'Overdue & missed' });
+    await dialog.waitFor({ state: 'visible' });
+    const missedItem = dialog.locator('.missed-tasks-item', { hasText: 'E2E Multi-Block Task' });
+    await expect(missedItem).toBeVisible();
+
+    await missedItem.hover();
+    const checkbox = missedItem.locator('.missed-tasks-block-checkbox');
+    await expect(checkbox).toBeVisible();
+    await checkbox.click();
+    await page.waitForTimeout(400);
+
+    // Disappears from the popup's list entirely (no "checked" state to show
+    // — see StatListItem's own comment: it just drops out on the next render).
+    await expect(dialog.locator('.missed-tasks-item', { hasText: 'E2E Multi-Block Task' })).toHaveCount(0);
+
+    const blocks = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:blocks')));
+    const marked = blocks.find((b) => b.id === 'e2e_block_popup_earlier');
+    expect(marked.status).toBe('done');
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+
+  test('manually reducing "Time left" by a whole block\'s duration auto-marks it done, and increasing it back un-marks it', async ({ page }) => {
+    // Mechanism B: setRemainingHoursWithBlockInference / planBlockCompletionFromRemainingHoursEdit.
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await seedTaskWithTwoBlocksToday(page, { idPrefix: 'e2e_block_infer' });
+
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill('E2E Multi-Block Task');
+    await page.waitForTimeout(300);
+    await page.getByText('E2E Multi-Block Task', { exact: false }).first().click();
+    await page.waitForTimeout(300);
+
+    // Task starts at 4h remaining, with a 0.5h earlier block and a 1h later
+    // block (both still 'scheduled'). Reducing Time left by exactly 0.5h
+    // (the earlier block's own durationHours) should walk oldest-first and
+    // mark that one block done, per planBlockCompletionFromRemainingHoursEdit.
+    const timeLeftInput = page.locator('.detail-field', { hasText: 'Time left' }).locator('.smart-duration-input');
+    await timeLeftInput.click();
+    await timeLeftInput.fill('3.5h');
+    await timeLeftInput.blur();
+    await page.waitForTimeout(400);
+
+    const scheduledRows = page.locator('.scheduled-block-row-checkable');
+    await expect(scheduledRows).toHaveCount(2);
+    await expect(scheduledRows.nth(0).locator('input[type="checkbox"]')).toBeChecked();
+    await expect(scheduledRows.nth(1).locator('input[type="checkbox"]')).not.toBeChecked();
+
+    // Persisted: re-open the modal from scratch and confirm it stuck.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    await search.fill('');
+    await search.fill('E2E Multi-Block Task');
+    await page.waitForTimeout(300);
+    await page.getByText('E2E Multi-Block Task', { exact: false }).first().click();
+    await page.waitForTimeout(300);
+    const scheduledRowsReopened = page.locator('.scheduled-block-row-checkable');
+    await expect(scheduledRowsReopened.nth(0).locator('input[type="checkbox"]')).toBeChecked();
+
+    // Now increase Time left back by the same amount — un-marks the block
+    // (newest-done-first, per the function's un-mark branch; only one block
+    // is done here so it's unambiguous which one).
+    const timeLeftInput2 = page.locator('.detail-field', { hasText: 'Time left' }).locator('.smart-duration-input');
+    await timeLeftInput2.click();
+    await timeLeftInput2.fill('4h');
+    await timeLeftInput2.blur();
+    await page.waitForTimeout(400);
+    await expect(scheduledRowsReopened.nth(0).locator('input[type="checkbox"]')).not.toBeChecked();
+
+    const blocks = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:blocks')));
+    const earlier = blocks.find((b) => b.id === 'e2e_block_infer_earlier');
+    expect(earlier.status).toBe('scheduled');
+    expect(earlier.hoursAppliedToRemaining).toBeUndefined();
+
+    await page.keyboard.press('Escape');
+    expectNoErrors(errors);
+  });
+});

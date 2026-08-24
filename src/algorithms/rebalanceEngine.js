@@ -63,7 +63,7 @@ import { toISODate, dateRange, addDays } from '../utils/dateUtils';
 import { getTransitiveDependencyIds } from '../utils/dependencyUtils';
 import { expandTaskOccurrences, deriveRecurrenceRule } from '../utils/recurrence';
 import { expandEventsForRange } from '../utils/recurrenceExpansion';
-import { isBlockTaskCompleted } from '../utils/missedTasks';
+import { isBlockTaskCompleted, isBlockDone } from '../utils/missedTasks';
 import { NO_SCHEDULE_PROJECT_ID } from '../utils/projectConstants';
 
 /**
@@ -325,11 +325,21 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   // See the futureBlocks equivalent below: a historical block whose task (or
   // recurring occurrence) is already completed is preserved as a genuine
   // historical record, same reasoning as completeTask's own preservation.
-  const historicalCompleted = historicalBlocks.filter(
-    (b) => !b.isLocked && isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
-  );
+  // ALSO preserved: a block marked done at the BLOCK level (markBlockDone —
+  // see ScheduledBlock.status's doc comment), independent of the task's own
+  // completion — otherwise a "Re-balance" would silently clear a block the
+  // user explicitly marked done, excluding its hours from spentHoursByTask
+  // and letting the allocator re-derive the task's remainingHours back up
+  // and re-place the exact same work it was just told is finished. Unlike
+  // isBlockTaskCompleted (see isGenuineCompletedRecord's own comment below
+  // for why THAT needs a same-day restriction for non-recurring tasks),
+  // isBlockDone needs no such restriction: it's a property of this exact
+  // block already, never "true for every block of this task" the way a
+  // whole-task completion flag is.
+  const isHistoricalGenuineRecord = (b) => isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId)) || isBlockDone(b);
+  const historicalCompleted = historicalBlocks.filter((b) => !b.isLocked && isHistoricalGenuineRecord(b));
   const historicalClearedIds = new Set(
-    historicalBlocks.filter((b) => !b.isLocked && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))).map((b) => b.id)
+    historicalBlocks.filter((b) => !b.isLocked && !isHistoricalGenuineRecord(b)).map((b) => b.id)
   );
   const lockedBlocks = futureBlocks.filter((b) => b.isLocked);
   // A block whose task is already completed (or, for a recurring task, whose
@@ -352,6 +362,12 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   //     completedDates) — a real historical record, not a "completed
   //     early" leftover, so it's preserved regardless of date.
   const isGenuineCompletedRecord = (b) => {
+    // A block marked done at the BLOCK level (see isHistoricalGenuineRecord's
+    // own comment above) is always a genuine record regardless of date —
+    // that restriction below only exists for whole-task completion, which
+    // (for a non-recurring task) says "yes" for every block once the task is
+    // done at all, with no date-specificity of its own to trust.
+    if (isBlockDone(b)) return true;
     const task = taskByIdForCompletion.get(b.taskId);
     if (!isBlockTaskCompleted(b, task)) return false;
     if (task?.isRecurring) return true; // completedDates already matched b's own date
@@ -362,6 +378,20 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     ...historicalClearedIds,
     ...futureBlocks.filter((b) => !b.isLocked && !isGenuineCompletedRecord(b)).map((b) => b.id),
   ]);
+
+  // Of the preserved historical/completed blocks above, the ones marked done
+  // at the BLOCK level while their task is still INCOMPLETE need to stay
+  // busy in the capacity map (see step 3's busyBlocksForCapacity below) —
+  // unlike a whole-task-completed block's slot, which capacityMap
+  // deliberately frees up (that task is done and gone, never re-allocated).
+  // A block-done task still HAS remaining hours and is still handed to the
+  // allocator, so without this its own already-done slot reads as free and
+  // the allocator can — and does, this was caught by a test — schedule a
+  // brand-new block for the SAME task directly on top of the one just
+  // marked done.
+  const doneWhileTaskIncomplete = [...historicalCompleted, ...completedBlocks].filter(
+    (b) => isBlockDone(b) && !isBlockTaskCompleted(b, taskByIdForCompletion.get(b.taskId))
+  );
 
   // 2. Recompute remainingHours per task: estimatedHours minus hours already
   //    "spent" in historical (completed/locked only) + locked blocks (i.e.
@@ -446,7 +476,10 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
   const capacityMap = computeHorizonCapacity(today, horizonDays, {
     routines,
     events: expandedEvents,
-    blocks: lockedBlocks,
+    // lockedBlocks (immovable work) plus doneWhileTaskIncomplete (see its
+    // own comment above) — both represent time that's genuinely spoken for
+    // and must stay busy, unlike a whole-task-completed block's freed slot.
+    blocks: [...lockedBlocks, ...doneWhileTaskIncomplete],
     rules,
     nowClamp,
   });

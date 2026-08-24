@@ -379,6 +379,27 @@
   background: var(--color-bg-surface-hover);
 }
 
+/* Marks THIS scheduled slice done (see SchedulerContext's markBlockDone) —
+   distinct from completing the whole task, which stays a click into
+   TaskDetailModal. Hidden at rest and revealed on row hover/focus, matching
+   the routine-block hover-reveal pattern in calendar.css: a checkbox next to
+   every single row at all times would be more visual noise than the
+   "quiet density" direction wants for a list this size, and this is a
+   secondary action compared to just opening the task. `:focus-within` on
+   the row (not just `:hover`) is what also reveals it for keyboard users
+   tabbing through the row, not just a mouse hover. */
+.today-agenda-block-checkbox {
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.today-agenda-item:hover .today-agenda-block-checkbox,
+.today-agenda-item:focus-within .today-agenda-block-checkbox,
+.today-agenda-block-checkbox:checked {
+  opacity: 1;
+}
+
 /* A missed item's block/task pairing is mutually exclusive with is-current
    (a block can't still be "in progress" once its end time has passed), so
    these two states never need to combine. */
@@ -1233,6 +1254,20 @@
 
 .missed-tasks-item.scheduled-today-item.is-openable:hover {
   background: var(--color-bg-surface-hover);
+}
+
+/* Same hover-reveal treatment as .today-agenda-block-checkbox — marking a
+   missed block done is a secondary action next to opening the task, so it
+   stays out of the way until the row is actually being looked at. */
+.missed-tasks-block-checkbox {
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.missed-tasks-item:hover .missed-tasks-block-checkbox,
+.missed-tasks-item:focus-within .missed-tasks-block-checkbox {
+  opacity: 1;
 }
 
 /* Completed today rows: a positive "done" state, not a danger one — override

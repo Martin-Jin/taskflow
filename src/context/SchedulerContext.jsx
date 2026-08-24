@@ -99,6 +99,11 @@ import {
   applyUpwardCompletionCascade,
   getAllDescendants,
   getDirectChildren,
+  computeActuallyAppliedHours,
+  computeRemainingHoursPatchAfterElapsed,
+  computeRemainingHoursPatchAfterRestore,
+  getEffectiveRemainingHoursForOccurrence,
+  planBlockCompletionFromRemainingHoursEdit,
 } from '../utils/taskHierarchy';
 import { planPostponeUpdate } from '../utils/rescheduleHistory';
 import { planTemplateInstantiation } from '../utils/taskTemplates';
@@ -3486,6 +3491,127 @@ export function SchedulerProvider({ children }) {
     [tasks, blocks, commit]
   );
 
+  /**
+   * Marks ONE scheduled block done — distinct from completing the whole
+   * task (completeTask below): a multi-day task's block for today finishing
+   * doesn't mean the task itself is done. Subtracts this block's own
+   * durationHours from the task's remaining hours via the same
+   * computeRemainingHoursPatchAfterElapsed mechanism a timer's Stop action
+   * uses, and records the ACTUAL amount subtracted
+   * (computeActuallyAppliedHours, which can be less than durationHours if
+   * remaining hours had less to give) on the block itself
+   * (hoursAppliedToRemaining) so unmarkBlockDone's reversal is exact
+   * regardless of what else happens to remaining hours in between. See
+   * ScheduledBlock.status/.hoursAppliedToRemaining's own doc comments and
+   * missedTasks.js's isBlockOrTaskDone for the read side this feeds.
+   *
+   * No-ops (returns without committing) for a block that's already done, or
+   * for a container task (its own remainingHours is a read-only rollup —
+   * see DetailSidebar's isContainer check — so there's nothing meaningful to
+   * subtract from directly).
+   */
+  const markBlockDone = useCallback(
+    (blockId) => {
+      const block = blocks.find((b) => b.id === blockId);
+      if (!block || block.status === 'done') return;
+      const task = tasks.find((t) => t.id === block.taskId);
+      if (!task) return;
+      const hasChildren = tasks.some((t) => t.parentId === task.id);
+      if (hasChildren) return;
+      const appliedHours = computeActuallyAppliedHours(task, block.durationHours);
+      const taskPatch = computeRemainingHoursPatchAfterElapsed(task, block.durationHours);
+      const newTasks = taskPatch ? tasks.map((t) => (t.id === task.id ? { ...t, ...taskPatch } : t)) : tasks;
+      const newBlocks = blocks.map((b) =>
+        b.id === blockId ? { ...b, status: 'done', hoursAppliedToRemaining: appliedHours } : b
+      );
+      commit({ tasks: newTasks, blocks: newBlocks }, `Marked scheduled block done`);
+    },
+    [tasks, blocks, commit]
+  );
+
+  /**
+   * Reverses markBlockDone: restores exactly `block.hoursAppliedToRemaining`
+   * back onto the task's remaining hours (computeRemainingHoursPatchAfterRestore,
+   * clamped to never exceed estimatedHours) and resets the block back to
+   * 'scheduled'. No-ops for a block that isn't currently done.
+   */
+  const unmarkBlockDone = useCallback(
+    (blockId) => {
+      const block = blocks.find((b) => b.id === blockId);
+      if (!block || block.status !== 'done') return;
+      const task = tasks.find((t) => t.id === block.taskId);
+      const hoursToRestore = block.hoursAppliedToRemaining || 0;
+      const taskPatch = task ? computeRemainingHoursPatchAfterRestore(task, hoursToRestore) : null;
+      const newTasks = taskPatch ? tasks.map((t) => (t.id === task.id ? { ...t, ...taskPatch } : t)) : tasks;
+      const newBlocks = blocks.map((b) => {
+        if (b.id !== blockId) return b;
+        const { hoursAppliedToRemaining, ...rest } = b;
+        return { ...rest, status: 'scheduled' };
+      });
+      commit({ tasks: newTasks, blocks: newBlocks }, `Unmarked scheduled block done`);
+    },
+    [tasks, blocks, commit]
+  );
+
+  /**
+   * Sets `task`'s "Time left" to `newRemaining` (same clamped-absolute-value
+   * semantics as a plain updateTask({ remainingHours }) / remainingHoursOverride
+   * write), AND infers which of its scheduled blocks that edit implies were
+   * completed or un-completed — see taskHierarchy.js's
+   * planBlockCompletionFromRemainingHoursEdit for the exact oldest-first /
+   * newest-first algorithm and why a partial (less than one full block)
+   * remainder is deliberately left unflagged.
+   *
+   * Applies the remaining-hours patch and every inferred block status change
+   * as ONE commit (not a markBlockDone/unmarkBlockDone call per block), for
+   * two reasons: (1) a single user action — editing one number — should be
+   * one undo-stack entry, not N+1; (2) markBlockDone/unmarkBlockDone each
+   * derive their own remaining-hours delta from CURRENT remaining hours,
+   * which would double-count against the user's own already-final new
+   * value if called after it's set. Each inferred block's
+   * hoursAppliedToRemaining is simply its own durationHours — never
+   * clamped/reduced — because planBlockCompletionFromRemainingHoursEdit's
+   * own pool logic only ever marks a block done when the elapsed pool fully
+   * covered it, so there's nothing left to clamp (unlike a lone
+   * markBlockDone call, which can legitimately run out of remaining hours
+   * mid-block).
+   *
+   * `blocksForTask` must be this task's own scheduled blocks, oldest first
+   * (see TaskDetailModal's taskScheduledBlocks) — the caller's
+   * responsibility, not recomputed here, since "this task's blocks" already
+   * has its own resolved-occurrence logic for a recurring task that this
+   * function has no need to duplicate.
+   */
+  const setRemainingHoursWithBlockInference = useCallback(
+    (task, newRemaining, blocksForTask) => {
+      const oldRemaining = getEffectiveRemainingHoursForOccurrence(task);
+      const clampedNew = Math.min(Math.max(0, Number(newRemaining) || 0), task.estimatedHours);
+      const { toMarkDone, toUnmark } = planBlockCompletionFromRemainingHoursEdit(blocksForTask, oldRemaining, clampedNew);
+
+      const remainingHoursPatch = !task.isRecurring
+        ? { remainingHours: clampedNew }
+        : task.dueDate
+          ? { remainingHoursOverride: { ...(task.remainingHoursOverride || {}), [task.dueDate]: clampedNew } }
+          : null;
+
+      const markDoneSet = new Set(toMarkDone);
+      const unmarkSet = new Set(toUnmark);
+      const newBlocks = blocks.map((b) => {
+        if (markDoneSet.has(b.id)) return { ...b, status: 'done', hoursAppliedToRemaining: b.durationHours };
+        if (unmarkSet.has(b.id)) {
+          const { hoursAppliedToRemaining, ...rest } = b;
+          return { ...rest, status: 'scheduled' };
+        }
+        return b;
+      });
+      const newTasks = remainingHoursPatch
+        ? tasks.map((t) => (t.id === task.id ? { ...t, ...remainingHoursPatch } : t))
+        : tasks;
+      commit({ tasks: newTasks, blocks: newBlocks }, `Updated time left`);
+    },
+    [tasks, blocks, commit]
+  );
+
   // Manually place a task's work onto a specific date/time slot — the one
   // "manual scheduling" entry point in the app (every other block comes from
   // the auto-scheduler in allocator.js/rebalanceEngine.js; see
@@ -4212,6 +4338,9 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      markBlockDone,
+      unmarkBlockDone,
+      setRemainingHoursWithBlockInference,
       scheduleTaskAt,
       addManualEvent,
       updateEvent,
@@ -4321,6 +4450,9 @@ export function SchedulerProvider({ children }) {
       updateBlock,
       toggleBlockLock,
       deleteBlock,
+      markBlockDone,
+      unmarkBlockDone,
+      setRemainingHoursWithBlockInference,
       scheduleTaskAt,
       addManualEvent,
       updateEvent,

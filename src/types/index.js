@@ -564,7 +564,16 @@
  * @property {number} durationHours           - Convenience-cached duration (endTime - startTime).
  * @property {boolean} isLocked              - User has manually pinned this block; engine must not move it.
  * @property {boolean} isAutoScheduled       - True if placed by the engine (vs. manually dragged in).
- * @property {'scheduled'|'in-progress'|'done'} status
+ * @property {'scheduled'|'in-progress'|'done'} status - 'done' means THIS block's slice of work was
+ *   completed, independent of whether the task itself is fully done — see markBlockDone/unmarkBlockDone
+ *   in SchedulerContext.jsx. A multi-day task is never "done" just because one day's block is; that's
+ *   the whole point of this field existing (see missedTasks.js's isBlockMissed/isBlockOrTaskDone).
+ * @property {number} [hoursAppliedToRemaining] - Only meaningful when status === 'done': the EXACT
+ *   number of hours this block's completion subtracted from the task's remaining hours (see
+ *   taskHierarchy.js's computeRemainingHoursPatchAfterElapsed). Recorded at completion time and read
+ *   back on un-completion so the reversal adds back precisely what was taken — never assumed to equal
+ *   durationHours, since a manual Time-left edit or another block's completion could have changed the
+ *   remaining-hours figure in between. Absent/undefined for a block that's never been through this flow.
  * @property {boolean} [isPassive]           - Denormalized from Task.isPassive at placement time. True if this
  *                                              block is allowed to overlap other blocks in time (e.g. laundry
  *                                              running alongside other scheduled work) — calendar views should lay

@@ -3,6 +3,7 @@ import { rebalance } from '../../src/algorithms/rebalanceEngine';
 import { allocateTasks } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
 import { NO_SCHEDULE_PROJECT_ID } from '../../src/utils/projectConstants';
+import { addDays } from '../../src/utils/dateUtils';
 
 const baseRules = {
   workDayStart: '09:00',
@@ -523,6 +524,176 @@ describe('rebalance: completed blocks no longer count as busy capacity', () => {
     // elsewhere or reported as a conflict, but never overlapping the lock.
     const claimBlock = result.blocks.find((b) => b.taskId === 'claim2');
     if (claimBlock) expect(claimBlock.startTime).not.toBe('09:00');
+  });
+});
+
+// Regression coverage for a bug found while building markBlockDone
+// (SchedulerContext.jsx): a block marked done at the BLOCK level (status:
+// 'done', via the "mark this scheduled slice done" feature — distinct from
+// the whole TASK being completed) used to have no special treatment here,
+// so it fell through the same "unlocked block whose task isn't completed"
+// path as a genuinely stale/never-worked block: cleared, and its hours not
+// counted as spent. That meant calling Re-balance after marking a block
+// done would silently un-mark it (the block itself vanishes) AND let the
+// allocator re-derive the task's remainingHours back up, re-scheduling the
+// exact same work the user had just told the app was finished.
+describe('rebalance: a block marked done (status: "done") survives even though its task is NOT completed', () => {
+  it('preserves a PAST-dated done block and counts its hours as spent, for a non-recurring task', () => {
+    const yesterday = addDays(today, -1);
+    const tasks = [
+      {
+        id: 'multiday',
+        title: 'Multi-day task',
+        isCompleted: false,
+        estimatedHours: 3,
+        remainingHours: 2, // markBlockDone already reduced this by the 1h block below
+        dueDate: today,
+        enforceDueDate: true,
+      },
+    ];
+    const existingBlocks = [
+      {
+        id: 'b-done-yesterday',
+        taskId: 'multiday',
+        date: yesterday,
+        startTime: '09:00',
+        endTime: '10:00',
+        durationHours: 1,
+        isLocked: false,
+        status: 'done',
+        hoursAppliedToRemaining: 1,
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    // The done block itself must survive, not be cleared.
+    expect(result.blocks.some((b) => b.id === 'b-done-yesterday')).toBe(true);
+    // Its 1h must count as spent — the freshly-allocated blocks for this
+    // task must total exactly 2h (the estimate minus the 1h already done),
+    // not 3h (which would mean the done hour got silently re-scheduled).
+    const freshHours = result.blocks
+      .filter((b) => b.taskId === 'multiday' && b.id !== 'b-done-yesterday')
+      .reduce((sum, b) => sum + b.durationHours, 0);
+    expect(freshHours).toBeCloseTo(2, 5);
+  });
+
+  it('preserves a TODAY-dated done block for a non-recurring task (the exact multi-day-task scenario)', () => {
+    const tasks = [
+      {
+        id: 'multiday2',
+        title: 'Multi-day task 2',
+        isCompleted: false,
+        estimatedHours: 2,
+        remainingHours: 1,
+        dueDate: today,
+        enforceDueDate: true,
+      },
+    ];
+    const existingBlocks = [
+      {
+        id: 'b-done-today',
+        taskId: 'multiday2',
+        date: today,
+        startTime: '09:00',
+        endTime: '10:00',
+        durationHours: 1,
+        isLocked: false,
+        status: 'done',
+        hoursAppliedToRemaining: 1,
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-done-today')).toBe(true);
+    const freshHours = result.blocks
+      .filter((b) => b.taskId === 'multiday2' && b.id !== 'b-done-today')
+      .reduce((sum, b) => sum + b.durationHours, 0);
+    expect(freshHours).toBeCloseTo(1, 5);
+    // Regression: the fresh block must NOT collide with the done block's own
+    // 09:00-10:00 slot — caught by this exact test before
+    // doneWhileTaskIncomplete was added to the capacity map's busy-blocks
+    // input. A whole-task-completed block's slot IS meant to free up (that
+    // task is gone for good), but this task still has real remaining hours
+    // and is still handed to the allocator, so its own already-done slot
+    // must stay off-limits to a fresh placement for the SAME task.
+    const freshBlock = result.blocks.find((b) => b.taskId === 'multiday2' && b.id !== 'b-done-today');
+    expect(freshBlock.startTime).not.toBe('09:00');
+  });
+
+  it('a done block stays BUSY for another task too — its slot does not free up the way a completed-task block does', () => {
+    // Unlike a whole-task-completed block (which frees its slot for other
+    // work, since that task will never be re-allocated), a block-done task
+    // still has remaining hours and could itself need that slot again later
+    // (e.g. after an unmarkBlockDone reversal) — so nothing else should be
+    // able to claim it either.
+    const tasks = [
+      { id: 'done-block', title: 'Has a done block', isCompleted: false, estimatedHours: 2, remainingHours: 1, dueDate: today, enforceDueDate: true },
+      {
+        id: 'claim3',
+        title: 'Wants the same slot',
+        isCompleted: false,
+        estimatedHours: 1,
+        remainingHours: 1,
+        dueDate: today,
+        enforceDueDate: true,
+        fixedTime: '09:00',
+      },
+    ];
+    const existingBlocks = [
+      {
+        id: 'b-done-3',
+        taskId: 'done-block',
+        date: today,
+        startTime: '09:00',
+        endTime: '10:00',
+        durationHours: 1,
+        isLocked: false,
+        status: 'done',
+        hoursAppliedToRemaining: 1,
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-done-3')).toBe(true);
+    const claimBlock = result.blocks.find((b) => b.taskId === 'claim3');
+    // Either placed elsewhere (not at the busy 09:00 slot) or reported as a
+    // fixedTime conflict — either way it must never overlap the done block.
+    if (claimBlock) expect(claimBlock.startTime).not.toBe('09:00');
+  });
+
+  it('a done block still frees its own clock slot for OTHER tasks once the owning task is fully completed too', () => {
+    // Once the task itself is marked complete (not just this one block),
+    // the existing whole-task-completed rule takes over and the slot frees
+    // up normally — the "stays busy" rule above is specific to a task that
+    // still has real remaining hours.
+    const tasks = [
+      { id: 'now-fully-done', title: 'Now fully done', isCompleted: true, estimatedHours: 1, dueDate: today },
+      {
+        id: 'claim4',
+        title: 'Wants the freed slot',
+        isCompleted: false,
+        estimatedHours: 1,
+        remainingHours: 1,
+        dueDate: today,
+        enforceDueDate: true,
+        fixedTime: '09:00',
+      },
+    ];
+    const existingBlocks = [
+      { id: 'b-done-4', taskId: 'now-fully-done', date: today, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false, status: 'done', hoursAppliedToRemaining: 1 },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-done-4')).toBe(true);
+    const claimBlock = result.blocks.find((b) => b.taskId === 'claim4');
+    expect(claimBlock).toBeTruthy();
+    expect(claimBlock.startTime).toBe('09:00');
+  });
+
+  it('a NOT-done, non-completed past block is still cleared as before (no over-broadening of the fix)', () => {
+    const yesterday = addDays(today, -1);
+    const tasks = [{ id: 'stale', title: 'Never worked', isCompleted: false, estimatedHours: 1, remainingHours: 1, dueDate: today }];
+    const existingBlocks = [
+      { id: 'b-stale', taskId: 'stale', date: yesterday, startTime: '09:00', endTime: '10:00', durationHours: 1, isLocked: false, status: 'scheduled' },
+    ];
+    const result = rebalance({ tasks, existingBlocks, routines: [], events: [], rules: baseRules, fromDate: today });
+    expect(result.blocks.some((b) => b.id === 'b-stale')).toBe(false);
   });
 });
 
