@@ -48,7 +48,14 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { groupItemsByDay } from '../../utils/calendarGrouping';
-import { GRID_START_MIN, DEFAULT_SCROLL_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
+import {
+  GRID_START_MIN,
+  DEFAULT_SCROLL_MIN,
+  MIN_BLOCK_HEIGHT_PX,
+  layoutDayItems,
+  computeDayPositions,
+  foldNarrowIllegibleTitles as foldNarrowIllegibleTitlesPure,
+} from '../../utils/calendarLayout';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { makeSelectionKey } from '../../hooks/useMultiSelect';
@@ -66,6 +73,15 @@ export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
 const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
+
+// Compact blocks (see isCompact below) render at a smaller 10px font with
+// tighter padding (see .cal-block.is-compact in calendar.css), so they need
+// less height to fit both lines than TWO_LINE_MIN_HEIGHT — which is tuned for
+// the normal 11.5px font. Compact box model: 1px top padding + a 10px/1.25
+// line-height title (12.5px) + a 10px/1.5 line-height time line (15px) + the
+// time line's 1px margin-top + 1px bottom padding = 30.5px, rounded up to a
+// clean, slightly conservative 32px.
+const COMPACT_TWO_LINE_MIN_HEIGHT = 32;
 
 // tightGap (see foldSequentialItems) is meant to degrade a box that's ALSO
 // still short enough for a two-line render to look cramped next to its close
@@ -171,6 +187,17 @@ function clusterMaxTitleLines(chipHeightPx, hasTimeLine) {
   const timeLineReserve = hasTimeLine ? CLUSTER_TITLE_LINE_HEIGHT_PX : 0;
   const available = chipHeightPx - CLUSTER_TITLE_VERTICAL_CHROME_PX - timeLineReserve;
   return Math.max(1, Math.floor(available / CLUSTER_TITLE_LINE_HEIGHT_PX));
+}
+
+// WeekView-specific wrapper around calendarLayout's foldNarrowIllegibleTitles:
+// supplies title resolution via clusterItemTitle (blocks need a taskById
+// lookup for their title; events carry theirs directly) as the getTitle
+// callback the pure function itself doesn't know how to do. See
+// calendarLayout.js for the actual fold/merge logic and its own doc comment
+// — kept there (not here) so it can be unit tested directly like the rest of
+// this file's layout math, per this repo's own testing conventions.
+function foldNarrowIllegibleTitles(laidOut, taskById) {
+  return foldNarrowIllegibleTitlesPure(laidOut, (it) => clusterItemTitle(it, taskById));
 }
 
 // Fixed viewport coordinates for a cluster's popover, anchored to the
@@ -305,10 +332,18 @@ export default function WeekView({
           end: timeToMinutes(e.endTime),
         }));
       const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
-      map.set(day, computeDayPositions(layoutDayItems(merged, pxPerMin), pxPerMin));
+      // foldNarrowIllegibleTitles runs strictly AFTER layoutDayItems has
+      // already decided lanes — it never changes that decision (lane count,
+      // MAX_SIDE_BY_SIDE_LANES, isLegibleAlone are all untouched), it only
+      // catches the one thing layoutDayItems has no way to see: a real
+      // side-by-side lane can still be too narrow for a specific title to
+      // read as more than 1-2 truncated characters, even though the box
+      // itself is tall enough (see this function's own doc comment).
+      const laidOut = foldNarrowIllegibleTitles(layoutDayItems(merged, pxPerMin), taskById);
+      map.set(day, computeDayPositions(laidOut, pxPerMin));
     }
     return map;
-  }, [days, blocksByDay, eventsByDay, pxPerMin]);
+  }, [days, blocksByDay, eventsByDay, pxPerMin, taskById]);
 
   /* Park the scroll position on mount (and whenever the visible date range
      changes) rather than at 00:00, which the full-day grid would otherwise
@@ -890,6 +925,19 @@ export default function WeekView({
     const height = isResizing
       ? Math.max(MIN_BLOCK_HEIGHT_PX, (resizePreview.endMin - timeToMinutes(item.data.startTime)) * pxPerMin)
       : item.height;
+    // Between the compact floor and the full-size one, the title renders at
+    // a smaller type size instead of the item being folded into a chip (see
+    // COMPACT_BLOCK_HEIGHT_PX). Shrinking the text slightly beats hiding the
+    // title behind "3 tasks"; below the compact floor the layout has already
+    // clustered it, so this band is the only place it applies. Computed up
+    // front (rather than inline below) because showTimeLine's own threshold
+    // needs to know it too — a resizing box is never compact (it's always
+    // rendered at full size while the user is actively dragging its edge).
+    const isCompact = !isResizing && height < MIN_BLOCK_HEIGHT_PX;
+    // The "does a time line fit" threshold depends on which font size this
+    // box is rendering at — see COMPACT_TWO_LINE_MIN_HEIGHT's own comment for
+    // why the compact case needs less height than the normal one.
+    const twoLineMinHeight = isCompact ? COMPACT_TWO_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT;
     return {
       isDragging,
       isResizing,
@@ -900,24 +948,20 @@ export default function WeekView({
       // way to it there, the same trade-off renderGhost makes.
       liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
       // Normally a two-line render (title + time) is purely a function of
-      // this box's own height (TWO_LINE_MIN_HEIGHT). A box tagged `tightGap`
-      // (see foldSequentialItems) sits close enough to its neighbour at this
-      // zoom that a full two-line render would look cramped/collide-adjacent
-      // — but that degrade only makes sense while this box is ALSO still
-      // short (below TIGHT_GAP_HEIGHT_CEILING); a box tall enough to have
-      // its own visible room to spare should keep its time line regardless
-      // of a close neighbour. A live resize always overrides this (the user
-      // is actively looking at this one box, and neighbours aren't repacked
-      // until the resize commits — see this function's own doc comment).
+      // this box's own height (twoLineMinHeight, above). A box tagged
+      // `tightGap` (see foldSequentialItems) sits close enough to its
+      // neighbour at this zoom that a full two-line render would look
+      // cramped/collide-adjacent — but that degrade only makes sense while
+      // this box is ALSO still short (below TIGHT_GAP_HEIGHT_CEILING); a box
+      // tall enough to have its own visible room to spare should keep its
+      // time line regardless of a close neighbour. A live resize always
+      // overrides this (the user is actively looking at this one box, and
+      // neighbours aren't repacked until the resize commits — see this
+      // function's own doc comment).
       showTimeLine: isResizing
         ? true
-        : height >= TWO_LINE_MIN_HEIGHT && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
-      // Between the compact floor and the full-size one, the title renders at
-      // a smaller type size instead of the item being folded into a chip (see
-      // COMPACT_BLOCK_HEIGHT_PX). Shrinking the text slightly beats hiding the
-      // title behind "3 tasks"; below the compact floor the layout has already
-      // clustered it, so this band is the only place it applies.
-      isCompact: !isResizing && height < MIN_BLOCK_HEIGHT_PX,
+        : height >= twoLineMinHeight && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
+      isCompact,
     };
   }
 
@@ -1236,7 +1280,7 @@ export default function WeekView({
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
+                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     // Desktop gets the richer HoverPreviewCard instead (see
                     // below) — mobile has no hover, so it keeps the native
@@ -1347,7 +1391,7 @@ export default function WeekView({
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
+                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
                   style={{
                     top,
                     height,

@@ -5,6 +5,8 @@ import {
   computeDayPositions,
   packLane,
   isLegibleAlone,
+  isLaneWidthTooNarrowForTitle,
+  foldNarrowIllegibleTitles,
   MIN_BLOCK_HEIGHT_PX,
   GRID_START_MIN,
   EXCESSIVE_PUSHDOWN_PX,
@@ -138,6 +140,142 @@ describe('isLegibleAlone', () => {
     // a question of pixels at the current zoom, not a fixed minute count.
     expect(isLegibleAlone(30, 0.55)).toBe(false);
     expect(isLegibleAlone(30, 1.25)).toBe(true);
+  });
+});
+
+describe('isLaneWidthTooNarrowForTitle', () => {
+  it('is always false at 1 lane (full width), however long the title is', () => {
+    expect(isLaneWidthTooNarrowForTitle('A very long task title that goes on and on', 1)).toBe(false);
+  });
+
+  it('is false for every title from the "must stay side-by-side" pinned lane-packing tests below, at 2 lanes', () => {
+    // These are the exact titles used in the pinned tests asserting 2
+    // legible-alone items must keep separate real lanes (see
+    // "assigns two overlapping legible-alone items..." and "gives two
+    // overlapping legible events..." below) — this check must never flag
+    // any of them, or WeekView's downstream fold pass (foldNarrowIllegibleTitles)
+    // would fold a pair that calendarLayout.js correctly decided should stay
+    // side-by-side, reintroducing the "events with plenty of space folded
+    // anyway" regression the user explicitly flagged.
+    const mustStaySideBySideTitles = ['Email student', 'Lower + Running', 'Standup', 'Review', 'Sync', 'MECHENG 211', 'MECHENG 222', 'Piano', 'Test prep'];
+    for (const title of mustStaySideBySideTitles) {
+      expect(isLaneWidthTooNarrowForTitle(title, 2)).toBe(false);
+    }
+  });
+
+  it('is true for a long real-world title at 2 lanes — the reported bug', () => {
+    // Recreates the actual reported shape: a long task title ("Test 1 -
+    // Physics assignment") sharing a 2-lane overlap group with a short one
+    // ("Piano"). The long title alone is what should trip this check.
+    expect(isLaneWidthTooNarrowForTitle('Test 1 - Physics assignment', 2)).toBe(true);
+    expect(isLaneWidthTooNarrowForTitle('Piano', 2)).toBe(false);
+  });
+
+  it('gets stricter as lane count grows (smaller per-lane share)', () => {
+    // Fits comfortably at 2 lanes (half width) but no longer at 4 (quarter
+    // width) — the per-lane character budget shrinks as more lanes split the
+    // same day column, so the same title can flip from fine to too-narrow
+    // purely from more concurrent items, without changing its own length.
+    const title = 'Team sync meeting';
+    expect(isLaneWidthTooNarrowForTitle(title, 2)).toBe(false);
+    expect(isLaneWidthTooNarrowForTitle(title, 4)).toBe(true);
+  });
+});
+
+describe('foldNarrowIllegibleTitles', () => {
+  // getTitle helper: reads a plain `title` field directly, since these tests
+  // don't need WeekView's block-vs-task lookup — that indirection is
+  // WeekView.jsx's own concern (see its thin wrapper), not this function's.
+  const byTitle = (it) => it.data.title;
+
+  it('folds the real reported bug: a long title sharing a 2-lane overlap group with a short one', () => {
+    // Recreates the exact reported shape from the user's screenshot: "Test 1
+    // - Physics assignment" 18:05-19:45 (100 min) overlapping "Piano"
+    // 19:15-20:15 (60 min) by 30 minutes. Both are individually legible-alone
+    // (well above MIN_BLOCK_HEIGHT_PX even at the lowest zoom) and there are
+    // only 2 concurrent items, so layoutDayItems correctly gives both a real
+    // side-by-side lane — the bug is that lane is only 50% of the day
+    // column's width, which truncates the long title to 1-2 characters. This
+    // must fold into a single cluster chip instead.
+    const pxPerMin = 1.25;
+    const items = [
+      { type: 'block', data: { id: 'test1', title: 'Test 1 - Physics assignment' }, start: 18 * 60 + 5, end: 19 * 60 + 45 },
+      { type: 'block', data: { id: 'piano', title: 'Piano' }, start: 19 * 60 + 15, end: 20 * 60 + 15 },
+    ];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    // Sanity check: layoutDayItems itself still gives both items separate
+    // lanes (this bug is NOT about layoutDayItems' own fold decision).
+    expect(laidOut.every((i) => i.kind !== 'cluster')).toBe(true);
+    expect(new Set(laidOut.map((i) => i.lane)).size).toBe(2);
+
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).toBe('cluster');
+    expect(folded[0].items.map((it) => it.data.id).sort()).toEqual(['piano', 'test1']);
+    expect(folded[0].totalLanes).toBe(1);
+  });
+
+  it('does NOT fold the pinned "must stay side-by-side" cases (short titles) — the previously-fixed over-clustering regression', () => {
+    // Same two shapes as the pinned layoutDayItems tests below ("Email
+    // student"/"Lower + Running" and "Standup"/"Review") — both must still
+    // render as 2 separate lanes after this pass, since their titles read
+    // fine at half width. This is the user's own explicit warning: a
+    // previous bug folded events that had "plenty of space to be displayed
+    // individually", and this fix must not reintroduce it.
+    const pxPerMin = 1.25;
+    const shapes = [
+      [
+        { type: 'block', data: { id: 'a', title: 'Email student' }, start: 540, end: 575 },
+        { type: 'block', data: { id: 'b', title: 'Lower + Running' }, start: 550, end: 585 },
+      ],
+      [
+        { type: 'block', data: { id: 'a', title: 'Standup' }, start: 540, end: 565 },
+        { type: 'block', data: { id: 'b', title: 'Review' }, start: 550, end: 575 },
+      ],
+    ];
+    for (const items of shapes) {
+      const laidOut = layoutDayItems(items, pxPerMin);
+      const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+      expect(folded).toHaveLength(2);
+      expect(folded.every((f) => f.kind !== 'cluster')).toBe(true);
+    }
+  });
+
+  it('is a no-op on a group with only 1 lane, regardless of title length', () => {
+    // A single, non-overlapping item never gets split into multiple lanes in
+    // the first place, so this pass must never touch it — a long title in a
+    // full-width box is exactly the "1 lane -> always false" case
+    // isLaneWidthTooNarrowForTitle itself pins.
+    const pxPerMin = 1.25;
+    const items = [{ type: 'block', data: { id: 'solo', title: 'A very long standalone task title indeed' }, start: 540, end: 600 }];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).not.toBe('cluster');
+  });
+
+  it('never drops an item — every input item is represented exactly once in the output, folded or not', () => {
+    const pxPerMin = 1.25;
+    const items = [
+      { type: 'block', data: { id: 'long1', title: 'A genuinely very long overlapping task title one' }, start: 540, end: 640 },
+      { type: 'block', data: { id: 'long2', title: 'Another genuinely very long overlapping title two' }, start: 560, end: 660 },
+      { type: 'block', data: { id: 'short', title: 'Ok' }, start: 580, end: 620 },
+    ];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    const total = folded.reduce((sum, f) => sum + (f.kind === 'cluster' ? f.items.length : 1), 0);
+    expect(total).toBe(3);
+  });
+
+  it('leaves a group with no over-narrow title completely untouched, including lane numbers', () => {
+    const pxPerMin = 1.25;
+    const items = [
+      { type: 'block', data: { id: 'a', title: 'Standup' }, start: 540, end: 565 },
+      { type: 'block', data: { id: 'b', title: 'Review' }, start: 550, end: 575 },
+    ];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    expect(folded).toEqual(laidOut);
   });
 });
 

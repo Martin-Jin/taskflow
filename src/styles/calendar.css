@@ -592,6 +592,24 @@
   transition: box-shadow var(--motion-emphasis-duration) var(--motion-emphasis-ease),
     transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
     opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
+  /* Title/time stack via flex column rather than plain block flow so their
+     vertical placement can depend on whether the time line is showing (see
+     .cal-block.no-time-line below) — a box too short for both lines centers
+     its lone title instead of leaving it pinned to the top with dead space
+     underneath, and a box with room for both pins the title to the top and
+     the time to the bottom edge instead of the two lines huddling together
+     with slack left over. */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* No time line fits (see itemLiveState's showTimeLine) — nothing to anchor
+   to the bottom edge, so center the lone title instead of leaving it
+   top-pinned over empty space. */
+.cal-block.no-time-line,
+.cal-event.no-time-line {
+  justify-content: center;
 }
 
 /* Routine (Fixed-availability) background: purely informational, and
@@ -985,6 +1003,11 @@
     transform var(--motion-emphasis-duration) var(--motion-emphasis-ease),
     opacity var(--motion-emphasis-duration) var(--motion-emphasis-ease);
   overflow: hidden;
+  /* See .cal-block's matching comment above — same title/time vertical
+     placement rule, shared by .cal-block.no-time-line above. */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
 .cal-event:hover {

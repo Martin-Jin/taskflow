@@ -99,6 +99,157 @@ export function isLegibleAlone(durationMin, pxPerMin) {
   return durationMin * pxPerMin >= COMPACT_BLOCK_HEIGHT_PX;
 }
 
+// Roughly how many characters of a title fit on one line inside a SINGLE
+// (non-cluster) box's own lane before CSS ellipsis (see .cal-block-title in
+// calendar.css) kicks in, at ONE lane — i.e. the day column's full width.
+// Same estimation approach as WeekView's own CLUSTER_LABEL_LINE_CHAR_BUDGET
+// and for the same reason: a day column is a fluid `1fr` grid track, so its
+// real rendered pixel width is never known here — only the lane FRACTION is
+// (totalLanes, below). This is a deliberately conservative estimate, not a
+// pixel measurement — CSS's own ellipsis stays the backstop for whatever a
+// real column width gets wrong that this estimate didn't predict.
+//
+// Calibrated generously above every title used in this file's own "must
+// stay side-by-side" pinned tests (the longest is 16 characters) so a normal
+// short title can never be dragged into folding at 2 lanes just from this
+// check, matching the user's own explicit warning: a previous version of
+// this fold logic once folded events that had "plenty of space to be
+// displayed individually", and this must not reintroduce that.
+export const SINGLE_ITEM_LANE_CHAR_BUDGET_AT_FULL_WIDTH = 48;
+
+// Whether a legible-alone item's title would be squeezed down to an
+// illegibly short truncation once split into `totalLanes` side-by-side
+// lanes — the real "not enough space" bug isLegibleAlone can't see on its
+// own (isLegibleAlone only ever judges an item's HEIGHT; see
+// MAX_SIDE_BY_SIDE_LANES' own doc comment on the equivalent, already-fixed
+// problem for LANE COUNT). This is WIDTH's version of the same idea, at the
+// per-item level: two items can each legitimately win a real side-by-side
+// lane (isLegibleAlone true, group small enough to stay under
+// MAX_SIDE_BY_SIDE_LANES) and still have one of their two titles render as 2
+// truncated characters, because HEIGHT and WIDTH are independent dimensions
+// and nothing before this checked the second one.
+//
+// This is a pure, presentation-facing judgment call — deliberately kept as
+// an exported, independently testable function rather than folded into
+// isLegibleAlone/packLanesCapped's own decision, so the existing lane-count
+// fold logic (and every test already pinned against it) stays completely
+// unchanged; a caller (WeekView.jsx) applies this AFTER layoutDayItems has
+// already decided lanes, to fold a too-narrow single further into whichever
+// item(s) it actually shares a lane split with — see WeekView's own
+// foldNarrowIllegibleTitles.
+//
+// A single lane (no split) is always exempt — this only ever applies once
+// totalLanes >= 2, so an item in its own full-width lane is never judged by
+// title length at all, regardless of how long that title is.
+export function isLaneWidthTooNarrowForTitle(title, totalLanes) {
+  if (totalLanes < 2) return false;
+  const perLaneBudget = Math.floor(SINGLE_ITEM_LANE_CHAR_BUDGET_AT_FULL_WIDTH / totalLanes);
+  return (title || '').length > perLaneBudget;
+}
+
+/**
+ * Post-processes layoutDayItems' lane-assigned (but not yet pixel-positioned)
+ * output, folding a legible-alone single item into a `kind: 'cluster'` chip
+ * with whichever OTHER item(s) it's actually side-by-side with, if its own
+ * title would be squeezed illegibly narrow at the lane width it landed in
+ * (see isLaneWidthTooNarrowForTitle). This is a rendering-only degrade
+ * layered ON TOP of layoutDayItems' own fold decision, never a replacement
+ * for it: isLegibleAlone, MAX_SIDE_BY_SIDE_LANES and packLanesCapped all stay
+ * exactly as they were (their own pinned tests are proof this file never
+ * needed to change lane count/height math to fix the reported bug) — this
+ * only ever removes items AFTER lanes are already decided, merging same-
+ * groupId lane-mates the same shape packLanesCapped's own overflow-merge
+ * already produces, so every downstream consumer (computeDayPositions, the
+ * cluster chip's own render) sees a shape it already knows how to handle.
+ *
+ * `getTitle(item)` resolves an item's real rendered title — kept as a
+ * caller-supplied callback rather than reading `item.data.title` directly,
+ * since a block's title actually lives on its associated Task (looked up by
+ * taskId), not on the block itself; only the caller (WeekView.jsx) knows how
+ * to do that lookup. This keeps the merge/grouping logic here pure and
+ * testable independent of that lookup — see WeekView's own thin wrapper.
+ *
+ * Runs once per overlap group: a group with fewer than 2 real lanes is
+ * already exempt (isLaneWidthTooNarrowForTitle returns false for
+ * totalLanes < 2), so nothing here changes the common single-lane case.
+ * Only items sharing the same groupId are ever merged — items in different,
+ * non-overlapping groups never had a reason to be side-by-side in the first
+ * place, so they're untouched regardless of their own title length.
+ */
+export function foldNarrowIllegibleTitles(laidOut, getTitle) {
+  const byGroup = new Map();
+  for (const item of laidOut) {
+    if (!byGroup.has(item.groupId)) byGroup.set(item.groupId, []);
+    byGroup.get(item.groupId).push(item);
+  }
+
+  const out = [];
+  for (const groupItems of byGroup.values()) {
+    // Only a plain `single` item with totalLanes >= 2 is ever a fold
+    // candidate — a `cluster` already summarizes 2+ items (its own label
+    // already truncates per-line, see WeekView's CLUSTER_LABEL_LINE_CHAR_BUDGET)
+    // and a lone item in a 1-lane group was never width-constrained at all.
+    const candidates = groupItems.filter(
+      (it) => it.kind !== 'cluster' && it.totalLanes >= 2 && isLaneWidthTooNarrowForTitle(getTitle(it), it.totalLanes)
+    );
+    if (candidates.length < 1) {
+      out.push(...groupItems);
+      continue;
+    }
+
+    // Fold every fold-candidate item in this group into ONE cluster spanning
+    // all of them, same shape packLanesCapped's own overflow-merge produces.
+    // A single fold-candidate still needs at least one partner to merge with
+    // (folding a lone item into a "cluster of 1" would just be a worse-
+    // labeled single box) — if every OTHER item in the group is itself
+    // legible at its own lane width, pull in the fewest additional lane-mates
+    // needed so the narrow title never renders unmerged, biased toward the
+    // item(s) sharing its own lane (the actual width constraint) first.
+    const nonCandidates = groupItems.filter((it) => !candidates.includes(it));
+    const mergeSet = [...candidates];
+    if (mergeSet.length === 1) {
+      const lonely = mergeSet[0];
+      const sameLane = nonCandidates.find((it) => it.lane === lonely.lane);
+      const partner = sameLane || nonCandidates[0];
+      if (partner) mergeSet.push(partner);
+    }
+
+    if (mergeSet.length < 2) {
+      // No partner exists anywhere in the group (shouldn't happen once
+      // totalLanes >= 2 implies at least one lane-mate, but guard anyway) —
+      // leave the group exactly as layoutDayItems produced it rather than
+      // fold a single item into a "cluster" of itself.
+      out.push(...groupItems);
+      continue;
+    }
+
+    const mergeSetIds = new Set(mergeSet);
+    const kept = groupItems.filter((it) => !mergeSetIds.has(it));
+    const mergedItems = mergeSet.flatMap((it) => (it.kind === 'cluster' ? it.items : [{ type: it.type, data: it.data }]));
+    const cluster = {
+      kind: 'cluster',
+      items: mergedItems,
+      start: Math.min(...mergeSet.map((it) => it.start)),
+      end: Math.max(...mergeSet.map((it) => it.end)),
+      lane: Math.min(...mergeSet.map((it) => it.lane)),
+      groupId: mergeSet[0].groupId,
+    };
+    out.push(...kept, cluster);
+
+    // Remaining lanes shrink to however many distinct lanes are left after
+    // the merge, so a group that folds from 2 lanes down to 1 renders full
+    // width rather than keeping a now-empty second lane's worth of margin.
+    const remainingLanes = new Set([...kept.map((it) => it.lane), cluster.lane]);
+    const remap = new Map([...remainingLanes].sort((a, b) => a - b).map((lane, i) => [lane, i]));
+    for (const it of [...kept, cluster]) {
+      it.lane = remap.get(it.lane);
+      it.totalLanes = remap.size;
+    }
+  }
+
+  return out;
+}
+
 // Two individually "legible enough to stand alone" (see isLegibleAlone)
 // items can still read as a jumbled mess at a zoomed-out level if they sit
 // nearly flush against each other — e.g. two 90-min blocks with only 30 real
