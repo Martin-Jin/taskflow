@@ -403,8 +403,55 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // calls it after saving) — `savedRef` guards against persisting the same
   // edit a second time in that case, since this function otherwise can't
   // tell "closing after an explicit save" apart from "closing without one".
+  // Whether persistEditedFields would actually change anything for this
+  // event — auto-save-on-dismiss (handleModalClose, below) should only ever
+  // fire for a real edit, never as a side effect of merely opening and
+  // closing the modal without touching a field. Mirrors persistEditedFields'
+  // own field list exactly (including its date/repeat scope rules) so
+  // "would this call be a no-op" and "what would this call actually send"
+  // never drift apart. String fields compare against '' the same way
+  // persistEditedFields' own fallbacks do (title falls back to 'Untitled
+  // event', so an emptied title still counts as a change from a real title).
+  // Only ever called from a context that's already confirmed !isReadOnly
+  // (handleModalClose gates on that before calling this), so it doesn't need
+  // its own read-only branch — a read-only event's fields are disabled in
+  // the UI and can't have changed anyway.
+  function hasUnsavedChanges() {
+    const titleChanged = (title.trim() || 'Untitled event') !== event.title;
+    const descriptionChanged = description !== (event.description || '');
+    const locationChanged = location !== (event.location || '');
+    const startTimeChanged = startTime !== (event.startTime || '');
+    const endTimeChanged = endTime !== (event.endTime || '');
+    const dateChanged = (!event.seriesId || scope === 'this') && date !== (event.date || '');
+    let repeatChanged = false;
+    if (repeatControlsApply) {
+      if (repeats) {
+        const nextRule = buildRRuleString({
+          freq: repeatFreq,
+          interval: repeatInterval,
+          byDay: repeatByDay,
+          count: repeatEndType === 'count' ? repeatCount : null,
+          until: repeatEndType === 'until' ? repeatUntil : null,
+        });
+        repeatChanged = nextRule !== (event.recurrenceRule || null);
+      } else if (isTrueRruleSeries) {
+        repeatChanged = true; // Repeats was unchecked on an existing recurring series.
+      }
+    }
+    return (
+      titleChanged ||
+      descriptionChanged ||
+      locationChanged ||
+      startTimeChanged ||
+      endTimeChanged ||
+      dateChanged ||
+      repeatChanged ||
+      ignored !== !!event.isFreeTime
+    );
+  }
+
   function handleModalClose() {
-    if (!cancelledRef.current && !savedRef.current && !isCreate && !isReadOnly) {
+    if (!cancelledRef.current && !savedRef.current && !isCreate && !isReadOnly && hasUnsavedChanges()) {
       const hasValidTimes = date && startTime && endTime && timeToMinutes(endTime) > timeToMinutes(startTime);
       if (hasValidTimes) persistEditedFields();
     }

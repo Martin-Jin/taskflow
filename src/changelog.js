@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.1.1',
+    date: '2026-08-26',
+    title: 'Fixed overlapping calendar events with long titles rendering unreadably narrow',
+    changes: [
+      'When two calendar items overlap and both are tall enough to get their own side-by-side column, a long title could still end up squeezed into a column too narrow to show more than a couple of letters. That pairing now collapses into the same tappable "N items" chip already used for short, crowded items, instead of showing an unreadably truncated title next to its neighbor.',
+      'Fixed short calendar events and task blocks hiding their time even when there was enough room to show it once their title switched to the smaller compact type size. A short block with no room for the time now centers its title instead of leaving it pinned to the top with empty space below; one with room for both keeps the title at the top and anchors the time to the bottom instead of the two lines crowding together with slack left over.',
+    ],
+  },
+  {
     version: '10.1.0',
     date: '2026-08-25',
     title: 'Reschedule a task in one tap, without opening it',
