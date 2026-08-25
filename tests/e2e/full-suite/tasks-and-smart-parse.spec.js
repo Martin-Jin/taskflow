@@ -1839,6 +1839,195 @@ test.describe('Postponement counter', () => {
   });
 });
 
+test.describe('Quick reschedule', () => {
+  /**
+   * Desktop: a hover-revealed button on each task row opens a small menu of
+   * due-date shortcuts (Tomorrow / In 3 days / Next week / Pick a date...).
+   * It must stay hidden until hovered, and must sit to the left of the
+   * existing sub-task collapse/expand chevron rather than overlapping it
+   * when a row has both.
+   */
+  test('desktop: hover reveals the reschedule button, and it sits left of the collapse chevron', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const parentTitle = `E2E Reschedule Parent ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(parentTitle);
+    await submitAddTask(page);
+
+    // Give it a sub-task so both the reschedule button and the collapse
+    // chevron are present on the same row at once.
+    await searchAndOpen(page, parentTitle);
+    await page.getByRole('button', { name: /add sub-?task/i }).click();
+    await page.getByPlaceholder(/sub-?task/i).fill('E2E sub-task');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await closeAnyModal(page);
+    await clearSearch(page);
+
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill(parentTitle);
+    await page.waitForTimeout(300);
+    const row = page.locator('.task-row', { hasText: parentTitle }).first();
+
+    // Hidden-until-hover here is an opacity fade (matching the row's other
+    // hover-reveal controls), not display:none, so Playwright's own
+    // visibility check (which only cares about layout/display) sees it as
+    // "visible" the whole time — assert on the computed opacity instead.
+    const rescheduleBtn = row.locator('.task-row-reschedule');
+    await expect.poll(() => rescheduleBtn.evaluate((el) => getComputedStyle(el).opacity)).toBe('0');
+    await row.hover();
+    await expect.poll(() => rescheduleBtn.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+
+    const rescheduleBox = await rescheduleBtn.boundingBox();
+    const collapseBox = await row.locator('.task-row-collapse').boundingBox();
+    expect(rescheduleBox.x + rescheduleBox.width).toBeLessThanOrEqual(collapseBox.x + 1);
+
+    await rescheduleBtn.click();
+    const menu = page.locator('.reschedule-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu).toContainText('Tomorrow');
+    await expect(menu).toContainText('In 3 days');
+    await expect(menu).toContainText('Next week');
+    await expect(menu).toContainText('Pick a date');
+
+    const readDueDate = () =>
+      page.evaluate(
+        (t) => JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').find((x) => x.title === t)?.dueDate ?? null,
+        parentTitle
+      );
+    expect(await readDueDate()).toBeNull();
+
+    await menu.getByText('Tomorrow', { exact: true }).click();
+    await page.waitForTimeout(300);
+    await expect(menu).toHaveCount(0);
+    expect(await readDueDate()).not.toBeNull();
+
+    await clearSearch(page);
+    expectNoErrors(errors);
+  });
+
+  /**
+   * Mobile: there is no tappable reschedule button on a row at all (that's
+   * desktop-only) — the swipe gesture itself is the trigger. Swiping a row
+   * left past a threshold opens the reschedule menu directly (centered,
+   * since there's no button to anchor it to) and the row snaps straight
+   * back to resting, never staying visibly swiped open. A short swipe under
+   * the threshold does nothing. A real drag needs genuine touch input — a
+   * plain viewport resize doesn't make Chromium emit touch/pointer events
+   * the way framer-motion's drag gesture recognizer expects, so this uses a
+   * real touch-capable context and drives it via CDP's
+   * Input.dispatchTouchEvent (mouse-event or synthetic PointerEvent
+   * simulation doesn't reliably register as a drag).
+   */
+  test('mobile: swiping a row left past the threshold opens the reschedule menu directly and the row snaps back', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    const client = await context.newCDPSession(page);
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    // InstallAppBanner (persistent, unlike the transient toasts around it in
+    // .floating-notifications) only renders on a mobile viewport, and at
+    // this viewport height it overlaps the "Add task" FAB — pre-dismiss it
+    // the same way gotoApp already pre-seeds "tutorial seen", since a real
+    // first-time mobile user would see the same overlap otherwise handled
+    // by their own one-time dismissal of the banner. Set AFTER gotoApp (not
+    // via an earlier addInitScript) since gotoApp's own init script wipes
+    // every `taskflow:`-prefixed key and would otherwise clear this too —
+    // and a plain page.evaluate here only needs a reload to take effect,
+    // same as any other persisted setting the app reads once on boot.
+    await page.evaluate(() => window.localStorage.setItem('taskflow:v1:addToHomeScreenDismissed', 'true'));
+    await page.reload();
+    await page.waitForTimeout(500);
+    await openAddTask(page);
+
+    const title = `E2E Swipe Reschedule ${RUN_ID}`;
+    await page.getByPlaceholder('Task name').fill(title);
+    await submitAddTask(page);
+
+    await gotoTab(page, 'Tasks');
+    const search = page.getByPlaceholder(/search tasks/i);
+    await search.fill(title);
+    await page.waitForTimeout(300);
+    // The search box's own suggestion listbox stays open (and overlapping
+    // the row below it) until something else takes focus — collapse it
+    // before touching the row, or a tap meant for the row hits the
+    // suggestion overlay instead.
+    await search.blur();
+    await page.waitForTimeout(200);
+    const row = page.locator('.task-row', { hasText: title }).first();
+    await expect(row).toBeVisible();
+
+    // Desktop's hover-revealed button is desktop-only — mobile has no
+    // tappable reschedule trigger on the row at all.
+    await expect(row.locator('.task-row-reschedule')).toHaveCount(0);
+
+    const box = await row.boundingBox();
+    const startX = box.x + box.width - 30;
+    const startY = box.y + box.height / 2;
+    const touchPoints = (x, y) => [{ x, y, id: 1 }];
+    const content = row.locator('.task-row-swipe-content');
+
+    async function swipeLeft(distance) {
+      // framer-motion's drag gesture only arms for a genuine touch-
+      // originated pointer sequence on a touch-capable device (a plain
+      // page.mouse drag, tried here first, never triggers it at all under
+      // hasTouch context), so the drag itself has to go through CDP's raw
+      // touch dispatch.
+      await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: touchPoints(startX, startY) });
+      const steps = 12;
+      for (let i = 1; i <= steps; i++) {
+        await client.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: touchPoints(startX - (distance * i) / steps, startY),
+        });
+        await page.waitForTimeout(20);
+      }
+      await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForTimeout(500);
+    }
+
+    // A short swipe under the threshold (SWIPE_OPEN_THRESHOLD_PX = 48) does
+    // nothing — no menu, and the row is back at rest, not stuck mid-swipe.
+    await swipeLeft(20);
+    await expect(page.locator('.reschedule-menu')).toHaveCount(0);
+    expect(await content.evaluate((el) => getComputedStyle(el).transform)).toBe('none');
+
+    // A full swipe past the threshold opens the menu directly...
+    const readDueDate = () =>
+      page.evaluate(
+        (t) => JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').find((x) => x.title === t)?.dueDate ?? null,
+        title
+      );
+    expect(await readDueDate()).toBeNull();
+
+    await swipeLeft(120);
+    const menu = page.locator('.reschedule-menu');
+    await expect(menu).toBeVisible();
+    // No anchor button exists on mobile, so the menu opens centered rather
+    // than pinned to a trigger's position.
+    await expect(menu).toHaveClass(/menu-popover-centered/);
+
+    // ...and the row is already back at its resting position underneath,
+    // not left visibly swiped open behind the menu.
+    expect(await content.evaluate((el) => getComputedStyle(el).transform)).toBe('none');
+
+    await menu.getByText('Tomorrow', { exact: true }).click();
+    await page.waitForTimeout(300);
+    await expect(menu).toHaveCount(0);
+    expect(await readDueDate()).not.toBeNull();
+
+    // Tapping a row (no swipe) still opens the task as normal.
+    await row.tap();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    expectNoErrors(errors);
+    await context.close();
+  });
+});
+
 test.describe('Task templates', () => {
   /**
    * The round trip is the assertion. A template stores due dates as day

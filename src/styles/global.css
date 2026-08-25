@@ -1195,6 +1195,75 @@ select:focus-visible,
 }
 
 /* ----------------------------------------------------------------------
+   RescheduleMenu (src/components/Common/RescheduleMenu.jsx) — quick
+   due-date presets, triggered from TaskListPanel's desktop hover button and
+   mobile swipe gesture. Shares .project-actions-dropdown's surface/shadow
+   language (see that block's own comment) rather than inventing a new
+   popover look, plus the same dropdown-in entrance animation already used
+   for HelpTooltip/calendar dropdowns — gated for free by the global
+   [data-animations='off']/prefers-reduced-motion rules near the top of this
+   file, since it's a plain CSS `animation`, not framer-motion.
+   ---------------------------------------------------------------------- */
+.reschedule-menu {
+  width: 190px;
+  background: var(--color-bg-surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 6px;
+  z-index: 200;
+  animation: dropdown-in var(--duration-fast) var(--ease-standard);
+}
+
+.reschedule-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reschedule-menu-item:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+/* The accent-colored icon is the one deliberate spot of color in this
+   otherwise neutral popover — reads as "this is the app's own scheduling
+   action", matching CalendarClock's use elsewhere in the app for the same
+   concept (AddTaskModal's due-date trigger, EventDetailModal's Date field). */
+.reschedule-menu-item-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.reschedule-menu-datepicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.reschedule-menu-datepicker input[type='date'] {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+/* ----------------------------------------------------------------------
    PresenceAvatars (src/components/Common/PresenceAvatars.jsx) — who else is
    viewing a shared project. Overlapping circles, newest layered under the
    previous so the stack reads left-to-right. Renders nothing when nobody
@@ -1689,14 +1758,12 @@ select:focus-visible,
 /* No `transform` transition here: TaskListPanel animates row reordering with
    framer-motion, which writes transforms to this element's inline style every
    frame — a CSS transition on transform would lag one behind and fight it. */
-.task-row {
-  transition: background var(--duration-fast) var(--ease-standard);
-}
-
-.task-row:hover {
-  background: var(--color-bg-surface-hover);
-}
-
+/* Hover/active feedback both moved onto .task-row-swipe-content (see
+   tasklist.css) once that inner wrapper became the element that actually
+   owns the row's background — a hover rule left on this outer element would
+   either be invisible (masked by the wrapper's own opaque background on a
+   top-level row) or show through ungated and unrounded (a sub-task row,
+   whose wrapper is transparent at rest). */
 .task-row:active {
   transform: scale(0.995);
 }

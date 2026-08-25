@@ -46,7 +46,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, animate, motion, useMotionValue, useTransform } from 'framer-motion';
 import {
   Repeat,
   Wind,
@@ -63,6 +63,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   History,
+  CalendarClock,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
@@ -80,6 +81,7 @@ import SearchBar, { taskMatchesQuery } from './Common/SearchBar';
 import AddTaskFabGroup from './Common/AddTaskFabGroup';
 import ReparentDropHint from './Common/ReparentDropHint';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
+import RescheduleMenu from './Common/RescheduleMenu';
 import PresenceAvatars from './Common/PresenceAvatars';
 import SharedProjectBadge from './Common/SharedProjectBadge';
 import ViewFilterMenu from './Common/ViewFilterMenu';
@@ -143,6 +145,19 @@ let lastHandledAIQuickAddSignal = 0;
 // the gap closes behind it.
 const ROW_TRANSITION = { duration: 0.2, ease: [0.2, 0, 0, 1] };
 const ROW_EXIT = { opacity: 0, scale: 0.98, transition: { duration: 0.12, ease: [0.3, 0, 1, 1] } };
+
+// SWIPE TO RESCHEDULE (mobile only — see TaskRow's swipe state). Dragging a
+// row leftward reveals a colored panel behind it, growing more opaque the
+// further it's dragged. Releasing past SWIPE_OPEN_THRESHOLD_PX opens the
+// reschedule menu directly and the row springs straight back to resting —
+// it never stays swiped open, so there's nothing left to tap shut
+// separately. SWIPE_PANEL_WIDTH_PX is purely the reveal panel's own visual
+// width; SWIPE_MAX_DRAG_PX caps how far the row can be pulled past it —
+// framer-motion's dragElastic already resists dragging further once
+// dragConstraints' left bound is reached, this is just that bound.
+const SWIPE_PANEL_WIDTH_PX = 96;
+const SWIPE_OPEN_THRESHOLD_PX = 48;
+const SWIPE_MAX_DRAG_PX = SWIPE_PANEL_WIDTH_PX;
 
 // How long a just-completed row stays put (checked, in place) before
 // visibleTasks lets it drop out and play ROW_EXIT — long enough for
@@ -636,6 +651,8 @@ export default function TaskListPanel({
         selectionMode={select.selectionMode}
         isSelected={select.isSelected(task.id)}
         onToggleSelect={select.toggle}
+        onReschedule={(taskId, date) => updateTask(taskId, { dueDate: date })}
+        isMobile={isMobile}
       />
     );
   }
@@ -1011,7 +1028,24 @@ const TaskRow = React.memo(function TaskRow({
   selectionMode,
   isSelected,
   onToggleSelect,
+  onReschedule,
+  isMobile,
 }) {
+  const [rescheduleMenuOpen, setRescheduleMenuOpen] = useState(false);
+  const rescheduleButtonRef = useRef(null);
+  // Swipe-to-reschedule (mobile only — see SWIPE TO RESCHEDULE below). A
+  // framer-motion MotionValue rather than useState: onDrag fires on every
+  // pointer-move frame, and setState there re-renders this whole row up to
+  // 60 times a second, competing with the drag's own transform updates and
+  // showing up as visible lag on a real phone. useTransform derives the
+  // reveal panel's opacity from the drag position entirely inside
+  // framer-motion's own update loop instead, bypassing React for every
+  // frame of the drag.
+  const swipeX = useMotionValue(0);
+  const swipePanelOpacity = useTransform(swipeX, (x) => Math.min(1, Math.abs(x) / SWIPE_OPEN_THRESHOLD_PX));
+  const [isSwipeOpen, setIsSwipeOpen] = useState(false);
+  const swipeRowRef = useRef(null);
+
   return (
     <motion.div
       layout={motionEnabled ? 'position' : false}
@@ -1046,6 +1080,18 @@ const TaskRow = React.memo(function TaskRow({
       // nothing left for a touch-drag to do here (see the
       // draggable={...&&!selectionMode} above), so this prop is simply
       // omitted rather than needing its own branch.
+      // Coexists with the swipe-to-reschedule gesture below (framer-motion
+      // drag="x" on the inner wrapper) without an explicit handoff: this
+      // handler's own long-press timer only ever fires after LONG_PRESS_MS
+      // of the finger staying still (see useReparentDrag's touchStart), and
+      // self-cancels the instant the finger moves more than
+      // DRAG_START_THRESHOLD_PX (8px) before that timer lands — which any
+      // real swipe does almost immediately. Framer-motion's own drag
+      // recognition on the inner wrapper claims the gesture at essentially
+      // the same threshold, so a genuine swipe reliably "wins" over the
+      // long-press path on its own, and a genuine long-press (finger held
+      // still first) never triggers enough movement to make framer-motion
+      // think a drag started.
       onTouchStart={selectionMode ? undefined : (e) => reparentHandlers.touchStart(e, task.id)}
       onClick={() => {
         if (selectionMode) {
@@ -1053,10 +1099,85 @@ const TaskRow = React.memo(function TaskRow({
           return;
         }
         if (reparentHandlers.consumeClick()) return; // trailing click of a long-press drag, not a tap
+        if (isSwipeOpen) return; // trailing click right after a swipe-to-open drag, not a tap
         onOpen(task.id);
       }}
     >
       {isReparentTarget && <ReparentDropHint parentTitle={task.title} />}
+      {/* SWIPE TO RESCHEDULE (mobile only) — this plain, non-motion wrapper
+          is the reveal panel's positioning parent, and its size always
+          matches its own real content (unlike the OUTER .task-row, which
+          carries framer-motion's `layout="position"` for the row-reorder
+          FLIP animation elsewhere in this file — an absolutely-positioned
+          child sized off a `layout`-animated ancestor can reflect a stale
+          box mid-transition, which is what made the panel render taller or
+          shorter than its own row). It does NOT itself move — only the
+          .task-row-swipe-content div inside it (the actual draggable
+          content) slides, sliding away from the panel to reveal it as a
+          fixed backdrop/trail rather than carrying the panel along with it. */}
+      <div className="task-row-swipe-wrap">
+        {isMobile && !selectionMode && !isReadOnlyViewer && !isCheckedForDisplay && (
+          <motion.div className="task-row-swipe-panel" style={{ opacity: swipePanelOpacity }}>
+            <CalendarClock size={16} />
+            <span>Reschedule</span>
+          </motion.div>
+        )}
+        {/* The whole row's normal content (checkbox through the trailing
+            collapse/restore/reschedule buttons) lives inside this inner
+            wrapper so it can slide left as one unit over the reveal panel
+            above, without touching the OUTER .task-row's own native-DnD/
+            long-press-reparent handlers (those stay on the outer element,
+            untouched — see that element's own comment on why the two
+            gestures don't conflict). drag is only ever enabled on mobile;
+            on desktop this is a plain, non-draggable div.
+            dragConstraints/dragElastic keep the pull bounded and springy
+            rather than letting the row fly off past the panel's own width. */}
+        <motion.div
+          ref={swipeRowRef}
+          className="task-row-swipe-content"
+          drag={isMobile && !selectionMode && !isReadOnlyViewer && !isCheckedForDisplay ? 'x' : false}
+          dragDirectionLock
+          dragConstraints={{ left: -SWIPE_MAX_DRAG_PX, right: 0 }}
+          dragElastic={0.15}
+          // Momentum is on by default, which lets the row keep coasting
+          // under its own inertia for a moment after the finger lifts —
+          // fighting the snap-back below, which is the actual source of
+          // truth for where this should rest (always 0 — the row never
+          // stays swiped open, see onDragEnd). This gesture should stop
+          // exactly where released, not glide past it.
+          dragMomentum={false}
+          style={{ x: swipeX }}
+          // The DRAG itself is an interaction, not decoration — CLAUDE.md's
+          // "no ambient drift" rule targets motion nothing causes, which
+          // doesn't apply to a user's own finger driving this. What DOES
+          // need gating is the snap-back animation on release: with
+          // animations off, it returns to resting position in one frame
+          // instead of springing there, matching how every other motion in
+          // this app degrades (see useMotionEnabled's own doc comment).
+          transition={motionEnabled ? { type: 'spring', stiffness: 500, damping: 40 } : { duration: 0 }}
+          onDragEnd={(_, info) => {
+            // Swiping past the threshold opens the menu directly — there's
+            // no revealed button to tap separately, and no "stay open"
+            // state to get stuck in. Snapping x back to 0 (rather than
+            // leaving it wherever the drag ended, or holding it open) is
+            // what makes the row never look stuck mid-swipe. isSwipeOpen
+            // stays true for as long as the menu itself is open (reset in
+            // the menu's onClose below), not just for the instant right
+            // after the drag — a centered mobile menu sits directly over
+            // the row underneath, and clicking one of its options can close
+            // the menu mid-click, which sometimes lets that same click's
+            // bubble phase fall through to whatever is now visible
+            // underneath (the row) once the menu unmounts. Keeping the
+            // guard armed for the menu's whole open lifetime, not just one
+            // frame, is what actually catches that.
+            const opened = info.offset.x < -SWIPE_OPEN_THRESHOLD_PX;
+            animate(swipeX, 0, motionEnabled ? { type: 'spring', stiffness: 500, damping: 40 } : { duration: 0 });
+            if (opened) {
+              setRescheduleMenuOpen(true);
+              setIsSwipeOpen(true);
+            }
+          }}
+        >
       {selectionMode ? (
         <input
           type="checkbox"
@@ -1208,6 +1329,23 @@ const TaskRow = React.memo(function TaskRow({
           <RotateCcw size={14} />
         </button>
       )}
+      {!isMobile && !selectionMode && !isReadOnlyViewer && !isCheckedForDisplay && (
+        <button
+          type="button"
+          ref={rescheduleButtonRef}
+          className="btn btn-icon task-row-reschedule"
+          onClick={(e) => {
+            e.stopPropagation();
+            setRescheduleMenuOpen((v) => !v);
+          }}
+          aria-label={`Reschedule ${task.title}`}
+          aria-haspopup="menu"
+          aria-expanded={rescheduleMenuOpen}
+          title="Reschedule"
+        >
+          <CalendarClock size={14} />
+        </button>
+      )}
       {hasChildren && (
         <button
           type="button"
@@ -1222,6 +1360,26 @@ const TaskRow = React.memo(function TaskRow({
           {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </button>
       )}
+        </motion.div>
+      </div>
+      <RescheduleMenu
+        isOpen={rescheduleMenuOpen}
+        onClose={() => {
+          setRescheduleMenuOpen(false);
+          // Deliberately NOT cleared in the same tick the menu closes — see
+          // onDragEnd's comment above. Closing from a menu option click
+          // (applyDate -> closeMenu -> here) happens synchronously inside
+          // that same click's handler, before the browser finishes
+          // dispatching it; clearing isSwipeOpen immediately would still
+          // leave the guard down in time for that same click's bubble phase
+          // to reach the row underneath. Waiting a tick lets this click
+          // finish first.
+          setTimeout(() => setIsSwipeOpen(false), 0);
+        }}
+        anchorRef={rescheduleButtonRef}
+        onReschedule={(date) => onReschedule(task.id, date)}
+        forceCentered={isMobile}
+      />
     </motion.div>
   );
 });

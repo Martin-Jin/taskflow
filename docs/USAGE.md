@@ -150,6 +150,19 @@ calendar yourself. Making
 a task recurring automatically makes its parent (or sub-tasks) recurring
 too, since they represent the steps toward the same repeating goal — no
 need to set it on both sides yourself.
+
+**Quick reschedule** — push a task's due date out without opening it at all.
+On desktop, hover a row to reveal a small calendar button on its right side
+(next to the expand/collapse arrow, if the row has one) and click it for a
+menu of shortcuts: Tomorrow, In 3 days, Next week, or Pick a date. On mobile,
+swipe a row to the left and release — past a short distance, the same menu
+pops up right away and the row settles back into place on its own, so there's
+nothing left held open or needing to be swiped shut again; swiping only a
+little way and letting go does nothing. A plain tap still opens the task as
+usual. Setting a date this way counts toward "Pushed N×" the same as editing
+it from the task's own detail view (see below) — it's a shortcut to the same
+edit, not a separate one.
+
 **Templates** — a task with sub-tasks can be saved as a reusable *shape of
 work* from its "⋯" menu ("Save as template"): the sub-tasks, their estimates,
 their dependencies and their relative spacing. Due dates are stored as
