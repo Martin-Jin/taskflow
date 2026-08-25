@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '10.1.0',
+    date: '2026-08-25',
+    title: 'Reschedule a task in one tap, without opening it',
+    changes: [
+      'Added a quick-reschedule menu with one-tap options for Tomorrow, In 3 days, Next week, or picking any date — no need to open the task first.',
+      'On desktop, hover over a task row in the list to reveal a small calendar button that opens the menu. It sits neatly beside the existing expand/collapse arrow when both are on the same row.',
+      'On mobile, swipe a task row to the left — past a short distance, the menu pops up right away and the row settles back into place on its own.',
+    ],
+  },
+  {
     version: '10.0.0',
     date: '2026-08-24',
     title: 'A task finishes itself once all its scheduled work is done',
