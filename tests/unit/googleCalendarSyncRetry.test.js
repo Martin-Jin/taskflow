@@ -169,6 +169,17 @@ describe('isUnsyncedPushableEvent — the retry sweep for events', () => {
       isUnsyncedPushableEvent({ ...base, date: yesterday, recurrenceRule: 'FREQ=WEEKLY', source: 'manual', googleEventId: null })
     ).toBe(true);
   });
+
+  it('CRITICAL SAFETY: never pushes a deleted-event tombstone, which would recreate the event the user just deleted', () => {
+    // A manual event tombstoned before it was ever pushed to Google (no
+    // googleEventId yet) still has a future date/start/end at delete time —
+    // without excluding deletedAt here, this predicate would select it and
+    // the push sweep would create a brand-new Google event for something
+    // that no longer exists in TaskFlow. See utils/eventTombstones.js.
+    expect(
+      isUnsyncedPushableEvent({ ...base, source: 'manual', googleEventId: null, deletedAt: '2026-08-12T00:00:00.000Z' })
+    ).toBe(false);
+  });
 });
 
 describe('dedupeAuthoritativeItems — last-resort guard against pushing duplicates', () => {

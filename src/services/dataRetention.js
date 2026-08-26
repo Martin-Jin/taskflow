@@ -32,6 +32,16 @@ export const RETENTION_DAYS_DELETED_TASKS = 30;
 /** Google Calendar events and synced history — kept for rolling window. */
 export const RETENTION_DAYS_CALENDAR_EVENTS = 365;
 
+/**
+ * CalendarEvents tombstoned by deleteEvent (see utils/eventTombstones.js) —
+ * purged after this many days. Matches RETENTION_DAYS_DELETED_TASKS for the
+ * same reason: long enough that a device offline for a realistic stretch
+ * still sees the tombstone (and therefore the deletion) before it's swept,
+ * since sweeping it too early would let a returning device see the event as
+ * merely "missing" rather than "deleted" and resurrect it on its next push.
+ */
+export const RETENTION_DAYS_DELETED_EVENTS = 30;
+
 /** Shared project presence docs (viewer avatars) — auto-delete via TTL. */
 export const RETENTION_DAYS_PRESENCE = 7;
 

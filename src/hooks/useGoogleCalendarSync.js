@@ -251,6 +251,12 @@ export function isPastCalendarItem(item) {
  *   - anything already in the PAST (see isPastCalendarItem): once a day is
  *     over, TaskFlow stops writing it to Google at all — history is frozen,
  *     not part of the live sync loop.
+ *   - a deleted-event tombstone (see utils/eventTombstones.js). A manual
+ *     event that was tombstoned before ever being pushed to Google (no
+ *     `googleEventId` yet) still has a future date/start/end at delete time —
+ *     without this check, the very tombstone whose whole job is to carry a
+ *     deletion across devices would instead get pushed to Google as a
+ *     brand-new event, recreating the thing the user just deleted.
  *
  * Pure and exported so the "which events are still unsynced" decision — the
  * gap that let a failed one-shot push strand an event forever — is unit
@@ -258,6 +264,7 @@ export function isPastCalendarItem(item) {
  */
 export function isUnsyncedPushableEvent(event) {
   if (!event || event.googleEventId) return false;
+  if (event.deletedAt) return false;
   if (event.source === 'google' && event.calendarId !== 'primary') return false;
   if (isBlockSourcedEvent(event)) return false;
   if (isPastCalendarItem(event)) return false;
@@ -1721,8 +1728,15 @@ export function useGoogleCalendarSync({
       // Legacy block-mirror rows are dropped as well: those are leftovers from
       // when TaskFlow still pushed ScheduledBlocks, and re-pushing one would
       // recreate a block-shaped event this app no longer manages at all.
+      //
+      // A deleted-event tombstone (see utils/eventTombstones.js) is dropped
+      // too, for the same reason isUnsyncedPushableEvent excludes one from the
+      // ordinary push sweep: `events` here is the raw, unfiltered array (this
+      // hook receives it that way, not the tombstone-hidden `visibleEvents`
+      // view), so without this check a rewrite would re-create on Google the
+      // exact event the user just deleted.
       const primaryEvents = latestEvents.filter(
-        (e) => (e.source !== 'google' || e.calendarId === 'primary') && !isPastCalendarItem(e) && !isBlockSourcedEvent(e)
+        (e) => (e.source !== 'google' || e.calendarId === 'primary') && !isPastCalendarItem(e) && !isBlockSourcedEvent(e) && !e.deletedAt
       );
 
       // Every primary-scoped local event is re-pushed, including ones

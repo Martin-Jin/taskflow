@@ -31,6 +31,7 @@ import {
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { mergeTasksByUpdatedAt } from '../utils/taskMerge';
+import { mergeEventsByUpdatedAt } from '../utils/eventMerge';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { getDeviceId } from '../utils/deviceIdentity.js';
@@ -190,9 +191,12 @@ export function canonicalStringify(value) {
  * Pure and stateless — hoisted out of the hook (it never closed over
  * anything) so it can be exported and unit-tested directly.
  *
- * Deliberately excludes `events` — see backupService.js's BACKUP_FIELDS doc
- * comment for why CalendarEvents are device-local (Google Calendar-sourced)
- * now rather than round-tripped through Firestore.
+ * Includes `events` — see backupService.js's BACKUP_FIELDS doc comment for
+ * why CalendarEvents now ride this same live cross-device sync: each event
+ * merges individually by its own `localUpdatedAt` timestamp (mergeEventsByUpdatedAt)
+ * with a real deletion tombstone (eventTombstones.js), the same fix that let
+ * `tasks` join this fingerprint safely rather than risking a stale device's
+ * whole-array push silently resurrecting a deletion.
  *
  * Uses canonicalStringify, NOT plain JSON.stringify — see that function's own
  * doc comment for why: a fingerprint that's sensitive to key order treats
@@ -218,6 +222,7 @@ export function computeFingerprint(source) {
     taskTemplates: source.taskTemplates,
     trash: source.trash,
     sharedProjectIds: source.sharedProjectIds,
+    events: source.events,
   };
   return canonicalStringify(relevant);
 }
@@ -604,6 +609,23 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
   if ('sharedProjectIds' in remoteData) {
     plan.sharedProjectIds = pickValid('sharedProjectIds', remoteData.sharedProjectIds, localState.sharedProjectIds);
   }
+  if ('events' in remoteData) {
+    // Same shape-validate-then-per-item-merge structure as `tasks` above:
+    // a malformed/corrupted remote `events` (wrong type, not an array) falls
+    // back to local WHOLESALE, and only a shape-valid remote array feeds the
+    // per-event merge. There's no `blocks`-equivalent companion field to
+    // carry alongside it (a CalendarEvent is self-contained), and no
+    // rebalance trigger is needed the way a task merge needs one to
+    // regenerate `blocks` — events don't drive that scheduling engine.
+    const validRemoteEvents = pickValid('events', remoteData.events, null);
+    const eventsMerged = validRemoteEvents !== null;
+    plan.events = eventsMerged ? mergeEventsByUpdatedAt(localState.events, validRemoteEvents) : localState.events;
+    // Whether a real per-event merge ran, as opposed to falling back to local
+    // wholesale — applyRemoteData needs this for the same reason
+    // plan.tasksMerged exists: to decide whether the merged result can
+    // safely be fingerprinted against the raw incoming remoteData.
+    plan.eventsMerged = eventsMerged;
+  }
 
   // Reaching here means skipAll was false, so remoteData was applied as-is —
   // safe to stamp "already synced" (the skipAll===true case returns early
@@ -648,14 +670,31 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
 }
 
 /**
+ * Same question as didTaskMergeChangeAnything, for the per-event merge
+ * (plan.eventsMerged, see planRemoteDataMerge's `events` handling). Events
+ * have no `blocks`-equivalent companion to regenerate, so this only answers
+ * the fingerprint-stamp-skip question, not a rebalance-trigger one — but it's
+ * kept as its own function (rather than reusing didTaskMergeChangeAnything
+ * with different field names threaded through) so each stays a simple,
+ * direct read of its own plan shape.
+ */
+export function didEventMergeChangeAnything(plan, localEventsBefore) {
+  if (!plan.eventsMerged) return false;
+  return canonicalStringify(plan.events) !== canonicalStringify(localEventsBefore);
+}
+
+/**
  * @param {Object} deps
  * @param {Object} deps.state - Current combined syncable state (tasks/blocks/
  *   sections/projects/labels/routines/rules/soundEnabled/soundVolume/
  *   animationsEnabled/notificationSettings/notes/shortcutBindings/savedViews/
- *   taskTemplates/trash/sharedProjectIds) — a plain object recomputed whenever any of those
- *   fields changes, purely so the push-scheduling effect below has
- *   something to depend on. Deliberately excludes `events` — see
- *   backupService.js's BACKUP_FIELDS doc comment.
+ *   taskTemplates/trash/sharedProjectIds/events) — a plain object recomputed
+ *   whenever any of those fields changes, purely so the push-scheduling
+ *   effect below has something to depend on. `events` joined this bundle
+ *   once the per-event timestamp+tombstone merge (eventMerge.js/
+ *   eventTombstones.js) made it safe to live-sync the same way `tasks`
+ *   already does — see backupService.js's BACKUP_FIELDS doc comment for the
+ *   history of why it used to be excluded.
  * @param {React.MutableRefObject} deps.stateRef - Ref mirroring `state`, read
  *   from async callbacks (the debounced push, backup builders) that need the
  *   LATEST snapshot rather than whatever was closed over when they were created.
@@ -694,6 +733,12 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  * @param {Function} deps.setTaskTemplates - RAW/untracked setter for taskTemplates
  * @param {Function} deps.setTrash - RAW/untracked setter for trash
  * @param {Function} deps.setSharedProjectIds - RAW/untracked setter for sharedProjectIds
+ * @param {Function} deps.setEventsLive - RAW/untracked setter for the per-event
+ *   merge result (see planRemoteDataMerge's `events` handling) — applies an
+ *   incoming pull/live-snapshot's merged events the same way setSections/
+ *   setProjects/etc. apply their own field, keeping `events` inside
+ *   `state`/`stateRef` (see deps.state) rather than the separate backup-only
+ *   path `events`/`setEvents` below still cover.
  * @param {*} deps.theme - Current theme (owned live by ThemeContext) — only
  *   read here so a backup payload can capture it (see BACKUP_FIELDS).
  * @param {Function} deps.setTheme - Applies a restored backup's theme.
@@ -702,12 +747,19 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
  *   `theme` immediately above: only read here so a backup payload can
  *   capture it, never part of the live-sync `state`/`stateRef` bundle.
  * @param {Function} deps.setAccentSeed - Applies a restored backup's accentSeed.
- * @param {Array} deps.events - Current CalendarEvents. Like `theme`, kept
- *   OUT of `state`/`stateRef` (so it never reaches the live-sync fingerprint
- *   or Firestore push/pull) but passed separately purely so backup payloads
- *   can capture it — see BACKUP_FIELDS' doc comment for why events are
- *   backed-up but not live-synced.
- * @param {Function} deps.setEvents - Applies a restored backup's events.
+ * @param {Array} deps.events - Current CalendarEvents. Unlike `theme`, this
+ *   IS also part of `state`/`stateRef` now (see deps.state) — it's still
+ *   passed as its own param too, but now purely for the two call sites that
+ *   need to read/replace it OUTSIDE the debounced live-sync path: the events-
+ *   fallback-from-backup effect (reads current `events` directly, not through
+ *   `stateRef`, so it can react to it going from empty to populated) and
+ *   applyBackupPayload (restoring a backup uses the TRACKED setter below,
+ *   same as every other backup-restored field, so it's undoable-adjacent the
+ *   way the rest of a restore is).
+ * @param {Function} deps.setEvents - Applies a restored backup's events (and
+ *   the events-fallback-from-backup effect's own restore) — the TRACKED
+ *   setter, matching how every other backup-restored field in this hook is
+ *   applied via its own setX in applyBackupPayload.
  * @param {boolean} deps.googleConnected - Whether Google Calendar is
  *   currently connected — gates the events-fallback-from-backup effect (see
  *   its own doc comment) so it only fires when there's no live Google
@@ -761,6 +813,7 @@ export function useCloudSync({
   setTaskTemplates,
   setTrash,
   setSharedProjectIds,
+  setEventsLive,
   theme,
   setTheme,
   accentSeed,
@@ -1170,6 +1223,7 @@ export function useCloudSync({
   // for.
   const applyRemoteData = useCallback((remoteData, { skipAll = false } = {}) => {
     const localTasksBefore = stateRef.current.tasks;
+    const localEventsBefore = stateRef.current.events;
     const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll });
     if (plan.tasksBlocks) overwritePresent(plan.tasksBlocks);
     if ('sections' in plan) setSections(plan.sections);
@@ -1193,12 +1247,18 @@ export function useCloudSync({
     if ('taskTemplates' in plan) setTaskTemplates(plan.taskTemplates);
     if ('trash' in plan) setTrash(plan.trash);
     if ('sharedProjectIds' in plan) setSharedProjectIds(plan.sharedProjectIds);
+    if ('events' in plan) setEventsLive(plan.events);
 
     // Did the per-task merge actually produce a task set different from what
     // was local a moment ago? See didTaskMergeChangeAnything's own doc
     // comment — this one answer gates both the rebalance trigger and the
     // fingerprint-stamp skip below.
     const mergeChangedTasks = didTaskMergeChangeAnything(plan, localTasksBefore);
+    // Same question for the per-event merge — see didEventMergeChangeAnything's
+    // own doc comment. No rebalance trigger needed for events (nothing
+    // downstream regenerates from them the way `blocks` regenerates from
+    // tasks), so this only feeds the fingerprint-stamp-skip decision below.
+    const mergeChangedEvents = didEventMergeChangeAnything(plan, localEventsBefore);
 
     // A real per-task merge that changed anything produced a combined result
     // that generally matches NEITHER side's raw array exactly — blocks are
@@ -1217,17 +1277,17 @@ export function useCloudSync({
     // Stamp what we just applied as "already synced" so the debounced push
     // effect doesn't immediately echo this same data straight back to
     // Firestore — but only when tasks/blocks were actually applied as-is
-    // (see planRemoteDataMerge's stampFingerprint comment) AND the tasks
-    // branch didn't just produce a genuinely NEW combined result via the
-    // per-task merge. Fingerprinting against raw `remoteData` in that case
-    // would falsely mark the merged-but-not-yet-pushed result as "Firestore
-    // already has this" — permanently suppressing the push that's supposed
-    // to carry it up. Skipping the stamp here is deliberately simpler than
-    // fingerprinting the as-applied plan instead: the normal debounced push
-    // effect already watches `state`/`stateRef` and will notice this local
-    // change like any other edit and push it up on its own, no special-
-    // casing needed here.
-    if (plan.stampFingerprint && !mergeChangedTasks) {
+    // (see planRemoteDataMerge's stampFingerprint comment) AND neither the
+    // tasks nor the events branch just produced a genuinely NEW combined
+    // result via their own per-item merge. Fingerprinting against raw
+    // `remoteData` in that case would falsely mark the merged-but-not-yet-
+    // pushed result as "Firestore already has this" — permanently
+    // suppressing the push that's supposed to carry it up. Skipping the
+    // stamp here is deliberately simpler than fingerprinting the as-applied
+    // plan instead: the normal debounced push effect already watches
+    // `state`/`stateRef` and will notice this local change like any other
+    // edit and push it up on its own, no special-casing needed here.
+    if (plan.stampFingerprint && !mergeChangedTasks && !mergeChangedEvents) {
       const remoteFingerprint = computeFingerprint(remoteData);
       lastPushedFingerprintRef.current = remoteFingerprint;
       // This data just came FROM Firestore (a pull or a confirmed live
@@ -1257,6 +1317,7 @@ export function useCloudSync({
     setTaskTemplates,
     setTrash,
     setSharedProjectIds,
+    setEventsLive,
   ]);
 
   // ---- Applies a full backup payload (local file or cloud backup) ----------
@@ -1587,17 +1648,22 @@ export function useCloudSync({
 
   // ---- Fallback: restore events from the latest backup if there's nothing
   // to show and no WORKING live Google Calendar source to repopulate them ---
-  // `events` is deliberately excluded from the live cross-device sync above
-  // (see BACKUP_FIELDS' doc comment) — Google Calendar is the normal
-  // day-to-day authoritative store, and `useGoogleCalendarSync`'s own silent
-  // reconnect repopulates `events` from Google on every mount/refresh. This
-  // only covers the gap that leaves: a device with no working live Google
-  // source has no other way to see events again, even though a recent
-  // Firestore backup already has them. That's two situations, not one —
-  // Google not connected at all (a new device, or wiped localStorage), AND
-  // Google nominally connected but its fetches failing after exhausting
-  // their retries (`googleSyncStale` — a cold start where auth wasn't ready
-  // yet, or a network hiccup). Both leave `events` equally empty.
+  // `events` now DOES live-sync across devices (see computeFingerprint/
+  // planRemoteDataMerge's `events` handling above), so in the ordinary case
+  // this fallback never has anything left to do — the initial pull/live
+  // listener already repopulates `events` on its own. It still earns its
+  // keep for genuinely last-resort cases the live sync itself can't cover:
+  // cloud sync toggled off, a first-ever pull that hasn't landed yet, or
+  // (unchanged from before) a device with no working live Google Calendar
+  // connection that also somehow has an empty local+remote `events`. Google
+  // Calendar is still the normal day-to-day authoritative store when
+  // connected, and `useGoogleCalendarSync`'s own silent reconnect repopulates
+  // `events` from Google on every mount/refresh — this only covers the gap
+  // that leaves. That's two situations, not one — Google not connected at
+  // all (a new device, or wiped localStorage), AND Google nominally
+  // connected but its fetches failing after exhausting their retries
+  // (`googleSyncStale` — a cold start where auth wasn't ready yet, or a
+  // network hiccup). Both leave `events` equally empty.
   //
   // Restoring ONLY the `events` field (not a full backup restore) keeps this
   // narrow — tasks/blocks/settings already come back via the live sync

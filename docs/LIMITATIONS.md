@@ -7,13 +7,15 @@ to be filled.
 
 - Cross-device sync (see [Account & cross-device
   sync](SYNC-AND-SHARING.md#account--cross-device-sync)) is live for tasks/blocks/boards/
-  settings — a change on device A shows up on an already-open device B
-  within moments via a background Firestore listener, no reload needed.
-  Calendar events are excluded from this sync entirely (Google Calendar is
-  their one source of truth — see [Backups](SYNC-AND-SHARING.md#backups)) and Google Calendar sync
-  itself is the exception: it stays poll-based (see the next bullet), so a
-  change made directly in Google Calendar can still take up to about a
-  minute to appear.
+  settings, and calendar events too — a change on device A shows up on an
+  already-open device B within moments via a background Firestore listener,
+  no reload needed, whether or not Google Calendar is connected on either
+  device. Deleting an event on a device with Google Calendar disconnected
+  syncs that deletion to your other TaskFlow devices, but not to Google
+  Calendar itself — see [Backups](SYNC-AND-SHARING.md#backups) for that
+  gap. Google Calendar sync itself is the one exception to "live": it stays
+  poll-based (see the next bullet), so a change made directly in Google
+  Calendar can still take up to about a minute to appear.
 - Google Calendar sync is two-way but poll-based, not truly real-time —
   pulls happen on sign-in/connect, a ~1-minute background poll while
   connected, on returning to the tab/window, and manual **Sync now**, not

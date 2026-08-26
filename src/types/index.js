@@ -632,8 +632,24 @@
  * @property {string|null} [recurrenceRule]   - RFC5545 RRULE string (e.g. "FREQ=WEEKLY;BYDAY=MO,WE"), null/absent for non-recurring events.
  * @property {Object<string,Object>} [overrides] - Per-occurrence override map keyed by the occurrence's ORIGINAL (RRULE-generated) ISO date, even if that occurrence was later moved (e.g. `{"2026-08-04": {isFreeTime: true}}`), for overriding fields on a single occurrence of a recurring event without duplicating the record. Two keys are handled specially by recurrenceExpansion.expandRecurringEvent rather than just shallow-merged as display fields: `date` (moves the occurrence to a different day) and `deleted: true` (drops that occurrence from expansion entirely).
  * @property {string|null} [googleUpdatedAt]  - Google's `updated` timestamp as of the last pull/push, used for conflict detection.
- * @property {string|null} [localUpdatedAt]   - Stamped on every local edit, compared against `googleUpdatedAt` to decide whether to push local changes or accept Google's incoming version.
+ * @property {string|null} [localUpdatedAt]   - Stamped on every local edit. Compared against another device's copy of the same event by the per-event cross-device merge (see utils/eventMerge.js) to decide which side's edit wins. Originally added for a Google-side conflict check that never shipped (see eventSyncService.js's own doc comment on why it doesn't gate anything there — Google's pull always wins unconditionally for a Google-sourced event, regardless of this timestamp).
  * @property {boolean} [canEdit]              - Whether the user has 'owner'/'writer' access to this event's source calendar on Google (see googleCalendarService.fetchEvents). Absent/undefined (manual events, mock data) counts as editable — only an explicit `false` (a reader/freeBusyReader-shared calendar, e.g. a subscribed lecture timetable) gates Save/Delete/field-editing in EventDetailModal and drag/resize in WeekView.
+ * @property {string} [deletedAt]             - ISO datetime stamped by SchedulerContext.deleteEvent instead of
+ *                                              actually removing the event from `events` — a TOMBSTONE, mirroring
+ *                                              Task.deletedAt (see above), so the per-event cross-device merge
+ *                                              (utils/eventMerge.js) can tell "never existed on this device" apart
+ *                                              from "existed, then was deleted here," which a plain removal can't
+ *                                              (see utils/eventTombstones.js). Only ever set on a real row deletion —
+ *                                              deleting a single occurrence or a "following" tail of a recurring
+ *                                              series instead writes into that row's own `overrides`/`recurrenceRule`,
+ *                                              which already syncs correctly as an ordinary field edit. `description`/
+ *                                              `location` are cleared at tombstone time (the closest CalendarEvent
+ *                                              equivalents to a task's notes/comments); `title` and every other field
+ *                                              are left as-is, since the delete-undo toast still needs to display the
+ *                                              title. SchedulerContext filters every tombstoned event out of what it
+ *                                              exposes to the rest of the app (see `visibleEvents`), and a retention
+ *                                              sweep permanently removes a tombstone once it's old enough that every
+ *                                              device has had a realistic chance to see the deletion.
  */
 
 /**
