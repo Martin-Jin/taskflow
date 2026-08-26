@@ -248,6 +248,49 @@ function stripVirtualIds(newBlocks, overflow, timeShifted) {
 }
 
 /**
+ * Coalesce ScheduledBlocks for the same task, on the same day, that end up
+ * genuinely back-to-back (one's endTime is the exact string as the next
+ * one's startTime) into a single block spanning both. allocateTasks' own
+ * passes (weighted-share, sweep, buffer-overflow, last-resort split,
+ * horizon-spill) and its same-day fixedTime fallback can each independently
+ * place a separate chunk for the same task/date, so a real zero-gap pair can
+ * come from two entirely different placement calls — nothing inside
+ * allocateTasks itself is in a position to notice that. This runs on the
+ * FINAL block set, after runLocalSearch has already finished relocating
+ * individual chunks to their lowest-cost day/time: merging any earlier would
+ * hand the cost-minimizing search a coarser block than the seed actually
+ * produced, taking away its ability to relocate a sub-chunk independently of
+ * its neighbour. Only an EXACT zero-gap string match qualifies — any real
+ * gap, however small, leaves both blocks untouched, exactly as today.
+ * Locked/completed/passive/immovable blocks are included in the input
+ * (nothing here filters them out), but in practice never merge with anything
+ * generated this same run, since they weren't just placed together — this is
+ * simply "merge whatever ends up touching," not a targeted lookup.
+ */
+function mergeContiguousBlocks(blocks) {
+  const byTaskDate = new Map();
+  for (const block of blocks) {
+    const key = `${block.taskId}::${block.date}`;
+    if (!byTaskDate.has(key)) byTaskDate.set(key, []);
+    byTaskDate.get(key).push(block);
+  }
+  const merged = [];
+  for (const group of byTaskDate.values()) {
+    const sorted = [...group].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    for (const block of sorted) {
+      const last = merged[merged.length - 1];
+      if (last && last.taskId === block.taskId && last.date === block.date && last.endTime === block.startTime) {
+        last.endTime = block.endTime;
+        last.durationHours = last.durationHours + block.durationHours;
+      } else {
+        merged.push({ ...block });
+      }
+    }
+  }
+  return merged;
+}
+
+/**
  * @param {Object} params
  * @param {import('../types').Task[]} params.tasks
  * @param {import('../types').ScheduledBlock[]} params.existingBlocks
@@ -604,7 +647,11 @@ export function rebalance({ tasks, existingBlocks, routines, events, rules, from
     resolveDueDateFn: (task) => resolveDueDate(task, taskByIdWithVirtual),
   });
   const rawBlocks = [...searchedMovableBlocks, ...immovableBlocks];
-  const { blocks: newBlocks, overflow: allocatorOverflow, timeShifted: strippedTimeShifted } = stripVirtualIds(rawBlocks, rawOverflow, rawTimeShifted);
+  const { blocks: strippedBlocks, overflow: allocatorOverflow, timeShifted: strippedTimeShifted } = stripVirtualIds(rawBlocks, rawOverflow, rawTimeShifted);
+  // Run AFTER local search, not before — see mergeContiguousBlocks' own doc
+  // comment for why merging any earlier would take away the search's ability
+  // to relocate a sub-chunk independently of its now-merged neighbour.
+  const newBlocks = mergeContiguousBlocks(strippedBlocks);
   // A dependency-blocked entry is now a genuinely different, POST-allocation
   // finding — a task whose (transitive) dependency itself came out of
   // allocateTasks with unplaced hours, so there's no valid slot to order the

@@ -1121,3 +1121,106 @@ describe('rebalance: shared-project task assignment (assignedTo)', () => {
     expect(withoutField.blocks.some((b) => b.taskId === 'personal1')).toBe(true);
   });
 });
+
+// Regression coverage for a reported bug: two ScheduledBlocks for the same
+// task, on the same day, could end up genuinely back-to-back (one ending at
+// the exact minute the other starts) yet still render on the calendar as two
+// separate boxes rather than one continuous block — because they really were
+// two separate ScheduledBlock records under the hood. allocateTasks' own
+// placement passes (fixed-time pre-pass, weighted-share, sweep,
+// buffer-overflow, last-resort split, horizon-spill) and its same-day
+// fixedTime fallback can each independently place a separate chunk for the
+// same task/date, so a real zero-gap pair can come from either the SAME
+// placeAndRecordBlocks call or two entirely DIFFERENT ones — see
+// mergeContiguousBlocks in rebalanceEngine.js, which coalesces both cases in
+// one place, after runLocalSearch has already finished relocating individual
+// chunks at full per-chunk granularity.
+describe('rebalance: contiguous same-task blocks merge into one', () => {
+  it('merges a fixedTime placement and its same-day fallback leftover when they land with zero gap', () => {
+    // Busy until 14:00, so the fixedTime (14:00) slot's own free interval is
+    // 14:00-17:00 (3h). maxChunkHours caps a single placement call at 30
+    // minutes, so the pinned placement only takes 14:00-14:30; the remaining
+    // 30 minutes of this 1-hour task falls to the same-day fallback
+    // (enforceDueDate -> single-day window, no other day to retry the pin
+    // on), which places into the SAME still-open interval starting right
+    // where the fixed placement left off — a genuine zero-gap contiguity
+    // between two otherwise-separate placement calls.
+    const events = [{ id: 'evA', date: today, startTime: '09:00', endTime: '14:00' }];
+    const tasks = [
+      {
+        id: 'fixedfallback', title: 'Fixed + fallback', estimatedHours: 1, remainingHours: 1,
+        dueDate: today, enforceDueDate: true, fixedTime: '14:00', maxChunkHours: 0.5,
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events, rules: baseRules, fromDate: today });
+
+    expect(result.overflow).toHaveLength(0);
+    const own = result.blocks.filter((b) => b.taskId === 'fixedfallback');
+    // One merged block spanning the full hour, not two adjacent 30-minute
+    // blocks — this is the exact bug being fixed.
+    expect(own).toHaveLength(1);
+    expect(own[0].startTime).toBe('14:00');
+    expect(own[0].endTime).toBe('15:00');
+    expect(own[0].durationHours).toBeCloseTo(1, 5);
+  });
+
+  it('does NOT merge when a genuine gap (even 1 minute) separates the fixed placement from its fallback leftover', () => {
+    // Identical setup to the merging case above, except a 1-minute event
+    // (14:30-14:31) sits exactly where the fixed placement ends — a real, if
+    // tiny, gap. The two placements must stay separate, completely unchanged
+    // from pre-fix behavior: only an EXACT zero-gap match may ever merge.
+    const events = [
+      { id: 'evA', date: today, startTime: '09:00', endTime: '14:00' },
+      { id: 'evB', date: today, startTime: '14:30', endTime: '14:31' },
+    ];
+    const tasks = [
+      {
+        id: 'fixedgap', title: 'Fixed + fallback with gap', estimatedHours: 1, remainingHours: 1,
+        dueDate: today, enforceDueDate: true, fixedTime: '14:00', maxChunkHours: 0.5,
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events, rules: baseRules, fromDate: today });
+
+    expect(result.overflow).toHaveLength(0);
+    const own = result.blocks.filter((b) => b.taskId === 'fixedgap').sort((a, b) => a.startTime.localeCompare(b.startTime));
+    expect(own).toHaveLength(2);
+    expect(own[0].startTime).toBe('14:00');
+    expect(own[0].endTime).toBe('14:30');
+    expect(own[1].startTime).toBe('14:31');
+    expect(own[1].endTime).toBe('15:01');
+    const total = own.reduce((s, b) => s + b.durationHours, 0);
+    expect(total).toBeCloseTo(1, 5);
+  });
+
+  it('merges a same-call fixed+fallback pair AND a later, separately-placed contiguous chunk from a different pass into ONE block', () => {
+    // The task needs 1.5h total against a 30-minute maxChunkHours cap.
+    // Within one placeAndRecordBlocks call for the fixed-time pass, the
+    // pinned placement takes 14:00-14:30 and its same-day fallback (also
+    // capped at maxChunkHours) takes 14:30-15:00 — those two are contiguous
+    // from the SAME call. The task's remaining 0.5h is then placed by a
+    // LATER, genuinely separate pass (the sweep pass, its own
+    // placeAndRecordBlocks call with its own placements) at 15:00-15:30 —
+    // contiguous with the first pair in wall-clock time, but produced by a
+    // different call entirely. Before this fix, that would have been 3
+    // separate blocks (or, with only the narrower same-call fix, 2 — the
+    // fixed+fallback pair merged, the sweep-pass chunk left standing alone).
+    // The full fix merges all three into ONE 14:00-15:30 block, since
+    // mergeContiguousBlocks runs once, at the very end, over every block
+    // regardless of which pass produced it.
+    const events = [{ id: 'evA', date: today, startTime: '09:00', endTime: '14:00' }];
+    const tasks = [
+      {
+        id: 'fixedfallback3', title: 'Fixed + multi-chunk fallback', estimatedHours: 1.5, remainingHours: 1.5,
+        dueDate: today, enforceDueDate: true, fixedTime: '14:00', maxChunkHours: 0.5,
+      },
+    ];
+    const result = rebalance({ tasks, existingBlocks: [], routines: [], events, rules: baseRules, fromDate: today });
+
+    expect(result.overflow).toHaveLength(0);
+    const own = result.blocks.filter((b) => b.taskId === 'fixedfallback3');
+    expect(own).toHaveLength(1);
+    expect(own[0].startTime).toBe('14:00');
+    expect(own[0].endTime).toBe('15:30');
+    expect(own[0].durationHours).toBeCloseTo(1.5, 5);
+  });
+});

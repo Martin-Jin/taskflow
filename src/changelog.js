@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.1.2',
+    date: '2026-08-26',
+    title: 'Fixed back-to-back scheduled work rendering as separate blocks',
+    changes: [
+      'When the scheduler split a task\'s remaining time into two chunks that ended up placed with no gap between them (e.g. one from 14:10–14:35 and the next from 14:35–16:50), the calendar showed them as two separate boxes with a visible seam. They now merge into a single continuous block whenever they’re genuinely back-to-back.',
+    ],
+  },
+  {
     version: '10.1.1',
     date: '2026-08-26',
     title: 'Fixed overlapping calendar events with long titles rendering unreadably narrow',

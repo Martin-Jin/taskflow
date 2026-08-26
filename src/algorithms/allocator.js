@@ -797,6 +797,19 @@ function placeAndRecordBlocks(task, date, hours, dayIntervals, newBlocks, idSuff
     if (conflict) conflictTracker.set(task.id, { type: 'conflict', conflict });
     else if (outsideWorkingHours) conflictTracker.set(task.id, { type: 'outside_hours' });
   }
+  // Placements from the two calls above (plus the same-day fallback
+  // concatenation just above) can legitimately land back-to-back with zero
+  // gap — e.g. a fixed-time chunk ending at 14:35 immediately followed by a
+  // fallback chunk starting at 14:35 — and the same is true ACROSS this
+  // task's other placement passes elsewhere in allocateTasks (weighted-share,
+  // sweep, buffer-overflow, last-resort split, horizon-spill can each place a
+  // separate chunk for this same task/date). Rather than coalescing here
+  // (which would only catch the same-call case and would also hand
+  // localSearch.js's cost-minimizing refinement a pre-merged block too coarse
+  // to relocate a sub-chunk independently), every placement always becomes
+  // its own block, and rebalanceEngine.js coalesces contiguous same-task
+  // blocks in one place, AFTER local search has already run on full
+  // per-chunk granularity — see mergeContiguousBlocks there.
   for (const p of placements) {
     newBlocks.push({
       id: `blk_${task.id}_${date}_${p.start}${idSuffix}`,
