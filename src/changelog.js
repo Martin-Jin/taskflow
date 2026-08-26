@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '10.2.1',
+    date: '2026-08-26',
+    title: 'Fixed the event editor scroll and a few calendar block display issues',
+    changes: [
+      "Fixed the event editor's Description field trapping scrolling — with a long description, the rest of the form (and the Save button) could become unreachable. The whole editor now scrolls together as one panel.",
+      'Fixed a calendar block\'s time sometimes being pushed far below its title with a big empty gap; it now sits right underneath, with a touch more breathing room above the title.',
+      "Fixed short calendar items still hiding their time even with visible room to show it, when packed side-by-side with another item — a leftover interaction from yesterday's compact-block fix.",
+    ],
+  },
+  {
     version: '10.2.0',
     date: '2026-08-26',
     title: 'Calendar events now sync live across your devices',

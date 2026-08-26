@@ -90,7 +90,54 @@ const COMPACT_TWO_LINE_MIN_HEIGHT = 32;
 // MIN_BLOCK_HEIGHT_PX, or one simply not tightly packed) would lose its time
 // line just because a neighbour starts/ends within TIGHT_GAP_PX of it, even
 // though it has plenty of its own visible room to spare.
-const TIGHT_GAP_HEIGHT_CEILING = 60;
+//
+// Expressed as a fixed +24px margin ABOVE whichever two-line threshold is
+// actually in play for this box (36 for normal type, 32 for compact — see
+// COMPACT_TWO_LINE_MIN_HEIGHT), rather than one flat number: a flat 60 was
+// tuned back when only the normal threshold existed, and left compact boxes
+// with a mismatched margin once COMPACT_TWO_LINE_MIN_HEIGHT was introduced —
+// a compact box that already comfortably cleared its OWN 32px "has room"
+// threshold (e.g. 50px tall) could still lose its time line purely because
+// 50 fell under the normal-sized 60px ceiling, which was never the box's own
+// threshold to begin with. Deriving the ceiling from the threshold that's
+// actually live for this box keeps the two compact/normal "has room" and
+// "still short" checks moving together the way they're supposed to.
+const TIGHT_GAP_HEIGHT_CEILING_MARGIN = 24;
+
+/**
+ * Whether a block/event box should render its time-range line, given its
+ * live pixel height, whether it's compact (smaller type — see isCompact in
+ * itemLiveState), whether it's tagged `tightGap` by foldSequentialItems, and
+ * how many side-by-side lanes it's currently sharing (see totalLanes in
+ * layoutDayItems). Pulled out of itemLiveState as a standalone, plain-
+ * argument function so this arithmetic (which has been the site of multiple
+ * real reported bugs — see TIGHT_GAP_HEIGHT_CEILING_MARGIN and
+ * COMPACT_TWO_LINE_MIN_HEIGHT's own comments) can be unit tested directly,
+ * the same reason calendarLayout.js's math was pulled out of this component.
+ *
+ * `tightGap` itself is computed by foldSequentialItems purely from how close
+ * an item sits to its neighbour in the WHOLE day's start-sorted sequence —
+ * it has no idea whether that item later lands in its own full-width lane
+ * (stacked directly above/below its close neighbour, where crowding is a
+ * real visual concern) or gets split into a side-by-side lane with some
+ * OTHER, unrelated item once layoutDayItems runs its overlap-group pass. In
+ * the lane-split case, the "close neighbour" tightGap was tagged for isn't
+ * even rendered in the same horizontal position any more — it's off in a
+ * different lane, or possibly a different overlap group's box entirely — so
+ * degrading this box's own render because of it is fixing a collision that
+ * doesn't visually exist. A `tightGap`-tagged box that ends up sharing 2+
+ * lanes (totalLanes > 1) is therefore exempt from the degrade regardless of
+ * height: it already has its own full lane's worth of width, and the
+ * crowding tightGap was flagging is a stale artifact of the pre-lane-split
+ * pass, not something visible on screen.
+ */
+export function computeShowTimeLine({ height, isCompact, tightGap, isResizing, totalLanes = 1 }) {
+  if (isResizing) return true;
+  const twoLineMinHeight = isCompact ? COMPACT_TWO_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT;
+  const tightGapHeightCeiling = twoLineMinHeight + TIGHT_GAP_HEIGHT_CEILING_MARGIN;
+  const degradesForTightGap = tightGap && totalLanes <= 1 && height < tightGapHeightCeiling;
+  return height >= twoLineMinHeight && !degradesForTightGap;
+}
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
@@ -934,10 +981,6 @@ export default function WeekView({
     // needs to know it too — a resizing box is never compact (it's always
     // rendered at full size while the user is actively dragging its edge).
     const isCompact = !isResizing && height < MIN_BLOCK_HEIGHT_PX;
-    // The "does a time line fit" threshold depends on which font size this
-    // box is rendering at — see COMPACT_TWO_LINE_MIN_HEIGHT's own comment for
-    // why the compact case needs less height than the normal one.
-    const twoLineMinHeight = isCompact ? COMPACT_TWO_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT;
     return {
       isDragging,
       isResizing,
@@ -947,20 +990,9 @@ export default function WeekView({
       // mid-resize the live time is the more useful one — so the title gives
       // way to it there, the same trade-off renderGhost makes.
       liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
-      // Normally a two-line render (title + time) is purely a function of
-      // this box's own height (twoLineMinHeight, above). A box tagged
-      // `tightGap` (see foldSequentialItems) sits close enough to its
-      // neighbour at this zoom that a full two-line render would look
-      // cramped/collide-adjacent — but that degrade only makes sense while
-      // this box is ALSO still short (below TIGHT_GAP_HEIGHT_CEILING); a box
-      // tall enough to have its own visible room to spare should keep its
-      // time line regardless of a close neighbour. A live resize always
-      // overrides this (the user is actively looking at this one box, and
-      // neighbours aren't repacked until the resize commits — see this
-      // function's own doc comment).
-      showTimeLine: isResizing
-        ? true
-        : height >= twoLineMinHeight && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
+      // See computeShowTimeLine's own doc comment for the full reasoning —
+      // pulled out as a standalone function so it can be unit tested.
+      showTimeLine: computeShowTimeLine({ height, isCompact, tightGap: item.tightGap, isResizing, totalLanes: item.totalLanes }),
       isCompact,
     };
   }

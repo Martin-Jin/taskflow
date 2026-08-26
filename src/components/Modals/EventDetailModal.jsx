@@ -497,6 +497,19 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
             </button>
           </div>
 
+          {/* .modal-detail (this modal's variantClassName) hides scroll on
+              the outer .modal and expects its own flexible, scrolling region
+              instead — see forms.css's .modal-detail/.detail-body comments.
+              TaskDetailModal gets that from its two-column .detail-main/
+              .detail-sidebar split; this modal has no such split (it's
+              single-column, see this file's own module doc comment), so
+              everything below the fixed .detail-header — including the
+              Save/Cancel/Delete action row — is wrapped here as the one
+              scrollable region instead. Without this wrapper, a long
+              description (or any other content taller than the modal's
+              max-height) had nowhere to scroll at all: the outer .modal no
+              longer scrolls, and nothing else in this component did either. */}
+          <div className="detail-body detail-body--single-column">
           {isCreate && (
             <div className="segmented-toggle" role="tablist" aria-label="Create event or schedule task">
               <button
@@ -759,6 +772,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
             <button className="btn btn-primary" onClick={handleSave}>
               {isCreate ? (createMode === 'task' ? 'Schedule task' : 'Add event') : 'Save'}
             </button>
+          </div>
           </div>
           </>
         );
