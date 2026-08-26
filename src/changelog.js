@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '10.3.0',
+    date: '2026-08-27',
+    title: 'Editing "Time left" now actually updates your scheduled blocks',
+    changes: [
+      'Typing a new "Time left" value for a task now updates its scheduled calendar blocks to match, instead of leaving stale blocks that no longer reflect how much work is really left.',
+      'If the new value only partly covers a block, that block shrinks to the leftover amount instead of being left untouched.',
+      'If the block being trimmed has already passed, the part of it covered by your edit stays on the calendar as done, and the rest of that time is automatically re-scheduled to a new slot.',
+      'Fixed a calendar item that had just been grouped into a chip with a too-short neighbor sometimes also swallowing the next, perfectly legible item into the same chip.',
+    ],
+  },
+  {
     version: '10.2.3',
     date: '2026-08-27',
     title: 'Fixed remaining calendar sliver cases and a recurring-task due date bug',

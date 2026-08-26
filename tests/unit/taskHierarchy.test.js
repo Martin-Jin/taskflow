@@ -367,9 +367,11 @@ describe('computeRemainingHoursPatchAfterRestore', () => {
 describe('planBlockCompletionFromRemainingHoursEdit', () => {
   // The exact scenario from the feature request: 1h logged, blocks are 40
   // and 30 minutes. First block (fully covered by the 1h pool) marks done;
-  // the leftover 20 minutes is less than the second (30min) block's own
-  // duration, so it's left as a plain reduction — no block flagged for it.
-  it('marks only the FULLY-covered oldest block(s) done, leaving a sub-block remainder unflagged', () => {
+  // the leftover 20 minutes doesn't fully cover the second (30min) block, so
+  // — with no today/nowMinutes passed, i.e. "assume it's in the future" —
+  // that block is shrunk down to the 20-minute leftover instead of left
+  // untouched, per planBlockCompletionFromRemainingHoursEdit's own ladder.
+  it('marks the FULLY-covered oldest block(s) done and shrinks a sub-block remainder to the leftover pool', () => {
     const blocks = [
       { id: 'b1', status: 'scheduled', durationHours: 40 / 60 },
       { id: 'b2', status: 'scheduled', durationHours: 30 / 60 },
@@ -377,6 +379,8 @@ describe('planBlockCompletionFromRemainingHoursEdit', () => {
     const result = planBlockCompletionFromRemainingHoursEdit(blocks, 2, 1); // decreased by 1h
     expect(result.toMarkDone).toEqual(['b1']);
     expect(result.toUnmark).toEqual([]);
+    expect(result.toShrink).toEqual([{ id: 'b2', durationHours: 0.33, markDone: false }]); // 20min rounded to hundredths of an hour
+    expect(result.toReschedule).toEqual([]);
   });
 
   it('marks multiple oldest blocks done when the pool fully covers more than one', () => {
@@ -398,11 +402,13 @@ describe('planBlockCompletionFromRemainingHoursEdit', () => {
     expect(result.toMarkDone).toEqual(['b2']);
   });
 
-  it('marks nothing done when the decrease is smaller than even the first not-done block', () => {
+  it('marks nothing done but shrinks the first not-done block when the decrease is smaller than its own duration', () => {
     const blocks = [{ id: 'b1', status: 'scheduled', durationHours: 1 }];
     const result = planBlockCompletionFromRemainingHoursEdit(blocks, 2, 1.7); // decreased by 0.3h, block needs 1h
     expect(result.toMarkDone).toEqual([]);
     expect(result.toUnmark).toEqual([]);
+    expect(result.toShrink).toEqual([{ id: 'b1', durationHours: 0.3, markDone: false }]);
+    expect(result.toReschedule).toEqual([]);
   });
 
   it('no-ops when remaining hours is unchanged', () => {
@@ -410,6 +416,46 @@ describe('planBlockCompletionFromRemainingHoursEdit', () => {
     const result = planBlockCompletionFromRemainingHoursEdit(blocks, 2, 2);
     expect(result.toMarkDone).toEqual([]);
     expect(result.toUnmark).toEqual([]);
+    expect(result.toShrink).toEqual([]);
+    expect(result.toReschedule).toEqual([]);
+  });
+
+  // FUTURE-vs-ELAPSED boundary block, with today/nowMinutes supplied.
+  describe('boundary block handling with today/nowMinutes', () => {
+    it('shrinks a FUTURE boundary block in place, without marking it done or owing a reschedule', () => {
+      const blocks = [{ id: 'b1', status: 'scheduled', date: '2026-08-28', startTime: '10:00', durationHours: 2 }];
+      // "Today" is the 27th — this block is tomorrow, still fully in the future.
+      const result = planBlockCompletionFromRemainingHoursEdit(blocks, 3, 2.5, '2026-08-27', 9 * 60);
+      expect(result.toMarkDone).toEqual([]);
+      expect(result.toShrink).toEqual([{ id: 'b1', durationHours: 0.5, markDone: false }]);
+      expect(result.toReschedule).toEqual([]);
+    });
+
+    it('shrinks a boundary block dated earlier than today to a DONE remnant, and owes the rest back as a reschedule', () => {
+      const blocks = [{ id: 'b1', status: 'scheduled', date: '2026-08-26', startTime: '19:10', durationHours: 2.833 }];
+      // "Today" is the 27th — this block's whole day is already in the past.
+      const result = planBlockCompletionFromRemainingHoursEdit(blocks, 3, 0.85, '2026-08-27', 9 * 60);
+      expect(result.toMarkDone).toEqual([]);
+      expect(result.toShrink).toEqual([{ id: 'b1', durationHours: 2.15, markDone: true }]);
+      expect(result.toReschedule).toEqual([0.68]); // 2.833 - 2.15, rounded to hundredths of an hour
+    });
+
+    it('shrinks a boundary block dated TODAY whose startTime has already elapsed to a DONE remnant, owing the rest', () => {
+      const blocks = [{ id: 'b1', status: 'scheduled', date: '2026-08-27', startTime: '08:00', durationHours: 2 }];
+      // now is 10:00 — this block started 2 hours ago, so it's already elapsed.
+      // delta = 3 - 1.5 = 1.5h pool, less than the block's own 2h duration.
+      const result = planBlockCompletionFromRemainingHoursEdit(blocks, 3, 1.5, '2026-08-27', 10 * 60);
+      expect(result.toShrink).toEqual([{ id: 'b1', durationHours: 1.5, markDone: true }]);
+      expect(result.toReschedule).toEqual([0.5]);
+    });
+
+    it('treats a TODAY block whose startTime has NOT yet elapsed as future — shrinks in place, nothing owed', () => {
+      const blocks = [{ id: 'b1', status: 'scheduled', date: '2026-08-27', startTime: '14:00', durationHours: 2 }];
+      // now is 10:00 — this block hasn't started yet. delta = 1.5h pool.
+      const result = planBlockCompletionFromRemainingHoursEdit(blocks, 3, 1.5, '2026-08-27', 10 * 60);
+      expect(result.toShrink).toEqual([{ id: 'b1', durationHours: 1.5, markDone: false }]);
+      expect(result.toReschedule).toEqual([]);
+    });
   });
 
   // REVERSE direction — an increase (correcting an error) un-marks already
