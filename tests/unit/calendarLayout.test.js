@@ -952,15 +952,15 @@ describe('short EVENTS fold like short blocks (both directions pinned)', () => {
  */
 describe('short-box legibility ladder (own height -> expand -> fold)', () => {
   it('step 1: an item whose own true height fits title+time at NORMAL type is left exactly at its true height', () => {
-    // 30 minutes at max zoom is 37.5px, past TWO_LINE_MIN_HEIGHT_PX (36), so
+    // 36 minutes at max zoom is 45px, past TWO_LINE_MIN_HEIGHT_PX (44), so
     // both lines fit inside the item's own real duration. Nothing should be
     // stretched and the type must stay full-size — this is the case where the
     // calendar can be completely honest about the time axis.
     const pxPerMin = 1.25;
-    const packed = packLane([block('A', 600, 630), block('B', 720, 780)], pxPerMin);
+    const packed = packLane([block('A', 600, 636), block('B', 720, 780)], pxPerMin);
     const a = packed.find((p) => p.data?.id === 'A');
     expect(a.fontMode).toBe('normal');
-    expect(a.height).toBe(Math.round(30 * pxPerMin));
+    expect(a.height).toBe(Math.round(36 * pxPerMin));
   });
 
   it('step 1: an item that fits only at COMPACT type shrinks its type rather than stretching', () => {
@@ -1025,6 +1025,32 @@ describe('short-box legibility ladder (own height -> expand -> fold)', () => {
       expect(allIds).toEqual(expect.arrayContaining(['Test prep', 'Email student', 'Piano']));
       expect(new Set(allIds).size).toBe(3);
     }
+  });
+
+  it('step 3: THE SECOND REPORTED BUG — a partial grow that clears the one-line floor but not a full two-line height still folds', () => {
+    // The fold check used to compare the item's height AFTER growth against
+    // COMPACT_BLOCK_HEIGHT_PX (20px, "can show a title alone"), not
+    // TWO_LINE_MIN_HEIGHT_PX (36px, "can show title AND time"). A item that
+    // went through the growth step specifically because it couldn't show
+    // BOTH lines within its own true duration, but found only a LITTLE free
+    // room below it — enough to clear 20px, not enough to clear 36px — used
+    // to pass the old check and render as a naked title with no time and a
+    // visible dead gap, instead of folding. This is exactly what the second
+    // screenshot showed: "Email student" rendered small, clickable, with a
+    // hover preview, but no visible time on the box itself and no fold.
+    //
+    // Reconstructed at max zoom (1.25px/min): "Email student" is 2 real
+    // minutes (5px true height) — under COMPACT_TWO_LINE_MIN_HEIGHT_PX, so it
+    // goes through the growth step. Its follower "Piano" starts 20 real
+    // minutes later, giving availableBelow = 20*1.25 - BLOCK_GAP_PX = 23px —
+    // comfortably clears the old 20px bar, but is well short of the 36px a
+    // real two-line render needs.
+    const items = [block('Test prep', 1145, 1320), block('Email student', 1195, 1197), block('Piano', 1217, 1260)];
+    const positioned = computeDayPositions(layoutDayItems(items, 1.25), 1.25);
+    const email = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'Email student');
+    expect(email).toBeUndefined();
+    const allIds = positioned.flatMap((p) => (p.kind === 'cluster' ? p.items.map((i) => i.data.id) : [p.data.id]));
+    expect(allIds).toEqual(expect.arrayContaining(['Test prep', 'Email student', 'Piano']));
   });
 
   it('step 3 does NOT fire for an item that merely can’t show its TIME — only one that can’t show its title either', () => {

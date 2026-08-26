@@ -85,9 +85,11 @@ export const COMPACT_BLOCK_HEIGHT_PX = 20;
 // above only cover a single line (the title); these cover the pair.
 //
 // Two numbers, because the two type sizes need different amounts of room:
-//   - TWO_LINE_MIN_HEIGHT_PX: the normal 11.5px type. A title line plus a
-//     time line plus the box's own top/bottom padding needs roughly 35px, so
-//     36 with a little slack.
+//   - TWO_LINE_MIN_HEIGHT_PX: the normal 11.5px type. Adding up .cal-block's
+//     own parts — 6px top padding, an 11.5px/1.5 (inherited body line-height)
+//     title line (17.25px), the time line's 1px top margin, a 10px/1.5 time
+//     line (15px), and 4px bottom padding — comes to 43.25px, rounded up to
+//     a clean 44.
 //   - COMPACT_TWO_LINE_MIN_HEIGHT_PX: the smaller 10px type used by
 //     .cal-block.is-compact, which also tightens the padding. Adding that
 //     rule's parts up — 1px top padding, a 10px/1.25 title line (12.5px), a
@@ -99,7 +101,7 @@ export const COMPACT_BLOCK_HEIGHT_PX = 20;
 // WeekView because chooseFontMode (below) has to make the "which type size,
 // and does it fit?" call as part of the layout maths, before any box gets a
 // height — see its own comment.
-export const TWO_LINE_MIN_HEIGHT_PX = 36;
+export const TWO_LINE_MIN_HEIGHT_PX = 44;
 export const COMPACT_TWO_LINE_MIN_HEIGHT_PX = 32;
 
 /**
@@ -877,7 +879,15 @@ export function packLane(items, pxPerMin) {
     // 31px at max zoom) that the calendar has always drawn at their true
     // height, and drawing them longer than they are is a worse lie than
     // omitting a time range the user can read off the grid anyway.
-    if (item.kind !== 'cluster' && fontMode === 'expand' && !isLegibleAlone(item.end - item.start, pxPerMin)) {
+    // Whether this item actually went through the grow-into-idle-space step
+    // below — tracked separately from naturalHeight's own value, because the
+    // fold check further down needs to know not just "how tall did this end
+    // up" but "did growing even get it to a height that can show what it was
+    // trying to show." A growth attempt that only PARTIALLY succeeds (there
+    // was some free room, but not enough to reach a full two-line height)
+    // still counts as an attempt that fell short, not as "not applicable."
+    const wentThroughGrowthStep = item.kind !== 'cluster' && fontMode === 'expand' && !isLegibleAlone(item.end - item.start, pxPerMin);
+    if (wentThroughGrowthStep) {
       const nextNaturalTop = i + 1 < sorted.length ? (sorted[i + 1].start - GRID_START_MIN) * pxPerMin : Infinity;
       // Leave BLOCK_GAP_PX of the available room untouched so growing into it
       // still lands comfortably under EXCESSIVE_PUSHDOWN_PX against the next
@@ -926,26 +936,36 @@ export function packLane(items, pxPerMin) {
     const excessiveThreshold = requiresStrictCheck ? EXCESSIVE_PUSHDOWN_PX : chainBaseline + EXCESSIVE_PUSHDOWN_PX;
 
     // The last step of the legibility ladder (see this function's own doc
-    // comment): an item that is too short to read even at compact type AND
-    // couldn't find enough free room below to stretch into has run out of
-    // ways to render honestly, so it folds into a chip with whatever is
-    // crowding it. Without this a 5-minute task wedged between a long
-    // side-by-side neighbour and a follower that starts the instant it ends
-    // draws as a few-pixel sliver: no title, no time, nothing to click but a
-    // line. It cannot be rescued by the growth step because there is nothing
-    // free below it, and the pushdown check below never sees it because the
-    // pixel it borrows from its follower lands exactly ON the tolerance
-    // rather than past it.
+    // comment): an item that went through the grow-into-idle-space step above
+    // (because it couldn't show its title+time within its own true duration
+    // at either type size) but STILL didn't reach a full two-line height —
+    // whether because there was no free room at all, or only partial room —
+    // has run out of ways to render what it needed to, so it folds into a
+    // chip with whatever is crowding it. Without this a 5-minute task wedged
+    // between a long side-by-side neighbour and a follower that starts the
+    // instant it ends draws as a bare title (or nothing) with no time, rather
+    // than being grouped with its neighbour honestly.
     //
-    // Restricted to items sharing an overlap group with something else
-    // (totalLanes >= 2), which is what marks an item as genuinely competing
-    // for space rather than simply being a short item on an otherwise clear
-    // stretch of the day. An ordinary short task sitting back-to-back with
-    // the next one gets its own full-width lane in its own overlap group and
-    // must keep its box — hiding a readable title behind an anonymous chip is
-    // the over-clustering regression this file's history is full of.
+    // The bar here is TWO_LINE_MIN_HEIGHT_PX (36), not the one-line
+    // COMPACT_BLOCK_HEIGHT_PX (20) floor used elsewhere in this file — an
+    // item that took this branch already failed isLegibleAlone at its own
+    // true duration, so it has nothing to show at all unless growth actually
+    // got it to a real two-line height; a partial grow that clears 20px but
+    // not 36px would otherwise render as a naked title with no time, silently
+    // reintroducing the exact bug this whole ladder exists to fix. Every item
+    // that goes through this branch is always drawn at NORMAL type once
+    // expanded (see the fontMode assignment at the end of this function), so
+    // the normal threshold applies regardless of what chooseFontMode said
+    // before growth was attempted.
+    //
+    // Restricted to items that actually went through the growth step — an
+    // item that's legibly-alone-but-just-lacks-a-time-line, or a cluster,
+    // never reaches for this check with a meaningful naturalHeight, and must
+    // not be pulled into folding just for lacking a second line it was never
+    // trying to grow into anyway (see the growth step's own doc comment on
+    // why that's a normal, honest degrade, not a failure).
     const unreadableEvenAfterGrowing =
-      item.kind !== 'cluster' && (item.totalLanes || 1) >= 2 && naturalHeight < COMPACT_BLOCK_HEIGHT_PX;
+      wentThroughGrowthStep && (item.totalLanes || 1) >= 2 && naturalHeight < TWO_LINE_MIN_HEIGHT_PX;
 
     // Such an item folds into whichever neighbour it is crowding against. If
     // something already sits above it in this lane, that's the one. If it is

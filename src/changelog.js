@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '10.2.3',
+    date: '2026-08-27',
+    title: 'Fixed remaining calendar sliver cases and a recurring-task due date bug',
+    changes: [
+      'Fixed a short calendar item that partially grew into empty space still rendering with no visible time — it now correctly groups with a neighbor instead when growing isn\'t enough to show both its title and time.',
+      'Fixed a calendar block\'s time sometimes getting clipped instead of hiding cleanly when there wasn\'t quite enough room.',
+      'Fixed a new recurring task (e.g. "every Friday") defaulting its due date to today even when today doesn\'t match the pattern — it now anchors to the actual next matching day.',
+    ],
+  },
+  {
     version: '10.2.2',
     date: '2026-08-26',
     title: 'Short calendar items now expand or group instead of rendering unreadably small',

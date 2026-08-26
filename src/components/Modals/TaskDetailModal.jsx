@@ -110,6 +110,7 @@ import {
   findRecurrencePhrase,
   buildRecurrenceString,
   resolveCurrentOccurrenceDueDate,
+  computeFirstMatchingDueDate,
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import Modal from '../Common/Modal';
@@ -1060,7 +1061,15 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
           setRecurrenceCount(match.rule.count);
           setRecurrenceUnit(match.rule.unit);
           setRecurrenceDays(match.rule.days || null);
-          if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
+          // Default to today only if today actually satisfies the
+          // just-detected rule — "every friday" typed on a Thursday must
+          // anchor on the next Friday, or the task's first occurrence would
+          // fall on a day the rule doesn't match. See AddTaskModal's
+          // matching fix for the same bug on task creation.
+          if (!dueDate && !detected.dueDate) {
+            const recurrenceString = buildRecurrenceString(match.rule.count, match.rule.unit, match.rule.days || null);
+            setDueDate(computeFirstMatchingDueDate(toISODate(new Date()), recurrenceString));
+          }
         },
         revert: () => {
           lastSmartRecurrenceRef.current = null;
