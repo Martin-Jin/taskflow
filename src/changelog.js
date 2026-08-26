@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.2.2',
+    date: '2026-08-26',
+    title: 'Short calendar items now expand or group instead of rendering unreadably small',
+    changes: [
+      "A very short calendar item (a few minutes long) squeezed next to another item, with no room to shrink its text and fit, now grows into any genuinely empty space below it so its time can still show — and if there's truly no room to grow either, it groups with whatever's crowding it into a tappable \"N items\" chip instead of rendering as an unreadable sliver.",
+    ],
+  },
+  {
     version: '10.2.1',
     date: '2026-08-26',
     title: 'Fixed the event editor scroll and a few calendar block display issues',

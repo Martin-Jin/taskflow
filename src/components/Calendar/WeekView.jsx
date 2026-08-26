@@ -52,6 +52,8 @@ import {
   GRID_START_MIN,
   DEFAULT_SCROLL_MIN,
   MIN_BLOCK_HEIGHT_PX,
+  TWO_LINE_MIN_HEIGHT_PX,
+  COMPACT_TWO_LINE_MIN_HEIGHT_PX,
   layoutDayItems,
   computeDayPositions,
   foldNarrowIllegibleTitles as foldNarrowIllegibleTitlesPure,
@@ -72,16 +74,13 @@ const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
 export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
-const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
-
-// Compact blocks (see isCompact below) render at a smaller 10px font with
-// tighter padding (see .cal-block.is-compact in calendar.css), so they need
-// less height to fit both lines than TWO_LINE_MIN_HEIGHT — which is tuned for
-// the normal 11.5px font. Compact box model: 1px top padding + a 10px/1.25
-// line-height title (12.5px) + a 10px/1.5 line-height time line (15px) + the
-// time line's 1px margin-top + 1px bottom padding = 30.5px, rounded up to a
-// clean, slightly conservative 32px.
-const COMPACT_TWO_LINE_MIN_HEIGHT = 32;
+// Both two-line height thresholds (the normal-type one and the smaller
+// compact-type one) now live in calendarLayout.js, because the layout pass
+// itself has to consult them: it decides which type size a box gets, and
+// whether a box needs stretching at all, before any height is assigned. These
+// aliases keep the shorter names this file already reads well with.
+const TWO_LINE_MIN_HEIGHT = TWO_LINE_MIN_HEIGHT_PX;
+const COMPACT_TWO_LINE_MIN_HEIGHT = COMPACT_TWO_LINE_MIN_HEIGHT_PX;
 
 // tightGap (see foldSequentialItems) is meant to degrade a box that's ALSO
 // still short enough for a two-line render to look cramped next to its close
@@ -972,15 +971,22 @@ export default function WeekView({
     const height = isResizing
       ? Math.max(MIN_BLOCK_HEIGHT_PX, (resizePreview.endMin - timeToMinutes(item.data.startTime)) * pxPerMin)
       : item.height;
-    // Between the compact floor and the full-size one, the title renders at
-    // a smaller type size instead of the item being folded into a chip (see
-    // COMPACT_BLOCK_HEIGHT_PX). Shrinking the text slightly beats hiding the
-    // title behind "3 tasks"; below the compact floor the layout has already
-    // clustered it, so this band is the only place it applies. Computed up
-    // front (rather than inline below) because showTimeLine's own threshold
-    // needs to know it too — a resizing box is never compact (it's always
-    // rendered at full size while the user is actively dragging its edge).
-    const isCompact = !isResizing && height < MIN_BLOCK_HEIGHT_PX;
+    // Which type size to draw at is decided by the layout pass, not here, and
+    // travels on the item as `fontMode` (see chooseFontMode in
+    // calendarLayout.js). It has to be decided there because it depends on the
+    // item's own real duration — the height it WOULD have if nothing stretched
+    // it — which is information this component no longer has once the box has
+    // been given a final drawn height.
+    //
+    // Reading it off the drawn height here instead, as this used to, produced
+    // boxes that were both shrunk AND stretched: the layout would stretch a
+    // too-short box part-way toward legibility, it would land under the
+    // full-size floor, and this line would shrink it on top of that. That pays
+    // the readability cost of small text without buying the one thing small
+    // text was for, which is keeping the box's bottom edge on its real end
+    // time. A resizing box is never compact — it's drawn full-size while the
+    // user is actively dragging its edge.
+    const isCompact = !isResizing && item.fontMode === 'compact';
     return {
       isDragging,
       isResizing,
