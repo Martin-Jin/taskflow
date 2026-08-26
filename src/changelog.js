@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.2.0',
+    date: '2026-08-26',
+    title: 'Calendar events now sync live across your devices',
+    changes: [
+      'Editing or deleting a calendar event on one device now shows up on your other signed-in devices within moments — the same live sync tasks already have — whether or not Google Calendar is connected on either device. Deleting an event now actually removes it everywhere, not just on the device you deleted it from.',
+      'Also fixed a rare case where editing a single occurrence of a repeating event (or ignoring/deleting it) could fail to carry over correctly during a sync.',
+    ],
+  },
+  {
     version: '10.1.2',
     date: '2026-08-26',
     title: 'Fixed back-to-back scheduled work rendering as separate blocks',

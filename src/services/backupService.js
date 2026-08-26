@@ -25,19 +25,24 @@ import { downloadTextFile } from '../utils/downloadFile';
  * `null` is its valid "use the shipped default" value, not a missing field.
  *
  * `events` (CalendarEvents — Google Calendar bookings, plus any manual/
- * blocked-time entries) is the other exception, in the opposite direction:
- * it's included here (point-in-time backups DO capture it) but deliberately
- * excluded from the LIVE cross-device Firestore sync (see useCloudSync.js's
- * computeFingerprint/planRemoteDataMerge/applyRemoteData, none of which
- * mention `events`). The risk that originally got `events` excluded from
- * everything — a stale snapshot silently resurrecting an event the user had
- * already deleted (in TaskFlow or directly in Google Calendar) — is a much
- * bigger deal for live sync, which reconciles automatically and continuously
- * in the background, than for a backup, which only ever gets written back by
- * an explicit, one-directional, user-initiated "restore" action. Google
- * Calendar remains the authoritative store for events day-to-day (see
- * useGoogleCalendarSync.js); this is just a safety net for "I deleted my
- * whole account's data" / "my local storage got wiped" scenarios.
+ * blocked-time entries) now rides the SAME live cross-device Firestore sync
+ * as `tasks` — see useCloudSync.js's computeFingerprint/planRemoteDataMerge/
+ * applyRemoteData, and utils/eventMerge.js/eventTombstones.js for the
+ * per-event, timestamp-and-tombstone merge that makes it safe. It used to be
+ * excluded entirely: the OLD design would have synced the whole `events`
+ * ARRAY as one blob per device, and a stale device's push could silently
+ * overwrite a newer deletion made on another device purely by writing last —
+ * "resurrecting" an event the user had already deleted. That risk is gone
+ * once each event merges individually by its own `localUpdatedAt` timestamp,
+ * with a real deletion tombstone instead of a plain array removal — the
+ * exact fix `tasks` already had via mergeTasksByUpdatedAt/taskTombstones.js,
+ * now mirrored for events. It's listed here for the same reason `tasks` is:
+ * a point-in-time backup is still a useful safety net independent of live
+ * sync, so it captures the same field. Google Calendar remains the
+ * authoritative store for an event's day-to-day content when Google Calendar
+ * is connected (see useGoogleCalendarSync.js) — this cross-device sync only
+ * ever has to carry events between TaskFlow's own devices, which matters
+ * precisely when Google Calendar is NOT connected on one of them.
  */
 export const BACKUP_FIELDS = [
   'tasks',
@@ -200,14 +205,32 @@ function excludeDeletedTasks(tasks) {
   return tasks.filter((task) => !task.deletedAt);
 }
 
-/** Assemble a full backup payload from current state, tagged with when it was taken. Completed one-off tasks (and their blocks), and deleted-task tombstones, are left out — there's nothing to restore them to. */
+/**
+ * Same reasoning as excludeDeletedTasks, applied to CalendarEvents now that
+ * they carry their own deletion tombstones (see utils/eventTombstones.js) for
+ * the live cross-device sync merge. A tombstone is a transient signal for
+ * that merge to converge on, not content worth preserving in a point-in-time
+ * backup — there's nothing to restore it to, and keeping one around only
+ * risks a much-later restore reintroducing a dead entry every live device
+ * already purged via its own retention sweep.
+ */
+function excludeDeletedEvents(events) {
+  return events.filter((event) => !event.deletedAt);
+}
+
+/** Assemble a full backup payload from current state, tagged with when it was taken. Completed one-off tasks (and their blocks), and deleted-task/deleted-event tombstones, are left out — there's nothing to restore them to. */
 export function buildBackupPayload(state) {
   const payload = { exportedAt: new Date().toISOString() };
   BACKUP_FIELDS.forEach((field) => {
     payload[field] = state[field];
   });
   const { tasks, blocks } = excludeCompletedTasks(payload.tasks, payload.blocks);
-  return { ...payload, tasks: excludeDeletedTasks(tasks), blocks };
+  return {
+    ...payload,
+    tasks: excludeDeletedTasks(tasks),
+    blocks,
+    events: excludeDeletedEvents(payload.events || []),
+  };
 }
 
 /**
