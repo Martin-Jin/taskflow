@@ -1070,6 +1070,65 @@ describe('short-box legibility ladder (own height -> expand -> fold)', () => {
     }
   });
 
+  it('step 3: THE THIRD REPORTED BUG — a legible item after a genuine (non-cluster-inflated) fold must not itself be dragged into that fold', () => {
+    // Real reported case, max zoom (1.25px/min): "Email student" (19:55-20:00,
+    // 5 real min) can't stand alone and correctly merges with its immediate
+    // neighbour "Prepare for tutorial" (20:00-20:30, 30 real min) into one
+    // chip. That much is correct and wanted. The bug: "Piano" (20:30-21:30,
+    // a full real hour, perfectly legible on its own) was ALSO getting pulled
+    // into that same chip, purely because the merged chip's own rounded
+    // bottom edge (Math.round(top) + Math.round(height) computed
+    // independently) overshot its honest real-time position by ~2.5px —
+    // just over the near-zero EXCESSIVE_PUSHDOWN_PX(2) tolerance — even
+    // though Piano's real start time exactly matches the chip's real end
+    // time, a genuine zero-minute gap. Piano must render as its own box.
+    const items = [
+      block('Test prep', 1145, 1320), // 19:05-22:00, a long side-by-side neighbour in the other lane
+      block('Email student', 1195, 1200), // 19:55-20:00
+      block('Prepare for tutorial', 1200, 1230), // 20:00-20:30
+      block('Piano', 1230, 1290), // 20:30-21:30
+    ];
+    const positioned = computeDayPositions(layoutDayItems(items, 1.25), 1.25);
+    const piano = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'Piano');
+    expect(piano).toBeDefined();
+    expect(piano.fontMode).toBe('normal');
+    // Email student + Prepare for tutorial still correctly merge with each
+    // other — this fix must not accidentally stop THAT fold from happening.
+    const cluster = positioned.find((p) => p.kind === 'cluster');
+    expect(cluster).toBeDefined();
+    const clusterIds = cluster.items.map((i) => i.data.id);
+    expect(clusterIds).toEqual(expect.arrayContaining(['Email student', 'Prepare for tutorial']));
+    expect(clusterIds).not.toContain('Piano');
+  });
+
+  it('step 3: a following item still folds into a cluster whose bottom edge WAS genuinely stretched (the floor actually kicked in)', () => {
+    // Companion to the fix above, pinning the other direction: when a merged
+    // chip's height is genuinely inflated past its members' true combined
+    // span (here, two very short back-to-back items whose true combined
+    // span is well under MIN_BLOCK_HEIGHT_PX, so the floor stretches the
+    // chip's bottom edge for real, not just by rounding), a following item
+    // landing inside that genuinely-stretched region must still fold in —
+    // the honest-cluster carve-out must not accidentally cover a real
+    // shortfall too.
+    //
+    // Uses layoutDayItems + computeDayPositions (not a raw packLane call)
+    // so A/B/C get real totalLanes assigned via an overlapping side-by-side
+    // neighbour — unreadableEvenAfterGrowing (and therefore the whole
+    // pendingUnreadable path this test exercises) is gated on totalLanes >=
+    // 2 and silently never fires without one, per its own doc comment.
+    const items = [
+      block('Side', 1190, 1320), // 19:50-22:00, a long side-by-side neighbour forcing totalLanes=2
+      block('A', 1195, 1196), // 19:55-19:56, 1 real minute
+      block('B', 1196, 1197), // 19:56-19:57, 1 real minute — true combined span with A is 2 min (2.5px), far under the 26px floor
+      block('C', 1197, 1199), // 19:57-19:59, starts the instant B ends — landing well inside the floor-inflated chip
+    ];
+    const positioned = computeDayPositions(layoutDayItems(items, 1.25), 1.25);
+    const cluster = positioned.find((p) => p.kind === 'cluster');
+    expect(cluster).toBeDefined();
+    const clusterIds = cluster.items.map((i) => i.data.id);
+    expect(clusterIds).toEqual(expect.arrayContaining(['A', 'B', 'C']));
+  });
+
   it('never reports the compact-and-stretched combination for ANY duration/zoom/spacing shape', () => {
     // The clarified rule as a hard invariant, swept across every zoom level,
     // every duration up to an hour, and a spread of gaps to the next item: no

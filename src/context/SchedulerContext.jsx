@@ -3555,7 +3555,15 @@ export function SchedulerProvider({ children }) {
       if (!areDependenciesMet(task, taskById)) return;
       const oldRemaining = getEffectiveRemainingHoursForOccurrence(task);
       const clampedNew = Math.min(Math.max(0, Number(newRemaining) || 0), task.estimatedHours);
-      const { toMarkDone, toUnmark } = planBlockCompletionFromRemainingHoursEdit(blocksForTask, oldRemaining, clampedNew);
+      const today = toISODate(new Date());
+      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+      const { toMarkDone, toUnmark, toShrink, toReschedule } = planBlockCompletionFromRemainingHoursEdit(
+        blocksForTask,
+        oldRemaining,
+        clampedNew,
+        today,
+        nowMinutes
+      );
 
       const remainingHoursPatch = !task.isRecurring
         ? { remainingHours: clampedNew }
@@ -3565,23 +3573,69 @@ export function SchedulerProvider({ children }) {
 
       const markDoneSet = new Set(toMarkDone);
       const unmarkSet = new Set(toUnmark);
-      const newBlocks = blocks.map((b) => {
-        if (markDoneSet.has(b.id)) return { ...b, status: 'done', hoursAppliedToRemaining: b.durationHours };
-        if (unmarkSet.has(b.id)) {
-          const { hoursAppliedToRemaining, ...rest } = b;
-          return { ...rest, status: 'scheduled' };
-        }
-        return b;
-      });
-      const newTasks = remainingHoursPatch
-        ? tasks.map((t) => (t.id === task.id ? { ...t, ...remainingHoursPatch } : t))
-        : tasks;
-      commit({ tasks: newTasks, blocks: newBlocks }, `Updated time left`);
+      const shrinkById = new Map(toShrink.map((s) => [s.id, s]));
+      // Pure function of whatever {tasks, blocks} it's handed, so it can run
+      // against either the closure's own current state (plain commit below)
+      // or commitAndGet's freshest-queued `current` (rebalance branch below)
+      // — see runRebalance's own doc comment on why reading a stale closure
+      // instead of `current` there would risk silently clobbering a commit
+      // that got queued in the same tick.
+      const applyPatch = (currentTasks, currentBlocks) => {
+        const patchedBlocks = currentBlocks.map((b) => {
+          if (markDoneSet.has(b.id)) return { ...b, status: 'done', hoursAppliedToRemaining: b.durationHours };
+          if (unmarkSet.has(b.id)) {
+            const { hoursAppliedToRemaining, ...rest } = b;
+            return { ...rest, status: 'scheduled' };
+          }
+          const shrink = shrinkById.get(b.id);
+          if (shrink) {
+            // Trim the block down to exactly the leftover pool, keeping its
+            // own startTime (see planBlockCompletionFromRemainingHoursEdit's
+            // own doc comment on why the START stays fixed). If the pool only
+            // covered PART of an already-elapsed block, the trimmed remnant is
+            // marked done — it's a genuine record of the work that pool says
+            // actually happened, at the time it happened; the hours this trim
+            // cuts away are picked up by the reschedule pass below instead of
+            // being silently lost.
+            const endMinutes = timeToMinutes(b.startTime) + Math.round(shrink.durationHours * 60);
+            const patch = { ...b, endTime: minutesToTime(endMinutes), durationHours: shrink.durationHours };
+            return shrink.markDone ? { ...patch, status: 'done', hoursAppliedToRemaining: shrink.durationHours } : patch;
+          }
+          return b;
+        });
+        const patchedTasks = remainingHoursPatch
+          ? currentTasks.map((t) => (t.id === task.id ? { ...t, ...remainingHoursPatch } : t))
+          : currentTasks;
+        return { tasks: patchedTasks, blocks: patchedBlocks };
+      };
+
+      // A shrunk-done block's own trimmed duration already lowers this
+      // task's "spent" hours correctly for the next rebalance's own
+      // estimatedHours-minus-spent recompute (see rebalanceEngine.js step 2)
+      // — nothing else needs to change to make the owed remainder show up as
+      // real remainingHours again. So the actual re-placement of
+      // `toReschedule`'s owed hours doesn't need its own bespoke logic at
+      // all: committing this patch, then immediately running the SAME
+      // re-balance pass the "Re-balance schedule" button uses, naturally
+      // finds fresh capacity for exactly the hours this trim just freed up.
+      // Every other task's own blocks are unaffected — rebalance() is a
+      // pure recompute of ITS inputs, and nothing about them changed here.
+      if (toReschedule.length > 0) {
+        let result;
+        commitAndGet((current) => {
+          const patched = applyPatch(current.tasks, current.blocks);
+          result = rebalance({ tasks: patched.tasks, existingBlocks: patched.blocks, routines, events, rules, currentUserId: user?.uid });
+          return { next: { tasks: patched.tasks, blocks: result.blocks }, value: result };
+        }, `Updated time left`);
+        setLastOverflow(result.overflow);
+      } else {
+        commit(applyPatch(tasks, blocks), `Updated time left`);
+      }
       // Same auto-complete trigger as markBlockDone: the user's own edit
       // drove remaining hours all the way to 0, so the task itself is done.
       if (clampedNew <= 0) completeTaskRef.current?.(task.id);
     },
-    [tasks, blocks, commit]
+    [tasks, blocks, commit, commitAndGet, routines, events, rules, user?.uid]
   );
 
   // Manually place a task's work onto a specific date/time slot — the one

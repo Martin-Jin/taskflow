@@ -147,45 +147,95 @@ export function computeRemainingHoursPatchAfterRestore(task, hoursToRestore) {
  * Plans which of `task`'s not-yet-done scheduled blocks a manual "Time
  * left" EDIT should auto-mark done (or un-mark), given the OLD and NEW
  * remaining-hours values the user just set directly. Pure/read-only —
- * returns `{ toMarkDone: [blockId...], toUnmark: [blockId...] }`; the
- * caller (SchedulerContext's setRemainingHoursWithBlockInference) is what
- * actually applies these via markBlockDone/unmarkBlockDone so the existing
- * hoursAppliedToRemaining bookkeeping and undo/commit semantics stay in one
- * place, not duplicated here.
+ * returns `{ toMarkDone, toUnmark, toShrink, toReschedule }`; the caller
+ * (SchedulerContext's setRemainingHoursWithBlockInference) is what actually
+ * applies these via markBlockDone/unmarkBlockDone/direct block edits/a
+ * scoped re-balance so the existing hoursAppliedToRemaining bookkeeping and
+ * undo/commit semantics stay in one place, not duplicated here.
  *
  * FORWARD (newRemaining < oldRemaining — the user logged more work than the
  * scheduler's own block math had captured): treats the decrease as a pool of
  * "extra elapsed hours" and walks `blocks` (already assumed sorted oldest
- * first — see TaskDetailModal's taskScheduledBlocks) marking a block done
- * only when the pool FULLY covers its own durationHours, oldest first,
- * stopping the moment the pool can't fully cover the next block. A leftover
- * partial pool (less than one whole block) is deliberately left as a plain
- * reduction with no block flagged — ScheduledBlock has no partial-done
- * state, only fully done or not (ask the user before adding one).
+ * first — see TaskDetailModal's taskScheduledBlocks) marking a block fully
+ * done whenever the pool covers its whole durationHours, oldest first. The
+ * one block where the pool runs out mid-way (covers some but not all of it)
+ * is the BOUNDARY block, handled one of two ways depending on whether it's
+ * already elapsed (see `today`/`nowMinutes`, the same wall-clock inputs
+ * missedTasks.js's isBlockMissed uses):
+ *   - NOT yet started (a future block): shrinks in place to exactly the
+ *     leftover pool, keeping its own startTime — e.g. a 4:10-5:20pm block
+ *     with only 0.5h of pool left over becomes 4:10-4:40pm. Reported via
+ *     `toShrink`; nothing needs rescheduling since the block already sat in
+ *     an open slot with no other work claiming the trimmed-off remainder.
+ *   - Already started or past (`block.date < today`, or today's block whose
+ *     startTime has already passed `nowMinutes`): the wall-clock time already
+ *     happened, but the pool says only PART of it was real work. That part
+ *     is preserved as a genuine "done" record — shrunk to the pool amount,
+ *     keeping its original startTime — and the rest of the block's original
+ *     duration (which the pool doesn't cover) didn't actually get done, so
+ *     it's handed back via `toReschedule` as hours still owed, for the
+ *     caller to re-place with a fresh scheduling pass rather than silently
+ *     dropped. Reported via `toShrink` (the done remnant) + `toReschedule`
+ *     (the owed hours) together, never `toMarkDone` — a done record with a
+ *     trimmed duration needs its own `hoursAppliedToRemaining`, which
+ *     `toMarkDone`'s blanket "whole block" handling doesn't carry.
  *
  * REVERSE (newRemaining > oldRemaining — the user is correcting an error by
  * INCREASING time left): walks already-done blocks NEWEST first (undoing
  * the most recently inferred completion first, mirroring how the forward
  * direction consumes oldest first) un-marking until the increase is
- * accounted for or there are no more done blocks to undo.
+ * accounted for or there are no more done blocks to undo. Unchanged by the
+ * shrink/reschedule addition above — growing time left never needs to
+ * un-shrink a block or cancel a reschedule, since neither of those leaves a
+ * `done` record behind for this walk to find.
  *
  * Deliberately excludes blocks the user already marked done through the
  * checkbox UI in the SAME edit — those aren't re-evaluated here, this only
  * infers NEW completions/reversals from the numeric delta.
+ *
+ * `today`/`nowMinutes` are optional (default to "everything is in the
+ * future") purely so existing callers/tests that only care about the
+ * whole-block FORWARD/REVERSE behavior don't need to pass wall-clock state
+ * they have no reason to compute — every real caller (SchedulerContext) has
+ * both on hand already.
  */
-export function planBlockCompletionFromRemainingHoursEdit(blocks, oldRemaining, newRemaining) {
+export function planBlockCompletionFromRemainingHoursEdit(blocks, oldRemaining, newRemaining, today = null, nowMinutes = null) {
   const delta = oldRemaining - newRemaining; // positive = user logged MORE work
   if (delta > 0) {
     let pool = delta;
     const toMarkDone = [];
+    const toShrink = [];
+    const toReschedule = [];
     for (const block of blocks) {
       if (block.status === 'done') continue;
-      if (pool < block.durationHours) break; // partial remainder — leave unflagged, per doc comment above
+      if (pool < block.durationHours) {
+        // Rounded to hundredths of an hour (same precision rebalanceEngine.js
+        // uses for its own unplacedHours reporting) — pool accumulates via
+        // repeated float subtraction above, so an exact-looking input like
+        // "0.3h left over" can otherwise arrive here as 0.30000000000000004.
+        const roundedPool = Math.round(pool * 100) / 100;
+        if (roundedPool > 0) {
+          const hasElapsed = today != null && (block.date < today || (block.date === today && timeToMinutesLocal(block.startTime) <= (nowMinutes ?? -Infinity)));
+          if (hasElapsed) {
+            // The block's wall-clock time already happened, but only `pool`
+            // hours of it were real work — preserve that much as a done
+            // record at its original startTime, and owe the rest back to
+            // the scheduler instead of silently losing it.
+            toShrink.push({ id: block.id, durationHours: roundedPool, markDone: true });
+            toReschedule.push(Math.round((block.durationHours - roundedPool) * 100) / 100);
+          } else {
+            // Still in the future — nothing has happened yet, so simply
+            // trim the open slot down to what's actually still needed.
+            toShrink.push({ id: block.id, durationHours: roundedPool, markDone: false });
+          }
+        }
+        break;
+      }
       pool -= block.durationHours;
       toMarkDone.push(block.id);
       if (pool <= 0) break;
     }
-    return { toMarkDone, toUnmark: [] };
+    return { toMarkDone, toUnmark: [], toShrink, toReschedule };
   }
   if (delta < 0) {
     let pool = -delta; // hours to "un-spend"
@@ -196,9 +246,18 @@ export function planBlockCompletionFromRemainingHoursEdit(blocks, oldRemaining, 
       toUnmark.push(block.id);
       pool -= block.hoursAppliedToRemaining ?? block.durationHours;
     }
-    return { toMarkDone: [], toUnmark };
+    return { toMarkDone: [], toUnmark, toShrink: [], toReschedule: [] };
   }
-  return { toMarkDone: [], toUnmark: [] };
+  return { toMarkDone: [], toUnmark: [], toShrink: [], toReschedule: [] };
+}
+
+// Local, dependency-free copy of dateUtils.js's timeToMinutes — this file
+// already keeps its date/hours math self-contained (see the module doc
+// comment) and pulling in the full dateUtils module for one conversion
+// isn't worth the coupling.
+function timeToMinutesLocal(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
 }
 
 /**

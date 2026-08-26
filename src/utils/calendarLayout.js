@@ -1009,8 +1009,23 @@ export function packLane(items, pxPerMin) {
       // never render EARLIER than that already-validated position, or it
       // would reopen the exact overlap-with-an-earlier-item problem
       // prevPacked's own placement was computed to avoid.
-      const mergedTop = Math.max(prevPacked.top, Math.round((mergedStart - GRID_START_MIN) * pxPerMin));
-      const mergedHeight = Math.round(Math.max(MIN_BLOCK_HEIGHT_PX, (mergedEnd - mergedStart) * pxPerMin));
+      const naturalMergedTop = Math.round((mergedStart - GRID_START_MIN) * pxPerMin);
+      const naturalMergedBottom = Math.round((mergedEnd - GRID_START_MIN) * pxPerMin);
+      // prevPacked's own placed `top` may already sit below its natural top
+      // (it was itself accepted as a within-budget pushdown against
+      // whatever came before it in the lane) — the merged cluster must
+      // never render EARLIER than that already-validated position, or it
+      // would reopen the exact overlap-with-an-earlier-item problem
+      // prevPacked's own placement was computed to avoid.
+      const mergedTop = Math.max(prevPacked.top, naturalMergedTop);
+      // Round the BOTTOM edge once rather than rounding top and height
+      // separately and adding them — two independent Math.round calls can
+      // each drift up to 0.5px, compounding into a false "excessive
+      // pushdown" against whatever comes next purely from rounding noise,
+      // even when the next item's real start time exactly matches this
+      // cluster's real end time (see this fix's own regression test).
+      const mergedBottom = Math.max(mergedTop + MIN_BLOCK_HEIGHT_PX, naturalMergedBottom);
+      const mergedHeight = mergedBottom - mergedTop;
       const cluster = {
         ...prevPacked,
         kind: 'cluster',
@@ -1026,12 +1041,31 @@ export function packLane(items, pxPerMin) {
       };
       out[out.length - 1] = cluster;
       prevBottom = cluster.top + cluster.height + BLOCK_GAP_PX;
-      // The merged box is a cluster — always genuinely crowded going
-      // forward (see itemGenuinelyCrowded above), and its own baseline is
-      // fresh (it was just validated against the strict tolerance, not
-      // inherited from further back).
-      chainBaseline = 0;
-      prevGenuinelyCrowded = true;
+      // Only poison the NEXT item's tolerance (both prevGenuinelyCrowded AND
+      // the chainBaseline it would otherwise reset to 0) if this cluster's
+      // own bottom edge was genuinely stretched past where its members' true
+      // combined span would honestly land (the MIN_BLOCK_HEIGHT_PX floor
+      // kicked in, or prevPacked's own already-validated position pushed the
+      // top down) — allowing 1px of rounding slack for the single
+      // Math.round above. An honestly-positioned cluster (this merge's real
+      // end time landing exactly where the next item's real start time
+      // already was) is not untrustworthy the way a stretched one is, and
+      // must not force the near-zero tolerance onto a perfectly legible
+      // following item that needed zero real pushdown to render fine — see
+      // prevGenuinelyCrowded's own doc comment on what this flag is actually
+      // meant to protect against, and this fix's own regression test for the
+      // false-fold this produced when left unconditional. Resetting
+      // chainBaseline to 0 unconditionally had the same effect through a
+      // different door: even with prevGenuinelyCrowded fixed, a flat 0
+      // baseline still only budgets EXCESSIVE_PUSHDOWN_PX (2px) of tolerance
+      // — not enough to cover the ordinary, unconditional BLOCK_GAP_PX every
+      // placement already adds — so an honest cluster needs the SAME
+      // chainBaseline treatment a non-cluster item gets: carry forward
+      // however far prevBottom actually sits past this cluster's own honest
+      // natural bottom, exactly like the single-item path computes it below.
+      const clusterGenuinelyStretched = mergedBottom > naturalMergedBottom + 1;
+      chainBaseline = clusterGenuinelyStretched ? 0 : prevBottom - naturalMergedBottom;
+      prevGenuinelyCrowded = clusterGenuinelyStretched;
       continue;
     }
 
@@ -1048,8 +1082,22 @@ export function packLane(items, pxPerMin) {
       const ownItems = item.kind === 'cluster' ? item.items : [{ type: item.type, data: item.data }];
       const mergedStart = Math.min(pendingUnreadable.start, item.start);
       const mergedEnd = Math.max(pendingUnreadable.end, item.end);
+      // Round the BOTTOM edge once, rather than rounding top and height
+      // separately and adding them — two independent Math.round calls can
+      // each drift up to 0.5px, and together can overshoot the cluster's
+      // true bottom by up to a whole extra pixel on top of whatever the
+      // MIN_BLOCK_HEIGHT_PX floor itself adds. That compounded drift is
+      // enough to trip the near-zero EXCESSIVE_PUSHDOWN_PX tolerance against
+      // whatever comes next in the lane purely from rounding noise — folding
+      // a perfectly legible following item (see this fix's own regression
+      // test) even though its real start time exactly matches this cluster's
+      // real end time, with no genuine gap at all. Rounding the bottom edge
+      // directly guarantees the next item's pushdown check only ever sees
+      // sub-pixel rounding error, never a compounded one.
       const mergedTop = Math.round((mergedStart - GRID_START_MIN) * pxPerMin);
-      const mergedHeight = Math.round(Math.max(MIN_BLOCK_HEIGHT_PX, (mergedEnd - mergedStart) * pxPerMin));
+      const naturalMergedBottom = Math.round((mergedEnd - GRID_START_MIN) * pxPerMin);
+      const mergedBottom = Math.max(mergedTop + MIN_BLOCK_HEIGHT_PX, naturalMergedBottom);
+      const mergedHeight = mergedBottom - mergedTop;
       const cluster = {
         ...item,
         kind: 'cluster',
@@ -1062,8 +1110,15 @@ export function packLane(items, pxPerMin) {
       };
       out.push(cluster);
       prevBottom = cluster.top + cluster.height + BLOCK_GAP_PX;
-      chainBaseline = 0;
-      prevGenuinelyCrowded = true;
+      // See the other merge branch's identical (and more heavily commented)
+      // version of these two lines for the full rationale — only an
+      // honestly-stretched cluster (the MIN_BLOCK_HEIGHT_PX floor actually
+      // kicked in) should poison the next item's pushdown tolerance AND
+      // reset its chainBaseline to 0; 1px of slack absorbs the single
+      // Math.round above.
+      const clusterGenuinelyStretched = mergedBottom > naturalMergedBottom + 1;
+      chainBaseline = clusterGenuinelyStretched ? 0 : prevBottom - naturalMergedBottom;
+      prevGenuinelyCrowded = clusterGenuinelyStretched;
       pendingUnreadable = null;
       continue;
     }
