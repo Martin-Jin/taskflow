@@ -11,6 +11,7 @@ import {
   GRID_START_MIN,
   EXCESSIVE_PUSHDOWN_PX,
   MAX_SIDE_BY_SIDE_LANES,
+  TWO_LINE_MIN_HEIGHT_PX,
 } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
@@ -470,14 +471,22 @@ describe('cross-group sequential visual overlap', () => {
 });
 
 describe('packLane', () => {
-  it('grows a too-short lone item up to MIN_BLOCK_HEIGHT_PX when there is no next item to bump into', () => {
+  it('grows a too-short lone item up to a full two-line height when there is no next item to bump into', () => {
     // A lone 4-minute item at max zoom (1.25px/min) is genuinely only 5px
     // tall — with idle space below it (nothing else in the lane), it may
-    // grow into that free room up to the legibility floor rather than
-    // rendering as an illegible sliver sitting above empty space.
+    // grow into that free room rather than rendering as an illegible sliver
+    // sitting above empty space.
+    //
+    // It grows to TWO_LINE_MIN_HEIGHT_PX, not the smaller one-line
+    // MIN_BLOCK_HEIGHT_PX this used to stop at. Stopping at one line meant
+    // the stretch never actually achieved anything: 26px is under both
+    // two-line thresholds, so the box came out taller but still couldn't show
+    // its time range — a box that lies about its end time AND withholds the
+    // real one, which is the worst of both. If the calendar is going to give
+    // up exact bottom-edge alignment, it has to buy the time line with it.
     const items = [{ start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } }];
     const packed = packLane(items, 1.25);
-    expect(packed[0].height).toBe(MIN_BLOCK_HEIGHT_PX);
+    expect(packed[0].height).toBe(TWO_LINE_MIN_HEIGHT_PX);
   });
 
   it('does not grow a too-short item past the real idle room before the next item in its lane', () => {
@@ -496,17 +505,21 @@ describe('packLane', () => {
     expect(tiny.top + tiny.height).toBeLessThanOrEqual(next.top);
   });
 
-  it('grows a too-short item to fill ample idle room up to (but not past) MIN_BLOCK_HEIGHT_PX', () => {
+  it('grows a too-short item to fill ample idle room up to (but not past) a full two-line height', () => {
     // "Tiny" (4 min, ~5px) is followed 40 real minutes later by "Next" —
-    // plenty of idle room, so growth is capped at the legibility floor
-    // itself rather than expanding to fill the entire gap.
+    // plenty of idle room, so growth stops as soon as the box can show its
+    // title and time rather than expanding to swallow the entire gap. Taking
+    // only what it needs keeps the overstatement of the item's end time as
+    // small as it can be while still being readable.
     const items = [
       { start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } },
       { start: 584, end: 600, kind: 'single', type: 'block', data: { id: 'Next', title: 'Next' } },
     ];
     const packed = packLane(items, 1.25);
     const tiny = packed.find((p) => p.data?.id === 'Tiny');
-    expect(tiny.height).toBe(MIN_BLOCK_HEIGHT_PX);
+    expect(tiny.height).toBe(TWO_LINE_MIN_HEIGHT_PX);
+    // ...and stops well short of the 55px gap it could have filled.
+    expect(tiny.height).toBeLessThan((584 - 540) * 1.25);
   });
 
   it('a kind:"cluster" item is still floored to MIN_BLOCK_HEIGHT_PX', () => {
@@ -916,5 +929,138 @@ describe('short EVENTS fold like short blocks (both directions pinned)', () => {
     const folded = foldSequentialItems([block('B1', 540, 550), event('E1', 555, 565)], 1.25);
     expect(folded).toHaveLength(1);
     expect(folded[0].kind).toBe('cluster');
+  });
+});
+
+/**
+ * The three-step "a short box must still be readable" ladder, in priority
+ * order. Each step only runs if the one before it couldn't solve the problem:
+ *
+ *   1. Render at the item's OWN true height (bottom edge lands exactly on its
+ *      real end time), at normal type if that fits both the title and the
+ *      time line, or at the smaller compact type if only that fits. Nothing
+ *      moves — the box stays honest about where it sits on the clock.
+ *   2. If neither type size fits inside the item's own true height, keep the
+ *      NORMAL type and stretch the box downward into genuinely empty space
+ *      below it instead, never past whatever comes next. The bottom edge no
+ *      longer matches the real end time; that's the deliberate trade for
+ *      being able to read the thing at all. Shrinking the type here would buy
+ *      nothing — the only reason to shrink was to avoid stretching, and the
+ *      box is being stretched regardless.
+ *   3. If there isn't enough empty space below to stretch into either, fold
+ *      the item into an "N items" chip with whatever is crowding it.
+ */
+describe('short-box legibility ladder (own height -> expand -> fold)', () => {
+  it('step 1: an item whose own true height fits title+time at NORMAL type is left exactly at its true height', () => {
+    // 30 minutes at max zoom is 37.5px, past TWO_LINE_MIN_HEIGHT_PX (36), so
+    // both lines fit inside the item's own real duration. Nothing should be
+    // stretched and the type must stay full-size — this is the case where the
+    // calendar can be completely honest about the time axis.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 630), block('B', 720, 780)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    expect(a.fontMode).toBe('normal');
+    expect(a.height).toBe(Math.round(30 * pxPerMin));
+  });
+
+  it('step 1: an item that fits only at COMPACT type shrinks its type rather than stretching', () => {
+    // 26 minutes at max zoom is 32.5px: too short for the normal two-line
+    // height (36) but past the compact one (32). Shrinking the type keeps the
+    // box's bottom edge on its real end time, which is strictly better than
+    // stretching it, so this must NOT grow.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 626), block('B', 720, 780)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    expect(a.fontMode).toBe('compact');
+    expect(a.height).toBe(Math.round(26 * pxPerMin));
+  });
+
+  it('step 2: an item too short for EITHER type size expands at NORMAL type — never compact-and-stretched', () => {
+    // THE CLARIFIED RULE. 15 minutes at max zoom is 18.75px — under the
+    // compact two-line height (32), so no type size fits inside the item's own
+    // duration. Shrinking the type is therefore pointless: it was only ever
+    // worth doing to avoid stretching, and this box has to stretch anyway. It
+    // must expand to a full two-line NORMAL-type height, not render as a
+    // shrunken-AND-stretched box (the shape this rule exists to forbid).
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 615), block('B', 720, 780)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    expect(a.fontMode).toBe('normal');
+    expect(a.height).toBe(TWO_LINE_MIN_HEIGHT_PX);
+    // And the whole point of expanding: the time line can now actually render.
+    expect(a.height).toBeGreaterThanOrEqual(TWO_LINE_MIN_HEIGHT_PX);
+  });
+
+  it('step 2: expansion stops at the next item’s own start rather than reaching into it', () => {
+    // Only genuinely idle space may be borrowed. Here the follower starts 20
+    // real minutes later (25px at max zoom), so the short item can take some
+    // of that but must never reach the follower's own natural top.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 605), block('B', 620, 680)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    const b = packed.find((p) => p.data?.id === 'B');
+    expect(a.kind).not.toBe('cluster');
+    expect(a.height).toBeGreaterThan(Math.round(5 * pxPerMin));
+    expect(a.height).toBeLessThan(TWO_LINE_MIN_HEIGHT_PX);
+    expect(a.top + a.height).toBeLessThanOrEqual(b.top);
+  });
+
+  it('step 3: THE REPORTED BUG — a 5-minute item wedged between a long side-by-side neighbour and an immediate follower folds instead of rendering as an unreadable sliver', () => {
+    // "Test prep" 19:05-22:00 runs down lane 0. "Email student" is 5 real
+    // minutes (19:55-20:00) and lands in lane 1, where "Piano" (20:00-21:00)
+    // starts the very instant it ends — so there is no idle space below it to
+    // expand into (4.25px at max zoom, against the ~36px a readable two-line
+    // box needs). With no room to grow and too little height to read, the only
+    // honest answer left is a chip. Before this ladder existed it rendered as
+    // a 6px sliver with no title and no time, side-by-side with a full-height
+    // block: the exact screenshot this test pins.
+    const items = [block('Test prep', 1145, 1320), block('Email student', 1195, 1200), block('Piano', 1200, 1260)];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+      const email = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'Email student');
+      // It must not survive as a standalone sliver anywhere in the output.
+      expect(email).toBeUndefined();
+      // It must instead be inside a chip, with nothing silently dropped.
+      const allIds = positioned.flatMap((p) => (p.kind === 'cluster' ? p.items.map((i) => i.data.id) : [p.data.id]));
+      expect(allIds).toEqual(expect.arrayContaining(['Test prep', 'Email student', 'Piano']));
+      expect(new Set(allIds).size).toBe(3);
+    }
+  });
+
+  it('step 3 does NOT fire for an item that merely can’t show its TIME — only one that can’t show its title either', () => {
+    // Guards the pinned "Email student" (20 min) / "Lower + Running" case
+    // below from being dragged into a chip by this ladder. A 20-minute item
+    // back-to-back with an hour-long one has no room to expand, and at low
+    // zoom it is too short for a two-line render — but it is still perfectly
+    // able to show its title on one line, which is a normal, honest calendar
+    // render, not a failure. Folding it would hide a readable title behind an
+    // anonymous chip, the exact over-clustering regression this file's history
+    // is full of.
+    const items = [block('Email student', 520, 540), block('Lower + Running', 540, 600)];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const packed = packLane(items, pxPerMin);
+      expect(packed).toHaveLength(2);
+      expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
+    }
+  });
+
+  it('never reports the compact-and-stretched combination for ANY duration/zoom/spacing shape', () => {
+    // The clarified rule as a hard invariant, swept across every zoom level,
+    // every duration up to an hour, and a spread of gaps to the next item: no
+    // box may ever come back both shrunk to compact type AND stretched past
+    // its own true height. Those are alternatives to each other, never a pair.
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      for (let dur = 1; dur <= 60; dur += 1) {
+        for (const gapAfter of [0, 5, 10, 20, 40, 90, 240]) {
+          const items = [block('A', 600, 600 + dur), block('B', 600 + dur + gapAfter, 600 + dur + gapAfter + 60)];
+          const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+          const a = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'A');
+          if (!a) continue; // folded into a chip — a different branch of the ladder
+          const trueHeight = (a.end - a.start) * pxPerMin;
+          const stretched = a.height > trueHeight + 0.51; // ignore whole-pixel rounding
+          expect(a.fontMode === 'compact' && stretched).toBe(false);
+        }
+      }
+    }
   });
 });
