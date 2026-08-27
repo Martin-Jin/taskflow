@@ -305,21 +305,23 @@ export function foldNarrowIllegibleTitles(laidOut, getTitle) {
   return out;
 }
 
-// Two individually "legible enough to stand alone" (see isLegibleAlone)
-// items can still read as a jumbled mess at a zoomed-out level if they sit
-// nearly flush against each other — e.g. two 90-min blocks with only 30 real
-// minutes (~16px at the lowest zoom) between them, each rendering a full
-// title+time-range at that height. Below TIGHT_GAP_PX of real (natural,
-// unclamped) gap, drop straight to a single-line/compact render for BOTH
-// neighbouring items even if their own height would otherwise fit two lines
-// — see WeekView's itemLiveState `showTimeLine`. Below the smaller
-// COLLISION_GAP_PX, even that minimal single-line render would still feel
-// like a collision, so as a last resort the pair is folded into the existing
-// "N tasks" chip mechanism instead — see foldSequentialItems.
+// TIGHT_GAP_PX feeds durationFoldGapMin (see foldSequentialItems) — the reach
+// limit for folding two too-short-alone items into one chip purely because
+// they sit close together, as opposed to an outright pixel collision
+// (COLLISION_GAP_PX, smaller, where folding happens regardless of either
+// item's own duration). A PIXEL threshold by definition (how close two boxes
+// look on screen), converted to real minutes via the current pxPerMin so it
+// scales with zoom the same consistent way every other cutoff in
+// foldSequentialItems does.
 //
-// Both are PIXEL thresholds by definition (how close two boxes look on
-// screen), but every other cutoff in foldSequentialItems is expressed in real
-// minutes so the whole decision scales with pxPerMin in one consistent unit.
+// This constant used to ALSO drive a single-line/compact render degrade for
+// two comfortably-tall items sitting close together (see WeekView's
+// itemLiveState `showTimeLine` and its own `tightGap`-consuming history) —
+// removed after real reports of a box with a perfectly legible, honest
+// height losing its time line purely because something unrelated started or
+// ended nearby, even though the box's own content had plenty of room. Once a
+// box clears its own two-line height threshold it always shows its time line
+// now, regardless of neighbouring gaps — see computeShowTimeLine.
 export const TIGHT_GAP_PX = 22;
 export const COLLISION_GAP_PX = 8;
 
@@ -378,15 +380,14 @@ export const MAX_SIDE_BY_SIDE_LANES = 2;
  *     regardless of either item's own duration (applies to blocks and
  *     events alike — this is about visual crowding, not "is this a tiny
  *     default task").
- *   - tightGapMin: a real gap at or above minGapMin but below this is still
- *     too tight for a full two-line render, so both neighbours are tagged
- *     `tightGap: true` (single-line degrade — see WeekView's itemLiveState)
- *     without folding into a chip.
+ *   - tightGapMin: also feeds durationFoldGapMin below (the reach limit for
+ *     folding two too-short-alone items purely because they're close, as
+ *     opposed to an outright pixel collision) — see durationFoldGapMin's own
+ *     comment.
  * A run of 3+ mutually-close items folds into ONE growing chip rather than
  * a chain of chips flush against each other. Passive tasks and any item
- * whose own duration is >= CHIP_EXEMPT_MIN are never folded into a chip
- * (they may still single-line-degrade under tightGapMin crowding) — they
- * always keep their own tappable box.
+ * whose own duration is >= CHIP_EXEMPT_MIN are never folded into a chip —
+ * they always keep their own tappable box.
  *
  * Operates on generic `{ type: 'block'|'event', data, start, end }` items,
  * already sorted by start. Only ever considers items adjacent by start time
@@ -493,10 +494,6 @@ export function foldSequentialItems(items, pxPerMin) {
       continue;
     }
 
-    if (prev && prev.kind === 'single' && gapMin < tightGapMin) {
-      prev.tightGap = true;
-      single.tightGap = true;
-    }
     out.push(single);
   }
   return out;
