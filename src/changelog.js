@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.3.1',
+    date: '2026-08-27',
+    title: 'Fixed a calendar item hiding its time even with room to show it',
+    changes: [
+      'Fixed a calendar block sometimes hiding its time range even though it had plenty of its own room to show it — this was happening whenever an unrelated earlier item ended nearby, which no longer affects a block\'s own display.',
+    ],
+  },
+  {
     version: '10.3.0',
     date: '2026-08-27',
     title: 'Editing "Time left" now actually updates your scheduled blocks',
