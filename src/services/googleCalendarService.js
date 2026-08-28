@@ -480,11 +480,17 @@ export function computeFetchTimeRange(startIso, endIso) {
  *      rather than trusting the string's substring positions — so the
  *      result is correct even if (a) is ever bypassed or misconfigured.
  *
- * @returns {Promise<{ events: import('../types').CalendarEvent[], failedCalendars: string[] }>}
+ * @returns {Promise<{ events: import('../types').CalendarEvent[], failedCalendars: string[], primaryCalendarId: string }>}
+ *   `primaryCalendarId` is the raw calendarId this fetch resolved the user's
+ *   own default calendar to (see the comment on `calendars.some(...)` a few
+ *   lines below) — consulted by useGoogleCalendarSync's
+ *   isUnsyncedPushableEvent so a pulled event sourced from the user's own
+ *   calendar isn't misclassified as foreign just because Google reported it
+ *   under its real (non-literal-"primary") id.
  */
 export async function fetchEvents(startIso, endIso) {
   if (!gapiInited || !accessToken) {
-    return { events: getMockEvents(startIso, endIso), failedCalendars: [] };
+    return { events: getMockEvents(startIso, endIso), failedCalendars: [], primaryCalendarId: 'primary' };
   }
 
   let calendars;
@@ -808,7 +814,24 @@ export async function fetchEvents(startIso, endIso) {
       return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
     });
 
-  return { events: withSyntheticSeries(events), failedCalendars };
+  // The calendarId a pulled event actually gets stamped with (see
+  // __calendarId above) is whatever raw id Google's calendarList reported
+  // for that calendar — for the user's OWN default calendar this is
+  // commonly their real account email address, NOT the literal string
+  // "primary" (see the comment above this function's own
+  // `calendars.some(...)` check). Every event this app itself PUSHES to
+  // Google, though, always targets the literal `calendarId: 'primary'` (see
+  // pushEventToCalendar) — so a pulled event sourced from the user's own
+  // calendar and a pushed one can end up with two different-looking
+  // `calendarId` values for what is, to Google, the exact same calendar.
+  // Reporting which raw id actually resolved to "primary" this fetch lets a
+  // caller (isUnsyncedPushableEvent) recognize the user's own calendar
+  // either way, without renaming any already-stored event's calendarId (that
+  // would mint a new `id` for it too — see how `id` is built above from
+  // `__calendarId` — silently duplicating every existing event under a
+  // second id on the very next fetch).
+  const primaryCal = calendars.find((c) => c.primary || c.id === 'primary');
+  return { events: withSyntheticSeries(events), failedCalendars, primaryCalendarId: primaryCal?.id || 'primary' };
 }
 
 /**

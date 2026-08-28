@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.4.0',
+    date: '2026-08-28',
+    title: 'Fixed Google Calendar events sometimes duplicating',
+    changes: [
+      'Fixed a bug where editing a recurring event\'s pattern directly in Google Calendar (which can give it a new event underneath) could leave two copies of it in TaskFlow instead of one.',
+      'Fixed a related issue where an event that lost its Google Calendar connection this way could get permanently stuck instead of properly re-syncing.',
+    ],
+  },
+  {
     version: '10.3.3',
     date: '2026-08-28',
     title: 'Fixed a stuck spelling-suggestion popup, and "Save" not dismissing sub-task prompt',

@@ -258,14 +258,28 @@ export function isPastCalendarItem(item) {
  *     deletion across devices would instead get pushed to Google as a
  *     brand-new event, recreating the thing the user just deleted.
  *
- * Pure and exported so the "which events are still unsynced" decision — the
- * gap that let a failed one-shot push strand an event forever — is unit
- * testable without driving the hook.
+ * `primaryCalendarId` (default `'primary'`, matching the pre-existing
+ * behavior for any caller that doesn't pass one, e.g. an older test) is the
+ * raw calendarId googleCalendarService.fetchEvents most recently resolved
+ * the user's OWN default calendar to. That id is commonly the account's real
+ * email address, NOT the literal string "primary" — Google's calendarList
+ * reports the primary calendar that way (see fetchEvents' own comment), while
+ * every event this app itself PUSHES to Google always targets the literal
+ * `calendarId: 'primary'` (see pushEventToCalendar). Comparing only against
+ * the literal string therefore misclassified the user's OWN primary-calendar
+ * events (pulled with calendarId set to their email) as foreign/subscribed —
+ * which meant a `source: 'google'` event demoted back to unsynced (see
+ * eventSyncService.demoteToUnsyncedLocalEvent, e.g. after its recurrence was
+ * edited on Google into a new series with a different id) could never
+ * actually be re-pushed here: it just sat at `googleEventId: null` forever,
+ * while the new series it was replaced by arrived as a separate row on the
+ * next pull — two rows for the same real thing. See this fix's own
+ * regression test for the concrete duplicate-event bug this caused.
  */
-export function isUnsyncedPushableEvent(event) {
+export function isUnsyncedPushableEvent(event, primaryCalendarId = 'primary') {
   if (!event || event.googleEventId) return false;
   if (event.deletedAt) return false;
-  if (event.source === 'google' && event.calendarId !== 'primary') return false;
+  if (event.source === 'google' && event.calendarId !== 'primary' && event.calendarId !== primaryCalendarId) return false;
   if (isBlockSourcedEvent(event)) return false;
   if (isPastCalendarItem(event)) return false;
   return !!(event.date && event.startTime && event.endTime);
@@ -640,6 +654,26 @@ export function useGoogleCalendarSync({
   // eventSyncService.mergePulledGoogleEvents and SchedulerContext.deleteEvent).
   const recentlyDeletedGoogleEventIdsRef = useRef(new Map());
 
+  // The raw calendarId googleCalendarService.fetchEvents most recently
+  // resolved the user's own default calendar to — see isUnsyncedPushableEvent's
+  // own doc comment for why this can legitimately be the account's email
+  // address rather than the literal string 'primary', and why comparing only
+  // against that literal string left a demoted event permanently un-pushable.
+  // Updated after every fetch below; starts at the literal 'primary' so the
+  // very first push sweep (before any fetch has run this session) still uses
+  // the same default isUnsyncedPushableEvent always had.
+  const primaryCalendarIdRef = useRef('primary');
+
+  // Thin wrapper around fetchGoogleEvents used at every call site in this
+  // file, so primaryCalendarIdRef always reflects the most recent fetch
+  // without each of the 7 call sites needing to remember to update it
+  // themselves — same shape/return as fetchGoogleEvents itself.
+  const fetchGoogleEventsTracked = useCallback(async (startIso, endIso) => {
+    const result = await fetchGoogleEvents(startIso, endIso);
+    if (result.primaryCalendarId) primaryCalendarIdRef.current = result.primaryCalendarId;
+    return result;
+  }, []);
+
   // googleEventIds this app instance has actually seen live on Google since
   // load — every id a pull returned, plus every id one of our own pushes was
   // given back. Consulted by mergePulledGoogleEvents to tell a genuine
@@ -932,7 +966,7 @@ export function useGoogleCalendarSync({
             if (cancelled) return;
 
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
             if (cancelled) return;
             applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
             markGoogleSyncSucceeded();
@@ -1010,7 +1044,7 @@ export function useGoogleCalendarSync({
             // checked below alongside the existing isGoogleAuthError case.
             await requestAccessToken(true);
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-            const { events: fetchedEvents } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+            const { events: fetchedEvents } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
             const { events: mergedEvents } = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
             markGoogleSyncSucceeded();
             // Also push any event still unsynced since the last tick — one
@@ -1198,7 +1232,7 @@ export function useGoogleCalendarSync({
       googleFetchInFlightRef.current = true;
       try {
         const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-        const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+        const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
         applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
         markGoogleSyncSucceeded();
         if (failedCalendars.length > 0) {
@@ -1234,7 +1268,7 @@ export function useGoogleCalendarSync({
     setIsPullingGoogleEvents(true);
     try {
       const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
       applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
       markGoogleSyncSucceeded();
       if (failedCalendars.length > 0) {
@@ -1286,7 +1320,7 @@ export function useGoogleCalendarSync({
     setIsPullingGoogleEvents(true);
     try {
       const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEvents(rangeStartIso, rangeEndIso);
+      const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
       setEvents((prev) =>
         hardResetEventsFromGoogle(fetchedEvents, recentlyDeletedGoogleEventIdsRef.current, recentlyDeletedGoogleEventInstancesRef.current)
       );
@@ -1349,7 +1383,7 @@ export function useGoogleCalendarSync({
             // rather than throwing) — refreshing first routes that signal
             // into this catch instead.
             await requestAccessToken(true);
-            const { events: fetchedEvents } = await fetchGoogleEvents(needed.startIso, needed.endIso);
+            const { events: fetchedEvents } = await fetchGoogleEventsTracked(needed.startIso, needed.endIso);
             applyPulledEvents(fetchedEvents, needed.startIso, needed.endIso);
             markGoogleSyncSucceeded();
             return;
@@ -1411,7 +1445,9 @@ export function useGoogleCalendarSync({
     // event on the user's own primary calendar — the same rule the rewrite's
     // authoritative set uses), and never a legacy block-mirror row left over
     // from when blocks were still pushed (see isBlockSourcedEvent).
-    const toPushEvents = (eventsOverride || eventsRef.current || []).filter(isUnsyncedPushableEvent);
+    const toPushEvents = (eventsOverride || eventsRef.current || []).filter((e) =>
+      isUnsyncedPushableEvent(e, primaryCalendarIdRef.current)
+    );
     const pushedByEventId = new Map();
     // Per-item try/catch so one failure never aborts the sweep — the next tick
     // simply retries whatever is still out of sync.
