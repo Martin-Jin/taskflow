@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.3.2',
+    date: '2026-08-28',
+    title: 'Fixed cloud backups failing for some tasks created from a template',
+    changes: [
+      'Fixed "Back up now" sometimes failing with an error for accounts that had ever created tasks from a saved template — a leftover field on those tasks could trip up the backup, which is now handled correctly (and cleaned up defensively for any other field like it in the future).',
+    ],
+  },
+  {
     version: '10.3.1',
     date: '2026-08-27',
     title: 'Fixed a calendar item hiding its time even with room to show it',

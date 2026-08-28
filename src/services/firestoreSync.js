@@ -160,7 +160,7 @@ const MAX_LISTED_BACKUPS = 40;
  */
 export async function createBackup(uid, data, { automatic = false } = {}) {
   const ref = await addDoc(collection(db, 'users', uid, 'backups'), {
-    ...data,
+    ...stripUndefined(data),
     automatic,
     createdAt: serverTimestamp(),
   });
