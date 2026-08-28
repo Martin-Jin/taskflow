@@ -294,6 +294,18 @@ export default function SmartTitleInput({
         onKeyUp={handleCaretMove}
         onClick={handleCaretMove}
         onKeyDown={handleKeyDown}
+        onBlur={() => {
+          // Neither popup has any way to know the field lost focus on its
+          // own — both only ever close via a keystroke, Escape, or picking a
+          // suggestion (which blurs then immediately refocuses, so it never
+          // reaches here — see spliceTextAndMoveCaret). Without this, clicking
+          // anywhere else in the modal (another field, a sidebar control)
+          // leaves whichever popup was open floating at its last measured
+          // position indefinitely, since the textarea it was anchored to no
+          // longer has focus to keep deriving one from.
+          mention.dismiss();
+          keywordSuggest.dismiss();
+        }}
         placeholder={placeholder}
         rows={1}
         maxLength={500}

@@ -56,9 +56,9 @@ describe('findDurationPhrase', () => {
     expect(result.hours).toBe(1);
   });
 
-  it('parses "a couple hours" using word-number vocabulary', () => {
-    const result = findDurationPhrase('Errands a couple hours');
-    expect(result.hours).toBe(2);
+  it('parses "a few hours" using word-number vocabulary', () => {
+    const result = findDurationPhrase('Errands a few hours');
+    expect(result.hours).toBe(3);
   });
 
   it('honors an "~" approximation marker prefix', () => {
@@ -132,11 +132,14 @@ describe('BASE_WORD_NUMBERS (wordNumbers.js)', () => {
     expect(BASE_WORD_NUMBERS.an).toBe(1);
   });
 
-  it('maps "couple"/"few" and their multi-word "a couple"/"a few" forms to 2/3', () => {
-    expect(BASE_WORD_NUMBERS.couple).toBe(2);
-    expect(BASE_WORD_NUMBERS['a couple']).toBe(2);
+  it('maps "few" and its multi-word "a few" form to 3', () => {
     expect(BASE_WORD_NUMBERS.few).toBe(3);
     expect(BASE_WORD_NUMBERS['a few']).toBe(3);
+  });
+
+  it('no longer recognizes "couple" — removed for being too easily confused with real words like "course"', () => {
+    expect(BASE_WORD_NUMBERS.couple).toBeUndefined();
+    expect(BASE_WORD_NUMBERS['a couple']).toBeUndefined();
   });
 
   it('does not support numbers beyond ten or compound forms like "twenty-one"', () => {

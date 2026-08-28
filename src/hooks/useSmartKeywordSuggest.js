@@ -101,5 +101,6 @@ export function useSmartKeywordSuggest({ inputRef, value, onChange, suppress = f
     selectIndex,
     handleKeyDown,
     refresh,
+    dismiss,
   };
 }
