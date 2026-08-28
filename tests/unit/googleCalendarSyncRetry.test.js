@@ -149,6 +149,27 @@ describe('isUnsyncedPushableEvent — the retry sweep for events', () => {
     expect(isUnsyncedPushableEvent({ ...base, source: 'google', calendarId: 'primary', googleEventId: null })).toBe(true);
   });
 
+  it('THE REPORTED BUG — also allows a demoted event whose calendarId is the account\'s real email address, not the literal "primary"', () => {
+    // Google's calendarList commonly reports the user's OWN default calendar
+    // under its real id (the account's email address) rather than the
+    // literal string "primary" — googleCalendarService.fetchEvents stamps a
+    // pulled event's calendarId from that raw id, so a genuinely-own-calendar
+    // event can arrive with calendarId: 'me@example.com'. Without the second
+    // argument, this used to be indistinguishable from a truly foreign/
+    // subscribed calendar and got excluded — meaning a demoted event
+    // (eventSyncService.demoteToUnsyncedLocalEvent, e.g. after its recurrence
+    // was edited on Google into a new series with a different id) could never
+    // be re-pushed, and just sat at googleEventId: null forever while the
+    // replacement series arrived as a separate row on the next pull — two
+    // rows for the same real thing. Passing the resolved primaryCalendarId
+    // (what googleCalendarService.fetchEvents actually saw this fetch) fixes
+    // the misclassification.
+    const event = { ...base, source: 'google', calendarId: 'me@example.com', googleEventId: null };
+    expect(isUnsyncedPushableEvent(event)).toBe(false); // no primaryCalendarId passed — old, still-safe default behavior
+    expect(isUnsyncedPushableEvent(event, 'me@example.com')).toBe(true); // told which raw id is actually primary
+    expect(isUnsyncedPushableEvent(event, 'someone-else@example.com')).toBe(false); // a genuinely different (foreign) calendar still isn't pushed
+  });
+
   it('skips a legacy block-mirror row rather than re-pushing it as a new event', () => {
     expect(isUnsyncedPushableEvent({ ...base, title: '📋 Write report', source: 'manual', googleEventId: null })).toBe(false);
   });
