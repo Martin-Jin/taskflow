@@ -1,6 +1,6 @@
 /**
- * Small word-numbers people type instead of digits ("a week", "a couple of
- * days", "a few hours"). Shared base vocabulary for dateParse.js (calendar
+ * Small word-numbers people type instead of digits ("a week", "a few
+ * hours"). Shared base vocabulary for dateParse.js (calendar
  * quantities, up to "ten") and durationParser.js (task-duration phrases,
  * which additionally layers "half"/"half an" on top — a duration-specific
  * concept that doesn't apply to counting weeks/months).
@@ -29,9 +29,7 @@ export const BASE_WORD_NUMBERS = {
   eight: 8,
   nine: 9,
   ten: 10,
-  couple: 2,
   few: 3,
-  // Multi-word forms — "a couple"/"a few" read as one count, not "a" (=1) stopping short before "couple".
-  'a couple': 2,
+  // Multi-word form — "a few" reads as one count, not "a" (=1) stopping short before "few".
   'a few': 3,
 };

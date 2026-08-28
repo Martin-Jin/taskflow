@@ -1588,6 +1588,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // Save/Cancel row is reachable whenever mainDirty is also true.
     if (fixedTimeError || dueDateError || dueDateRequiredError) return;
     commitChanges();
+    // An explicit Save is the user saying "I'm done with this edit," so
+    // treat any pending "Apply to all sub-tasks" offer as settled too —
+    // otherwise the button (and the whole Save/Cancel row it shares space
+    // with, see the render condition below) stays visible right after Save
+    // with nothing left to Cancel, which reads as Save having not worked.
+    // Mirrors the reset the task-switch effect already does; unlike that
+    // reset, this deliberately leaves initialSnapshotRef/hasEditedFixedTime/
+    // etc. untouched — only the apply-to-subtasks offer is being dismissed.
+    hasEditedSharedFieldsRef.current = false;
+    setJustAppliedToAll(false);
     // Deliberately does NOT close the modal — per user preference, Save
     // just commits and leaves the task open; Escape (or the close button)
     // is how the user dismisses it when they're done.
@@ -1606,15 +1616,17 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
    * (justAppliedToAll) — see the Save row below, which hides the button
    * otherwise. isContainer re-hides it the moment the last sub-task is
    * removed (recomputed from the live `tasks` list each render);
-   * hasEditedSharedFieldsRef only resets when the modal switches to a
-   * different task, NOT on every sidebar auto-save — sidebar fields
-   * debounce-save ~500ms after each edit (see the auto-save effect below),
-   * which resets initialSnapshotRef/isDirty back to false, but the button
-   * should stay available for the rest of the session rather than flash and
-   * disappear right after the edit that triggered it. justAppliedToAll is
-   * the exception: it resets back to false the moment an appliable field
-   * changes again (see appliableSharedDirty above), so the button reappears
-   * only once there's something new to apply.
+   * hasEditedSharedFieldsRef resets when the modal switches to a different
+   * task, or when the user clicks the explicit Save button (handleSave) —
+   * NOT on every sidebar auto-save. Sidebar fields debounce-save ~500ms
+   * after each edit (see the auto-save effect below), which resets
+   * initialSnapshotRef/isDirty back to false, but the button stays available
+   * through that so it doesn't flash and disappear right after the edit that
+   * triggered it — Save is the deliberate, explicit "I'm done, this offer is
+   * settled" signal instead. justAppliedToAll is the other way this resets:
+   * it goes back to false the moment an appliable field changes again (see
+   * appliableSharedDirty above), so the button reappears only once there's
+   * something new to apply.
    *
    * Deliberately excludes title/notes/estimatedHours/dependsOn/fixedTime —
    * those are meant to stay per-task (a shared title would collide, a shared

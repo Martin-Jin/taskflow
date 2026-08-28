@@ -84,9 +84,9 @@ describe('findDuePhrase', () => {
     expect(result).toEqual({ iso: '2026-08-03', matchedText: 'in 3 days', index: 10 });
   });
 
-  it('parses "in a couple of weeks" using word-number vocabulary', () => {
-    const result = findDuePhrase('check back in a couple of weeks', REF);
-    expect(result).toEqual({ iso: '2026-08-14', matchedText: 'in a couple of weeks', index: 11 });
+  it('parses "in a few weeks" using word-number vocabulary', () => {
+    const result = findDuePhrase('check back in a few weeks', REF);
+    expect(result).toEqual({ iso: '2026-08-21', matchedText: 'in a few weeks', index: 11 });
   });
 
   it('parses "next month" as one calendar month out, same day-of-month', () => {

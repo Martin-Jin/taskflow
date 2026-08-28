@@ -384,6 +384,19 @@ test.describe('Sub-tasks', () => {
     await page.waitForTimeout(600);
     await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).toBeVisible();
 
+    // Pressing the explicit Save button (not "Apply to all sub-tasks" itself)
+    // must ALSO dismiss the offer — an explicit Save is the user saying
+    // they're done with this edit, and leaving the button up afterward with
+    // no dirty Save/Cancel row left to go with it reads as Save not having
+    // worked. Dirty the title too, so a real Save/Cancel row is showing to
+    // click (the button alone, with mainDirty false, wouldn't render a
+    // separate "Save" to press).
+    await titleInput.fill(`${title} (edited again)`);
+    await page.waitForTimeout(200);
+    await page.getByRole('button', { name: /^save$/i }).click();
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('button', { name: /apply to all sub-tasks/i })).not.toBeVisible();
+
     await closeAnyModal(page);
     expectNoErrors(errors);
   });

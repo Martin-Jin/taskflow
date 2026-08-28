@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '10.3.3',
+    date: '2026-08-28',
+    title: 'Fixed a stuck spelling-suggestion popup, and "Save" not dismissing sub-task prompt',
+    changes: [
+      'Fixed the "Did you mean…" title-typo suggestion staying open after clicking away, instead of closing like it should.',
+      'Removed "couple" from smart-parse\'s word list — it was too easily confused with ordinary words like "course," triggering that popup by mistake.',
+      'Pressing "Save" on a parent task now also dismisses "Apply to all sub-tasks" when there\'s nothing left to apply, instead of leaving it showing.',
+    ],
+  },
+  {
     version: '10.3.2',
     date: '2026-08-28',
     title: 'Fixed cloud backups failing for some tasks created from a template',
