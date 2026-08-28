@@ -205,7 +205,7 @@ export function planTemplateInstantiation(template, options, makeId) {
     }
     task.projectId = projectId;
     task.sectionId = sectionId;
-    task.parentId = entry.parentLocalId ? realIdByLocalId.get(entry.parentLocalId) : undefined;
+    if (entry.parentLocalId) task.parentId = realIdByLocalId.get(entry.parentLocalId);
     task.dueDate = entry.dueDayOffset === null || entry.dueDayOffset === undefined || !anchorDate
       ? null
       : addDays(anchorDate, entry.dueDayOffset);
