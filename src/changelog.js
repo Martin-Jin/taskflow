@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.5.0',
+    date: '2026-08-29',
+    title: 'Calendar multi-select no longer hides block titles, and short items block together properly',
+    changes: [
+      'Selecting calendar blocks/events for a bulk action now dims whatever isn\'t selected instead of showing a checkbox — the checkbox was sometimes pushing a short block\'s title out of view entirely.',
+      'A calendar item under 10 minutes long now always groups into a chip with its neighbors when there isn\'t room to show it clearly, instead of sometimes rendering as an unreadable sliver.',
+    ],
+  },
+  {
     version: '10.4.0',
     date: '2026-08-28',
     title: 'Fixed Google Calendar events sometimes duplicating',

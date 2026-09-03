@@ -61,6 +61,17 @@ export const CLUSTER_MAX_GAP_MIN = 30;
 export const MIN_BLOCK_HEIGHT_PX = 26;
 export const BLOCK_GAP_PX = 2;
 
+// A real duration below this always folds into a cluster the moment its
+// rendered height comes out compressed below a comfortable two-line size —
+// no growth-into-idle-space attempt, no lane-count exemption, no ladder of
+// partial successes. Explicit product decision: a genuinely tiny item (under
+// 10 real minutes) reads as an unreliable sliver often enough — squeezed
+// between neighbours whether or not it happens to land in its own lane —
+// that it's not worth the more permissive multi-step legibility ladder
+// packLane applies to everything else. See packLane's own
+// `forceFoldShortDuration` check for exactly what "compressed" means here.
+export const FORCE_FOLD_DURATION_MIN = 10;
+
 // The same floor, recomputed for a DELIBERATELY SMALLER type size. A box in
 // this band renders its title at .cal-block.is-compact's reduced font
 // (10px/~13.5px line + tighter padding, see calendar.css) rather than folding
@@ -820,10 +831,23 @@ export function packLane(items, pxPerMin) {
   // strict near-zero tolerance too, since its baseline is no longer purely
   // cosmetic.
   let prevGenuinelyCrowded = false;
-  // An item that opened its lane, turned out to be unreadable, and had
-  // nothing above it to fold into — held here until the next item in the lane
-  // can absorb it. See the fold step below.
-  let pendingUnreadable = null;
+  // Item(s) that turned out to be unreadable/compressed with nothing genuine
+  // to fold into YET (no predecessor at all, or a predecessor too far away to
+  // honestly be "the thing crowding this") — held here until a later item's
+  // own turn can absorb them. See the fold step below.
+  //
+  // A QUEUE, not a single slot: originally this only ever held the very
+  // first item in a lane (the only case that could have no prevPacked at
+  // all), so one slot was enough. FORCE_FOLD_DURATION_MIN's compressedBelow
+  // Comfortable check made a second, distinct case possible — two or more
+  // CONSECUTIVE items can each independently fail to grow (because each is
+  // squeezed by whatever starts right after IT), while none of them is
+  // genuinely pushed down by its own predecessor. A single `pendingUnreadable
+  // = item` slot silently overwrote and lost every deferred item except the
+  // most recent one the moment a second one queued up before the first was
+  // ever resolved — a real, non-hypothetical data-loss bug (an item vanished
+  // off the calendar entirely, not just folded into the wrong neighbour).
+  const pendingUnreadable = [];
 
   for (let i = 0; i < sorted.length; i++) {
     const item = sorted[i];
@@ -964,24 +988,53 @@ export function packLane(items, pxPerMin) {
     const unreadableEvenAfterGrowing =
       wentThroughGrowthStep && (item.totalLanes || 1) >= 2 && naturalHeight < TWO_LINE_MIN_HEIGHT_PX;
 
-    // Such an item folds into whichever neighbour it is crowding against. If
-    // something already sits above it in this lane, that's the one. If it is
-    // the FIRST thing in its lane (which is exactly the reported case — the
-    // 5-minute task is what opens the lane, and the hour-long item that
-    // leaves it no room starts underneath it), there is nothing behind to
-    // merge into yet, so it waits and is picked up by the next item's own
-    // turn through the loop instead. `pendingUnreadable` carries it across.
+    // FORCE_FOLD_DURATION_MIN: a simpler, unconditional override for a
+    // genuinely tiny item (real duration under 10 minutes) — explicit
+    // product decision, not part of the ladder above. Folds the moment its
+    // rendered height comes out compressed below a comfortable two-line
+    // size, for ANY reason: it doesn't matter whether growth was attempted,
+    // whether it shares a lane with something else, or whether the ladder
+    // above would otherwise have judged it "legible enough" — a sub-10-minute
+    // item squeezed to less than TWO_LINE_MIN_HEIGHT_PX reads as an
+    // unreliable sliver often enough that it isn't worth the more permissive,
+    // multi-condition treatment everything else in this function gets. See
+    // this constant's own doc comment for why 10 minutes is the line.
+    const isForceFoldDuration = item.kind !== 'cluster' && item.end - item.start < FORCE_FOLD_DURATION_MIN;
+    const compressedBelowComfortable = isForceFoldDuration && naturalHeight < TWO_LINE_MIN_HEIGHT_PX;
+
+    // Such an item folds into whichever neighbour it is ACTUALLY crowding
+    // against — which is not simply "whatever happens to be prevPacked".
+    // pushdownPx (computed above) tells the two cases apart: if it's
+    // genuinely positive, this item's own natural top was pushed down by
+    // prevPacked's real bottom edge, so prevPacked is honestly the thing
+    // crowding it. But an item can also fail to grow (wentThroughGrowthStep)
+    // purely because the NEXT item starts immediately after it, while its
+    // own natural top sits nowhere near prevPacked at all — prevBottom may be
+    // hours/many pixels earlier, so pushdownPx is ~0. Real reported bug: a
+    // 5-minute "Charge" block at 12:40 with "Look at cost" starting the
+    // instant it ends had a "Morning tasks" block at 08:00 as its prevPacked
+    // (nothing else in the lane between them) — merging into prevPacked
+    // there produced one cluster spanning 08:00-13:15 for what should have
+    // been two SEPARATE things: "Morning tasks" (plenty of its own room,
+    // stays standalone) and a "Charge"+"Look at cost" cluster honestly
+    // positioned at 12:40. A merge must never claim a span wider than what
+    // is genuinely crowding this item — so prevPacked is only treated as the
+    // culprit when it actually pushed this item down; otherwise (no genuine
+    // pushdown, or no prevPacked at all — the original "opens the lane"
+    // case) this item waits and is picked up by the NEXT item's own turn
+    // through the loop instead, via `pendingUnreadable`.
     //
-    // Holding it over is only ever safe because there is guaranteed to BE a
-    // next item: with nothing after it in the lane the growth step above had
+    // Holding it over is only safe because there is guaranteed to BE a next
+    // item: with nothing after it in the lane the growth step above had
     // unlimited room and would have already stretched it to a readable
     // height, so it could not have reached this branch at all.
-    if (unreadableEvenAfterGrowing && !prevPacked && i + 1 < sorted.length) {
-      pendingUnreadable = item;
+    const genuinelyPushedByPrev = pushdownPx > EXCESSIVE_PUSHDOWN_PX;
+    if ((unreadableEvenAfterGrowing || compressedBelowComfortable) && !genuinelyPushedByPrev && i + 1 < sorted.length) {
+      pendingUnreadable.push(item);
       continue;
     }
 
-    if (prevPacked && (pushdownPx > excessiveThreshold || unreadableEvenAfterGrowing)) {
+    if (prevPacked && (pushdownPx > excessiveThreshold || unreadableEvenAfterGrowing || compressedBelowComfortable)) {
       // Fold into (or grow) a cluster instead of accepting a position that
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged
@@ -1066,19 +1119,22 @@ export function packLane(items, pxPerMin) {
       continue;
     }
 
-    // Absorb an unreadable item that opened this lane and had nothing above
-    // it to fold into (see pendingUnreadable above). The pair becomes one
-    // chip covering both of their spans — the same shape every other fold in
-    // this file produces — so the tiny item is still reachable by tapping it
-    // instead of vanishing or drawing as a bare line.
-    if (pendingUnreadable) {
-      const pendingItems =
-        pendingUnreadable.kind === 'cluster'
-          ? pendingUnreadable.items
-          : [{ type: pendingUnreadable.type, data: pendingUnreadable.data }];
+    // Absorb every still-queued unreadable/compressed item (see
+    // pendingUnreadable's own doc comment above — there can be more than one,
+    // queued back-to-back) that had nothing genuine to fold into yet. The
+    // whole group becomes one chip covering all of their spans — the same
+    // shape every other fold in this file produces — so every one of them
+    // stays reachable by tapping it instead of vanishing or drawing as a bare
+    // line (or, before this queue existed, being silently overwritten and
+    // LOST — see the real regression this queue fixes, pinned in this file's
+    // own tests).
+    if (pendingUnreadable.length > 0) {
+      const pendingItems = pendingUnreadable.flatMap((p) =>
+        p.kind === 'cluster' ? p.items : [{ type: p.type, data: p.data }]
+      );
       const ownItems = item.kind === 'cluster' ? item.items : [{ type: item.type, data: item.data }];
-      const mergedStart = Math.min(pendingUnreadable.start, item.start);
-      const mergedEnd = Math.max(pendingUnreadable.end, item.end);
+      const mergedStart = Math.min(...pendingUnreadable.map((p) => p.start), item.start);
+      const mergedEnd = Math.max(...pendingUnreadable.map((p) => p.end), item.end);
       // Round the BOTTOM edge once, rather than rounding top and height
       // separately and adding them — two independent Math.round calls can
       // each drift up to 0.5px, and together can overshoot the cluster's
@@ -1116,7 +1172,7 @@ export function packLane(items, pxPerMin) {
       const clusterGenuinelyStretched = mergedBottom > naturalMergedBottom + 1;
       chainBaseline = clusterGenuinelyStretched ? 0 : prevBottom - naturalMergedBottom;
       prevGenuinelyCrowded = clusterGenuinelyStretched;
-      pendingUnreadable = null;
+      pendingUnreadable.length = 0;
       continue;
     }
 
