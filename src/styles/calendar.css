@@ -1055,6 +1055,30 @@
   opacity: 0.95;
 }
 
+/* Calendar's own selection indicator while bulk-select is active: rather than
+   a checkbox (which pushed the title down inside a block/event's own flex
+   column, sometimes hiding it entirely on a short block — see CLAUDE.md's
+   "never render the absence of information" — a checkbox glyph doesn't even
+   fit that principle: the block/event already IS the tappable target),
+   selection reads purely from brightness. A selected block/event/cluster
+   keeps the .is-selected accent tint (see global.css); everything NOT
+   currently selected dims instead, so which rows are armed for the bulk
+   action is visible at a glance without any control competing for the same
+   small box for space. Two classes (matching .free-time's own specificity
+   above, which also sets its own opacity) so this always wins regardless of
+   whether a dimmed event also happens to be free-time-striped — the
+   selection state is the more important signal in that moment, and .free-
+   time's own 0.95 read as "barely dimmed at all" if it silently won here
+   instead. Transition matches this file's existing motion tokens (see
+   CLAUDE.md's design-direction rules on named duration/easing roles) — a
+   plain opacity change is exactly the kind of causal, non-ambient motion
+   those allow. */
+.cal-block.is-selection-dimmed,
+.cal-event.is-selection-dimmed {
+  opacity: 0.45;
+  transition: opacity var(--motion-enter-duration) var(--motion-enter-ease);
+}
+
 /* CalendarEvents get full drag/resize parity with ScheduledBlocks (see
    WeekView) — this class layers the grab cursor + lane-positioning support
    on top of .cal-event's existing dashed/striped look without touching its

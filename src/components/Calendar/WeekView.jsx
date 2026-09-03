@@ -1225,10 +1225,12 @@ export default function WeekView({
                 return (
                   <div
                     key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''}`}
+                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''} ${selectionMode && !clusterAllSelected ? 'is-selection-dimmed' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
+                    aria-pressed={selectionMode ? clusterAllSelected : undefined}
+                    aria-label={selectionMode ? `Select ${fullTitleList}` : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (selectionMode) {
@@ -1251,16 +1253,6 @@ export default function WeekView({
                     }}
                     title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
-                    {selectionMode && (
-                      <input
-                        type="checkbox"
-                        className="bulk-select-checkbox"
-                        checked={clusterAllSelected}
-                        onChange={toggleClusterSelection}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select ${fullTitleList}`}
-                      />
-                    )}
                     <div className="cal-cluster-title-stack">
                       {titleLines.map((line, i) => (
                         <div className="cal-cluster-title-line" key={i}>
@@ -1291,7 +1283,9 @@ export default function WeekView({
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
+                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''} ${selectionMode && !evtSelected ? 'is-selection-dimmed' : ''}`}
+                    aria-pressed={selectionMode ? evtSelected : undefined}
+                    aria-label={selectionMode ? `Select ${evt.title}` : undefined}
                     style={{ top, height, ...laneStyle }}
                     // Desktop gets the richer HoverPreviewCard instead (see
                     // below) — mobile has no hover, so it keeps the native
@@ -1342,16 +1336,6 @@ export default function WeekView({
                       }
                     }}
                   >
-                    {selectionMode && (
-                      <input
-                        type="checkbox"
-                        className="bulk-select-checkbox"
-                        checked={evtSelected}
-                        onChange={() => onToggleSelectKey?.(evtKey)}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select ${evt.title}`}
-                      />
-                    )}
                     {/* A read-only (subscribed/shared) event previously had no
                         visual cue at all — the only way to discover it wasn't
                         yours to move was to try dragging it and have nothing
@@ -1402,7 +1386,9 @@ export default function WeekView({
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
+                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''} ${selectionMode && !blockSelected ? 'is-selection-dimmed' : ''}`}
+                  aria-pressed={selectionMode ? blockSelected : undefined}
+                  aria-label={selectionMode ? `Select ${displayTitle}` : undefined}
                   style={{
                     top,
                     height,
@@ -1463,16 +1449,7 @@ export default function WeekView({
                       : undefined
                   }
                 >
-                  {selectionMode ? (
-                    <input
-                      type="checkbox"
-                      className="bulk-select-checkbox"
-                      checked={blockSelected}
-                      onChange={() => onToggleSelectKey?.(blockKey)}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`Select ${displayTitle}`}
-                    />
-                  ) : (
+                  {!selectionMode && (
                     <button
                       className="lock-indicator"
                       onClick={(e) => {
