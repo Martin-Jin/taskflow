@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.5.1',
+    date: '2026-09-10',
+    title: "Dashboard agenda no longer lists all-day events",
+    changes: [
+      "An all-day event no longer shows up as a row in \"Today's agenda\" — it has no real time slot, so it was permanently occupying agenda space instead of just appearing in the \"Right now\" card where it belongs.",
+    ],
+  },
+  {
     version: '10.5.0',
     date: '2026-08-29',
     title: 'Calendar multi-select no longer hides block titles, and short items block together properly',

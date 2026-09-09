@@ -70,7 +70,9 @@ export default function TodayAgenda() {
         };
       });
     const eventItems = expandEventsForRange(events || [], today, today)
-      .filter((e) => e.date === today)
+      // An all-day event has no real time slot, so it doesn't belong in a
+      // time-ordered agenda — it's already shown separately in "Right now".
+      .filter((e) => e.date === today && !e.isAllDay)
       .map((e) => ({ id: e.id, eventId: e.id, startTime: e.startTime, endTime: e.endTime, title: e.title, isMissed: false }));
     const merged = [...blockItems, ...eventItems].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
