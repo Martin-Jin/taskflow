@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.6.1',
+    date: '2026-09-11',
+    title: 'Fixed a recurring subtask wrongly staying in "Overdue & missed"',
+    changes: [
+      'Moving a recurring parent task\'s due date forward could leave one of its recurring subtasks listed under "Overdue & missed" on the dashboard even though its own detail view correctly showed it due today. The dashboard now reads the same current due date as everything else, instead of a stale value left over from before the parent was moved.',
+    ],
+  },
+  {
     version: '10.6.0',
     date: '2026-09-11',
     title: 'Scheduler now prefers earlier open time within a day',
