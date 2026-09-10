@@ -58,7 +58,7 @@ import { useScheduler } from '../../context/SchedulerContext';
 import { useAuth } from '../../context/AuthContext';
 import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/dateUtils';
 import { linkLabel } from '../../utils/linkify';
-import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT } from '../../utils/recurrence';
+import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT, computeFirstMatchingDueDate } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
 import { computeEffectiveRole, getAssignableCollaborators, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
@@ -261,8 +261,18 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
           setRecurrenceUnit(match.rule.unit);
           setRecurrenceDays(match.rule.days || null);
           // A recurring task needs a starting due date — default to today if
-          // the user hasn't set (or typed) one, matching Todoist's own behavior.
-          if (!dueDate && !detected.dueDate) setDueDate(toISODate(new Date()));
+          // the user hasn't set (or typed) one, matching Todoist's own
+          // behavior. But "today" is only a valid starting point if it
+          // actually satisfies the just-detected rule — "every friday" typed
+          // on a Thursday must anchor on the next Friday, not today, or the
+          // task's very first occurrence would fall on a day the rule
+          // doesn't even match. computeFirstMatchingDueDate finds that first
+          // matching date; it's a no-op (returns today unchanged) for a rule
+          // with no weekday filter, or one today already satisfies.
+          if (!dueDate && !detected.dueDate) {
+            const recurrenceString = buildRecurrenceString(match.rule.count, match.rule.unit, match.rule.days || null);
+            setDueDate(computeFirstMatchingDueDate(toISODate(new Date()), recurrenceString));
+          }
         },
         revert: () => {
           setIsRecurring(false);

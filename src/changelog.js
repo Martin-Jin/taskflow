@@ -21,6 +21,157 @@
 
 export const CHANGELOG = [
   {
+    version: '10.6.1',
+    date: '2026-09-11',
+    title: 'Fixed a recurring subtask wrongly staying in "Overdue & missed"',
+    changes: [
+      'Moving a recurring parent task\'s due date forward could leave one of its recurring subtasks listed under "Overdue & missed" on the dashboard even though its own detail view correctly showed it due today. The dashboard now reads the same current due date as everything else, instead of a stale value left over from before the parent was moved.',
+    ],
+  },
+  {
+    version: '10.6.0',
+    date: '2026-09-11',
+    title: 'Scheduler now prefers earlier open time within a day',
+    changes: [
+      "The auto-scheduler used to fill whichever open gap in your day was biggest, even if an earlier, smaller gap would fit the task just as well — so a task could land at 8pm while a free hour earlier that afternoon sat unused. It now gives a small preference to starting earlier in the day, so the scheduler favors that earlier gap unless a later one genuinely avoids splitting a task across more days or missing a due date.",
+    ],
+  },
+  {
+    version: '10.5.2',
+    date: '2026-09-10',
+    title: 'All-day events no longer get stuck in the "Right now" card',
+    changes: [
+      'An all-day event was staying pinned in the "Right now" card for the entire day, with a progress bar that never reflected anything real, and could push an actual in-progress task or event down into just a "+1 more" badge. All-day events no longer compete for that spot — only genuinely timed items appear there now.',
+    ],
+  },
+  {
+    version: '10.5.1',
+    date: '2026-09-10',
+    title: "Dashboard agenda no longer lists all-day events",
+    changes: [
+      "An all-day event no longer shows up as a row in \"Today's agenda\" — it has no real time slot, so it was permanently occupying agenda space instead of just appearing in the \"Right now\" card where it belongs.",
+    ],
+  },
+  {
+    version: '10.5.0',
+    date: '2026-08-29',
+    title: 'Calendar multi-select no longer hides block titles, and short items block together properly',
+    changes: [
+      'Selecting calendar blocks/events for a bulk action now dims whatever isn\'t selected instead of showing a checkbox — the checkbox was sometimes pushing a short block\'s title out of view entirely.',
+      'A calendar item under 10 minutes long now always groups into a chip with its neighbors when there isn\'t room to show it clearly, instead of sometimes rendering as an unreadable sliver.',
+    ],
+  },
+  {
+    version: '10.4.0',
+    date: '2026-08-28',
+    title: 'Fixed Google Calendar events sometimes duplicating',
+    changes: [
+      'Fixed a bug where editing a recurring event\'s pattern directly in Google Calendar (which can give it a new event underneath) could leave two copies of it in TaskFlow instead of one.',
+      'Fixed a related issue where an event that lost its Google Calendar connection this way could get permanently stuck instead of properly re-syncing.',
+    ],
+  },
+  {
+    version: '10.3.3',
+    date: '2026-08-28',
+    title: 'Fixed a stuck spelling-suggestion popup, and "Save" not dismissing sub-task prompt',
+    changes: [
+      'Fixed the "Did you mean…" title-typo suggestion staying open after clicking away, instead of closing like it should.',
+      'Removed "couple" from smart-parse\'s word list — it was too easily confused with ordinary words like "course," triggering that popup by mistake.',
+      'Pressing "Save" on a parent task now also dismisses "Apply to all sub-tasks" when there\'s nothing left to apply, instead of leaving it showing.',
+    ],
+  },
+  {
+    version: '10.3.2',
+    date: '2026-08-28',
+    title: 'Fixed cloud backups failing for some tasks created from a template',
+    changes: [
+      'Fixed "Back up now" sometimes failing with an error for accounts that had ever created tasks from a saved template — a leftover field on those tasks could trip up the backup, which is now handled correctly (and cleaned up defensively for any other field like it in the future).',
+    ],
+  },
+  {
+    version: '10.3.1',
+    date: '2026-08-27',
+    title: 'Fixed a calendar item hiding its time even with room to show it',
+    changes: [
+      'Fixed a calendar block sometimes hiding its time range even though it had plenty of its own room to show it — this was happening whenever an unrelated earlier item ended nearby, which no longer affects a block\'s own display.',
+    ],
+  },
+  {
+    version: '10.3.0',
+    date: '2026-08-27',
+    title: 'Editing "Time left" now actually updates your scheduled blocks',
+    changes: [
+      'Typing a new "Time left" value for a task now updates its scheduled calendar blocks to match, instead of leaving stale blocks that no longer reflect how much work is really left.',
+      'If the new value only partly covers a block, that block shrinks to the leftover amount instead of being left untouched.',
+      'If the block being trimmed has already passed, the part of it covered by your edit stays on the calendar as done, and the rest of that time is automatically re-scheduled to a new slot.',
+      'Fixed a calendar item that had just been grouped into a chip with a too-short neighbor sometimes also swallowing the next, perfectly legible item into the same chip.',
+    ],
+  },
+  {
+    version: '10.2.3',
+    date: '2026-08-27',
+    title: 'Fixed remaining calendar sliver cases and a recurring-task due date bug',
+    changes: [
+      'Fixed a short calendar item that partially grew into empty space still rendering with no visible time — it now correctly groups with a neighbor instead when growing isn\'t enough to show both its title and time.',
+      'Fixed a calendar block\'s time sometimes getting clipped instead of hiding cleanly when there wasn\'t quite enough room.',
+      'Fixed a new recurring task (e.g. "every Friday") defaulting its due date to today even when today doesn\'t match the pattern — it now anchors to the actual next matching day.',
+    ],
+  },
+  {
+    version: '10.2.2',
+    date: '2026-08-26',
+    title: 'Short calendar items now expand or group instead of rendering unreadably small',
+    changes: [
+      "A very short calendar item (a few minutes long) squeezed next to another item, with no room to shrink its text and fit, now grows into any genuinely empty space below it so its time can still show — and if there's truly no room to grow either, it groups with whatever's crowding it into a tappable \"N items\" chip instead of rendering as an unreadable sliver.",
+    ],
+  },
+  {
+    version: '10.2.1',
+    date: '2026-08-26',
+    title: 'Fixed the event editor scroll and a few calendar block display issues',
+    changes: [
+      "Fixed the event editor's Description field trapping scrolling — with a long description, the rest of the form (and the Save button) could become unreachable. The whole editor now scrolls together as one panel.",
+      'Fixed a calendar block\'s time sometimes being pushed far below its title with a big empty gap; it now sits right underneath, with a touch more breathing room above the title.',
+      "Fixed short calendar items still hiding their time even with visible room to show it, when packed side-by-side with another item — a leftover interaction from yesterday's compact-block fix.",
+    ],
+  },
+  {
+    version: '10.2.0',
+    date: '2026-08-26',
+    title: 'Calendar events now sync live across your devices',
+    changes: [
+      'Editing or deleting a calendar event on one device now shows up on your other signed-in devices within moments — the same live sync tasks already have — whether or not Google Calendar is connected on either device. Deleting an event now actually removes it everywhere, not just on the device you deleted it from.',
+      'Also fixed a rare case where editing a single occurrence of a repeating event (or ignoring/deleting it) could fail to carry over correctly during a sync.',
+    ],
+  },
+  {
+    version: '10.1.2',
+    date: '2026-08-26',
+    title: 'Fixed back-to-back scheduled work rendering as separate blocks',
+    changes: [
+      'When the scheduler split a task\'s remaining time into two chunks that ended up placed with no gap between them (e.g. one from 14:10–14:35 and the next from 14:35–16:50), the calendar showed them as two separate boxes with a visible seam. They now merge into a single continuous block whenever they’re genuinely back-to-back.',
+    ],
+  },
+  {
+    version: '10.1.1',
+    date: '2026-08-26',
+    title: 'Fixed overlapping calendar events with long titles rendering unreadably narrow',
+    changes: [
+      'When two calendar items overlap and both are tall enough to get their own side-by-side column, a long title could still end up squeezed into a column too narrow to show more than a couple of letters. That pairing now collapses into the same tappable "N items" chip already used for short, crowded items, instead of showing an unreadably truncated title next to its neighbor.',
+      'Fixed short calendar events and task blocks hiding their time even when there was enough room to show it once their title switched to the smaller compact type size. A short block with no room for the time now centers its title instead of leaving it pinned to the top with empty space below; one with room for both keeps the title at the top and anchors the time to the bottom instead of the two lines crowding together with slack left over.',
+    ],
+  },
+  {
+    version: '10.1.0',
+    date: '2026-08-25',
+    title: 'Reschedule a task in one tap, without opening it',
+    changes: [
+      'Added a quick-reschedule menu with one-tap options for Tomorrow, In 3 days, Next week, or picking any date — no need to open the task first.',
+      'On desktop, hover over a task row in the list to reveal a small calendar button that opens the menu. It sits neatly beside the existing expand/collapse arrow when both are on the same row.',
+      'On mobile, swipe a task row to the left — past a short distance, the menu pops up right away and the row settles back into place on its own.',
+    ],
+  },
+  {
     version: '10.0.0',
     date: '2026-08-24',
     title: 'A task finishes itself once all its scheduled work is done',

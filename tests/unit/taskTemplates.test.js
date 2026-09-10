@@ -200,6 +200,13 @@ describe('planTemplateInstantiation', () => {
   it('leaves the root parentless and returns parents before children', () => {
     const plan = planTemplateInstantiation(build(), { anchorDate: '2027-01-10' }, idFactory('new'));
     expect(plan[0].parentId).toBeUndefined();
+    // Firestore's SDK throws synchronously on ANY `undefined` field value in
+    // a write payload (see firestoreSync.js's stripUndefined) — a root task
+    // must OMIT parentId entirely, not carry the key with an undefined
+    // value, or a cloud backup silently fails the moment a template-created
+    // root task reaches it. toBeUndefined() alone doesn't distinguish those
+    // two cases, which is exactly how this shipped once already.
+    expect('parentId' in plan[0]).toBe(false);
     const seen = new Set();
     for (const t of plan) {
       if (t.parentId) expect(seen.has(t.parentId)).toBe(true);

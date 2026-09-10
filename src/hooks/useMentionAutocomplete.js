@@ -228,5 +228,6 @@ export function useMentionAutocomplete({ inputRef, value, onChange, projects = [
     selectByIndex,
     handleKeyDown,
     refresh,
+    dismiss,
   };
 }

@@ -331,30 +331,66 @@ deliberately excluded from every backup payload — recurring tasks are never ma
 completed on finishing an occurrence (see `types/index.js`'s `Task.isRecurring`), so
 they're unaffected by this filter.
 
-**`events` (CalendarEvents) is a special case: it's in `BACKUP_FIELDS` (point-in-time
-backups DO capture it) but deliberately excluded from LIVE cross-device Firestore
-sync.** Google Calendar remains the authoritative store for events day-to-day (see
-`useGoogleCalendarSync.js`), and round-tripping the same data through a continuously-
-reconciled second store (the live Firestore doc `useCloudSync.js`'s
-`computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData` sync against) caused real
-bugs: a stale cross-device snapshot could silently resurrect an event a user had
-already deleted (in TaskFlow or directly in Google Calendar), on top of whatever the
-Google Calendar sync's own merge policy (`eventSyncService.js`) was already doing. A
-point-in-time backup doesn't have that failure mode — restoring one is an explicit,
-one-directional, user-initiated action (not an automatic background reconciliation),
-so it's safe to include `events` there as a safety net for "my local storage got
-wiped" / "I need to roll back to an old snapshot" scenarios. Concretely: `events`/
-`setEvents` are passed to `useCloudSync.js` as separate params (same pattern as
-`theme`/`setTheme`) so `buildBackupPayload`/`applyBackupPayload` (backup export/
-restore, in `backupService.js` and `useCloudSync.js` respectively) can read/write
-them, while the `state`/`stateRef` bundle that feeds `computeFingerprint`/
-`pushUserData`/`applyRemoteData` (the live-sync path) never includes them. An old
-backup taken before `events` joined `BACKUP_FIELDS` is still valid — a missing
-`events` key is treated as "leave it untouched," not rejected (see
-`isValidBackupPayload`'s doc comment in `backupService.js`). Do not add `events` to
-the live-sync path (`computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData`, or
-`SchedulerContext`'s `cloudSyncState`) without a strong reason and updating this note
-plus the README's own Backups section.
+**`events` (CalendarEvents) now lives in `BACKUP_FIELDS` AND live-syncs across
+devices through Firestore, the same as `tasks`.** That wasn't always true, and the
+history matters for anyone touching this code:
+
+- The ORIGINAL design (before this note was rewritten) synced the whole `events`
+  ARRAY as one blob — the same "take one side's entire array" shape `tasks` itself
+  used to have, before a per-task merge fixed it (see `taskMerge.js`'s own doc
+  comment). A stale device waking up and pushing its whole array could arrive at
+  Firestore AFTER a genuinely newer deletion made on another device and silently
+  overwrite it, purely because its write landed last — a deleted event would
+  "resurrect" with no explanation. That risk was serious enough that `events` was
+  excluded from live sync entirely for a long time, with only a point-in-time
+  backup (a one-directional, explicit restore, not a continuous background
+  reconciliation) treating it as safe to capture.
+- The fix mirrors the one already proven for `tasks`: instead of syncing one array,
+  `utils/eventMerge.js`'s `mergeEventsByUpdatedAt` merges EVENT BY EVENT, keeping
+  whichever side's copy has the newer `localUpdatedAt` timestamp (the field
+  `SchedulerContext.updateEvent` already stamps on every local edit). A genuine
+  deletion is recorded as a TOMBSTONE (`utils/eventTombstones.js` — a `deletedAt`
+  stamp, row kept instead of removed, heavy fields like `description`/`location`
+  cleared) rather than a plain array removal, mirroring `taskTombstones.js`
+  exactly. A tombstone with a newer timestamp than a stale conflicting edit wins
+  (the deletion sticks); an edit with a newer timestamp than an old tombstone wins
+  too (the event correctly "un-deletes" — the same non-bug `taskMerge.js`
+  documents for tasks). This closes the original resurrection risk because no
+  single device's write can ever silently clobber another device's newer change —
+  each event converges on its own most-recent state, independent of write order.
+- Wiring: `events` is part of `SchedulerContext`'s `cloudSyncState` (fed into
+  `useCloudSync.js`'s `state`/`stateRef`) exactly like `tasks`/`sections`/etc., so
+  it flows through `computeFingerprint`/`planRemoteDataMerge`/`applyRemoteData`
+  and the debounced push effect automatically. `SchedulerContext` also exposes a
+  tombstone-filtered `visibleEvents` (mirroring `visibleTasks`) so the calendar
+  grid and every other UI consumer never sees a tombstone — only the sync/merge
+  layer and local persistence work with the raw, tombstone-including array.
+- **Independent of Google Calendar.** This is TaskFlow's OWN device-to-device
+  sync through Firestore — it works whether or not Google Calendar is connected
+  on either device, which is the point: previously, an event edit or delete only
+  reached a second device if BOTH had their own independent Google Calendar
+  connection talking to Google directly; a device with Google disconnected saw
+  nothing. Google Calendar sync (`eventSyncService.js`'s `mergePulledGoogleEvents`,
+  policy: Google always wins for a Google-sourced event, unconditionally, no
+  timestamp exception) is a separate, pre-existing relationship, untouched by this
+  change — it still governs a Google-sourced event's day-to-day content whenever
+  Google is connected. The two coexist safely for edits: an edit on a
+  Google-connected device pushes both to Google directly AND through Firestore, so
+  when a disconnected device later reconnects Google and pulls, it's pulling the
+  same edit — nothing is lost or contradicted. **One known, accepted gap:**
+  deleting a Google-sourced event on a device with Google DISCONNECTED tombstones
+  it locally and syncs that tombstone through Firestore, but never tells Google
+  itself — Google's own copy stays live. If Google Calendar is later connected on
+  any device and pulls, and the event is still live there, `mergePulledGoogleEvents`
+  (which has no concept of `deletedAt`) will pull it back in, since it has no way
+  to know the event was deleted through TaskFlow's own sync rather than genuinely
+  still wanted. This is inherent to deleting something without telling the system
+  that's still authoritative for it, not a bug in the merge above — fixing it
+  would mean changing `eventSyncService.js`'s own policy, which is deliberately
+  out of scope for this note.
+- An old backup taken before this design was live-synced is still valid — a
+  missing `events` key is treated as "leave it untouched," not rejected (see
+  `isValidBackupPayload`'s doc comment in `backupService.js`).
 
 **Automatic daily cloud backups, and independent retention for both pools:**
 in addition to the manual "Back up now" button, `useCloudSync.js`
@@ -423,6 +459,19 @@ several places; follow the same patterns:
   
 - **Todoist sync:** follows Google Calendar's pattern — pulled items win; local
   sync metadata ages out.
+
+- **Deleted-task and deleted-event tombstones:** a task or event delete doesn't
+  remove the row immediately — it's stamped with a `deletedAt` tombstone instead
+  (`utils/taskTombstones.js` / `utils/eventTombstones.js`), so the cross-device
+  merge has a real chance to see the deletion before it's gone for good. Each is
+  swept once per app load: `SchedulerContext`'s "deleted task retention sweep"
+  effect purges a task tombstone older than `RETENTION_DAYS_DELETED_TASKS` (30
+  days), and its "deleted event retention sweep" effect does the same for an
+  event tombstone against `RETENTION_DAYS_DELETED_EVENTS` (also 30 days) — both
+  constants live in `dataRetention.js`. Long enough that a device offline for a
+  realistic stretch still sees the tombstone before it's swept; too-early
+  sweeping would let a returning device see the item as merely "missing" rather
+  than "deleted" and push it back into existence.
 
 When you add new persisted state to Firestore:
 1. Choose a retention strategy (count-based like backups, time-based like

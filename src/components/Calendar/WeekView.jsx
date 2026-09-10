@@ -48,7 +48,16 @@ import { expandRecurringEvent, resolveEventId } from '../../utils/recurrenceExpa
 import { priorityColor } from '../../utils/priorityColor';
 import { formatHours } from '../../utils/formatHours';
 import { groupItemsByDay } from '../../utils/calendarGrouping';
-import { GRID_START_MIN, DEFAULT_SCROLL_MIN, MIN_BLOCK_HEIGHT_PX, layoutDayItems, computeDayPositions } from '../../utils/calendarLayout';
+import {
+  GRID_START_MIN,
+  DEFAULT_SCROLL_MIN,
+  MIN_BLOCK_HEIGHT_PX,
+  TWO_LINE_MIN_HEIGHT_PX,
+  COMPACT_TWO_LINE_MIN_HEIGHT_PX,
+  layoutDayItems,
+  computeDayPositions,
+  foldNarrowIllegibleTitles as foldNarrowIllegibleTitlesPure,
+} from '../../utils/calendarLayout';
 import { findNearestAncestorDueDate } from '../../utils/taskHierarchy';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { makeSelectionKey } from '../../hooks/useMultiSelect';
@@ -65,16 +74,42 @@ const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
 export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
-const TWO_LINE_MIN_HEIGHT = 36; // below this px height, drop the time-range line rather than clip it (title line + time line + padding needs ~35px)
+// Both two-line height thresholds (the normal-type one and the smaller
+// compact-type one) now live in calendarLayout.js, because the layout pass
+// itself has to consult them: it decides which type size a box gets, and
+// whether a box needs stretching at all, before any height is assigned. These
+// aliases keep the shorter names this file already reads well with.
+const TWO_LINE_MIN_HEIGHT = TWO_LINE_MIN_HEIGHT_PX;
+const COMPACT_TWO_LINE_MIN_HEIGHT = COMPACT_TWO_LINE_MIN_HEIGHT_PX;
 
-// tightGap (see foldSequentialItems) is meant to degrade a box that's ALSO
-// still short enough for a two-line render to look cramped next to its close
-// neighbour — not any box a close neighbour happens to sit next to. Without
-// this ceiling, a genuinely tall box (e.g. a cluster chip floored to
-// MIN_BLOCK_HEIGHT_PX, or one simply not tightly packed) would lose its time
-// line just because a neighbour starts/ends within TIGHT_GAP_PX of it, even
-// though it has plenty of its own visible room to spare.
-const TIGHT_GAP_HEIGHT_CEILING = 60;
+/**
+ * Whether a block/event box should render its time-range line, given its
+ * live pixel height and whether it's compact (smaller type — see isCompact
+ * in itemLiveState). Pulled out of itemLiveState as a standalone, plain-
+ * argument function so this arithmetic can be unit tested directly, the same
+ * reason calendarLayout.js's math was pulled out of this component.
+ *
+ * Purely a question of whether THIS box's own height clears the two-line
+ * minimum for whichever type size it's drawn at (36 normal / 32 compact —
+ * see TWO_LINE_MIN_HEIGHT/COMPACT_TWO_LINE_MIN_HEIGHT). It used to ALSO
+ * degrade a box tagged `tightGap` (close to a neighbour in the day's
+ * start-sorted sequence — see foldSequentialItems) even once it cleared that
+ * floor, on the theory that a short box sitting close to a neighbour could
+ * still look visually cramped. In practice this produced its own bug reports
+ * — a box with a perfectly real, comfortable height (e.g. a genuine 30-minute
+ * item rendering at its own true size) losing its time line purely because
+ * something else happened to start or end within TIGHT_GAP_PX of it, even
+ * though nothing about the box's OWN content was actually short on room.
+ * `tightGap` is retained as a field on the packed item for other consumers
+ * (see its own doc comment in calendarLayout.js) but no longer factors into
+ * this decision — once a box is tall enough to show both its own lines, it
+ * always does, regardless of what's above or below it.
+ */
+export function computeShowTimeLine({ height, isCompact, isResizing }) {
+  if (isResizing) return true;
+  const twoLineMinHeight = isCompact ? COMPACT_TWO_LINE_MIN_HEIGHT : TWO_LINE_MIN_HEIGHT;
+  return height >= twoLineMinHeight;
+}
 
 const DOW_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
@@ -171,6 +206,17 @@ function clusterMaxTitleLines(chipHeightPx, hasTimeLine) {
   const timeLineReserve = hasTimeLine ? CLUSTER_TITLE_LINE_HEIGHT_PX : 0;
   const available = chipHeightPx - CLUSTER_TITLE_VERTICAL_CHROME_PX - timeLineReserve;
   return Math.max(1, Math.floor(available / CLUSTER_TITLE_LINE_HEIGHT_PX));
+}
+
+// WeekView-specific wrapper around calendarLayout's foldNarrowIllegibleTitles:
+// supplies title resolution via clusterItemTitle (blocks need a taskById
+// lookup for their title; events carry theirs directly) as the getTitle
+// callback the pure function itself doesn't know how to do. See
+// calendarLayout.js for the actual fold/merge logic and its own doc comment
+// — kept there (not here) so it can be unit tested directly like the rest of
+// this file's layout math, per this repo's own testing conventions.
+function foldNarrowIllegibleTitles(laidOut, taskById) {
+  return foldNarrowIllegibleTitlesPure(laidOut, (it) => clusterItemTitle(it, taskById));
 }
 
 // Fixed viewport coordinates for a cluster's popover, anchored to the
@@ -305,10 +351,18 @@ export default function WeekView({
           end: timeToMinutes(e.endTime),
         }));
       const merged = [...blockItems, ...eventItems].sort((a, b) => a.start - b.start || a.end - b.end);
-      map.set(day, computeDayPositions(layoutDayItems(merged, pxPerMin), pxPerMin));
+      // foldNarrowIllegibleTitles runs strictly AFTER layoutDayItems has
+      // already decided lanes — it never changes that decision (lane count,
+      // MAX_SIDE_BY_SIDE_LANES, isLegibleAlone are all untouched), it only
+      // catches the one thing layoutDayItems has no way to see: a real
+      // side-by-side lane can still be too narrow for a specific title to
+      // read as more than 1-2 truncated characters, even though the box
+      // itself is tall enough (see this function's own doc comment).
+      const laidOut = foldNarrowIllegibleTitles(layoutDayItems(merged, pxPerMin), taskById);
+      map.set(day, computeDayPositions(laidOut, pxPerMin));
     }
     return map;
-  }, [days, blocksByDay, eventsByDay, pxPerMin]);
+  }, [days, blocksByDay, eventsByDay, pxPerMin, taskById]);
 
   /* Park the scroll position on mount (and whenever the visible date range
      changes) rather than at 00:00, which the full-day grid would otherwise
@@ -890,6 +944,22 @@ export default function WeekView({
     const height = isResizing
       ? Math.max(MIN_BLOCK_HEIGHT_PX, (resizePreview.endMin - timeToMinutes(item.data.startTime)) * pxPerMin)
       : item.height;
+    // Which type size to draw at is decided by the layout pass, not here, and
+    // travels on the item as `fontMode` (see chooseFontMode in
+    // calendarLayout.js). It has to be decided there because it depends on the
+    // item's own real duration — the height it WOULD have if nothing stretched
+    // it — which is information this component no longer has once the box has
+    // been given a final drawn height.
+    //
+    // Reading it off the drawn height here instead, as this used to, produced
+    // boxes that were both shrunk AND stretched: the layout would stretch a
+    // too-short box part-way toward legibility, it would land under the
+    // full-size floor, and this line would shrink it on top of that. That pays
+    // the readability cost of small text without buying the one thing small
+    // text was for, which is keeping the box's bottom edge on its real end
+    // time. A resizing box is never compact — it's drawn full-size while the
+    // user is actively dragging its edge.
+    const isCompact = !isResizing && item.fontMode === 'compact';
     return {
       isDragging,
       isResizing,
@@ -899,25 +969,10 @@ export default function WeekView({
       // mid-resize the live time is the more useful one — so the title gives
       // way to it there, the same trade-off renderGhost makes.
       liveTimeOnly: isResizing && height < TWO_LINE_MIN_HEIGHT,
-      // Normally a two-line render (title + time) is purely a function of
-      // this box's own height (TWO_LINE_MIN_HEIGHT). A box tagged `tightGap`
-      // (see foldSequentialItems) sits close enough to its neighbour at this
-      // zoom that a full two-line render would look cramped/collide-adjacent
-      // — but that degrade only makes sense while this box is ALSO still
-      // short (below TIGHT_GAP_HEIGHT_CEILING); a box tall enough to have
-      // its own visible room to spare should keep its time line regardless
-      // of a close neighbour. A live resize always overrides this (the user
-      // is actively looking at this one box, and neighbours aren't repacked
-      // until the resize commits — see this function's own doc comment).
-      showTimeLine: isResizing
-        ? true
-        : height >= TWO_LINE_MIN_HEIGHT && !(item.tightGap && height < TIGHT_GAP_HEIGHT_CEILING),
-      // Between the compact floor and the full-size one, the title renders at
-      // a smaller type size instead of the item being folded into a chip (see
-      // COMPACT_BLOCK_HEIGHT_PX). Shrinking the text slightly beats hiding the
-      // title behind "3 tasks"; below the compact floor the layout has already
-      // clustered it, so this band is the only place it applies.
-      isCompact: !isResizing && height < MIN_BLOCK_HEIGHT_PX,
+      // See computeShowTimeLine's own doc comment for the full reasoning —
+      // pulled out as a standalone function so it can be unit tested.
+      showTimeLine: computeShowTimeLine({ height, isCompact, isResizing }),
+      isCompact,
     };
   }
 
@@ -1170,10 +1225,12 @@ export default function WeekView({
                 return (
                   <div
                     key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''}`}
+                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''} ${selectionMode && !clusterAllSelected ? 'is-selection-dimmed' : ''}`}
                     style={{ top, height, ...laneStyle }}
                     role="button"
                     tabIndex={0}
+                    aria-pressed={selectionMode ? clusterAllSelected : undefined}
+                    aria-label={selectionMode ? `Select ${fullTitleList}` : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (selectionMode) {
@@ -1196,16 +1253,6 @@ export default function WeekView({
                     }}
                     title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
                   >
-                    {selectionMode && (
-                      <input
-                        type="checkbox"
-                        className="bulk-select-checkbox"
-                        checked={clusterAllSelected}
-                        onChange={toggleClusterSelection}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select ${fullTitleList}`}
-                      />
-                    )}
                     <div className="cal-cluster-title-stack">
                       {titleLines.map((line, i) => (
                         <div className="cal-cluster-title-line" key={i}>
@@ -1236,7 +1283,9 @@ export default function WeekView({
                   <div
                     key={evt.id}
                     id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''}`}
+                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''} ${selectionMode && !evtSelected ? 'is-selection-dimmed' : ''}`}
+                    aria-pressed={selectionMode ? evtSelected : undefined}
+                    aria-label={selectionMode ? `Select ${evt.title}` : undefined}
                     style={{ top, height, ...laneStyle }}
                     // Desktop gets the richer HoverPreviewCard instead (see
                     // below) — mobile has no hover, so it keeps the native
@@ -1287,16 +1336,6 @@ export default function WeekView({
                       }
                     }}
                   >
-                    {selectionMode && (
-                      <input
-                        type="checkbox"
-                        className="bulk-select-checkbox"
-                        checked={evtSelected}
-                        onChange={() => onToggleSelectKey?.(evtKey)}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Select ${evt.title}`}
-                      />
-                    )}
                     {/* A read-only (subscribed/shared) event previously had no
                         visual cue at all — the only way to discover it wasn't
                         yours to move was to try dragging it and have nothing
@@ -1347,7 +1386,9 @@ export default function WeekView({
                 <div
                   key={block.id}
                   id={`block-${block.id}`}
-                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''}`}
+                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''} ${selectionMode && !blockSelected ? 'is-selection-dimmed' : ''}`}
+                  aria-pressed={selectionMode ? blockSelected : undefined}
+                  aria-label={selectionMode ? `Select ${displayTitle}` : undefined}
                   style={{
                     top,
                     height,
@@ -1408,16 +1449,7 @@ export default function WeekView({
                       : undefined
                   }
                 >
-                  {selectionMode ? (
-                    <input
-                      type="checkbox"
-                      className="bulk-select-checkbox"
-                      checked={blockSelected}
-                      onChange={() => onToggleSelectKey?.(blockKey)}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`Select ${displayTitle}`}
-                    />
-                  ) : (
+                  {!selectionMode && (
                     <button
                       className="lock-indicator"
                       onClick={(e) => {

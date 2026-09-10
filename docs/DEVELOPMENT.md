@@ -134,7 +134,7 @@ the greedy result as a starting point (a "seed") and searches for a
 lower-cost rearrangement of it.
 
 **`placementCost.js`** is a pure function that scores a candidate
-placement — lower is better. Three terms, all scaled by a per-priority
+placement — lower is better. Four terms, all scaled by a per-priority
 multiplier (`PRIORITY_MULTIPLIER`: `urgent 1.4, high 1.2, medium 1.0, low
 0.8` — fractional, not the allocator's integer scoring weights, since this
 is a gentler nudge rather than a strict ordering rule):
@@ -159,6 +159,18 @@ is a gentler nudge rather than a strict ordering rule):
   call but never justifies shredding a task across days to chase a nicer hour.
   The preference is soft by design and never reaches the allocator: a hard
   constraint would produce unschedulable tasks with no visible reason.
+- **Earliness** — a small reward (`EARLINESS_REWARD_PER_HOUR`, 0.05/hour) for
+  each block starting earlier in the day, measured in hours until midnight. On
+  its own, the greedy allocator (see step 2 above) fills whichever free gap in
+  a day is *largest*, with no preference for whichever gap is *earliest* — so
+  a task could land in a big evening gap while a smaller morning gap sat
+  unused, with nothing in this cost function able to tell the two placements
+  apart. This term exists purely to break that tie: a full day (24h) of
+  earliness difference is worth at most `24 × 0.05 × 1.4 ≈ 1.7`, smaller than
+  a single extra fragmentation day (3) or even one hour of misplaced
+  time-of-day preference (1.0), so it can only decide a placement every other
+  term already considers equal — it must never outweigh fragmentation,
+  due-date, or time-of-day.
 
 There's deliberately no separate "unplaced" cost term — an unplaced task
 already surfaces through the allocator's own `overflow` reporting, and
@@ -753,7 +765,7 @@ src/
 ├── algorithms/               # Pure scheduling logic, framework-agnostic
 │   ├── capacityEngine.js     # Day-by-day free-time computation
 │   ├── allocator.js          # Priority/deadline-aware hour distribution (greedy seed)
-│   ├── placementCost.js      # Cost function (fragmentation + due-date terms) scoring a placement
+│   ├── placementCost.js      # Cost function (fragmentation + due-date + time-of-day + earliness terms) scoring a placement
 │   ├── localSearch.js        # Time-boxed search that refines the greedy seed to lower cost
 │   └── rebalanceEngine.js    # Orchestrates capacity+allocator+search, preserves locks
 ├── components/

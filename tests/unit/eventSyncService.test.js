@@ -161,6 +161,251 @@ describe('mergePulledGoogleEvents — restored/unconfirmed events are re-pushed,
   });
 });
 
+describe('mergePulledGoogleEvents — replacement detection (a series gets a new Google master id)', () => {
+  // THE REPORTED BUG: editing a recurring event's own pattern directly in
+  // Google Calendar can make Google mint an entirely new master event id for
+  // it, rather than keeping the old one. From this app's point of view the
+  // old id just vanishes from the next pull (unconfirmed-yet, since this is
+  // often the very first pull of a session) and an unrelated-looking new id
+  // shows up in the SAME pull — without replacement detection, the old row
+  // gets demoted (kept, googleEventId cleared, meant to be re-pushed) and the
+  // new row is added separately: two rows for one real "Tutoring every
+  // Saturday" series. Reconstructed from the exact real report.
+  const rangeStart = '2026-07-01';
+  const rangeEnd = '2026-08-31';
+
+  it('replaces the old row in place instead of demoting it, when a plausible match exists in the same pull', () => {
+    const oldMaster = googleEvent({
+      id: 'local-tutoring-old',
+      googleEventId: 'old-master-id',
+      title: 'Tutoring',
+      date: '2026-07-04',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;UNTIL=20260724T115959Z;BYDAY=SA',
+    });
+    const newMaster = googleEvent({
+      id: 'new-master-id',
+      googleEventId: 'new-master-id',
+      title: 'Tutoring',
+      date: '2026-07-04',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA', // no UNTIL — the series is still ongoing
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [newMaster], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+
+    // Exactly one row survives — the new one — not two.
+    expect(result).toHaveLength(1);
+    expect(result[0].googleEventId).toBe('new-master-id');
+    expect(result[0].title).toBe('Tutoring');
+  });
+
+  it('carries forward the old row\'s isFreeTime flag onto the matched replacement', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+      isFreeTime: true,
+    });
+    const newMaster = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [newMaster], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(1);
+    expect(result[0].isFreeTime).toBe(true);
+  });
+
+  it('does NOT match two events with different titles, even if everything else lines up', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const unrelated = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Piano practice',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [unrelated], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    // Both survive as separate rows — old one demoted (re-pushable), new one added.
+    expect(result).toHaveLength(2);
+    expect(result.find((e) => e.title === 'Tutoring').googleEventId).toBeNull();
+    expect(result.find((e) => e.title === 'Piano practice').googleEventId).toBe('new-id');
+  });
+
+  it('does NOT match two events with different times, even with the same title/recurrence', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const differentTime = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Tutoring',
+      startTime: '14:00',
+      endTime: '16:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [differentTime], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(2);
+  });
+
+  it('does NOT match a different recurrence day-of-week pattern, even with the same title/time', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const differentDay = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SU',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [differentDay], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(2);
+  });
+
+  it('does NOT match a recurring event against a non-recurring one', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const oneOff = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Tutoring',
+      date: '2026-07-04',
+      startTime: '08:00',
+      endTime: '10:00',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [oneOff], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(2);
+  });
+
+  it('CRITICAL SAFETY: does not guess when a new pulled event matches MORE than one demote-candidate — leaves all rows unmatched rather than picking one', () => {
+    const oldA = googleEvent({
+      id: 'local-a',
+      googleEventId: 'old-a',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const oldB = googleEvent({
+      id: 'local-b',
+      googleEventId: 'old-b',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const ambiguousNew = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([oldA, oldB], [ambiguousNew], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    // All three rows survive — neither old row is dropped, the new one is added normally.
+    expect(result).toHaveLength(3);
+    expect(result.filter((e) => e.googleEventId === null)).toHaveLength(2);
+    expect(result.find((e) => e.googleEventId === 'new-id')).toBeDefined();
+  });
+
+  it('does not touch a demote-candidate when there is no matching new pulled event at all (falls back to ordinary demote-and-repush)', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(1);
+    expect(result[0].googleEventId).toBeNull();
+    expect(result[0].title).toBe('Tutoring');
+  });
+
+  it('still matches when only the recurrence UNTIL date differs — the exact real-world edit that triggers a new master id', () => {
+    const oldMaster = googleEvent({
+      id: 'local-old',
+      googleEventId: 'old-id',
+      title: 'Groceries',
+      startTime: '09:00',
+      endTime: '11:00',
+      recurrenceRule: 'FREQ=WEEKLY;WKST=MO;UNTIL=20260724T115959Z;INTERVAL=1;BYDAY=SA',
+    });
+    const newMaster = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Groceries',
+      startTime: '09:00',
+      endTime: '11:00',
+      recurrenceRule: 'FREQ=WEEKLY;WKST=MO;UNTIL=20260807;INTERVAL=1;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([oldMaster], [newMaster], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    expect(result).toHaveLength(1);
+    expect(result[0].googleEventId).toBe('new-id');
+  });
+
+  it('does not match a manual event against a new pulled event — replacement detection only ever considers Google-sourced local rows', () => {
+    const manual = {
+      id: 'manual-1',
+      source: 'manual',
+      googleEventId: null,
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      date: '2026-07-04',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    };
+    const newMaster = googleEvent({
+      id: 'new-id',
+      googleEventId: 'new-id',
+      title: 'Tutoring',
+      startTime: '08:00',
+      endTime: '10:00',
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=SA',
+    });
+    const result = mergePulledGoogleEvents([manual], [newMaster], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set());
+    // Both survive — the manual event is never touched by a Google pull at all.
+    expect(result).toHaveLength(2);
+    expect(result.find((e) => e.source === 'manual')).toEqual(manual);
+  });
+});
+
 describe('mergePulledGoogleEvents — preserving the local-only "ignore from scheduler" flag across a sync', () => {
   const rangeStart = '2026-08-01';
   const rangeEnd = '2026-08-31';

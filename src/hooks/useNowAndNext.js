@@ -34,9 +34,15 @@ export function computeNowAndNext(tasks, blocks, events, now) {
     return { kind: 'event', event: evt, date: evt.date, startTime: evt.startTime, endTime: evt.endTime };
   }
 
+  // An all-day event is stored as a 00:00-23:59 span so the rest of the app
+  // (capacity engine, calendar layout) needs no special case for it - but
+  // that same span would make it look "in progress" every minute of the
+  // day here, permanently occupying the "Right now" card and burying any
+  // real timed block/event behind a "+1 more" badge. It's excluded from
+  // both current and next so only genuinely timed items ever appear here.
   const todaysItems = [
     ...blocks.filter((b) => b.date === today && !isDone(b)).map(toItem),
-    ...expandEventsForRange(events || [], today, today).filter((e) => e.date === today).map(eventToItem),
+    ...expandEventsForRange(events || [], today, today).filter((e) => e.date === today && !e.isAllDay).map(eventToItem),
   ].sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
 
   const isNowItem = (item) => timeToMinutes(item.startTime) <= nowMinutes && nowMinutes < timeToMinutes(item.endTime);

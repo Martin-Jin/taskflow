@@ -1060,6 +1060,23 @@
   min-height: 0;
 }
 
+/* EventDetailModal has no .detail-main/.detail-sidebar two-column split (see
+   that file's own module doc comment) to provide the actual scrolling child
+   .detail-body normally relies on — this variant makes .detail-body itself
+   the scroll container instead, stacking its content in one column. Same
+   hidden-scrollbar treatment as .detail-main/.detail-sidebar below, for
+   visual consistency. */
+.detail-body--single-column {
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.detail-body--single-column::-webkit-scrollbar {
+  display: none;
+}
+
 .detail-main,
 .detail-sidebar {
   overflow-y: auto;
@@ -2150,6 +2167,14 @@
 
   .detail-sidebar {
     width: 100%;
+  }
+
+  /* Same reasoning as .detail-main/.detail-sidebar above — .modal-detail
+     itself is back to being the one scrollable unit at this width, so its
+     single-column child (see EventDetailModal) shouldn't ALSO scroll on its
+     own. */
+  .detail-body--single-column {
+    overflow-y: visible;
   }
 
   .detail-sync-note {

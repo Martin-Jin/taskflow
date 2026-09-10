@@ -15,7 +15,7 @@
  *   - Optional/variable whitespace, or none at all: "2h", "2 h", "2  hours".
  *   - Decimal and fractional hours: "1.5 hours", "1,5 hours" (EU decimal
  *     comma), "1/2 hour".
- *   - Written-out small numbers: "half an hour", "an hour", "a couple hours".
+ *   - Written-out small numbers: "half an hour", "an hour", "a few hours".
  *   - Optional leading markers like "~", "approx", "about", "est"/"estimate".
  *   - Minutes, converted to hours: "45 min", "45 minutes", "45m".
  *   - Combined hour+minute: "1h 30m", "1 hour 30 minutes".
@@ -28,15 +28,12 @@
 import { BASE_WORD_NUMBERS } from './wordNumbers';
 
 // Shares dateParse.js's base word-to-number vocabulary (a/an/one/.../ten,
-// couple, few) and layers on duration-specific forms: "half"/"half an" (no
-// equivalent when counting whole weeks/months) and "couple of" (this parser's
-// unit always follows directly, e.g. "a couple of hours", so the "of" needs
-// its own entry here).
+// few) and layers on duration-specific forms: "half"/"half an" (no
+// equivalent when counting whole weeks/months).
 const WORD_NUMBERS = {
   ...BASE_WORD_NUMBERS,
   half: 0.5,
   'half an': 0.5,
-  'couple of': 2,
 };
 
 /** Normalize a numeric token: handles ".", "," decimals and simple "a/b" fractions. */
@@ -123,11 +120,11 @@ function matchNumericDuration(text) {
 }
 
 /**
- * Try to find a written-out duration ("half an hour", "a couple hours",
+ * Try to find a written-out duration ("half an hour", "a few hours",
  * "an hour"). Returns {hours, matchedText, index} or null.
  */
 function matchWordDuration(text) {
-  // Longest phrases first so "a couple of hours" isn't shadowed by "a".
+  // Longest phrases first so "a few hours" isn't shadowed by "a".
   const phrases = Object.keys(WORD_NUMBERS).sort((a, b) => b.length - a.length);
 
   for (const phrase of phrases) {

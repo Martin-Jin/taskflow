@@ -111,20 +111,25 @@ aren't included in any backup (there's nothing to restore them to);
 recurring tasks always are, since completing one occurrence doesn't mark
 the task itself as done.
 
-**Calendar events are included in backups, but still excluded from live
-cross-device cloud sync.** Google Calendar remains the single source of
-truth for synced events day-to-day — TaskFlow mirrors whatever Google
-currently has via polling/pulling (see [Google Calendar](INTEGRATIONS.md#google-calendar)
-below), and any purely local "blocked time" entry (never pushed to Google)
-is device-local by design. Live-syncing events across devices too would let
-a stale, continuously-reconciled snapshot silently resurrect an event you'd
-already deleted (in TaskFlow or directly in Google Calendar) — exactly the
-kind of duplicate/reappearing-event bug that exclusion exists to prevent.
-A one-off backup restore doesn't share that risk (it's an explicit,
-user-initiated, one-directional action rather than an automatic background
-sync), so backups do capture your events as a point-in-time safety net —
-restoring an old backup will bring back whatever events it had, which may
-since have changed or been deleted in Google Calendar.
+**Calendar events are included in backups, and also sync live across your
+devices**, the same way tasks do — including deletions, not just edits.
+This works whether or not Google Calendar is connected on either device:
+it's TaskFlow's own sync, independent of Google. Editing or deleting an
+event on one device shows up on your other signed-in devices within
+moments, without either one needing a working Google Calendar connection.
+Google Calendar remains the single source of truth for a synced event's
+day-to-day content whenever it IS connected — TaskFlow still mirrors
+whatever Google currently has via polling/pulling (see
+[Google Calendar](INTEGRATIONS.md#google-calendar) below) — but that's a
+separate relationship from TaskFlow's own cross-device sync, and the two
+work together without conflicting. One gap worth knowing: if you delete an
+event on a device with Google Calendar disconnected, that deletion syncs
+to your other TaskFlow devices, but doesn't tell Google itself — if Google
+Calendar is later connected somewhere and that event is still live there,
+it can reappear. Backups still capture your events too, as a point-in-time
+safety net independent of the live sync above — restoring an old backup
+will bring back whatever events it had, which may since have changed or
+been deleted elsewhere.
 
 **Restoring a backup only ever changes local TaskFlow data — it never
 touches your actual Google Calendar.** Since Google Calendar remains the

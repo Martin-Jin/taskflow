@@ -23,6 +23,11 @@
  *   3. TIME-OF-DAY — for a task with a `preferredTimeOfDay`, a penalty per
  *      hour placed outside that window. Soft by design: it nudges this
  *      search, it never constrains the allocator (see utils/timeOfDay.js).
+ *   4. EARLINESS — a small reward per hour a block starts before end-of-day,
+ *      so that when a day has both an earlier and a later free gap of equal
+ *      standing on every other term, the search prefers the earlier one
+ *      instead of being indifferent between them (see EARLINESS_REWARD_
+ *      PER_HOUR below for why this term is needed at all).
  *
  * Priority is a MULTIPLIER on those two terms, never an independent cost —
  * there is deliberately no separate "this task is unplaced" cost line here;
@@ -35,6 +40,8 @@
 
 import { diffDays, timeToMinutes } from '../utils/dateUtils';
 import { minutesOutsidePreference } from '../utils/timeOfDay';
+
+const MINUTES_IN_DAY = 24 * 60;
 
 /**
  * Tunable per-priority cost multiplier. Fractional (not integer weights like
@@ -94,6 +101,33 @@ export const SMALL_CHUNK_PENALTY = 2;
 // cost visibly runs away rather than plateauing.
 export const EARLY_REWARD_PER_DAY = 0.5;
 export const LATE_PENALTY_PER_DAY_SQUARED = 4;
+
+/**
+ * Reward per hour a block starts before midnight-of-the-following-day (i.e.
+ * (24 - startHour) hours "saved"), so an earlier start in the SAME day always
+ * scores strictly better than a later one.
+ *
+ * This exists because none of the other terms distinguish between two
+ * placements on the same day: the greedy allocator (allocator.js's
+ * placeHoursInDay) fills whichever free gap is LARGEST that day, with no
+ * preference for whichever gap is EARLIEST, and this cost function used to
+ * have no term that could tell the two apart either — a task landing in an
+ * early-morning gap and the identical task landing in a same-size evening gap
+ * scored as an exact tie. The visible symptom: free time sitting earlier in
+ * the day while a task's block scheduled later anyway, with no way for the
+ * search to prefer the earlier gap even though it was strictly better for the
+ * user.
+ *
+ * Deliberately the smallest-magnitude term in this file (0.05/hour, vs.
+ * TIME_OF_DAY_PENALTY_PER_HOUR's 1.0/hour and FRAG_DAY_PENALTY's 3/day) —
+ * this is a tiebreaker, not a scheduling goal. A full day (24h) of earliness
+ * difference caps out at 24 * 0.05 = 1.2, smaller than a single extra
+ * fragmentation day (3) or even one hour of misplaced time-of-day preference
+ * (1.0), so this term can only decide a placement that every other term
+ * already considers equal — it must never outweigh fragmentation, due-date,
+ * or time-of-day.
+ */
+export const EARLINESS_REWARD_PER_HOUR = 0.05;
 
 /**
  * Group a task's blocks and return the set of distinct dates used and the
@@ -171,6 +205,25 @@ function timeOfDayCost(task, taskBlocks) {
 }
 
 /**
+ * Earliness cost for one task: a small negative cost (reward) per hour each
+ * block starts before midnight, summed across all of the task's blocks and
+ * scaled by priorityMultiplier like every other term. Not scaled by
+ * priorityMultiplier alone, though: it stays the smallest term in the file
+ * even for an urgent task, since it is a tiebreaker, not a scheduling goal
+ * (see EARLINESS_REWARD_PER_HOUR's doc comment).
+ */
+function earlinessCost(task, taskBlocks) {
+  if (taskBlocks.length === 0) return 0;
+  const mult = priorityMultiplier(task);
+  let reward = 0;
+  for (const b of taskBlocks) {
+    const hoursUntilMidnight = (MINUTES_IN_DAY - timeToMinutes(b.startTime)) / 60;
+    reward += hoursUntilMidnight * EARLINESS_REWARD_PER_HOUR * mult;
+  }
+  return -reward;
+}
+
+/**
  * Evaluate the total cost of a candidate placement.
  *
  * @param {import('../types').ScheduledBlock[]} blocks - ALL blocks under consideration for this evaluation (only
@@ -181,7 +234,7 @@ function timeOfDayCost(task, taskBlocks) {
  *   (own or borrowed from an ancestor) — pass allocator.js's `resolveDueDate` bound to the caller's `taskById`, or
  *   any equivalent. Kept as an injected function rather than importing allocator.js directly, to avoid a circular
  *   dependency between allocator.js and this module.
- * @returns {{ total: number, byTask: Map<string, {fragmentation: number, dueDate: number, timeOfDay: number, total: number}> }}
+ * @returns {{ total: number, byTask: Map<string, {fragmentation: number, dueDate: number, timeOfDay: number, earliness: number, total: number}> }}
  */
 export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn) {
   const blocksByTask = new Map();
@@ -199,8 +252,9 @@ export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn) {
     const dueDate = resolveDueDateFn ? resolveDueDateFn(task) : task.dueDate || null;
     const due = dueDateCost(task, lastDate, dueDate);
     const timeOfDay = timeOfDayCost(task, taskBlocks);
-    const taskTotal = fragmentation + due + timeOfDay;
-    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, total: taskTotal });
+    const earliness = earlinessCost(task, taskBlocks);
+    const taskTotal = fragmentation + due + timeOfDay + earliness;
+    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, earliness, total: taskTotal });
     total += taskTotal;
   }
 

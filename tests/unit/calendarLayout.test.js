@@ -5,10 +5,13 @@ import {
   computeDayPositions,
   packLane,
   isLegibleAlone,
+  isLaneWidthTooNarrowForTitle,
+  foldNarrowIllegibleTitles,
   MIN_BLOCK_HEIGHT_PX,
   GRID_START_MIN,
   EXCESSIVE_PUSHDOWN_PX,
   MAX_SIDE_BY_SIDE_LANES,
+  TWO_LINE_MIN_HEIGHT_PX,
 } from '../../src/utils/calendarLayout';
 
 // Helper to build a generic block item ({ type, data, start, end }) with
@@ -138,6 +141,142 @@ describe('isLegibleAlone', () => {
     // a question of pixels at the current zoom, not a fixed minute count.
     expect(isLegibleAlone(30, 0.55)).toBe(false);
     expect(isLegibleAlone(30, 1.25)).toBe(true);
+  });
+});
+
+describe('isLaneWidthTooNarrowForTitle', () => {
+  it('is always false at 1 lane (full width), however long the title is', () => {
+    expect(isLaneWidthTooNarrowForTitle('A very long task title that goes on and on', 1)).toBe(false);
+  });
+
+  it('is false for every title from the "must stay side-by-side" pinned lane-packing tests below, at 2 lanes', () => {
+    // These are the exact titles used in the pinned tests asserting 2
+    // legible-alone items must keep separate real lanes (see
+    // "assigns two overlapping legible-alone items..." and "gives two
+    // overlapping legible events..." below) — this check must never flag
+    // any of them, or WeekView's downstream fold pass (foldNarrowIllegibleTitles)
+    // would fold a pair that calendarLayout.js correctly decided should stay
+    // side-by-side, reintroducing the "events with plenty of space folded
+    // anyway" regression the user explicitly flagged.
+    const mustStaySideBySideTitles = ['Email student', 'Lower + Running', 'Standup', 'Review', 'Sync', 'MECHENG 211', 'MECHENG 222', 'Piano', 'Test prep'];
+    for (const title of mustStaySideBySideTitles) {
+      expect(isLaneWidthTooNarrowForTitle(title, 2)).toBe(false);
+    }
+  });
+
+  it('is true for a long real-world title at 2 lanes — the reported bug', () => {
+    // Recreates the actual reported shape: a long task title ("Test 1 -
+    // Physics assignment") sharing a 2-lane overlap group with a short one
+    // ("Piano"). The long title alone is what should trip this check.
+    expect(isLaneWidthTooNarrowForTitle('Test 1 - Physics assignment', 2)).toBe(true);
+    expect(isLaneWidthTooNarrowForTitle('Piano', 2)).toBe(false);
+  });
+
+  it('gets stricter as lane count grows (smaller per-lane share)', () => {
+    // Fits comfortably at 2 lanes (half width) but no longer at 4 (quarter
+    // width) — the per-lane character budget shrinks as more lanes split the
+    // same day column, so the same title can flip from fine to too-narrow
+    // purely from more concurrent items, without changing its own length.
+    const title = 'Team sync meeting';
+    expect(isLaneWidthTooNarrowForTitle(title, 2)).toBe(false);
+    expect(isLaneWidthTooNarrowForTitle(title, 4)).toBe(true);
+  });
+});
+
+describe('foldNarrowIllegibleTitles', () => {
+  // getTitle helper: reads a plain `title` field directly, since these tests
+  // don't need WeekView's block-vs-task lookup — that indirection is
+  // WeekView.jsx's own concern (see its thin wrapper), not this function's.
+  const byTitle = (it) => it.data.title;
+
+  it('folds the real reported bug: a long title sharing a 2-lane overlap group with a short one', () => {
+    // Recreates the exact reported shape from the user's screenshot: "Test 1
+    // - Physics assignment" 18:05-19:45 (100 min) overlapping "Piano"
+    // 19:15-20:15 (60 min) by 30 minutes. Both are individually legible-alone
+    // (well above MIN_BLOCK_HEIGHT_PX even at the lowest zoom) and there are
+    // only 2 concurrent items, so layoutDayItems correctly gives both a real
+    // side-by-side lane — the bug is that lane is only 50% of the day
+    // column's width, which truncates the long title to 1-2 characters. This
+    // must fold into a single cluster chip instead.
+    const pxPerMin = 1.25;
+    const items = [
+      { type: 'block', data: { id: 'test1', title: 'Test 1 - Physics assignment' }, start: 18 * 60 + 5, end: 19 * 60 + 45 },
+      { type: 'block', data: { id: 'piano', title: 'Piano' }, start: 19 * 60 + 15, end: 20 * 60 + 15 },
+    ];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    // Sanity check: layoutDayItems itself still gives both items separate
+    // lanes (this bug is NOT about layoutDayItems' own fold decision).
+    expect(laidOut.every((i) => i.kind !== 'cluster')).toBe(true);
+    expect(new Set(laidOut.map((i) => i.lane)).size).toBe(2);
+
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).toBe('cluster');
+    expect(folded[0].items.map((it) => it.data.id).sort()).toEqual(['piano', 'test1']);
+    expect(folded[0].totalLanes).toBe(1);
+  });
+
+  it('does NOT fold the pinned "must stay side-by-side" cases (short titles) — the previously-fixed over-clustering regression', () => {
+    // Same two shapes as the pinned layoutDayItems tests below ("Email
+    // student"/"Lower + Running" and "Standup"/"Review") — both must still
+    // render as 2 separate lanes after this pass, since their titles read
+    // fine at half width. This is the user's own explicit warning: a
+    // previous bug folded events that had "plenty of space to be displayed
+    // individually", and this fix must not reintroduce it.
+    const pxPerMin = 1.25;
+    const shapes = [
+      [
+        { type: 'block', data: { id: 'a', title: 'Email student' }, start: 540, end: 575 },
+        { type: 'block', data: { id: 'b', title: 'Lower + Running' }, start: 550, end: 585 },
+      ],
+      [
+        { type: 'block', data: { id: 'a', title: 'Standup' }, start: 540, end: 565 },
+        { type: 'block', data: { id: 'b', title: 'Review' }, start: 550, end: 575 },
+      ],
+    ];
+    for (const items of shapes) {
+      const laidOut = layoutDayItems(items, pxPerMin);
+      const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+      expect(folded).toHaveLength(2);
+      expect(folded.every((f) => f.kind !== 'cluster')).toBe(true);
+    }
+  });
+
+  it('is a no-op on a group with only 1 lane, regardless of title length', () => {
+    // A single, non-overlapping item never gets split into multiple lanes in
+    // the first place, so this pass must never touch it — a long title in a
+    // full-width box is exactly the "1 lane -> always false" case
+    // isLaneWidthTooNarrowForTitle itself pins.
+    const pxPerMin = 1.25;
+    const items = [{ type: 'block', data: { id: 'solo', title: 'A very long standalone task title indeed' }, start: 540, end: 600 }];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind).not.toBe('cluster');
+  });
+
+  it('never drops an item — every input item is represented exactly once in the output, folded or not', () => {
+    const pxPerMin = 1.25;
+    const items = [
+      { type: 'block', data: { id: 'long1', title: 'A genuinely very long overlapping task title one' }, start: 540, end: 640 },
+      { type: 'block', data: { id: 'long2', title: 'Another genuinely very long overlapping title two' }, start: 560, end: 660 },
+      { type: 'block', data: { id: 'short', title: 'Ok' }, start: 580, end: 620 },
+    ];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    const total = folded.reduce((sum, f) => sum + (f.kind === 'cluster' ? f.items.length : 1), 0);
+    expect(total).toBe(3);
+  });
+
+  it('leaves a group with no over-narrow title completely untouched, including lane numbers', () => {
+    const pxPerMin = 1.25;
+    const items = [
+      { type: 'block', data: { id: 'a', title: 'Standup' }, start: 540, end: 565 },
+      { type: 'block', data: { id: 'b', title: 'Review' }, start: 550, end: 575 },
+    ];
+    const laidOut = layoutDayItems(items, pxPerMin);
+    const folded = foldNarrowIllegibleTitles(laidOut, byTitle);
+    expect(folded).toEqual(laidOut);
   });
 });
 
@@ -332,43 +471,60 @@ describe('cross-group sequential visual overlap', () => {
 });
 
 describe('packLane', () => {
-  it('grows a too-short lone item up to MIN_BLOCK_HEIGHT_PX when there is no next item to bump into', () => {
+  it('grows a too-short lone item up to a full two-line height when there is no next item to bump into', () => {
     // A lone 4-minute item at max zoom (1.25px/min) is genuinely only 5px
     // tall — with idle space below it (nothing else in the lane), it may
-    // grow into that free room up to the legibility floor rather than
-    // rendering as an illegible sliver sitting above empty space.
+    // grow into that free room rather than rendering as an illegible sliver
+    // sitting above empty space.
+    //
+    // It grows to TWO_LINE_MIN_HEIGHT_PX, not the smaller one-line
+    // MIN_BLOCK_HEIGHT_PX this used to stop at. Stopping at one line meant
+    // the stretch never actually achieved anything: 26px is under both
+    // two-line thresholds, so the box came out taller but still couldn't show
+    // its time range — a box that lies about its end time AND withholds the
+    // real one, which is the worst of both. If the calendar is going to give
+    // up exact bottom-edge alignment, it has to buy the time line with it.
     const items = [{ start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } }];
     const packed = packLane(items, 1.25);
-    expect(packed[0].height).toBe(MIN_BLOCK_HEIGHT_PX);
+    expect(packed[0].height).toBe(TWO_LINE_MIN_HEIGHT_PX);
   });
 
-  it('does not grow a too-short item past the real idle room before the next item in its lane', () => {
+  it('FORCE_FOLD_DURATION_MIN: a sub-10-minute item with only partial idle room to grow into now folds instead of rendering compressed', () => {
     // "Tiny" (4 min, ~5px) is followed 10 real minutes later by "Next" — only
-    // 12.5px of genuinely free room, still under MIN_BLOCK_HEIGHT_PX (26px).
-    // It should grow to fill exactly that idle room, not the full floor,
-    // and must never reach into "Next"'s own natural top.
+    // 12.5px of genuinely free room, still under TWO_LINE_MIN_HEIGHT_PX (44px).
+    // Explicit product decision: any item under FORCE_FOLD_DURATION_MIN (10
+    // real minutes) that ends up compressed below a comfortable two-line
+    // height always folds, regardless of lane count or growth history — see
+    // FORCE_FOLD_DURATION_MIN's own doc comment. This replaces the older
+    // "grow into whatever idle room exists and stay separate" behavior for
+    // items this short, which read as an unreliable sliver often enough in
+    // practice (real report) that it's no longer worth keeping separate.
     const items = [
       { start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } },
       { start: 554, end: 600, kind: 'single', type: 'block', data: { id: 'Next', title: 'Next' } },
     ];
     const packed = packLane(items, 1.25);
-    const tiny = packed.find((p) => p.data?.id === 'Tiny');
-    const next = packed.find((p) => p.data?.id === 'Next');
-    expect(tiny.height).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
-    expect(tiny.top + tiny.height).toBeLessThanOrEqual(next.top);
+    expect(packed).toHaveLength(1);
+    expect(packed[0].kind).toBe('cluster');
+    const allIds = packed[0].items.map((i) => i.data.id);
+    expect(allIds).toEqual(expect.arrayContaining(['Tiny', 'Next']));
   });
 
-  it('grows a too-short item to fill ample idle room up to (but not past) MIN_BLOCK_HEIGHT_PX', () => {
+  it('grows a too-short item to fill ample idle room up to (but not past) a full two-line height', () => {
     // "Tiny" (4 min, ~5px) is followed 40 real minutes later by "Next" —
-    // plenty of idle room, so growth is capped at the legibility floor
-    // itself rather than expanding to fill the entire gap.
+    // plenty of idle room, so growth stops as soon as the box can show its
+    // title and time rather than expanding to swallow the entire gap. Taking
+    // only what it needs keeps the overstatement of the item's end time as
+    // small as it can be while still being readable.
     const items = [
       { start: 540, end: 544, kind: 'single', type: 'block', data: { id: 'Tiny', title: 'Tiny' } },
       { start: 584, end: 600, kind: 'single', type: 'block', data: { id: 'Next', title: 'Next' } },
     ];
     const packed = packLane(items, 1.25);
     const tiny = packed.find((p) => p.data?.id === 'Tiny');
-    expect(tiny.height).toBe(MIN_BLOCK_HEIGHT_PX);
+    expect(tiny.height).toBe(TWO_LINE_MIN_HEIGHT_PX);
+    // ...and stops well short of the 55px gap it could have filled.
+    expect(tiny.height).toBeLessThan((584 - 540) * 1.25);
   });
 
   it('a kind:"cluster" item is still floored to MIN_BLOCK_HEIGHT_PX', () => {
@@ -778,5 +934,333 @@ describe('short EVENTS fold like short blocks (both directions pinned)', () => {
     const folded = foldSequentialItems([block('B1', 540, 550), event('E1', 555, 565)], 1.25);
     expect(folded).toHaveLength(1);
     expect(folded[0].kind).toBe('cluster');
+  });
+});
+
+/**
+ * The three-step "a short box must still be readable" ladder, in priority
+ * order. Each step only runs if the one before it couldn't solve the problem:
+ *
+ *   1. Render at the item's OWN true height (bottom edge lands exactly on its
+ *      real end time), at normal type if that fits both the title and the
+ *      time line, or at the smaller compact type if only that fits. Nothing
+ *      moves — the box stays honest about where it sits on the clock.
+ *   2. If neither type size fits inside the item's own true height, keep the
+ *      NORMAL type and stretch the box downward into genuinely empty space
+ *      below it instead, never past whatever comes next. The bottom edge no
+ *      longer matches the real end time; that's the deliberate trade for
+ *      being able to read the thing at all. Shrinking the type here would buy
+ *      nothing — the only reason to shrink was to avoid stretching, and the
+ *      box is being stretched regardless.
+ *   3. If there isn't enough empty space below to stretch into either, fold
+ *      the item into an "N items" chip with whatever is crowding it.
+ */
+describe('short-box legibility ladder (own height -> expand -> fold)', () => {
+  it('step 1: an item whose own true height fits title+time at NORMAL type is left exactly at its true height', () => {
+    // 36 minutes at max zoom is 45px, past TWO_LINE_MIN_HEIGHT_PX (44), so
+    // both lines fit inside the item's own real duration. Nothing should be
+    // stretched and the type must stay full-size — this is the case where the
+    // calendar can be completely honest about the time axis.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 636), block('B', 720, 780)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    expect(a.fontMode).toBe('normal');
+    expect(a.height).toBe(Math.round(36 * pxPerMin));
+  });
+
+  it('step 1: an item that fits only at COMPACT type shrinks its type rather than stretching', () => {
+    // 26 minutes at max zoom is 32.5px: too short for the normal two-line
+    // height (36) but past the compact one (32). Shrinking the type keeps the
+    // box's bottom edge on its real end time, which is strictly better than
+    // stretching it, so this must NOT grow.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 626), block('B', 720, 780)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    expect(a.fontMode).toBe('compact');
+    expect(a.height).toBe(Math.round(26 * pxPerMin));
+  });
+
+  it('step 2: an item too short for EITHER type size expands at NORMAL type — never compact-and-stretched', () => {
+    // THE CLARIFIED RULE. 15 minutes at max zoom is 18.75px — under the
+    // compact two-line height (32), so no type size fits inside the item's own
+    // duration. Shrinking the type is therefore pointless: it was only ever
+    // worth doing to avoid stretching, and this box has to stretch anyway. It
+    // must expand to a full two-line NORMAL-type height, not render as a
+    // shrunken-AND-stretched box (the shape this rule exists to forbid).
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 615), block('B', 720, 780)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    expect(a.fontMode).toBe('normal');
+    expect(a.height).toBe(TWO_LINE_MIN_HEIGHT_PX);
+    // And the whole point of expanding: the time line can now actually render.
+    expect(a.height).toBeGreaterThanOrEqual(TWO_LINE_MIN_HEIGHT_PX);
+  });
+
+  it('step 2: expansion stops at the next item’s own start rather than reaching into it', () => {
+    // Only genuinely idle space may be borrowed. "A" is 14 real minutes (at or
+    // above FORCE_FOLD_DURATION_MIN, so the new short-duration force-fold rule
+    // doesn't apply here — see its own dedicated test below) with true height
+    // 17.5px, well under COMPACT_TWO_LINE_MIN_HEIGHT_PX, so it expands. The
+    // follower starts 16 real minutes later (20px at max zoom, 18px after the
+    // block gap), so growth can take some of that but must never reach the
+    // follower's own natural top, and doesn't reach a full two-line height.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('A', 600, 614), block('B', 630, 690)], pxPerMin);
+    const a = packed.find((p) => p.data?.id === 'A');
+    const b = packed.find((p) => p.data?.id === 'B');
+    expect(a.kind).not.toBe('cluster');
+    expect(a.height).toBeGreaterThan(Math.round(14 * pxPerMin));
+    expect(a.height).toBeLessThan(TWO_LINE_MIN_HEIGHT_PX);
+    expect(a.top + a.height).toBeLessThanOrEqual(b.top);
+  });
+
+  it('FORCE_FOLD_DURATION_MIN: THE REPORTED "Charge" BUG — a sub-10-minute item folds even in a single lane with no lane-split involved', () => {
+    // Real report, reconstructed: "Charge" (12:40-12:45, 5 real minutes) is
+    // immediately followed by "Look at cost" (12:45-13:15) at max zoom OUT
+    // (0.55px/min) — a single lane, nothing side-by-side, no totalLanes
+    // exemption in play at all. Charge's own true height (2.75px) is far
+    // under any legibility floor, and even growing into the (already tiny,
+    // low-zoom) idle room before "Look at cost" starts can't reach a
+    // comfortable two-line height. Before FORCE_FOLD_DURATION_MIN, the old
+    // ladder's totalLanes>=2 requirement meant a single-lane item like this
+    // could render as a compressed sliver indefinitely; now any item under
+    // 10 real minutes forces a fold regardless of lane count.
+    const pxPerMin = 0.55;
+    const packed = packLane([block('Charge', 760, 765), block('LookAtCost', 765, 795)], pxPerMin);
+    expect(packed).toHaveLength(1);
+    expect(packed[0].kind).toBe('cluster');
+    const allIds = packed[0].items.map((i) => i.data.id);
+    expect(allIds).toEqual(expect.arrayContaining(['Charge', 'LookAtCost']));
+  });
+
+  it('FORCE_FOLD_DURATION_MIN: THE REPORTED SECOND "Charge" BUG — a force-folded item must merge with what is ACTUALLY crowding it, not a distant unrelated predecessor', () => {
+    // Real report: "Morning tasks" (08:00-08:05) sits alone, hours before
+    // "Charge" (12:40-12:45) and "Look at cost" (12:45-13:15, immediately
+    // after Charge) in the SAME single lane, with nothing else between them.
+    // Charge can't grow (Look at cost leaves it no room) so it force-folds —
+    // but the fold target must be whichever item is genuinely crowding it
+    // (Look at cost), never simply "whatever happens to be prevPacked".
+    // Before this fix, Charge merged into prevPacked (Morning tasks, its
+    // predecessor purely by array order) producing ONE cluster spanning
+    // 08:00-13:15 — a ~5 HOUR chip for 10 minutes of real work, and it
+    // silently swallowed a "Morning tasks" block that had every bit of room
+    // it needed to render normally on its own.
+    const pxPerMin = 0.55;
+    const packed = packLane(
+      [block('Morning', 480, 485), block('Charge', 760, 765), block('LookAtCost', 765, 795)],
+      pxPerMin
+    );
+    const morning = packed.find((p) => p.kind !== 'cluster' && p.data?.id === 'Morning');
+    expect(morning).toBeDefined();
+    expect(morning.height).toBeGreaterThanOrEqual(TWO_LINE_MIN_HEIGHT_PX);
+
+    const cluster = packed.find((p) => p.kind === 'cluster');
+    expect(cluster).toBeDefined();
+    const clusterIds = cluster.items.map((i) => i.data.id);
+    expect(clusterIds).not.toContain('Morning');
+    expect(clusterIds).toEqual(expect.arrayContaining(['Charge', 'LookAtCost']));
+    // The cluster's own span must honestly reflect only its real members —
+    // it must never claim to start all the way back at Morning's own time.
+    expect(cluster.start).toBe(760);
+    expect(cluster.end).toBe(795);
+  });
+
+  it('CRITICAL: pendingUnreadable is a QUEUE — two CONSECUTIVE deferred items must both survive, not overwrite each other', () => {
+    // Real regression caught while verifying the fix above: at a low enough
+    // zoom, a real-time gap that "sounds" generous (55 real minutes) can
+    // still be pixel-small, so TWO items in a row can each independently
+    // fail to grow (because each is squeezed by whatever starts right after
+    // IT) while neither is genuinely pushed down by ITS OWN predecessor —
+    // both defer via pendingUnreadable. Before this fix, pendingUnreadable
+    // was a single slot: the second deferred item silently overwrote the
+    // first, and the first vanished from the output entirely — not folded
+    // into the wrong thing, not mis-positioned, just GONE. "C" (700-705),
+    // "Crowded" (760-765), and "Crowder" (765-795) at max zoom OUT
+    // reproduces this: C can't reach a comfortable height in the ~31px
+    // before Crowded starts, and Crowded itself can't grow at all (Crowder
+    // starts the instant it ends) — both queue up before Crowder's own turn
+    // finally resolves the fold.
+    const pxPerMin = 0.55;
+    const packed = packLane([block('C', 700, 705), block('Crowded', 760, 765), block('Crowder', 765, 795)], pxPerMin);
+    expect(packed).toHaveLength(1);
+    expect(packed[0].kind).toBe('cluster');
+    const allIds = packed[0].items.map((i) => i.data.id);
+    expect(allIds).toEqual(expect.arrayContaining(['C', 'Crowded', 'Crowder']));
+    expect(allIds).toHaveLength(3);
+  });
+
+  it('FORCE_FOLD_DURATION_MIN: does NOT force-fold a sub-10-minute item that already reaches a comfortable height (nothing to compress)', () => {
+    // A 5-minute item with ample idle room to grow into (60 real minutes to
+    // the next item) reaches a full two-line height on its own — it was
+    // never "compressed", so the new rule must not fold it just because its
+    // real duration happens to be under 10 minutes.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('Tiny', 600, 605), block('Next', 665, 725)], pxPerMin);
+    expect(packed).toHaveLength(2);
+    expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
+    const tiny = packed.find((p) => p.data?.id === 'Tiny');
+    expect(tiny.height).toBeGreaterThanOrEqual(TWO_LINE_MIN_HEIGHT_PX);
+  });
+
+  it('FORCE_FOLD_DURATION_MIN: a 10-minute-exactly item is NOT subject to the force-fold rule (strictly less than 10, not less-or-equal)', () => {
+    // Boundary check: FORCE_FOLD_DURATION_MIN is 10, and the check is a
+    // strict "<" — an item exactly 10 real minutes long follows the normal
+    // ladder (grow/compact/expand), not the unconditional force-fold.
+    const pxPerMin = 1.25;
+    const packed = packLane([block('TenMin', 600, 610), block('Next', 625, 685)], pxPerMin);
+    // 10 min at max zoom = 12.5px true height -> expand mode, grows into the
+    // ~16px of idle room before Next (15 real min gap minus BLOCK_GAP_PX) —
+    // still under TWO_LINE_MIN_HEIGHT_PX, but per the *old* ladder (still the
+    // one that applies at exactly 10 minutes) a single-lane item like this
+    // was never forced to fold just for falling short of a full two-line
+    // height — only genuinely unreadable multi-lane cases were. So this
+    // stays a standalone (if compressed) box, not a cluster.
+    const tenMin = packed.find((p) => p.data?.id === 'TenMin');
+    expect(tenMin).toBeDefined();
+    expect(tenMin.kind).not.toBe('cluster');
+  });
+
+  it('step 3: THE REPORTED BUG — a 5-minute item wedged between a long side-by-side neighbour and an immediate follower folds instead of rendering as an unreadable sliver', () => {
+    // "Test prep" 19:05-22:00 runs down lane 0. "Email student" is 5 real
+    // minutes (19:55-20:00) and lands in lane 1, where "Piano" (20:00-21:00)
+    // starts the very instant it ends — so there is no idle space below it to
+    // expand into (4.25px at max zoom, against the ~36px a readable two-line
+    // box needs). With no room to grow and too little height to read, the only
+    // honest answer left is a chip. Before this ladder existed it rendered as
+    // a 6px sliver with no title and no time, side-by-side with a full-height
+    // block: the exact screenshot this test pins.
+    const items = [block('Test prep', 1145, 1320), block('Email student', 1195, 1200), block('Piano', 1200, 1260)];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+      const email = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'Email student');
+      // It must not survive as a standalone sliver anywhere in the output.
+      expect(email).toBeUndefined();
+      // It must instead be inside a chip, with nothing silently dropped.
+      const allIds = positioned.flatMap((p) => (p.kind === 'cluster' ? p.items.map((i) => i.data.id) : [p.data.id]));
+      expect(allIds).toEqual(expect.arrayContaining(['Test prep', 'Email student', 'Piano']));
+      expect(new Set(allIds).size).toBe(3);
+    }
+  });
+
+  it('step 3: THE SECOND REPORTED BUG — a partial grow that clears the one-line floor but not a full two-line height still folds', () => {
+    // The fold check used to compare the item's height AFTER growth against
+    // COMPACT_BLOCK_HEIGHT_PX (20px, "can show a title alone"), not
+    // TWO_LINE_MIN_HEIGHT_PX (36px, "can show title AND time"). A item that
+    // went through the growth step specifically because it couldn't show
+    // BOTH lines within its own true duration, but found only a LITTLE free
+    // room below it — enough to clear 20px, not enough to clear 36px — used
+    // to pass the old check and render as a naked title with no time and a
+    // visible dead gap, instead of folding. This is exactly what the second
+    // screenshot showed: "Email student" rendered small, clickable, with a
+    // hover preview, but no visible time on the box itself and no fold.
+    //
+    // Reconstructed at max zoom (1.25px/min): "Email student" is 2 real
+    // minutes (5px true height) — under COMPACT_TWO_LINE_MIN_HEIGHT_PX, so it
+    // goes through the growth step. Its follower "Piano" starts 20 real
+    // minutes later, giving availableBelow = 20*1.25 - BLOCK_GAP_PX = 23px —
+    // comfortably clears the old 20px bar, but is well short of the 36px a
+    // real two-line render needs.
+    const items = [block('Test prep', 1145, 1320), block('Email student', 1195, 1197), block('Piano', 1217, 1260)];
+    const positioned = computeDayPositions(layoutDayItems(items, 1.25), 1.25);
+    const email = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'Email student');
+    expect(email).toBeUndefined();
+    const allIds = positioned.flatMap((p) => (p.kind === 'cluster' ? p.items.map((i) => i.data.id) : [p.data.id]));
+    expect(allIds).toEqual(expect.arrayContaining(['Test prep', 'Email student', 'Piano']));
+  });
+
+  it('step 3 does NOT fire for an item that merely can’t show its TIME — only one that can’t show its title either', () => {
+    // Guards the pinned "Email student" (20 min) / "Lower + Running" case
+    // below from being dragged into a chip by this ladder. A 20-minute item
+    // back-to-back with an hour-long one has no room to expand, and at low
+    // zoom it is too short for a two-line render — but it is still perfectly
+    // able to show its title on one line, which is a normal, honest calendar
+    // render, not a failure. Folding it would hide a readable title behind an
+    // anonymous chip, the exact over-clustering regression this file's history
+    // is full of.
+    const items = [block('Email student', 520, 540), block('Lower + Running', 540, 600)];
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      const packed = packLane(items, pxPerMin);
+      expect(packed).toHaveLength(2);
+      expect(packed.every((p) => p.kind !== 'cluster')).toBe(true);
+    }
+  });
+
+  it('step 3: THE THIRD REPORTED BUG — a legible item after a genuine (non-cluster-inflated) fold must not itself be dragged into that fold', () => {
+    // Real reported case, max zoom (1.25px/min): "Email student" (19:55-20:00,
+    // 5 real min) can't stand alone and correctly merges with its immediate
+    // neighbour "Prepare for tutorial" (20:00-20:30, 30 real min) into one
+    // chip. That much is correct and wanted. The bug: "Piano" (20:30-21:30,
+    // a full real hour, perfectly legible on its own) was ALSO getting pulled
+    // into that same chip, purely because the merged chip's own rounded
+    // bottom edge (Math.round(top) + Math.round(height) computed
+    // independently) overshot its honest real-time position by ~2.5px —
+    // just over the near-zero EXCESSIVE_PUSHDOWN_PX(2) tolerance — even
+    // though Piano's real start time exactly matches the chip's real end
+    // time, a genuine zero-minute gap. Piano must render as its own box.
+    const items = [
+      block('Test prep', 1145, 1320), // 19:05-22:00, a long side-by-side neighbour in the other lane
+      block('Email student', 1195, 1200), // 19:55-20:00
+      block('Prepare for tutorial', 1200, 1230), // 20:00-20:30
+      block('Piano', 1230, 1290), // 20:30-21:30
+    ];
+    const positioned = computeDayPositions(layoutDayItems(items, 1.25), 1.25);
+    const piano = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'Piano');
+    expect(piano).toBeDefined();
+    expect(piano.fontMode).toBe('normal');
+    // Email student + Prepare for tutorial still correctly merge with each
+    // other — this fix must not accidentally stop THAT fold from happening.
+    const cluster = positioned.find((p) => p.kind === 'cluster');
+    expect(cluster).toBeDefined();
+    const clusterIds = cluster.items.map((i) => i.data.id);
+    expect(clusterIds).toEqual(expect.arrayContaining(['Email student', 'Prepare for tutorial']));
+    expect(clusterIds).not.toContain('Piano');
+  });
+
+  it('step 3: a following item still folds into a cluster whose bottom edge WAS genuinely stretched (the floor actually kicked in)', () => {
+    // Companion to the fix above, pinning the other direction: when a merged
+    // chip's height is genuinely inflated past its members' true combined
+    // span (here, two very short back-to-back items whose true combined
+    // span is well under MIN_BLOCK_HEIGHT_PX, so the floor stretches the
+    // chip's bottom edge for real, not just by rounding), a following item
+    // landing inside that genuinely-stretched region must still fold in —
+    // the honest-cluster carve-out must not accidentally cover a real
+    // shortfall too.
+    //
+    // Uses layoutDayItems + computeDayPositions (not a raw packLane call)
+    // so A/B/C get real totalLanes assigned via an overlapping side-by-side
+    // neighbour — unreadableEvenAfterGrowing (and therefore the whole
+    // pendingUnreadable path this test exercises) is gated on totalLanes >=
+    // 2 and silently never fires without one, per its own doc comment.
+    const items = [
+      block('Side', 1190, 1320), // 19:50-22:00, a long side-by-side neighbour forcing totalLanes=2
+      block('A', 1195, 1196), // 19:55-19:56, 1 real minute
+      block('B', 1196, 1197), // 19:56-19:57, 1 real minute — true combined span with A is 2 min (2.5px), far under the 26px floor
+      block('C', 1197, 1199), // 19:57-19:59, starts the instant B ends — landing well inside the floor-inflated chip
+    ];
+    const positioned = computeDayPositions(layoutDayItems(items, 1.25), 1.25);
+    const cluster = positioned.find((p) => p.kind === 'cluster');
+    expect(cluster).toBeDefined();
+    const clusterIds = cluster.items.map((i) => i.data.id);
+    expect(clusterIds).toEqual(expect.arrayContaining(['A', 'B', 'C']));
+  });
+
+  it('never reports the compact-and-stretched combination for ANY duration/zoom/spacing shape', () => {
+    // The clarified rule as a hard invariant, swept across every zoom level,
+    // every duration up to an hour, and a spread of gaps to the next item: no
+    // box may ever come back both shrunk to compact type AND stretched past
+    // its own true height. Those are alternatives to each other, never a pair.
+    for (const pxPerMin of [0.55, 0.65, 0.8, 1.0, 1.25]) {
+      for (let dur = 1; dur <= 60; dur += 1) {
+        for (const gapAfter of [0, 5, 10, 20, 40, 90, 240]) {
+          const items = [block('A', 600, 600 + dur), block('B', 600 + dur + gapAfter, 600 + dur + gapAfter + 60)];
+          const positioned = computeDayPositions(layoutDayItems(items, pxPerMin), pxPerMin);
+          const a = positioned.find((p) => p.kind !== 'cluster' && p.data?.id === 'A');
+          if (!a) continue; // folded into a chip — a different branch of the ladder
+          const trueHeight = (a.end - a.start) * pxPerMin;
+          const stretched = a.height > trueHeight + 0.51; // ignore whole-pixel rounding
+          expect(a.fontMode === 'compact' && stretched).toBe(false);
+        }
+      }
+    }
   });
 });

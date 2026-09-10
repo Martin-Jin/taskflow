@@ -61,6 +61,7 @@ import {
   retireInFlightFingerprint,
   planRemoteDataMerge,
   didTaskMergeChangeAnything,
+  didEventMergeChangeAnything,
   computePushStampPlan,
   computePushSingleFlightDecision,
   planAutoBackupPrune,
@@ -199,9 +200,9 @@ describe('computeFingerprint', () => {
     shortcutBindings: {},
   };
 
-  it('ignores an events field entirely (events are excluded from LIVE cross-device sync specifically — they ARE included in point-in-time backups, see backupService.test.js)', () => {
+  it('includes events (they now ride the same live cross-device sync as tasks — see the dedicated planRemoteDataMerge/eventMerge coverage below)', () => {
     const withEvents = { ...baseState, events: [{ id: 'e1' }] };
-    expect(computeFingerprint(baseState)).toBe(computeFingerprint(withEvents));
+    expect(computeFingerprint(baseState)).not.toBe(computeFingerprint(withEvents));
   });
 
   it('produces the same fingerprint for the same data (so a pushed echo is recognized)', () => {
@@ -537,11 +538,11 @@ describe('planRemoteDataMerge', () => {
     labels: ['remote-label'],
     routines: ['remote-routine'],
     rules: { id: 'remote-rule' },
-    // Deliberately included in remoteData/localState fixtures (as a stray
-    // extra field, same as an old Firestore doc from before events were
-    // excluded from sync would still carry) to prove planRemoteDataMerge
-    // ignores it — see the dedicated test below.
-    events: [{ id: 'e2', occurrenceId: 'e2-occ' }],
+    // Only present on the remote side here (localState below has no `events`
+    // key at all) — exercises the same "union, remote-only id kept" path as
+    // an analogous local-only/remote-only task id. See the dedicated
+    // 'events per-event merge' describe block below for the full matrix.
+    events: [{ id: 'e2', localUpdatedAt: '2026-08-02T00:00:00.000Z' }],
     soundEnabled: true,
     soundVolume: 0.9,
     animationsEnabled: true,
@@ -570,6 +571,8 @@ describe('planRemoteDataMerge', () => {
     expect(plan.animationsEnabled).toBe(true);
     expect(plan.notes).toBe(remoteData.notes);
     expect(plan.shortcutBindings).toBe(remoteData.shortcutBindings);
+    expect(plan.events).toEqual(remoteData.events); // union, since localState has no events at all
+    expect(plan.eventsMerged).toBe(true);
     expect(plan.stampFingerprint).toBe(true);
   });
 
@@ -610,22 +613,28 @@ describe('planRemoteDataMerge', () => {
     expect('notes' in plan).toBe(false);
     expect('shortcutBindings' in plan).toBe(false);
     expect('sharedProjectIds' in plan).toBe(false);
+    expect('events' in plan).toBe(false);
     // Deliberately left unstamped so the next schedulePush still pushes the
     // newer local edit instead of assuming this state is already synced.
     expect(plan.stampFingerprint).toBe(false);
   });
 
-  it('never applies events, even when remoteData carries a stray/legacy events field', () => {
-    // Google Calendar is the authoritative source for events day-to-day, and
-    // an automatic, continuously-reconciled live sync of them re-opens the
-    // exact "stale snapshot resurrects a deleted event" risk that got them
-    // excluded here (see backupService.js's BACKUP_FIELDS doc comment) — this
-    // exclusion is specific to the LIVE Firestore doc `planRemoteDataMerge`
-    // reconciles against, NOT to point-in-time backups, which DO include
-    // events now (a one-directional, user-initiated restore is a different
-    // risk profile — see backupService.test.js).
+  it('applies events via the same per-item merge structure as tasks, when remoteData carries a shape-valid events array', () => {
+    // Events used to be excluded here entirely: the OLD design would have
+    // synced the whole `events` array as one blob per device, and a stale
+    // device's push could silently overwrite a newer deletion made elsewhere
+    // purely by writing last — the exact "resurrection" risk that got them
+    // excluded (see backupService.js's BACKUP_FIELDS doc comment for the
+    // history). Once each event merges individually by its own
+    // `localUpdatedAt` with a real deletion tombstone (mergeEventsByUpdatedAt/
+    // eventTombstones.js — the same fix mergeTasksByUpdatedAt already applied
+    // for tasks), that risk no longer applies, so `events` now DOES apply
+    // here. See the dedicated 'events per-event merge' describe block below
+    // for the full matrix of merge outcomes (corrupt shape, edits on both
+    // sides, deletes racing edits, etc.).
     const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
-    expect('events' in plan).toBe(false);
+    expect('events' in plan).toBe(true);
+    expect(plan.eventsMerged).toBe(true);
   });
 
   it('a malformed remote field falls back to the local value instead of being applied as-is', () => {
@@ -697,6 +706,67 @@ describe('planRemoteDataMerge — tasks per-task merge wiring', () => {
   });
 });
 
+describe('planRemoteDataMerge — events per-event merge wiring', () => {
+  // Covers the wiring around mergeEventsByUpdatedAt itself (see
+  // eventMerge.test.js for the merge function's own exhaustive semantics):
+  // a corrupt remote `events` shape must fall back to local WHOLESALE exactly
+  // like `tasks` does, and only a shape-valid remote `events` should trigger
+  // the per-event merge. Mirrors 'planRemoteDataMerge — tasks per-task merge
+  // wiring' above field-for-field, with `localUpdatedAt` in place of
+  // `updatedAt`.
+  const localState = {
+    events: [
+      { id: 'shared', title: 'local version', localUpdatedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'local-only', title: 'only here locally', localUpdatedAt: '2026-08-01T00:00:00.000Z' },
+    ],
+  };
+  const remoteData = {
+    events: [
+      { id: 'shared', title: 'remote version (newer)', localUpdatedAt: '2026-08-10T00:00:00.000Z' },
+      { id: 'remote-only', title: 'only here remotely', localUpdatedAt: '2026-08-10T00:00:00.000Z' },
+    ],
+  };
+
+  it('a corrupt remote events shape (not an array) falls back to local events wholesale, unmerged', () => {
+    const tamperedRemote = { ...remoteData, events: 'not-an-array' };
+    const plan = planRemoteDataMerge(tamperedRemote, localState, { skipAll: false });
+    expect(plan.events).toBe(localState.events);
+    expect(plan.eventsMerged).toBe(false);
+  });
+
+  it('a shape-valid remote events array produces a per-event merge, not a wholesale replace', () => {
+    const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
+    expect(plan.eventsMerged).toBe(true);
+    const byId = new Map(plan.events.map((e) => [e.id, e]));
+    // Union of both sides' ids, not just remote's.
+    expect(byId.size).toBe(3);
+    expect(byId.get('local-only')).toBeDefined();
+    expect(byId.get('remote-only')).toBeDefined();
+    // Newer remote edit to the shared id wins.
+    expect(byId.get('shared').title).toBe('remote version (newer)');
+  });
+
+  it('a newer local deletion (tombstone) beats an older conflicting remote edit — the delete wins', () => {
+    const localTombstone = {
+      events: [{ id: 'e1', title: 'Team sync', deletedAt: '2026-08-12T00:00:00.000Z', localUpdatedAt: '2026-08-12T00:00:00.000Z' }],
+    };
+    const staleRemoteEdit = { events: [{ id: 'e1', title: 'Team sync (moved)', localUpdatedAt: '2026-08-11T00:00:00.000Z' }] };
+    const plan = planRemoteDataMerge(staleRemoteEdit, localTombstone, { skipAll: false });
+    expect(plan.events).toEqual(localTombstone.events);
+    expect(plan.events[0].deletedAt).toBe('2026-08-12T00:00:00.000Z');
+  });
+
+  it('a newer remote edit beats an older local tombstone — the event "un-deletes", correctly (mirrors mergeTasksByUpdatedAt precedent)', () => {
+    const localTombstone = {
+      events: [{ id: 'e1', title: 'Team sync', deletedAt: '2026-08-10T00:00:00.000Z', localUpdatedAt: '2026-08-10T00:00:00.000Z' }],
+    };
+    const laterRemoteEdit = { events: [{ id: 'e1', title: 'Team sync (restored)', localUpdatedAt: '2026-08-12T00:00:00.000Z' }] };
+    const plan = planRemoteDataMerge(laterRemoteEdit, localTombstone, { skipAll: false });
+    expect(plan.events).toEqual(laterRemoteEdit.events);
+    expect(plan.events[0].deletedAt).toBeUndefined();
+  });
+});
+
 describe('didTaskMergeChangeAnything', () => {
   // Regression coverage for the fingerprint-correctness fix: a per-task merge
   // that actually changes the task set must NOT be fingerprinted against the
@@ -755,6 +825,55 @@ describe('didTaskMergeChangeAnything', () => {
     const mergedSameButReordered = [{ recurrenceRule: { count: 1, unit: 'week' }, title: 'same', id: 't1' }];
     const plan = { tasksMerged: true, tasksBlocks: { tasks: mergedSameButReordered, blocks: [] } };
     expect(didTaskMergeChangeAnything(plan, localTasksBefore)).toBe(false);
+  });
+});
+
+describe('didEventMergeChangeAnything', () => {
+  // Mirrors didTaskMergeChangeAnything's own coverage above — same
+  // fingerprint-correctness fix, applied to the events branch: a per-event
+  // merge that actually changes the event set must NOT be fingerprinted
+  // against the raw incoming remoteData, or the push that's supposed to
+  // carry the merged result up to Firestore would be silently suppressed.
+
+  it('false when no real merge ran (plan.eventsMerged is false — corrupt remote shape fell back to local)', () => {
+    const localEvents = [{ id: 'e1', localUpdatedAt: '2026-08-01T00:00:00.000Z' }];
+    const plan = { eventsMerged: false, events: localEvents };
+    expect(didEventMergeChangeAnything(plan, localEvents)).toBe(false);
+  });
+
+  it('false when skipAll produced no events plan at all', () => {
+    const plan = {}; // skipAll path — planRemoteDataMerge returns {stampFingerprint: false}
+    expect(didEventMergeChangeAnything(plan, [{ id: 'e1' }])).toBe(false);
+  });
+
+  it('false when a real merge ran but produced the SAME event set already local (nothing actually changed)', () => {
+    const localEvents = [{ id: 'e1', title: 'same', localUpdatedAt: '2026-08-01T00:00:00.000Z' }];
+    const plan = { eventsMerged: true, events: [{ ...localEvents[0] }] };
+    expect(didEventMergeChangeAnything(plan, localEvents)).toBe(false);
+  });
+
+  it('true when a real merge ran and the merged events differ from what was local a moment ago', () => {
+    const localEventsBefore = [{ id: 'e1', title: 'old', localUpdatedAt: '2026-08-01T00:00:00.000Z' }];
+    const mergedEvents = [
+      { id: 'e1', title: 'old', localUpdatedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'e2', title: 'new from remote', localUpdatedAt: '2026-08-10T00:00:00.000Z' },
+    ];
+    const plan = { eventsMerged: true, events: mergedEvents };
+    expect(didEventMergeChangeAnything(plan, localEventsBefore)).toBe(true);
+  });
+
+  it('end-to-end: planRemoteDataMerge -> didEventMergeChangeAnything correctly flags a real content-changing merge', () => {
+    const localEventsBefore = [{ id: 'e1', title: 'local', localUpdatedAt: '2026-08-01T00:00:00.000Z' }];
+    const remoteData = { events: [{ id: 'e1', title: 'remote newer', localUpdatedAt: '2026-08-10T00:00:00.000Z' }] };
+    const plan = planRemoteDataMerge(remoteData, { events: localEventsBefore }, { skipAll: false });
+    expect(didEventMergeChangeAnything(plan, localEventsBefore)).toBe(true);
+  });
+
+  it('end-to-end: a merge that resolves to exactly the same local content is correctly NOT flagged', () => {
+    const localEventsBefore = [{ id: 'e1', title: 'local', localUpdatedAt: '2026-08-10T00:00:00.000Z' }];
+    const remoteData = { events: [{ id: 'e1', title: 'stale remote copy', localUpdatedAt: '2026-08-01T00:00:00.000Z' }] };
+    const plan = planRemoteDataMerge(remoteData, { events: localEventsBefore }, { skipAll: false });
+    expect(didEventMergeChangeAnything(plan, localEventsBefore)).toBe(false);
   });
 });
 

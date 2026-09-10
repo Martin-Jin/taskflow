@@ -59,11 +59,26 @@ describe('BACKUP_FIELDS / buildBackupPayload integrity', () => {
     }
   });
 
-  it('includes events in the built payload (point-in-time backups are a safety net; live cross-device sync still excludes them separately, see useCloudSync.test.js)', () => {
+  it('includes events in the built payload (a backup is a safety net independent of the live cross-device sync events now also ride, see useCloudSync.test.js)', () => {
     const state = makeSampleState();
     const payload = buildBackupPayload(state);
     expect(BACKUP_FIELDS).toContain('events');
-    expect(payload.events).toBe(state.events);
+    // Not a `.toBe` reference check: buildBackupPayload now filters out any
+    // deleted-event tombstone (excludeDeletedEvents, mirroring
+    // excludeDeletedTasks for tasks — see the dedicated tombstone test
+    // below), so it always returns a NEW array even when nothing needed
+    // filtering, same as `tasks` already does.
+    expect(payload.events).toEqual(state.events);
+  });
+
+  it('excludes a deleted-event tombstone from the built payload — nothing to restore it to, same reasoning as excludeDeletedTasks', () => {
+    const state = makeSampleState();
+    state.events = [
+      { id: 'e1', title: 'Standup', date: '2026-07-31' },
+      { id: 'e2', title: 'Deleted meeting', date: '2026-07-30', deletedAt: '2026-07-31T00:00:00.000Z' },
+    ];
+    const payload = buildBackupPayload(state);
+    expect(payload.events.map((e) => e.id)).toEqual(['e1']);
   });
 
   it('round-trips events through export + validate unchanged (backup/restore parity)', () => {

@@ -88,4 +88,33 @@ describe('computeNowAndNext', () => {
     expect(result.current).toBeNull();
     expect(result.next).toBeNull();
   });
+
+  it('never surfaces an all-day event as current, even though its stored span covers "now"', () => {
+    const now = new Date('2026-08-04T10:30:00');
+    // All-day events are stored as 00:00-23:59 (see types/index.js) so most
+    // of the app needs no special case - but that span must not make it
+    // look "in progress" all day here.
+    const events = [event('holiday', '2026-08-04', '00:00', '23:59', { isAllDay: true })];
+    const result = computeNowAndNext([], [], events, now);
+    expect(result.current).toBeNull();
+  });
+
+  it('lets a real timed block win "current" over a same-day all-day event', () => {
+    const now = new Date('2026-08-04T10:30:00');
+    const tasks = [task('t1', 'Piano')];
+    const blocks = [block('b1', 't1', '2026-08-04', '10:10', '11:10')];
+    const events = [event('holiday', '2026-08-04', '00:00', '23:59', { isAllDay: true })];
+    const result = computeNowAndNext(tasks, blocks, events, now);
+    expect(result.current.kind).toBe('block');
+    expect(result.current.task.title).toBe('Piano');
+    // The all-day event isn't a timed item, so it doesn't inflate overlapCount either.
+    expect(result.current.overlapCount).toBe(0);
+  });
+
+  it('does not offer an all-day event as "next" either', () => {
+    const now = new Date('2026-08-04T09:00:00');
+    const events = [event('holiday', '2026-08-04', '00:00', '23:59', { isAllDay: true })];
+    const result = computeNowAndNext([], [], events, now);
+    expect(result.next).toBeNull();
+  });
 });

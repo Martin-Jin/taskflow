@@ -61,6 +61,17 @@ export const CLUSTER_MAX_GAP_MIN = 30;
 export const MIN_BLOCK_HEIGHT_PX = 26;
 export const BLOCK_GAP_PX = 2;
 
+// A real duration below this always folds into a cluster the moment its
+// rendered height comes out compressed below a comfortable two-line size —
+// no growth-into-idle-space attempt, no lane-count exemption, no ladder of
+// partial successes. Explicit product decision: a genuinely tiny item (under
+// 10 real minutes) reads as an unreliable sliver often enough — squeezed
+// between neighbours whether or not it happens to land in its own lane —
+// that it's not worth the more permissive multi-step legibility ladder
+// packLane applies to everything else. See packLane's own
+// `forceFoldShortDuration` check for exactly what "compressed" means here.
+export const FORCE_FOLD_DURATION_MIN = 10;
+
 // The same floor, recomputed for a DELIBERATELY SMALLER type size. A box in
 // this band renders its title at .cal-block.is-compact's reduced font
 // (10px/~13.5px line + tighter padding, see calendar.css) rather than folding
@@ -79,6 +90,61 @@ export const BLOCK_GAP_PX = 2;
 // using MIN_BLOCK_HEIGHT_PX — a chip is a summary of things that couldn't be
 // shown, so it has to be fully legible at normal size.
 export const COMPACT_BLOCK_HEIGHT_PX = 20;
+
+// How tall a box must be to show BOTH of its two lines — the title and the
+// time range under it — without the second one being clipped. The floors
+// above only cover a single line (the title); these cover the pair.
+//
+// Two numbers, because the two type sizes need different amounts of room:
+//   - TWO_LINE_MIN_HEIGHT_PX: the normal 11.5px type. Adding up .cal-block's
+//     own parts — 6px top padding, an 11.5px/1.5 (inherited body line-height)
+//     title line (17.25px), the time line's 1px top margin, a 10px/1.5 time
+//     line (15px), and 4px bottom padding — comes to 43.25px, rounded up to
+//     a clean 44.
+//   - COMPACT_TWO_LINE_MIN_HEIGHT_PX: the smaller 10px type used by
+//     .cal-block.is-compact, which also tightens the padding. Adding that
+//     rule's parts up — 1px top padding, a 10px/1.25 title line (12.5px), a
+//     10px/1.5 time line (15px), the time line's 1px top margin, and 1px
+//     bottom padding — comes to 30.5px, rounded up to a clean 32.
+//
+// Both are tied to real CSS in calendar.css, so if either type size or its
+// padding changes these have to move with it. They live here rather than in
+// WeekView because chooseFontMode (below) has to make the "which type size,
+// and does it fit?" call as part of the layout maths, before any box gets a
+// height — see its own comment.
+export const TWO_LINE_MIN_HEIGHT_PX = 44;
+export const COMPACT_TWO_LINE_MIN_HEIGHT_PX = 32;
+
+/**
+ * Which type size a box should render at, judged purely on the height the
+ * item's OWN real duration gives it — before any stretching is considered.
+ *
+ * The three answers, in the order the layout prefers them:
+ *   - 'normal'  — the full-size type fits the title and the time line inside
+ *                 the item's real duration. Nothing has to give.
+ *   - 'compact' — only the smaller type fits. Shrinking the text is worth it
+ *                 here because it keeps the box's bottom edge exactly on the
+ *                 item's real end time, so the calendar stays honest about
+ *                 when the thing actually finishes.
+ *   - 'expand'  — neither type size fits. Shrinking the text now buys
+ *                 nothing: the only reason to shrink was to avoid stretching
+ *                 the box, and a box in this band has to be stretched
+ *                 (or folded away) regardless. So the caller stretches it at
+ *                 NORMAL type instead of rendering it both shrunken and
+ *                 stretched, which would be the worst of both.
+ *
+ * Deliberately takes the TRUE height, not the height the box ends up drawn
+ * at. Deciding the type size from the final drawn height instead is what
+ * produced the shrunken-and-stretched combination above: a box would be
+ * stretched part-way toward legibility, land under the normal floor, and get
+ * shrunk on top of that — paying the readability cost of small text without
+ * getting the honest bottom edge that was the only thing small text was for.
+ */
+export function chooseFontMode(trueHeightPx) {
+  if (trueHeightPx >= TWO_LINE_MIN_HEIGHT_PX) return 'normal';
+  if (trueHeightPx >= COMPACT_TWO_LINE_MIN_HEIGHT_PX) return 'compact';
+  return 'expand';
+}
 
 // Within an overlap group (see layoutDayItems), an item whose OWN true
 // proportional height (at the current zoom) would already clear
@@ -99,21 +165,174 @@ export function isLegibleAlone(durationMin, pxPerMin) {
   return durationMin * pxPerMin >= COMPACT_BLOCK_HEIGHT_PX;
 }
 
-// Two individually "legible enough to stand alone" (see isLegibleAlone)
-// items can still read as a jumbled mess at a zoomed-out level if they sit
-// nearly flush against each other — e.g. two 90-min blocks with only 30 real
-// minutes (~16px at the lowest zoom) between them, each rendering a full
-// title+time-range at that height. Below TIGHT_GAP_PX of real (natural,
-// unclamped) gap, drop straight to a single-line/compact render for BOTH
-// neighbouring items even if their own height would otherwise fit two lines
-// — see WeekView's itemLiveState `showTimeLine`. Below the smaller
-// COLLISION_GAP_PX, even that minimal single-line render would still feel
-// like a collision, so as a last resort the pair is folded into the existing
-// "N tasks" chip mechanism instead — see foldSequentialItems.
+// Roughly how many characters of a title fit on one line inside a SINGLE
+// (non-cluster) box's own lane before CSS ellipsis (see .cal-block-title in
+// calendar.css) kicks in, at ONE lane — i.e. the day column's full width.
+// Same estimation approach as WeekView's own CLUSTER_LABEL_LINE_CHAR_BUDGET
+// and for the same reason: a day column is a fluid `1fr` grid track, so its
+// real rendered pixel width is never known here — only the lane FRACTION is
+// (totalLanes, below). This is a deliberately conservative estimate, not a
+// pixel measurement — CSS's own ellipsis stays the backstop for whatever a
+// real column width gets wrong that this estimate didn't predict.
 //
-// Both are PIXEL thresholds by definition (how close two boxes look on
-// screen), but every other cutoff in foldSequentialItems is expressed in real
-// minutes so the whole decision scales with pxPerMin in one consistent unit.
+// Calibrated generously above every title used in this file's own "must
+// stay side-by-side" pinned tests (the longest is 16 characters) so a normal
+// short title can never be dragged into folding at 2 lanes just from this
+// check, matching the user's own explicit warning: a previous version of
+// this fold logic once folded events that had "plenty of space to be
+// displayed individually", and this must not reintroduce that.
+export const SINGLE_ITEM_LANE_CHAR_BUDGET_AT_FULL_WIDTH = 48;
+
+// Whether a legible-alone item's title would be squeezed down to an
+// illegibly short truncation once split into `totalLanes` side-by-side
+// lanes — the real "not enough space" bug isLegibleAlone can't see on its
+// own (isLegibleAlone only ever judges an item's HEIGHT; see
+// MAX_SIDE_BY_SIDE_LANES' own doc comment on the equivalent, already-fixed
+// problem for LANE COUNT). This is WIDTH's version of the same idea, at the
+// per-item level: two items can each legitimately win a real side-by-side
+// lane (isLegibleAlone true, group small enough to stay under
+// MAX_SIDE_BY_SIDE_LANES) and still have one of their two titles render as 2
+// truncated characters, because HEIGHT and WIDTH are independent dimensions
+// and nothing before this checked the second one.
+//
+// This is a pure, presentation-facing judgment call — deliberately kept as
+// an exported, independently testable function rather than folded into
+// isLegibleAlone/packLanesCapped's own decision, so the existing lane-count
+// fold logic (and every test already pinned against it) stays completely
+// unchanged; a caller (WeekView.jsx) applies this AFTER layoutDayItems has
+// already decided lanes, to fold a too-narrow single further into whichever
+// item(s) it actually shares a lane split with — see WeekView's own
+// foldNarrowIllegibleTitles.
+//
+// A single lane (no split) is always exempt — this only ever applies once
+// totalLanes >= 2, so an item in its own full-width lane is never judged by
+// title length at all, regardless of how long that title is.
+export function isLaneWidthTooNarrowForTitle(title, totalLanes) {
+  if (totalLanes < 2) return false;
+  const perLaneBudget = Math.floor(SINGLE_ITEM_LANE_CHAR_BUDGET_AT_FULL_WIDTH / totalLanes);
+  return (title || '').length > perLaneBudget;
+}
+
+/**
+ * Post-processes layoutDayItems' lane-assigned (but not yet pixel-positioned)
+ * output, folding a legible-alone single item into a `kind: 'cluster'` chip
+ * with whichever OTHER item(s) it's actually side-by-side with, if its own
+ * title would be squeezed illegibly narrow at the lane width it landed in
+ * (see isLaneWidthTooNarrowForTitle). This is a rendering-only degrade
+ * layered ON TOP of layoutDayItems' own fold decision, never a replacement
+ * for it: isLegibleAlone, MAX_SIDE_BY_SIDE_LANES and packLanesCapped all stay
+ * exactly as they were (their own pinned tests are proof this file never
+ * needed to change lane count/height math to fix the reported bug) — this
+ * only ever removes items AFTER lanes are already decided, merging same-
+ * groupId lane-mates the same shape packLanesCapped's own overflow-merge
+ * already produces, so every downstream consumer (computeDayPositions, the
+ * cluster chip's own render) sees a shape it already knows how to handle.
+ *
+ * `getTitle(item)` resolves an item's real rendered title — kept as a
+ * caller-supplied callback rather than reading `item.data.title` directly,
+ * since a block's title actually lives on its associated Task (looked up by
+ * taskId), not on the block itself; only the caller (WeekView.jsx) knows how
+ * to do that lookup. This keeps the merge/grouping logic here pure and
+ * testable independent of that lookup — see WeekView's own thin wrapper.
+ *
+ * Runs once per overlap group: a group with fewer than 2 real lanes is
+ * already exempt (isLaneWidthTooNarrowForTitle returns false for
+ * totalLanes < 2), so nothing here changes the common single-lane case.
+ * Only items sharing the same groupId are ever merged — items in different,
+ * non-overlapping groups never had a reason to be side-by-side in the first
+ * place, so they're untouched regardless of their own title length.
+ */
+export function foldNarrowIllegibleTitles(laidOut, getTitle) {
+  const byGroup = new Map();
+  for (const item of laidOut) {
+    if (!byGroup.has(item.groupId)) byGroup.set(item.groupId, []);
+    byGroup.get(item.groupId).push(item);
+  }
+
+  const out = [];
+  for (const groupItems of byGroup.values()) {
+    // Only a plain `single` item with totalLanes >= 2 is ever a fold
+    // candidate — a `cluster` already summarizes 2+ items (its own label
+    // already truncates per-line, see WeekView's CLUSTER_LABEL_LINE_CHAR_BUDGET)
+    // and a lone item in a 1-lane group was never width-constrained at all.
+    const candidates = groupItems.filter(
+      (it) => it.kind !== 'cluster' && it.totalLanes >= 2 && isLaneWidthTooNarrowForTitle(getTitle(it), it.totalLanes)
+    );
+    if (candidates.length < 1) {
+      out.push(...groupItems);
+      continue;
+    }
+
+    // Fold every fold-candidate item in this group into ONE cluster spanning
+    // all of them, same shape packLanesCapped's own overflow-merge produces.
+    // A single fold-candidate still needs at least one partner to merge with
+    // (folding a lone item into a "cluster of 1" would just be a worse-
+    // labeled single box) — if every OTHER item in the group is itself
+    // legible at its own lane width, pull in the fewest additional lane-mates
+    // needed so the narrow title never renders unmerged, biased toward the
+    // item(s) sharing its own lane (the actual width constraint) first.
+    const nonCandidates = groupItems.filter((it) => !candidates.includes(it));
+    const mergeSet = [...candidates];
+    if (mergeSet.length === 1) {
+      const lonely = mergeSet[0];
+      const sameLane = nonCandidates.find((it) => it.lane === lonely.lane);
+      const partner = sameLane || nonCandidates[0];
+      if (partner) mergeSet.push(partner);
+    }
+
+    if (mergeSet.length < 2) {
+      // No partner exists anywhere in the group (shouldn't happen once
+      // totalLanes >= 2 implies at least one lane-mate, but guard anyway) —
+      // leave the group exactly as layoutDayItems produced it rather than
+      // fold a single item into a "cluster" of itself.
+      out.push(...groupItems);
+      continue;
+    }
+
+    const mergeSetIds = new Set(mergeSet);
+    const kept = groupItems.filter((it) => !mergeSetIds.has(it));
+    const mergedItems = mergeSet.flatMap((it) => (it.kind === 'cluster' ? it.items : [{ type: it.type, data: it.data }]));
+    const cluster = {
+      kind: 'cluster',
+      items: mergedItems,
+      start: Math.min(...mergeSet.map((it) => it.start)),
+      end: Math.max(...mergeSet.map((it) => it.end)),
+      lane: Math.min(...mergeSet.map((it) => it.lane)),
+      groupId: mergeSet[0].groupId,
+    };
+    out.push(...kept, cluster);
+
+    // Remaining lanes shrink to however many distinct lanes are left after
+    // the merge, so a group that folds from 2 lanes down to 1 renders full
+    // width rather than keeping a now-empty second lane's worth of margin.
+    const remainingLanes = new Set([...kept.map((it) => it.lane), cluster.lane]);
+    const remap = new Map([...remainingLanes].sort((a, b) => a - b).map((lane, i) => [lane, i]));
+    for (const it of [...kept, cluster]) {
+      it.lane = remap.get(it.lane);
+      it.totalLanes = remap.size;
+    }
+  }
+
+  return out;
+}
+
+// TIGHT_GAP_PX feeds durationFoldGapMin (see foldSequentialItems) — the reach
+// limit for folding two too-short-alone items into one chip purely because
+// they sit close together, as opposed to an outright pixel collision
+// (COLLISION_GAP_PX, smaller, where folding happens regardless of either
+// item's own duration). A PIXEL threshold by definition (how close two boxes
+// look on screen), converted to real minutes via the current pxPerMin so it
+// scales with zoom the same consistent way every other cutoff in
+// foldSequentialItems does.
+//
+// This constant used to ALSO drive a single-line/compact render degrade for
+// two comfortably-tall items sitting close together (see WeekView's
+// itemLiveState `showTimeLine` and its own `tightGap`-consuming history) —
+// removed after real reports of a box with a perfectly legible, honest
+// height losing its time line purely because something unrelated started or
+// ended nearby, even though the box's own content had plenty of room. Once a
+// box clears its own two-line height threshold it always shows its time line
+// now, regardless of neighbouring gaps — see computeShowTimeLine.
 export const TIGHT_GAP_PX = 22;
 export const COLLISION_GAP_PX = 8;
 
@@ -172,15 +391,14 @@ export const MAX_SIDE_BY_SIDE_LANES = 2;
  *     regardless of either item's own duration (applies to blocks and
  *     events alike — this is about visual crowding, not "is this a tiny
  *     default task").
- *   - tightGapMin: a real gap at or above minGapMin but below this is still
- *     too tight for a full two-line render, so both neighbours are tagged
- *     `tightGap: true` (single-line degrade — see WeekView's itemLiveState)
- *     without folding into a chip.
+ *   - tightGapMin: also feeds durationFoldGapMin below (the reach limit for
+ *     folding two too-short-alone items purely because they're close, as
+ *     opposed to an outright pixel collision) — see durationFoldGapMin's own
+ *     comment.
  * A run of 3+ mutually-close items folds into ONE growing chip rather than
  * a chain of chips flush against each other. Passive tasks and any item
- * whose own duration is >= CHIP_EXEMPT_MIN are never folded into a chip
- * (they may still single-line-degrade under tightGapMin crowding) — they
- * always keep their own tappable box.
+ * whose own duration is >= CHIP_EXEMPT_MIN are never folded into a chip —
+ * they always keep their own tappable box.
  *
  * Operates on generic `{ type: 'block'|'event', data, start, end }` items,
  * already sorted by start. Only ever considers items adjacent by start time
@@ -287,10 +505,6 @@ export function foldSequentialItems(items, pxPerMin) {
       continue;
     }
 
-    if (prev && prev.kind === 'single' && gapMin < tightGapMin) {
-      prev.tightGap = true;
-      single.tightGap = true;
-    }
     out.push(single);
   }
   return out;
@@ -526,15 +740,33 @@ export const EXCESSIVE_PUSHDOWN_PX = 2;
  * far as needed — mirroring how Google Calendar visually stretches a dense
  * run of short meetings rather than letting their boxes collide.
  *
- * Before that pushdown logic even runs, a too-short single item (own natural
- * height under MIN_BLOCK_HEIGHT_PX) first gets a chance to grow into any
- * genuinely idle space below it in the same lane — capped by the NEXT item's
- * own natural top, so it only ever borrows real empty space, never reaches
- * into a neighbour. This is what fixes the "5-minute sliver sitting above a
- * big empty gap" look while everything after it (pushdown/fold) still works
- * exactly the same off the resulting (possibly grown) naturalHeight — growing
- * is a strictly separate, earlier step. The box's bottom no longer landing
- * exactly on its true end time is an accepted tradeoff here.
+ * Before that pushdown logic even runs, a short item goes through a three-step
+ * ladder that decides how to make it readable, always preferring the option
+ * that keeps its bottom edge on its real end time:
+ *
+ *   1. If the item's OWN real duration is tall enough to show its title and
+ *      time together — at the normal type size, or failing that at the
+ *      smaller compact one — it is left exactly at that height and simply
+ *      drawn at whichever type fits (see chooseFontMode). Nothing moves.
+ *   2. If neither type size fits inside its own duration, the box stretches
+ *      down into genuinely idle space in the same lane instead, at NORMAL
+ *      type — capped by the NEXT item's own natural top, so it only ever
+ *      borrows real empty space and never reaches into a neighbour. This is
+ *      what fixes the "5-minute sliver sitting above a big empty gap" look.
+ *      Shrinking the type here would buy nothing, since the only reason to
+ *      shrink was to avoid stretching. Only items that can't even show a
+ *      title on their own (per isLegibleAlone) qualify: an item that shows a
+ *      readable title but has no room for a second line is fine as it is, and
+ *      drawing it longer than it really is would be the worse lie.
+ *   3. If there wasn't enough idle space to stretch into either, the item is
+ *      folded into a chip with whatever is crowding it — see
+ *      `unreadableEvenAfterGrowing` below.
+ *
+ * Everything after this (pushdown/fold) still works exactly the same off the
+ * resulting (possibly grown) naturalHeight — the ladder is a strictly
+ * separate, earlier step. The box's bottom no longer landing exactly on its
+ * true end time is the accepted tradeoff at step 2, and the reason step 1
+ * prefers shrinking the type whenever that alone is enough.
  *
  * That pushdown has no upper bound by itself though: if enough predecessors
  * in a lane were stretched (each pushdown adding to the last), the
@@ -599,6 +831,23 @@ export function packLane(items, pxPerMin) {
   // strict near-zero tolerance too, since its baseline is no longer purely
   // cosmetic.
   let prevGenuinelyCrowded = false;
+  // Item(s) that turned out to be unreadable/compressed with nothing genuine
+  // to fold into YET (no predecessor at all, or a predecessor too far away to
+  // honestly be "the thing crowding this") — held here until a later item's
+  // own turn can absorb them. See the fold step below.
+  //
+  // A QUEUE, not a single slot: originally this only ever held the very
+  // first item in a lane (the only case that could have no prevPacked at
+  // all), so one slot was enough. FORCE_FOLD_DURATION_MIN's compressedBelow
+  // Comfortable check made a second, distinct case possible — two or more
+  // CONSECUTIVE items can each independently fail to grow (because each is
+  // squeezed by whatever starts right after IT), while none of them is
+  // genuinely pushed down by its own predecessor. A single `pendingUnreadable
+  // = item` slot silently overwrote and lost every deferred item except the
+  // most recent one the moment a second one queued up before the first was
+  // ever resolved — a real, non-hypothetical data-loss bug (an item vanished
+  // off the calendar entirely, not just folded into the wrong neighbour).
+  const pendingUnreadable = [];
 
   for (let i = 0; i < sorted.length; i++) {
     const item = sorted[i];
@@ -615,17 +864,51 @@ export function packLane(items, pxPerMin) {
     // zero gap naturally sit flush with no floor-induced false collision.
     let naturalHeight = item.kind === 'cluster' ? Math.max(MIN_BLOCK_HEIGHT_PX, trueHeight) : trueHeight;
 
-    // A too-short single item that has genuinely free room below it (the
-    // next lane-mate's natural top is well past this item's own natural
-    // bottom) may borrow some of that idle space to reach MIN_BLOCK_HEIGHT_PX
-    // instead of rendering as an illegible sliver with empty space sitting
-    // right below it — e.g. a 5-minute task followed 40 minutes later by the
-    // next item. This never reaches INTO another item (capped by the next
-    // item's own natural top, so it can still be pushed down if needed
-    // afterward) and never applies to a cluster (already floored above). The
-    // bottom no longer landing exactly on the true end time is an accepted
-    // tradeoff here — see this function's own doc comment.
-    if (item.kind !== 'cluster' && naturalHeight < MIN_BLOCK_HEIGHT_PX) {
+    // Decide the type size from the item's OWN real duration, before any
+    // stretching — see chooseFontMode for why judging it from the final drawn
+    // height instead produces a box that is both shrunken AND stretched.
+    // A cluster chip has no title/time pair of its own to size (it stacks the
+    // titles it stands in for), so it always renders at normal type.
+    const fontMode = item.kind === 'cluster' ? 'normal' : chooseFontMode(trueHeight);
+
+    // A single item whose own real duration is too short to show its title and
+    // time together at EITHER type size may borrow genuinely free room below
+    // it — space no other item in this lane has any claim on — and stretch
+    // down into it until both lines fit. This is what stops a 5-minute task
+    // from rendering as an unreadable sliver sitting on top of a big empty
+    // gap. It stretches toward the NORMAL two-line height, since a box being
+    // stretched has no reason left to shrink its type (see chooseFontMode).
+    //
+    // Two limits keep this honest: it never reaches into the next item (the
+    // cap is that item's own natural top, so this box can still be pushed
+    // down afterward if it needs to be), and it never applies to a cluster
+    // (already floored above). Where there isn't enough free room to reach a
+    // full two-line height, the box takes whatever room there is — even a
+    // partial stretch buys back some readability — and if that still leaves it
+    // too short to read at all, the fold path below turns it into a chip.
+    //
+    // The box's bottom edge no longer landing exactly on its real end time is
+    // the accepted trade here, and the reason step 1 above prefers shrinking
+    // the type whenever that alone is enough.
+    // Gated on isLegibleAlone as well as fontMode, so this only ever rescues a
+    // box that genuinely can't stand on its own. An item that already clears
+    // the one-line legibility floor is showing a readable title at a truthful
+    // position — that it has no room for a second line of time as well is a
+    // normal, minor degrade the renderer already handles by dropping that
+    // line, not a failure worth breaking the time axis over. Stretching those
+    // too would pull in ordinary mid-length items (a 25-minute meeting is
+    // 31px at max zoom) that the calendar has always drawn at their true
+    // height, and drawing them longer than they are is a worse lie than
+    // omitting a time range the user can read off the grid anyway.
+    // Whether this item actually went through the grow-into-idle-space step
+    // below — tracked separately from naturalHeight's own value, because the
+    // fold check further down needs to know not just "how tall did this end
+    // up" but "did growing even get it to a height that can show what it was
+    // trying to show." A growth attempt that only PARTIALLY succeeds (there
+    // was some free room, but not enough to reach a full two-line height)
+    // still counts as an attempt that fell short, not as "not applicable."
+    const wentThroughGrowthStep = item.kind !== 'cluster' && fontMode === 'expand' && !isLegibleAlone(item.end - item.start, pxPerMin);
+    if (wentThroughGrowthStep) {
       const nextNaturalTop = i + 1 < sorted.length ? (sorted[i + 1].start - GRID_START_MIN) * pxPerMin : Infinity;
       // Leave BLOCK_GAP_PX of the available room untouched so growing into it
       // still lands comfortably under EXCESSIVE_PUSHDOWN_PX against the next
@@ -633,7 +916,7 @@ export function packLane(items, pxPerMin) {
       // trigger the fold-into-cluster path below for a pair that actually had
       // (barely) enough real breathing room to stay separate.
       const availableBelow = nextNaturalTop - naturalTop - BLOCK_GAP_PX;
-      naturalHeight = Math.min(MIN_BLOCK_HEIGHT_PX, Math.max(naturalHeight, availableBelow));
+      naturalHeight = Math.min(TWO_LINE_MIN_HEIGHT_PX, Math.max(naturalHeight, availableBelow));
     }
 
     const pushedTop = Math.max(naturalTop, prevBottom);
@@ -673,7 +956,85 @@ export function packLane(items, pxPerMin) {
     const requiresStrictCheck = prevGenuinelyCrowded || itemGenuinelyCrowded || naturalGapToPrev < 0;
     const excessiveThreshold = requiresStrictCheck ? EXCESSIVE_PUSHDOWN_PX : chainBaseline + EXCESSIVE_PUSHDOWN_PX;
 
-    if (prevPacked && pushdownPx > excessiveThreshold) {
+    // The last step of the legibility ladder (see this function's own doc
+    // comment): an item that went through the grow-into-idle-space step above
+    // (because it couldn't show its title+time within its own true duration
+    // at either type size) but STILL didn't reach a full two-line height —
+    // whether because there was no free room at all, or only partial room —
+    // has run out of ways to render what it needed to, so it folds into a
+    // chip with whatever is crowding it. Without this a 5-minute task wedged
+    // between a long side-by-side neighbour and a follower that starts the
+    // instant it ends draws as a bare title (or nothing) with no time, rather
+    // than being grouped with its neighbour honestly.
+    //
+    // The bar here is TWO_LINE_MIN_HEIGHT_PX (36), not the one-line
+    // COMPACT_BLOCK_HEIGHT_PX (20) floor used elsewhere in this file — an
+    // item that took this branch already failed isLegibleAlone at its own
+    // true duration, so it has nothing to show at all unless growth actually
+    // got it to a real two-line height; a partial grow that clears 20px but
+    // not 36px would otherwise render as a naked title with no time, silently
+    // reintroducing the exact bug this whole ladder exists to fix. Every item
+    // that goes through this branch is always drawn at NORMAL type once
+    // expanded (see the fontMode assignment at the end of this function), so
+    // the normal threshold applies regardless of what chooseFontMode said
+    // before growth was attempted.
+    //
+    // Restricted to items that actually went through the growth step — an
+    // item that's legibly-alone-but-just-lacks-a-time-line, or a cluster,
+    // never reaches for this check with a meaningful naturalHeight, and must
+    // not be pulled into folding just for lacking a second line it was never
+    // trying to grow into anyway (see the growth step's own doc comment on
+    // why that's a normal, honest degrade, not a failure).
+    const unreadableEvenAfterGrowing =
+      wentThroughGrowthStep && (item.totalLanes || 1) >= 2 && naturalHeight < TWO_LINE_MIN_HEIGHT_PX;
+
+    // FORCE_FOLD_DURATION_MIN: a simpler, unconditional override for a
+    // genuinely tiny item (real duration under 10 minutes) — explicit
+    // product decision, not part of the ladder above. Folds the moment its
+    // rendered height comes out compressed below a comfortable two-line
+    // size, for ANY reason: it doesn't matter whether growth was attempted,
+    // whether it shares a lane with something else, or whether the ladder
+    // above would otherwise have judged it "legible enough" — a sub-10-minute
+    // item squeezed to less than TWO_LINE_MIN_HEIGHT_PX reads as an
+    // unreliable sliver often enough that it isn't worth the more permissive,
+    // multi-condition treatment everything else in this function gets. See
+    // this constant's own doc comment for why 10 minutes is the line.
+    const isForceFoldDuration = item.kind !== 'cluster' && item.end - item.start < FORCE_FOLD_DURATION_MIN;
+    const compressedBelowComfortable = isForceFoldDuration && naturalHeight < TWO_LINE_MIN_HEIGHT_PX;
+
+    // Such an item folds into whichever neighbour it is ACTUALLY crowding
+    // against — which is not simply "whatever happens to be prevPacked".
+    // pushdownPx (computed above) tells the two cases apart: if it's
+    // genuinely positive, this item's own natural top was pushed down by
+    // prevPacked's real bottom edge, so prevPacked is honestly the thing
+    // crowding it. But an item can also fail to grow (wentThroughGrowthStep)
+    // purely because the NEXT item starts immediately after it, while its
+    // own natural top sits nowhere near prevPacked at all — prevBottom may be
+    // hours/many pixels earlier, so pushdownPx is ~0. Real reported bug: a
+    // 5-minute "Charge" block at 12:40 with "Look at cost" starting the
+    // instant it ends had a "Morning tasks" block at 08:00 as its prevPacked
+    // (nothing else in the lane between them) — merging into prevPacked
+    // there produced one cluster spanning 08:00-13:15 for what should have
+    // been two SEPARATE things: "Morning tasks" (plenty of its own room,
+    // stays standalone) and a "Charge"+"Look at cost" cluster honestly
+    // positioned at 12:40. A merge must never claim a span wider than what
+    // is genuinely crowding this item — so prevPacked is only treated as the
+    // culprit when it actually pushed this item down; otherwise (no genuine
+    // pushdown, or no prevPacked at all — the original "opens the lane"
+    // case) this item waits and is picked up by the NEXT item's own turn
+    // through the loop instead, via `pendingUnreadable`.
+    //
+    // Holding it over is only safe because there is guaranteed to BE a next
+    // item: with nothing after it in the lane the growth step above had
+    // unlimited room and would have already stretched it to a readable
+    // height, so it could not have reached this branch at all.
+    const genuinelyPushedByPrev = pushdownPx > EXCESSIVE_PUSHDOWN_PX;
+    if ((unreadableEvenAfterGrowing || compressedBelowComfortable) && !genuinelyPushedByPrev && i + 1 < sorted.length) {
+      pendingUnreadable.push(item);
+      continue;
+    }
+
+    if (prevPacked && (pushdownPx > excessiveThreshold || unreadableEvenAfterGrowing || compressedBelowComfortable)) {
       // Fold into (or grow) a cluster instead of accepting a position that
       // would misrepresent this item's real end time. The cluster's own
       // box uses ITS natural span (min start, max end across every merged
@@ -698,8 +1059,23 @@ export function packLane(items, pxPerMin) {
       // never render EARLIER than that already-validated position, or it
       // would reopen the exact overlap-with-an-earlier-item problem
       // prevPacked's own placement was computed to avoid.
-      const mergedTop = Math.max(prevPacked.top, Math.round((mergedStart - GRID_START_MIN) * pxPerMin));
-      const mergedHeight = Math.round(Math.max(MIN_BLOCK_HEIGHT_PX, (mergedEnd - mergedStart) * pxPerMin));
+      const naturalMergedTop = Math.round((mergedStart - GRID_START_MIN) * pxPerMin);
+      const naturalMergedBottom = Math.round((mergedEnd - GRID_START_MIN) * pxPerMin);
+      // prevPacked's own placed `top` may already sit below its natural top
+      // (it was itself accepted as a within-budget pushdown against
+      // whatever came before it in the lane) — the merged cluster must
+      // never render EARLIER than that already-validated position, or it
+      // would reopen the exact overlap-with-an-earlier-item problem
+      // prevPacked's own placement was computed to avoid.
+      const mergedTop = Math.max(prevPacked.top, naturalMergedTop);
+      // Round the BOTTOM edge once rather than rounding top and height
+      // separately and adding them — two independent Math.round calls can
+      // each drift up to 0.5px, compounding into a false "excessive
+      // pushdown" against whatever comes next purely from rounding noise,
+      // even when the next item's real start time exactly matches this
+      // cluster's real end time (see this fix's own regression test).
+      const mergedBottom = Math.max(mergedTop + MIN_BLOCK_HEIGHT_PX, naturalMergedBottom);
+      const mergedHeight = mergedBottom - mergedTop;
       const cluster = {
         ...prevPacked,
         kind: 'cluster',
@@ -708,15 +1084,95 @@ export function packLane(items, pxPerMin) {
         end: mergedEnd,
         top: mergedTop,
         height: mergedHeight,
+        // A chip stacks the titles it stands in for rather than a title/time
+        // pair of its own, and is always drawn at least MIN_BLOCK_HEIGHT_PX
+        // tall, so it never has a reason to shrink its type.
+        fontMode: 'normal',
       };
       out[out.length - 1] = cluster;
       prevBottom = cluster.top + cluster.height + BLOCK_GAP_PX;
-      // The merged box is a cluster — always genuinely crowded going
-      // forward (see itemGenuinelyCrowded above), and its own baseline is
-      // fresh (it was just validated against the strict tolerance, not
-      // inherited from further back).
-      chainBaseline = 0;
-      prevGenuinelyCrowded = true;
+      // Only poison the NEXT item's tolerance (both prevGenuinelyCrowded AND
+      // the chainBaseline it would otherwise reset to 0) if this cluster's
+      // own bottom edge was genuinely stretched past where its members' true
+      // combined span would honestly land (the MIN_BLOCK_HEIGHT_PX floor
+      // kicked in, or prevPacked's own already-validated position pushed the
+      // top down) — allowing 1px of rounding slack for the single
+      // Math.round above. An honestly-positioned cluster (this merge's real
+      // end time landing exactly where the next item's real start time
+      // already was) is not untrustworthy the way a stretched one is, and
+      // must not force the near-zero tolerance onto a perfectly legible
+      // following item that needed zero real pushdown to render fine — see
+      // prevGenuinelyCrowded's own doc comment on what this flag is actually
+      // meant to protect against, and this fix's own regression test for the
+      // false-fold this produced when left unconditional. Resetting
+      // chainBaseline to 0 unconditionally had the same effect through a
+      // different door: even with prevGenuinelyCrowded fixed, a flat 0
+      // baseline still only budgets EXCESSIVE_PUSHDOWN_PX (2px) of tolerance
+      // — not enough to cover the ordinary, unconditional BLOCK_GAP_PX every
+      // placement already adds — so an honest cluster needs the SAME
+      // chainBaseline treatment a non-cluster item gets: carry forward
+      // however far prevBottom actually sits past this cluster's own honest
+      // natural bottom, exactly like the single-item path computes it below.
+      const clusterGenuinelyStretched = mergedBottom > naturalMergedBottom + 1;
+      chainBaseline = clusterGenuinelyStretched ? 0 : prevBottom - naturalMergedBottom;
+      prevGenuinelyCrowded = clusterGenuinelyStretched;
+      continue;
+    }
+
+    // Absorb every still-queued unreadable/compressed item (see
+    // pendingUnreadable's own doc comment above — there can be more than one,
+    // queued back-to-back) that had nothing genuine to fold into yet. The
+    // whole group becomes one chip covering all of their spans — the same
+    // shape every other fold in this file produces — so every one of them
+    // stays reachable by tapping it instead of vanishing or drawing as a bare
+    // line (or, before this queue existed, being silently overwritten and
+    // LOST — see the real regression this queue fixes, pinned in this file's
+    // own tests).
+    if (pendingUnreadable.length > 0) {
+      const pendingItems = pendingUnreadable.flatMap((p) =>
+        p.kind === 'cluster' ? p.items : [{ type: p.type, data: p.data }]
+      );
+      const ownItems = item.kind === 'cluster' ? item.items : [{ type: item.type, data: item.data }];
+      const mergedStart = Math.min(...pendingUnreadable.map((p) => p.start), item.start);
+      const mergedEnd = Math.max(...pendingUnreadable.map((p) => p.end), item.end);
+      // Round the BOTTOM edge once, rather than rounding top and height
+      // separately and adding them — two independent Math.round calls can
+      // each drift up to 0.5px, and together can overshoot the cluster's
+      // true bottom by up to a whole extra pixel on top of whatever the
+      // MIN_BLOCK_HEIGHT_PX floor itself adds. That compounded drift is
+      // enough to trip the near-zero EXCESSIVE_PUSHDOWN_PX tolerance against
+      // whatever comes next in the lane purely from rounding noise — folding
+      // a perfectly legible following item (see this fix's own regression
+      // test) even though its real start time exactly matches this cluster's
+      // real end time, with no genuine gap at all. Rounding the bottom edge
+      // directly guarantees the next item's pushdown check only ever sees
+      // sub-pixel rounding error, never a compounded one.
+      const mergedTop = Math.round((mergedStart - GRID_START_MIN) * pxPerMin);
+      const naturalMergedBottom = Math.round((mergedEnd - GRID_START_MIN) * pxPerMin);
+      const mergedBottom = Math.max(mergedTop + MIN_BLOCK_HEIGHT_PX, naturalMergedBottom);
+      const mergedHeight = mergedBottom - mergedTop;
+      const cluster = {
+        ...item,
+        kind: 'cluster',
+        items: [...pendingItems, ...ownItems],
+        start: mergedStart,
+        end: mergedEnd,
+        top: mergedTop,
+        height: mergedHeight,
+        fontMode: 'normal',
+      };
+      out.push(cluster);
+      prevBottom = cluster.top + cluster.height + BLOCK_GAP_PX;
+      // See the other merge branch's identical (and more heavily commented)
+      // version of these two lines for the full rationale — only an
+      // honestly-stretched cluster (the MIN_BLOCK_HEIGHT_PX floor actually
+      // kicked in) should poison the next item's pushdown tolerance AND
+      // reset its chainBaseline to 0; 1px of slack absorbs the single
+      // Math.round above.
+      const clusterGenuinelyStretched = mergedBottom > naturalMergedBottom + 1;
+      chainBaseline = clusterGenuinelyStretched ? 0 : prevBottom - naturalMergedBottom;
+      prevGenuinelyCrowded = clusterGenuinelyStretched;
+      pendingUnreadable.length = 0;
       continue;
     }
 
@@ -737,7 +1193,12 @@ export function packLane(items, pxPerMin) {
     // let a 2-item rounding-noise case slip past the strict tolerance.
     chainBaseline = prevBottom - (naturalTop + naturalHeight);
     prevGenuinelyCrowded = itemGenuinelyCrowded;
-    out.push({ ...item, top, height });
+    // fontMode travels with the box so the renderer never has to re-derive it
+    // from the drawn height (which is exactly what got this wrong before —
+    // see chooseFontMode). 'expand' is a layout instruction, not a type size;
+    // by this point the box has already been stretched as far as it could be,
+    // and it renders at normal type either way.
+    out.push({ ...item, top, height, fontMode: fontMode === 'expand' ? 'normal' : fontMode });
   }
 
   return out;

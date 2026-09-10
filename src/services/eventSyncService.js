@@ -42,6 +42,7 @@
 import { toISODate } from '../utils/dateUtils';
 import { isBlockSourcedEvent } from './googleCalendarService';
 import { computeEffectivePurgeBoundary as centralized_computeEffectivePurgeBoundary } from './dataRetention';
+import { parseRRule } from '../utils/recurrenceExpansion';
 
 /**
  * True if a local Google-sourced event should be looked up against this
@@ -234,6 +235,94 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
 }
 
 /**
+ * True if `pulled` (a brand-new Google event, no existing local row owns its
+ * googleEventId) plausibly IS `local` (a Google-sourced event about to be
+ * demoted because its own googleEventId vanished from this pull) — i.e.
+ * Google gave the same real-world series a new event id, rather than these
+ * being two genuinely different events. This is what stops the exact bug
+ * pattern reported: editing a recurring event's pattern directly in Google
+ * Calendar can make Google mint an entirely new master id for it, which
+ * otherwise reads to TaskFlow as "the old one disappeared AND an unrelated
+ * new one appeared" — demoting the old one (so it gets re-pushed) as well as
+ * keeping the new pulled one produces two rows for one real series.
+ *
+ * Deliberately conservative — every check here is exact, not fuzzy, because
+ * wrongly merging two truly DIFFERENT events (e.g. two unrelated weekly
+ * meetings that happen to share a title and time) would be a worse bug than
+ * the duplicate this replaces: a real, distinct commitment quietly losing
+ * its own row.
+ *   - Title must match EXACTLY (case-sensitive) — no fuzzy/partial matching.
+ *   - Time-of-day (start/end) must match exactly.
+ *   - Both recurring or both single-occurrence on the same date — a
+ *     recurring series is never matched against a one-off, or vice versa.
+ *   - For recurring events, only the recurrence's core SHAPE is compared —
+ *     freq/interval/byDay via parseRRule — deliberately ignoring `count`/
+ *     `until`, since changing how long a series runs (the most common
+ *     reason Google mints a new master id in the first place) must not by
+ *     itself defeat the match it's trying to catch. A rule that fails to
+ *     parse (parseRRule returns null) never matches anything, including
+ *     itself — an unparseable rule offers no safe basis for comparison.
+ * Recurring-vs-recurring match only ever runs when BOTH sides are recurring
+ * (guarded above), so a non-recurring local/pulled pairing never reaches the
+ * parseRRule calls at all.
+ */
+function isPlausibleReplacement(local, pulled) {
+  if (local.title !== pulled.title) return false;
+  if (local.startTime !== pulled.startTime || local.endTime !== pulled.endTime) return false;
+
+  const localRecurring = !!local.recurrenceRule;
+  const pulledRecurring = !!pulled.recurrenceRule;
+  if (localRecurring !== pulledRecurring) return false;
+
+  if (!localRecurring) return local.date === pulled.date;
+
+  const localRule = parseRRule(local.recurrenceRule);
+  const pulledRule = parseRRule(pulled.recurrenceRule);
+  if (!localRule || !pulledRule) return false;
+  if (localRule.freq !== pulledRule.freq) return false;
+  if (localRule.interval !== pulledRule.interval) return false;
+  const localByDay = (localRule.byDay || []).slice().sort().join(',');
+  const pulledByDay = (pulledRule.byDay || []).slice().sort().join(',');
+  return localByDay === pulledByDay;
+}
+
+/**
+ * Finds, among `demoteCandidates` (local events about to be demoted this
+ * merge — see mergePulledGoogleEvents) and `newPulledCandidates` (pulled
+ * events with no existing local match), every 1:1 pairing isPlausibleReplacement
+ * accepts. Deliberately REJECTS any local or pulled event that matches more
+ * than one candidate on the other side — an ambiguous match is exactly the
+ * situation where guessing is more dangerous than leaving both as separate
+ * rows (the pre-existing, safe fallback: the old row still gets demoted and
+ * re-pushed, the new one still gets added, and a human can reconcile the
+ * resulting duplicate the way this bug was cleaned up manually before this
+ * fix existed) — see this function's own regression tests for the exact
+ * "two candidates match the same series" case this guards.
+ * @returns {Map<string, string>} local event id -> matched pulled event's googleEventId
+ */
+function findReplacementMatches(demoteCandidates, newPulledCandidates) {
+  const matchesByLocalId = new Map();
+  const pulledMatchCounts = new Map();
+
+  for (const local of demoteCandidates) {
+    const matches = newPulledCandidates.filter((pulled) => isPlausibleReplacement(local, pulled));
+    if (matches.length === 1) {
+      matchesByLocalId.set(local.id, matches[0].googleEventId);
+      pulledMatchCounts.set(matches[0].googleEventId, (pulledMatchCounts.get(matches[0].googleEventId) || 0) + 1);
+    }
+  }
+
+  // A pulled event matched by more than one demote-candidate is ambiguous —
+  // drop every match that resolved to it rather than guessing which local
+  // row it really replaces.
+  for (const [localId, pulledId] of matchesByLocalId) {
+    if (pulledMatchCounts.get(pulledId) > 1) matchesByLocalId.delete(localId);
+  }
+
+  return matchesByLocalId;
+}
+
+/**
  * Merge freshly-pulled Google events into the existing local `events` array.
  * Policy: Google always wins for anything it returns. Concretely:
  *   - Every non-Google (source:'manual') local event is kept untouched —
@@ -297,6 +386,26 @@ function applyRecentInstanceDeletes(pulledEvent, recentlyDeletedGoogleEventInsta
  *     forced to `true` on the pulled master, even if that pull's own
  *     EXDATE-derived overrides don't (yet) reflect Google's side having
  *     processed the delete — see applyRecentInstanceDeletes.
+ *   - REPLACEMENT DETECTION: before any of the above decides an in-scope,
+ *     absent, never-confirmed local event's fate, it's checked against every
+ *     brand-new pulled event (see findReplacementMatches/isPlausibleReplacement)
+ *     for a plausible 1:1 match — same title, same time-of-day, same
+ *     recurrence SHAPE (freq/interval/byDay, ignoring count/until). This is
+ *     what a recurring event getting a brand-new Google-side master id looks
+ *     like (e.g. its pattern was edited directly in Google Calendar in a way
+ *     Google treats as a new series) — without this, the old id vanishing
+ *     read as an ordinary "never confirmed, re-push it" case while the new
+ *     id's pulled event was added as a separate row, producing two rows for
+ *     one real series that persisted indefinitely (the demoted, `googleEventId:
+ *     null` row was never actually re-pushed successfully, since Google
+ *     already has an event there — see isUnsyncedPushableEvent's own history
+ *     for the compounding half of this bug). A matched local event is dropped
+ *     outright instead of demoted (its replacement already exists as the
+ *     pulled row, carrying forward local-only flags like `isFreeTime` via
+ *     preserveIgnoredFlag). Matching is deliberately exact/conservative, and
+ *     any pulled event matched by more than one local candidate is treated as
+ *     ambiguous and left unmatched — guessing wrong here (merging two
+ *     genuinely different events) is worse than the duplicate it replaces.
  * @param {import('../types').CalendarEvent[]} existingEvents
  * @param {import('../types').CalendarEvent[]} pulledGoogleEvents
  * @param {string} rangeStartIso
@@ -345,6 +454,37 @@ export function mergePulledGoogleEvents(
 
   const pulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
 
+  // Candidates for the replacement-detection pass below (see
+  // findReplacementMatches/isPlausibleReplacement's own doc comments): every
+  // local Google-sourced event that WOULD be demoted-and-repushed (in scope,
+  // absent from the pull, never Google-confirmed), matched against every
+  // freshly-pulled event that isn't already claimed by an existing local row.
+  // Computed up front, before the main loop below decides each event's fate,
+  // because a match changes that fate for BOTH sides: the local row is
+  // dropped outright (its replacement already exists as the pulled row)
+  // rather than demoted, and the matched pulled row carries forward the
+  // local row's own local-only flags the same way an ordinary id-matched
+  // update already does (see preserveIgnoredFlag).
+  const demoteCandidates = existingEvents.filter(
+    (e) =>
+      e.source === 'google' &&
+      !isBlockSourcedEvent(e) &&
+      !pulledByGoogleEventId.has(e.googleEventId) &&
+      !isTooOldToRetain(e, purgeBoundaryIso) &&
+      isInScopeForPull(e, rangeStartIso, rangeEndIso) &&
+      !isGoogleConfirmed(e, confirmedGoogleEventIds)
+  );
+  const newPulledCandidates = freshPulled.filter((e) => !existingByGoogleEventId.has(e.googleEventId));
+  const replacementMatches = findReplacementMatches(demoteCandidates, newPulledCandidates);
+  const matchedLocalIds = new Set(replacementMatches.keys());
+  const matchedPulledGoogleEventIds = new Set(replacementMatches.values());
+
+  const patchedFreshPulled = freshPulled.map((e) => {
+    if (!matchedPulledGoogleEventIds.has(e.googleEventId)) return e;
+    const matchedLocal = demoteCandidates.find((c) => replacementMatches.get(c.id) === e.googleEventId);
+    return matchedLocal ? preserveIgnoredFlag(matchedLocal, e) : e;
+  });
+
   const survivingLocal = [];
   for (const e of existingEvents) {
     if (e.source !== 'google') {
@@ -359,6 +499,12 @@ export function mergePulledGoogleEvents(
     if (isBlockSourcedEvent(e)) continue;
 
     if (pulledByGoogleEventId.has(e.googleEventId)) continue; // superseded below by the pulled version
+
+    // Matched to a freshly-pulled replacement above — that pulled row already
+    // carries this event forward (see patchedFreshPulled), so this row is
+    // dropped rather than also demoted-and-repushed, which is what used to
+    // produce a duplicate: two rows for the one real series.
+    if (matchedLocalIds.has(e.id)) continue;
 
     // Aged out of the retention window entirely — purge it, don't just leave
     // it untouched (see isTooOldToRetain's own doc comment for why this is
@@ -380,7 +526,7 @@ export function mergePulledGoogleEvents(
     survivingLocal.push(demoteToUnsyncedLocalEvent(e));
   }
 
-  return [...survivingLocal, ...freshPulled];
+  return [...survivingLocal, ...patchedFreshPulled];
 }
 
 /**

@@ -464,11 +464,95 @@
   color: var(--color-danger);
 }
 
+/* A plain positioning context and clip boundary — .task-row-swipe-wrap is
+   its only real child. overflow: hidden clips the content wrapper's
+   leftward slide (and the reveal panel behind it) to the row's own
+   rounded-corner bounds. Desktop never moves this at all (drag is only
+   enabled on mobile — see TaskRow's swipe state), so overflow: hidden costs
+   nothing there beyond what .card already implied. */
 .task-row {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  /* .card's own 16px padding would otherwise sit on this outer element,
+     outside .task-row-swipe-content's opaque background below — leaving a
+     ring around the row's edges that falls through to whatever's behind it
+     (the page background, not the row's own surface color) instead of
+     reading as part of the row. Padding moves onto the inner wrapper
+     instead so its background covers the whole visual box, edge to edge. */
+  padding: 0;
+}
+
+/* A plain (non-motion) wrapper between .task-row and the two elements
+   below, existing ONLY to be the reveal panel's positioning parent instead
+   of the outer .task-row. .task-row carries framer-motion's
+   `layout="position"` (for the row-reorder FLIP animation elsewhere in this
+   file), and an absolutely-positioned child sized off a `layout`-animated
+   ancestor can end up reflecting a stale/mid-transition box during that
+   animation instead of the ancestor's real rendered size — visible as the
+   reveal panel rendering taller or shorter than the row it belongs to. This
+   wrapper is never itself layout-animated (or draggable — that's
+   .task-row-swipe-content, its child, below), so anchoring the panel to it
+   instead sidesteps that entirely, AND keeps the panel from sliding along
+   with the content it's supposed to sit still behind — .task-row-swipe-
+   panel is this element's DIRECT child (a sibling of .task-row-swipe-
+   content, not nested inside it), so only the content's own transform
+   moves it; the panel stays put as the "trail" the content slides away
+   from, not a passenger riding along with it. */
+.task-row-swipe-wrap {
+  position: relative;
+  border-radius: inherit;
+}
+
+/* The actual flex row every existing .task-row rule used to target directly
+   — checkbox, main content, badges, trailing buttons, laid out exactly as
+   before. Carries .card's original padding (see .task-row's own comment
+   above) plus its OWN opaque background (not inherited — see .card/
+   .task-row-child below) so it fully covers .task-row-swipe-panel while at
+   rest, same background each depth's row already had before this wrapper
+   existed. touch-action: pan-y lets vertical list scrolling keep working
+   normally on mobile while framer-motion's own drag handles the horizontal
+   axis — without it, the browser's own scroll gesture recognizer and
+   framer-motion's drag recognizer can both grab the same touch. Needs its
+   own z-index (not just DOM order) since it's the one being dragged —
+   framer-motion promotes a dragged element onto its own compositor layer,
+   which otherwise paints above later, non-positioned siblings regardless of
+   source order once the drag starts. */
+.task-row-swipe-content {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  padding: 16px;
+  background: var(--color-bg-surface);
+  border-radius: inherit;
+  touch-action: pan-y;
+}
+
+/* Sub-task rows have no background at rest (see .task-row-child below) —
+   the swipe wrapper must match that exactly, or a sub-task row would show a
+   solid card-colored background it never had before this feature. Padding
+   and the hover background both move onto this inner wrapper too (same
+   reasoning as .task-row-swipe-content's own comment above) — .task-row-
+   child's hover background used to live on the OUTER element, which this
+   wrapper's z-index now fully covers, so left on the outer element alone it
+   would never be visible at all. */
+.task-row-child .task-row-swipe-content {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+/* Gated behind (hover: hover) — without it, tapping a row on a touch device
+   triggers a "sticky" :hover that stays lit until something else is tapped,
+   which reads as a stuck highlight rather than the passing hover-feedback
+   it's meant to be on a device that actually has a pointer to hover with. */
+@media (hover: hover) {
+  .task-row-child:hover .task-row-swipe-content {
+    background: var(--color-bg-surface-hover);
+  }
 }
 
 .task-row .task-checkbox {
@@ -481,13 +565,7 @@
    hierarchy reads as a checklist rather than a stack of equal-weight cards,
    while still sharing every other `.task-row` layout rule above. */
 .task-row-child {
-  padding: 6px 4px;
-  border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease-standard);
-}
-
-.task-row-child:hover {
-  background: var(--color-bg-surface-hover);
+  padding: 0;
 }
 
 /* Collapse/expand chevron for a row with children — sits at the row's
@@ -531,6 +609,99 @@
 .task-row-restore:hover:not(:disabled) {
   background: var(--color-bg-surface-hover);
   border-color: transparent;
+}
+
+/* Quick-reschedule trigger (RescheduleMenu) — desktop only (mobile's
+   equivalent is the swipe gesture instead, see .task-row-swipe-panel below).
+   Sits just left of the collapse chevron when both are present, purely by
+   JSX order in the same flex row (see TaskListPanel's renderTaskRow), no
+   explicit positioning needed. Hidden at rest and revealed on row
+   hover/focus, same "secondary action, stay out of the way until the row is
+   actually being looked at" pattern as Today's Agenda's block-done checkbox
+   (dashboard.css) — a reschedule shortcut next to every single row at all
+   times would be more visual noise than "quiet density" wants for a list
+   this size. Kept visible once its own menu is open (aria-expanded) so it
+   doesn't vanish out from under an open popover if the pointer drifts off
+   the row while choosing an option. */
+.task-row-reschedule {
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-top: 1px;
+  border-color: transparent;
+  background: transparent;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
+}
+
+.task-row:focus-within .task-row-reschedule,
+.task-row-reschedule[aria-expanded='true'] {
+  opacity: 1;
+}
+
+/* Desktop-only trigger (see TaskListPanel's `!isMobile` gate — mobile uses
+   the swipe gesture instead), so its hover-reveal is gated the same way:
+   without (hover: hover), a tap-and-hold on a touch device would trigger a
+   "sticky" :hover that leaves the button lit until something else is
+   tapped, reading as a stuck highlight rather than passing hover feedback.
+   The button is never rendered on mobile at all, but a tablet/hybrid device
+   in the "keep the desktop list layout" width range could still have a
+   coarse pointer with no real hover — this keeps that case correct too. */
+@media (hover: hover) {
+  .task-row:hover .task-row-reschedule {
+    opacity: 1;
+  }
+
+  .task-row-reschedule:hover:not(:disabled) {
+    background: var(--color-bg-surface-hover);
+    border-color: transparent;
+  }
+}
+
+/* Mobile swipe-to-reschedule's reveal panel — a sibling of
+   .task-row-swipe-content inside .task-row-swipe-wrap (see that element's
+   own comment for why it's a separate wrapper rather than the outer
+   .task-row), NOT nested inside the content that actually slides — this is
+   what makes it stay still as a fixed backdrop the content reveals by
+   sliding away from it, rather than being dragged along as a passenger.
+   inset: 0 fills the wrap's full padded box, matching it exactly, so the
+   panel is visible the instant the content starts sliding left, not just
+   once fully revealed; .task-row-swipe-content's own z-index keeps it
+   painting on top at rest.
+   Its own opacity is driven by a framer-motion MotionValue derived from the
+   drag position (see TaskRow's swipeX/swipePanelOpacity) rather than in
+   this stylesheet — a smoothly growing wash as the finger drags, which is
+   the "leaves a trail" effect asked for, rather than a hard on/off reveal.
+   Deriving it through framer-motion rather than React state matters here,
+   not just style: state updates on every drag frame would re-render this
+   whole row up to 60 times a second, which showed up as real lag on a
+   phone. The accent color (not a neutral) is what makes that wash actually
+   read as a color trail rather than just a darkening shadow.
+   Purely a visual indicator, not a button — swiping past the threshold
+   opens the reschedule menu directly on release and the row springs
+   straight back to resting (see TaskListPanel's onDragEnd), so there's
+   nothing here to tap separately and nothing left stuck open afterward. */
+.task-row-swipe-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  /* flex-end (not center) is the cross-axis here (column layout, so this is
+     horizontal) — keeps the icon/label tucked toward the row's trailing
+     edge rather than centered in the middle of the whole reveal band. */
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  width: 96px;
+  margin-left: auto;
+  padding-right: 16px;
+  background: var(--color-accent-soft);
+  border-radius: inherit;
+  color: var(--color-accent);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .task-row-main {
@@ -624,7 +795,16 @@
     padding-bottom: 76px;
   }
 
-  .card.task-row {
+  /* Tighter row padding on mobile is carried by .task-row-swipe-content, not
+     .task-row itself — see .task-row's own comment (in the base rules
+     above) on why padding has to live on that inner wrapper for its opaque
+     background to cover the whole row edge to edge, rounded corners
+     included. Left on the outer .card.task-row here (as it was before the
+     swipe feature existed), the outer element grows taller than the inner
+     wrapper on a phone-width screen, and the two disagree on height —
+     visible as the swipe reveal panel (sized to the outer element) standing
+     taller than the row content actually sliding over it. */
+  .task-row-swipe-content {
     padding: 10px 12px;
     gap: 10px;
   }

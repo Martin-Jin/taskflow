@@ -68,7 +68,7 @@ export const MONTH_ALIASES = MONTH_NAMES.reduce((acc, name, i) => {
 // "sept" is a common non-3-letter abbreviation worth covering explicitly.
 MONTH_ALIASES.sept = 8;
 
-/** Small word-numbers people type instead of digits: "in a week", "in a couple of days", "in a few months". */
+/** Small word-numbers people type instead of digits: "in a week", "in a few months". */
 export const WORD_NUMBERS = BASE_WORD_NUMBERS;
 
 export const UNIT_ALIASES = {
@@ -227,7 +227,7 @@ export function findDuePhrase(text, referenceDate = new Date()) {
   if (m) return { iso: addDays(todayIso, 7), matchedText: m[0], index: m.index };
 
   // "in <count> <unit>(s)" / "<count> <unit>(s) from now" — count may be a digit or a word
-  // ("a", "few", "couple"), optionally followed by "of" ("a couple of weeks").
+  // ("a", "few"), optionally followed by "of" ("a few weeks").
   const countGroup = `(?:(\\d+)|(${WORD_NUMBER_PATTERN}))`;
   m = s.match(new RegExp(`\\bin\\s+${countGroup}\\s+(?:of\\s+)?(${UNIT_PATTERN})s?\\b`));
   if (!m) m = s.match(new RegExp(`\\b${countGroup}\\s+(?:of\\s+)?(${UNIT_PATTERN})s?\\s+from now\\b`));

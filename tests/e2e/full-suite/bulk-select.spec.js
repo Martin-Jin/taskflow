@@ -113,4 +113,45 @@ test.describe('Bulk multi-select', () => {
 
     expectNoErrors(errors);
   });
+
+  test('Calendar view: entering selection mode dims unselected blocks/events instead of showing a checkbox', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Calendar');
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await expect(page.getByRole('button', { name: /cancel select/i })).toBeVisible();
+
+    // No checkbox glyph anywhere on a calendar block/event/cluster — see
+    // WeekView's own comment on why: the block/event IS the tappable target,
+    // and a checkbox pushed the title out of a short block's own flex column
+    // (real reported bug). Selection reads purely from dimming instead.
+    await expect(page.locator('.cal-block input[type="checkbox"], .cal-event input[type="checkbox"]')).toHaveCount(0);
+
+    const items = page.locator('.cal-block, .cal-event');
+    await expect(items.first()).toBeVisible();
+    const itemCount = await items.count();
+    expect(itemCount).toBeGreaterThan(1);
+
+    // Every item starts dimmed (nothing selected yet).
+    await expect(items.first()).toHaveClass(/is-selection-dimmed/);
+
+    // Clicking one item selects it — full brightness, no longer dimmed —
+    // while everything else stays dimmed.
+    const first = items.first();
+    await first.click();
+    await expect(first).toHaveClass(/is-selected/);
+    await expect(first).not.toHaveClass(/is-selection-dimmed/);
+    await expect(page.locator('.bulk-action-bar-count')).toHaveText('1 selected');
+
+    const second = items.nth(1);
+    await expect(second).toHaveClass(/is-selection-dimmed/);
+
+    // Cancelling selection mode removes the dimming from everything.
+    await page.locator('.bulk-action-bar').getByLabel('Cancel selection').click();
+    await expect(page.locator('.bulk-action-bar')).toHaveCount(0);
+    await expect(page.locator('.is-selection-dimmed')).toHaveCount(0);
+
+    expectNoErrors(errors);
+  });
 });
