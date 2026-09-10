@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.5.2',
+    date: '2026-09-10',
+    title: 'All-day events no longer get stuck in the "Right now" card',
+    changes: [
+      'An all-day event was staying pinned in the "Right now" card for the entire day, with a progress bar that never reflected anything real, and could push an actual in-progress task or event down into just a "+1 more" badge. All-day events no longer compete for that spot — only genuinely timed items appear there now.',
+    ],
+  },
+  {
     version: '10.5.1',
     date: '2026-09-10',
     title: "Dashboard agenda no longer lists all-day events",
