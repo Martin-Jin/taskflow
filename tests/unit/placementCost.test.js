@@ -7,6 +7,7 @@ import {
   SMALL_CHUNK_THRESHOLD_MINS,
   EARLY_REWARD_PER_DAY,
   LATE_PENALTY_PER_DAY_SQUARED,
+  EARLINESS_REWARD_PER_HOUR,
 } from '../../src/algorithms/placementCost';
 
 function block(taskId, date, startTime, endTime, extra = {}) {
@@ -107,6 +108,49 @@ describe('evaluatePlacementCost: due-date term', () => {
   });
 });
 
+describe('evaluatePlacementCost: earliness term', () => {
+  it('rewards (negative cost) a block starting earlier in the day, scaling linearly with hours before midnight', () => {
+    const task = { id: 't1', priority: 'medium' };
+    const early = [block('t1', '2026-08-01', '09:00', '10:00')]; // 15h until midnight
+    const late = [block('t1', '2026-08-01', '20:00', '21:00')]; // 4h until midnight
+    const costEarly = evaluatePlacementCost(early, [task], resolveDueDate).byTask.get('t1').earliness;
+    const costLate = evaluatePlacementCost(late, [task], resolveDueDate).byTask.get('t1').earliness;
+    expect(costEarly).toBeLessThan(costLate); // earlier start = more negative = cheaper
+    expect(costEarly).toBeCloseTo(-15 * EARLINESS_REWARD_PER_HOUR * PRIORITY_MULTIPLIER.medium, 6);
+    expect(costLate).toBeCloseTo(-4 * EARLINESS_REWARD_PER_HOUR * PRIORITY_MULTIPLIER.medium, 6);
+  });
+
+  it('sums the reward across every block of a multi-chunk task', () => {
+    const task = { id: 't1', priority: 'medium' };
+    const blocks = [
+      block('t1', '2026-08-01', '09:00', '10:00'), // 15h until midnight
+      block('t1', '2026-08-02', '13:00', '14:00'), // 11h until midnight
+    ];
+    const { byTask } = evaluatePlacementCost(blocks, [task], resolveDueDate);
+    expect(byTask.get('t1').earliness).toBeCloseTo(-(15 + 11) * EARLINESS_REWARD_PER_HOUR * PRIORITY_MULTIPLIER.medium, 6);
+  });
+
+  it('scales by priorityMultiplier like the other terms', () => {
+    const urgentTask = { id: 'u', priority: 'urgent' };
+    const lowTask = { id: 'l', priority: 'low' };
+    const shape = (id) => [block(id, '2026-08-01', '09:00', '10:00')];
+    const { byTask } = evaluatePlacementCost([...shape('u'), ...shape('l')], [urgentTask, lowTask], resolveDueDate);
+    // More negative = cheaper = "more rewarded" for the higher-priority task.
+    expect(byTask.get('u').earliness).toBeLessThan(byTask.get('l').earliness);
+  });
+
+  it('contributes zero cost for a task with no blocks at all', () => {
+    const task = { id: 't1', priority: 'medium' };
+    const { byTask } = evaluatePlacementCost([], [task], resolveDueDate);
+    expect(byTask.get('t1').earliness).toBe(0);
+  });
+
+  it('stays smaller in magnitude than a single fragmentation day-penalty, even across a full 24h span (tiebreaker, not a scheduling goal)', () => {
+    const maxPossibleEarlinessReward = 24 * EARLINESS_REWARD_PER_HOUR * PRIORITY_MULTIPLIER.urgent; // highest multiplier, most favorable case for this term
+    expect(maxPossibleEarlinessReward).toBeLessThan(FRAG_DAY_PENALTY * PRIORITY_MULTIPLIER.urgent);
+  });
+});
+
 describe('evaluatePlacementCost: totals and multi-task aggregation', () => {
   it('sums fragmentation + due-date cost per task, and totals across all tasks', () => {
     const task = { id: 't1', priority: 'high', dueDate: '2026-08-05' };
@@ -116,7 +160,7 @@ describe('evaluatePlacementCost: totals and multi-task aggregation', () => {
     ];
     const { byTask, total } = evaluatePlacementCost(blocks, [task], resolveDueDate);
     const entry = byTask.get('t1');
-    expect(entry.total).toBeCloseTo(entry.fragmentation + entry.dueDate, 9);
+    expect(entry.total).toBeCloseTo(entry.fragmentation + entry.dueDate + entry.timeOfDay + entry.earliness, 9);
     expect(total).toBeCloseTo(entry.total, 9);
   });
 

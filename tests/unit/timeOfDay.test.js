@@ -121,7 +121,7 @@ describe('placementCost — the time-of-day term', () => {
     const t = task({ preferredTimeOfDay: 'morning' });
     const blocks = [block('19:00', '21:00', 2)];
     const c = costOf(t, blocks);
-    expect(c.total).toBeCloseTo(c.fragmentation + c.dueDate + c.timeOfDay, 6);
+    expect(c.total).toBeCloseTo(c.fragmentation + c.dueDate + c.timeOfDay + c.earliness, 6);
   });
 
   it('stays weaker than a day of fragmentation for a typical 2-hour block', () => {

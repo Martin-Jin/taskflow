@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.6.0',
+    date: '2026-09-11',
+    title: 'Scheduler now prefers earlier open time within a day',
+    changes: [
+      "The auto-scheduler used to fill whichever open gap in your day was biggest, even if an earlier, smaller gap would fit the task just as well — so a task could land at 8pm while a free hour earlier that afternoon sat unused. It now gives a small preference to starting earlier in the day, so the scheduler favors that earlier gap unless a later one genuinely avoids splitting a task across more days or missing a due date.",
+    ],
+  },
+  {
     version: '10.5.2',
     date: '2026-09-10',
     title: 'All-day events no longer get stuck in the "Right now" card',
