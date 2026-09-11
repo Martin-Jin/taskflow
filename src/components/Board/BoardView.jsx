@@ -627,10 +627,11 @@ export default function BoardView({ projectId, onProjectChange, filter = 'all', 
               {/* A container (has sub-tasks — see subtaskTotal above) shows its rolled-up remaining
                   hours here rather than its own frozen/independent number — see utils/taskHierarchy.js. */}
               {formatHours(subtaskTotal > 0 ? getEffectiveRemainingHours(task, tasks) : getEffectiveRemainingHoursForOccurrence(task))} left
-              {task.dueDate ? (
+              {/* No due date is the common/default case, not something worth
+                  calling out on every undated card — see direction rule 3
+                  ("never render the absence of information"). */}
+              {task.dueDate && (
                 <span className="board-card-due"> · due {formatDisplayDate(task.dueDate)}</span>
-              ) : (
-                <span> · no due date</span>
               )}
             </span>
             {subtaskTotal > 0 && (

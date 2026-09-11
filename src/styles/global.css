@@ -1826,6 +1826,10 @@ select:focus-visible,
   background: var(--color-bg-surface-hover);
   color: var(--color-text-secondary);
 }
+.badge.warning {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
 
 /* "pushed N×" — a task whose deadline the user keeps moving out (see
    utils/rescheduleHistory.js). Warning, not danger: it's advisory, and a red
