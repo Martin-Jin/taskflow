@@ -124,21 +124,9 @@ export default function IntegrationsSection({ sectionRef }) {
             warning on the button above, which is why it's only shown while
             googleConnected (the two never appear at once). */}
         {googleConnected && googleSyncStale && (
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 5,
-              padding: '4px 8px',
-              borderRadius: 6,
-              fontSize: 12,
-              fontWeight: 600,
-              color: 'var(--color-warning)',
-              border: '1px solid var(--color-warning)',
-            }}
-          >
-            <Clock size={13} /> Hasn't synced recently
-          </span>
+          <Badge variant="warning" icon={Clock}>
+            Hasn't synced recently
+          </Badge>
         )}
       </div>
       {googleConnected && (

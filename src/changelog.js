@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.6.2',
+    date: '2026-09-12',
+    title: 'Small visual polish pass',
+    changes: [
+      'Board view cards no longer print "no due date" on every card that simply doesn\'t have one — matching how the task list already treats it as the default, unremarkable case rather than something worth calling out.',
+      'The "Hasn\'t synced recently" notice in Settings → Integrations now uses the same pill style as other status badges in the app, instead of a one-off box.',
+    ],
+  },
+  {
     version: '10.6.1',
     date: '2026-09-11',
     title: 'Fixed a recurring subtask wrongly staying in "Overdue & missed"',
