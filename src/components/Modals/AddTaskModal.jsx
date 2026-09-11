@@ -487,7 +487,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     <>
       <div className={`modal-overlay ${isClosing ? 'is-closing' : ''}`} onClick={requestClose}>
       <div
-        className="modal modal-detail"
+        className="modal modal-detail addtask-modal"
         onClick={(e) => e.stopPropagation()}
         style={{ width: 560 }}
         ref={modalRef}

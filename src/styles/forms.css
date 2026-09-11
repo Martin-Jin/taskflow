@@ -1298,6 +1298,21 @@
   color: var(--color-text-primary);
 }
 
+/* AddTaskModal reuses .modal-detail for its header/width styling but has
+   none of TaskDetailModal's two-column .detail-body/.detail-main/
+   .detail-sidebar structure that .modal-detail's own overflow-y: hidden
+   (further up this file) relies on for inner scrolling. Without this
+   override, expanding the "More options" (...) panel pushed content past
+   the modal's fixed height with nothing able to scroll it into view — the
+   whole modal just clipped. This puts .modal-detail back to the base
+   .modal behavior (the whole modal scrolls as one unit), same as what
+   already happens for every .modal-detail variant once the mobile
+   breakpoint collapses their side-by-side columns anyway (see the
+   `@media (max-width: 639px)` block below). */
+.addtask-modal {
+  overflow-y: auto;
+}
+
 .addtask-more-panel {
   display: flex;
   flex-direction: column;

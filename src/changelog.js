@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.6.3',
+    date: '2026-09-12',
+    title: 'Fixed "More options" panel getting cut off in Add Task',
+    changes: [
+      'Opening the "..." (more options) panel on the Add Task screen and scrolling down used to visually clip content instead of scrolling — some fields, and the Cancel/Add task buttons, were unreachable once enough options were expanded. The whole panel now scrolls properly.',
+    ],
+  },
+  {
     version: '10.6.2',
     date: '2026-09-12',
     title: 'Small visual polish pass',
