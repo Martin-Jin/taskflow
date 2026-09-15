@@ -35,7 +35,18 @@ export default function TodayAgenda() {
         // even if a block for it landed on today's calendar — it's already
         // covered by the "Overdue & missed" tile's own detail popup, whether
         // or not this task has since been completed (see DashboardStats).
-        return !(task?.dueDate && task.dueDate < today);
+        if (task?.dueDate && task.dueDate < today) return false;
+        // A task finished early (completed on an earlier day than its block
+        // was scheduled for) is done and gone — it shouldn't linger in
+        // today's agenda just because a block for it still lands on today's
+        // calendar. Recurring tasks are exempt: their per-occurrence
+        // completedDates already keys the "done" check to the right day (see
+        // isBlockTaskCompleted), and completedAt tracks only the most recent
+        // occurrence, not this specific block's date.
+        if (!task?.isRecurring && isBlockOrTaskDone(b, task) && task?.completedAt) {
+          if (toISODate(new Date(task.completedAt)) < today) return false;
+        }
+        return true;
       })
       .map((b) => {
         const task = taskById.get(b.taskId);

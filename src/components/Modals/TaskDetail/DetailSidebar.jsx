@@ -33,6 +33,7 @@ import { formatDisplayDate, formatTime12h } from '../../../utils/dateUtils';
 import { formatHours } from '../../../utils/formatHours';
 import { WEEKDAY_LABELS, MAX_RECURRENCE_COUNT, RECURRENCE_UNITS } from '../../../utils/recurrence';
 import { isSharedProject } from '../../../utils/sharedProjectAccess';
+import { isBlockOrTaskDone } from '../../../utils/missedTasks';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../../utils/projectConstants';
 import DetailField from '../../Common/DetailField';
 import { useEscapeLayer } from '../../../hooks/useEscapeLayer';
@@ -149,13 +150,25 @@ export default function DetailSidebar({
         <DetailField icon={CalendarRange} label="Scheduled">
           <div className="scheduled-blocks-list">
             {taskScheduledBlocks.map((b) => {
-              const isDone = b.status === 'done';
+              // A block's own status only tracks a per-slice "mark this
+              // portion done" toggle (see markBlockDone/unmarkBlockDone) — it
+              // never gets touched when the WHOLE task is completed instead,
+              // so checking b.status alone left every remaining scheduled
+              // slice showing as unchecked even after the task itself was
+              // marked done. isBlockOrTaskDone treats either as "done".
+              const isDone = isBlockOrTaskDone(b, task);
+              // Once the whole task is done, per-block status is moot — there's
+              // nothing left to individually mark/unmark (unmarking only ever
+              // acts on a block whose OWN status is 'done'; see
+              // unmarkBlockDone's no-op guard), so the checkbox goes read-only
+              // rather than looking toggleable and silently doing nothing.
+              const isTaskLevelDone = isDone && b.status !== 'done';
               return (
                 <label key={b.id} className="scheduled-block-row scheduled-block-row-checkable">
                   <input
                     type="checkbox"
                     checked={isDone}
-                    disabled={isReadOnlyViewer || (hasIncompleteDependencies && !isDone)}
+                    disabled={isReadOnlyViewer || isTaskLevelDone || (hasIncompleteDependencies && !isDone)}
                     onChange={() => (isDone ? onUnmarkBlockDone(b.id) : onMarkBlockDone(b.id))}
                     aria-label={`Mark ${formatDisplayDate(b.date)}, ${formatTime12h(b.startTime)}–${formatTime12h(b.endTime)} as done`}
                     title={hasIncompleteDependencies && !isDone ? "Can't mark scheduled time done until this task's dependencies are complete" : undefined}
