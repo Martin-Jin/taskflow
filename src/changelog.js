@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.6.3',
+    date: '2026-09-16',
+    title: "Fixed completed tasks lingering in Today's agenda",
+    changes: [
+      'A task finished earlier than its scheduled time today (e.g. completed yesterday) kept showing up in the dashboard\'s Today\'s agenda even though it was already done. It\'s now correctly left off the list.',
+      'Opening a completed task\'s details used to show its remaining scheduled time slots as unchecked, even though the task itself was done. They now correctly show as checked off.',
+    ],
+  },
+  {
     version: '10.6.2',
     date: '2026-09-12',
     title: 'Small visual polish pass',
