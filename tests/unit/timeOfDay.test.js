@@ -83,7 +83,11 @@ describe('placementCost — the time-of-day term', () => {
     durationHours,
   });
   const task = (over = {}) => ({ id: 't1', title: 'T', priority: 'medium', dueDate: '2026-09-20', ...over });
-  const costOf = (t, blocks) => evaluatePlacementCost(blocks, [t], (x) => x.dueDate).byTask.get('t1');
+  // This file only exercises the time-of-day term, so the backload term's
+  // window map is irrelevant here -- an empty map just means backload is 0
+  // for every task (see placementCost.js's own doc comment on taskWindowById).
+  const noWindows = new Map();
+  const costOf = (t, blocks) => evaluatePlacementCost(blocks, [t], (x) => x.dueDate, noWindows).byTask.get('t1');
 
   it('is zero when no preference is set', () => {
     expect(costOf(task(), [block('19:00', '21:00', 2)]).timeOfDay).toBe(0);
@@ -121,7 +125,7 @@ describe('placementCost — the time-of-day term', () => {
     const t = task({ preferredTimeOfDay: 'morning' });
     const blocks = [block('19:00', '21:00', 2)];
     const c = costOf(t, blocks);
-    expect(c.total).toBeCloseTo(c.fragmentation + c.dueDate + c.timeOfDay + c.earliness, 6);
+    expect(c.total).toBeCloseTo(c.fragmentation + c.dueDate + c.timeOfDay + c.earliness + c.backload, 6);
   });
 
   it('stays weaker than a day of fragmentation for a typical 2-hour block', () => {
@@ -131,7 +135,8 @@ describe('placementCost — the time-of-day term', () => {
     const spread = evaluatePlacementCost(
       [block('09:00', '10:00', 1), { ...block('09:00', '10:00', 1), id: 'b2', date: '2026-09-16' }],
       [task({ preferredTimeOfDay: 'morning' })],
-      (x) => x.dueDate
+      (x) => x.dueDate,
+      noWindows
     ).byTask.get('t1');
     const wrongHour = costOf(task({ preferredTimeOfDay: 'morning' }), [block('19:00', '21:00', 2)]);
     expect(spread.fragmentation).toBeGreaterThan(wrongHour.timeOfDay);
