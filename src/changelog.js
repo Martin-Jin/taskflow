@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.7.0',
+    date: '2026-09-16',
+    title: 'Scheduler now spreads out tasks with plenty of time to spare',
+    changes: [
+      'A task with several days before its due date used to sometimes get all its work crammed into the last day or two, even when there was room to spread it out earlier. The scheduler now prefers spacing that work more evenly across the days it has available, while still avoiding the opposite problem of splitting a task into too many small pieces.',
+    ],
+  },
+  {
     version: '10.6.3',
     date: '2026-09-16',
     title: "Fixed completed tasks lingering in Today's agenda",

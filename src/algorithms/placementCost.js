@@ -28,6 +28,15 @@
  *      standing on every other term, the search prefers the earlier one
  *      instead of being indifferent between them (see EARLINESS_REWARD_
  *      PER_HOUR below for why this term is needed at all).
+ *   5. BACKLOAD — penalty for concentrating a task's work late within its own
+ *      available window (its hour-weighted "center of mass" date sitting
+ *      later than where an evenly-spread task's would sit), even though a
+ *      cram job and a well-spread job can use the exact same NUMBER of days
+ *      and therefore look identical to the fragmentation term above. This is
+ *      deliberately one-directional (only penalizes being LATER than the
+ *      even-spread ideal) — being earlier is already rewarded by the due-date
+ *      term's early-slack bonus, so rewarding it again here would double-count
+ *      the same behavior. See BACKLOAD_PENALTY_PER_DAY below for scaling.
  *
  * Priority is a MULTIPLIER on those two terms, never an independent cost —
  * there is deliberately no separate "this task is unplaced" cost line here;
@@ -130,6 +139,44 @@ export const LATE_PENALTY_PER_DAY_SQUARED = 4;
 export const EARLINESS_REWARD_PER_HOUR = 0.05;
 
 /**
+ * How many days later than the "even spread" ideal centroid a task's actual
+ * hour-weighted centroid is allowed to sit before any backload penalty kicks
+ * in at all (see backloadCost below). A task that's only slightly back of
+ * ideal is well within normal scheduling noise -- capacity gaps, a day that
+ * happened to fill up early, other tasks competing for the same slots -- and
+ * shouldn't be treated as "cramming." 1 day is enough slack to absorb that
+ * ordinary jitter without masking a real cram job, where the centroid ends up
+ * several days later than ideal, not one.
+ */
+export const BACKLOAD_TOLERANCE_DAYS = 1;
+
+/**
+ * Cost per day of "excess lateness" -- how far a task's actual hour-weighted
+ * centroid sits past its ideal (even-spread) centroid, beyond the tolerance
+ * above.
+ *
+ * Must stay weaker than FRAG_DAY_PENALTY (3/day): this term scores WHEN a
+ * task's hours land within its window, not HOW MANY days they're spread
+ * across, and it must never cost more to correctly spread a task across its
+ * window than the fragmentation term would already charge for an equivalent
+ * BAD spread -- otherwise the two terms would fight over the same moves
+ * instead of scoring independent concerns (see module doc comment). At the
+ * same time it needs to be clearly stronger than EARLINESS_REWARD_PER_HOUR's
+ * 0.05 -- that term is a same-day tiebreaker only, while this one has to
+ * actually move the search's decisions across multi-day placements, not just
+ * settle ties.
+ *
+ * 1.5/day sits at exactly half of FRAG_DAY_PENALTY, which keeps "spread it
+ * out" always cheaper than "shred it across pointless extra days," and
+ * avoids landing on an exact tie with TIME_OF_DAY_PENALTY_PER_HOUR (1.0) or
+ * FRAG_DAY_PENALTY (3) themselves -- an exact tie between two terms means the
+ * search's choice between them is decided by iteration order rather than by
+ * which one actually matters more, which is the failure mode
+ * EARLINESS_REWARD_PER_HOUR's own doc comment already flags for this file.
+ */
+export const BACKLOAD_PENALTY_PER_DAY = 1.5;
+
+/**
  * Group a task's blocks and return the set of distinct dates used and the
  * ISO date of its LAST-ending block (i.e. when the task's work actually
  * completes) — null if the task has no blocks at all (fully unplaced).
@@ -224,6 +271,47 @@ function earlinessCost(task, taskBlocks) {
 }
 
 /**
+ * Backload cost for one task: penalizes its hour-weighted "center of mass"
+ * date sitting later, within its own valid scheduling window, than where an
+ * evenly-spread placement's centroid would sit.
+ *
+ * `taskWindow` is `{ windowStart, windowEnd }` for this task, precomputed
+ * once per search run by the caller (see localSearch.js) rather than
+ * recomputed here on every call -- the window depends only on the task/rules/
+ * today, never on the candidate placement being scored, so recomputing it per
+ * candidate move would be wasted work inside a loop that runs thousands of
+ * times per rebalance.
+ *
+ * Returns 0 for: no blocks placed, no resolvable due date (mirrors
+ * dueDateCost -- an undated task has no "ideal" spread to compare against),
+ * or a window of 1 day or less (nothing to spread across, so lateness within
+ * it is meaningless).
+ */
+function backloadCost(task, taskBlocks, dueDate, taskWindow) {
+  if (taskBlocks.length === 0 || !dueDate || !taskWindow) return 0;
+  const { windowStart, windowEnd } = taskWindow;
+  const availableDays = diffDays(windowStart, windowEnd) + 1;
+  if (availableDays <= 1) return 0;
+
+  let weightedOffsetSum = 0;
+  let totalHours = 0;
+  for (const b of taskBlocks) {
+    const offsetDays = diffDays(windowStart, b.date);
+    weightedOffsetSum += offsetDays * b.durationHours;
+    totalHours += b.durationHours;
+  }
+  if (totalHours <= 0) return 0;
+  const actualCentroidOffsetDays = weightedOffsetSum / totalHours;
+
+  const idealCentroidOffsetDays = availableDays / 2;
+  const excessLateness = actualCentroidOffsetDays - idealCentroidOffsetDays - BACKLOAD_TOLERANCE_DAYS;
+  if (excessLateness <= 0) return 0; // at or ahead of ideal (plus tolerance) -- never rewarded here, only penalized when later (see module doc comment)
+
+  const mult = priorityMultiplier(task);
+  return excessLateness * BACKLOAD_PENALTY_PER_DAY * mult;
+}
+
+/**
  * Evaluate the total cost of a candidate placement.
  *
  * @param {import('../types').ScheduledBlock[]} blocks - ALL blocks under consideration for this evaluation (only
@@ -234,9 +322,23 @@ function earlinessCost(task, taskBlocks) {
  *   (own or borrowed from an ancestor) — pass allocator.js's `resolveDueDate` bound to the caller's `taskById`, or
  *   any equivalent. Kept as an injected function rather than importing allocator.js directly, to avoid a circular
  *   dependency between allocator.js and this module.
- * @returns {{ total: number, byTask: Map<string, {fragmentation: number, dueDate: number, timeOfDay: number, earliness: number, total: number}> }}
+ * @param {Map<string, {windowStart: string, windowEnd: string}>} taskWindowById - each scored task's valid
+ *   scheduling window (own ISO windowStart/windowEnd), used only by the backload term below. Computed via
+ *   allocator.js's `getTaskWindow` and passed in by the caller (see localSearch.js) rather than resolved here, since
+ *   this module deliberately has no dependency on allocator.js (see resolveDueDateFn's own doc comment above) and
+ *   the window doesn't change between the many candidate placements one search run evaluates, so it's cheaper to
+ *   compute it once per run than on every call. A task missing from this map (e.g. a caller that hasn't been
+ *   updated, or a task genuinely outside the schedulable set) gets zero backload cost, same as having no due date.
+ * @returns {{ total: number, byTask: Map<string, {fragmentation: number, dueDate: number, timeOfDay: number, earliness: number, backload: number, total: number}> }}
  */
-export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn) {
+export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn, taskWindowById) {
+  if (!taskWindowById) {
+    // Loud failure by design: a caller silently omitting this would make the
+    // backload term quietly no-op for every task instead of erroring, which
+    // is a worse bug than a thrown error caught immediately in development
+    // (see this parameter's own doc comment above).
+    throw new Error('evaluatePlacementCost: taskWindowById is required (Map<taskId, {windowStart, windowEnd}>)');
+  }
   const blocksByTask = new Map();
   for (const b of blocks) {
     if (!blocksByTask.has(b.taskId)) blocksByTask.set(b.taskId, []);
@@ -253,8 +355,9 @@ export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn) {
     const due = dueDateCost(task, lastDate, dueDate);
     const timeOfDay = timeOfDayCost(task, taskBlocks);
     const earliness = earlinessCost(task, taskBlocks);
-    const taskTotal = fragmentation + due + timeOfDay + earliness;
-    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, earliness, total: taskTotal });
+    const backload = backloadCost(task, taskBlocks, dueDate, taskWindowById.get(task.id));
+    const taskTotal = fragmentation + due + timeOfDay + earliness + backload;
+    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, earliness, backload, total: taskTotal });
     total += taskTotal;
   }
 

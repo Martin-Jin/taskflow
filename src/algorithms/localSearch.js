@@ -387,6 +387,18 @@ export function runLocalSearch({ movableBlocks, immovableBlocks, tasks, taskById
     }
   }
 
+  const dates = [...capacityMap.keys()].sort();
+  const horizonEnd = dates[dates.length - 1];
+
+  // Each task's valid scheduling window, computed ONCE up front rather than
+  // per candidate-move evaluation: placementCost.js's backload term needs it
+  // to know a task's available "runway" to spread across, but the window
+  // itself depends only on the task/rules/today -- never on where its blocks
+  // actually land -- so recomputing it inside the search loop below (which
+  // calls evaluatePlacementCost on every one of MAX_ITERATIONS candidates)
+  // would repeat identical work thousands of times for no benefit.
+  const taskWindowById = new Map(tasks.map((t) => [t.id, getTaskWindow(t, today, horizonEnd, rules.bufferDays, taskById)]));
+
   // Repair any dependency-order violation already present in the incoming
   // seed BEFORE scoring/searching (see repairDependencyOrderViolations' doc
   // comment) -- the greedy allocator has no dependency awareness, so this is
@@ -395,15 +407,12 @@ export function runLocalSearch({ movableBlocks, immovableBlocks, tasks, taskById
   // move-validation checks inside the search loop below then only ever need
   // to keep an already-valid state valid, never fix up a bad one mid-search.
   const repairedSeed = repairDependencyOrderViolations(movableBlocks, tasks, taskById, dependencyIdsByTask, capacityMap, immovableBlocks);
-  const seedCost = evaluatePlacementCost([...repairedSeed, ...immovableBlocks], tasks, resolveDueDateFn).total;
+  const seedCost = evaluatePlacementCost([...repairedSeed, ...immovableBlocks], tasks, resolveDueDateFn, taskWindowById).total;
 
   // Nothing to optimize (no movable blocks, or a degenerate empty task set) -- return the (repaired) seed as-is.
   if (repairedSeed.length === 0) {
     return { blocks: repairedSeed, cost: seedCost, seedCost, iterations: 0 };
   }
-
-  const dates = [...capacityMap.keys()].sort();
-  const horizonEnd = dates[dates.length - 1];
 
   let current = repairedSeed.map((b) => ({ ...b }));
   let currentCost = seedCost;
@@ -479,7 +488,7 @@ export function runLocalSearch({ movableBlocks, immovableBlocks, tasks, taskById
     const candidate = current.map((b, i) =>
       i === blockIdx ? { ...b, date: targetDate, startTime: minutesToTime(targetStart), endTime: minutesToTime(targetEnd) } : b
     );
-    const candidateCost = evaluatePlacementCost([...candidate, ...immovableBlocks], tasks, resolveDueDateFn).total;
+    const candidateCost = evaluatePlacementCost([...candidate, ...immovableBlocks], tasks, resolveDueDateFn, taskWindowById).total;
 
     const delta = candidateCost - currentCost;
     const accept = delta <= 0 || rng() < Math.exp(-delta / Math.max(temperature, 1e-6));

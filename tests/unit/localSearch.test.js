@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { allocateTasks, resolveDueDate } from '../../src/algorithms/allocator';
+import { allocateTasks, resolveDueDate, getTaskWindow } from '../../src/algorithms/allocator';
 import { computeHorizonCapacity } from '../../src/algorithms/capacityEngine';
 import { runLocalSearch, MAX_ITERATIONS, SEARCH_TIME_BUDGET_MS } from '../../src/algorithms/localSearch';
 import { evaluatePlacementCost } from '../../src/algorithms/placementCost';
@@ -23,7 +23,12 @@ function seedAndSearch(tasks, capacityMap, rules = baseRules, taskById, options)
   const movableTaskIds = new Set(tasks.filter((t) => !t.fixedTime && !t.isPassive).map((t) => t.id));
   const movableBlocks = seedBlocks.filter((b) => movableTaskIds.has(b.taskId));
   const immovableBlocks = seedBlocks.filter((b) => !movableTaskIds.has(b.taskId));
-  const seedCost = evaluatePlacementCost(seedBlocks, tasks, (t) => resolveDueDate(t, fullTaskById)).total;
+  // Mirrors localSearch.js's own precomputed window map (see its doc comment) --
+  // built the same way here so the seed/final cost comparisons below score the
+  // backload term consistently with what runLocalSearch itself used internally.
+  const horizonEnd = [...capacityMap.keys()].sort().at(-1);
+  const taskWindowById = new Map(tasks.map((t) => [t.id, getTaskWindow(t, today, horizonEnd, rules.bufferDays, fullTaskById)]));
+  const seedCost = evaluatePlacementCost(seedBlocks, tasks, (t) => resolveDueDate(t, fullTaskById), taskWindowById).total;
   const result = runLocalSearch({
     movableBlocks,
     immovableBlocks,
@@ -36,7 +41,7 @@ function seedAndSearch(tasks, capacityMap, rules = baseRules, taskById, options)
     options,
   });
   const finalBlocks = [...result.blocks, ...immovableBlocks];
-  const finalCost = evaluatePlacementCost(finalBlocks, tasks, (t) => resolveDueDate(t, fullTaskById)).total;
+  const finalCost = evaluatePlacementCost(finalBlocks, tasks, (t) => resolveDueDate(t, fullTaskById), taskWindowById).total;
   return { seedBlocks, finalBlocks, seedCost, finalCost, overflow, timeShifted, searchResult: result };
 }
 
