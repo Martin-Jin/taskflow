@@ -16,8 +16,14 @@
  *      module only ever receives *unlocked* remaining work).
  *   2. The 1-day-before-due-date buffer rule.
  *   3. Priority-first ordering when capacity is scarce.
- *   4. Even pacing across the available runway for lower-urgency tasks,
- *      front-loading for urgent/high priority tasks near deadline.
+ *   4. Even pacing across the available runway BY DEFAULT, for every task
+ *      regardless of priority — front-loading toward the deadline is an
+ *      opt-in rule (rules.frontLoadUrgent, default off) a user can turn back
+ *      on for urgent/high priority tasks specifically. Priority/urgency still
+ *      determines ORDERING between different tasks competing for the same
+ *      day's capacity (see Step 1's score) — it no longer also biases a
+ *      single task's own placement toward its deadline unless explicitly
+ *      asked to.
  *   5. A per-task cap on how many chunks it may be split into (no marathon
  *      8-hour blocks courtesy of maxChunkHours; no unbounded fragmentation
  *      courtesy of maxChunksFor), plus a flat 5-minute floor on individual
@@ -48,10 +54,15 @@
  *      `fixed_time_outside_hours`, instead of falling through to a generic
  *      "no capacity" reason.
  *   8. A "blocker" task (one with at least one other incomplete task
- *      depending on it — see computeBlockerIds) skips even-pacing/front-load
- *      entirely and greedily claims as much of each day's capacity as it can,
- *      so it finishes ASAP instead of splitting days evenly with unrelated
- *      work — the whole point of unblocking whatever's waiting on it.
+ *      depending on it — see computeBlockerIds) paces like any other task
+ *      (Step 3/4), but its own planning window is first narrowed to whichever
+ *      is EARLIER: its own due date, or the tightest deadline anything
+ *      depending on it (transitively) is under (see computeEffectiveDeadlines,
+ *      the same backward-urgency-propagation map Step 1 already computes for
+ *      scoring). This guarantees a blocker still finishes in time to unblock
+ *      its dependents without needing to greedily rush through its own
+ *      capacity regardless of whether anything was actually at risk of being
+ *      delayed.
  *
  * --------------------------------------------------------------------------
  * ALGORITHM WALKTHROUGH
@@ -82,12 +93,11 @@
  *   date" as required, instead of a brittle nested if/else cascade.
  *
  *   A task with at least one incomplete dependent (see computeBlockerIds) is
- *   flagged as a "blocker" — it still sorts by the score above, but Steps 3
- *   and 4 below treat it differently once it's up: it skips even-pacing/
- *   front-load and instead greedily consumes each day's capacity in
- *   chronological order until its remaining hours are cleared or its window
- *   runs out, so it clears out of the way as fast as possible for whatever's
- *   waiting on it.
+ *   flagged as a "blocker" — it still sorts by the score above, and Steps 3
+ *   and 4 below pace it exactly like any other task, but Step 2 first
+ *   narrows its own planning window to respect whichever dependent needs it
+ *   soonest (see item 8 above), so it can never drift later than its
+ *   dependents actually require just because its own due date is loose.
  *
  * Step 2 — DETERMINE EACH TASK'S PLANNING WINDOW:
  *   effectiveDeadline = dueDate - bufferDays   (finish 1 day early, by default)
@@ -99,23 +109,27 @@
  *   both collapse to dueDate itself (no buffer, no earliestDate) — the task
  *   must be done ON its due date, not paced earlier. See getTaskWindow().
  *
+ *   A blocker task (see computeBlockerIds/item 8 above) additionally clamps
+ *   windowEnd down to the earliest effective deadline anything depending on
+ *   it (transitively) is under, if that's tighter than its own — see
+ *   computeEffectiveDeadlines. This never WIDENS the window past what
+ *   getTaskWindow already computed, only narrows it further.
+ *
  * Step 3 — PACE HOURS ACROSS THE WINDOW:
  *   daysInWindow = windowEnd - windowStart + 1
  *   idealHoursPerDay = remainingHours / daysInWindow
  *
- *   If frontLoadUrgent is true AND the task is high/urgent priority, we bias
- *   allocation toward the *later* days of the window (still respecting the
- *   buffer) using a weighting curve so more hours land closer to the
- *   deadline — reflecting how urgent work tends to intensify near the wire.
- *   Otherwise, hours are spread as evenly as capacity allows (even pacing
- *   for long-horizon, lower-urgency tasks, per the requirements).
+ *   If frontLoadUrgent is true AND the task is high/urgent priority (default
+ *   false — see item 4 above), we bias allocation toward the *later* days of
+ *   the window (still respecting the buffer) using a weighting curve so more
+ *   hours land closer to the deadline — reflecting how urgent work tends to
+ *   intensify near the wire, for a user who explicitly wants that. Otherwise
+ *   (the default), hours are spread as evenly as capacity allows regardless
+ *   of priority.
  *
  * Step 4 — GREEDY CAPACITY-AWARE PLACEMENT:
  *   Walk the task's window day-by-day (in bias order), and for each day:
- *     - Determine target hours for that day (from Step 3's distribution) —
- *       except a blocker task (see computeBlockerIds), which targets ALL of
- *       its remaining hours every day instead of an ideal share, so it
- *       greedily consumes whatever capacity that day actually has.
+ *     - Determine target hours for that day (from Step 3's distribution).
  *     - Clamp to maxChunkHours, the task's remaining chunk budget, and to
  *       remaining day capacity
  *     - Slice from the day's free intervals, LARGEST-QUALIFYING-INTERVAL-FIRST
@@ -282,8 +296,15 @@ export function getEffectiveDeadline(task, bufferDays, taskById) {
  * via a per-chain `stack` set (mirrors findAncestorDueDate's pattern above) —
  * a scheduling pass must never hang on bad dependency data, even though the
  * UI (getIneligibleDependencyIds) already stops one from being created.
+ *
+ * Exported so allocateTasks can compute this ONE map up front and reuse it
+ * for two purposes that both need "how soon must this actually be done":
+ * scoring (prioritizeTasks, via scoreTask) and, for a blocker task
+ * specifically, clamping its OWN placement window — see processTask's
+ * `isBlocker` handling below for why a blocker's window must also respect
+ * whatever's waiting on it, not just its own due date.
  */
-function computeEffectiveDeadlines(tasks, bufferDays, taskById) {
+export function computeEffectiveDeadlines(tasks, bufferDays, taskById) {
   const allTasks = taskById ? [...taskById.values()] : tasks;
   const dependentsOf = getDependentsMap(allTasks);
   const cache = new Map();
@@ -315,13 +336,13 @@ function computeEffectiveDeadlines(tasks, bufferDays, taskById) {
  * IDs of tasks that are "blockers": they have at least one other, still-
  * incomplete task depending on them (directly, via that task's `dependsOn`).
  * A completed dependent doesn't count — nothing is actually waiting on the
- * blocker anymore. Used by allocateTasks to make a blocker greedily consume
- * a day's capacity instead of pacing evenly (see the module doc comment,
- * Step 4) — the goal is to clear the blocker out of the way as fast as
- * possible, not to spread it thin alongside unrelated work. `taskById`, when
- * given, should cover the FULL task graph (not just the eligible/schedulable
- * subset) so a dependent that isn't itself being scheduled this run (e.g.
- * already locked) still counts.
+ * blocker anymore. Used by allocateTasks (see the module doc comment, Step 2)
+ * to narrow a blocker's own planning window down to whatever deadline its
+ * dependents are actually under, rather than letting it pace all the way out
+ * to its own (possibly much looser) due date. `taskById`, when given, should
+ * cover the FULL task graph (not just the eligible/schedulable subset) so a
+ * dependent that isn't itself being scheduled this run (e.g. already locked)
+ * still counts.
  */
 function computeBlockerIds(tasks, taskById) {
   const allTasks = taskById ? [...taskById.values()] : tasks;
@@ -375,9 +396,16 @@ export function scoreTask(task, today, bufferDays, taskById, effectiveDeadlines)
  * ancestor lookup and to walk the full dependency graph for backward urgency
  * propagation (see computeEffectiveDeadlines) — a blocker task's urgency
  * rises to match whatever depends on it, not just its own deadline.
+ *
+ * `precomputedEffectiveDeadlines`, if given, is a ready-made
+ * computeEffectiveDeadlines() map — pass it when the caller (allocateTasks)
+ * already needs that same map for another reason (clamping a blocker task's
+ * own placement window, see processTask below), so the dependency graph is
+ * only walked once per run instead of twice. Computed fresh here when
+ * omitted, exactly as before.
  */
-export function prioritizeTasks(tasks, today, bufferDays, taskById) {
-  const effectiveDeadlines = computeEffectiveDeadlines(tasks, bufferDays, taskById);
+export function prioritizeTasks(tasks, today, bufferDays, taskById, precomputedEffectiveDeadlines) {
+  const effectiveDeadlines = precomputedEffectiveDeadlines || computeEffectiveDeadlines(tasks, bufferDays, taskById);
   const scoreCache = new Map();
   const scoreOf = (task) => {
     if (!scoreCache.has(task.id)) scoreCache.set(task.id, scoreTask(task, today, bufferDays, taskById, effectiveDeadlines));
@@ -917,7 +945,11 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
     outsideHoursFree.set(date, clipOutsideRange(allDay, cap.workWindow));
   }
 
-  const prioritized = prioritizeTasks(tasks, today, rules.bufferDays, taskById);
+  // Computed once and shared by both prioritizeTasks (scoring/ordering) and
+  // processTask's blocker window clamp below (see computeEffectiveDeadlines'
+  // own doc comment) — one dependency-graph walk instead of two.
+  const effectiveDeadlines = computeEffectiveDeadlines(tasks, rules.bufferDays, taskById);
+  const prioritized = prioritizeTasks(tasks, today, rules.bufferDays, taskById, effectiveDeadlines);
   const blockerIds = computeBlockerIds(tasks, taskById);
   const newBlocks = [];
   const overflow = [];
@@ -961,8 +993,33 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
    */
   function processTask(task) {
     const isBlocker = blockerIds.has(task.id);
-    const { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
-    const frontLoad = !isBlocker && rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
+    let { windowStart, windowEnd } = getTaskWindow(task, today, horizonEnd, rules.bufferDays, taskById);
+    // A blocker still gets the SAME even-pacing-by-default treatment as any
+    // other task (see the module doc comment's "Step 4" and buildDayWeights)
+    // rather than greedily maxing out each day's capacity — that greedy-fill
+    // used to be how a blocker finished "as fast as possible" for whatever
+    // depends on it, but it did so unconditionally, even when the blocker's
+    // own due date was loose and nothing was actually about to be delayed.
+    // The real requirement is narrower: a blocker must still finish in time
+    // for its most urgent dependent, not as early as physically possible.
+    // That requirement is enforced here instead, by shrinking the blocker's
+    // own planning window to whichever is EARLIER: its own due date, or the
+    // tightest deadline anything depending on it (transitively) is under —
+    // `effectiveDeadlines` already computes exactly that minimum (see
+    // computeEffectiveDeadlines, otherwise only used for scoring/ordering).
+    // Once the window itself reflects real dependent pressure, pacing evenly
+    // across it can never leave a dependent short of runway: the blocker is
+    // simply not ALLOWED to spread past the point its dependents need it by.
+    // Never widens the window (only intersects it with getTaskWindow's own
+    // result), so this can't undo enforceDueDate's single-day collapse or
+    // push the window past the visible horizon.
+    if (isBlocker) {
+      const propagatedDeadline = effectiveDeadlines.get(task.id);
+      if (propagatedDeadline && propagatedDeadline < windowEnd) {
+        windowEnd = propagatedDeadline < windowStart ? windowStart : propagatedDeadline;
+      }
+    }
+    const frontLoad = rules.frontLoadUrgent && (task.priority === 'urgent' || task.priority === 'high');
     const dayWeights = buildDayWeights(windowStart, windowEnd, frontLoad);
     // A single-day window (enforceDueDate collapsing a recurring occurrence
     // onto its one due date) gives a fixedTime task no OTHER day to retry on
@@ -1054,8 +1111,12 @@ export function allocateTasks(tasks, capacityMap, rules, today, taskById) {
       if (remaining <= EPSILON_HOURS) break;
       if (!freeForTask.has(date)) continue; // outside computed horizon
 
+      // A blocker no longer targets ALL its remaining hours on every day
+      // (the old greedy-max-capacity-per-day behavior) — it paces by ideal
+      // share exactly like any other task, just across a window already
+      // narrowed above to respect its dependents' real deadline pressure.
       const idealShare = task.remainingHours * (weight / totalWeight);
-      const targetHours = isBlocker ? remaining : Math.max(Math.min(idealShare, remaining), 0);
+      const targetHours = Math.max(Math.min(idealShare, remaining), 0);
       if (targetHours < PACING_SHARE_THRESHOLD_HOURS - EPSILON_HOURS) continue;
 
       remaining -= placeWithinDailyBudget(date, targetHours, freeForTask.get(date), '');

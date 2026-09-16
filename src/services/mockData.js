@@ -550,7 +550,17 @@ export function getDefaultRules() {
     workDayEnd: '23:00',
     maxDailyDeepWorkHours: 8,
     horizonWeeks: 4,
-    frontLoadUrgent: true,
+    // Default off: an individual task's own placement should start early and
+    // spread across its available days by default, regardless of priority —
+    // priority/urgency already governs which task wins a contested day's
+    // capacity (see allocator.js's scoring step), so front-loading here was
+    // redundant with that AND fought the scheduler's anti-cramming cost term
+    // (backloadCost in placementCost.js), which wants slack spread out, not
+    // packed against the deadline. A user who prefers the old cramming-
+    // toward-deadline behavior for urgent/high-priority tasks can still turn
+    // this back on from Settings. Existing users keep whatever value they
+    // already had persisted — this default only applies to a new/reset user.
+    frontLoadUrgent: false,
     minGapBetweenBlocksMins: 10,
     autoRescheduleEnabled: true,
   };

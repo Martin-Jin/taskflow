@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.7.1',
+    date: '2026-09-16',
+    title: 'Fixed high-priority and blocking tasks still cramming near their due date',
+    changes: [
+      "The previous update's fix for spreading out tasks with time to spare didn't fully work for urgent or high-priority tasks, or for a task that something else was waiting on — both still landed entirely on their due date instead of starting earlier. Both are now scheduled starting as soon as possible and spread across the days available, the same as any other task, while a task something else depends on still finishes in time for whatever's waiting on it.",
+      'A setting that intentionally packs urgent/high-priority work toward its deadline is still available if you prefer that (Settings → Scheduling), but it no longer happens by default.',
+    ],
+  },
+  {
     version: '10.7.0',
     date: '2026-09-16',
     title: 'Scheduler now spreads out tasks with plenty of time to spare',

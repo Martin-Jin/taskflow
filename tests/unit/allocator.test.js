@@ -844,3 +844,141 @@ describe('allocateTasks: a fixedTime may fall outside working hours', () => {
     expect(blocks[0].startTime).toBe('06:00');
   });
 });
+
+// Regression coverage for the "still cramming near the due date" bug: two
+// independent causes in this file both fought placementCost.js's backloadCost
+// term (which wants a task's hours spread across its slack, not packed
+// against the deadline) before local search ever got a chance to refine
+// anything, since the GREEDY SEED is what actually decided where the hours
+// landed. Cause 1: rules.frontLoadUrgent (now default false, see
+// getDefaultRules) deliberately biased an urgent/high-priority task's OWN
+// placement toward deadline-adjacent days. Cause 2: a "blocker" task (see
+// computeBlockerIds) greedily targeted ALL its remaining hours on every day
+// in chronological order regardless of frontLoadUrgent, cramming into the
+// fewest/earliest days at max daily capacity instead of pacing evenly.
+describe('allocateTasks: frontLoadUrgent default and blocker placement no longer cram', () => {
+  it('spreads an urgent task with ample slack across multiple days by default (frontLoadUrgent unset/false)', () => {
+    // 6 hours of work, due in 9 days, no other competing tasks -- ample
+    // capacity every day. With frontLoad off (the new default), this must
+    // start early and spread across many days rather than landing entirely
+    // on/near the due date.
+    const rules = { ...baseRules, horizonWeeks: 2 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 14, { routines: [], blocks: [], rules, events: [] });
+    const task = {
+      id: 'urgent_spread', title: 'Urgent with slack', priority: 'urgent',
+      estimatedHours: 6, remainingHours: 6, dueDate: '2026-07-09',
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    const days = new Set(blocks.map((b) => b.date));
+    // Spread across most/all of the window, not crammed into 1-2 days near
+    // the due date.
+    expect(days.size).toBeGreaterThanOrEqual(6);
+    // Starts on day 1 (today), not deadline-adjacent.
+    expect(blocks.some((b) => b.date === '2026-07-01')).toBe(true);
+    // Nothing crammed entirely on/right before the due date -- the due date
+    // itself (with a 1-day-early buffer default of 0 here) should not hold a
+    // disproportionate share of the work.
+    const dueDateHours = blocks.filter((b) => b.date === '2026-07-09').reduce((s, b) => s + b.durationHours, 0);
+    expect(dueDateHours).toBeLessThan(2);
+  });
+
+  it('still crams an urgent task toward its deadline when frontLoadUrgent is explicitly true (opt-in preserved)', () => {
+    // Same shape as above, but the user has explicitly turned the old
+    // behavior back on -- must still bias toward deadline-adjacent days.
+    const rules = { ...baseRules, horizonWeeks: 2, frontLoadUrgent: true };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 14, { routines: [], blocks: [], rules, events: [] });
+    const task = {
+      id: 'urgent_frontload', title: 'Urgent, frontload on', priority: 'urgent',
+      estimatedHours: 6, remainingHours: 6, dueDate: '2026-07-09',
+    };
+
+    const { blocks, overflow } = allocateTasks([task], capacityMap, rules, '2026-07-01');
+
+    expect(overflow).toHaveLength(0);
+    // The bulk of the work should land on/near the due date, not on day 1.
+    const day1Hours = blocks.filter((b) => b.date === '2026-07-01').reduce((s, b) => s + b.durationHours, 0);
+    const dueDateHours = blocks.filter((b) => b.date === '2026-07-09').reduce((s, b) => s + b.durationHours, 0);
+    expect(dueDateHours).toBeGreaterThan(day1Hours);
+  });
+
+  it('a medium-priority task is unaffected by frontLoadUrgent either way (the rule only ever applies to urgent/high)', () => {
+    const rulesOff = { ...baseRules, horizonWeeks: 2, frontLoadUrgent: false };
+    const rulesOn = { ...baseRules, horizonWeeks: 2, frontLoadUrgent: true };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 14, { routines: [], blocks: [], rules: rulesOff, events: [] });
+    const task = (rules) => ({
+      id: 'medium', title: 'Medium priority', priority: 'medium',
+      estimatedHours: 6, remainingHours: 6, dueDate: '2026-07-09',
+    });
+
+    const { blocks: blocksOff } = allocateTasks([task(rulesOff)], capacityMap, rulesOff, '2026-07-01');
+    const { blocks: blocksOn } = allocateTasks([task(rulesOn)], capacityMap, rulesOn, '2026-07-01');
+
+    const shapeOf = (blocks) => blocks.map((b) => `${b.date}:${b.durationHours.toFixed(2)}`).sort();
+    expect(shapeOf(blocksOff)).toEqual(shapeOf(blocksOn));
+  });
+
+  it('a blocker task with ample slack spreads across its window instead of cramming into the fewest/earliest days', () => {
+    // Blocker: 6 hours, due in 8 days. Dependent: due 1 day after the
+    // blocker, needs the blocker done first. Plenty of capacity throughout.
+    // Before the fix, the blocker greedily targeted ALL remaining hours every
+    // day (chronological order) -- maxing out day 1's capacity, then day 2,
+    // landing entirely in the first ~1-2 days. After the fix it should pace
+    // like any other task, across as much of its (dependent-respecting)
+    // window as needed.
+    const rules = { ...baseRules, horizonWeeks: 2 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 14, { routines: [], blocks: [], rules, events: [] });
+    const blocker = {
+      id: 'blocker', title: 'Blocker task', priority: 'medium',
+      estimatedHours: 6, remainingHours: 6, dueDate: '2026-07-09',
+    };
+    const dependent = {
+      id: 'dependent', title: 'Dependent task', priority: 'medium',
+      estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-10', dependsOn: ['blocker'],
+    };
+    const taskById = new Map([[blocker.id, blocker], [dependent.id, dependent]]);
+
+    const { blocks, overflow } = allocateTasks([blocker, dependent], capacityMap, rules, '2026-07-01', taskById);
+
+    expect(overflow).toHaveLength(0);
+    const blockerBlocks = blocks.filter((b) => b.taskId === 'blocker');
+    const days = new Set(blockerBlocks.map((b) => b.date));
+    expect(days.size).toBeGreaterThanOrEqual(6);
+  });
+
+  it('a blocker with a TIGHT dependent deadline still finishes in time to unblock it (no regression in dependency-unblocking speed)', () => {
+    // Blocker has a loose due date of its own (day 12), but its dependent is
+    // due much sooner (day 4) -- the dependent needs the blocker's hours
+    // done well before the blocker's own due date would otherwise allow. The
+    // fix must narrow the blocker's effective window to respect that, not
+    // let it pace all the way out to day 12 and delay the dependent.
+    const rules = { ...baseRules, horizonWeeks: 2, bufferDays: 0 };
+    const capacityMap = computeHorizonCapacity('2026-07-01', 14, { routines: [], blocks: [], rules, events: [] });
+    const blocker = {
+      id: 'blocker_tight', title: 'Blocker, loose own due date', priority: 'medium',
+      estimatedHours: 4, remainingHours: 4, dueDate: '2026-07-12',
+    };
+    const dependent = {
+      id: 'dependent_tight', title: 'Dependent, due soon', priority: 'high',
+      estimatedHours: 1, remainingHours: 1, dueDate: '2026-07-04', dependsOn: ['blocker_tight'],
+    };
+    const taskById = new Map([[blocker.id, blocker], [dependent.id, dependent]]);
+
+    const { blocks, overflow } = allocateTasks([blocker, dependent], capacityMap, rules, '2026-07-01', taskById);
+
+    expect(overflow).toHaveLength(0);
+    const blockerBlocks = blocks.filter((b) => b.taskId === 'blocker_tight');
+    const dependentBlocks = blocks.filter((b) => b.taskId === 'dependent_tight');
+    expect(blockerBlocks.length).toBeGreaterThan(0);
+    expect(dependentBlocks.length).toBeGreaterThan(0);
+    // The blocker's last block must finish no later than the dependent's own
+    // due date (2026-07-04) -- its window was narrowed to respect the
+    // dependent's real deadline rather than pacing out to its own (day 12).
+    const lastBlockerDate = blockerBlocks.reduce((max, b) => (b.date > max ? b.date : max), blockerBlocks[0].date);
+    expect(lastBlockerDate <= '2026-07-04').toBe(true);
+    // The dependent itself is not pushed past its own due date either.
+    expect(dependentBlocks.every((b) => b.date <= '2026-07-04')).toBe(true);
+  });
+});
