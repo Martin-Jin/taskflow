@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.7.2',
+    date: '2026-09-16',
+    title: 'Fixed a local edit to a Google Calendar event being overwritten on reconnect',
+    changes: [
+      "Editing an event that came from Google Calendar while Google Calendar was disconnected (or deleting it) could get silently undone the next time you reconnected — TaskFlow used to always trust Google's copy over your own local change, even when your change was the newer one. It now keeps whichever side changed more recently, so a local edit or deletion made while offline survives reconnecting instead of being quietly overwritten.",
+    ],
+  },
+  {
     version: '10.7.1',
     date: '2026-09-16',
     title: 'Fixed high-priority and blocking tasks still cramming near their due date',

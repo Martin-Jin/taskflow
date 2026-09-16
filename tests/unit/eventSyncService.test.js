@@ -23,6 +23,7 @@ import {
   expandSyncedBounds,
   computeOnDemandFetchRange,
   computeEffectivePurgeBoundary,
+  resolvePulledEventConflict,
   RECENTLY_DELETED_TTL_MS,
 } from '../../src/services/eventSyncService.js';
 
@@ -790,6 +791,140 @@ describe('mergePulledGoogleEvents — LEGACY block-mirror suppression during pul
     const manual = { id: 'm1', source: 'manual', googleEventId: null, date: '2026-08-05', title: 'Lunch' };
     const merged = mergePulledGoogleEvents([manual], [mirror()], '2026-08-01', '2026-08-31');
     expect(merged).toEqual([manual]);
+  });
+});
+
+describe('resolvePulledEventConflict — pure timestamp comparison', () => {
+  // The bug being fixed: mergePulledGoogleEvents used to take the pulled
+  // (Google) copy unconditionally, even when the local copy had a newer edit
+  // that was never pushed (e.g. made while Google Calendar was disconnected).
+  // This function is the pure decision extracted so the tie-breaking rules
+  // can be tested directly, independent of the full merge.
+
+  it('local edit newer than Google pull wins', () => {
+    const local = { localUpdatedAt: '2026-08-10T12:00:00.000Z' };
+    const pulled = { googleUpdatedAt: '2026-08-10T09:00:00.000Z' };
+    expect(resolvePulledEventConflict(local, pulled)).toBe('local');
+  });
+
+  it('Google pull newer than local edit wins', () => {
+    const local = { localUpdatedAt: '2026-08-10T09:00:00.000Z' };
+    const pulled = { googleUpdatedAt: '2026-08-10T12:00:00.000Z' };
+    expect(resolvePulledEventConflict(local, pulled)).toBe('pulled');
+  });
+
+  it('never-locally-edited event always takes the pull (regression guard)', () => {
+    // A row that was only ever pulled from Google (never touched locally)
+    // has localUpdatedAt: null — see googleCalendarService.parseGoogleEvent.
+    // This must never be mistaken for "local wins by default".
+    const local = { localUpdatedAt: null };
+    const pulled = { googleUpdatedAt: '2026-08-10T09:00:00.000Z' };
+    expect(resolvePulledEventConflict(local, pulled)).toBe('pulled');
+  });
+
+  it('a tie keeps local (arbitrary but deterministic, and a no-op either way)', () => {
+    const local = { localUpdatedAt: '2026-08-10T12:00:00.000Z' };
+    const pulled = { googleUpdatedAt: '2026-08-10T12:00:00.000Z' };
+    expect(resolvePulledEventConflict(local, pulled)).toBe('local');
+  });
+
+  it('local edit wins over an unparseable/missing Google timestamp', () => {
+    const local = { localUpdatedAt: '2026-08-10T12:00:00.000Z' };
+    expect(resolvePulledEventConflict(local, { googleUpdatedAt: null })).toBe('local');
+    expect(resolvePulledEventConflict(local, {})).toBe('local');
+  });
+});
+
+describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () => {
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('keeps the local edit when it is newer than Google\'s own last-modified stamp for that pull', () => {
+    // Simulates: user edits a Google-sourced event while disconnected (which
+    // stamps localUpdatedAt but can't push), then reconnects and pulls —
+    // Google's copy is stale relative to the edit.
+    const local = googleEvent({
+      id: 'local1',
+      googleEventId: 'g1',
+      title: 'Edited locally while offline',
+      localUpdatedAt: '2026-08-10T12:00:00.000Z',
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      title: 'Stale Google title',
+      googleUpdatedAt: '2026-08-10T09:00:00.000Z',
+    });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([local]);
+  });
+
+  it('still takes the pulled version when Google is newer than the local edit (no regression to the common case)', () => {
+    const local = googleEvent({
+      id: 'local1',
+      googleEventId: 'g1',
+      title: 'Old local edit',
+      localUpdatedAt: '2026-08-10T09:00:00.000Z',
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      title: 'Newer Google edit',
+      googleUpdatedAt: '2026-08-10T12:00:00.000Z',
+    });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
+  });
+
+  it('takes the pulled version for an event that was never locally edited, even though Google has no newer timestamp advantage to speak of', () => {
+    // local.localUpdatedAt is null (never edited) — must not default to "local wins".
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title', localUpdatedAt: null });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title', googleUpdatedAt: '2020-01-01T00:00:00.000Z' });
+    const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
+  });
+
+  it('a local deletion (tombstone) newer than the Google pull stays deleted rather than being resurrected', () => {
+    // Mirrors deleteEvent's own tombstone stamp: deletedAt + localUpdatedAt
+    // both set to the delete time. Google still has its live copy (the
+    // documented, still-open gap: deleting while disconnected never tells
+    // Google) but the newer local tombstone must still win this merge.
+    const tombstoned = googleEvent({
+      id: 'local1',
+      googleEventId: 'g1',
+      title: 'Deleted locally while offline',
+      deletedAt: '2026-08-10T12:00:00.000Z',
+      localUpdatedAt: '2026-08-10T12:00:00.000Z',
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      title: 'Still live on Google',
+      googleUpdatedAt: '2026-08-10T09:00:00.000Z',
+    });
+    const result = mergePulledGoogleEvents([tombstoned], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([tombstoned]);
+  });
+
+  it('an older local tombstone is still overwritten (un-deleted) by a genuinely newer Google edit', () => {
+    // Same "newer edit correctly un-deletes a stale tombstone" non-bug
+    // eventMerge.js documents for cross-device sync — this merge must behave
+    // identically when the newer side is a Google pull instead of another device.
+    const tombstoned = googleEvent({
+      id: 'local1',
+      googleEventId: 'g1',
+      title: 'Deleted locally',
+      deletedAt: '2026-08-10T09:00:00.000Z',
+      localUpdatedAt: '2026-08-10T09:00:00.000Z',
+    });
+    const pulled = googleEvent({
+      id: 'g1',
+      googleEventId: 'g1',
+      title: 'Re-edited on Google after the local delete',
+      googleUpdatedAt: '2026-08-10T12:00:00.000Z',
+    });
+    const result = mergePulledGoogleEvents([tombstoned], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([pulled]);
   });
 });
 
