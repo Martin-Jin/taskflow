@@ -75,14 +75,16 @@ dependency cycle (it can't hang a rebalance even on bad data), though the
 Edit modal already stops a cycle from being created in the first place.
 
 Beyond scoring, a **blocker task** (anything with at least one other,
-still-incomplete task depending on it) also gets placed differently: instead
-of pacing its hours evenly across its window like everything else, it
-greedily consumes as much of each day's free capacity as it can, so it
-clears out of the way — and unblocks whatever's waiting on it — as fast as
-possible, rather than splitting the day evenly with unrelated equal-priority
-work. This still isn't full job-shop-style makespan minimization (there's no
-global reordering of the whole schedule to minimize total completion time);
-it's a targeted rule for this one case.
+still-incomplete task depending on it) gets one more adjustment: its own
+planning window is narrowed to whichever is earlier — its own due date, or
+the tightest deadline anything depending on it (transitively) is under. It
+still paces its hours the same way as any other task (evenly by default, see
+below) — it just isn't allowed to pace all the way out to a due date of its
+own that's looser than what its dependents actually need, so finishing in
+time to unblock them can never depend on the blocker racing through its own
+capacity as fast as possible. This still isn't full job-shop-style makespan
+minimization (there's no global reordering of the whole schedule to minimize
+total completion time); it's a targeted rule for this one case.
 
 The **planning window** is `[today, dueDate − bufferDays]` — the buffer
 targets finishing a day early by default, but it's a soft preference: if
@@ -95,9 +97,13 @@ date"**: the window collapses to just `[dueDate, dueDate]`, so every
 remaining hour lands on the due date itself instead of being spread out
 ahead of it.
 
-**Pacing** distributes hours across the window: even pacing (default) gives
-every day an equal share; front-loaded pacing (for urgent/high-priority
-tasks, when enabled) ramps effort up as the deadline approaches.
+**Pacing** distributes hours across the window: even pacing (the default,
+for every task regardless of priority) gives every day an equal share;
+front-loaded pacing is an opt-in rule (off by default) that, once enabled,
+ramps effort up as the deadline approaches for urgent/high-priority tasks
+specifically. Priority/urgency still decides which task wins a contested
+day's capacity either way (see "Allocation" above) — front-loading only ever
+changes how one task's OWN hours are spread within its own window.
 
 **Placement** is greedy and runs in five passes — a weighted-share pass
 targeting each day's ideal slice (clamped to `maxChunkHours`, available
