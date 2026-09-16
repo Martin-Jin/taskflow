@@ -8,14 +8,30 @@
  * local state) — this module is the one place that knows how a pull should
  * be combined with whatever's already in TaskFlow.
  *
- * CONFLICT POLICY (explicit, literal product decision): Google Calendar
- * always wins. If a pulled event corresponds to an existing local
- * Google-sourced record, the pulled version replaces it outright — no
- * timestamp-based "keep local if newer" exception, even if the local copy
- * has a `localUpdatedAt` from an edit that hasn't been pushed yet. The
- * `googleUpdatedAt`/`localUpdatedAt` fields are still stamped/maintained
- * (for potential future use, e.g. avoiding redundant pushes) but never gate
- * this overwrite-on-pull behavior.
+ * CONFLICT POLICY when a pulled event corresponds to an existing local
+ * Google-sourced record (same `googleEventId`): the two sides' timestamps
+ * are compared, and whichever is newer wins — see resolvePulledEventConflict
+ * below. This used to be "Google always wins, unconditionally, no timestamp
+ * comparison" — that meant any local edit (or local delete) made while
+ * Google Calendar was disconnected was silently discarded the moment the
+ * user reconnected, replaced by Google's own stale copy. The fix mirrors the
+ * exact policy eventMerge.js's mergeEventsByUpdatedAt already uses for
+ * TaskFlow's own cross-device Firestore sync of events: compare each side's
+ * "last genuinely changed" timestamp and keep the newer one, rather than
+ * always taking one fixed side.
+ *
+ * The two timestamps being compared are NOT the same field on both sides,
+ * because a freshly-pulled event never carries a local edit stamp (see
+ * googleCalendarService.js's parseGoogleEvent, which always sets a pulled
+ * event's `localUpdatedAt` to null) — only Google's own per-event `updated`
+ * field (RFC3339, arrives here as `googleUpdatedAt`) describes when THAT
+ * side last changed. So the comparison is local.localUpdatedAt (the existing
+ * local row's own last-local-edit stamp) vs pulled.googleUpdatedAt (this
+ * pull's Google-side last-modified stamp for the same event) — see
+ * resolvePulledEventConflict's own doc comment for the exact tie-breaking
+ * rules, including why an event that was never actually edited locally must
+ * still always take Google's version (a pulled `localUpdatedAt: null` must
+ * never be mistaken for "local wins").
  *
  * RETENTION WINDOW: the routine background sync (see useGoogleCalendarSync's
  * ROUTINE_SYNC_WINDOW_DAYS) only ever covers a small ROLLING window centered
@@ -207,6 +223,71 @@ function preserveIgnoredFlag(localEvent, pulledEvent) {
   return result;
 }
 
+/** Epoch millis for a timestamp string, or null if missing/unparseable — same convention as eventMerge.js's localUpdatedAtMillis. */
+function timestampMillis(iso) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Decides, for one (local, pulled) pair sharing a `googleEventId`, whether
+ * the local copy should survive the pull unchanged (`'local'`) or be
+ * replaced by the freshly-pulled version (`'pulled'`) — the per-pair decision
+ * behind this file's CONFLICT POLICY (see module doc above).
+ *
+ * `local.localUpdatedAt` is only ever set by a genuine local edit/delete (see
+ * SchedulerContext's updateEvent/deleteEvent/setEventIgnored, and
+ * applyEventScopeUpdate's own comment on why even a 'this'-scope occurrence
+ * edit bumps the MASTER row's top-level stamp) — a row that was only ever
+ * pulled from Google and never touched locally has it as `null` (see
+ * googleCalendarService.js's parseGoogleEvent). `pulled.googleUpdatedAt` is
+ * Google's own per-event `updated` timestamp for THIS pull, i.e. how fresh
+ * Google's side is right now.
+ *
+ * Rules, in order:
+ *   1. No local edit ever happened (`localUpdatedAt` missing/unparseable) —
+ *      Google always wins. This is the overwhelmingly common case (an event
+ *      nobody has touched locally since it was pulled) and must never be
+ *      confused with "local wins" just because SOME timestamp is missing —
+ *      unlike eventMerge.js's symmetric two-sided comparison (where either
+ *      side can legitimately lack a timestamp), this comparison is
+ *      deliberately asymmetric: only a real local edit stamp can ever beat
+ *      Google's pull.
+ *   2. Both timestamps parse — newer wins. A tie (extremely unlikely given
+ *      millisecond resolution, but possible if a push round-tripped fast
+ *      enough that Google's own `updated` exactly matches the edit's own
+ *      stamp) keeps local, since local already reflects that edit and taking
+ *      the pulled copy would be a no-op replacement anyway.
+ *   3. Local has an edit stamp but Google's `updated` is missing/unparseable
+ *      (shouldn't happen in practice — Google always returns `updated` — but
+ *      handled defensively rather than throwing) — local wins, since there's
+ *      no valid Google-side timestamp to prove the pull is newer.
+ *
+ * A tombstoned local event (`deletedAt` set, see eventTombstones.js) is not
+ * special-cased here: deleteEvent already stamps `localUpdatedAt` on tombstone
+ * exactly like an ordinary edit, so a delete that's newer than Google's last
+ * change to that event wins via rule 2 (the event stays deleted, matching how
+ * mergeEventsByUpdatedAt already treats a newer tombstone beating a stale
+ * edit) — and a delete older than a real subsequent Google-side edit loses,
+ * same as any other stale local change. The caller is responsible for keeping
+ * the tombstone's cleared fields (description/location) if local wins; this
+ * function only decides which side's full object to use.
+ *
+ * @param {import('../types').CalendarEvent} local
+ * @param {import('../types').CalendarEvent} pulled
+ * @returns {'local'|'pulled'}
+ */
+export function resolvePulledEventConflict(local, pulled) {
+  const localMs = timestampMillis(local?.localUpdatedAt);
+  if (localMs === null) return 'pulled';
+
+  const googleMs = timestampMillis(pulled?.googleUpdatedAt);
+  if (googleMs === null) return 'local';
+
+  return googleMs > localMs ? 'pulled' : 'local';
+}
+
 /**
  * Fold "recently instance-deleted" suppression into one pulled master
  * event's `overrides`. Unlike the whole-event suppression above (which drops
@@ -324,14 +405,18 @@ function findReplacementMatches(demoteCandidates, newPulledCandidates) {
 
 /**
  * Merge freshly-pulled Google events into the existing local `events` array.
- * Policy: Google always wins for anything it returns. Concretely:
+ * Policy: Google wins for anything it returns, EXCEPT a genuine local
+ * edit/delete newer than Google's own last change (see resolvePulledEvent
+ * Conflict / this file's module doc). Concretely:
  *   - Every non-Google (source:'manual') local event is kept untouched —
  *     fixes a prior bug where a Google pull replaced the ENTIRE events
  *     array, silently deleting all manual events.
  *   - Every local Google-sourced event whose googleEventId appears in the
- *     freshly pulled set is REPLACED by the pulled version (Google wins,
- *     unconditionally — even if the local copy has a newer localUpdatedAt
- *     from an edit that hasn't been pushed yet).
+ *     freshly pulled set is normally REPLACED by the pulled version — UNLESS
+ *     resolvePulledEventConflict says the local copy's own `localUpdatedAt`
+ *     is newer than this pull's `googleUpdatedAt` for that event, in which
+ *     case the local copy is kept unchanged and the pulled version is
+ *     dropped from this merge entirely (see localWinsGoogleEventIds below).
  *   - Every local Google-sourced event whose googleEventId does NOT appear
  *     in the freshly pulled set, but whose `date` falls within
  *     [rangeStartIso, rangeEndIso] (i.e. it WAS in scope for this pull and
@@ -452,7 +537,31 @@ export function mergePulledGoogleEvents(
       return local ? preserveIgnoredFlag(local, e) : e;
     });
 
-  const pulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
+  // CONFLICT POLICY (see module doc / resolvePulledEventConflict): a pulled
+  // event whose existing local Google-sourced counterpart has a newer local
+  // edit/delete than Google's own `updated` for it is dropped from this
+  // pull's batch entirely — the local row keeps winning until a LATER pull
+  // sees Google catch back up (e.g. once the locally-edited copy is pushed —
+  // see this file's module doc for the push-back gap this alone doesn't
+  // close). Tracked as its own id set (rather than just filtering
+  // `freshPulled`) so the survivingLocal loop below can tell "local won a
+  // conflict, keep it exactly as-is" apart from "absent from the pull
+  // because Google genuinely deleted it" — those would otherwise look
+  // identical (an in-scope local googleEventId with no pulled match) and the
+  // absent-means-deleted branch would incorrectly drop the very local edit
+  // this conflict resolution just decided to keep.
+  const localWinsGoogleEventIds = new Set();
+  const freshPulledAfterConflicts = freshPulled.filter((e) => {
+    const local = existingByGoogleEventId.get(e.googleEventId);
+    if (!local) return true;
+    if (resolvePulledEventConflict(local, e) === 'local') {
+      localWinsGoogleEventIds.add(e.googleEventId);
+      return false;
+    }
+    return true;
+  });
+
+  const pulledByGoogleEventId = new Map(freshPulledAfterConflicts.map((e) => [e.googleEventId, e]));
 
   // Candidates for the replacement-detection pass below (see
   // findReplacementMatches/isPlausibleReplacement's own doc comments): every
@@ -474,12 +583,12 @@ export function mergePulledGoogleEvents(
       isInScopeForPull(e, rangeStartIso, rangeEndIso) &&
       !isGoogleConfirmed(e, confirmedGoogleEventIds)
   );
-  const newPulledCandidates = freshPulled.filter((e) => !existingByGoogleEventId.has(e.googleEventId));
+  const newPulledCandidates = freshPulledAfterConflicts.filter((e) => !existingByGoogleEventId.has(e.googleEventId));
   const replacementMatches = findReplacementMatches(demoteCandidates, newPulledCandidates);
   const matchedLocalIds = new Set(replacementMatches.keys());
   const matchedPulledGoogleEventIds = new Set(replacementMatches.values());
 
-  const patchedFreshPulled = freshPulled.map((e) => {
+  const patchedFreshPulled = freshPulledAfterConflicts.map((e) => {
     if (!matchedPulledGoogleEventIds.has(e.googleEventId)) return e;
     const matchedLocal = demoteCandidates.find((c) => replacementMatches.get(c.id) === e.googleEventId);
     return matchedLocal ? preserveIgnoredFlag(matchedLocal, e) : e;
@@ -499,6 +608,16 @@ export function mergePulledGoogleEvents(
     if (isBlockSourcedEvent(e)) continue;
 
     if (pulledByGoogleEventId.has(e.googleEventId)) continue; // superseded below by the pulled version
+
+    // This event's local edit/delete outranked Google's pull (see
+    // resolvePulledEventConflict) — keep it exactly as it stands locally.
+    // Without this check it would fall through to the "in scope, absent from
+    // the pull" branch below, which assumes absence means Google deleted it
+    // and would incorrectly drop the very edit that just won.
+    if (localWinsGoogleEventIds.has(e.googleEventId)) {
+      survivingLocal.push(e);
+      continue;
+    }
 
     // Matched to a freshly-pulled replacement above — that pulled row already
     // carries this event forward (see patchedFreshPulled), so this row is
