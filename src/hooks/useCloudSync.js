@@ -84,6 +84,63 @@ function pickValid(field, value, fallback) {
 }
 
 /**
+ * Fixes a real bug: restoring a backup (local file, or a cloud snapshot) felt
+ * instant on the device that clicked "Restore" — but the moment a SECOND
+ * device next synced, that device's older data would silently win and undo
+ * the restore, with no error and no warning. Here's why, and what this
+ * function does about it.
+ *
+ * Every task and calendar event carries its own "last changed" timestamp
+ * (`updatedAt` for a task, `localUpdatedAt` for a calendar event — see
+ * taskMerge.js/eventMerge.js). When two devices disagree about a task, the
+ * sync logic doesn't guess — it just keeps whichever copy has the NEWER
+ * timestamp. That's the right rule for ordinary editing, but a backup is not
+ * an ordinary edit: the tasks and events INSIDE a backup file still carry
+ * whatever timestamp they had on the day the backup was originally taken,
+ * which could be weeks or months old. From the sync logic's point of view, a
+ * just-restored task genuinely looks OLDER than almost anything a second
+ * device might later push — even though the person restoring it just told
+ * TaskFlow "this is what I want right now." So the second device's stale
+ * content would win the timestamp comparison and quietly overwrite the
+ * restore soon after it synced.
+ *
+ * The fix: when a backup is applied, every task and event in it gets its
+ * timestamp bumped to the moment of the restore, not left as whatever the
+ * backup originally recorded. That makes the restored content look exactly
+ * like a fresh edit made right now, so it correctly wins against anything
+ * older arriving later from another device — which is what the user actually
+ * intended by choosing to restore. This re-stamps EVERY item in the backup,
+ * not just ones that differ from what's currently on screen — the whole
+ * point of a restore is that all of its content should be treated as
+ * current, uniformly.
+ *
+ * Deliberately NOT used for `applyRemoteData` (actual incoming data pulled
+ * from another device or Firestore's live listener) — that data's timestamps
+ * must stay exactly as the OTHER device stamped them, or the whole
+ * newer-wins comparison this function exists to satisfy would break for
+ * every future sync: an incoming pull would always look artificially "just
+ * now" and never lose a comparison it legitimately should.
+ *
+ * Split into one function per array (rather than one function taking both)
+ * because `applyBackupPayload` applies `tasks` and `events` at two separate
+ * points in the payload, guarded by two separate `'x' in payload` checks —
+ * a combined function would force one call site to pass the other's array as
+ * empty/undefined for no benefit.
+ *
+ * @param {import('../types').Task[]} tasks
+ * @param {string} nowIso
+ * @returns {import('../types').Task[]}
+ */
+export function restampBackupTasks(tasks, nowIso) {
+  return (tasks || []).map((t) => ({ ...t, updatedAt: nowIso }));
+}
+
+/** Event counterpart to restampBackupTasks — see that function's doc comment for the full "why". Stamps `localUpdatedAt`, the field mergeEventsByUpdatedAt compares (see eventMerge.js), not `updatedAt`. */
+export function restampBackupEvents(events, nowIso) {
+  return (events || []).map((e) => ({ ...e, localUpdatedAt: nowIso }));
+}
+
+/**
  * Pure decision for the events-fallback-from-backup effect (see its own doc
  * comment on the effect below): whether local `events` is missing with no
  * WORKING live Google Calendar source to repopulate it, so a recent Firestore
@@ -820,6 +877,33 @@ export function useCloudSync({
   setAccentSeed,
   events,
   setEvents,
+  // TRACKED counterparts of the RAW setters above, used ONLY by
+  // applyBackupPayload (see that function's own comment on why a restore
+  // needs the tracked setter and applyRemoteData does not). Passing both the
+  // raw and tracked variant for the same piece of state looks redundant, but
+  // the two call sites inside this hook have genuinely opposite
+  // requirements: applyRemoteData applying an incoming pull/listener
+  // snapshot must NOT look like a local edit (see setSections/etc. above),
+  // while applyBackupPayload applying a user-initiated restore MUST look
+  // like one, so the race-guard/push machinery treats the restored content
+  // as the newest thing that happened rather than invisible background
+  // bookkeeping.
+  setSectionsTracked,
+  setProjectsTracked,
+  setLabelsTracked,
+  setRoutinesTracked,
+  setRulesTracked,
+  setSoundEnabledTracked,
+  setSoundVolumeTracked,
+  setAnimationsEnabledTracked,
+  setNotificationSettingsTracked,
+  setNotesTracked,
+  setShortcutBindingsTracked,
+  setSavedViewsTracked,
+  setTaskTemplatesTracked,
+  setTrashTracked,
+  setSharedProjectIdsTracked,
+  setEventsTracked,
   googleConnected,
   googleSyncStale,
   pullFromGoogleCalendar,
@@ -1324,33 +1408,68 @@ export function useCloudSync({
   // Same field set as applyRemoteData, but tasks/blocks go through commit()
   // (undoable, matching clearAllData's precedent) and this also restores
   // `theme`, which live sync deliberately leaves to ThemeContext.
+  //
+  // Two things make a restore different from applyRemoteData's "apply
+  // whatever arrived" job, both fixing the same real bug (restoring a backup
+  // felt instant, but a second device's older data would silently undo it
+  // the next time that device synced):
+  //
+  //   1. Every restored task/event gets a FRESH timestamp (see
+  //      restampBackupTasks/restampBackupEvents's own comment for the full
+  //      "why") instead of keeping whatever old timestamp the backup was
+  //      taken with. Only actually-incoming tasks/events are re-stamped —
+  //      e.g. a payload with `blocks` but no `tasks` key falls back to
+  //      whatever tasks are ALREADY local (see pickValid), which were never
+  //      part of the restore and must keep their real, already-correct
+  //      timestamps rather than being bumped as if they too had just changed.
+  //   2. Every setter below is the TRACKED variant, not the raw one
+  //      applyRemoteData uses — so the sync engine's race-guard machinery
+  //      (see useLocalEditTrackedState's doc comment) sees this restore as a
+  //      genuine local edit, the same as if the user had just typed
+  //      something. Without that, a pull or live snapshot landing around the
+  //      same moment as a restore would have no way to know a local change
+  //      just happened, and could let stale remote data win the race before
+  //      the restored content even gets pushed.
+  //   `commit` (tasks/blocks) is already the tracked path — useHistoryState's
+  //   commit() bumps `currentActionId` on every call — so only the timestamp
+  //   re-stamp is needed there; every OTHER field needed the setter swap too.
   const applyBackupPayload = useCallback((payload) => {
+    const nowIso = new Date().toISOString();
     if ('tasks' in payload || 'blocks' in payload) {
+      const nextTasks = 'tasks' in payload
+        ? restampBackupTasks(pickValid('tasks', payload.tasks, stateRef.current.tasks), nowIso)
+        : stateRef.current.tasks;
       commit(
         {
-          tasks: pickValid('tasks', payload.tasks, stateRef.current.tasks),
+          tasks: nextTasks,
           blocks: pickValid('blocks', payload.blocks, stateRef.current.blocks),
         },
         'Restored from backup'
       );
     }
-    if ('sections' in payload) setSections(pickValid('sections', payload.sections, stateRef.current.sections));
-    if ('projects' in payload) setProjects(pickValid('projects', payload.projects, stateRef.current.projects));
-    if ('labels' in payload) setLabels(pickValid('labels', payload.labels, stateRef.current.labels));
-    if ('routines' in payload) setRoutines(pickValid('routines', payload.routines, stateRef.current.routines));
-    if ('rules' in payload) setRules(pickValid('rules', payload.rules, stateRef.current.rules));
+    if ('sections' in payload) setSectionsTracked(pickValid('sections', payload.sections, stateRef.current.sections));
+    if ('projects' in payload) setProjectsTracked(pickValid('projects', payload.projects, stateRef.current.projects));
+    if ('labels' in payload) setLabelsTracked(pickValid('labels', payload.labels, stateRef.current.labels));
+    if ('routines' in payload) setRoutinesTracked(pickValid('routines', payload.routines, stateRef.current.routines));
+    if ('rules' in payload) setRulesTracked(pickValid('rules', payload.rules, stateRef.current.rules));
     // Absent on a backup taken before `events` joined BACKUP_FIELDS — left
     // untouched in that case, same as any other field missing from an
     // older/partial payload (see isValidBackupPayload's doc comment).
-    if ('events' in payload) setEvents(pickValid('events', payload.events, events));
-    if ('soundEnabled' in payload) setSoundEnabled(pickValid('soundEnabled', payload.soundEnabled, stateRef.current.soundEnabled));
-    if ('soundVolume' in payload) setSoundVolume(pickValid('soundVolume', payload.soundVolume, stateRef.current.soundVolume));
+    if ('events' in payload) {
+      setEventsTracked(restampBackupEvents(pickValid('events', payload.events, events), nowIso));
+    }
+    if ('soundEnabled' in payload) {
+      setSoundEnabledTracked(pickValid('soundEnabled', payload.soundEnabled, stateRef.current.soundEnabled));
+    }
+    if ('soundVolume' in payload) {
+      setSoundVolumeTracked(pickValid('soundVolume', payload.soundVolume, stateRef.current.soundVolume));
+    }
     if ('animationsEnabled' in payload) {
-      setAnimationsEnabled(pickValid('animationsEnabled', payload.animationsEnabled, stateRef.current.animationsEnabled));
+      setAnimationsEnabledTracked(pickValid('animationsEnabled', payload.animationsEnabled, stateRef.current.animationsEnabled));
     }
     if ('notificationSettings' in payload) {
       const notificationSettings = pickValid('notificationSettings', payload.notificationSettings, stateRef.current.notificationSettings);
-      setNotificationSettings({ ...notificationSettings, timezone: getBrowserTimeZone() });
+      setNotificationSettingsTracked({ ...notificationSettings, timezone: getBrowserTimeZone() });
     }
     if ('theme' in payload) setTheme(pickValid('theme', payload.theme, theme));
     // Absent on a backup taken before `accentSeed` joined BACKUP_FIELDS —
@@ -1358,53 +1477,53 @@ export function useCloudSync({
     // `null` is a legitimate value (means "use the shipped default"), so
     // pickValid's own FIELD_TYPES check must accept it — see backupService.js.
     if ('accentSeed' in payload) setAccentSeed(pickValid('accentSeed', payload.accentSeed, accentSeed));
-    if ('notes' in payload) setNotes(pickValid('notes', payload.notes, stateRef.current.notes));
+    if ('notes' in payload) setNotesTracked(pickValid('notes', payload.notes, stateRef.current.notes));
     else if ('pinnedLinks' in payload) {
       // legacy backup file, see notesModel.js migration note
       const migrated = migrateLinksToNotes(payload.pinnedLinks);
-      if (migrated) setNotes(migrated);
+      if (migrated) setNotesTracked(migrated);
     }
     if ('shortcutBindings' in payload) {
       const shortcutBindings = pickValid('shortcutBindings', payload.shortcutBindings, stateRef.current.shortcutBindings);
-      setShortcutBindings(shortcutBindings);
+      setShortcutBindingsTracked(shortcutBindings);
       savePersisted('shortcutBindings', shortcutBindings);
     }
     if ('savedViews' in payload) {
-      setSavedViews(pickValid('savedViews', payload.savedViews, stateRef.current.savedViews));
+      setSavedViewsTracked(pickValid('savedViews', payload.savedViews, stateRef.current.savedViews));
     }
     if ('taskTemplates' in payload) {
-      setTaskTemplates(pickValid('taskTemplates', payload.taskTemplates, stateRef.current.taskTemplates));
+      setTaskTemplatesTracked(pickValid('taskTemplates', payload.taskTemplates, stateRef.current.taskTemplates));
     }
     if ('trash' in payload) {
-      setTrash(pickValid('trash', payload.trash, stateRef.current.trash));
+      setTrashTracked(pickValid('trash', payload.trash, stateRef.current.trash));
     }
     if ('sharedProjectIds' in payload) {
-      setSharedProjectIds(pickValid('sharedProjectIds', payload.sharedProjectIds, stateRef.current.sharedProjectIds));
+      setSharedProjectIdsTracked(pickValid('sharedProjectIds', payload.sharedProjectIds, stateRef.current.sharedProjectIds));
     }
   }, [
     commit,
     stateRef,
-    setSections,
-    setProjects,
-    setLabels,
-    setRoutines,
-    setRules,
-    setSoundEnabled,
-    setSoundVolume,
-    setAnimationsEnabled,
-    setNotificationSettings,
+    setSectionsTracked,
+    setProjectsTracked,
+    setLabelsTracked,
+    setRoutinesTracked,
+    setRulesTracked,
+    setSoundEnabledTracked,
+    setSoundVolumeTracked,
+    setAnimationsEnabledTracked,
+    setNotificationSettingsTracked,
     setTheme,
     theme,
     setAccentSeed,
     accentSeed,
-    setNotes,
-    setShortcutBindings,
-    setSavedViews,
-    setTaskTemplates,
-    setTrash,
-    setSharedProjectIds,
+    setNotesTracked,
+    setShortcutBindingsTracked,
+    setSavedViewsTracked,
+    setTaskTemplatesTracked,
+    setTrashTracked,
+    setSharedProjectIdsTracked,
     events,
-    setEvents,
+    setEventsTracked,
   ]);
 
   // ---- Push this device's Google Calendar connection health -----------------

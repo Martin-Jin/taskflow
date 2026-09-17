@@ -21,6 +21,22 @@
 
 export const CHANGELOG = [
   {
+    version: '10.7.4',
+    date: '2026-09-17',
+    title: 'Fixed a restored backup silently getting undone by another device',
+    changes: [
+      "Restoring a backup (either a downloaded file or a cloud backup) worked immediately on the device you restored it on, but if a second device synced sometime afterward, that device's older data could quietly overwrite the restore — undoing it with no warning. Restoring now marks everything it brings back as the newest version of your data, so it correctly takes priority the next time your devices sync instead of losing to whatever an out-of-date device happens to push later.",
+    ],
+  },
+  {
+    version: '10.7.3',
+    date: '2026-09-17',
+    title: "Fixed a deleted project leaving a task's Project field blank",
+    changes: [
+      "Opening a task that was still assigned to a project which had since been deleted showed an empty Project field instead of \"No project\". It now falls back to \"No project\" the same way an unassigned task already does — nothing about the task's own data changes, so re-creating the project won't reattach it.",
+    ],
+  },
+  {
     version: '10.7.2',
     date: '2026-09-16',
     title: 'Fixed a local edit to a Google Calendar event being overwritten on reconnect',

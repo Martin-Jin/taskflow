@@ -93,12 +93,23 @@ export default function DetailSidebar({
   // discarded rather than committed — which is what cancelling means.
   useEscapeLayer(repeatEditText !== null, () => onRepeatEditTextChange(null));
 
+  // A task's projectId can point at a project that no longer exists — e.g.
+  // it was deleted (or the current user was removed from a shared project)
+  // in another tab/device since this task was last saved. SelectMenu shows
+  // whatever `value` is passed, with no opinion on whether it's one of its
+  // own `options`; passing the dangling id straight through left the field
+  // blank instead of falling back the way an actually-unassigned task
+  // ("No project") already does. NO_SCHEDULE_PROJECT_ID is a synthetic,
+  // always-valid option rather than a real Project record, so it's never
+  // "dangling" and is left alone here.
+  const projectStillExists = !projectId || projectId === NO_SCHEDULE_PROJECT_ID || projects.some((p) => p.id === projectId);
+
   return (
     <div className="detail-sidebar">
       <DetailField icon={Folder} label="Project">
         <SelectMenu
           ariaLabel="Project"
-          value={projectId}
+          value={projectStillExists ? projectId : ''}
           onChange={onProjectChange}
           options={[
             { value: '', label: 'No project' },
