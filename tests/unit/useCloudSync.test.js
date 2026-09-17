@@ -50,6 +50,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { isValidFieldValue, isValidBackupPayload, BACKUP_FIELDS } from '../../src/services/backupService.js';
+import { mergeTasksByUpdatedAt } from '../../src/utils/taskMerge.js';
+import { mergeEventsByUpdatedAt } from '../../src/utils/eventMerge.js';
 import {
   computeFingerprint,
   canonicalStringify,
@@ -70,6 +72,8 @@ import {
   detectGoogleCalendarStatusMismatch,
   shouldTriggerVisibilityRefresh,
   VISIBILITY_PULL_THROTTLE_MS,
+  restampBackupTasks,
+  restampBackupEvents,
 } from '../../src/hooks/useCloudSync.js';
 
 describe('isValidFieldValue', () => {
@@ -1344,5 +1348,97 @@ describe('detectGoogleCalendarStatusMismatch', () => {
     expect(
       detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId: 'device-A', localConnected: true, localSyncStale: false })
     ).toBe(null);
+  });
+});
+
+describe('restampBackupTasks / restampBackupEvents', () => {
+  // Regression coverage for a real bug: restoring a backup (local file, or a
+  // cloud snapshot) looked instant, but the moment a SECOND device next
+  // synced, that device's older data would silently overwrite the just-
+  // restored content — because the merge picks whichever copy has the newer
+  // `updatedAt`/`localUpdatedAt`, and a backup's items still carry their
+  // ORIGINAL timestamp from whenever the backup was taken (see
+  // restampBackupTasks's own doc comment for the full mechanism). These
+  // functions are what applyBackupPayload now calls before committing/
+  // setting restored data, so every item looks like a fresh edit made right
+  // now instead of an old one.
+
+  it('restampBackupTasks stamps every task with the given timestamp, overwriting whatever it had before', () => {
+    const backupTasks = [
+      { id: 't1', title: 'Old task', updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', title: 'Another old task', updatedAt: '2026-02-01T00:00:00.000Z' },
+    ];
+    const restamped = restampBackupTasks(backupTasks, '2026-09-17T12:00:00.000Z');
+    expect(restamped.every((t) => t.updatedAt === '2026-09-17T12:00:00.000Z')).toBe(true);
+    // Every other field is untouched.
+    expect(restamped.map((t) => t.title)).toEqual(['Old task', 'Another old task']);
+  });
+
+  it('restampBackupTasks re-stamps EVERY task, not just ones that differ from some baseline', () => {
+    // The whole point of a restore is that all of its content should be
+    // treated as current, uniformly — there is no "only changed items" concept.
+    const backupTasks = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, updatedAt: '2020-01-01T00:00:00.000Z' }));
+    const restamped = restampBackupTasks(backupTasks, '2026-09-17T12:00:00.000Z');
+    expect(restamped).toHaveLength(5);
+    expect(restamped.every((t) => t.updatedAt === '2026-09-17T12:00:00.000Z')).toBe(true);
+  });
+
+  it('restampBackupTasks handles an empty/missing array without throwing', () => {
+    expect(restampBackupTasks([], '2026-09-17T12:00:00.000Z')).toEqual([]);
+    expect(restampBackupTasks(undefined, '2026-09-17T12:00:00.000Z')).toEqual([]);
+  });
+
+  it('restampBackupEvents stamps localUpdatedAt (not updatedAt) — the field mergeEventsByUpdatedAt actually compares', () => {
+    const backupEvents = [{ id: 'e1', title: 'Old event', localUpdatedAt: '2026-01-01T00:00:00.000Z' }];
+    const restamped = restampBackupEvents(backupEvents, '2026-09-17T12:00:00.000Z');
+    expect(restamped[0].localUpdatedAt).toBe('2026-09-17T12:00:00.000Z');
+    expect(restamped[0].updatedAt).toBeUndefined();
+  });
+
+  it('restampBackupEvents handles an empty/missing array without throwing', () => {
+    expect(restampBackupEvents([], '2026-09-17T12:00:00.000Z')).toEqual([]);
+    expect(restampBackupEvents(undefined, '2026-09-17T12:00:00.000Z')).toEqual([]);
+  });
+
+  // The actual bug: does a restore correctly WIN a subsequent cross-device
+  // merge against stale data pushed later by a second device, once its
+  // timestamp has been re-stamped to "now"? Exercises the real merge
+  // functions (mergeTasksByUpdatedAt/mergeEventsByUpdatedAt), not just that a
+  // timestamp field changed value.
+  describe('a restore wins the subsequent merge against stale remote data', () => {
+    it('WITHOUT re-stamping, a backup task with its original old timestamp would lose to a slightly-less-old stale remote edit (demonstrates the bug this fix closes)', () => {
+      const restoredTaskUnstamped = { id: 't1', title: 'Restored content', updatedAt: '2026-01-01T00:00:00.000Z' };
+      // Device B wakes up later and pushes ITS OWN old copy, made after the
+      // backup was taken but before the restore happened.
+      const staleRemoteTask = { id: 't1', title: 'Stale content from device B', updatedAt: '2026-06-01T00:00:00.000Z' };
+      const merged = mergeTasksByUpdatedAt([restoredTaskUnstamped], [staleRemoteTask]);
+      // Bug reproduced: the un-restamped restore loses, because its
+      // timestamp is genuinely older than the stale remote edit's.
+      expect(merged[0].title).toBe('Stale content from device B');
+    });
+
+    it('WITH re-stamping, the same restore now correctly wins against that same stale remote edit', () => {
+      const backupTask = { id: 't1', title: 'Restored content', updatedAt: '2026-01-01T00:00:00.000Z' };
+      const [restoredTask] = restampBackupTasks([backupTask], '2026-09-17T12:00:00.000Z');
+      const staleRemoteTask = { id: 't1', title: 'Stale content from device B', updatedAt: '2026-06-01T00:00:00.000Z' };
+      const merged = mergeTasksByUpdatedAt([restoredTask], [staleRemoteTask]);
+      expect(merged[0].title).toBe('Restored content');
+    });
+
+    it('the same fix applies to events via mergeEventsByUpdatedAt', () => {
+      const backupEvent = { id: 'e1', title: 'Restored event', localUpdatedAt: '2026-01-01T00:00:00.000Z' };
+      const [restoredEvent] = restampBackupEvents([backupEvent], '2026-09-17T12:00:00.000Z');
+      const staleRemoteEvent = { id: 'e1', title: 'Stale event from device B', localUpdatedAt: '2026-06-01T00:00:00.000Z' };
+      const merged = mergeEventsByUpdatedAt([restoredEvent], [staleRemoteEvent]);
+      expect(merged[0].title).toBe('Restored event');
+    });
+
+    it('a restored deletion (tombstone) also correctly wins against a stale remote edit once re-stamped', () => {
+      const backupTombstone = { id: 't1', deletedAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+      const [restoredTombstone] = restampBackupTasks([backupTombstone], '2026-09-17T12:00:00.000Z');
+      const staleRemoteEdit = { id: 't1', title: 'edited on device B before it saw the delete', updatedAt: '2026-06-01T00:00:00.000Z' };
+      const merged = mergeTasksByUpdatedAt([restoredTombstone], [staleRemoteEdit]);
+      expect(merged[0].deletedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
   });
 });

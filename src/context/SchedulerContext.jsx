@@ -1315,6 +1315,22 @@ export function SchedulerProvider({ children }) {
     [setSectionsRaw]
   );
 
+  // Same shared-section-preserving guard as setSectionsGuarded above, but
+  // built on the TRACKED base setter — used only by applyBackupPayload's
+  // restore (see useCloudSync's own comment on why a restore, unlike an
+  // ordinary remote pull, needs to register as a genuine local edit so the
+  // race-guard/push machinery knows to treat the restored content as the
+  // newest thing that happened).
+  const setSectionsGuardedTracked = useCallback(
+    (next) => {
+      setSections((prev) => {
+        const incoming = typeof next === 'function' ? next(prev) : next;
+        return preserveSharedSections(incoming, liveSharedSectionsRef.current);
+      });
+    },
+    [setSections]
+  );
+
   // Wraps overwritePresent/commit so every caller inside useCloudSync
   // (applyRemoteData's live listener/pull for the former, applyBackupPayload's
   // restore for the latter) — both of which replace `tasks` WHOLESALE with a
@@ -1408,6 +1424,26 @@ export function SchedulerProvider({ children }) {
     // effect), never as a stand-in for a local edit, so it must not bump
     // localNonUndoEditIdRef (see useLocalEditTrackedState's doc comment).
     setEvents: setEventsRaw,
+    // TRACKED counterparts, used ONLY by applyBackupPayload's restore — see
+    // useCloudSync's own comment on why a restore (unlike an ordinary
+    // remote pull) needs to look like a genuine local edit to the
+    // race-guard/push machinery.
+    setSectionsTracked: setSectionsGuardedTracked,
+    setProjectsTracked: setProjects,
+    setLabelsTracked: setLabels,
+    setRoutinesTracked: setRoutines,
+    setRulesTracked: setRules,
+    setSoundEnabledTracked: setSoundEnabled,
+    setSoundVolumeTracked: setSoundVolume,
+    setAnimationsEnabledTracked: setAnimationsEnabled,
+    setNotificationSettingsTracked: setNotificationSettings,
+    setNotesTracked: setNotes,
+    setShortcutBindingsTracked: setShortcutBindings,
+    setSavedViewsTracked: setSavedViews,
+    setTaskTemplatesTracked: setTaskTemplates,
+    setTrashTracked: setTrash,
+    setSharedProjectIdsTracked: setSharedProjectIds,
+    setEventsTracked: setEvents,
     googleConnected,
     googleSyncStale,
     pullFromGoogleCalendar,
