@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.7.5',
+    date: '2026-09-20',
+    title: 'Fixed Google Calendar sync losing updates from other devices',
+    changes: [
+      "If Google Calendar was connected on one device, that device's routine background check-in with Google was mistakenly being counted as \"you just made a change\" — every minute, whether you'd touched anything or not. That made it wrongly think an update arriving from another device was racing something you'd just done, so it threw the other device's update away instead of applying it. This is very likely why syncing seemed to only half-work when one device was connected to Google Calendar and another wasn't.",
+      'Separately, a calendar event that had just been sent to Google Calendar for the first time could have that fact silently undone if another device edited the same event around the same moment — the event would revert to looking like it had never been sent, and then get sent again, leaving two copies of it on your calendar. Every place that records "this event is now on Google Calendar" now also records exactly when, so a genuinely newer edit from another device can no longer accidentally erase that record.',
+    ],
+  },
+  {
     version: '10.7.4',
     date: '2026-09-17',
     title: 'Fixed a restored backup silently getting undone by another device',
