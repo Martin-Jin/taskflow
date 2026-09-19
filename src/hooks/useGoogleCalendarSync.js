@@ -1471,10 +1471,20 @@ export function useGoogleCalendarSync({
       // push, including flipping source to 'google' — a row left at 'manual'
       // after it exists on Google is permanently exempt from pull-driven
       // updates and deletion detection (see addManualEvent's own comment).
+      // Also stamps localUpdatedAt, for the same reason those two functions'
+      // own push-success patches do: without it, this patch has no timestamp
+      // the cross-device Firestore merge (mergeEventsByUpdatedAt) can compare
+      // against, so an ordinary concurrent edit made on ANOTHER device to the
+      // pre-push copy — which DOES carry a real timestamp — could silently
+      // win the merge and revert this event back to source:'manual'/
+      // googleEventId:null after Google already has a real copy of it,
+      // orphaning that Google event and causing this sweep to push a second,
+      // duplicate copy on its next tick.
+      const nowIso = new Date().toISOString();
       const stampPushedIds = (list) =>
         list.map((e) => {
           const result = pushedByEventId.get(e.id);
-          return result ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e;
+          return result ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google', localUpdatedAt: nowIso } : e;
         });
       setEvents((prev) => stampPushedIds(prev));
       // Mirror the stamp onto eventsRef immediately, for the same reason
@@ -1916,6 +1926,7 @@ export function useGoogleCalendarSync({
       // A non-primary (subscribed/foreign) event was never part of the
       // rewrite at all — its Google copy still exists untouched, so it's
       // returned completely unmodified.
+      const rewriteStampIso = new Date().toISOString();
       setEvents((prev) =>
         prev
           .filter((e) => !((e.source !== 'google' || e.calendarId === 'primary') && isBlockSourcedEvent(e)))
@@ -1926,7 +1937,16 @@ export function useGoogleCalendarSync({
             // reasoning as updatedBlocks above.
             if (isPastCalendarItem(e)) return e;
             const fresh = stampedGoogleEventIdsByEventId.get(e.id) ?? null;
-            return e.googleEventId === fresh ? e : { ...e, googleEventId: fresh };
+            // Stamps localUpdatedAt whenever googleEventId actually changes —
+            // same reasoning as every other push-success patch in this file/
+            // SchedulerContext.jsx: a rewrite deletes and re-inserts every
+            // in-range event under a brand-new id, so without a fresh
+            // timestamp here, a concurrent edit on ANOTHER device (still
+            // holding the pre-rewrite id, but with a real localUpdatedAt of
+            // its own) could win the cross-device Firestore merge and
+            // silently restore the now-stale id, at rewrite scale — every
+            // rewritten event, not just one.
+            return e.googleEventId === fresh ? e : { ...e, googleEventId: fresh, localUpdatedAt: rewriteStampIso };
           })
       );
 

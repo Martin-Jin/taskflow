@@ -1089,7 +1089,24 @@ export function SchedulerProvider({ children }) {
     rewriteGoogleCalendarFromTaskflow,
   } = useGoogleCalendarSync({
     events,
-    setEvents,
+    // RAW/untracked, matching every setXRaw passed into useCloudSync (see
+    // that hook's own setEvents/setEventsLive comment). Every write this hook
+    // makes — the routine poll's merge, a manual pull/rebuild, the push
+    // sweep's id-stamping, a full calendar rewrite — is the sync engine
+    // reconciling with Google, not a user editing an event, so it must not
+    // bump localNonUndoEditIdRef (see useLocalEditTrackedState's doc
+    // comment). Passing the TRACKED setter here was a real bug: it made
+    // useCloudSync's race guard (hasAnyLocalEditRaced) see a "local edit"
+    // on every ~60s Google poll tick, so a Firestore pull/listener snapshot
+    // landing in that same window was wrongly treated as racing a local
+    // edit and silently skipped (skipAll) — the exact failure mode behind
+    // "sync doesn't converge when one device is Google-connected and
+    // another isn't." A user's own event edits/deletes still bump the ref
+    // correctly, since those go through SchedulerContext's own
+    // updateEvent/deleteEvent/addManualEvent, which call the TRACKED
+    // `setEvents` directly further down in this file, independent of what's
+    // passed into this hook.
+    setEvents: setEventsRaw,
     tasks,
     blocks,
     setNotification,
@@ -3778,8 +3795,22 @@ export function SchedulerProvider({ children }) {
         pushEventToCalendar(newEvent)
           .then((result) => {
             if (!result) return;
+            // Stamps localUpdatedAt alongside the push result, not just
+            // googleEventId/source — without it, this patch is invisible to
+            // the cross-device Firestore merge (mergeEventsByUpdatedAt
+            // compares localUpdatedAt) and an ordinary concurrent edit made
+            // on ANOTHER device to the pre-push `source:'manual'` copy could
+            // beat it purely because IT has a real timestamp and this patch
+            // didn't, silently reverting this event back to source:'manual'/
+            // googleEventId:null after Google already has a real copy of it
+            // — orphaning that Google event and causing it to be re-pushed
+            // as a duplicate on the next sync tick.
             setEvents((prev) =>
-              prev.map((e) => (e.id === newEvent.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+              prev.map((e) =>
+                e.id === newEvent.id
+                  ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google', localUpdatedAt: new Date().toISOString() }
+                  : e
+              )
             );
           })
           .catch((err) => {
@@ -3970,9 +4001,16 @@ export function SchedulerProvider({ children }) {
             // Flips source to 'google' too — see addManualEvent's own
             // comment on its equivalent patch for why: a manual event can
             // get its FIRST googleEventId here instead, if it was created
-            // while disconnected and only pushed later via an edit.
+            // while disconnected and only pushed later via an edit. Also
+            // stamps localUpdatedAt — see addManualEvent's push-success
+            // patch for why an untimestamped patch here is unsafe against a
+            // concurrent edit from another device.
             setEvents((prev) =>
-              prev.map((e) => (e.id === pushId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+              prev.map((e) =>
+                e.id === pushId
+                  ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google', localUpdatedAt: new Date().toISOString() }
+                  : e
+              )
             );
           })
           .catch((err) => console.error('[SchedulerContext] Failed to push updated event to Google Calendar', err));
@@ -4106,8 +4144,16 @@ export function SchedulerProvider({ children }) {
                 pushEventToCalendar(t)
                   .then((result) => {
                     if (!result) return;
+                    // Stamps localUpdatedAt — see addManualEvent's
+                    // push-success patch for why an untimestamped patch here
+                    // is unsafe against a concurrent edit from another
+                    // device.
                     setEvents((prev) =>
-                      prev.map((e) => (e.id === t.id ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+                      prev.map((e) =>
+                        e.id === t.id
+                          ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google', localUpdatedAt: new Date().toISOString() }
+                          : e
+                      )
                     );
                   })
                   .catch((err) => console.error('[SchedulerContext] Failed to restore deleted event on Google Calendar on undo', err));
@@ -4234,8 +4280,15 @@ export function SchedulerProvider({ children }) {
         pushEventToCalendar(truncatedMaster)
           .then((result) => {
             if (!result) return;
+            // Stamps localUpdatedAt — see addManualEvent's push-success
+            // patch for why an untimestamped patch here is unsafe against a
+            // concurrent edit from another device.
             setEvents((prev) =>
-              prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+              prev.map((e) =>
+                e.id === masterId
+                  ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google', localUpdatedAt: new Date().toISOString() }
+                  : e
+              )
             );
           })
           .catch((err) => {
@@ -4269,8 +4322,15 @@ export function SchedulerProvider({ children }) {
             pushEventToCalendar(master)
               .then((result) => {
                 if (!result) return;
+                // Stamps localUpdatedAt — see addManualEvent's push-success
+                // patch for why an untimestamped patch here is unsafe
+                // against a concurrent edit from another device.
                 setEvents((prev) =>
-                  prev.map((e) => (e.id === masterId ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google' } : e))
+                  prev.map((e) =>
+                    e.id === masterId
+                      ? { ...e, googleEventId: result.id, googleUpdatedAt: result.updated, source: 'google', localUpdatedAt: new Date().toISOString() }
+                      : e
+                  )
                 );
               })
               .catch((err) => console.error('[SchedulerContext] Failed to restore truncated series on Google Calendar on undo', err));
