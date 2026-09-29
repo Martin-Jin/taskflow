@@ -113,6 +113,150 @@ export async function pushGoogleCalendarStatus(uid, deviceId, connected, stale) 
 }
 
 /**
+ * ============================================================================
+ * RESTORE LOCK — "I'm restoring a backup, hold off" flag for other devices
+ * ============================================================================
+ * Same isolated-field pattern as pushGoogleCalendarStatus just above: a
+ * small map merge-written onto the shared users/{uid} doc, deliberately
+ * never referenced by computeFingerprint/planRemoteDataMerge/applyRemoteData
+ * (see useCloudSync.js), so writing or clearing it can never look like a
+ * data change to the tasks/blocks/settings merge logic, and a device
+ * applying someone ELSE's restore never mistakes that for a data echo of
+ * its own.
+ *
+ * WHY THIS EXISTS: restoring a backup (see applyBackupPayload in
+ * useCloudSync.js) already re-stamps every restored row/field to "now" so it
+ * wins the ordinary per-item merge against a stale device's write — but that
+ * merge is still item-by-item. A device that's mid-push RIGHT as the
+ * restore lands can still get its OWN pre-restore write into Firestore a
+ * moment later, and for fields that are genuinely whole-value (not yet
+ * per-item merged — see CLAUDE.md's Backups section for which fields those
+ * are today) that stale write can win outright. This lock closes that
+ * narrow window by making every OTHER device pause its own pushes and skip
+ * merging incoming snapshots for the whole duration of the restore, then
+ * pull the finished result wholesale once it's done — see
+ * isRestoreLockActive/the `authoritative` option on planRemoteDataMerge.
+ *
+ * @typedef {Object} RestoreLock
+ * @property {string} deviceId - which device (see utils/deviceIdentity.js)
+ *   currently holds the lock, or most recently held it.
+ * @property {import('firebase/firestore').Timestamp} startedAt - when this
+ *   device began restoring (server time).
+ * @property {import('firebase/firestore').Timestamp} heartbeatAt - refreshed
+ *   every few seconds while the lock is held, so another device can tell a
+ *   crashed/closed restoring device apart from one still genuinely working
+ *   (see isRestoreLockActive's staleness check) without waiting forever.
+ * @property {number} generation - bumped by 1 every time this device
+ *   acquires the lock. Lets a device that reconnects mid-restore (or was
+ *   never actually blocked, e.g. it only just came online) tell "this is a
+ *   restore I haven't seen the result of yet" apart from "I already
+ *   converged on this one" without comparing timestamps.
+ * @property {'restoring'|'released'} state
+ * @property {boolean} [rewroteGoogleCalendar] - set only at release time, only
+ *   when the restore was immediately followed by "Rewrite Google Calendar to
+ *   match TaskFlow" (see SchedulerContext's restoreCloudBackupAndRewriteCalendar).
+ *   Read by useGoogleCalendarSync.js to decide whether it's safe to treat the
+ *   googleEventIds in the released payload as freshly confirmed — see that
+ *   file's own comment on why that's only trustworthy right after a real
+ *   rewrite, not after an ordinary restore.
+ */
+
+/**
+ * Acquire (or re-acquire) the restore lock — merge-writes `restoreLock` with
+ * a fresh `generation` (one higher than whatever's currently on the server)
+ * and `state: 'restoring'`. Awaited by the caller BEFORE it starts applying
+ * the backup locally, so another device's listener has a real chance to see
+ * the lock before this device's data starts moving — see useCloudSync.js's
+ * acquireAndRunRestoreLock, which wraps this with the local heartbeat
+ * interval and the restore sequence itself.
+ *
+ * READS the current doc's `restoreLock.generation` first, rather than
+ * trusting a caller-supplied "highest generation I've seen" counter —
+ * deliberately, because that counter is only ever a LOCAL device's own
+ * observation history. A device that has never happened to see another
+ * device's earlier restore (offline the whole time, or freshly signed in)
+ * would otherwise start counting from 0 and could write a LOWER generation
+ * than what's already recorded — which every other device's release-
+ * detection check (`generation > last one I've applied`) would then
+ * silently ignore as "already converged," permanently losing that restore.
+ * Reading the server's own value first is what guarantees the sequence only
+ * ever goes up, regardless of which device's local memory is stale.
+ *
+ * Not perfectly atomic (two devices restoring at the exact same instant
+ * could both read the same starting generation before either writes) — an
+ * accepted, narrow gap rather than a Firestore transaction, matching this
+ * file's existing pullUserData-then-pushUserData shape elsewhere; the
+ * heartbeat/staleness mechanism this lock already has makes that overlap
+ * self-correct rather than silent (a device blocked won't ever
+ * double-apply a stale generation, it will just see BOTH restores'
+ * writes land — the later one keeping its own generation lead).
+ * @param {string} uid
+ * @param {string} deviceId
+ * @returns {Promise<number>} the newly-acquired generation.
+ */
+export async function pushRestoreLock(uid, deviceId) {
+  const existing = await pullUserData(uid);
+  const currentGeneration = existing?.restoreLock?.generation || 0;
+  const generation = currentGeneration + 1;
+  await setDoc(
+    doc(db, 'users', uid),
+    {
+      restoreLock: {
+        deviceId,
+        generation,
+        state: 'restoring',
+        startedAt: serverTimestamp(),
+        heartbeatAt: serverTimestamp(),
+      },
+    },
+    { merge: true }
+  );
+  return generation;
+}
+
+/**
+ * Refresh the lock's heartbeat without changing anything else about it —
+ * called on an interval while a restore is in progress, so a device that's
+ * still genuinely working doesn't look stale to another device's staleness
+ * check (see isRestoreLockActive).
+ * @param {string} uid
+ */
+export async function heartbeatRestoreLock(uid) {
+  await setDoc(doc(db, 'users', uid), { restoreLock: { heartbeatAt: serverTimestamp() } }, { merge: true });
+}
+
+/**
+ * Release the lock — merge-writes `state: 'released'` (keeping the same
+ * `generation` and `deviceId` the acquire call set, since Firestore's
+ * `merge: true` leaves unmentioned map keys alone... EXCEPT this is a
+ * top-level field holding a nested object, and `setDoc`'s merge semantics
+ * for a nested map replace the WHOLE map unless every key you want to keep
+ * is repeated — so this call must repeat every field, not just the ones
+ * changing. See computeFingerprint's own doc comment on canonicalStringify
+ * for the general shape of "Firestore round-trips don't preserve what you
+ * didn't explicitly write" surprises this codebase has already hit once.
+ * @param {string} uid
+ * @param {string} deviceId
+ * @param {number} generation
+ * @param {boolean} [rewroteGoogleCalendar]
+ */
+export async function clearRestoreLock(uid, deviceId, generation, rewroteGoogleCalendar = false) {
+  await setDoc(
+    doc(db, 'users', uid),
+    {
+      restoreLock: {
+        deviceId,
+        generation,
+        state: 'released',
+        heartbeatAt: serverTimestamp(),
+        rewroteGoogleCalendar,
+      },
+    },
+    { merge: true }
+  );
+}
+
+/**
  * Live-subscribes to the user's synced doc so a change pushed from another
  * device (or another tab) converges into this one within moments, instead
  * of only on the next sign-in/reload/manual "Sync now". `onData` fires with

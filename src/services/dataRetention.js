@@ -42,6 +42,20 @@ export const RETENTION_DAYS_CALENDAR_EVENTS = 365;
  */
 export const RETENTION_DAYS_DELETED_EVENTS = 30;
 
+/**
+ * Personal sections/projects/labels tombstoned by deleteSection/
+ * deleteProject/deleteLabel (see utils/collectionTombstones.js) — purged
+ * after this many days. Matches RETENTION_DAYS_DELETED_TASKS/_EVENTS for the
+ * same reason: long enough that a device offline for a realistic stretch
+ * still sees the tombstone (and therefore the deletion) before it's swept,
+ * since sweeping it too early would let a returning device see the row as
+ * merely "missing" rather than "deleted" and resurrect it on its next push.
+ * A SHARED section/project is never tombstoned in the first place (see that
+ * file's own module doc comment), so this constant only ever governs
+ * personal rows.
+ */
+export const RETENTION_DAYS_DELETED_ENTITIES = 30;
+
 /** Shared project presence docs (viewer avatars) — auto-delete via TTL. */
 export const RETENTION_DAYS_PRESENCE = 7;
 
@@ -101,6 +115,20 @@ export const CLOUD_SYNC_EDIT_DEBOUNCE_MS = 200;
 
 /** Shared project sync debounce: same rationale as cloud sync. */
 export const SHARED_PROJECT_SYNC_DEBOUNCE_MS = 1500;
+
+/**
+ * Restore lock (see firestoreSync.js's pushRestoreLock/heartbeatRestoreLock):
+ * how often the restoring device refreshes its heartbeat, and how long
+ * another device waits without seeing a fresh one before deciding the
+ * restoring device crashed/closed its tab and resuming normal sync on its
+ * own. 3x the heartbeat interval, matching this app's other "give it a few
+ * missed beats before giving up" precedent (PRESENCE_STALE_MS below is 3x
+ * PRESENCE_HEARTBEAT_MS for the same reason) — long enough that one slow
+ * network round-trip doesn't false-positive, short enough that a genuinely
+ * crashed device doesn't leave everyone else stuck for long.
+ */
+export const RESTORE_LOCK_HEARTBEAT_MS = 10 * MS_PER_SECOND;
+export const RESTORE_LOCK_STALE_MS = 3 * RESTORE_LOCK_HEARTBEAT_MS;
 
 // ---- Cutoff Calculations ---------------------------------------------------
 // Pure functions for computing age thresholds. Never use raw time math inline.

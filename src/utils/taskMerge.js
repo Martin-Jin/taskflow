@@ -15,6 +15,12 @@
  * write" apart from "a fresh write of stale content" — only a per-task,
  * per-field timestamp comparison can.
  *
+ * The actual merge is entityMerge.js's mergeEntitiesByTimestamp — this file
+ * just calls it with `updatedAt` as the timestamp field. See entityMerge.js
+ * for the shared mechanics; this doc comment keeps the task-specific history
+ * above and the tombstone-interaction notes below, since those don't belong
+ * in the generic helper.
+ *
  * Extracted as a pure function (no Firebase/React/Date.now() side effects) so
  * it's unit-testable in isolation — same precedent as this file's siblings:
  * useCloudSync.js's computeFingerprint/race-guard functions, and
@@ -22,12 +28,7 @@
  * ============================================================================
  */
 
-/** Epoch millis for `task.updatedAt`, or null if missing/unparseable. */
-function updatedAtMillis(task) {
-  if (!task?.updatedAt) return null;
-  const ms = new Date(task.updatedAt).getTime();
-  return Number.isNaN(ms) ? null : ms;
-}
+import { mergeEntitiesByTimestamp } from './entityMerge.js';
 
 /**
  * Per-task merge of two tasks arrays by `updatedAt`, replacing the old
@@ -68,41 +69,5 @@ function updatedAtMillis(task) {
  * @returns {import('../types').Task[]}
  */
 export function mergeTasksByUpdatedAt(localTasks, remoteTasks) {
-  const localById = new Map((localTasks || []).map((t) => [t.id, t]));
-  const remoteById = new Map((remoteTasks || []).map((t) => [t.id, t]));
-
-  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
-  const merged = [];
-
-  for (const id of ids) {
-    const local = localById.get(id);
-    const remote = remoteById.get(id);
-
-    if (local && !remote) {
-      merged.push(local);
-      continue;
-    }
-    if (remote && !local) {
-      merged.push(remote);
-      continue;
-    }
-
-    // Present on both sides — keep whichever has the newer updatedAt.
-    const localMs = updatedAtMillis(local);
-    const remoteMs = updatedAtMillis(remote);
-
-    if (localMs === null && remoteMs === null) {
-      merged.push(local); // both missing/invalid — arbitrary but deterministic
-    } else if (remoteMs === null) {
-      merged.push(local); // only local has a valid timestamp
-    } else if (localMs === null) {
-      merged.push(remote); // only remote has a valid timestamp
-    } else if (remoteMs > localMs) {
-      merged.push(remote);
-    } else {
-      merged.push(local); // local newer, or a tie
-    }
-  }
-
-  return merged;
+  return mergeEntitiesByTimestamp(localTasks, remoteTasks, { timestampField: 'updatedAt' });
 }

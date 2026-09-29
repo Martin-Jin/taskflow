@@ -59,6 +59,7 @@ import { toISODate } from '../utils/dateUtils';
 import { isBlockSourcedEvent } from './googleCalendarService';
 import { computeEffectivePurgeBoundary as centralized_computeEffectivePurgeBoundary } from './dataRetention';
 import { parseRRule } from '../utils/recurrenceExpansion';
+import { canonicalStringify } from '../utils/canonicalStringify';
 
 /**
  * True if a local Google-sourced event should be looked up against this
@@ -128,6 +129,53 @@ function isTooOldToRetain(event, purgeBoundaryIso) {
 function isGoogleConfirmed(event, confirmedGoogleEventIds) {
   if (!confirmedGoogleEventIds) return true;
   return confirmedGoogleEventIds.has(event.googleEventId);
+}
+
+/**
+ * True if an in-scope, pull-absent local Google-sourced event should be
+ * PROCESSED AT ALL (either dropped as a genuine delete, or demoted so the
+ * push sweep re-creates it) — false means "leave it completely untouched",
+ * the third outcome this pull's own trustworthiness can force regardless of
+ * what isGoogleConfirmed would otherwise say.
+ *
+ * `hasCompletedFullWindowPull` (see useGoogleCalendarSync.js's
+ * hasCompletedFullWindowPullRef) is the caller's own answer to "did this
+ * fetch actually succeed AND cover the app's whole routine sync window",
+ * not just this one specific event's id. Two real ways a pull can "succeed"
+ * while still not being trustworthy enough to say anything about a
+ * particular event:
+ *   1. A per-calendar fetch failure (see googleCalendarService.js's
+ *      `failedCalendars`) still lets the OTHER calendars' events come back
+ *      normally, so the pull as a whole "succeeds" even though it's
+ *      genuinely incomplete for whichever calendar failed.
+ *   2. An on-demand fetch for a narrow date range (e.g. jumping the
+ *      calendar view far into the future — see ensureGoogleRangeSynced)
+ *      only proves absence within that narrow slice, not the whole window.
+ *
+ * THIS IS THE FIX FOR THE RESTORE-THEN-DUPLICATE BUG: without this check, an
+ * event whose googleEventId was seeded as "confirmed" from ANOTHER device's
+ * restore (see useGoogleCalendarSync.js's seedConfirmedGoogleEventIds) looks
+ * exactly like a genuinely-live event to isGoogleConfirmed — so the first
+ * time THIS device's own pull happens to be partial/narrow and misses it,
+ * the old code would demote it (clear its googleEventId) purely because
+ * isGoogleConfirmed said "yes, trust the pull" — and the push sweep would
+ * immediately re-create it on Google as a duplicate. Gating on
+ * hasCompletedFullWindowPull first means an untrustworthy pull can never
+ * trigger a demotion at all, confirmed or not — it just leaves the event
+ * alone until a genuinely trustworthy pull comes along.
+ *
+ * Defaults `hasCompletedFullWindowPull` to `true` so existing callers/tests
+ * that don't pass it keep today's policy unchanged (isGoogleConfirmed alone
+ * decides). Does NOT re-open the original resurrection risk isGoogleConfirmed
+ * exists to prevent: on the very first pull of a fresh session (right after a
+ * restore), the caller passes `hasCompletedFullWindowPull: false` (it only
+ * flips to true AFTER a pull succeeds), so a restored event is left
+ * completely untouched by THIS check and survives to fall through to
+ * isGoogleConfirmed's own "never confirmed -> re-push" rule exactly as it
+ * already did.
+ */
+function isPullTrustworthyEnoughToActOn(hasCompletedFullWindowPull) {
+  return hasCompletedFullWindowPull;
 }
 
 /**
@@ -231,6 +279,40 @@ function timestampMillis(iso) {
 }
 
 /**
+ * The subset of a CalendarEvent's fields that describe what the user
+ * actually sees/schedules around — used by resolvePulledEventConflict to
+ * tell "Google's `updated` bumped because something changed that matters"
+ * apart from "Google's `updated` bumped for something TaskFlow doesn't even
+ * track" (an attendee RSVP, a reminder, a colour). Deliberately excludes
+ * bookkeeping fields that are never meaningful to compare this way:
+ * `id`/`googleEventId` (identity, not content), `source`/`calendarId`/
+ * `calendarName` (where it came from, not what it says),
+ * `googleUpdatedAt`/`localUpdatedAt`/`deletedAt` (timestamps — comparing
+ * these IS the conflict decision this function feeds into, not part of the
+ * content being compared), and `canEdit` (a permission flag, not content).
+ * `isFreeTime` IS included — unlike the others, it changes what the
+ * scheduler actually does with the event, so a real change to it should
+ * count as a real content difference even though it CAN also come from a
+ * Google-side `transparency` toggle that has nothing to do with a title/
+ * time edit.
+ */
+function comparableEventContent(event) {
+  return {
+    title: event?.title,
+    date: event?.date,
+    startTime: event?.startTime,
+    endTime: event?.endTime,
+    isAllDay: event?.isAllDay,
+    endDate: event?.endDate,
+    isFreeTime: event?.isFreeTime,
+    description: event?.description,
+    location: event?.location,
+    recurrenceRule: event?.recurrenceRule,
+    overrides: event?.overrides,
+  };
+}
+
+/**
  * Decides, for one (local, pulled) pair sharing a `googleEventId`, whether
  * the local copy should survive the pull unchanged (`'local'`) or be
  * replaced by the freshly-pulled version (`'pulled'`) — the per-pair decision
@@ -274,6 +356,23 @@ function timestampMillis(iso) {
  * the tombstone's cleared fields (description/location) if local wins; this
  * function only decides which side's full object to use.
  *
+ * ONE FURTHER REFINEMENT before falling back to rule 2's timestamp
+ * comparison: Google's `updated` field is not a content timestamp — it also
+ * bumps for things TaskFlow doesn't track at all (an attendee RSVP, a
+ * reminder tweak, a colour change), so "newer `updated`" does not by itself
+ * prove "this pull actually changed anything the user would notice." If the
+ * pulled event's CONTENT (title/date/times/description/location/
+ * recurrenceRule/etc. — see comparableEventContent) is already identical to
+ * local's current content, applying the pull would be a pointless
+ * replacement that changes the event's object reference for no visible
+ * difference (which matters for React re-render/equality checks
+ * downstream), so this keeps local instead. This is a narrower guarantee
+ * than "never loses a real local edit to a content-free Google bump": it
+ * can only compare against local's CURRENT content, not a snapshot of what
+ * local looked like before whatever edit is being evaluated — there's no
+ * edit history to compare against — so it only ever catches the case where
+ * the two sides already agree, not every content-free-bump race.
+ *
  * @param {import('../types').CalendarEvent} local
  * @param {import('../types').CalendarEvent} pulled
  * @returns {'local'|'pulled'}
@@ -284,6 +383,14 @@ export function resolvePulledEventConflict(local, pulled) {
 
   const googleMs = timestampMillis(pulled?.googleUpdatedAt);
   if (googleMs === null) return 'local';
+
+  // Google's `updated` is newer, but if the content it describes is
+  // identical to what's already local, there's nothing to actually apply —
+  // see this function's own doc comment for why a newer `updated` doesn't
+  // by itself prove a content change.
+  if (googleMs > localMs && canonicalStringify(comparableEventContent(local)) === canonicalStringify(comparableEventContent(pulled))) {
+    return 'local';
+  }
 
   return googleMs > localMs ? 'pulled' : 'local';
 }
@@ -511,7 +618,8 @@ export function mergePulledGoogleEvents(
   recentlyDeletedGoogleEventInstances = new Map(),
   nowMs = Date.now(),
   purgeBoundaryIso = rangeStartIso,
-  confirmedGoogleEventIds = null
+  confirmedGoogleEventIds = null,
+  hasCompletedFullWindowPull = true
 ) {
   const manualOwnedGoogleEventIds = new Set(
     existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
@@ -581,6 +689,12 @@ export function mergePulledGoogleEvents(
       !pulledByGoogleEventId.has(e.googleEventId) &&
       !isTooOldToRetain(e, purgeBoundaryIso) &&
       isInScopeForPull(e, rangeStartIso, rangeEndIso) &&
+      // An untrustworthy pull (see isPullTrustworthyEnoughToActOn) makes an
+      // event ineligible for demotion no matter what isGoogleConfirmed would
+      // say — it must not become a demote candidate at all here, or it could
+      // still be matched against a pulled replacement below and dropped as
+      // if it genuinely no longer existed.
+      isPullTrustworthyEnoughToActOn(hasCompletedFullWindowPull) &&
       !isGoogleConfirmed(e, confirmedGoogleEventIds)
   );
   const newPulledCandidates = freshPulledAfterConflicts.filter((e) => !existingByGoogleEventId.has(e.googleEventId));
@@ -636,11 +750,28 @@ export function mergePulledGoogleEvents(
       continue;
     }
 
-    // In scope and absent from the pull. If this instance ever saw the id live
-    // on Google, that's a genuine Google-side delete and Google wins (drop it).
-    // Otherwise the event only ever existed in TaskFlow — e.g. restored from a
-    // backup whose googleEventId predates the user clearing their calendar — so
-    // it's re-pushed rather than deleted. See isGoogleConfirmed.
+    // In scope and absent from the pull, but this pull ITSELF wasn't
+    // trustworthy enough to conclude anything either way (a per-calendar
+    // fetch failure, or a narrow on-demand fetch that never actually looked
+    // at this event's window) — leave it completely untouched, same as the
+    // generic out-of-scope case above. This is deliberately NOT the same as
+    // "unconfirmed -> demote and re-push" just below: demoting here would
+    // clear this event's (possibly perfectly valid) googleEventId on the
+    // strength of a pull that never really checked, and the push sweep would
+    // immediately re-create it on Google as a duplicate — exactly the
+    // restore-then-duplicate bug this check exists to close. See
+    // isPullTrustworthyEnoughToActOn's own doc comment.
+    if (!isPullTrustworthyEnoughToActOn(hasCompletedFullWindowPull)) {
+      survivingLocal.push(e);
+      continue;
+    }
+
+    // In scope, absent from a pull that WAS trustworthy. If this instance
+    // ever saw the id live on Google, that's a genuine Google-side delete and
+    // Google wins (drop it). Otherwise the event only ever existed in
+    // TaskFlow — e.g. restored from a backup whose googleEventId predates the
+    // user clearing their calendar — so it's re-pushed rather than deleted.
+    // See isGoogleConfirmed.
     if (isGoogleConfirmed(e, confirmedGoogleEventIds)) continue;
     survivingLocal.push(demoteToUnsyncedLocalEvent(e));
   }

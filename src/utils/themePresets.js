@@ -265,7 +265,7 @@ function clampAwayFromRed(hue) {
 /**
  * Derives a small "system feedback" ramp — a hue distinct from the primary
  * accent, used ONLY for UI that represents the app doing something (the
- * calendar-rewrite spinner/progress bar), never for a role the user
+ * BlockingProgressOverlay spinner/progress bar), never for a role the user
  * actively picks or triggers (buttons, selection, nav). Keeping those two
  * meanings on visibly different hues is the actual point: today a stuck
  * progress bar and a selected calendar block are the identical color, so
