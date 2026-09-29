@@ -28,10 +28,15 @@ import {
   deleteBackup,
   deleteBackups,
   pushGoogleCalendarStatus,
+  pushRestoreLock,
+  heartbeatRestoreLock,
+  clearRestoreLock,
 } from '../services/firestoreSync';
 import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { mergeTasksByUpdatedAt } from '../utils/taskMerge';
 import { mergeEventsByUpdatedAt } from '../utils/eventMerge';
+import { pickNewerScalar, mergeEntitiesByTimestamp } from '../utils/entityMerge';
+import { canonicalStringify } from '../utils/canonicalStringify';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { getDeviceId } from '../utils/deviceIdentity.js';
@@ -40,6 +45,8 @@ import {
   BACKUP_CHECK_INTERVAL_MS,
   BACKUP_RETENTION_COUNT_AUTOMATIC,
   BACKUP_RETENTION_COUNT_MANUAL,
+  RESTORE_LOCK_HEARTBEAT_MS,
+  RESTORE_LOCK_STALE_MS,
 } from '../services/dataRetention';
 
 /**
@@ -205,42 +212,13 @@ export function detectGoogleCalendarStatusMismatch({ remoteStatus, localDeviceId
   return localWorking ? 'otherDeviceBehind' : 'thisDeviceBehind';
 }
 
-/**
- * A JSON.stringify substitute whose output depends only on DATA, never on an
- * object's own key insertion order — plain `JSON.stringify` follows whatever
- * order the object's keys happen to have been set in, and Firestore's SDK
- * does NOT guarantee preserving that order for nested map fields on a
- * round-trip (arrays keep their element order; it's specifically each
- * object/map's OWN key order that can come back reshuffled). Two logically
- * identical objects that merely differ in key order must fingerprint
- * IDENTICALLY, or every echo of this device's own push looks like new remote
- * data forever — see this function's own discovery: a real production
- * account's sync got stuck in a permanent push -> echo -> reapply -> push
- * loop, purely from a task's nested `recurrenceRule`/`subtasks` objects
- * coming back from Firestore with reordered keys (never a real value
- * difference), which none of computeFingerprint's/applyRemoteData's
- * consumers could tell apart from a genuine edit.
- *
- * Recursively sorts each plain object's keys before stringifying; arrays are
- * walked element-by-element in their EXISTING order (array order is
- * semantically meaningful — e.g. subtask ordering — and was confirmed stable
- * across the Firestore round-trip that exposed this bug, unlike object key
- * order). `null`/primitives/Dates pass through JSON.stringify's own handling
- * unchanged.
- */
-export function canonicalStringify(value) {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalStringify(item)).join(',')}]`;
-  }
-  if (value && typeof value === 'object' && !(value instanceof Date)) {
-    const sortedKeys = Object.keys(value).sort();
-    const entries = sortedKeys
-      .filter((key) => value[key] !== undefined) // matches JSON.stringify's own "drop undefined values" behavior
-      .map((key) => `${JSON.stringify(key)}:${canonicalStringify(value[key])}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
+// canonicalStringify itself now lives in utils/canonicalStringify.js (see
+// this file's own import above) — so utils/entityMerge.js and
+// hooks/usePersistedState.js can use it without creating a circular import
+// with this file. Re-exported here (not just imported) so every existing
+// `import { canonicalStringify } from '.../useCloudSync.js'` keeps working
+// unchanged.
+export { canonicalStringify };
 
 /**
  * Hashes/serializes the syncable subset of state so callers can detect "is
@@ -259,6 +237,17 @@ export function canonicalStringify(value) {
  * doc comment for why: a fingerprint that's sensitive to key order treats
  * Firestore's own echo of an unchanged nested object as a fresh remote
  * change, forever.
+ *
+ * Includes `fieldUpdatedAt` — the per-field sidecar timestamp map stamped by
+ * useFieldStampedState (usePersistedState.js) for the nine settings-shaped
+ * fields below that have no per-row id of their own to hang a timestamp on
+ * (routines/rules/soundEnabled/soundVolume/animationsEnabled/
+ * notificationSettings/notes/shortcutBindings/sharedProjectIds). Without it
+ * here, changing one of those fields alone (with its value ending up
+ * identical after a round-trip, or the fingerprint simply never having been
+ * told a timestamp changed) could leave the fingerprint unchanged and the
+ * new stamp would never actually reach Firestore — see schedulePush's
+ * "no change, don't push" check, which relies entirely on this fingerprint.
  */
 export function computeFingerprint(source) {
   const relevant = {
@@ -280,6 +269,7 @@ export function computeFingerprint(source) {
     trash: source.trash,
     sharedProjectIds: source.sharedProjectIds,
     events: source.events,
+    fieldUpdatedAt: source.fieldUpdatedAt,
   };
   return canonicalStringify(relevant);
 }
@@ -415,6 +405,44 @@ export function isRemoteWriteStale(remoteLastWriteAt, knownLastWriteAtMillis) {
   if (remoteLastWriteAt === undefined || remoteLastWriteAt === null) return false;
   if (knownLastWriteAtMillis === undefined || knownLastWriteAtMillis === null) return false;
   return toMillis(remoteLastWriteAt) < knownLastWriteAtMillis;
+}
+
+/**
+ * Pure decision: given the `restoreLock` map read off the shared users/{uid}
+ * doc (see firestoreSync.js's RestoreLock typedef), is a DIFFERENT device
+ * currently, actively restoring a backup — i.e. should THIS device pause its
+ * own pushes and stop merging incoming snapshots until the restore finishes
+ * or the lock goes stale?
+ *
+ * False (not blocked) in every one of these cases:
+ *   - No lock at all (an older doc, or nobody's ever restored).
+ *   - `state !== 'restoring'` — the lock has already been released.
+ *   - `deviceId === localDeviceId` — THIS device is the one holding the
+ *     lock; a device never blocks on its own restore (its own restore
+ *     sequence handles its own local pausing directly, see
+ *     useCloudSync.js's acquireRestoreLock).
+ *   - The lock's `heartbeatAt` is missing, or older than `staleMs` —
+ *     `toMillis` (this file's own Firestore-Timestamp normalizer) returns 0
+ *     for a missing/unparseable value, which always fails the freshness
+ *     check below exactly like a genuinely ancient timestamp would, so a
+ *     malformed lock is never trusted as active. A real stale heartbeat
+ *     means the restoring device most likely crashed or closed its tab
+ *     mid-restore, so this device gives up waiting and resumes ordinary
+ *     syncing rather than staying wedged forever. Checked against `nowMs` on
+ *     a periodic timer by the caller (a listener-only check would never
+ *     re-evaluate once the restoring device stops sending snapshots at all,
+ *     which is exactly the crash case this guards against).
+ *
+ * @param {import('../services/firestoreSync').RestoreLock|null|undefined} restoreLock
+ * @param {string} localDeviceId
+ * @param {number} nowMs
+ * @param {number} [staleMs]
+ * @returns {boolean}
+ */
+export function isRestoreLockActive(restoreLock, localDeviceId, nowMs, staleMs = RESTORE_LOCK_STALE_MS) {
+  if (!restoreLock || restoreLock.state !== 'restoring') return false;
+  if (restoreLock.deviceId === localDeviceId) return false;
+  return nowMs - toMillis(restoreLock.heartbeatAt) < staleMs;
 }
 
 /**
@@ -599,11 +627,96 @@ export function computePushSingleFlightDecision(pushInFlight) {
  * `tasks`/`blocks` — every other field applied unconditionally even when the
  * race guard had already fired, which is exactly what let a raced remote
  * snapshot stomp a just-deleted/just-shared project back into existence.)
+ *
+ * `authoritative` (see useCloudSync.js's restore-lock release handling) is
+ * the opposite of `skipAll`: instead of applying nothing, it applies
+ * EVERYTHING present in `remoteData` WHOLESALE, bypassing every per-item/
+ * per-field merge and timestamp comparison entirely — remote simply wins,
+ * for every field, unconditionally. This is what makes "the just-finished
+ * restore is now the truth on every device" actually true: an ordinary merge
+ * only ever compares timestamps, so an item this device holds that the
+ * RESTORED backup doesn't contain (e.g. something created here after the
+ * backup was taken, or a stale device's own leftover row) would otherwise
+ * survive the union step forever — a restore is supposed to make every
+ * device look exactly like the backup, including removing what the backup
+ * doesn't have, and only a wholesale replace can do that without inventing
+ * a whole separate tombstone-synthesis step for fields the backup payload
+ * doesn't already track. Shape-validation (pickValid) still applies — a
+ * corrupted/malformed field in `remoteData` still falls back to local rather
+ * than crashing — but there is no merge/timestamp comparison of any kind. A
+ * field ABSENT from `remoteData` is left out of the plan entirely, same as
+ * the ordinary path, so an old/partial payload doesn't wipe a field it
+ * simply never mentions.
  */
-export function planRemoteDataMerge(remoteData, localState, { skipAll = false } = {}) {
+export function planRemoteDataMerge(remoteData, localState, { skipAll = false, authoritative = false } = {}) {
   if (skipAll) return { stampFingerprint: false };
 
+  if (authoritative) {
+    const plan = {};
+    if ('tasks' in remoteData || 'blocks' in remoteData) {
+      plan.tasksBlocks = {
+        tasks: pickValid('tasks', remoteData.tasks, localState.tasks),
+        blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
+      };
+      // No merge ran — this IS the wholesale-replace path — so
+      // didTaskMergeChangeAnything's "was this a real merge" gate correctly
+      // treats it as false and skips the rebalance trigger. The restore's
+      // OWN caller is responsible for triggering a rebalance once, after
+      // every field has been applied — see useCloudSync.js's restore-lock
+      // release handling.
+      plan.tasksMerged = false;
+    }
+    ['sections', 'projects', 'labels', 'routines', 'rules', 'soundEnabled', 'soundVolume', 'animationsEnabled', 'savedViews', 'taskTemplates', 'trash', 'sharedProjectIds', 'events', 'fieldUpdatedAt'].forEach(
+      (field) => {
+        if (field in remoteData) plan[field] = pickValid(field, remoteData[field], localState[field]);
+      }
+    );
+    // notificationSettings keeps this device's own timezone even in
+    // authoritative mode — same reasoning as the ordinary path just below:
+    // a restored/another-device's timezone is never what THIS device wants.
+    if ('notificationSettings' in remoteData) {
+      const notificationSettings = pickValid('notificationSettings', remoteData.notificationSettings, localState.notificationSettings);
+      plan.notificationSettings = { ...notificationSettings, timezone: getBrowserTimeZone() };
+    }
+    // Same legacy-payload fallback as the ordinary path below (see its own
+    // comment) — a pre-Notes-feature payload carries `pinnedLinks` instead
+    // of `notes`.
+    if ('notes' in remoteData) {
+      plan.notes = pickValid('notes', remoteData.notes, localState.notes);
+    } else if ('pinnedLinks' in remoteData) {
+      const migrated = migrateLinksToNotes(remoteData.pinnedLinks);
+      if (migrated) plan.notes = migrated;
+    }
+    if ('shortcutBindings' in remoteData) plan.shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings);
+    plan.stampFingerprint = true;
+    return plan;
+  }
+
   const plan = {};
+  // Sidecar timestamps for the nine settings-shaped fields stamped by
+  // useFieldStampedState (see that hook's doc comment in usePersistedState.js
+  // for the full "why" — no per-row id to hang a timestamp on, so one ISO
+  // string per FIELD instead). Built up field-by-field below, alongside each
+  // field's own merge decision, then attached to the plan at the end.
+  const localFieldStamps = localState.fieldUpdatedAt || {};
+  const remoteFieldStamps = remoteData.fieldUpdatedAt || {};
+  const nextFieldStamps = { ...localFieldStamps };
+
+  /**
+   * Decides one sidecar-stamped field's value using pickNewerScalar, and
+   * records the winning side's timestamp into nextFieldStamps so the merged
+   * doc keeps whichever stamp actually won — not just whichever field value
+   * won, and not a blanket "now" (which would make an old, un-edited remote
+   * value look freshly written and incorrectly beat a genuinely newer edit
+   * made on a device that HASN'T synced this specific timestamp back yet).
+   */
+  function pickScalarField(field, remoteValue, localValue) {
+    const decision = pickNewerScalar(localFieldStamps[field], remoteFieldStamps[field]);
+    if (decision === 'remote' && remoteFieldStamps[field] !== undefined) {
+      nextFieldStamps[field] = remoteFieldStamps[field];
+    }
+    return decision === 'remote' ? remoteValue : localValue;
+  }
 
   if ('tasks' in remoteData || 'blocks' in remoteData) {
     // Shape-validate first: a malformed/corrupted remote `tasks` (wrong
@@ -628,31 +741,88 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
     // against the raw incoming remoteData (see its own comment).
     plan.tasksMerged = tasksMerged;
   }
-  if ('sections' in remoteData) plan.sections = pickValid('sections', remoteData.sections, localState.sections);
-  if ('projects' in remoteData) plan.projects = pickValid('projects', remoteData.projects, localState.projects);
-  if ('labels' in remoteData) plan.labels = pickValid('labels', remoteData.labels, localState.labels);
-  if ('routines' in remoteData) plan.routines = pickValid('routines', remoteData.routines, localState.routines);
-  if ('rules' in remoteData) plan.rules = pickValid('rules', remoteData.rules, localState.rules);
-  if ('soundEnabled' in remoteData) plan.soundEnabled = pickValid('soundEnabled', remoteData.soundEnabled, localState.soundEnabled);
-  if ('soundVolume' in remoteData) plan.soundVolume = pickValid('soundVolume', remoteData.soundVolume, localState.soundVolume);
+  // sections/projects/labels: per-entity merge by `updatedAt`, same
+  // shape-validate-then-per-item-merge structure as `tasks` above — a
+  // malformed/corrupted remote array falls back to local WHOLESALE, and only
+  // a shape-valid remote array feeds mergeEntitiesByTimestamp
+  // (utils/entityMerge.js). Each collection has stable per-row ids, so a
+  // rename on one device and an unrelated add on another both survive
+  // instead of one whole-array write clobbering the other — the same fix
+  // tasks/events already have via mergeTasksByUpdatedAt/mergeEventsByUpdatedAt.
+  // savedViews/taskTemplates/trash stay whole-array "remote wins if
+  // shape-valid" for now — see CLAUDE.md's Backups section for why those
+  // three are deferred.
+  if ('sections' in remoteData) {
+    const validRemoteSections = pickValid('sections', remoteData.sections, null);
+    plan.sectionsMerged = validRemoteSections !== null;
+    plan.sections = plan.sectionsMerged ? mergeEntitiesByTimestamp(localState.sections, validRemoteSections) : localState.sections;
+  }
+  if ('projects' in remoteData) {
+    const validRemoteProjects = pickValid('projects', remoteData.projects, null);
+    plan.projectsMerged = validRemoteProjects !== null;
+    plan.projects = plan.projectsMerged ? mergeEntitiesByTimestamp(localState.projects, validRemoteProjects) : localState.projects;
+  }
+  if ('labels' in remoteData) {
+    const validRemoteLabels = pickValid('labels', remoteData.labels, null);
+    plan.labelsMerged = validRemoteLabels !== null;
+    plan.labels = plan.labelsMerged ? mergeEntitiesByTimestamp(localState.labels, validRemoteLabels) : localState.labels;
+  }
+  // The nine fields below ARE sidecar-timestamped (see fieldUpdatedAt/
+  // pickScalarField above) — each resolved by comparing the two devices'
+  // OWN last-write timestamp for that specific field, not by which write
+  // simply reached Firestore last.
+  if ('routines' in remoteData) {
+    plan.routines = pickScalarField('routines', pickValid('routines', remoteData.routines, localState.routines), localState.routines);
+  }
+  if ('rules' in remoteData) {
+    plan.rules = pickScalarField('rules', pickValid('rules', remoteData.rules, localState.rules), localState.rules);
+  }
+  if ('soundEnabled' in remoteData) {
+    plan.soundEnabled = pickScalarField(
+      'soundEnabled',
+      pickValid('soundEnabled', remoteData.soundEnabled, localState.soundEnabled),
+      localState.soundEnabled
+    );
+  }
+  if ('soundVolume' in remoteData) {
+    plan.soundVolume = pickScalarField(
+      'soundVolume',
+      pickValid('soundVolume', remoteData.soundVolume, localState.soundVolume),
+      localState.soundVolume
+    );
+  }
   if ('animationsEnabled' in remoteData) {
-    plan.animationsEnabled = pickValid('animationsEnabled', remoteData.animationsEnabled, localState.animationsEnabled);
+    plan.animationsEnabled = pickScalarField(
+      'animationsEnabled',
+      pickValid('animationsEnabled', remoteData.animationsEnabled, localState.animationsEnabled),
+      localState.animationsEnabled
+    );
   }
   // This device's own browser timezone always wins over whatever timezone
-  // the remote doc carries (another device's, possibly stale).
+  // the remote doc carries (another device's, possibly stale) — applied
+  // AFTER the timestamp-based pick below, same as before the sidecar existed,
+  // since the timezone override isn't itself part of what's being timestamped.
   if ('notificationSettings' in remoteData) {
-    const notificationSettings = pickValid('notificationSettings', remoteData.notificationSettings, localState.notificationSettings);
+    const notificationSettings = pickScalarField(
+      'notificationSettings',
+      pickValid('notificationSettings', remoteData.notificationSettings, localState.notificationSettings),
+      localState.notificationSettings
+    );
     plan.notificationSettings = { ...notificationSettings, timezone: getBrowserTimeZone() };
   }
   if ('notes' in remoteData) {
-    plan.notes = pickValid('notes', remoteData.notes, localState.notes);
+    plan.notes = pickScalarField('notes', pickValid('notes', remoteData.notes, localState.notes), localState.notes);
   } else if ('pinnedLinks' in remoteData) {
     // legacy remote doc, see notesModel.js migration note
     const migrated = migrateLinksToNotes(remoteData.pinnedLinks);
     if (migrated) plan.notes = migrated;
   }
   if ('shortcutBindings' in remoteData) {
-    plan.shortcutBindings = pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings);
+    plan.shortcutBindings = pickScalarField(
+      'shortcutBindings',
+      pickValid('shortcutBindings', remoteData.shortcutBindings, localState.shortcutBindings),
+      localState.shortcutBindings
+    );
   }
   if ('savedViews' in remoteData) {
     plan.savedViews = pickValid('savedViews', remoteData.savedViews, localState.savedViews);
@@ -664,7 +834,11 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
     plan.trash = pickValid('trash', remoteData.trash, localState.trash);
   }
   if ('sharedProjectIds' in remoteData) {
-    plan.sharedProjectIds = pickValid('sharedProjectIds', remoteData.sharedProjectIds, localState.sharedProjectIds);
+    plan.sharedProjectIds = pickScalarField(
+      'sharedProjectIds',
+      pickValid('sharedProjectIds', remoteData.sharedProjectIds, localState.sharedProjectIds),
+      localState.sharedProjectIds
+    );
   }
   if ('events' in remoteData) {
     // Same shape-validate-then-per-item-merge structure as `tasks` above:
@@ -682,6 +856,20 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false } 
     // plan.tasksMerged exists: to decide whether the merged result can
     // safely be fingerprinted against the raw incoming remoteData.
     plan.eventsMerged = eventsMerged;
+  }
+
+  // Only attach the sidecar map if this doc actually carries one (or already
+  // has local stamps to preserve) — an absent `fieldUpdatedAt` on both sides
+  // (e.g. a doc from before this sidecar existed) should leave the plan
+  // without the key entirely, same as every other optional field's `'x' in
+  // remoteData` guard, rather than writing an empty object over nothing.
+  if ('fieldUpdatedAt' in remoteData || Object.keys(localFieldStamps).length > 0) {
+    plan.fieldUpdatedAt = nextFieldStamps;
+    // The raw incoming value, kept alongside the merged result purely so
+    // didFieldStampsMergeChangeAnything can tell "the merge just echoed
+    // remote as-is" apart from "the merge kept at least one field local" —
+    // see that function's own doc comment. Never applied to state itself.
+    plan.remoteFieldUpdatedAt = remoteFieldStamps;
   }
 
   // Reaching here means skipAll was false, so remoteData was applied as-is —
@@ -738,6 +926,38 @@ export function didTaskMergeChangeAnything(plan, localTasksBefore) {
 export function didEventMergeChangeAnything(plan, localEventsBefore) {
   if (!plan.eventsMerged) return false;
   return canonicalStringify(plan.events) !== canonicalStringify(localEventsBefore);
+}
+
+/**
+ * Same question as didTaskMergeChangeAnything/didEventMergeChangeAnything,
+ * generalized for a per-entity-merged collection (sections/projects/labels
+ * — see mergeEntitiesByTimestamp in planRemoteDataMerge). `field` is the
+ * plan/localState key ('sections', 'projects', or 'labels'); `mergedFlag` is
+ * the matching `plan.sectionsMerged`/`plan.projectsMerged`/`plan.labelsMerged`
+ * key planRemoteDataMerge sets alongside it.
+ */
+export function didEntityMergeChangeAnything(plan, field, mergedFlag, localValueBefore) {
+  if (!plan[mergedFlag]) return false;
+  return canonicalStringify(plan[field]) !== canonicalStringify(localValueBefore);
+}
+
+/**
+ * Same question as didTaskMergeChangeAnything/didEventMergeChangeAnything,
+ * for the sidecar-timestamped settings fields (see fieldUpdatedAt/
+ * pickScalarField in planRemoteDataMerge): did resolving them per-field by
+ * timestamp produce a combined result that differs from remoteData's OWN
+ * fieldUpdatedAt map? It will whenever pickScalarField kept even ONE field's
+ * LOCAL value because this device's stamp for that field was newer — in
+ * which case the merged plan is no longer identical to what's in Firestore,
+ * and applyRemoteData must not fingerprint against raw remoteData (that
+ * would falsely mark the still-newer local field as "already synced" and
+ * permanently suppress the push that's supposed to carry it up) — same
+ * reasoning as the task/event equivalents above, just for whole-value fields
+ * instead of per-item arrays.
+ */
+export function didFieldStampsMergeChangeAnything(plan) {
+  if (!('fieldUpdatedAt' in plan)) return false;
+  return canonicalStringify(plan.fieldUpdatedAt) !== canonicalStringify(plan.remoteFieldUpdatedAt);
 }
 
 /**
@@ -871,6 +1091,7 @@ export function useCloudSync({
   setTrash,
   setSharedProjectIds,
   setEventsLive,
+  setFieldUpdatedAt,
   theme,
   setTheme,
   accentSeed,
@@ -907,6 +1128,7 @@ export function useCloudSync({
   googleConnected,
   googleSyncStale,
   pullFromGoogleCalendar,
+  seedConfirmedGoogleEventIds,
   runRebalance,
 }) {
   // ANONYMOUS VISITORS ARE DELIBERATELY NOT A SYNC ACCOUNT.
@@ -971,6 +1193,37 @@ export function useCloudSync({
   // apart from "a different device's write" in the live listener below.
   const deviceIdRef = useRef(null);
   if (deviceIdRef.current === null) deviceIdRef.current = getDeviceId();
+
+  // ---- Restore lock (see firestoreSync.js's RestoreLock typedef) -----------
+  // Full lifecycle: acquireAndRunRestoreLock (this device restoring) below;
+  // the live-listener effect further down (this device noticing ANOTHER
+  // device's lock and blocking) reads/writes the refs/state here.
+  //
+  // Latest restoreLock object this device has actually seen come back from
+  // Firestore — a ref (not state) because it's read by a plain setInterval
+  // callback (the staleness re-check) that must always see the CURRENT
+  // value, not whatever was closed over when the interval was first set up.
+  const restoreLockRef = useRef(null);
+  // The generation this device has already converged on (wholesale-applied,
+  // see the release-handling branch below) — starts 0 so the very first
+  // release this device ever sees (generation >= 1, since acquire always
+  // bumps by at least 1) is treated as new.
+  const lastAppliedRestoreLockGenerationRef = useRef(0);
+  // Cheap boolean another device's lock being active reduces to, read
+  // synchronously by runPushNow/schedulePush on every call — recomputed
+  // whenever restoreLockRef changes or the staleness timer ticks, rather
+  // than calling isRestoreLockActive(restoreLockRef.current, ...) at every
+  // call site (which would also need `Date.now()` threaded through).
+  const isBlockedByOtherRestoreRef = useRef(false);
+  // User-facing overlay state — TWO independent booleans, not one, because
+  // "this device is restoring" and "this device is blocked by ANOTHER
+  // device's restore" are different situations with different copy (see
+  // BlockingProgressOverlay) and must never be conflated: a device can only
+  // ever be in one of the two at a time (a device holding the lock is
+  // exempt from its own block, see isRestoreLockActive), but they are still
+  // tracked separately for clarity at the call site.
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
+  const [isBlockedByRestore, setIsBlockedByRestore] = useState(false);
 
   // Last mismatch kind (see detectGoogleCalendarStatusMismatch) already
   // warned about, so the live listener below only notifies on an actual
@@ -1103,6 +1356,16 @@ export function useCloudSync({
   // ref mutation around it.
   const runPushNow = useCallback(async () => {
     if (!user) return;
+    // Another device is actively restoring a backup — this device's own
+    // edits during that window are deliberately DISCARDED, not merely
+    // delayed (see the listener's own comment on why the armed debounce
+    // timer is cleared, not left to fire later): the whole point of the
+    // lock is that the restore becomes the truth on every device once it
+    // finishes, so queuing this device's pre-restore edits to push right
+    // after would just re-introduce the very staleness the lock exists to
+    // prevent. `pushQueuedRef` is deliberately NOT set here (unlike the
+    // ordinary single-flight-busy case below) for the same reason.
+    if (isBlockedByOtherRestoreRef.current) return;
     // Never let two full-document setDocs be on the wire at once — see
     // computePushSingleFlightDecision. Checked before the fingerprint compare
     // deliberately: the in-flight push has already optimistically stamped
@@ -1305,10 +1568,17 @@ export function useCloudSync({
   // is applied, since none of these fields carry a per-field "is this newer"
   // signal to fall back on the way tasks/blocks at least have an action id
   // for.
-  const applyRemoteData = useCallback((remoteData, { skipAll = false } = {}) => {
+  const applyRemoteData = useCallback((remoteData, { skipAll = false, authoritative = false } = {}) => {
     const localTasksBefore = stateRef.current.tasks;
     const localEventsBefore = stateRef.current.events;
-    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll });
+    // Captured for the same reason localTasksBefore/localEventsBefore are —
+    // didEntityMergeChangeAnything needs "what was local a moment ago" to
+    // tell a real content-changing per-entity merge apart from one that
+    // resolved to exactly what was already there.
+    const localSectionsBefore = stateRef.current.sections;
+    const localProjectsBefore = stateRef.current.projects;
+    const localLabelsBefore = stateRef.current.labels;
+    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll, authoritative });
     if (plan.tasksBlocks) overwritePresent(plan.tasksBlocks);
     if ('sections' in plan) setSections(plan.sections);
     if ('projects' in plan) setProjects(plan.projects);
@@ -1332,6 +1602,7 @@ export function useCloudSync({
     if ('trash' in plan) setTrash(plan.trash);
     if ('sharedProjectIds' in plan) setSharedProjectIds(plan.sharedProjectIds);
     if ('events' in plan) setEventsLive(plan.events);
+    if ('fieldUpdatedAt' in plan) setFieldUpdatedAt(plan.fieldUpdatedAt);
 
     // Did the per-task merge actually produce a task set different from what
     // was local a moment ago? See didTaskMergeChangeAnything's own doc
@@ -1343,6 +1614,14 @@ export function useCloudSync({
     // downstream regenerates from them the way `blocks` regenerates from
     // tasks), so this only feeds the fingerprint-stamp-skip decision below.
     const mergeChangedEvents = didEventMergeChangeAnything(plan, localEventsBefore);
+    // Same question for the sidecar-timestamped settings fields — see
+    // didFieldStampsMergeChangeAnything's own doc comment.
+    const mergeChangedFieldStamps = didFieldStampsMergeChangeAnything(plan);
+    // Same question for each per-entity-merged collection — see
+    // didEntityMergeChangeAnything's own doc comment.
+    const mergeChangedSections = didEntityMergeChangeAnything(plan, 'sections', 'sectionsMerged', localSectionsBefore);
+    const mergeChangedProjects = didEntityMergeChangeAnything(plan, 'projects', 'projectsMerged', localProjectsBefore);
+    const mergeChangedLabels = didEntityMergeChangeAnything(plan, 'labels', 'labelsMerged', localLabelsBefore);
 
     // A real per-task merge that changed anything produced a combined result
     // that generally matches NEITHER side's raw array exactly — blocks are
@@ -1371,7 +1650,15 @@ export function useCloudSync({
     // plan instead: the normal debounced push effect already watches
     // `state`/`stateRef` and will notice this local change like any other
     // edit and push it up on its own, no special-casing needed here.
-    if (plan.stampFingerprint && !mergeChangedTasks && !mergeChangedEvents) {
+    if (
+      plan.stampFingerprint &&
+      !mergeChangedTasks &&
+      !mergeChangedEvents &&
+      !mergeChangedFieldStamps &&
+      !mergeChangedSections &&
+      !mergeChangedProjects &&
+      !mergeChangedLabels
+    ) {
       const remoteFingerprint = computeFingerprint(remoteData);
       lastPushedFingerprintRef.current = remoteFingerprint;
       // This data just came FROM Firestore (a pull or a confirmed live
@@ -1433,8 +1720,26 @@ export function useCloudSync({
   //   `commit` (tasks/blocks) is already the tracked path — useHistoryState's
   //   commit() bumps `currentActionId` on every call — so only the timestamp
   //   re-stamp is needed there; every OTHER field needed the setter swap too.
+  //
+  // `payload.fieldUpdatedAt` (the sidecar timestamps for the nine settings-
+  // shaped fields — see useFieldStampedState) is DELIBERATELY never read
+  // here, even though it's a BACKUP_FIELDS entry. Every field below that's
+  // sidecar-stamped is applied through its TRACKED setter (setRulesTracked,
+  // etc.), and SchedulerContext wires those through useFieldStampedState —
+  // so calling one already stamps "now" for that field automatically, the
+  // same restamp-on-restore behavior restampBackupTasks/restampBackupEvents
+  // give tasks/events explicitly. Applying the BACKUP's old fieldUpdatedAt
+  // value instead would defeat that: a stale timestamp from when the backup
+  // was taken could then lose to a genuinely older edit another device made
+  // AFTER the backup but BEFORE the restore, silently un-doing the restore
+  // for that field — exactly the bug this whole restamp-on-restore design
+  // exists to prevent.
   const applyBackupPayload = useCallback((payload) => {
     const nowIso = new Date().toISOString();
+    // NOTE: there is deliberately no `'fieldUpdatedAt' in payload` branch
+    // here — see this function's own doc comment just above its declaration
+    // for the full reasoning. Every sidecar-stamped field below already
+    // restamps itself via its tracked setter.
     if ('tasks' in payload || 'blocks' in payload) {
       const nextTasks = 'tasks' in payload
         ? restampBackupTasks(pickValid('tasks', payload.tasks, stateRef.current.tasks), nowIso)
@@ -1572,6 +1877,78 @@ export function useCloudSync({
       // (subscribeUserData already filtered out the pre-ack optimistic
       // event), so every path should widen the freshness baseline.
       recordObservedWriteAt(remoteData.lastWriteAt);
+
+      // Restore lock (see firestoreSync.js's RestoreLock typedef) —
+      // deliberately BEFORE the fingerprint-equality early return just
+      // below, for the same reason the Google Calendar status check is:
+      // `restoreLock` is excluded from computeFingerprint on purpose (a lock
+      // acquire/release must never look like a data change to the merge
+      // logic), so a snapshot where the lock is the ONLY thing that changed
+      // would otherwise be skipped entirely, and this device would never
+      // learn the restore started (or finished).
+      restoreLockRef.current = remoteData.restoreLock || null;
+      const lockActiveNow = isRestoreLockActive(restoreLockRef.current, deviceIdRef.current, Date.now());
+      isBlockedByOtherRestoreRef.current = lockActiveNow;
+      setIsBlockedByRestore(lockActiveNow);
+      if (lockActiveNow) {
+        // Another device just started (or is still) restoring — drop
+        // anything of THIS device's own already sitting in the debounce
+        // timer (an edit made moments before the lock arrived) rather than
+        // letting it fire once the timer elapses. Per the intended design,
+        // a device blocked by another's restore discards its own pending
+        // edits for the duration rather than queuing them — see
+        // runPushNow's own check for why simply blocking new pushes isn't
+        // enough on its own.
+        if (pushTimerRef.current) {
+          clearTimeout(pushTimerRef.current);
+          pushTimerRef.current = null;
+        }
+      } else {
+        // Lock absent, released, or gone stale. If it's a RELEASE this
+        // device hasn't converged on yet (a higher generation than the last
+        // one it wholesale-applied), pull the finished restore and apply it
+        // AUTHORITATIVELY — not merge it — so this device ends up byte-
+        // identical to what the restoring device just finished, including
+        // removing anything local the backup didn't contain. See
+        // planRemoteDataMerge's own doc comment on why only a wholesale
+        // apply can do that.
+        const lock = restoreLockRef.current;
+        const isUnconvergedRelease =
+          lock &&
+          lock.state === 'released' &&
+          lock.deviceId !== deviceIdRef.current &&
+          (lock.generation || 0) > lastAppliedRestoreLockGenerationRef.current;
+        if (isUnconvergedRelease) {
+          lastAppliedRestoreLockGenerationRef.current = lock.generation;
+          pullUserData(user.uid)
+            .then((freshRemoteData) => {
+              if (!freshRemoteData) return;
+              recordObservedWriteAt(freshRemoteData.lastWriteAt);
+              applyRemoteData(freshRemoteData, { authoritative: true });
+              runRebalanceTriggerRef.current();
+              // Only when the restoring device's release says a Google
+              // rewrite ran as PART of this restore (see firestoreSync.js's
+              // RestoreLock typedef) — the googleEventIds in
+              // freshRemoteData.events were just confirmed live against
+              // Google by that rewrite's own batch insert, a real completed
+              // round-trip, not merely a claim carried forward from whenever
+              // the backup was taken. Seeding them here is what stops THIS
+              // device's own next poll from treating their absence (it
+              // hasn't pulled yet) as "Google deleted these" and re-pushing
+              // duplicates — see seedConfirmedGoogleEventIds' own doc
+              // comment (useGoogleCalendarSync.js) for why this is the ONE
+              // situation where seeding from Firestore rather than a live
+              // pull of this device's own is actually safe.
+              if (lock.rewroteGoogleCalendar) {
+                seedConfirmedGoogleEventIds?.(
+                  (freshRemoteData.events || []).map((e) => e.googleEventId).filter(Boolean)
+                );
+              }
+            })
+            .catch((err) => console.warn('[useCloudSync] Failed to pull restore-lock release', err));
+          return; // handled via the authoritative pull above, not the ordinary merge path below
+        }
+      }
 
       // Cross-device Google Calendar status check — deliberately BEFORE the
       // fingerprint-equality early return just below, since that fingerprint
@@ -1942,6 +2319,93 @@ export function useCloudSync({
     }
   }, [user, stateRef, setNotification, computeFingerprint, waitForPushWireToClear]);
 
+  // ---- Restore lock: the writer-side sequence ------------------------------
+  // Wraps applyBackupPayload with the full "make this restore authoritative
+  // on every device" sequence — see firestoreSync.js's RestoreLock typedef
+  // for the full design. Every restore entry point (importBackup,
+  // restoreCloudBackup, below) calls THIS instead of applyBackupPayload
+  // directly.
+  //
+  // Sequence, in order:
+  //   1. Acquire the lock (awaited BEFORE anything local changes) — so
+  //      another device's listener has a real chance to see the lock and
+  //      start blocking before this device's data starts moving. See
+  //      firestoreSync.js's pushRestoreLock.
+  //   2. Start a heartbeat interval so another device's staleness check
+  //      doesn't time out while this restore is still genuinely in progress.
+  //   3. Show this device's OWN "restoring" overlay (isRestoringBackup).
+  //   4. Apply the backup locally (unchanged applyBackupPayload call).
+  //   5. Force an IMMEDIATE push (reusing pushToCloud just above — see that
+  //      function for why a manual write can't just rely on the ordinary
+  //      200ms debounce: this write needs to be awaited and confirmed before
+  //      the lock can safely release).
+  //
+  // Deliberately does NOT release the lock itself — it returns a `release`
+  // function instead, and the CALLER decides when to invoke it. This is
+  // because restoreCloudBackupAndRewriteCalendar (SchedulerContext.jsx)
+  // needs to hold the lock across a SECOND step (rewriting Google Calendar)
+  // that happens after this function returns — releasing here and having
+  // that caller re-acquire for the rewrite would leave a gap where a blocked
+  // device unblocks, polls/pushes, and races the in-progress rewrite. An
+  // ordinary restore (no rewrite following) just calls `release()`
+  // immediately, so there's no user-visible difference for that case.
+  //
+  // `release(rewroteGoogleCalendar)` stops the heartbeat, writes
+  // state: 'released' (see firestoreSync.js's clearRestoreLock), and hides
+  // this device's own overlay. Safe to call at most once per acquisition —
+  // callers own that discipline, same as any other acquire/release pair.
+  const acquireAndRunRestoreLock = useCallback(
+    async (payload) => {
+      if (!user) {
+        // Signed out / cloud sync unavailable — nothing to coordinate with
+        // other devices, so just apply locally exactly as before this lock
+        // existed. Every restore entry point already only calls this once
+        // the payload has already validated, so this is purely "no cloud,
+        // no lock" rather than a validity check. `release` is a no-op here
+        // — nothing was ever acquired.
+        applyBackupPayload(payload);
+        return { release: async () => {} };
+      }
+      // pushRestoreLock reads the server's own current generation itself
+      // (see its own doc comment for why) — this device's local
+      // lastAppliedRestoreLockGenerationRef is not consulted here at all,
+      // only updated below once the new generation comes back.
+      const generation = await pushRestoreLock(user.uid, deviceIdRef.current);
+      // This device holds the lock now — it must never block on its own
+      // restore (isRestoreLockActive already exempts the holder by
+      // deviceId), but it DOES need to remember it has already converged on
+      // this generation, so the release it writes at the end of this same
+      // sequence doesn't make its OWN listener re-pull what it just applied.
+      lastAppliedRestoreLockGenerationRef.current = generation;
+      const heartbeatHandle = setInterval(() => {
+        heartbeatRestoreLock(user.uid).catch((err) => console.warn('[useCloudSync] Restore-lock heartbeat failed', err));
+      }, RESTORE_LOCK_HEARTBEAT_MS);
+      setIsRestoringBackup(true);
+      const release = async (rewroteGoogleCalendar = false) => {
+        clearInterval(heartbeatHandle);
+        try {
+          await clearRestoreLock(user.uid, deviceIdRef.current, generation, rewroteGoogleCalendar);
+        } catch (err) {
+          console.warn('[useCloudSync] Failed to release restore lock — other devices may stay blocked until it goes stale', err);
+        }
+        setIsRestoringBackup(false);
+      };
+      try {
+        applyBackupPayload(payload);
+        await pushToCloud();
+      } catch (err) {
+        // Applying/pushing failed — release now rather than leaving the
+        // lock (and every other device) stuck until it goes stale, then
+        // re-throw so the caller's own error handling (importBackup/
+        // restoreCloudBackup already wrap their own try/catch) still runs.
+        await release(false);
+        throw err;
+      }
+      return { release };
+    },
+    [user, applyBackupPayload, pushToCloud]
+  );
+
   // ---- Export local backup file --------------------------------------------
   const exportBackup = useCallback(() => {
     const payload = buildBackupPayload({ ...stateRef.current, theme, accentSeed, events });
@@ -1955,21 +2419,35 @@ export function useCloudSync({
   // TaskFlow" follow-up action only after a real restore — never on a
   // rejected/invalid file. See restoreCloudBackup below for the cloud-backup
   // equivalent of this same signal.
-  const importBackup = useCallback(async (file) => {
-    try {
-      const payload = await readBackupFile(file);
-      if (!isValidBackupPayload(payload)) {
-        setNotification({ type: 'error', message: 'Invalid backup file.' });
-        return false;
+  //
+  // Goes through acquireAndRunRestoreLock (not applyBackupPayload directly)
+  // so this restore becomes authoritative on every OTHER signed-in device
+  // too — see that function's own doc comment. Releases the lock
+  // IMMEDIATELY, since a plain restore (no Google rewrite following) has
+  // nothing else to hold it open for; SchedulerContext's
+  // importBackupFromFileAndRewriteCalendar is the variant that defers this
+  // via `deferRelease` — see restoreCloudBackup's own doc comment for the
+  // full reasoning, mirrored here identically.
+  const importBackup = useCallback(
+    async (file, { deferRelease = false } = {}) => {
+      try {
+        const payload = await readBackupFile(file);
+        if (!isValidBackupPayload(payload)) {
+          setNotification({ type: 'error', message: 'Invalid backup file.' });
+          return false;
+        }
+        const { release } = await acquireAndRunRestoreLock(payload);
+        setNotification({ type: 'success', message: 'Backup restored.' });
+        if (deferRelease) return { ok: true, release };
+        await release(false);
+        return true;
+      } catch (err) {
+        setNotification({ type: 'error', message: err.message || 'Failed to read backup file.' });
+        return deferRelease ? { ok: false, release: async () => {} } : false;
       }
-      applyBackupPayload(payload);
-      setNotification({ type: 'success', message: 'Backup restored.' });
-      return true;
-    } catch (err) {
-      setNotification({ type: 'error', message: err.message || 'Failed to read backup file.' });
-      return false;
-    }
-  }, [applyBackupPayload, setNotification]);
+    },
+    [acquireAndRunRestoreLock, setNotification]
+  );
 
   // Shared prune step for both backup pools (automatic and manual each have
   // their own independent retention count — see the constants above). Fetches
@@ -2089,6 +2567,33 @@ export function useCloudSync({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, cloudSynced]);
 
+  // ---- Restore-lock staleness re-check (crashed/closed restoring device) --
+  // A device being BLOCKED (see isBlockedByOtherRestoreRef/isBlockedByRestore
+  // above) only learns the lock exists via a Firestore snapshot — but a
+  // device that crashes or has its tab closed mid-restore sends no FURTHER
+  // snapshots at all, so a listener-only check would leave every other
+  // device stuck behind that lock forever. This periodic re-evaluation
+  // against the CURRENT clock (isRestoreLockActive's own `nowMs` freshness
+  // check, not just whatever the last snapshot said) is what actually
+  // recovers from that: once the lock's heartbeat is older than
+  // RESTORE_LOCK_STALE_MS, this stops treating it as active and lets
+  // ordinary syncing resume, with a toast explaining why.
+  useEffect(() => {
+    if (!user || !cloudSynced) return undefined;
+    const handle = setInterval(() => {
+      if (!isBlockedByOtherRestoreRef.current) return; // nothing to re-check
+      const stillActive = isRestoreLockActive(restoreLockRef.current, deviceIdRef.current, Date.now());
+      if (stillActive) return;
+      isBlockedByOtherRestoreRef.current = false;
+      setIsBlockedByRestore(false);
+      setNotification({
+        type: 'warning',
+        message: 'The other device stopped responding during its restore — resuming normal syncing.',
+      });
+    }, RESTORE_LOCK_HEARTBEAT_MS / 2);
+    return () => clearInterval(handle);
+  }, [user, cloudSynced, setNotification]);
+
   const loadCloudBackups = useCallback(async () => {
     if (!user) return;
     setIsLoadingBackups(true);
@@ -2105,23 +2610,40 @@ export function useCloudSync({
   // Returns whether the restore actually applied — same reasoning as
   // importBackup above (BackupsModal/SettingsPanel use this to decide
   // whether to offer the "Rewrite Google Calendar to match TaskFlow" follow-up).
-  const restoreCloudBackup = useCallback(async (backupId) => {
-    if (!user) return false;
-    try {
-      const payload = await getBackup(user.uid, backupId);
-      if (!isValidBackupPayload(payload)) {
-        setNotification({ type: 'error', message: 'Invalid cloud backup.' });
-        return false;
+  //
+  // Goes through acquireAndRunRestoreLock (not applyBackupPayload directly),
+  // same reasoning as importBackup above. `deferRelease` (default false)
+  // lets SchedulerContext's restoreCloudBackupAndRewriteCalendar keep the
+  // lock held across the Google rewrite that follows a restore, instead of
+  // this function releasing it the instant the restore itself finishes —
+  // see acquireAndRunRestoreLock's own doc comment for why releasing too
+  // early would let a blocked device race the in-progress rewrite. When
+  // deferred, the resolved value carries a `release` function the caller
+  // must invoke exactly once when it's actually done holding the lock open;
+  // the plain (non-deferred) path releases immediately and returns the
+  // ordinary boolean every existing caller already expects.
+  const restoreCloudBackup = useCallback(
+    async (backupId, { deferRelease = false } = {}) => {
+      if (!user) return false;
+      try {
+        const payload = await getBackup(user.uid, backupId);
+        if (!isValidBackupPayload(payload)) {
+          setNotification({ type: 'error', message: 'Invalid cloud backup.' });
+          return false;
+        }
+        const { release } = await acquireAndRunRestoreLock(payload);
+        setNotification({ type: 'success', message: 'Cloud backup restored.' });
+        if (deferRelease) return { ok: true, release };
+        await release(false);
+        return true;
+      } catch (err) {
+        console.error(err);
+        setNotification({ type: 'error', message: 'Failed to restore cloud backup.' });
+        return deferRelease ? { ok: false, release: async () => {} } : false;
       }
-      applyBackupPayload(payload);
-      setNotification({ type: 'success', message: 'Cloud backup restored.' });
-      return true;
-    } catch (err) {
-      console.error(err);
-      setNotification({ type: 'error', message: 'Failed to restore cloud backup.' });
-      return false;
-    }
-  }, [user, applyBackupPayload, setNotification]);
+    },
+    [user, acquireAndRunRestoreLock, setNotification]
+  );
 
   const removeCloudBackup = useCallback(async (backupId) => {
     if (!user) return;
@@ -2151,5 +2673,12 @@ export function useCloudSync({
     loadCloudBackups,
     restoreCloudBackup,
     removeCloudBackup,
+    // Restore lock overlay state — see BlockingProgressOverlay.jsx. Exactly
+    // one of these can be true at a time in practice (a device holding the
+    // lock is exempt from its own block, see isRestoreLockActive), but both
+    // are surfaced so the overlay's copy can tell "I am restoring" apart
+    // from "another device is restoring and I'm waiting" without guessing.
+    isRestoringBackup,
+    isBlockedByRestore,
   };
 }

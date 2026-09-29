@@ -129,7 +129,7 @@
   --color-accent-solid-text: #ffffff;
   --color-accent-soft: var(--color-accent-50);
   /* A second, distinct hue reserved ONLY for system/progress feedback (the
-     calendar-rewrite spinner + progress bar) — never for anything the user
+     BlockingProgressOverlay spinner + progress bar) — never for anything the user
      selects or triggers (buttons/nav/checkboxes stay on --color-accent-*).
      Derived from the accent seed by themePresets.js's
      buildSecondaryAccentRamp, same mechanism as the rest of this ramp; this
@@ -2305,12 +2305,15 @@ input.search-bar-input {
 }
 
 /* Not dismissible (no click-outside/close button — see
-   CalendarRewriteOverlay's own doc comment for why), so no need for the
+   BlockingProgressOverlay's own doc comment for why), so no need for the
    cursor pointer .modal-overlay normally implies via its click-to-close
    handler; this one never registers a click handler at all. Sits at the
-   same z-index as every other modal-overlay — a rewrite is the one thing
-   this app deliberately never lets you look past while it runs. */
-.calendar-rewrite-panel {
+   same z-index as every other modal-overlay — each of its uses (a Google
+   Calendar rewrite, a cloud backup restore) is something this app
+   deliberately never lets you look past while it runs. Renamed from
+   .calendar-rewrite-* when the component itself generalized beyond that one
+   original use — see BlockingProgressOverlay.jsx's own doc comment. */
+.blocking-progress-panel {
   background: var(--color-bg-surface-raised);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-elevated);
@@ -2325,36 +2328,36 @@ input.search-bar-input {
   animation: modal-in var(--duration-base) var(--ease-decelerate);
 }
 
-.calendar-rewrite-spinner {
+.blocking-progress-spinner {
   /* --color-accent-secondary, not the primary accent — this is the app
      doing something (system feedback), not something the user selected or
      triggered, so it gets its own hue rather than looking identical to a
      selected calendar block/board card. See that token's own comment. */
   color: var(--color-accent-secondary);
-  animation: calendar-rewrite-spin 1.1s linear infinite;
+  animation: blocking-progress-spin 1.1s linear infinite;
   margin-bottom: 12px;
 }
 
-@keyframes calendar-rewrite-spin {
+@keyframes blocking-progress-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.calendar-rewrite-title {
+.blocking-progress-title {
   margin: 0 0 6px;
   font-size: 16px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
-.calendar-rewrite-subtitle {
+.blocking-progress-subtitle {
   margin: 0 0 18px;
   font-size: 12.5px;
   color: var(--color-text-secondary);
 }
 
-.calendar-rewrite-progress-track {
+.blocking-progress-track {
   width: 100%;
   height: 8px;
   border-radius: var(--radius-full, 999px);
@@ -2362,15 +2365,15 @@ input.search-bar-input {
   overflow: hidden;
 }
 
-.calendar-rewrite-progress-fill {
+.blocking-progress-fill {
   height: 100%;
   border-radius: inherit;
-  /* Same secondary/system-feedback hue as .calendar-rewrite-spinner above. */
+  /* Same secondary/system-feedback hue as .blocking-progress-spinner above. */
   background: var(--color-accent-secondary);
   transition: width var(--duration-base) var(--ease-standard);
 }
 
-.calendar-rewrite-count {
+.blocking-progress-count {
   margin: 10px 0 0;
   font-size: 12px;
   font-weight: 600;

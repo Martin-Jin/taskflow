@@ -38,7 +38,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useHistoryState } from '../hooks/useHistoryState';
-import { usePersistedState, useLocalEditTrackedState } from '../hooks/usePersistedState';
+import { usePersistedState, useLocalEditTrackedState, useFieldStampedState, useEntityStampedState } from '../hooks/usePersistedState';
 import { useNotificationChecker } from '../hooks/useNotificationChecker';
 import { useGoogleCalendarSync } from '../hooks/useGoogleCalendarSync';
 import { useCloudSync } from '../hooks/useCloudSync';
@@ -79,8 +79,15 @@ import {
 import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAndPresenceForProjects } from '../services/sharedProjectService';
-import { RETENTION_DAYS_COMPLETED_TASKS, RETENTION_DAYS_DELETED_TASKS, RETENTION_DAYS_DELETED_EVENTS, computeCutoffMs } from '../services/dataRetention';
+import {
+  RETENTION_DAYS_COMPLETED_TASKS,
+  RETENTION_DAYS_DELETED_TASKS,
+  RETENTION_DAYS_DELETED_EVENTS,
+  RETENTION_DAYS_DELETED_ENTITIES,
+  computeCutoffMs,
+} from '../services/dataRetention';
 import { tombstoneTasks, isStaleTombstone } from '../utils/taskTombstones';
+import { tombstoneEntities, isStaleEntityTombstone } from '../utils/collectionTombstones';
 import { tombstoneEvents, isStaleEventTombstone } from '../utils/eventTombstones';
 import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
 import { setGuestDisplayName } from '../utils/guestIdentity';
@@ -467,30 +474,52 @@ export function SchedulerProvider({ children }) {
   // the context value, and the original raw/untracked one (named `*Raw`)
   // that's passed into useCloudSync so ITS OWN application of remote/backup
   // data is never mistaken for a local edit racing itself.
-  const [routines, setRoutines, setRoutinesRaw] = useLocalEditTrackedState(
-    usePersistedState('routines', getDefaultRoutines),
+  //
+  // fieldUpdatedAt: the per-field sidecar timestamp map for the nine fields
+  // below that have no per-row id of their own to merge by (see
+  // useFieldStampedState's doc comment in usePersistedState.js for the full
+  // "why"). Declared here, ahead of those nine fields, purely because
+  // useFieldStampedState needs its TRACKED setter already in hand to wrap
+  // each one. Same tracked/raw split as everything else: ordinary local
+  // edits go through the tracked setter (via useFieldStampedState, below),
+  // while useCloudSync's applyRemoteData writes an incoming remote value
+  // through the raw one.
+  const [fieldUpdatedAt, setFieldUpdatedAt, setFieldUpdatedAtRaw] = useLocalEditTrackedState(
+    usePersistedState('fieldUpdatedAt', {}),
     localNonUndoEditIdRef
   );
-  const [rules, setRules, setRulesRaw] = useLocalEditTrackedState(usePersistedState('rules', getDefaultRules), localNonUndoEditIdRef);
+  const [routines, setRoutines, setRoutinesRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('routines', getDefaultRoutines), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'routines'
+  );
+  const [rules, setRules, setRulesRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('rules', getDefaultRules), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'rules'
+  );
   // Sound effect settings — synced/backed-up siblings of routines/rules (see
   // BACKUP_FIELDS) rather than SoundContext's own local-only state, so they
   // follow the user across devices and survive a backup restore like every
   // other setting. SoundContext (rendered inside this provider) just reads
   // these via useScheduler() instead of maintaining an independent copy.
-  const [soundEnabled, setSoundEnabled, setSoundEnabledRaw] = useLocalEditTrackedState(
-    usePersistedState('soundEnabled', true),
-    localNonUndoEditIdRef
+  const [soundEnabled, setSoundEnabled, setSoundEnabledRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('soundEnabled', true), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'soundEnabled'
   );
-  const [soundVolume, setSoundVolume, setSoundVolumeRaw] = useLocalEditTrackedState(
-    usePersistedState('soundVolume', 0.5),
-    localNonUndoEditIdRef
+  const [soundVolume, setSoundVolume, setSoundVolumeRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('soundVolume', 0.5), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'soundVolume'
   );
   // Global animation toggle — same synced-setting treatment as sound above.
   // Applied to the DOM via the effect below (mirrors ThemeContext's
   // data-theme attribute) so global.css can key off it.
-  const [animationsEnabled, setAnimationsEnabled, setAnimationsEnabledRaw] = useLocalEditTrackedState(
-    usePersistedState('animationsEnabled', true),
-    localNonUndoEditIdRef
+  const [animationsEnabled, setAnimationsEnabled, setAnimationsEnabledRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('animationsEnabled', true), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'animationsEnabled'
   );
   // Notification settings (TODO.md #10). In-app firing logic lives in
   // useNotificationChecker (Phase 2); emailEnabled is inert client-side and
@@ -503,9 +532,10 @@ export function SchedulerProvider({ children }) {
   // the same list of places (useCloudSync's applyRemoteData/applyBackupPayload,
   // its cloud-push payload, and the context value below), plus BACKUP_FIELDS
   // in backupService.js.
-  const [notificationSettings, setNotificationSettings, setNotificationSettingsRaw] = useLocalEditTrackedState(
-    usePersistedState('notificationSettings', getDefaultNotificationSettings),
-    localNonUndoEditIdRef
+  const [notificationSettings, setNotificationSettings, setNotificationSettingsRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('notificationSettings', getDefaultNotificationSettings), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'notificationSettings'
   );
 
   // Keep notificationSettings.timezone resynced to the browser's own IANA
@@ -541,12 +571,16 @@ export function SchedulerProvider({ children }) {
   // old bookmark-style pinned-links shape directly (bypassing usePersistedState,
   // which only reads the *new* 'notes' key) and converts it once; from then
   // on 'notes' exists and this branch is never taken again.
-  const [notes, setNotes, setNotesRaw] = useLocalEditTrackedState(
-    usePersistedState('notes', () => {
-      const legacy = loadPersisted('pinnedLinks', null);
-      return legacy ? migrateLinksToNotes(legacy) : DEFAULT_NOTES;
-    }),
-    localNonUndoEditIdRef
+  const [notes, setNotes, setNotesRaw] = useFieldStampedState(
+    useLocalEditTrackedState(
+      usePersistedState('notes', () => {
+        const legacy = loadPersisted('pinnedLinks', null);
+        return legacy ? migrateLinksToNotes(legacy) : DEFAULT_NOTES;
+      }),
+      localNonUndoEditIdRef
+    ),
+    setFieldUpdatedAt,
+    'notes'
   );
   // Custom keyboard-shortcut rebindings — the SOURCE OF TRUTH for these still
   // lives in localStorage under this exact same key, written directly by
@@ -556,9 +590,10 @@ export function SchedulerProvider({ children }) {
   // see that file's doc comment). This is a React-state MIRROR of that same
   // localStorage entry, kept in sync by ShortcutsModal.jsx after every write,
   // purely so it can be pushed/pulled/backed-up like every other setting.
-  const [shortcutBindings, setShortcutBindings, setShortcutBindingsRaw] = useLocalEditTrackedState(
-    usePersistedState('shortcutBindings', {}),
-    localNonUndoEditIdRef
+  const [shortcutBindings, setShortcutBindings, setShortcutBindingsRaw] = useFieldStampedState(
+    useLocalEditTrackedState(usePersistedState('shortcutBindings', {}), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'shortcutBindings'
   );
   /* Named search queries (see utils/savedViews.js). Synced rather than
      device-local, unlike the anonymous view/filter SELECTION beside it: a
@@ -668,30 +703,36 @@ export function SchedulerProvider({ children }) {
   // effect further down, e.g. to strip shared items before saving), but the
   // tracked/raw split applies identically regardless of which state hook
   // backs a field.
-  const [sections, setSections, setSectionsRaw] = useLocalEditTrackedState(
-    useState(() => loadPersisted('sections', null) ?? getMockSections()),
-    localNonUndoEditIdRef
+  // sections/projects/labels ALSO run through useEntityStampedState (see its
+  // doc comment) on top of useLocalEditTrackedState: each has a stable
+  // per-row `id`, so a per-ROW `updatedAt` — not just a whole-collection
+  // sidecar stamp like the settings fields above — is what lets
+  // mergeEntitiesByTimestamp (utils/entityMerge.js) resolve a concurrent
+  // edit on one device and a DIFFERENT edit on another WITHOUT either one
+  // clobbering the other, the same fix tasks/events already have via
+  // mergeTasksByUpdatedAt/mergeEventsByUpdatedAt.
+  const [sections, setSections, setSectionsRaw] = useEntityStampedState(
+    useLocalEditTrackedState(useState(() => loadPersisted('sections', null) ?? getMockSections()), localNonUndoEditIdRef)
   );
-  const [projects, setProjects, setProjectsRaw] = useLocalEditTrackedState(
-    useState(() => loadPersisted('projects', null) ?? getMockProjects()),
-    localNonUndoEditIdRef
+  const [projects, setProjects, setProjectsRaw] = useEntityStampedState(
+    useLocalEditTrackedState(useState(() => loadPersisted('projects', null) ?? getMockProjects()), localNonUndoEditIdRef)
   );
   // labels: app-local tags (see types/index.js's Label typedef) — Todoist
   // does have its own label concept, and importFromTodoist maps a task's
   // Todoist labels onto these (creating any that don't exist yet by name),
   // but nothing here is ever pushed back to Todoist.
-  const [labels, setLabels, setLabelsRaw] = useLocalEditTrackedState(
-    useState(() => loadPersisted('labels', null) ?? []),
-    localNonUndoEditIdRef
+  const [labels, setLabels, setLabelsRaw] = useEntityStampedState(
+    useLocalEditTrackedState(useState(() => loadPersisted('labels', null) ?? []), localNonUndoEditIdRef)
   );
   // sharedProjectIds: ids of Collaborative Projects (Firestore
   // `sharedProjects/{projectId}`) this user is a member of — just a pointer
   // list so joined projects re-list on every device and survive a restore;
   // the projects' actual content lives in Firestore, not here (see
   // backupService.js's SHARED PROJECTS doc comment above BACKUP_FIELDS).
-  const [sharedProjectIds, setSharedProjectIds, setSharedProjectIdsRaw] = useLocalEditTrackedState(
-    useState(() => loadPersisted('sharedProjectIds', null) ?? []),
-    localNonUndoEditIdRef
+  const [sharedProjectIds, setSharedProjectIds, setSharedProjectIdsRaw] = useFieldStampedState(
+    useLocalEditTrackedState(useState(() => loadPersisted('sharedProjectIds', null) ?? []), localNonUndoEditIdRef),
+    setFieldUpdatedAt,
+    'sharedProjectIds'
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -768,6 +809,38 @@ export function SchedulerProvider({ children }) {
   // whole point of a tombstone is that the sync/merge layer and local
   // persistence NEED to see it; only this rendered-UI-facing view hides it.
   const visibleEvents = useMemo(() => events.filter((e) => !e.deletedAt), [events]);
+
+  // Same tombstone-hiding treatment as visibleTasks/visibleEvents above, now
+  // that personal sections/projects/labels carry their own deletion
+  // tombstones too (see utils/collectionTombstones.js and
+  // deleteSection/deleteProject/deleteLabel). A SHARED section/project is
+  // never tombstoned (see those functions' own comments), so filtering
+  // `!s.deletedAt` here is a no-op for a shared row — it simply never has
+  // the field set.
+  //
+  // KNOWN FOLLOW-UP, NOT YET DONE: introducing these three views does not,
+  // by itself, make every existing consumer tombstone-aware — most of this
+  // app's ~30 project/section/label consumers (navbar dropdown, sidebar,
+  // Board/Gantt/Calendar views, task/section pickers, the AI quick-add
+  // context builder, several `.length`-based empty states, etc.) still read
+  // the raw `projects`/`sections`/`labels` off this context value today, and
+  // swapping each of them onto `visibleProjects`/`visibleSections`/
+  // `visibleLabels` is deliberately being done as its own follow-up change,
+  // not bundled into this one — see CLAUDE.md's "Known, deferred issues".
+  // Until that follow-up lands, a project/section/label a user just deleted
+  // on ANOTHER device may still appear in pickers/dropdowns on THIS one for
+  // a moment (or vice versa) even though the sync/merge layer already
+  // correctly treats it as deleted — a UI staleness gap, not a data-loss one.
+  //
+  // CRITICAL: same rule as visibleTasks/visibleEvents — this filtering must
+  // NEVER reach `cloudSyncState.sections`/`.projects`/`.labels`, `stateRef`,
+  // the raw `sections`/`projects`/`labels` bindings used internally
+  // throughout this file, or what's persisted (savePersisted('sections', ...)
+  // etc.) — the sync/merge layer and local persistence NEED to see the
+  // tombstone; only a rendered-UI-facing view should ever hide it.
+  const visibleSections = useMemo(() => sections.filter((s) => !s.deletedAt), [sections]);
+  const visibleProjects = useMemo(() => projects.filter((p) => !p.deletedAt), [projects]);
+  const visibleLabels = useMemo(() => labels.filter((l) => !l.deletedAt), [labels]);
 
   // In-app notification checker (TODO.md #10, Phase 2) — scans tasks/blocks
   // on an interval and fires a native Notification (or Toast fallback) per
@@ -1037,6 +1110,43 @@ export function SchedulerProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- Deleted section/project/label (tombstone) retention sweep ----------
+  // Same shape and reasoning as the deleted-task/event sweeps above, for the
+  // three personal collections that now carry their own deletion tombstones
+  // (see deleteSection/deleteProject/deleteLabel/utils/collectionTombstones.js).
+  // A tombstoned row stays in the array — never physically removed at delete
+  // time — so the per-entity cross-device merge (utils/entityMerge.js) has
+  // time to see the deletion before it's gone for good. Once that window
+  // (RETENTION_DAYS_DELETED_ENTITIES) has passed, this actually drops it.
+  // Runs once on mount, reading the raw arrays directly rather than through
+  // visibleSections/visibleProjects/visibleLabels — the whole point of this
+  // sweep is to find tombstones, which those filtered views never contain.
+  // Uses the tracked setSections/setProjects/setLabels (not a raw/untracked
+  // setter): this is an ordinary local mutation of this device's own data,
+  // the same as the migration effects above, and should participate in the
+  // cloud-sync race guard like any other local edit. A pure filter (nothing
+  // added or content-changed) never triggers useEntityStampedState's own
+  // stamping — only a row whose CONTENT changes gets a fresh updatedAt, and
+  // a row that's simply removed here has no content left to stamp.
+  useEffect(() => {
+    setSections((prev) => {
+      const staleIds = new Set(prev.filter((s) => isStaleEntityTombstone(s, RETENTION_DAYS_DELETED_ENTITIES)).map((s) => s.id));
+      if (staleIds.size === 0) return prev;
+      return prev.filter((s) => !staleIds.has(s.id));
+    });
+    setProjects((prev) => {
+      const staleIds = new Set(prev.filter((p) => isStaleEntityTombstone(p, RETENTION_DAYS_DELETED_ENTITIES)).map((p) => p.id));
+      if (staleIds.size === 0) return prev;
+      return prev.filter((p) => !staleIds.has(p.id));
+    });
+    setLabels((prev) => {
+      const staleIds = new Set(prev.filter((l) => isStaleEntityTombstone(l, RETENTION_DAYS_DELETED_ENTITIES)).map((l) => l.id));
+      if (staleIds.size === 0) return prev;
+      return prev.filter((l) => !staleIds.has(l.id));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Trash retention sweep, alongside the two task sweeps above: drop trash
   // entries past TRASH_RETENTION_DAYS (and anything over the cap) once per
   // load. rememberDeletion prunes on every delete too, but an entry that aged
@@ -1087,6 +1197,7 @@ export function SchedulerProvider({ children }) {
     isRewritingCalendar,
     rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
+    seedConfirmedGoogleEventIds,
   } = useGoogleCalendarSync({
     events,
     // RAW/untracked, matching every setXRaw passed into useCloudSync (see
@@ -1278,6 +1389,10 @@ export function SchedulerProvider({ children }) {
       // personal), so unlike tasks/sections above there's no partition step —
       // the whole array goes straight into the synced bundle.
       events,
+      // Per-field sidecar timestamps for the nine settings-shaped fields
+      // above that have no per-row id of their own to merge by — see
+      // useFieldStampedState's doc comment in usePersistedState.js.
+      fieldUpdatedAt,
     }),
     [
       tasks,
@@ -1298,6 +1413,7 @@ export function SchedulerProvider({ children }) {
       trash,
       sharedProjectIds,
       events,
+      fieldUpdatedAt,
     ]
   );
 
@@ -1400,6 +1516,8 @@ export function SchedulerProvider({ children }) {
     loadCloudBackups,
     restoreCloudBackup: restoreCloudBackupRaw,
     removeCloudBackup,
+    isRestoringBackup,
+    isBlockedByRestore,
   } = useCloudSync({
     state: cloudSyncState,
     stateRef: cloudStateRef,
@@ -1430,6 +1548,7 @@ export function SchedulerProvider({ children }) {
     setTrash: setTrashRaw,
     setSharedProjectIds: setSharedProjectIdsRaw,
     setEventsLive: setEventsRaw,
+    setFieldUpdatedAt: setFieldUpdatedAtRaw,
     theme,
     setTheme,
     accentSeed,
@@ -1464,6 +1583,7 @@ export function SchedulerProvider({ children }) {
     googleConnected,
     googleSyncStale,
     pullFromGoogleCalendar,
+    seedConfirmedGoogleEventIds,
     runRebalance: triggerRebalanceFromMerge,
   });
 
@@ -1540,16 +1660,37 @@ export function SchedulerProvider({ children }) {
    * is connected (nothing to rewrite otherwise) — returns the restore's own
    * boolean result either way so the caller's UI can react the same as a
    * plain restore.
+   *
+   * Calls restoreCloudBackupRaw directly with `{ deferRelease: true }`
+   * (bypassing the plain restoreCloudBackup wrapper above) rather than
+   * releasing the restore lock the instant the restore itself finishes — see
+   * useCloudSync.js's acquireAndRunRestoreLock for why: a blocked device
+   * unblocking BEFORE the rewrite completes could poll/push and race the
+   * in-progress rewrite. The lock stays held across both steps, and
+   * `release(true)` — the `true` recording that a Google rewrite ran as
+   * part of this restore — is the last thing this sequence does, whichever
+   * way the rewrite goes (success or failure both still need to unblock
+   * every other device, so it runs unconditionally once a lock was actually
+   * acquired).
    */
   const restoreCloudBackupAndRewriteCalendar = useCallback(
     async (backupId) => {
-      const restored = await restoreCloudBackup(backupId);
-      if (restored && googleConnected) {
-        await rewriteGoogleCalendarFromTaskflow();
+      setIsBackingUp(true);
+      try {
+        const result = await restoreCloudBackupRaw(backupId, { deferRelease: true });
+        const restored = typeof result === 'object' ? result.ok : result;
+        if (!restored) return false;
+        try {
+          if (googleConnected) await rewriteGoogleCalendarFromTaskflow();
+        } finally {
+          await result.release(Boolean(googleConnected));
+        }
+        return true;
+      } finally {
+        setIsBackingUp(false);
       }
-      return restored;
     },
-    [restoreCloudBackup, googleConnected, rewriteGoogleCalendarFromTaskflow]
+    [restoreCloudBackupRaw, googleConnected, rewriteGoogleCalendarFromTaskflow]
   );
 
   /** Settings' "Restore from file" action — matches old importBackupFromFile's name. */
@@ -1557,18 +1698,27 @@ export function SchedulerProvider({ children }) {
 
   /**
    * File-restore counterpart to restoreCloudBackupAndRewriteCalendar above —
-   * same reasoning, same no-gap chaining. importBackupFromFile already returns whether the restore
-   * applied (see importBackup/applyBackupPayload).
+   * same reasoning, same no-gap chaining, same deferred-release lock
+   * handling. importBackupFromFile already returns whether the restore
+   * applied (see importBackup/applyBackupPayload) for the plain (non-defer)
+   * case, but this variant calls the hook's own `importBackup` directly with
+   * `{ deferRelease: true }` instead of going through importBackupFromFile,
+   * for the same reason restoreCloudBackupAndRewriteCalendar bypasses its
+   * own plain wrapper above.
    */
   const importBackupFromFileAndRewriteCalendar = useCallback(
     async (file) => {
-      const restored = await importBackupFromFile(file);
-      if (restored && googleConnected) {
-        await rewriteGoogleCalendarFromTaskflow();
+      const result = await importBackup(file, { deferRelease: true });
+      const restored = typeof result === 'object' ? result.ok : result;
+      if (!restored) return false;
+      try {
+        if (googleConnected) await rewriteGoogleCalendarFromTaskflow();
+      } finally {
+        await result.release(Boolean(googleConnected));
       }
-      return restored;
+      return true;
     },
-    [importBackupFromFile, googleConnected, rewriteGoogleCalendarFromTaskflow]
+    [importBackup, googleConnected, rewriteGoogleCalendarFromTaskflow]
   );
 
   /** Settings' cloud-backups picker open action — matches old refreshCloudBackups' name. */
@@ -2826,7 +2976,14 @@ export function SchedulerProvider({ children }) {
       // have this tag stripped, which is unknowable afterwards.
       const label = labels.find((l) => l.id === labelId);
       if (label) rememberDeletion(buildLabelTrashEntry({ label, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') }));
-      setLabels((prev) => prev.filter((l) => l.id !== labelId));
+      // Tombstone (deletedAt/updatedAt stamped, row kept) rather than
+      // removing from the array — labels have no sharing concept at all
+      // (every label is "personal"), so this is always the right call here,
+      // unlike deleteProject/deleteSection which have to check first. See
+      // utils/collectionTombstones.js's module doc comment for why a plain
+      // removal would let a stale rename from another device silently
+      // resurrect a label this device just deleted.
+      setLabels((prev) => tombstoneEntities(prev, [labelId], new Date().toISOString()));
       const newTasks = tasks.map((t) =>
         t.labelIds?.includes(labelId) ? { ...t, labelIds: t.labelIds.filter((id) => id !== labelId) } : t
       );
@@ -3016,8 +3173,26 @@ export function SchedulerProvider({ children }) {
         buildProjectTrashEntry({ project, sections, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') })
       );
 
-      setProjects((prev) => prev.filter((p) => p.id !== projectId));
-      setSections((prev) => prev.filter((s) => s.projectId !== projectId));
+      // A SHARED project (and its sections, cascaded below) is hard-removed
+      // exactly as before — see deleteSection's own comment on why a shared
+      // row is never tombstoned: it isn't part of this device's personal
+      // Firestore sync bundle, and the shared-sync engine below is already
+      // told about the deletion explicitly. A PERSONAL project is tombstoned
+      // instead (see utils/collectionTombstones.js) so a stale rename
+      // arriving from another device can't silently resurrect it, and its
+      // (necessarily also personal) sections are tombstoned right along with
+      // it in the same cascade this filter used to perform as a hard delete.
+      const nowIso = new Date().toISOString();
+      if (sharedId) {
+        setProjects((prev) => prev.filter((p) => p.id !== projectId));
+        setSections((prev) => prev.filter((s) => s.projectId !== projectId));
+      } else {
+        setProjects((prev) => tombstoneEntities(prev, [projectId], nowIso));
+        setSections((prev) => {
+          const idsToTombstone = prev.filter((s) => s.projectId === projectId).map((s) => s.id);
+          return tombstoneEntities(prev, idsToTombstone, nowIso);
+        });
+      }
 
       if (sharedId) {
         // Tell the sync engine BEFORE the delete goes out: an edit made just
@@ -3440,7 +3615,17 @@ export function SchedulerProvider({ children }) {
       if (section && !isSharedSection(section)) {
         rememberDeletion(buildSectionTrashEntry({ section, tasks, nowMs: Date.now(), makeId: () => generateLocalId('trash') }));
       }
-      setSections((prev) => prev.filter((s) => s.id !== sectionId));
+      // A SHARED section is hard-removed exactly as before — it's not part
+      // of this device's personal Firestore sync bundle in the first place
+      // (see partitionSectionsBySharing), so there's nothing for
+      // mergeEntitiesByTimestamp to ever compare it against, and
+      // noteSharedSectionDeleted above already tells the shared-sync engine
+      // this was deliberate. A PERSONAL section is tombstoned instead (see
+      // utils/collectionTombstones.js) so a stale rename arriving from
+      // another device can't silently resurrect it.
+      setSections((prev) =>
+        isSharedSection(section) ? prev.filter((s) => s.id !== sectionId) : tombstoneEntities(prev, [sectionId], new Date().toISOString())
+      );
       // Tasks in the deleted section fall back to "No Section", matching
       // what Todoist does (and matching this app's own local behavior before
       // sharing existed) — kept exactly the same for a shared project's
@@ -4446,15 +4631,28 @@ export function SchedulerProvider({ children }) {
       // Same tombstone-filtered treatment — see visibleEvents' own comment.
       events: visibleEvents,
       rules,
+      // Deliberately still the RAW arrays, not visibleSections/
+      // visibleProjects/visibleLabels — see those views' own comment (just
+      // above visibleTasks/visibleEvents) for why: most of this app's
+      // consumers haven't been swapped onto the tombstone-filtered view yet,
+      // so switching this binding now would be an incomplete, silent
+      // behavior change rather than a real fix. The filtered views are
+      // exposed below under their own names so follow-up work can adopt
+      // them consumer-by-consumer without another context change.
       sections,
       projects,
       labels,
+      visibleSections,
+      visibleProjects,
+      visibleLabels,
       sharedProjectIds,
       searchQuery,
       isLoading,
       isPullingCloud,
       isSyncing,
       isBackingUp,
+      isRestoringBackup,
+      isBlockedByRestore,
       isPullingGoogleEvents,
       cloudBackups,
       lastAutoBackupAt,
@@ -4576,12 +4774,17 @@ export function SchedulerProvider({ children }) {
       sections,
       projects,
       labels,
+      visibleSections,
+      visibleProjects,
+      visibleLabels,
       sharedProjectIds,
       searchQuery,
       isLoading,
       isPullingCloud,
       isSyncing,
       isBackingUp,
+      isRestoringBackup,
+      isBlockedByRestore,
       isPullingGoogleEvents,
       cloudBackups,
       lastAutoBackupAt,

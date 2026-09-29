@@ -65,6 +65,7 @@ export const BACKUP_FIELDS = [
   'trash',
   'events',
   'sharedProjectIds',
+  'fieldUpdatedAt',
 ];
 
 /**
@@ -119,8 +120,15 @@ export const BACKUP_FIELDS = [
  *   - `taskTemplates` was added 2026-08-22.
  *   - `trash` was added 2026-08-22.
  *   - `accentSeed` was added 2026-08-23 (theme presets/custom accent).
+ *   - `fieldUpdatedAt` was added 2026-09-20 (per-field sidecar timestamps for
+ *     the nine settings-shaped fields with no per-row id of their own — see
+ *     usePersistedState.js's useFieldStampedState doc comment). A restore
+ *     from a backup taken before this field existed simply has no sidecar
+ *     stamps to apply; applyBackupPayload's own tracked setters stamp "now"
+ *     for whichever of those nine fields the payload DOES carry, same as
+ *     restampBackupTasks/restampBackupEvents already do for tasks/events.
  */
-export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews', 'taskTemplates', 'trash', 'accentSeed']);
+export const OPTIONAL_BACKUP_FIELDS = new Set(['events', 'savedViews', 'taskTemplates', 'trash', 'accentSeed', 'fieldUpdatedAt']);
 
 /**
  * Expected runtime shape per BACKUP_FIELDS entry — used both by
@@ -156,6 +164,8 @@ export const FIELD_TYPES = {
   shortcutBindings: 'object',
   events: 'array',
   sharedProjectIds: 'array',
+  // Per-field ISO timestamp map — see useFieldStampedState's doc comment.
+  fieldUpdatedAt: 'object',
 };
 
 /** Does `value` match the runtime shape FIELD_TYPES declares for `field`? */
@@ -218,7 +228,19 @@ function excludeDeletedEvents(events) {
   return events.filter((event) => !event.deletedAt);
 }
 
-/** Assemble a full backup payload from current state, tagged with when it was taken. Completed one-off tasks (and their blocks), and deleted-task/deleted-event tombstones, are left out — there's nothing to restore them to. */
+/**
+ * Same reasoning as excludeDeletedTasks/excludeDeletedEvents, applied to
+ * personal sections/projects/labels now that they carry their own deletion
+ * tombstones too (see utils/collectionTombstones.js). A shared row is never
+ * tombstoned in the first place (see deleteSection/deleteProject's own
+ * comments), so this is a no-op filter for one — it simply never has
+ * `deletedAt` set.
+ */
+function excludeDeletedEntities(rows) {
+  return (rows || []).filter((row) => !row.deletedAt);
+}
+
+/** Assemble a full backup payload from current state, tagged with when it was taken. Completed one-off tasks (and their blocks), deleted-task/deleted-event tombstones, and deleted section/project/label tombstones, are left out — there's nothing to restore them to. */
 export function buildBackupPayload(state) {
   const payload = { exportedAt: new Date().toISOString() };
   BACKUP_FIELDS.forEach((field) => {
@@ -230,6 +252,9 @@ export function buildBackupPayload(state) {
     tasks: excludeDeletedTasks(tasks),
     blocks,
     events: excludeDeletedEvents(payload.events || []),
+    sections: excludeDeletedEntities(payload.sections),
+    projects: excludeDeletedEntities(payload.projects),
+    labels: excludeDeletedEntities(payload.labels),
   };
 }
 

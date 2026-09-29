@@ -22,7 +22,7 @@
  * memoized setter is just a thin useCallback wrapper around.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { trackAndSet } from '../../src/hooks/usePersistedState.js';
+import { trackAndSet, stampAndSet, stampChangedEntitiesAndSet } from '../../src/hooks/usePersistedState.js';
 import { hasAnyLocalEditRaced } from '../../src/hooks/useCloudSync.js';
 
 describe('trackAndSet', () => {
@@ -134,5 +134,170 @@ describe('useLocalEditTrackedState end-to-end with hasAnyLocalEditRaced', () => 
     // tracked setters are independent wrappers over the same ref, not
     // accidentally sharing state beyond the ref itself.
     expect(rawSetProjects).not.toHaveBeenCalled();
+  });
+});
+
+describe('stampAndSet', () => {
+  // useFieldStampedState's setter is a thin useCallback wrapper around this,
+  // same "test the plain function, not the hook" approach as trackAndSet
+  // above (see usePersistedState.js's useFieldStampedState doc comment for
+  // the full "why" — the per-field sidecar timestamp this stamps is what
+  // planRemoteDataMerge's pickScalarField later compares, see
+  // useCloudSync.test.js's 'fieldUpdatedAt sidecar merge wiring' coverage).
+
+  it('stamps the given field with an ISO timestamp and forwards the value to the tracked setter unchanged', () => {
+    const setFieldStamps = vi.fn();
+    const trackedSetRules = vi.fn();
+    stampAndSet(setFieldStamps, 'rules', trackedSetRules, { bufferDays: 2 });
+    expect(trackedSetRules).toHaveBeenCalledWith({ bufferDays: 2 });
+    expect(setFieldStamps).toHaveBeenCalledTimes(1);
+    // Called with an updater function (not a plain object) — see this
+    // function's own doc comment for why: it must never depend on or race
+    // the sidecar map's value from an earlier render.
+    const updater = setFieldStamps.mock.calls[0][0];
+    expect(typeof updater).toBe('function');
+    const result = updater({ soundVolume: '2026-08-01T00:00:00.000Z' });
+    expect(result.soundVolume).toBe('2026-08-01T00:00:00.000Z'); // other fields preserved
+    expect(typeof result.rules).toBe('string');
+    expect(Number.isNaN(new Date(result.rules).getTime())).toBe(false); // a real, parseable timestamp
+  });
+
+  it('stamps the field the setter was called for, not some other field, when two fields are stamped in sequence', () => {
+    const stamps = {};
+    const setFieldStamps = (updater) => {
+      Object.assign(stamps, updater(stamps));
+    };
+    const trackedSetRules = vi.fn();
+    const trackedSetSoundVolume = vi.fn();
+    stampAndSet(setFieldStamps, 'rules', trackedSetRules, {});
+    stampAndSet(setFieldStamps, 'soundVolume', trackedSetSoundVolume, 0.7);
+    expect(Object.keys(stamps).sort()).toEqual(['rules', 'soundVolume']);
+    expect(trackedSetRules).toHaveBeenCalledTimes(1);
+    expect(trackedSetSoundVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the functional-update form for the wrapped value exactly, same as trackAndSet', () => {
+    const setFieldStamps = vi.fn();
+    const trackedSetNotes = vi.fn();
+    const updater = (prev) => ({ ...prev, notes: [...prev.notes, 'new'] });
+    stampAndSet(setFieldStamps, 'notes', trackedSetNotes, updater);
+    expect(trackedSetNotes).toHaveBeenCalledWith(updater);
+    expect(trackedSetNotes.mock.calls[0][0]).toBe(updater);
+  });
+});
+
+describe('stampChangedEntitiesAndSet', () => {
+  // useEntityStampedState's setter is a thin useCallback wrapper around this
+  // — same "test the plain function, not the hook" approach as
+  // trackAndSet/stampAndSet above. This is the highest-risk piece of the
+  // per-entity stamping design (see useEntityStampedState's own doc comment
+  // for the full "why diffing, not stamp-everything" reasoning): getting the
+  // diff wrong in the over-stamping direction is the same class of bug
+  // CLAUDE.md's TaskDetailModal write-loop warning describes — a set that
+  // re-stamps every row on every call, not just the row that actually
+  // changed.
+
+  it('stamps updatedAt ONLY on the row whose content actually changed, leaving unrelated rows untouched (same reference)', () => {
+    const prev = [
+      { id: 'p1', name: 'Alpha' },
+      { id: 'p2', name: 'Beta' },
+    ];
+    const currentValueRef = { current: prev };
+    const trackedSetProjects = vi.fn();
+    // A rename of p1 that re-creates the WHOLE array via .map() — same
+    // pattern renameProject/etc. actually use — so p2 is a NEW object
+    // reference even though its content is unchanged.
+    const next = [
+      { id: 'p1', name: 'Alpha renamed' },
+      { id: 'p2', name: 'Beta' },
+    ];
+    stampChangedEntitiesAndSet(currentValueRef, trackedSetProjects, next);
+    expect(trackedSetProjects).toHaveBeenCalledTimes(1);
+    const result = trackedSetProjects.mock.calls[0][0];
+    const byId = new Map(result.map((r) => [r.id, r]));
+    expect(byId.get('p1').name).toBe('Alpha renamed');
+    expect(typeof byId.get('p1').updatedAt).toBe('string');
+    // p2's content is identical to before -> untouched, no stamp, same
+    // object reference as what was passed in.
+    expect(byId.get('p2').updatedAt).toBeUndefined();
+    expect(byId.get('p2')).toBe(next[1]);
+  });
+
+  it('stamps a brand-new row (no previous version at all)', () => {
+    const prev = [{ id: 'p1', name: 'Alpha' }];
+    const currentValueRef = { current: prev };
+    const trackedSetProjects = vi.fn();
+    const next = [...prev, { id: 'p2', name: 'New project' }];
+    stampChangedEntitiesAndSet(currentValueRef, trackedSetProjects, next);
+    const result = trackedSetProjects.mock.calls[0][0];
+    const byId = new Map(result.map((r) => [r.id, r]));
+    expect(typeof byId.get('p2').updatedAt).toBe('string');
+  });
+
+  it('does NOT stamp when nothing in the collection actually changed content-wise, even if the array itself is a new reference', () => {
+    const prev = [{ id: 'p1', name: 'Alpha', order: 1 }];
+    const currentValueRef = { current: prev };
+    const trackedSetProjects = vi.fn();
+    // Same content, keys in a different order — canonicalStringify (not
+    // JSON.stringify) must treat this as unchanged, same reasoning as
+    // didTaskMergeChangeAnything's own key-order regression test.
+    const next = [{ order: 1, name: 'Alpha', id: 'p1' }];
+    stampChangedEntitiesAndSet(currentValueRef, trackedSetProjects, next);
+    const result = trackedSetProjects.mock.calls[0][0];
+    expect(result[0].updatedAt).toBeUndefined();
+  });
+
+  it('resolves a functional update against the CURRENT ref value, not a stale closed-over array', () => {
+    const currentValueRef = { current: [{ id: 'p1', name: 'Alpha' }] };
+    const trackedSetProjects = vi.fn();
+    const updater = (prevRows) => prevRows.map((r) => (r.id === 'p1' ? { ...r, name: 'Alpha renamed' } : r));
+    stampChangedEntitiesAndSet(currentValueRef, trackedSetProjects, updater);
+    const result = trackedSetProjects.mock.calls[0][0];
+    expect(result[0].name).toBe('Alpha renamed');
+    expect(typeof result[0].updatedAt).toBe('string');
+  });
+
+  it('a row present before but absent after (a hard delete) is simply gone from the result, nothing thrown', () => {
+    const prev = [
+      { id: 'p1', name: 'Alpha' },
+      { id: 'p2', name: 'Beta' },
+    ];
+    const currentValueRef = { current: prev };
+    const trackedSetProjects = vi.fn();
+    const next = prev.filter((p) => p.id !== 'p2');
+    stampChangedEntitiesAndSet(currentValueRef, trackedSetProjects, next);
+    const result = trackedSetProjects.mock.calls[0][0];
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('p1');
+  });
+
+  it('stamping many unrelated edits in sequence never cross-contaminates rows (regression guard for the write-loop failure mode)', () => {
+    // Simulates N distinct single-row edits in a row, the way a user renaming
+    // several projects one after another would drive this setter repeatedly
+    // — asserts each call stamps exactly the row that changed and nothing
+    // else, however many times it's called.
+    let current = [
+      { id: 'p1', name: 'A' },
+      { id: 'p2', name: 'B' },
+      { id: 'p3', name: 'C' },
+    ];
+    const currentValueRef = { current };
+    const setValue = (rows) => {
+      current = rows;
+      currentValueRef.current = rows;
+    };
+    stampChangedEntitiesAndSet(currentValueRef, setValue, current.map((r) => (r.id === 'p1' ? { ...r, name: 'A renamed' } : r)));
+    const afterFirst = new Map(current.map((r) => [r.id, r]));
+    expect(afterFirst.get('p1').updatedAt).toBeDefined();
+    expect(afterFirst.get('p2').updatedAt).toBeUndefined();
+    expect(afterFirst.get('p3').updatedAt).toBeUndefined();
+
+    stampChangedEntitiesAndSet(currentValueRef, setValue, current.map((r) => (r.id === 'p2' ? { ...r, name: 'B renamed' } : r)));
+    const afterSecond = new Map(current.map((r) => [r.id, r]));
+    // p1's stamp from the first edit must survive untouched by the second,
+    // unrelated edit.
+    expect(afterSecond.get('p1').updatedAt).toBe(afterFirst.get('p1').updatedAt);
+    expect(afterSecond.get('p2').updatedAt).toBeDefined();
+    expect(afterSecond.get('p3').updatedAt).toBeUndefined();
   });
 });

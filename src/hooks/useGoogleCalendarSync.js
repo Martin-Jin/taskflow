@@ -690,6 +690,37 @@ export function useGoogleCalendarSync({
   // alongside the stale googleEventId it's supposed to distrust.
   const confirmedGoogleEventIdsRef = useRef(new Set());
 
+  // Whether THIS session has completed at least one clean pull covering the
+  // app's whole routine sync window (see ROUTINE_SYNC_WINDOW_DAYS/
+  // getRoutineSyncRange below) — the second, independent gate
+  // mergePulledGoogleEvents' shouldDemoteAbsentGoogleEvent checks before
+  // trusting "absent from this pull" as proof Google deleted something.
+  // confirmedGoogleEventIdsRef (above) answers "has this SPECIFIC id been
+  // seen live"; this ref answers "was the fetch that would have seen it
+  // actually a trustworthy, full-coverage one" — two different failure modes
+  // it guards against:
+  //   1. A per-calendar fetch failure (fetchEvents' own `failedCalendars`)
+  //      still returns SOME events successfully, so the pull as a whole
+  //      looks like it "worked" even though it's incomplete for whichever
+  //      calendar failed.
+  //   2. An on-demand fetch for a narrow date range (see
+  //      ensureGoogleRangeSynced) only proves absence within that narrow
+  //      slice, not across the whole window a "Google really deleted this"
+  //      inference needs to be safe.
+  // Starts `false` every session (never persisted, same reasoning as
+  // confirmedGoogleEventIdsRef — see its own doc comment) and is set `true`
+  // only by applyPulledEvents' own bookkeeping below, AFTER a routine
+  // full-window pull with zero failedCalendars completes. Reset on rewrite
+  // start (alongside confirmedGoogleEventIdsRef — a rewrite makes every
+  // prior pull's observations stale). NOT reset on disconnect, mirroring
+  // confirmedGoogleEventIdsRef's own existing behavior: disconnecting
+  // doesn't retroactively un-happen a pull that already succeeded, and
+  // reconnecting later simply resumes polling — the next successful pull
+  // re-confirms it regardless, so there's nothing a disconnect-time reset
+  // would protect against that the ordinary pull cycle doesn't already
+  // cover.
+  const hasCompletedFullWindowPullRef = useRef(false);
+
   // `${masterGoogleEventId}::${occurrenceDateIso}` -> timestamp this app
   // instance issued a deleteCalendarEventInstance call for that single
   // occurrence (SchedulerContext.deleteEvent's scope 'this'). Parallel to
@@ -765,7 +796,7 @@ export function useGoogleCalendarSync({
   // poll hand the FRESH list straight to the push sweep, so the same tick that
   // demotes an event also pushes it.
   const applyPulledEvents = useCallback(
-    (fetchedEvents, rangeStartIso, rangeEndIso) => {
+    (fetchedEvents, rangeStartIso, rangeEndIso, { isFullWindowPull = false, failedCalendars = [] } = {}) => {
       const didHardReset = !googleEventsHardResetDoneRef.current;
       // Union this fetch's own range into everything synced so far BEFORE
       // merging, so the purge check below uses the union's outer edge
@@ -797,7 +828,15 @@ export function useGoogleCalendarSync({
               recentlyDeletedGoogleEventInstancesRef.current,
               Date.now(),
               purgeBoundaryIso,
-              confirmedGoogleEventIdsRef.current
+              confirmedGoogleEventIdsRef.current,
+              // Read BEFORE this pull's own success/failure is folded in
+              // below — the gate a demotion decision sees must reflect
+              // whether a pull EARLIER than this one already proved
+              // trustworthy, never this pull's own outcome (which isn't
+              // known until after it's already fetched). This is the same
+              // "starts false/empty, only widens after" shape
+              // confirmedGoogleEventIdsRef already uses.
+              hasCompletedFullWindowPullRef.current
             );
 
       // Merge once, eagerly, against the latest events this component has been
@@ -836,6 +875,17 @@ export function useGoogleCalendarSync({
         googleEventsHardResetDoneRef.current = true; // synchronous — covers any other already-in-flight closure too
         setGoogleEventsHardResetDone(true);
       }
+      // Widen hasCompletedFullWindowPullRef only AFTER this pull is known to
+      // have succeeded cleanly — never on the strength of a narrow on-demand
+      // fetch, and never if even one calendar failed to load. Once true it
+      // stays true for the rest of the session (nothing narrows it back
+      // except a rewrite/disconnect, handled at those call sites) — a single
+      // clean full-window pull is enough to establish "this session's view
+      // of Google is trustworthy going forward", the same one-shot
+      // "confirmed" shape confirmedGoogleEventIdsRef already uses per-id.
+      if (isFullWindowPull && failedCalendars.length === 0) {
+        hasCompletedFullWindowPullRef.current = true;
+      }
       // Only queue an auto-rebalance if this pull actually changed something
       // schedule-relevant (see eventsSignature) — most poll ticks/tab-focus
       // refreshes pull back an identical event set, and rebalancing on every
@@ -848,6 +898,36 @@ export function useGoogleCalendarSync({
     },
     [setEvents, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, onEventsChanged]
   );
+
+  /**
+   * Adds `googleEventIds` to confirmedGoogleEventIdsRef directly, bypassing
+   * the normal "only a real pull confirms an id" rule — used for exactly one
+   * situation: useCloudSync.js's restore-lock release handling, when this
+   * device just wholesale-applied a restore that ALSO ran "Rewrite Google
+   * Calendar to match TaskFlow" on the restoring device
+   * (`lock.rewroteGoogleCalendar` — see firestoreSync.js's RestoreLock
+   * typedef). That's the one case where trusting ids from Firestore rather
+   * than a live pull of THIS device's own is actually safe: the restoring
+   * device didn't just claim those ids exist on Google, it just watched
+   * Google's own API hand them back from a batch insert moments ago (see
+   * rewriteGoogleCalendarFromTaskflow's own re-stamp step) — a real,
+   * already-completed round-trip this device is simply being told about
+   * secondhand through the synced doc, not asked to take on faith.
+   *
+   * NEVER call this for an ordinary restore's payload (no rewrite involved):
+   * those googleEventIds are exactly the untrustworthy claim
+   * confirmedGoogleEventIdsRef/isGoogleConfirmed exist to distrust in the
+   * first place — a backup taken before the user cleared their Google
+   * account carries ids Google has never heard of, and seeding them as
+   * "confirmed" would let a later pull's absence get treated as license to
+   * demote-and-repush something that was never real, defeating the entire
+   * protection.
+   */
+  const seedConfirmedGoogleEventIds = useCallback((googleEventIds) => {
+    for (const id of googleEventIds) {
+      if (id) confirmedGoogleEventIdsRef.current.add(id);
+    }
+  }, []);
 
   const markGoogleEventDeleted = useCallback((googleEventId) => {
     if (!googleEventId) return;
@@ -968,7 +1048,7 @@ export function useGoogleCalendarSync({
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
             const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
             if (cancelled) return;
-            applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+            applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso, { isFullWindowPull: true, failedCalendars });
             markGoogleSyncSucceeded();
             if (failedCalendars.length > 0) {
               console.warn(`[useGoogleCalendarSync] Couldn't load events from: ${failedCalendars.join(', ')}`);
@@ -1044,8 +1124,11 @@ export function useGoogleCalendarSync({
             // checked below alongside the existing isGoogleAuthError case.
             await requestAccessToken(true);
             const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
-            const { events: fetchedEvents } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
-            const { events: mergedEvents } = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+            const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
+            const { events: mergedEvents } = applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso, {
+              isFullWindowPull: true,
+              failedCalendars,
+            });
             markGoogleSyncSucceeded();
             // Also push any event still unsynced since the last tick — one
             // whose one-shot push at create/edit time failed, or one restored
@@ -1233,7 +1316,7 @@ export function useGoogleCalendarSync({
       try {
         const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
         const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
-        applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+        applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso, { isFullWindowPull: true, failedCalendars });
         markGoogleSyncSucceeded();
         if (failedCalendars.length > 0) {
           setNotification({
@@ -1269,7 +1352,7 @@ export function useGoogleCalendarSync({
     try {
       const { rangeStartIso, rangeEndIso } = getRoutineSyncRange();
       const { events: fetchedEvents, failedCalendars } = await fetchGoogleEventsTracked(rangeStartIso, rangeEndIso);
-      applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso);
+      applyPulledEvents(fetchedEvents, rangeStartIso, rangeEndIso, { isFullWindowPull: true, failedCalendars });
       markGoogleSyncSucceeded();
       if (failedCalendars.length > 0) {
         setNotification({
@@ -1384,6 +1467,12 @@ export function useGoogleCalendarSync({
             // into this catch instead.
             await requestAccessToken(true);
             const { events: fetchedEvents } = await fetchGoogleEventsTracked(needed.startIso, needed.endIso);
+            // Deliberately NOT passed { isFullWindowPull: true } — `needed`
+            // is a narrow on-demand slice (see ensureGoogleRangeSynced's own
+            // doc comment above), not the app's full routine sync window, so
+            // it must never widen hasCompletedFullWindowPullRef. See
+            // eventSyncService.js's shouldDemoteAbsentGoogleEvent for why
+            // that distinction matters for the demotion decision.
             applyPulledEvents(fetchedEvents, needed.startIso, needed.endIso);
             markGoogleSyncSucceeded();
             return;
@@ -1670,7 +1759,7 @@ export function useGoogleCalendarSync({
 
   const [isRewritingCalendar, setIsRewritingCalendar] = useState(false);
   // { done, total } | null — live progress through the rewrite's delete+insert
-  // work, surfaced by CalendarRewriteOverlay/SettingsPanel so a long-running
+  // work, surfaced by BlockingProgressOverlay/SettingsPanel so a long-running
   // rewrite never looks indistinguishable from a hang. Both numbers count
   // individual EVENTS (the unit a user actually recognizes), but `done`
   // advances one BATCH at a time (up to MAX_BATCH_SIZE events per step) since
@@ -1748,6 +1837,12 @@ export function useGoogleCalendarSync({
     // every previously-confirmed id is about to become stale. Clearing here
     // means the set only ever holds ids the rewrite's own inserts confirm.
     confirmedGoogleEventIdsRef.current = new Set();
+    // Same reasoning applies one level up: any pull BEFORE this rewrite
+    // proved a snapshot of Google that the rewrite is about to make stale by
+    // construction, so it shouldn't keep backing a demotion decision after
+    // this point either. The next routine pull re-establishes it once the
+    // rewrite's own results are what's actually live.
+    hasCompletedFullWindowPullRef.current = false;
     setIsRewritingCalendar(true);
     try {
       // `events` arrives fresh as a prop on every render, so the closed-over
@@ -1781,8 +1876,26 @@ export function useGoogleCalendarSync({
       // hook receives it that way, not the tombstone-hidden `visibleEvents`
       // view), so without this check a rewrite would re-create on Google the
       // exact event the user just deleted.
+      //
+      // The "is this the user's own primary calendar" check must accept BOTH
+      // the literal string 'primary' AND primaryCalendarIdRef.current, the
+      // same two-way comparison isUnsyncedPushableEvent uses (see that
+      // function's own doc comment for the full explanation) — Google's
+      // calendarList reports the user's own default calendar under their real
+      // email address, not the literal word "primary", so a pulled event's
+      // calendarId is commonly that email. Comparing only against the literal
+      // string here (as this rewrite path used to) meant a pulled primary-
+      // calendar event was wrongly treated as belonging to someone else's
+      // calendar and silently excluded from the authoritative set — so a
+      // rewrite would delete it from Google (the unconditional delete-by-range
+      // pass isn't scoped by this filter) but never re-create it, quietly
+      // losing the event instead of just leaving it alone.
       const primaryEvents = latestEvents.filter(
-        (e) => (e.source !== 'google' || e.calendarId === 'primary') && !isPastCalendarItem(e) && !isBlockSourcedEvent(e) && !e.deletedAt
+        (e) =>
+          (e.source !== 'google' || e.calendarId === 'primary' || e.calendarId === primaryCalendarIdRef.current) &&
+          !isPastCalendarItem(e) &&
+          !isBlockSourcedEvent(e) &&
+          !e.deletedAt
       );
 
       // Every primary-scoped local event is re-pushed, including ones
@@ -1926,12 +2039,28 @@ export function useGoogleCalendarSync({
       // A non-primary (subscribed/foreign) event was never part of the
       // rewrite at all — its Google copy still exists untouched, so it's
       // returned completely unmodified.
+      //
+      // Same two-way "is this actually the user's own primary calendar"
+      // comparison as the authoritative-set filter above (and
+      // isUnsyncedPushableEvent) — checking only the literal string 'primary'
+      // here wrongly treated the user's own primary-calendar events (pulled
+      // with calendarId set to their real email) as foreign and returned them
+      // unmodified, leaving their now-deleted-in-phase-1 googleEventId stamped
+      // as if still valid. That's exactly the "actively harmful" stale-id case
+      // described above: the event would look already-synced forever and
+      // silently never reappear on the calendar.
       const rewriteStampIso = new Date().toISOString();
       setEvents((prev) =>
         prev
-          .filter((e) => !((e.source !== 'google' || e.calendarId === 'primary') && isBlockSourcedEvent(e)))
+          .filter(
+            (e) =>
+              !(
+                (e.source !== 'google' || e.calendarId === 'primary' || e.calendarId === primaryCalendarIdRef.current) &&
+                isBlockSourcedEvent(e)
+              )
+          )
           .map((e) => {
-            if (e.source === 'google' && e.calendarId !== 'primary') return e;
+            if (e.source === 'google' && e.calendarId !== 'primary' && e.calendarId !== primaryCalendarIdRef.current) return e;
             // Past events were excluded from the rewrite, so their Google
             // copies survive untouched and their ids stay valid — same
             // reasoning as updatedBlocks above.
@@ -2026,5 +2155,6 @@ export function useGoogleCalendarSync({
     isRewritingCalendar,
     rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
+    seedConfirmedGoogleEventIds,
   };
 }

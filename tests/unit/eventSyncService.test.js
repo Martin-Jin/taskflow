@@ -162,6 +162,153 @@ describe('mergePulledGoogleEvents — restored/unconfirmed events are re-pushed,
   });
 });
 
+describe('mergePulledGoogleEvents — hasCompletedFullWindowPull (the restore-then-duplicate fix)', () => {
+  // The bug this closes: device A restores a backup and (optionally) rewrites
+  // Google Calendar to match it. Device B receives the restored events over
+  // Firestore, including a googleEventId it never personally confirmed live
+  // itself — but useGoogleCalendarSync.js's seedConfirmedGoogleEventIds can
+  // seed that id into B's confirmedGoogleEventIds directly when A's release
+  // says a Google rewrite ran (a real, already-completed round-trip A just
+  // watched happen). If B's OWN next pull is a partial one (a per-calendar
+  // fetch failure) or a narrow on-demand fetch (jumping the calendar view far
+  // ahead), the OLD code would still see "confirmed id, absent from this
+  // pull" and treat that as a genuine Google-side delete — demoting the event
+  // (clearing its googleEventId) and letting the push sweep immediately
+  // re-create it on Google as a duplicate, even though nothing was ever
+  // actually deleted; this pull just didn't look thoroughly enough to say
+  // either way.
+  //
+  // The fix: `hasCompletedFullWindowPull` gates the ENTIRE demote-or-delete
+  // decision, not just the delete half. When it's false, an in-scope, pull-
+  // absent event is left completely untouched — neither deleted (isGoogleConfirmed
+  // says nothing this pull can trust) NOR demoted-and-repushed (which is what
+  // actually caused the duplicate). Both directions must keep working — see
+  // calendarLayout.test.js for the precedent on pinning both sides of a fix
+  // like this in the same suite: the wipe-prevention tests above this block
+  // (all 79, unchanged) confirm a genuinely unconfirmed event still survives
+  // via demotion when the pull IS trustworthy; the tests below confirm a
+  // CONFIRMED event now also survives, untouched, when the pull is NOT.
+  //
+  // Positioned as the LAST positional argument (after confirmedGoogleEventIds)
+  // and defaults to `true`, so every call above this block that omits it
+  // exercises the pre-existing "pull was fine" policy unchanged.
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+
+  it('a CONFIRMED event is left completely untouched when the pull itself was untrustworthy — this is the actual fix', () => {
+    const seededFromAnotherDevicesRewrite = googleEvent({
+      id: 'local1',
+      googleEventId: 'id-restoring-device-just-confirmed',
+      date: '2026-08-20',
+      title: 'Shopping',
+    });
+    const result = mergePulledGoogleEvents(
+      [seededFromAnotherDevicesRewrite],
+      [],
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      new Set(['id-restoring-device-just-confirmed']), // seeded via seedConfirmedGoogleEventIds from a restore-lock release
+      false // but THIS device's own pull was partial/narrow
+    );
+    // Before this fix, a confirmed id absent from ANY pull (however partial
+    // or narrow) was demoted (googleEventId cleared) and immediately
+    // re-pushed as a duplicate. Now it's left byte-for-byte as it was —
+    // nothing to push, nothing deleted — until a genuinely trustworthy pull
+    // comes along and actually decides its fate.
+    expect(result).toEqual([seededFromAnotherDevicesRewrite]);
+  });
+
+  it('an UNCONFIRMED event is ALSO left untouched (not demoted) when the pull was untrustworthy, unlike the always-demote policy an untrustworthy pull used to get', () => {
+    const neverConfirmed = googleEvent({ id: 'local1', googleEventId: 'stale-from-backup', date: '2026-08-20' });
+    const result = mergePulledGoogleEvents(
+      [neverConfirmed],
+      [],
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      new Set(),
+      false
+    );
+    expect(result).toEqual([neverConfirmed]);
+  });
+
+  it('once hasCompletedFullWindowPull is true, behavior reverts to the pre-fix policy: unconfirmed -> demoted and re-pushable', () => {
+    const stillUnconfirmed = googleEvent({ id: 'local1', googleEventId: 'stale-from-backup', date: '2026-08-20' });
+    const result = mergePulledGoogleEvents(
+      [stillUnconfirmed],
+      [],
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      new Set(),
+      true
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].googleEventId).toBeNull(); // demoted, eligible for the push sweep — same as before this fix
+  });
+
+  it('once hasCompletedFullWindowPull is true, a CONFIRMED event absent from the pull is genuinely deleted — the trustworthy-pull path is unaffected', () => {
+    const genuinelyDeleted = googleEvent({ id: 'local1', googleEventId: 'was-live', date: '2026-08-20' });
+    const result = mergePulledGoogleEvents(
+      [genuinelyDeleted],
+      [],
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      new Set(['was-live']),
+      true
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('defaulting hasCompletedFullWindowPull (omitted entirely) preserves the pre-fix policy — confirmation alone decides', () => {
+    const genuinelyDeleted = googleEvent({ id: 'local1', googleEventId: 'was-live', date: '2026-08-20' });
+    const result = mergePulledGoogleEvents(
+      [genuinelyDeleted],
+      [],
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      new Set(['was-live'])
+      // hasCompletedFullWindowPull omitted -> defaults to true
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('a genuinely OUT-OF-SCOPE event is untouched regardless of hasCompletedFullWindowPull — the two checks are independent', () => {
+    const outOfScope = googleEvent({ id: 'local1', googleEventId: 'faraway', date: '2026-09-15' });
+    const result = mergePulledGoogleEvents(
+      [outOfScope],
+      [],
+      rangeStart,
+      rangeEnd,
+      new Map(),
+      new Map(),
+      Date.now(),
+      rangeStart,
+      new Set(['faraway']),
+      false
+    );
+    expect(result).toEqual([outOfScope]);
+  });
+});
+
 describe('mergePulledGoogleEvents — replacement detection (a series gets a new Google master id)', () => {
   // THE REPORTED BUG: editing a recurring event's own pattern directly in
   // Google Calendar can make Google mint an entirely new master event id for
@@ -807,9 +954,12 @@ describe('resolvePulledEventConflict — pure timestamp comparison', () => {
     expect(resolvePulledEventConflict(local, pulled)).toBe('local');
   });
 
-  it('Google pull newer than local edit wins', () => {
-    const local = { localUpdatedAt: '2026-08-10T09:00:00.000Z' };
-    const pulled = { googleUpdatedAt: '2026-08-10T12:00:00.000Z' };
+  it('Google pull newer than local edit wins, when the pull actually changed something', () => {
+    // Distinct titles on each side — see 'Google pull newer but content-
+    // identical' below for the companion case where the pull is newer but
+    // describes no real change, which correctly keeps local instead.
+    const local = { title: 'Old title', localUpdatedAt: '2026-08-10T09:00:00.000Z' };
+    const pulled = { title: 'New title from Google', googleUpdatedAt: '2026-08-10T12:00:00.000Z' };
     expect(resolvePulledEventConflict(local, pulled)).toBe('pulled');
   });
 
@@ -832,6 +982,83 @@ describe('resolvePulledEventConflict — pure timestamp comparison', () => {
     const local = { localUpdatedAt: '2026-08-10T12:00:00.000Z' };
     expect(resolvePulledEventConflict(local, { googleUpdatedAt: null })).toBe('local');
     expect(resolvePulledEventConflict(local, {})).toBe('local');
+  });
+
+  describe('content-aware refinement: a newer Google `updated` alone is not proof of a content change', () => {
+    // Google bumps `updated` for things TaskFlow doesn't even track (an
+    // attendee RSVP, a reminder tweak, a colour change) — so "pulled is
+    // newer" and "pulled actually changed anything" are different questions.
+    // This only ever compares against local's CURRENT content (there's no
+    // snapshot of what local looked like before its own edit to compare
+    // against), so it's a narrower guarantee than "never loses a real local
+    // edit to a content-free bump" — see resolvePulledEventConflict's own
+    // doc comment.
+
+    it('Google pull newer but content-identical to local: keeps local rather than a pointless replacement', () => {
+      const local = {
+        title: 'Team sync',
+        date: '2026-08-10',
+        startTime: '09:00',
+        endTime: '09:30',
+        localUpdatedAt: '2026-08-10T09:00:00.000Z',
+      };
+      const pulled = {
+        title: 'Team sync',
+        date: '2026-08-10',
+        startTime: '09:00',
+        endTime: '09:30',
+        googleUpdatedAt: '2026-08-10T12:00:00.000Z', // newer, but nothing above actually differs
+      };
+      expect(resolvePulledEventConflict(local, pulled)).toBe('local');
+    });
+
+    it('Google pull newer AND content differs: pulled still correctly wins', () => {
+      const local = {
+        title: 'Team sync',
+        startTime: '09:00',
+        endTime: '09:30',
+        localUpdatedAt: '2026-08-10T09:00:00.000Z',
+      };
+      const pulled = {
+        title: 'Team sync (moved)',
+        startTime: '10:00',
+        endTime: '10:30',
+        googleUpdatedAt: '2026-08-10T12:00:00.000Z',
+      };
+      expect(resolvePulledEventConflict(local, pulled)).toBe('pulled');
+    });
+
+    it('a description/location/recurrenceRule/overrides difference still counts as content, not just title/date/time', () => {
+      const local = {
+        title: 'Standup',
+        description: 'Old notes',
+        localUpdatedAt: '2026-08-10T09:00:00.000Z',
+      };
+      const pulled = {
+        title: 'Standup',
+        description: 'New notes from Google',
+        googleUpdatedAt: '2026-08-10T12:00:00.000Z',
+      };
+      expect(resolvePulledEventConflict(local, pulled)).toBe('pulled');
+    });
+
+    it('this refinement only applies when pulled is NEWER — a content-identical pull that is OLDER than local still correctly keeps local via the ordinary timestamp rule', () => {
+      const local = {
+        title: 'Standup',
+        localUpdatedAt: '2026-08-10T12:00:00.000Z',
+      };
+      const pulled = {
+        title: 'Standup',
+        googleUpdatedAt: '2026-08-10T09:00:00.000Z',
+      };
+      expect(resolvePulledEventConflict(local, pulled)).toBe('local');
+    });
+
+    it('does not change the outcome for an event that was never locally edited (rule 1 still short-circuits first)', () => {
+      const local = { title: 'Standup', localUpdatedAt: null };
+      const pulled = { title: 'Standup (renamed on Google)', googleUpdatedAt: '2026-08-10T09:00:00.000Z' };
+      expect(resolvePulledEventConflict(local, pulled)).toBe('pulled');
+    });
   });
 });
 

@@ -28,7 +28,7 @@ import TimerWidget from './components/Common/TimerWidget';
 import BrandMark from './components/Common/BrandMark';
 import CompleteTaskConfirmModal from './components/Common/CompleteTaskConfirmModal';
 import ConfirmModal from './components/Common/ConfirmModal';
-import CalendarRewriteOverlay from './components/Common/CalendarRewriteOverlay';
+import BlockingProgressOverlay from './components/Common/BlockingProgressOverlay';
 import AccountButton from './components/Nav/AccountButton';
 import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
@@ -214,6 +214,10 @@ function AppShell() {
     taskTemplates,
     setTaskTemplates,
     instantiateTemplate,
+    isRewritingCalendar,
+    rewriteProgress,
+    isRestoringBackup,
+    isBlockedByRestore,
   } = useScheduler();
 
   // Shared by the sidebar, List view, and Board view — selecting a project
@@ -716,7 +720,22 @@ function AppShell() {
       )}
       <CompleteTaskConfirmModal />
       <ConfirmModal />
-      <CalendarRewriteOverlay />
+      <BlockingProgressOverlay
+        active={isRewritingCalendar}
+        title="Rewriting Google Calendar…"
+        subtitle="Don't close this tab or make other changes until this finishes."
+        progress={rewriteProgress}
+      />
+      <BlockingProgressOverlay
+        active={isRestoringBackup}
+        title="Restoring backup…"
+        subtitle="Don't close this tab until this finishes — it's also being applied to your other devices."
+      />
+      <BlockingProgressOverlay
+        active={isBlockedByRestore}
+        title="Restoring on another device…"
+        subtitle="Another device is restoring a backup. Wait for it to finish — changes made here right now won't be saved."
+      />
     </div>
   );
 }

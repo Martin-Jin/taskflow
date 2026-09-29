@@ -41,6 +41,7 @@ function makeSampleState() {
     trash: [{ id: 'tr1', kind: 'label', name: 'urgent', deletedAt: 1, label: { id: 'l1', name: 'urgent' }, detached: [] }],
     events: [{ id: 'e1', title: 'Standup', date: '2026-07-31' }],
     sharedProjectIds: ['sp1'],
+    fieldUpdatedAt: { rules: '2026-07-31T09:00:00.000Z', soundVolume: '2026-07-30T09:00:00.000Z' },
   };
 }
 
@@ -318,13 +319,25 @@ describe('applyBackupPayload field coverage (static source cross-check)', () => 
     applyBackupPayloadSource = fullSource.slice(start, end);
   });
 
-  it('has an `in payload` check for every BACKUP_FIELDS entry (except tasks/blocks, handled via a combined check)', () => {
+  it('has an `in payload` check for every BACKUP_FIELDS entry (except tasks/blocks, handled via a combined check, and fieldUpdatedAt, deliberately never read from the payload)', () => {
     const combinedCheckFields = ['tasks', 'blocks'];
+    // fieldUpdatedAt is a deliberate exception, not a missed field: every
+    // sidecar-stamped field it covers (rules/soundEnabled/etc.) is restored
+    // through its TRACKED setter, which auto-stamps "now" via
+    // useFieldStampedState — so applying the BACKUP's own (stale)
+    // fieldUpdatedAt value would fight that restamp-on-restore behavior
+    // instead of complementing it. See applyBackupPayload's own doc comment,
+    // right above its declaration, for the full reasoning.
+    const neverReadFromPayload = ['fieldUpdatedAt'];
     for (const field of BACKUP_FIELDS) {
-      if (combinedCheckFields.includes(field)) continue;
+      if (combinedCheckFields.includes(field) || neverReadFromPayload.includes(field)) continue;
       expect(applyBackupPayloadSource).toContain(`'${field}' in payload`);
     }
     // tasks/blocks are restored together via a single combined guard.
     expect(applyBackupPayloadSource).toContain("'tasks' in payload || 'blocks' in payload");
+    // Confirms the exemption is intentional and documented, not just an
+    // omission this test happens to allow — the comment explaining why must
+    // actually exist in the function it's describing.
+    expect(applyBackupPayloadSource).toContain('fieldUpdatedAt');
   });
 });

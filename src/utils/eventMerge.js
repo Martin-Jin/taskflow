@@ -32,17 +32,16 @@
  * newer delete wins over a stale edit, and a newer edit correctly "undeletes"
  * a stale tombstone.
  *
+ * The actual merge is entityMerge.js's mergeEntitiesByTimestamp — this file
+ * just calls it with `localUpdatedAt` as the timestamp field. See
+ * entityMerge.js for the shared mechanics.
+ *
  * Extracted as a pure function (no Firebase/React/Date.now() side effects) so
  * it's unit-testable in isolation — same precedent as taskMerge.js.
  * ============================================================================
  */
 
-/** Epoch millis for `event.localUpdatedAt`, or null if missing/unparseable. */
-function localUpdatedAtMillis(event) {
-  if (!event?.localUpdatedAt) return null;
-  const ms = new Date(event.localUpdatedAt).getTime();
-  return Number.isNaN(ms) ? null : ms;
-}
+import { mergeEntitiesByTimestamp } from './entityMerge.js';
 
 /**
  * Per-event merge of two CalendarEvent arrays by `localUpdatedAt`.
@@ -68,40 +67,5 @@ function localUpdatedAtMillis(event) {
  * @returns {import('../types').CalendarEvent[]}
  */
 export function mergeEventsByUpdatedAt(localEvents, remoteEvents) {
-  const localById = new Map((localEvents || []).map((e) => [e.id, e]));
-  const remoteById = new Map((remoteEvents || []).map((e) => [e.id, e]));
-
-  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
-  const merged = [];
-
-  for (const id of ids) {
-    const local = localById.get(id);
-    const remote = remoteById.get(id);
-
-    if (local && !remote) {
-      merged.push(local);
-      continue;
-    }
-    if (remote && !local) {
-      merged.push(remote);
-      continue;
-    }
-
-    const localMs = localUpdatedAtMillis(local);
-    const remoteMs = localUpdatedAtMillis(remote);
-
-    if (localMs === null && remoteMs === null) {
-      merged.push(local); // both missing/invalid — arbitrary but deterministic
-    } else if (remoteMs === null) {
-      merged.push(local); // only local has a valid timestamp
-    } else if (localMs === null) {
-      merged.push(remote); // only remote has a valid timestamp
-    } else if (remoteMs > localMs) {
-      merged.push(remote);
-    } else {
-      merged.push(local); // local newer, or a tie
-    }
-  }
-
-  return merged;
+  return mergeEntitiesByTimestamp(localEvents, remoteEvents, { timestampField: 'localUpdatedAt' });
 }
