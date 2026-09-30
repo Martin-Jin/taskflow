@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.7.6',
+    date: '2026-09-30',
+    title: 'Your name now shows on your own comments',
+    changes: [
+      'Comments on your personal (non-shared) tasks now show your name above the comment, the same way comments on shared tasks already did.',
+    ],
+  },
+  {
     version: '10.7.5',
     date: '2026-09-20',
     title: 'Fixed Google Calendar sync losing updates from other devices',
