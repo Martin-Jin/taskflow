@@ -238,9 +238,7 @@ export default function CommentThread({ task }) {
                   <span className="account-avatar account-avatar-fallback">{authorName[0].toUpperCase()}</span>
                 )}
                 <div className="comment-body">
-                  {isSharedTask && c.authorDisplayName && (
-                    <span className="comment-author">{c.authorDisplayName}</span>
-                  )}
+                  {authorName !== '?' && <span className="comment-author">{authorName}</span>}
                   {c.text && (
                     <p className="comment-text">
                       {parseCommentBody(c.text).map((seg, i) =>
