@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.8.2',
+    date: '2026-10-03',
+    title: 'Scheduled blocks follow "must be done on due date"',
+    changes: [
+      'Turning "must be done on its due date" on or off for a task that is already scheduled now moves its calendar blocks straight away, including the sub-tasks of a parent task, instead of leaving the old blocks where they were.',
+    ],
+  },
+  {
     version: '10.8.1',
     date: '2026-10-02',
     title: 'Scheduled tasks no longer pushed to Google Calendar',

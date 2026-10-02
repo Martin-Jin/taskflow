@@ -41,6 +41,27 @@ function isSameSchedulingValue(a, b) {
 }
 
 /**
+ * Does any task changed by a "knock-on" sync (e.g. "must be done on its due
+ * date" being copied from a parent task down onto its sub-tasks) need a
+ * rebalance? The edited task itself may have no block of its own — a parent
+ * with sub-tasks is never scheduled directly — while the sub-tasks it just
+ * changed do, so checking only the edited task would leave their old blocks
+ * sitting on the wrong day.
+ *
+ * `syncUpdates` maps task id -> the partial patch the sync will apply (the
+ * same shape computeEnforceDueDateSyncUpdates returns); `blocks` is the
+ * current block list.
+ */
+export function needsRescheduleOnCascadedUpdates(tasks, syncUpdates, blocks, currentUserId) {
+  for (const [taskId, patch] of syncUpdates) {
+    const prevTask = tasks.find((t) => t.id === taskId);
+    const hasBlock = blocks.some((b) => b.taskId === taskId && !b.isLocked);
+    if (needsRescheduleOnTaskUpdate(prevTask, patch, hasBlock, currentUserId)) return true;
+  }
+  return false;
+}
+
+/**
  * Decide whether editing a task (SchedulerContext's updateTask) should queue
  * a rebalance. Extracted as a pure function so this dirty-check — otherwise a
  * closure inside a React context — can be unit tested; see CLAUDE.md's rule
@@ -68,6 +89,14 @@ export function needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedSchedu
   const recurrenceChanged = 'recurrenceString' in updates && updates.recurrenceString !== prevTask.recurrenceString;
 
   if ((dueDateChanged || durationChanged || otherSchedulingFieldChanged || recurrenceChanged) && hasUnlockedScheduledBlock) {
+    return true;
+  }
+
+  // Switching "must be done on its due date" either way can change where a
+  // task fits even when it has no block yet: a task that overflowed its
+  // deadline window has nothing to invalidate, but dropping the requirement
+  // widens its window and it needs a rebalance to finally be placed.
+  if ('enforceDueDate' in updates && !!updates.enforceDueDate !== !!prevTask.enforceDueDate) {
     return true;
   }
 
