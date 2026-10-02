@@ -1132,19 +1132,27 @@ every field that can conflict carries one:
 
 **Restore is a force-push, coordinated by a lock.** Restamping restored rows
 to "now" isn't enough on its own: another device's already-armed push can land
-after the restore and win purely by writing last. So a restoring device writes
-a `restoreLock` on `users/{uid}` first (`useCloudSync.js`'s
-`acquireAndRunRestoreLock`, `firestoreSync.js`'s `pushRestoreLock`), with a
-heartbeat. Other devices stop pushing and stop merging snapshots while it's
-held (an armed push is cancelled and their in-progress edits are discarded, by
-design), and show a blocking overlay (`BlockingProgressOverlay.jsx`). On
-release they apply the result wholesale (`planRemoteDataMerge`'s
-`authoritative` option) rather than merging, which is the only way a device can
-lose something the backup doesn't contain. A stale heartbeat
-(`RESTORE_LOCK_STALE_MS`) frees everyone if the restoring device crashes. Not
-closed: a push already on the wire when the lock arrives, and a device offline
-for the whole restore (it just competes by timestamp when it returns). The lock
-only covers Firestore traffic — see the Google gap below.
+after the restore and win purely by writing last. So a restoring device takes a
+`restoreLock` on `users/{uid}` first (`useCloudSync.js`'s
+`acquireAndRunRestoreLock`, `firestoreSync.js`'s `pushRestoreLock`):
+
+1. The restoring device writes the lock, with a heartbeat, before touching
+   any local data.
+2. Every other device sees it and stops pushing and stops merging snapshots.
+   An armed push is cancelled and in-progress edits are discarded, by design.
+   A blocking overlay (`BlockingProgressOverlay.jsx`) tells the user to wait.
+3. The restoring device applies the backup, pushes immediately, and releases
+   the lock.
+4. On release, the other devices apply the result wholesale
+   (`planRemoteDataMerge`'s `authoritative` option) instead of merging — the
+   only way a device can lose something the backup doesn't contain.
+
+- **Crash safety:** a stale heartbeat (`RESTORE_LOCK_STALE_MS`) frees everyone
+  if the restoring device dies.
+- **Not closed:** a push already on the wire when the lock arrives, and a
+  device offline for the whole restore (it competes by timestamp on return).
+- **Firestore only:** the lock doesn't pause Google traffic — see the Google
+  gap below.
 
 **Google Calendar as the third device** (`eventSyncService.js`,
 `useGoogleCalendarSync.js`):
