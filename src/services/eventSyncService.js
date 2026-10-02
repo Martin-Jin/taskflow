@@ -396,6 +396,31 @@ export function resolvePulledEventConflict(local, pulled) {
 }
 
 /**
+ * Marks a local Google-sourced event that just WON a conflict against a pull
+ * (see resolvePulledEventConflict) as "Google is behind" by setting
+ * `pendingGooglePush`, so the push sweep (useGoogleCalendarSync.js's
+ * pushUnsyncedItemsToCalendar) sends the winning copy back to Google.
+ *
+ * Winning the conflict only stops the pull from overwriting the local copy;
+ * on its own, Google's own calendar would keep showing the stale version (or,
+ * for a local delete, keep the event alive) forever. This is how an edit or
+ * delete made while Google was disconnected eventually reaches Google.
+ *
+ * Flagged only when there is something to send: a local delete (the pull
+ * proves Google still has the event live), or an edit whose content actually
+ * differs from the pulled copy. Never flagged for a read-only event
+ * (`canEdit === false`) — Google would reject the write.
+ */
+function flagForGooglePushBack(local, pulled) {
+  if (local.pendingGooglePush || local.canEdit === false) return local;
+  const differs =
+    !!local.deletedAt ||
+    !pulled ||
+    canonicalStringify(comparableEventContent(local)) !== canonicalStringify(comparableEventContent(pulled));
+  return differs ? { ...local, pendingGooglePush: true } : local;
+}
+
+/**
  * Fold "recently instance-deleted" suppression into one pulled master
  * event's `overrides`. Unlike the whole-event suppression above (which drops
  * a pulled event entirely), a single-occurrence delete must still let the
@@ -650,8 +675,8 @@ export function mergePulledGoogleEvents(
   // edit/delete than Google's own `updated` for it is dropped from this
   // pull's batch entirely — the local row keeps winning until a LATER pull
   // sees Google catch back up (e.g. once the locally-edited copy is pushed —
-  // see this file's module doc for the push-back gap this alone doesn't
-  // close). Tracked as its own id set (rather than just filtering
+  // the winner is flagged `pendingGooglePush` below so the push sweep
+  // sends it back to Google — see flagForGooglePushBack). Tracked as its own id set (rather than just filtering
   // `freshPulled`) so the survivingLocal loop below can tell "local won a
   // conflict, keep it exactly as-is" apart from "absent from the pull
   // because Google genuinely deleted it" — those would otherwise look
@@ -670,6 +695,7 @@ export function mergePulledGoogleEvents(
   });
 
   const pulledByGoogleEventId = new Map(freshPulledAfterConflicts.map((e) => [e.googleEventId, e]));
+  const freshPulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
 
   // Candidates for the replacement-detection pass below (see
   // findReplacementMatches/isPlausibleReplacement's own doc comments): every
@@ -729,7 +755,7 @@ export function mergePulledGoogleEvents(
     // the pull" branch below, which assumes absence means Google deleted it
     // and would incorrectly drop the very edit that just won.
     if (localWinsGoogleEventIds.has(e.googleEventId)) {
-      survivingLocal.push(e);
+      survivingLocal.push(flagForGooglePushBack(e, freshPulledByGoogleEventId.get(e.googleEventId)));
       continue;
     }
 

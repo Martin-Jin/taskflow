@@ -612,14 +612,18 @@
  *                                            calendar layout need no special case, but rendered in WeekView's all-day row
  *                                            rather than as a full-height block. `isFreeTime` defaults from Google's own
  *                                            `transparency` for these (a booked day of leave blocks the day, a birthday
- *                                            from a holiday calendar doesn't), and `canEdit` is forced false because the
- *                                            push path only knows how to write timed events.
+ *                                            from a holiday calendar doesn't), and `canEdit` is forced false (they stay
+ *                                            read-only in the UI), though the push path does write them back as real
+ *                                            all-day events (see buildCalendarEventResource).
  * @property {string} [endDate]             - Inclusive last day of a MULTI-day all-day event. Stored once and expanded into
  *                                            one instance per covered day at display/capacity time (see
  *                                            recurrenceExpansion.expandMultiDayEvent) — NOT as N rows, because
  *                                            mergePulledGoogleEvents keys local events by googleEventId in a Map.
  * @property {boolean} isRecurring
  * @property {string|null} googleEventId
+ * @property {boolean} [pendingGooglePush]   - Set when a local edit/delete beat Google's copy on a pull, meaning Google is
+ *                                            behind and the push sweep must send it back (then clears this). See
+ *                                            eventSyncService.flagForGooglePushBack.
  * @property {string} [calendarId]           - Google calendarId this event came from (primary or a subscribed calendar).
  * @property {string} [calendarName]         - Display name of the source calendar, e.g. "Lecture Timetable".
  * @property {'google'|'manual'} source

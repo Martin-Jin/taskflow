@@ -1585,10 +1585,59 @@ export function useGoogleCalendarSync({
       eventsRef.current = stampPushedIds(eventsRef.current || []);
     }
 
+    // ---- Send local edits/deletes that won a conflict back to Google --------
+    // mergePulledGoogleEvents flags (`pendingGooglePush`) a Google-sourced
+    // event whose local edit or delete beat Google's copy on a pull — typically
+    // something done while Google was disconnected. Winning only stopped the
+    // pull overwriting it; this is the step that actually tells Google. Same
+    // per-item try/catch as above: a failure leaves the flag set so the next
+    // tick retries.
+    const pendingPushBack = (eventsOverride || eventsRef.current || []).filter(
+      (e) => e.pendingGooglePush && e.googleEventId && e.canEdit !== false && !isBlockSourcedEvent(e)
+    );
+    const pushBackResults = new Map();
+    for (const event of pendingPushBack) {
+      try {
+        if (event.deletedAt) {
+          // Suppress the pull from re-showing it while Google's delete propagates.
+          markGoogleEventDeleted(event.googleEventId);
+          try {
+            await deleteCalendarEvent(event.googleEventId, event.calendarId || 'primary');
+          } catch (err) {
+            unmarkGoogleEventDeleted(event.googleEventId);
+            throw err;
+          }
+          pushBackResults.set(event.id, { deleted: true });
+        } else {
+          const result = await pushEventToCalendar(event);
+          if (result?.id) {
+            confirmedGoogleEventIdsRef.current.add(result.id);
+            pushBackResults.set(event.id, { updated: result.updated });
+          }
+        }
+      } catch (err) {
+        console.warn('[useGoogleCalendarSync] Failed to send local change back to Google; will retry next sync.', event.id, err);
+      }
+    }
+    if (pushBackResults.size > 0) {
+      // A delete keeps its tombstone's own stamp; an edit is restamped like
+      // every other successful push (see the comment on stampPushedIds above).
+      const nowIso = new Date().toISOString();
+      const clearFlags = (list) =>
+        list.map((e) => {
+          const res = pushBackResults.get(e.id);
+          if (!res) return e;
+          const { pendingGooglePush, ...rest } = e;
+          return res.deleted ? rest : { ...rest, googleUpdatedAt: res.updated, localUpdatedAt: nowIso };
+        });
+      setEvents((prev) => clearFlags(prev));
+      eventsRef.current = clearFlags(eventsRef.current || []);
+    }
+
     // Reflects what actually succeeded, not what was attempted — a failed push
     // stays out of the total and is retried on the next tick.
-    return { events: pushedByEventId.size };
-  }, [setEvents]);
+    return { events: pushedByEventId.size + pushBackResults.size };
+  }, [setEvents, markGoogleEventDeleted, unmarkGoogleEventDeleted]);
   pushUnsyncedItemsRef.current = pushUnsyncedItemsToCalendar;
 
   const pushToGoogleCalendar = useCallback(async () => {
@@ -1982,7 +2031,8 @@ export function useGoogleCalendarSync({
         // A non-primary event can't reach here (primaryEvents filtered them
         // out above), but an event with no date/time would build an invalid
         // resource — skip rather than send Google a malformed insert.
-        .filter((entry) => entry.resource.start?.dateTime && entry.resource.end?.dateTime);
+        // (an all-day resource carries `date` instead of `dateTime`)
+        .filter((entry) => (entry.resource.start?.dateTime || entry.resource.start?.date) && (entry.resource.end?.dateTime || entry.resource.end?.date));
 
       const insertResults = await runBatchesWithRetry(
         insertEntries,
