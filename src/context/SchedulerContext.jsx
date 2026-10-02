@@ -52,7 +52,7 @@ import { uploadCommentAttachment, deleteCommentAttachment, checkAttachmentAllowe
 import { extractValidMentionUids, getMentionCandidates } from '../utils/commentMentions';
 import { rebalance } from '../algorithms/rebalanceEngine';
 import { areDependenciesMet } from '../utils/dependencyUtils';
-import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate } from '../utils/taskFieldDerivations';
+import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate, needsRescheduleOnCascadedUpdates } from '../utils/taskFieldDerivations';
 import {
   computeRecurringRescheduleUpdate,
   computeRecurrenceSyncUpdates,
@@ -2066,7 +2066,16 @@ export function SchedulerProvider({ children }) {
         }
       }
       const hasUnlockedScheduledBlock = blocks.some((b) => b.taskId === taskId && !b.isLocked);
-      const needsRebalance = needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock, user?.uid);
+      // Turning "must be done on due date" on for a parent task also forces it
+      // onto its sub-tasks (computeEnforceDueDateSyncUpdates, applied inside
+      // the commit below). The parent has no block of its own, but its
+      // sub-tasks do — preview that cascade here so their stale blocks get
+      // rebalanced too.
+      const previewTasks = tasks.map((t) => (t.id === taskId ? { ...t, ...updates } : t));
+      const cascadedUpdates = reanchorRecurringEnforceDueDateUpdates(previewTasks, computeEnforceDueDateSyncUpdates(previewTasks));
+      const needsRebalance =
+        needsRescheduleOnTaskUpdate(prevTask, updates, hasUnlockedScheduledBlock, user?.uid) ||
+        needsRescheduleOnCascadedUpdates(tasks, cascadedUpdates, blocks, user?.uid);
 
       // Function form — see addTask's comment just above.
       commit(

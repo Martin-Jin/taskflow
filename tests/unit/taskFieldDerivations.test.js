@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate } from '../../src/utils/taskFieldDerivations';
+import { deriveRemainingHoursOnEstimateChange, needsRescheduleOnTaskUpdate, needsRescheduleOnCascadedUpdates } from '../../src/utils/taskFieldDerivations';
 
 describe('deriveRemainingHoursOnEstimateChange', () => {
   it('shifts remainingHours up by the same delta when the estimate increases', () => {
@@ -161,5 +161,32 @@ describe('needsRescheduleOnTaskUpdate', () => {
       const personalTask = { ...baseTask, assignedTo: null };
       expect(needsRescheduleOnTaskUpdate(personalTask, { assignedTo: 'user-a' }, false, 'user-a')).toBe(false);
     });
+  });
+});
+
+describe('enforceDueDate rescheduling', () => {
+  const task = { id: 't1', dueDate: '2026-10-10', enforceDueDate: false, estimatedHours: 1 };
+
+  it('flags turning enforcement on or off even with no existing block', () => {
+    expect(needsRescheduleOnTaskUpdate(task, { enforceDueDate: true }, false, null)).toBe(true);
+    expect(needsRescheduleOnTaskUpdate({ ...task, enforceDueDate: true }, { enforceDueDate: false }, false, null)).toBe(true);
+  });
+
+  it('does not flag an unchanged flag (undefined vs false)', () => {
+    const noFlag = { id: 't1', dueDate: '2026-10-10' };
+    expect(needsRescheduleOnTaskUpdate(noFlag, { enforceDueDate: false }, false, null)).toBe(false);
+  });
+
+  it('flags a cascade that changes a sub-task with a block, though the parent has none', () => {
+    const tasks = [{ id: 'p' }, { id: 'c', parentId: 'p', dueDate: '2026-10-10' }];
+    const sync = new Map([['c', { enforceDueDate: true }]]);
+    const blocks = [{ id: 'b1', taskId: 'c', isLocked: false }];
+    expect(needsRescheduleOnCascadedUpdates(tasks, sync, blocks, null)).toBe(true);
+  });
+
+  it('ignores a cascade onto a sub-task whose only block is locked', () => {
+    const tasks = [{ id: 'c', dueDate: '2026-10-10', enforceDueDate: false }];
+    const sync = new Map([['c', { dueDate: '2026-10-10' }]]);
+    expect(needsRescheduleOnCascadedUpdates(tasks, sync, [{ taskId: 'c', isLocked: true }], null)).toBe(false);
   });
 });
