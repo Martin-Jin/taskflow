@@ -1083,7 +1083,22 @@ describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () 
       googleUpdatedAt: '2026-08-10T09:00:00.000Z',
     });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([local]);
+    // Kept as-is, and flagged so the push sweep sends it back to Google.
+    expect(result).toEqual([{ ...local, pendingGooglePush: true }]);
+  });
+
+  it('does not flag a winning local copy whose content already matches Google (nothing to send)', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Same', localUpdatedAt: '2026-08-10T12:00:00.000Z' });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'Same', googleUpdatedAt: '2026-08-10T09:00:00.000Z' });
+    const [result] = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result.pendingGooglePush).toBeUndefined();
+  });
+
+  it('never flags a read-only (canEdit === false) event for push-back', () => {
+    const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Edited', canEdit: false, localUpdatedAt: '2026-08-10T12:00:00.000Z' });
+    const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'Stale', googleUpdatedAt: '2026-08-10T09:00:00.000Z' });
+    const [result] = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(result.pendingGooglePush).toBeUndefined();
   });
 
   it('still takes the pulled version when Google is newer than the local edit (no regression to the common case)', () => {
@@ -1130,7 +1145,8 @@ describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () 
       googleUpdatedAt: '2026-08-10T09:00:00.000Z',
     });
     const result = mergePulledGoogleEvents([tombstoned], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([tombstoned]);
+    // Flagged so the push sweep finally tells Google about the delete.
+    expect(result).toEqual([{ ...tombstoned, pendingGooglePush: true }]);
   });
 
   it('an older local tombstone is still overwritten (un-deleted) by a genuinely newer Google edit', () => {

@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '10.8.0',
+    date: '2026-10-02',
+    title: 'Google Calendar: all-day events and offline changes',
+    changes: [
+      'All-day events now go back to Google Calendar as real all-day events. Before, they were sent as a 24-hour timed event, which showed up as a second copy next to the original all-day one.',
+      'Events you edit or delete in TaskFlow while Google Calendar is disconnected are now sent to Google the next time it syncs, instead of leaving Google showing the old version (or still showing the deleted event).',
+    ],
+  },
+  {
     version: '10.7.6',
     date: '2026-09-30',
     title: 'Your name now shows on your own comments',

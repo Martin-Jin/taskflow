@@ -64,6 +64,7 @@ import {
   isBlockSourcedEvent,
   TASKFLOW_BLOCK_PROPERTY_KEY,
   priorityToColorId,
+  buildCalendarEventResource,
 } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
@@ -539,5 +540,32 @@ describe('isRateLimitError', () => {
   it('handles null/undefined gracefully', () => {
     expect(isRateLimitError(null)).toBe(false);
     expect(isRateLimitError(undefined)).toBe(false);
+  });
+});
+
+describe('buildCalendarEventResource — all-day events', () => {
+  const timed = { title: 'Meeting', date: '2026-10-05', startTime: '09:00', endTime: '10:00' };
+
+  it('sends a timed event as dateTime values', () => {
+    const r = buildCalendarEventResource(timed);
+    expect(r.start.dateTime).toBe('2026-10-05T09:00:00');
+    expect(r.end.dateTime).toBe('2026-10-05T10:00:00');
+    expect(r.transparency).toBeUndefined();
+  });
+
+  it('sends a single-day all-day event as date values with an exclusive end', () => {
+    const r = buildCalendarEventResource({ ...timed, startTime: '00:00', endTime: '23:59', isAllDay: true });
+    expect(r.start).toEqual({ date: '2026-10-05' });
+    expect(r.end).toEqual({ date: '2026-10-06' });
+  });
+
+  it('a multi-day all-day event ends the day AFTER its inclusive endDate', () => {
+    const r = buildCalendarEventResource({ ...timed, isAllDay: true, endDate: '2026-10-07' });
+    expect(r.end).toEqual({ date: '2026-10-08' });
+  });
+
+  it('carries Free marking through transparency (all-day only)', () => {
+    expect(buildCalendarEventResource({ ...timed, isAllDay: true, isFreeTime: true }).transparency).toBe('transparent');
+    expect(buildCalendarEventResource({ ...timed, isFreeTime: true }).transparency).toBeUndefined();
   });
 });

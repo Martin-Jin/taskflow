@@ -928,9 +928,33 @@ export function buildCalendarEventResource(event) {
     summary: event.title,
     description: event.description || undefined,
     location: event.location || undefined,
-    start: { dateTime: `${event.date}T${event.startTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    ...buildStartEnd(event),
+    // An all-day event's Free/Busy marking round-trips through Google's
+    // `transparency`; timed events have never carried it (see the pull side).
+    ...(event.isAllDay && event.isFreeTime ? { transparency: 'transparent' } : {}),
     recurrence: event.recurrenceRule ? [`RRULE:${event.recurrenceRule}`] : undefined,
+  };
+}
+
+/**
+ * Google's `start`/`end` for an event. An all-day event is stored locally as a
+ * 00:00-23:59 span (so the rest of the app needs no special case), but sending
+ * that to Google as timed values turns it into a real 24-hour timed event — and
+ * a second copy next to the original all-day one. All-day events must go out as
+ * `{ date }` instead, where Google's `end.date` is EXCLUSIVE (the day after the
+ * last covered day), the inverse of the `-1` applied when pulling.
+ */
+function buildStartEnd(event) {
+  if (event.isAllDay) {
+    return {
+      start: { date: event.date },
+      end: { date: addDays(event.endDate || event.date, 1) },
+    };
+  }
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return {
+    start: { dateTime: `${event.date}T${event.startTime}:00`, timeZone },
+    end: { dateTime: `${event.date}T${event.endTime}:00`, timeZone },
   };
 }
 
@@ -1142,14 +1166,14 @@ export async function pushEventInstanceUpdate(master, occurrenceDateIso, fields)
   }
 
   const calendarId = master.calendarId || 'primary';
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const resource = {
     summary: fields.title,
     description: fields.description || undefined,
     location: fields.location || undefined,
-    start: { dateTime: `${fields.date}T${fields.startTime}:00`, timeZone },
-    end: { dateTime: `${fields.date}T${fields.endTime}:00`, timeZone },
+    // Same all-day handling as buildCalendarEventResource: a single occurrence
+    // of an all-day series must stay all-day.
+    ...buildStartEnd({ ...fields, isAllDay: fields.isAllDay ?? master.isAllDay, endDate: undefined }),
   };
 
   const resp = await window.gapi.client.calendar.events.patch({ calendarId, eventId: instanceId, resource });
