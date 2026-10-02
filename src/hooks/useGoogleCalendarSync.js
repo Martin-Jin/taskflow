@@ -154,6 +154,14 @@ const STALE_SYNC_WARNING_THRESHOLD_MS = 15 * 60 * 1000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// TEMPORARY PAUSE of the "push today's scheduled tasks to Google Calendar"
+// feature (pushTodaysTasksToCalendar below). While false, TaskFlow neither
+// creates nor removes the "📋 ..." task-block events on Google, so only real
+// calendar events are synced. Any block events already on Google are left
+// where they are. The feature's code is intact — set this back to true to
+// resume it.
+const PUSH_TODAYS_TASK_BLOCKS_ENABLED = false;
+
 // Debounce for pushTodaysTasksToCalendar's trigger effect (see below). A
 // rebalance, a completion, or a cloud-merge can each touch several blocks in
 // one commit, and each is its own React state update — without debouncing,
@@ -1696,7 +1704,7 @@ export function useGoogleCalendarSync({
   const blockPushDebounceTimeoutRef = useRef(null);
 
   const runTodaysTaskBlockPushNow = useCallback(async () => {
-    if (!googleConnected) return;
+    if (!PUSH_TODAYS_TASK_BLOCKS_ENABLED || !googleConnected) return;
     const { proceed, queue } = computePushSingleFlightDecision(blockPushInFlightRef.current);
     if (!proceed) {
       if (queue) blockPushQueuedRef.current = true;

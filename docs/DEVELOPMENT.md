@@ -940,6 +940,10 @@ that reliably distinguished "this block moved" from "this block is new",
 which kept manufacturing duplicate and missing events on users' real
 calendars.
 
+**Currently paused:** `PUSH_TODAYS_TASK_BLOCKS_ENABLED` in
+`useGoogleCalendarSync.js` is `false`, so the feature below does nothing and
+only real calendar events sync. The code is intact; flip the flag to resume.
+
 Block-push came back on a fundamentally different model
 (`pushTodaysTasksToCalendar` in `useGoogleCalendarSync.js`): only **today's**
 blocks are ever pushed, one-way (TaskFlow -> Google, never read back), and
