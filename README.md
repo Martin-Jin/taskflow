@@ -67,7 +67,8 @@ for the full setup, including optional Firebase/Google/Todoist credentials.
 **Working on TaskFlow itself**
 
 - **[Development](docs/DEVELOPMENT.md)** — scheduler internals, data model,
-  project layout, persistence, testing, and contribution conventions.
+  project layout, persistence, cross-device sync, testing, and contribution
+  conventions.
 
 ## Building
 

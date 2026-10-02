@@ -3,7 +3,8 @@
 Everything in this file is optional. TaskFlow works fully standalone with no
 sign-in, saving to the current browser's `localStorage` — see
 [Persistence](DEVELOPMENT.md#persistence). Signing in adds cross-device sync,
-cloud backups, and shared projects on top of that.
+cloud backups, and shared projects on top of that. For how the sync works
+under the hood, see [Cross-device sync](DEVELOPMENT.md#cross-device-sync).
 
 - [Account & cross-device sync](#account--cross-device-sync)
 - [Backups](#backups)
