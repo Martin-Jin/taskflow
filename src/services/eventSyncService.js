@@ -20,6 +20,11 @@
  * "last genuinely changed" timestamp and keep the newer one, rather than
  * always taking one fixed side.
  *
+ * A local edit or delete that WINS this comparison is flagged
+ * `pendingGooglePush` (see flagForGooglePushBack) so the push sweep in
+ * useGoogleCalendarSync.js sends it on to Google; winning alone only stops the
+ * pull overwriting it.
+ *
  * The two timestamps being compared are NOT the same field on both sides,
  * because a freshly-pulled event never carries a local edit stamp (see
  * googleCalendarService.js's parseGoogleEvent, which always sets a pulled

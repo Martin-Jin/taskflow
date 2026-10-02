@@ -47,7 +47,9 @@ for the full setup, including optional Firebase/Google/Todoist credentials.
 - **[Using the app](docs/USAGE.md)** — a tour of every tab, plus smart task
   titles, bulk select, and the command palette.
 - **[Sync, backups, and sharing](docs/SYNC-AND-SHARING.md)** — signing in,
-  cross-device sync, backups and restore, and shared projects.
+  cross-device sync, backups and restore, and shared projects. Open it to
+  understand what happens to your data across devices; how it works inside is
+  in Development.
 - **[Integrations](docs/INTEGRATIONS.md)** — Todoist, Google Calendar, AI
   Quick Add, and notifications.
 - **[Known limitations](docs/LIMITATIONS.md)** — what it doesn't do, and why.
@@ -66,8 +68,9 @@ for the full setup, including optional Firebase/Google/Todoist credentials.
 
 **Working on TaskFlow itself**
 
-- **[Development](docs/DEVELOPMENT.md)** — scheduler internals, data model,
-  project layout, persistence, testing, and contribution conventions.
+- **[Development](docs/DEVELOPMENT.md)** — for contributors: how the scheduler
+  works, the data model, project layout, persistence, how cross-device sync and
+  restore work internally, testing, and contribution conventions.
 
 ## Building
 

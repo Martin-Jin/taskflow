@@ -1,8 +1,8 @@
 # Developing TaskFlow
 
 Internals for anyone working in this codebase — how the scheduler works, the
-data model, project layout, persistence, contribution conventions, tech
-stack, and testing. For what the app does and how to set it up as a user,
+data model, project layout, persistence, cross-device sync, contribution
+conventions, tech stack, and testing. For what the app does and how to set it up as a user,
 see the main [README](../README.md).
 
 ## Contents
@@ -11,6 +11,11 @@ see the main [README](../README.md).
 - [Data model](#data-model)
 - [Project layout](#project-layout)
 - [Persistence](#persistence)
+- [Cross-device sync](#cross-device-sync)
+  - [The model: "git" with newest-write-wins](#the-model-git-with-newest-write-wins)
+  - [Per-task merge and deletion tombstones](#per-task-merge-and-deletion-tombstones)
+  - [Restore: a force-push coordinated by a lock](#restore-a-force-push-coordinated-by-a-lock)
+  - [Google Calendar as the third device](#google-calendar-as-the-third-device)
 - [Contributing / working in this codebase](#contributing--working-in-this-codebase)
   - [Versioning and the changelog](#versioning-and-the-changelog)
 - [Tech stack](#tech-stack)
@@ -1057,81 +1062,6 @@ for these so a shape change can't strand users on a stale persisted value,
 and merge the loaded value over the defaults defensively rather than
 trusting it.
 
-**Cross-device merge and deletion tombstones.** `useCloudSync.js`'s
-`planRemoteDataMerge` used to treat `tasks` as one atomic value — whichever
-side (local or remote) "won" got its entire array applied wholesale. That
-meant a device waking up with a stale local copy (e.g. a phone left open for
-days) could push its own array AFTER a genuinely newer edit from another
-device, and — because a fresh write simply lands "last" — silently overwrite
-the newer edit even though its content was actually older. The whole-document
-`lastWriteAt` staleness gate (`isRemoteWriteStale`) can't catch this: the
-stale device's push IS a fresh write, just of stale content, so a doc-level
-timestamp can't tell the two apart.
-
-`mergeTasksByUpdatedAt` (`src/utils/taskMerge.js`) fixes this with a per-task
-merge: for each task id present on either side, whichever copy has the newer
-`updatedAt` wins (a task on only one side — e.g. just created, not yet synced
-— is kept as-is). This is why every task mutation in `SchedulerContext.jsx`
-must reliably stamp `updatedAt`; a mutation that forgets to would make that
-task invisible to the merge's recency check. `ScheduledBlock`s are
-deliberately NOT part of this merge — they have no stable id across a
-rebalance (`rebalanceEngine.js`'s `rebalance()` regenerates every unlocked
-block from scratch on each run, keeping only locked/historical/completed ones
-by reference) and no `updatedAt` of their own, so per-block merging doesn't
-make sense. Instead, whenever a per-task merge actually changes the task set,
-`applyRemoteData` triggers a local rebalance (via `SchedulerContext.jsx`'s
-`runRebalanceRef`/`triggerRebalanceFromMerge` — a forward-reference wrapper,
-same pattern as `queueDueDateRebalanceRef`, since `useCloudSync` is called
-before `runRebalance` itself is defined) so `blocks` regenerates fresh from
-the merged tasks rather than staying an incompatible mix of two devices'
-block arrays.
-
-Deletion needed its own fix to work with this merge: `deleteTask` no longer
-removes a task from the array outright — it tombstones it in place
-(`deletedAt`/`updatedAt` stamped, heavy content fields cleared — see
-`utils/taskTombstones.js`'s `tombstoneTasks`). Without this, the merge
-couldn't tell "this task never existed on this device" apart from "it existed
-here and was deleted," so a delete on one device could be silently undone by
-a stale edit arriving from a device that never saw the delete. A tombstone
-competes in the SAME `updatedAt` comparison as any live edit, with no special
-casing — a delete newer than a stale edit correctly wins (the deletion
-sticks), and an edit newer than an old tombstone correctly wins too (the task
-"un-deletes", which is intentional: an undo, or the user recreating similar
-content after deleting). Every UI-facing consumer of `useScheduler()` gets a
-tombstone-filtered `tasks` view (`SchedulerContext.jsx`'s `visibleTasks`) —
-tombstones are invisible everywhere except `stateRef`/persistence/sync, which
-need to see them for the merge to work. A mount-time retention sweep
-(`RETENTION_DAYS_DELETED_TASKS`, `dataRetention.js`) permanently purges
-tombstones older than 30 days — long enough that a realistically-offline
-device still sees the tombstone before it's gone for good. Point-in-time
-backups exclude tombstones entirely (`backupService.js`'s
-`excludeDeletedTasks`), same reasoning as excluding completed one-off tasks:
-there's nothing to restore a tombstone to, and a much-later restore
-reintroducing a dead entry would just create a zombie every live device had
-already purged.
-
-If signed in (see [Account & cross-device sync](SYNC-AND-SHARING.md#account--cross-device-sync)),
-the same data also syncs to Firestore — `localStorage` on
-the current device stays the always-on, works-offline source of truth, and
-the cloud copy is what a second device pulls down.
-
-**Shared projects invert that model**, and it's the one place in the app where
-Firestore — not `localStorage` — is the source of truth: a project several
-people edit concurrently can't have a per-device local authority. Two
-consequences for persistence:
-
-- `sharedProjectIds` (which shared projects you're a member of) IS persisted,
-  synced, and backed up. It's a short list of ids — unambiguously your own
-  data, and losing it would lose your way back into boards you'd joined.
-  Restoring it re-lists those projects but grants nothing: membership is
-  enforced by the `collaborators` map in Firestore rules, not by this array.
-- A shared project's **content** (its tasks/sections/comments) is deliberately
-  excluded from every backup payload. It isn't solely yours to snapshot or roll
-  back — restoring a months-old backup must not resurrect tasks a collaborator
-  deliberately deleted, or re-create content from a project you've since been
-  removed from. See the doc comment above `FIELD_TYPES` in
-  `src/services/backupService.js` for the full rationale.
-
 ### Data retention policies
 
 Time-based cleanup is centralized in `src/services/dataRetention.js` to keep
@@ -1211,6 +1141,166 @@ the durable piece of that identity: a single `localStorage` record,
   real Google account (`linkWithCredential`, upgrading their uid in place —
   see `AuthContext.jsx`), the guest record simply stops being read for that
   uid; there's nothing to migrate out of it.
+
+## Cross-device sync
+
+How TaskFlow keeps several signed-in devices, and Google Calendar, in agreement. The code is mostly `useCloudSync.js` (the Firestore side) and `useGoogleCalendarSync.js` / `eventSyncService.js` (the Google side). Backup retention and the restore UI are covered under [Persistence](#persistence); the user-facing description is in [Sync & sharing](SYNC-AND-SHARING.md).
+
+### The model: "git" with newest-write-wins
+
+Think of the
+`users/{uid}` Firestore document as the shared repository, each device as its
+own local copy, a sync as a commit, and Google Calendar as a third device that
+pushes and pulls the same way. Conflicts are settled by newest timestamp, so
+every field that can conflict carries one:
+
+- **Per-row stamps** — `tasks` and `events` (`updatedAt` / `localUpdatedAt`),
+  and personal `sections`, `projects` and `labels` (`updatedAt`/`deletedAt`,
+  `utils/collectionTombstones.js`). All merge through
+  `utils/entityMerge.js`'s `mergeEntitiesByTimestamp`; `taskMerge.js` and
+  `eventMerge.js` are thin wrappers over it. A delete is a tombstone (row kept,
+  `deletedAt` set) so it can win a merge instead of being resurrected.
+- **A `fieldUpdatedAt` sidecar** — one timestamp per whole-value field with no
+  row ids (`routines`, `rules`, the sound/animation settings,
+  `notificationSettings`, `notes`, `shortcutBindings`, `sharedProjectIds`),
+  stamped automatically by `useFieldStampedState` and compared with
+  `pickNewerScalar`. No mutation call site stamps anything by hand.
+- **`savedViews`, `taskTemplates`, `trash`, `blocks`** are still whole-array
+  (blocks have no stable ids; the others are never soft-deleted).
+
+### Per-task merge and deletion tombstones
+
+`useCloudSync.js`'s
+`planRemoteDataMerge` used to treat `tasks` as one atomic value — whichever
+side (local or remote) "won" got its entire array applied wholesale. That
+meant a device waking up with a stale local copy (e.g. a phone left open for
+days) could push its own array AFTER a genuinely newer edit from another
+device, and — because a fresh write simply lands "last" — silently overwrite
+the newer edit even though its content was actually older. The whole-document
+`lastWriteAt` staleness gate (`isRemoteWriteStale`) can't catch this: the
+stale device's push IS a fresh write, just of stale content, so a doc-level
+timestamp can't tell the two apart.
+
+`mergeTasksByUpdatedAt` (`src/utils/taskMerge.js`) fixes this with a per-task
+merge: for each task id present on either side, whichever copy has the newer
+`updatedAt` wins (a task on only one side — e.g. just created, not yet synced
+— is kept as-is). This is why every task mutation in `SchedulerContext.jsx`
+must reliably stamp `updatedAt`; a mutation that forgets to would make that
+task invisible to the merge's recency check. `ScheduledBlock`s are
+deliberately NOT part of this merge — they have no stable id across a
+rebalance (`rebalanceEngine.js`'s `rebalance()` regenerates every unlocked
+block from scratch on each run, keeping only locked/historical/completed ones
+by reference) and no `updatedAt` of their own, so per-block merging doesn't
+make sense. Instead, whenever a per-task merge actually changes the task set,
+`applyRemoteData` triggers a local rebalance (via `SchedulerContext.jsx`'s
+`runRebalanceRef`/`triggerRebalanceFromMerge` — a forward-reference wrapper,
+same pattern as `queueDueDateRebalanceRef`, since `useCloudSync` is called
+before `runRebalance` itself is defined) so `blocks` regenerates fresh from
+the merged tasks rather than staying an incompatible mix of two devices'
+block arrays.
+
+Deletion needed its own fix to work with this merge: `deleteTask` no longer
+removes a task from the array outright — it tombstones it in place
+(`deletedAt`/`updatedAt` stamped, heavy content fields cleared — see
+`utils/taskTombstones.js`'s `tombstoneTasks`). Without this, the merge
+couldn't tell "this task never existed on this device" apart from "it existed
+here and was deleted," so a delete on one device could be silently undone by
+a stale edit arriving from a device that never saw the delete. A tombstone
+competes in the SAME `updatedAt` comparison as any live edit, with no special
+casing — a delete newer than a stale edit correctly wins (the deletion
+sticks), and an edit newer than an old tombstone correctly wins too (the task
+"un-deletes", which is intentional: an undo, or the user recreating similar
+content after deleting). Every UI-facing consumer of `useScheduler()` gets a
+tombstone-filtered `tasks` view (`SchedulerContext.jsx`'s `visibleTasks`) —
+tombstones are invisible everywhere except `stateRef`/persistence/sync, which
+need to see them for the merge to work. A mount-time retention sweep
+(`RETENTION_DAYS_DELETED_TASKS`, `dataRetention.js`) permanently purges
+tombstones older than 30 days — long enough that a realistically-offline
+device still sees the tombstone before it's gone for good. Point-in-time
+backups exclude tombstones entirely (`backupService.js`'s
+`excludeDeletedTasks`), same reasoning as excluding completed one-off tasks:
+there's nothing to restore a tombstone to, and a much-later restore
+reintroducing a dead entry would just create a zombie every live device had
+already purged.
+
+### Restore: a force-push coordinated by a lock
+
+Restamping restored rows
+to "now" isn't enough on its own: another device's already-armed push can land
+after the restore and win purely by writing last. So a restoring device takes a
+`restoreLock` on `users/{uid}` first (`useCloudSync.js`'s
+`acquireAndRunRestoreLock`, `firestoreSync.js`'s `pushRestoreLock`):
+
+1. The restoring device writes the lock, with a heartbeat, before touching
+   any local data.
+2. Every other device sees it and stops pushing and stops merging snapshots.
+   An armed push is cancelled and in-progress edits are discarded, by design.
+   A blocking overlay (`BlockingProgressOverlay.jsx`) tells the user to wait.
+3. The restoring device applies the backup, pushes immediately, and releases
+   the lock.
+4. On release, the other devices apply the result wholesale
+   (`planRemoteDataMerge`'s `authoritative` option) instead of merging — the
+   only way a device can lose something the backup doesn't contain.
+
+- **Crash safety:** a stale heartbeat (`RESTORE_LOCK_STALE_MS`) frees everyone
+  if the restoring device dies.
+- **Not closed:** a push already on the wire when the lock arrives, and a
+  device offline for the whole restore (it competes by timestamp on return).
+- **Firestore only:** the lock doesn't pause Google traffic — see the Google
+  gap below.
+
+### Google Calendar as the third device
+
+The logic lives in `eventSyncService.js` and `useGoogleCalendarSync.js`:
+
+- A pulled event and its local copy are compared by the local edit stamp vs.
+  Google's own `updated` (`resolvePulledEventConflict`); if the content is
+  already identical, local is kept.
+- "Absent from this pull" only means "Google deleted it" when BOTH gates pass:
+  this session has personally seen the id come back from Google
+  (`confirmedGoogleEventIdsRef`), AND this session has completed a clean pull
+  of the whole sync window (`hasCompletedFullWindowPullRef`). An untrustworthy
+  pull (partial, or a narrow on-demand fetch) leaves the event untouched — not
+  demoted, because demoting clears its Google id and the push sweep would
+  re-create it as a duplicate (`isPullTrustworthyEnoughToActOn`).
+- After a restore that also rewrote Google, the release carries
+  `rewroteGoogleCalendar` and the other devices seed their confirmed ids from
+  it (`seedConfirmedGoogleEventIds`) — safe only then, since a real Google
+  round-trip just happened.
+- A local edit or delete that WINS against a pull is flagged
+  `pendingGooglePush` (`flagForGooglePushBack`) and the push sweep sends it
+  to Google, clearing the flag on success. This is how changes made while
+  Google was disconnected eventually reach it. Only an event the pull actually
+  returned is flagged, so a delete is never sent on the strength of an
+  "absent" result.
+- All-day events are sent as `{ date }` with an exclusive end date
+  (`buildCalendarEventResource`); sending 00:00–23:59 as timed values creates a
+  second, timed copy beside the real all-day event.
+- Known gaps: the restore lock doesn't pause another connected device's own
+  Google poll/push during a rewrite (a narrow race), and a locally deleted
+  event outside the pull window isn't told to Google until a pull covers it.
+
+If signed in (see [Account & cross-device sync](SYNC-AND-SHARING.md#account--cross-device-sync)),
+the same data also syncs to Firestore — `localStorage` on
+the current device stays the always-on, works-offline source of truth, and
+the cloud copy is what a second device pulls down.
+
+**Shared projects invert that model**, and it's the one place in the app where
+Firestore — not `localStorage` — is the source of truth: a project several
+people edit concurrently can't have a per-device local authority. Two
+consequences for persistence:
+
+- `sharedProjectIds` (which shared projects you're a member of) IS persisted,
+  synced, and backed up. It's a short list of ids — unambiguously your own
+  data, and losing it would lose your way back into boards you'd joined.
+  Restoring it re-lists those projects but grants nothing: membership is
+  enforced by the `collaborators` map in Firestore rules, not by this array.
+- A shared project's **content** (its tasks/sections/comments) is deliberately
+  excluded from every backup payload. It isn't solely yours to snapshot or roll
+  back — restoring a months-old backup must not resurrect tasks a collaborator
+  deliberately deleted, or re-create content from a project you've since been
+  removed from. See the doc comment above `FIELD_TYPES` in
+  `src/services/backupService.js` for the full rationale.
 
 ## Contributing / working in this codebase
 

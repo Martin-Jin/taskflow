@@ -10,10 +10,7 @@ to be filled.
   settings, and calendar events too — a change on device A shows up on an
   already-open device B within moments via a background Firestore listener,
   no reload needed, whether or not Google Calendar is connected on either
-  device. Deleting an event on a device with Google Calendar disconnected
-  syncs that deletion to your other TaskFlow devices, but not to Google
-  Calendar itself — see [Backups](SYNC-AND-SHARING.md#backups) for that
-  gap. Google Calendar sync itself is the one exception to "live": it stays
+  device. Google Calendar sync itself is the one exception to "live": it stays
   poll-based (see the next bullet), so a change made directly in Google
   Calendar can still take up to about a minute to appear.
 - Google Calendar sync is two-way but poll-based, not truly real-time —
@@ -22,13 +19,13 @@ to be filled.
   via a live webhook (no backend exists for that in this client-only SPA),
   so a change made directly in Google Calendar can take up to about a
   minute to appear in TaskFlow rather than being instant. On conflict (the
-  same event changed in both places since the last sync), **Google
-  Calendar's version always wins** — a local edit that hasn't been pushed
-  yet can be silently overwritten by the next pull.
+  same event changed in both places since the last sync), **the most recent
+  change wins**, using Google's own last-modified time. A TaskFlow edit or
+  delete that wins is then sent to Google on the next sync. Events outside
+  the sync window (below) aren't compared until a pull covers them.
 - All-day Google Calendar events are imported and affect your capacity, but
   are **read-only** — you can see one and mark it Free/Busy, but not edit or
-  delete it from TaskFlow, because the outbound sync only knows how to write
-  timed events. Whether an all-day event blocks the day follows Google's own
+  delete it from TaskFlow. Whether an all-day event blocks the day follows Google's own
   Free/Busy marking: a booked day of leave flattens that day's capacity, a
   birthday from a holiday calendar doesn't. A multi-day all-day event that also
   repeats is treated as single-day occurrences — a rare combination, and the

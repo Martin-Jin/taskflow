@@ -778,11 +778,10 @@ export async function fetchEvents(startIso, endIso) {
         // shared as 'reader'/'freeBusyReader' (e.g. a university timetable)
         // are view-only on Google's side, so TaskFlow must not offer full
         // edit controls for events sourced from them either.
-        /* All-day events are deliberately read-only regardless of access role:
-           buildEventResource only knows how to emit `start.dateTime`, so
-           pushing an edit would rewrite the all-day event as a timed one on
-           the user's real calendar. Making them editable requires teaching the
-           push path the `start.date` shape first. */
+        /* All-day events are deliberately read-only in the UI regardless of
+           access role. The push path can now write the `start.date` shape (see
+           buildCalendarEventResource), so editing them is possible in
+           principle, but it has no editor for a date-only event yet. */
         canEdit: isAllDay ? false : e.__accessRole === 'owner' || e.__accessRole === 'writer',
         googleUpdatedAt: e.updated,
         localUpdatedAt: null,

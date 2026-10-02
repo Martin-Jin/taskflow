@@ -3,7 +3,8 @@
 Everything in this file is optional. TaskFlow works fully standalone with no
 sign-in, saving to the current browser's `localStorage` — see
 [Persistence](DEVELOPMENT.md#persistence). Signing in adds cross-device sync,
-cloud backups, and shared projects on top of that.
+cloud backups, and shared projects on top of that. For how the sync works
+under the hood, see [Cross-device sync](DEVELOPMENT.md#cross-device-sync).
 
 - [Account & cross-device sync](#account--cross-device-sync)
 - [Backups](#backups)
@@ -79,6 +80,19 @@ normal for them to live directly in client-side code rather than `.env`,
 unlike the Todoist/Google Calendar credentials below. Access control is
 enforced entirely by the Firestore rules from step 4.
 
+### Who wins when two devices change the same thing
+
+Every change TaskFlow syncs carries the time it was made, and when two
+devices disagree **the most recent change wins**, item by item: renaming a
+project on your laptop while adding a label on your phone keeps both. A
+delete is remembered for 30 days so it can't be undone by a device that was
+offline and still has the old copy. Settings (sounds, notifications,
+shortcuts and so on) work the same way, one setting at a time. A device with
+a wrong clock can win or lose unfairly, since the time comes from the device.
+
+If two devices edit the exact same item while both are offline, the older
+edit is replaced by the newer one and can't be recovered.
+
 ## Backups
 
 Independent of cross-device sync, **Settings → Backups** lets you download a
@@ -105,8 +119,14 @@ next daily automatic-backup check). So up to 14 automatic + 14 manual can
 exist side by side.
 
 Restoring — from a file or from a cloud snapshot — replaces your current
-tasks, boards, and settings on this device, and asks for confirmation
-first, same as **Clear all data** below. Already-completed one-off tasks
+tasks, boards, and settings, and asks for confirmation first, same as
+**Clear all data** below. If you're signed in on several devices, the restore
+applies to all of them: while it runs, your other devices show a "please wait"
+screen and ignore anything you do on them, and when it finishes they end up
+exactly matching the backup — including losing anything the backup didn't
+have. Changes made on another device during that moment are discarded. A
+device that's switched off or offline for the whole restore doesn't see it,
+and is simply reconciled by most-recent-change when it comes back. Already-completed one-off tasks
 aren't included in any backup (there's nothing to restore them to);
 recurring tasks always are, since completing one occurrence doesn't mark
 the task itself as done.
@@ -122,11 +142,10 @@ day-to-day content whenever it IS connected — TaskFlow still mirrors
 whatever Google currently has via polling/pulling (see
 [Google Calendar](INTEGRATIONS.md#google-calendar) below) — but that's a
 separate relationship from TaskFlow's own cross-device sync, and the two
-work together without conflicting. One gap worth knowing: if you delete an
-event on a device with Google Calendar disconnected, that deletion syncs
-to your other TaskFlow devices, but doesn't tell Google itself — if Google
-Calendar is later connected somewhere and that event is still live there,
-it can reappear. Backups still capture your events too, as a point-in-time
+work together without conflicting. If you edit or delete a Google
+event on a device with Google Calendar disconnected, the change syncs to
+your other TaskFlow devices straight away, and is sent to Google itself the
+next time a Google-connected device syncs. Backups still capture your events too, as a point-in-time
 safety net independent of the live sync above — restoring an old backup
 will bring back whatever events it had, which may since have changed or
 been deleted elsewhere.
