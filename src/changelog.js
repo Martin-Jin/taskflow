@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.8.1',
+    date: '2026-10-02',
+    title: 'Scheduled tasks no longer pushed to Google Calendar',
+    changes: [
+      "TaskFlow no longer adds today's scheduled tasks to your Google Calendar for now, so only your real events sync. Task entries it added earlier stay where they are and can be deleted in Google Calendar.",
+    ],
+  },
+  {
     version: '10.8.0',
     date: '2026-10-02',
     title: 'Google Calendar: all-day events and offline changes',
