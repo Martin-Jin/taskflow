@@ -1110,6 +1110,72 @@ there's nothing to restore a tombstone to, and a much-later restore
 reintroducing a dead entry would just create a zombie every live device had
 already purged.
 
+**The sync model as a whole: "git" with newest-write-wins.** Think of the
+`users/{uid}` Firestore document as the shared repository, each device as its
+own local copy, a sync as a commit, and Google Calendar as a third device that
+pushes and pulls the same way. Conflicts are settled by newest timestamp, so
+every field that can conflict carries one:
+
+- **Per-row stamps** — `tasks` and `events` (`updatedAt` / `localUpdatedAt`),
+  and personal `sections`, `projects` and `labels` (`updatedAt`/`deletedAt`,
+  `utils/collectionTombstones.js`). All merge through
+  `utils/entityMerge.js`'s `mergeEntitiesByTimestamp`; `taskMerge.js` and
+  `eventMerge.js` are thin wrappers over it. A delete is a tombstone (row kept,
+  `deletedAt` set) so it can win a merge instead of being resurrected.
+- **A `fieldUpdatedAt` sidecar** — one timestamp per whole-value field with no
+  row ids (`routines`, `rules`, the sound/animation settings,
+  `notificationSettings`, `notes`, `shortcutBindings`, `sharedProjectIds`),
+  stamped automatically by `useFieldStampedState` and compared with
+  `pickNewerScalar`. No mutation call site stamps anything by hand.
+- **`savedViews`, `taskTemplates`, `trash`, `blocks`** are still whole-array
+  (blocks have no stable ids; the others are never soft-deleted).
+
+**Restore is a force-push, coordinated by a lock.** Restamping restored rows
+to "now" isn't enough on its own: another device's already-armed push can land
+after the restore and win purely by writing last. So a restoring device writes
+a `restoreLock` on `users/{uid}` first (`useCloudSync.js`'s
+`acquireAndRunRestoreLock`, `firestoreSync.js`'s `pushRestoreLock`), with a
+heartbeat. Other devices stop pushing and stop merging snapshots while it's
+held (an armed push is cancelled and their in-progress edits are discarded, by
+design), and show a blocking overlay (`BlockingProgressOverlay.jsx`). On
+release they apply the result wholesale (`planRemoteDataMerge`'s
+`authoritative` option) rather than merging, which is the only way a device can
+lose something the backup doesn't contain. A stale heartbeat
+(`RESTORE_LOCK_STALE_MS`) frees everyone if the restoring device crashes. Not
+closed: a push already on the wire when the lock arrives, and a device offline
+for the whole restore (it just competes by timestamp when it returns). The lock
+only covers Firestore traffic — see the Google gap below.
+
+**Google Calendar as the third device** (`eventSyncService.js`,
+`useGoogleCalendarSync.js`):
+
+- A pulled event and its local copy are compared by the local edit stamp vs.
+  Google's own `updated` (`resolvePulledEventConflict`); if the content is
+  already identical, local is kept.
+- "Absent from this pull" only means "Google deleted it" when BOTH gates pass:
+  this session has personally seen the id come back from Google
+  (`confirmedGoogleEventIdsRef`), AND this session has completed a clean pull
+  of the whole sync window (`hasCompletedFullWindowPullRef`). An untrustworthy
+  pull (partial, or a narrow on-demand fetch) leaves the event untouched — not
+  demoted, because demoting clears its Google id and the push sweep would
+  re-create it as a duplicate (`isPullTrustworthyEnoughToActOn`).
+- After a restore that also rewrote Google, the release carries
+  `rewroteGoogleCalendar` and the other devices seed their confirmed ids from
+  it (`seedConfirmedGoogleEventIds`) — safe only then, since a real Google
+  round-trip just happened.
+- A local edit or delete that WINS against a pull is flagged
+  `pendingGooglePush` (`flagForGooglePushBack`) and the push sweep sends it
+  to Google, clearing the flag on success. This is how changes made while
+  Google was disconnected eventually reach it. Only an event the pull actually
+  returned is flagged, so a delete is never sent on the strength of an
+  "absent" result.
+- All-day events are sent as `{ date }` with an exclusive end date
+  (`buildCalendarEventResource`); sending 00:00–23:59 as timed values creates a
+  second, timed copy beside the real all-day event.
+- Known gaps: the restore lock doesn't pause another connected device's own
+  Google poll/push during a rewrite (a narrow race), and a locally deleted
+  event outside the pull window isn't told to Google until a pull covers it.
+
 If signed in (see [Account & cross-device sync](SYNC-AND-SHARING.md#account--cross-device-sync)),
 the same data also syncs to Firestore — `localStorage` on
 the current device stays the always-on, works-offline source of truth, and
