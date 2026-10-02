@@ -29,13 +29,13 @@
     "@firebase/rules-unit-testing": "^5.0.2",
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-react": "^6.1.1",
-    "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
   },
   "allowScripts": {
     "esbuild@0.21.5": true,
-    "protobufjs@7.6.5": true,
-    "firebase@12.16.0": true,
-    "@firebase/util@1.15.1": true
+    "protobufjs@7.6.6": true,
+    "firebase@12.19.0": true,
+    "@firebase/util@1.15.3": true
   }
 }
