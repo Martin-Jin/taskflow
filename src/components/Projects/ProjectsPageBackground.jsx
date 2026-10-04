@@ -82,10 +82,21 @@ function draw(canvas) {
   const glowY = height * 0.02;
   const glowRadius = Math.max(width, height) * 0.5;
 
+  // Light theme: the glow sits on a near-white page, where the dark-theme
+  // strengths read as a grey-green smudge. Use a fainter wash and
+  // slightly stronger lines/nodes so the constellation stays visible.
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const glowAlpha = isDark ? [0.16, 0.05] : [0.07, 0.02];
+  const lineAlpha = isDark ? 0.14 : 0.2;
+  const nodeAlpha = isDark ? 0.32 : 0.38;
+
   const gradient = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, glowRadius);
-  gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.16)`);
-  gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, 0.05)`);
-  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${glowAlpha[0]})`);
+  gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${glowAlpha[1]})`);
+  // Fade to the SAME colour at 0 alpha, not transparent black: canvas
+  // gradients blend channels independently, so a black end stop dragged the
+  // glow through a muddy grey on light backgrounds.
+  gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, width, height);
 
@@ -98,14 +109,14 @@ function draw(canvas) {
     ctx.beginPath();
     ctx.moveTo(p1.x, p1.y);
     ctx.lineTo(p2.x, p2.y);
-    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.14)`;
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${lineAlpha})`;
     ctx.stroke();
   });
 
   points.forEach((p) => {
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.32)`;
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${nodeAlpha})`;
     ctx.fill();
   });
 }

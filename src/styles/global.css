@@ -809,6 +809,16 @@ select:focus-visible,
      on SelectMenu/MentionDropdown). */
   pointer-events: none;
   z-index: 0;
+  /* Feather every edge so the canvas never shows as a visible tinted box
+     against the page background (obvious on the light theme). */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, #000 12%, #000 88%, transparent),
+    linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent, #000 12%, #000 88%, transparent),
+    linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  mask-composite: intersect;
 }
 
 .projects-page {
