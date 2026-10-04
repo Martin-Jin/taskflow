@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.8.3',
+    date: '2026-10-05',
+    title: 'Projects page background suits the light theme',
+    changes: [
+      'The decorative background on the Projects page now blends into the light theme: a softer glow, no visible box edges, and clearer lines and dots.',
+    ],
+  },
+  {
     version: '10.8.2',
     date: '2026-10-03',
     title: 'Scheduled blocks follow "must be done on due date"',
