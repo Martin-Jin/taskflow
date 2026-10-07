@@ -37,6 +37,11 @@
  * See NoteEditorModal, where dismissing a half-written note used to discard
  * it with no explanation.
  *
+ * `onShiftEnter` is the "save and close" shortcut: Shift+Enter anywhere inside
+ * the dialog (except a rich-text editor, where it means a line break) calls
+ * it with the same `{ requestClose, ... }` ctx. A key press an inner control
+ * already handled (`defaultPrevented`) is left alone. See shiftEnterHandler.
+ *
  * NOT every modal in the app is on this yet — some have deliberately
  * bespoke shapes (JoinProjectModal's busy-gated dismissal, TaskDetailModal's
  * own multi-panel layout) migrated separately, on their own terms, rather
@@ -47,6 +52,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { shiftEnterHandler } from '../../utils/shiftEnterHandler';
 
 function resolveSlot(slot, ctx) {
   return typeof slot === 'function' ? slot(ctx) : slot;
@@ -66,6 +72,7 @@ export default function Modal({
   overlayClassName = '',
   dismissible = true,
   guardDismiss,
+  onShiftEnter,
 }) {
   const { isClosing, requestClose } = useAnimatedUnmount(onClose);
   const attemptClose = () => {
@@ -110,6 +117,7 @@ export default function Modal({
       <div
         className={`modal modal-size-${size} ${variantClassName}`}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onShiftEnter ? shiftEnterHandler(() => onShiftEnter(ctx)) : undefined}
         ref={modalRef}
         role="dialog"
         aria-modal="true"

@@ -17,14 +17,14 @@
  * contract built for single overwritable values.
  *
  * DISMISSAL: dismissing a detection reverts its field (or, for a label,
- * just hides that one chip) and blocks that exact phrase from reapplying
- * *while it's still typed*. The moment that phrase is no longer present in
- * the title (edited or deleted), the block is lifted — so retyping the
- * same trigger word later re-arms smart parse instead of staying silently
- * dismissed for the rest of the session.
+ * just hides that one chip) and remembers the exact typed occurrence that was
+ * cancelled (see utils/dismissedSpans.js) — not the phrase text. That
+ * occurrence is blanked out before parsing, so a later date typed after it
+ * still gets detected, and the same word typed again elsewhere is a fresh
+ * detection. The cancel lifts as soon as the user edits the cancelled text.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Repeat,
   Wind,
@@ -46,6 +46,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { parseTaskText, stripMatchedText } from '../utils/smartParse';
+import { shiftSpans, maskSpans, findLiveIndex, removeRanges } from '../utils/dismissedSpans';
 import { formatDisplayDate, formatTime12h } from '../utils/dateUtils';
 import { linkLabel } from '../utils/linkify';
 import { PRIORITY_LABELS } from '../utils/priorityColor';
@@ -74,31 +75,32 @@ const SCALAR_FIELD_TYPES = [
 
 export function useSmartTaskTitle({ tasks, projects = [], sections = [], collaborators = [], fields }) {
   const [smartDetected, setSmartDetected] = useState({});
-  const [dismissedKeys, setDismissedKeys] = useState(() => new Set());
+  // Cancelled occurrences, as character ranges in the current title. A ref
+  // (not state) because only the next parse reads them; nothing renders from them.
+  const dismissedSpansRef = useRef([]);
+  const lastTitleRef = useRef('');
+
+  /** Copy of a detection that also records where in the title it was found. */
+  function withStart(match, title) {
+    const start = findLiveIndex(title, match.matchedText, dismissedSpansRef.current);
+    return start === -1 ? match : { ...match, start };
+  }
 
   function handleTitleChange(value) {
-    const { detected } = parseTaskText(value, { existingTasks: tasks, projects, sections, collaborators });
+    dismissedSpansRef.current = shiftSpans(dismissedSpansRef.current, lastTitleRef.current, value);
+    lastTitleRef.current = value;
+    const { detected } = parseTaskText(maskSpans(value, dismissedSpansRef.current), {
+      existingTasks: tasks,
+      projects,
+      sections,
+      collaborators,
+    });
     const nextVisible = {};
-    const nextDismissed = new Set(dismissedKeys);
 
     SCALAR_FIELD_TYPES.forEach((type) => {
       const match = detected[type];
       const field = fields[type];
       if (!field) return;
-
-      // Drop any dismissal for this type that doesn't match what's currently
-      // typed. A dismissed key must only keep suppressing the exact phrase it
-      // was dismissed for — otherwise, editing straight from one valid match
-      // to a *different* valid match of the same type (e.g. "at 9pm" -> "at
-      // 10pm") never passes through a "no match" state, so the old key would
-      // never get cleared, and coming back to the original phrase later would
-      // stay silently (and permanently) suppressed. This mirrors the `labels`
-      // cleanup below, which already compares against the full current match
-      // set rather than only clearing on a total absence of matches.
-      const key = match ? `${type}:${match.matchedText}` : null;
-      [...nextDismissed].forEach((k) => {
-        if (k.startsWith(`${type}:`) && k !== key) nextDismissed.delete(k);
-      });
 
       if (!match) {
         // If a chip was showing (i.e. this field was auto-applied from a
@@ -111,36 +113,39 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], collabo
         return;
       }
 
-      if (field.isUntouched() && !nextDismissed.has(key)) {
+      if (field.isUntouched()) {
         // Pass the full detection set so a field's apply() can see what else
         // was just detected in this same pass (e.g. recurrence checking
         // whether a due date was also detected, without relying on a sibling
         // setState having already landed — state updates aren't visible
         // within the same synchronous pass).
         field.apply(match, detected);
-        nextVisible[type] = match;
+        nextVisible[type] = withStart(match, value);
       }
     });
 
-    const labelMatches = detected.labels || [];
-    const matchedLabelKeys = new Set(labelMatches.map((m) => `labels:${m.matchedText}`));
-    [...nextDismissed].forEach((key) => {
-      if (key.startsWith('labels:') && !matchedLabelKeys.has(key)) nextDismissed.delete(key);
-    });
-    const visibleLabels = labelMatches.filter((m) => !nextDismissed.has(`labels:${m.matchedText}`));
+    const visibleLabels = (detected.labels || []).map((m) => withStart(m, value));
     if (visibleLabels.length > 0) nextVisible.labels = visibleLabels;
 
-    setDismissedKeys(nextDismissed);
     setSmartDetected(nextVisible);
+  }
+
+  /** Remember the typed occurrence behind `entry` as cancelled, so it's skipped from now on. */
+  function cancelOccurrence(entry) {
+    const title = lastTitleRef.current;
+    const start = entry.start ?? findLiveIndex(title, entry.matchedText, dismissedSpansRef.current);
+    if (start < 0) return;
+    const end = start + entry.matchedText.length;
+    dismissedSpansRef.current = [...dismissedSpansRef.current, { start, end, text: title.slice(start, end) }];
   }
 
   /** For `labels`, `match` identifies which of the several detected tags to dismiss. */
   function dismissSmartChip(type, match) {
     if (type === 'labels') {
       if (!match) return;
-      setDismissedKeys((prev) => new Set(prev).add(`labels:${match.matchedText}`));
+      cancelOccurrence(match);
       setSmartDetected((prev) => {
-        const remaining = (prev.labels || []).filter((m) => m.matchedText !== match.matchedText);
+        const remaining = (prev.labels || []).filter((m) => m.matchedText !== match.matchedText || m.start !== match.start);
         const next = { ...prev };
         if (remaining.length > 0) next.labels = remaining;
         else delete next.labels;
@@ -151,7 +156,7 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], collabo
 
     const entry = smartDetected[type];
     if (!entry) return;
-    setDismissedKeys((prev) => new Set(prev).add(`${type}:${entry.matchedText}`));
+    cancelOccurrence(entry);
     fields[type].revert(entry);
     setSmartDetected((prev) => {
       const next = { ...prev };
@@ -201,19 +206,29 @@ export function useSmartTaskTitle({ tasks, projects = [], sections = [], collabo
    * visible in the title after all.
    */
   function buildFinalTitle(title, fallback) {
-    let result = title;
-    SCALAR_FIELD_TYPES.forEach((type) => {
-      if (smartDetected[type]) result = stripMatchedText(result, smartDetected[type].matchedText);
+    const entries = [...SCALAR_FIELD_TYPES.map((type) => smartDetected[type]).filter(Boolean), ...(smartDetected.labels || [])];
+    // Strip each phrase from the exact spot it was detected, so a cancelled
+    // twin typed earlier in the title ("friday monday" with friday cancelled)
+    // isn't removed instead. Entries with no recorded spot fall back to the
+    // first occurrence.
+    const ranges = [];
+    const unplaced = [];
+    entries.forEach((e) => {
+      const end = e.start + e.matchedText.length;
+      if (e.start != null && title.slice(e.start, end).toLowerCase() === e.matchedText.toLowerCase()) ranges.push({ start: e.start, end });
+      else unplaced.push(e);
     });
-    (smartDetected.labels || []).forEach((match) => {
-      result = stripMatchedText(result, match.matchedText);
+    let result = ranges.length ? removeRanges(title, ranges) : title;
+    unplaced.forEach((e) => {
+      result = stripMatchedText(result, e.matchedText);
     });
     return result.trim() || fallback || title.trim();
   }
 
   function resetSmartState() {
     setSmartDetected({});
-    setDismissedKeys(new Set());
+    dismissedSpansRef.current = [];
+    lastTitleRef.current = '';
   }
 
   return { smartDetected, handleTitleChange, dismissSmartChip, applySmartChipCandidate, buildFinalTitle, resetSmartState };

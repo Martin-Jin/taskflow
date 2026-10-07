@@ -426,8 +426,12 @@ mention that makes the task a sub-task of another, an `assign to <name>` /
 guests), a `#project` mention, a standalone `%section` shorthand, and one or
 more `@label` mentions,
 surfacing each as a dismissible chip rather than applying anything
-silently. Dismissing a chip blocks that exact phrase from re-triggering
-until you edit it. A chip that matched more than one thing ambiguously
+silently. Cancelling a detection (the chip's x, or Backspace with the cursor
+right after the highlighted phrase, which deletes no text) cancels only that
+one typed occurrence: a later date in the same title is still detected, the
+same word typed again elsewhere is detected again, and editing the cancelled
+word re-arms it. `Shift+Enter` in the Add task, task details and event
+windows saves everything and closes. A chip that matched more than one thing ambiguously
 (e.g. `%section` matching sections in several different projects) is
 clickable instead, opening a small list to pick which one you meant. See
 `src/utils/smartParse.js` and `src/hooks/useSmartTaskTitle.js`.
