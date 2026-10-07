@@ -1210,6 +1210,42 @@ test.describe('Recurring tasks', () => {
 });
 
 test.describe('Smart parse', () => {
+  test('Backspace right after a detected date cancels only that one, so a later date still parses', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const titleInput = page.getByPlaceholder('Task name');
+    await titleInput.pressSequentially('Change time for friday');
+    await expect(page.locator('.smart-chip-row')).toContainText(/Due/);
+
+    // One Backspace cancels the detection and deletes no text.
+    await titleInput.press('Backspace');
+    await expect(titleInput).toHaveValue('Change time for friday');
+    await expect(page.locator('.smart-chip-row')).toHaveCount(0);
+
+    // A later date is still picked up.
+    await titleInput.pressSequentially(' monday');
+    await expect(page.locator('.smart-chip-row')).toContainText(/Due/);
+    await expect(titleInput).toHaveValue('Change time for friday monday');
+
+    await closeAnyModal(page);
+    expectNoErrors(errors);
+  });
+
+  test('Shift+Enter saves the new task and closes the modal', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await openAddTask(page);
+
+    const titleInput = page.getByPlaceholder('Task name');
+    await titleInput.fill(`Shift enter save ${RUN_ID}`);
+    await titleInput.press('Shift+Enter');
+    await expect(titleInput).toBeHidden();
+    await expect(page.getByText(`Shift enter save ${RUN_ID}`).first()).toBeVisible();
+    expectNoErrors(errors);
+  });
+
   test('detects due date, priority, project, and label chips together from natural-language title', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);

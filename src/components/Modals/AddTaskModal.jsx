@@ -76,6 +76,7 @@ import { TIME_OF_DAY_OPTIONS, TIME_OF_DAY_LABELS } from '../../utils/timeOfDay';
 import SelectMenu from '../Common/SelectMenu';
 import SmartChips from '../Common/SmartChips';
 import SmartTitleInput from '../Common/SmartTitleInput';
+import { shiftEnterHandler } from '../../utils/shiftEnterHandler';
 import SmartDurationInput from '../Common/SmartDurationInput';
 import SmartParseGuideModal from './SmartParseGuideModal';
 
@@ -489,6 +490,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       <div
         className="modal modal-detail addtask-modal"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={shiftEnterHandler(handleSubmit)}
         style={{ width: 560 }}
         ref={modalRef}
         role="dialog"

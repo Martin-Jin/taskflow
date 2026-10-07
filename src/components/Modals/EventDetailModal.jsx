@@ -483,7 +483,7 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   const modalTitle = isCreate ? (createMode === 'task' ? 'Schedule task' : 'New event') : event.title || 'Untitled event';
 
   return (
-    <Modal onClose={handleModalClose} ariaLabel={modalTitle} size="lg" variantClassName="modal-detail">
+    <Modal onClose={handleModalClose} ariaLabel={modalTitle} size="lg" variantClassName="modal-detail" onShiftEnter={handleSave}>
       {({ requestClose }) => {
         requestCloseRef.current = requestClose;
         return (

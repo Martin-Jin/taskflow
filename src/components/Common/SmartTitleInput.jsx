@@ -4,10 +4,11 @@
  * currently has detected in the typed text (a due date, "every month", a
  * priority shorthand, an "after <task>" mention) gets an inline highlight
  * directly over the matched words, clickable to cancel that one detection
- * without touching the rest of the title. Cancelling reverts the field it
- * wrote (see useSmartTaskTitle) — retyping the same trigger word later
- * re-arms it, since the dismissal only holds while that exact phrase is
- * still present in the text.
+ * without touching the rest of the title. Pressing Backspace with the caret
+ * right after a highlight cancels it the same way, without deleting any text.
+ * Cancelling reverts the field it wrote (see useSmartTaskTitle) and only
+ * covers that one typed occurrence — later words still parse, and editing
+ * the cancelled text re-arms it.
  *
  * Implementation: an absolutely-positioned backdrop sits in the same box as
  * the real input, rendering the same text with transparent characters and a
@@ -80,9 +81,16 @@ function buildRanges(title, smartDetected) {
     const lowerMatch = matchedText.toLowerCase();
     let searchFrom = 0;
     let start = -1;
+    // Use the spot the detection was recorded at when it still holds, so a
+    // cancelled twin of the same word earlier in the title isn't highlighted.
+    const recorded = match?.start;
+    if (recorded != null && lowerTitle.slice(recorded, recorded + lowerMatch.length) === lowerMatch) {
+      const recordedEnd = recorded + lowerMatch.length;
+      if (!claimed.some(([cs, ce]) => recorded < ce && recordedEnd > cs)) start = recorded;
+    }
     // Skip past any range already claimed by an earlier detection so two
     // matches never highlight the same characters.
-    while (searchFrom <= lowerTitle.length) {
+    while (start === -1 && searchFrom <= lowerTitle.length) {
       const idx = lowerTitle.indexOf(lowerMatch, searchFrom);
       if (idx === -1) break;
       const end = idx + lowerMatch.length;
@@ -238,6 +246,19 @@ export default function SmartTitleInput({
     // that neither popup handled counts as a real submit request.
     const handledByMention = mention.handleKeyDown(e);
     const handledByKeywordSuggest = !handledByMention && keywordSuggest.handleKeyDown(e);
+    // Backspace straight after a detected phrase cancels just that detection
+    // and deletes nothing — the highlight acts like an invisible character.
+    // Phrases opened with @ # % are skipped: they're still being typed with
+    // autocomplete, and Backspace there must edit the text.
+    if (!handledByMention && !handledByKeywordSuggest && e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const { selectionStart, selectionEnd } = e.target;
+      const hit = selectionStart === selectionEnd && ranges.find((r) => r.end === selectionStart && !/^[@#%]/.test(value.slice(r.start, r.end)));
+      if (hit) {
+        e.preventDefault();
+        onDismiss(hit.type, hit.type === 'labels' ? hit.match : undefined);
+        return;
+      }
+    }
     if (!handledByMention && !handledByKeywordSuggest && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (onEnter) {

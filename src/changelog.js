@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '10.9.0',
+    date: '2026-10-07',
+    title: 'Cancel one smart-parse with Backspace, and Shift+Enter to save',
+    changes: [
+      'Press Backspace right after a highlighted date, time or other detected phrase in a task title to cancel just that one detection. Nothing is deleted, and later words still get picked up, so "Change time for friday monday" can now use Monday.',
+      'Cancelling a detection (with Backspace or the x on its chip) now only affects that one typed occurrence. Typing the same word again later is detected again, and so is the word if you edit it.',
+      'Press Shift+Enter in the Add task, task details and event windows to save everything and close.',
+    ],
+  },
+  {
     version: '10.8.3',
     date: '2026-10-05',
     title: 'Projects page background suits the light theme',

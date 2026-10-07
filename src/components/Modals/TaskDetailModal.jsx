@@ -1603,6 +1603,16 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     // is how the user dismisses it when they're done.
   }
 
+  // Shift+Enter: commit everything still pending, then close. Blocked by the
+  // same validation errors as the Save button; a viewer has nothing to save.
+  function handleSaveAndClose({ requestClose }) {
+    if (!isReadOnlyViewer) {
+      if (fixedTimeError || dueDateError || dueDateRequiredError) return;
+      if (isDirty) commitChanges();
+    }
+    requestClose();
+  }
+
   /**
    * Cascades this (container) task's shared fields — priority, due
    * date/enforcement, project/section, labels, and passive flag — down onto
@@ -1760,7 +1770,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   return (
     <>
-      <Modal onClose={onClose} ariaLabel="Task details" size="xl" variantClassName="modal-detail">
+      <Modal onClose={onClose} ariaLabel="Task details" size="xl" variantClassName="modal-detail" onShiftEnter={handleSaveAndClose}>
         {({ requestClose }) => {
           requestCloseRef.current = requestClose;
           return (
