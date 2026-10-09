@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.9.1',
+    date: '2026-10-10',
+    title: 'Deleted projects disappear from the Projects page',
+    changes: [
+      'Deleting a project now removes it from the Projects page and the project dropdown straight away, instead of only showing the "Deleted project" message.',
+    ],
+  },
+  {
     version: '10.9.0',
     date: '2026-10-07',
     title: 'Cancel one smart-parse with Backspace, and Shift+Enter to save',
