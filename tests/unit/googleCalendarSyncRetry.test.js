@@ -327,14 +327,20 @@ describe('restore-then-push: a backup-restored Google event reaches Google again
   //   2. The row it hands back must then satisfy isUnsyncedPushableEvent, or
   //      the push sweep skips it and the event is stranded locally forever —
   //      kept, but never actually re-created on Google.
-  const rangeStart = '2026-08-01';
-  const rangeEnd = '2026-08-31';
-  // Future-dated so the past-item freeze can't be what makes this pass/fail.
-  const futureDate = (() => {
+  // Both the pulled window and the event's date are measured from today. They
+  // used to be a fixed August 2026 window against a "today + 5 days" event, so
+  // the event drifted out of the window once the calendar moved past August
+  // and these tests failed for a reason unrelated to the sync logic: an event
+  // outside the pulled window is out of scope and deliberately left untouched.
+  const isoFromToday = (offsetDays) => {
     const d = new Date();
-    d.setDate(d.getDate() + 5);
+    d.setDate(d.getDate() + offsetDays);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  })();
+  };
+  const rangeStart = isoFromToday(-10);
+  const rangeEnd = isoFromToday(25);
+  // Future-dated so the past-item freeze can't be what makes this pass/fail.
+  const futureDate = isoFromToday(5);
 
   const restoredFromBackup = {
     id: 'local_restored',
@@ -421,11 +427,14 @@ describe('poll tick handoff: the demotion and the push sweep must agree WITHIN o
   // that setEvents only updates on an explicit flush), so the "reads a
   // render-stale list" failure mode is reproducible here rather than only in
   // the browser.
-  const futureDate = (() => {
+  // Window and event date are both measured from today (see the identical
+  // note in the describe block above) so the event can't drift out of scope.
+  const isoFromToday = (offsetDays) => {
     const d = new Date();
-    d.setDate(d.getDate() + 5);
+    d.setDate(d.getDate() + offsetDays);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  })();
+  };
+  const futureDate = isoFromToday(5);
 
   const restoredShopping = {
     id: 'local_restored',
@@ -489,8 +498,8 @@ describe('poll tick handoff: the demotion and the push sweep must agree WITHIN o
     return toPush.length;
   }
 
-  const rangeStart = '2026-08-01';
-  const rangeEnd = '2026-08-31';
+  const rangeStart = isoFromToday(-10);
+  const rangeEnd = isoFromToday(25);
 
   it('pushes the restored event on the SAME tick that demotes it, before any re-render', () => {
     const harness = makeHarness([restoredShopping]);
