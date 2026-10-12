@@ -342,6 +342,14 @@ test.describe('AI Quick Add', () => {
     await expect(projectMenu).toContainText('All projects');
     await expect(page.locator('#ai-quickadd-event-start')).toBeVisible();
     await expect(page.locator('#ai-quickadd-event-end')).toBeVisible();
+    // The event range starts as "this week": 7 days before today to 7 days after.
+    const localIso = (offset) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    await expect(page.locator('#ai-quickadd-event-start')).toHaveValue(localIso(-7));
+    await expect(page.locator('#ai-quickadd-event-end')).toHaveValue(localIso(7));
 
     // Picking a real project narrows the picker's label to that project's name.
     await projectMenu.click();
@@ -355,6 +363,11 @@ test.describe('AI Quick Add', () => {
       await expect(projectMenu).toContainText(secondOptionLabel);
     }
 
+    // A range typed into the date fields is NOT remembered: it would go stale
+    // and silently hide the current week's events, so a re-opened modal
+    // starts from this week again (checked after the reopen below).
+    await page.locator('#ai-quickadd-event-start').fill(localIso(-60));
+
     // The scope choice persists across a remount (device-local preference,
     // same pattern as provider/model — see CONTEXT_SCOPE_STORAGE_KEY).
     // Cancel collapses the mini-FAB speed-dial, so re-expand it via the main
@@ -366,6 +379,16 @@ test.describe('AI Quick Add', () => {
     await aiFab.click();
     await page.waitForTimeout(300);
     const reopenedModal = page.getByRole('dialog', { name: 'AI Quick Add', exact: true });
+    await expect(reopenedModal.getByRole('button', { name: 'Workspace context sent to the AI' })).toContainText('Custom');
+    await expect(page.locator('#ai-quickadd-event-start')).toHaveValue(localIso(-7));
+
+    // One-click "no context" button: sends nothing, and the same button puts
+    // the previous mode (Custom) back.
+    const noContextBtn = reopenedModal.getByRole('button', { name: 'Send no context' });
+    await noContextBtn.click();
+    await expect(reopenedModal.getByRole('button', { name: 'Workspace context sent to the AI' })).toContainText('No context');
+    await expect(reopenedModal).toContainText(/can still create new tasks\/events\/projects/i);
+    await reopenedModal.getByRole('button', { name: 'Add context back' }).click();
     await expect(reopenedModal.getByRole('button', { name: 'Workspace context sent to the AI' })).toContainText('Custom');
 
     await reopenedModal.getByRole('button', { name: 'Cancel' }).click();
