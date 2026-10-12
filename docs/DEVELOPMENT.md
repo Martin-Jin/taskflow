@@ -321,9 +321,8 @@ date that actually satisfies the inherited rule via
 `computeFirstMatchingDueDate` (a no-op for plain interval rules, but
 necessary for a weekday-specific rule like "every Wed, Sun" since the
 recurring relative's own `dueDate` may not itself fall on one of those
-days). The one-time `migrateRecurrenceConsistency` migration applied this
-once to any pre-existing inconsistent data — see its file-level comment for
-removal timing.
+days). A one-time migration once applied this to pre-existing inconsistent
+data; it has since been removed (see the `deleted/` folder).
 
 **"Done for today" vs. `isCompleted`:** a recurring task never sets
 `isCompleted: true` on a normal completion (its due date just advances — see
@@ -402,13 +401,13 @@ one:** `computeRecurrenceSyncUpdates` (parent/sub-task recurrence sync, see
 above) resets `remainingHours` to `estimatedHours` and clears `isCompleted`
 whenever it flips a task's `isRecurring` to `true` and that task was already
 `isCompleted` or sitting at `remainingHours <= 0`. Without this, a task that
-was completed (or migrated in already-completed — see
-`migrateSubtasksToTasks.js`'s `sub.isCompleted ? 0 : 0.5`) BEFORE it or its
-parent became recurring stayed permanently stuck showing 0 remaining, since
-becoming recurring isn't `completeTask`'s occurrence-advance (the only other
-place that reset happens). `migrateStaleRecurringRemainingHours.js` is the
-matching one-time backfill for tasks that were already stuck like this
-before the live sync above existed to catch it going forward.
+was completed (or converted from an old embedded sub-task that was already
+completed) BEFORE it or its parent became recurring stayed permanently stuck
+showing 0 remaining, since becoming recurring isn't `completeTask`'s
+occurrence-advance (the only other place that reset happens). A one-time
+backfill once repaired tasks that were already stuck like this before the
+live sync above existed; it has since been removed (see the `deleted/`
+folder).
 
 ### Dependencies and passive tasks
 
@@ -824,12 +823,6 @@ src/
 │   ├── useMultiSelect.js          # Transient (not persisted) per-surface bulk-selection state — List/Board/Calendar/TaskDetailModal's sub-task list each get their own independent instance; makeSelectionKey/parseSelectionKey encode a block:<id>/event:<id> composite key scheme for Calendar's mixed ScheduledBlock+CalendarEvent selections
 │   ├── useLongPressSelect.js      # Mobile long-press-to-enter-selection-mode, modeled on useReparentDrag's own long-press timing/threshold
 │   └── useTaskBulkEditActions.js  # Shared Task-only bulk-edit action set (editable-field computation + apply/complete/delete handlers) reused by List and Board
-├── migrations/
-│   ├── migrateBlockedTimeToEvents.js  # One-time data-shape migration backfilling new event fields (description/location) onto pre-existing manual events — see file-level comments for removal timing
-│   ├── migrateSubtasksToTasks.js      # One-time migration converting the old embedded Task.subtasks array into standalone parentId-linked Tasks — see file-level comments for removal timing
-│   ├── migrateRecurrenceConsistency.js # One-time migration syncing recurrence across mismatched parent/sub-task chains — see file-level comments for removal timing
-│   ├── migrateStaleRecurringRemainingHours.js # One-time migration repairing a recurring task stuck at remainingHours 0 from before it became recurring — see file-level comments for removal timing
-│   └── migrateRecurrenceState.js       # One-time migration adopting utils/recurrenceState.js's convergent completedOccurrences/skippedThrough model on existing recurring tasks — see file-level comments for removal timing
 ├── services/
 │   ├── todoistService.js         # Todoist API v1 wrapper + normalization
 │   ├── googleCalendarService.js  # Google Calendar OAuth + two-way event sync (push/pull) + planCalendarRewrite/computeCalendarRewritePlan (opt-in reverse-direction "make Google match TaskFlow" event rewrite, primary-calendar-only) + planTodaysBlockPush/computeTodaysBlockPushPlan (today's ScheduledBlocks, one-way, delete-all-then-recreate)

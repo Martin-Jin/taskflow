@@ -76,7 +76,6 @@ import {
   planSubtaskOccurrenceCompletion,
   reanchorRecurringEnforceDueDateUpdates,
 } from '../utils/recurrenceState';
-import { migrateRecurrenceState } from '../migrations/migrateRecurrenceState';
 import { useSharedProjectSync } from '../hooks/useSharedProjectSync';
 import { addSelfAsCollaborator, createSharedProject, deleteSharedProject, updateSharedProject, writeSharedTasks, writeSharedSections, renameSelfAndPresenceForProjects } from '../services/sharedProjectService';
 import {
@@ -139,10 +138,6 @@ import { resolveEventId, truncateRuleUntil } from '../utils/recurrenceExpansion'
 import { dedupeEventsByOccurrence } from '../utils/eventUtils';
 import { applyEventScopeUpdate, splitSeriesAtOccurrence } from '../utils/eventScopeUpdate';
 import { nextLabelColor } from '../utils/labelColor';
-import { migrateBlockedTimeToEvents } from '../migrations/migrateBlockedTimeToEvents';
-import { migrateSubtasksToTasks } from '../migrations/migrateSubtasksToTasks';
-import { migrateRecurrenceConsistency } from '../migrations/migrateRecurrenceConsistency';
-import { migrateStaleRecurringRemainingHours } from '../migrations/migrateStaleRecurringRemainingHours';
 import { ensureProtectedSleepRoutine } from '../utils/protectedSleepRoutine';
 
 const SchedulerContext = createContext(null);
@@ -633,43 +628,6 @@ export function SchedulerProvider({ children }) {
   // total mystery each time ("last imported 3 tasks, 2 days ago").
   const [lastTodoistImport, setLastTodoistImport] = usePersistedState('lastTodoistImport', null);
 
-  // Guards the one-time migrateBlockedTimeToEvents backfill below so it only
-  // ever runs once per device instead of re-running (harmlessly, but
-  // pointlessly) on every load. See src/migrations/migrateBlockedTimeToEvents.js.
-  const [blockedTimeMigrationDone, setBlockedTimeMigrationDone] = usePersistedState('blockedTimeMigrationDone', false);
-
-  // Guards the one-time migrateSubtasksToTasks backfill below — see
-  // src/migrations/migrateSubtasksToTasks.js for why (the old nested
-  // Task.subtasks array became standalone Tasks linked by parentId).
-  const [subtasksMigrationDone, setSubtasksMigrationDone] = usePersistedState('subtasksMigrationDone', false);
-
-  // Guards the one-time migrateRecurrenceConsistency backfill below — see
-  // src/migrations/migrateRecurrenceConsistency.js (parent/sub-task
-  // recurrence used to be able to drift out of sync; addTask/updateTask now
-  // keep them in sync going forward, this just catches up existing data).
-  const [recurrenceConsistencyMigrationDone, setRecurrenceConsistencyMigrationDone] = usePersistedState(
-    'recurrenceConsistencyMigrationDone',
-    false
-  );
-
-  // Guards the one-time migrateRecurrenceState backfill below — see
-  // src/migrations/migrateRecurrenceState.js (recurring tasks gained a
-  // commutative completedOccurrences/skippedThrough source of truth, with
-  // dueDate/completedDates/completionHistory derived from it).
-  const [recurrenceStateMigrationDone, setRecurrenceStateMigrationDone] = usePersistedState(
-    'recurrenceStateMigrationDone',
-    false
-  );
-
-  // Guards the one-time migrateStaleRecurringRemainingHours backfill below —
-  // see src/migrations/migrateStaleRecurringRemainingHours.js (a recurring
-  // task that became recurring while already isCompleted/remainingHours: 0
-  // used to stay stuck there forever).
-  const [staleRecurringRemainingHoursMigrationDone, setStaleRecurringRemainingHoursMigrationDone] = usePersistedState(
-    'staleRecurringRemainingHoursMigrationDone',
-    false
-  );
-
   // events: seeded from local storage so a refresh doesn't blank the
   // calendar grid while the silent Google re-auth (below) is in flight,
   // falling back to mock data on a genuine first-ever run (no persisted key
@@ -948,79 +906,7 @@ export function SchedulerProvider({ children }) {
     savePersisted('events', events);
   }, [events]);
 
-  // ONE-TIME MIGRATION — see src/migrations/migrateBlockedTimeToEvents.js. Safe to delete this effect once the flag above is true for all users.
-  useEffect(() => {
-    if (blockedTimeMigrationDone) return;
-    setEvents((prev) => migrateBlockedTimeToEvents(prev));
-    setBlockedTimeMigrationDone(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ONE-TIME MIGRATION — see src/migrations/migrateSubtasksToTasks.js. Only
-  // actually commits a new history entry when this device's data has legacy
-  // embedded subtasks to convert, so most users (who never had any) don't
-  // get a needless "Migrated sub-tasks" entry in their Undo stack. Safe to
-  // delete this effect once the flag above is true for all users.
-  useEffect(() => {
-    if (subtasksMigrationDone) return;
-    if (stateRef.current.tasks.some((t) => t.subtasks && t.subtasks.length > 0)) {
-      commit({ tasks: migrateSubtasksToTasks(stateRef.current.tasks), blocks: stateRef.current.blocks }, 'Migrated sub-tasks to standalone tasks');
-    }
-    setSubtasksMigrationDone(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ONE-TIME MIGRATION — see src/migrations/migrateRecurrenceConsistency.js.
-  // Runs after the subtasks migration above (so parentId links are already
-  // in their final standalone-Task shape) and only commits a history entry
-  // when this device actually has an inconsistent parent/sub-task recurrence
-  // chain to fix. Safe to delete this effect once the flag above is true for
-  // all users.
-  useEffect(() => {
-    if (recurrenceConsistencyMigrationDone) return;
-    const synced = migrateRecurrenceConsistency(stateRef.current.tasks);
-    if (synced !== stateRef.current.tasks) {
-      commit({ tasks: synced, blocks: stateRef.current.blocks }, 'Synced recurring parent/sub-task consistency');
-    }
-    setRecurrenceConsistencyMigrationDone(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ONE-TIME MIGRATION — see src/migrations/migrateRecurrenceState.js. Runs
-  // after the recurrence-consistency migration above so parent/sub-task
-  // recurrence is already settled before each series gets its anchor. Uses
-  // overwritePresent rather than commit: adopting the new model is a
-  // representation change with no user-visible effect (every derived value
-  // comes out identical — that's asserted in its unit tests), so it has no
-  // business appearing in the undo stack or popping an action toast. Safe to
-  // delete this effect once the flag above is true for all users.
-  useEffect(() => {
-    if (recurrenceStateMigrationDone) return;
-    const migrated = migrateRecurrenceState(stateRef.current.tasks);
-    if (migrated !== stateRef.current.tasks) {
-      overwritePresent({ tasks: migrated, blocks: stateRef.current.blocks });
-    }
-    setRecurrenceStateMigrationDone(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ONE-TIME MIGRATION — see src/migrations/migrateStaleRecurringRemainingHours.js.
-  // Runs after the two migrations above (so it sees final isRecurring state)
-  // and only commits a history entry when this device actually has a
-  // recurring task stuck at remainingHours <= 0 with nothing legitimately
-  // backing it. Safe to delete this effect once the flag above is true for
-  // all users.
-  useEffect(() => {
-    if (staleRecurringRemainingHoursMigrationDone) return;
-    const repaired = migrateStaleRecurringRemainingHours(stateRef.current.tasks);
-    if (repaired !== stateRef.current.tasks) {
-      commit({ tasks: repaired, blocks: stateRef.current.blocks }, 'Fixed recurring tasks stuck at 0 remaining hours');
-    }
-    setStaleRecurringRemainingHoursMigrationDone(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Runs on every load (not a one-time migration — see
+  // Runs on every load (a permanent invariant, not a one-time migration — see
   // src/utils/protectedSleepRoutine.js) so a user who ends up
   // with zero routines labeled "Sleep" — however that happened — always gets
   // a protected one back, rather than only being backfilled once.
@@ -1096,9 +982,8 @@ export function SchedulerProvider({ children }) {
   // reading `events` directly rather than through `visibleEvents` — the whole
   // point of this sweep is to find tombstones, which that filtered view never
   // contains. Uses the tracked `setEvents` (not a raw/untracked setter): this
-  // is an ordinary local mutation of this device's own data, the same as the
-  // migration effects above, and should participate in the cloud-sync race
-  // guard like any other local edit.
+  // is an ordinary local mutation of this device's own data, and should
+  // participate in the cloud-sync race guard like any other local edit.
   useEffect(() => {
     setEvents((prev) => {
       const staleTombstoneIds = new Set(
@@ -1123,8 +1008,8 @@ export function SchedulerProvider({ children }) {
   // sweep is to find tombstones, which those filtered views never contain.
   // Uses the tracked setSections/setProjects/setLabels (not a raw/untracked
   // setter): this is an ordinary local mutation of this device's own data,
-  // the same as the migration effects above, and should participate in the
-  // cloud-sync race guard like any other local edit. A pure filter (nothing
+  // and should participate in the cloud-sync race guard like any other local
+  // edit. A pure filter (nothing
   // added or content-changed) never triggers useEntityStampedState's own
   // stamping — only a row whose CONTENT changes gets a fresh updatedAt, and
   // a row that's simply removed here has no content left to stamp.
@@ -1168,8 +1053,7 @@ export function SchedulerProvider({ children }) {
   // ---- Initial data load ---------------------------------------------------
   // Google Calendar's own silent re-auth/pull now runs inside
   // useGoogleCalendarSync (below), so there's nothing left to block on here —
-  // this just clears the loading flag once the one-time migration/sweep
-  // effects above have run.
+  // this just clears the loading flag once the sweep effects above have run.
   useEffect(() => {
     setIsLoading(false);
   }, []);
