@@ -31,6 +31,8 @@
  * ============================================================================
  */
 
+import { addDays } from '../utils/dateUtils';
+
 // Rough chars-per-token heuristic for the pre-flight cost estimate shown in
 // the UI (Stage A.5) — deliberately not an exact tokenizer dependency, since
 // this only needs to be "in the right ballpark", and is labeled as
@@ -213,11 +215,25 @@ function labelsSection(labels) {
 }
 
 // Default event date-range window for "Custom" scope when the user hasn't
-// picked their own start/end — "this month" isn't quite what's implemented
-// (a fixed calendar month would shrink to almost nothing sent on the last
-// day of a month); instead this is a rolling ~30 day window starting today,
-// which stays a similarly-sized, useful lookahead no matter what day it is.
-export const DEFAULT_EVENT_RANGE_DAYS = 30;
+// picked their own start/end: "this week", meaning 7 days before today up to
+// 7 days after it. It's a rolling window around today rather than a calendar
+// week or month, so it is always the same size (a calendar week would shrink
+// to one day on its last day) and always covers both what just happened and
+// what's coming up.
+export const DEFAULT_EVENT_RANGE_DAYS = 7;
+
+/**
+ * The default event window for a given "today", as inclusive ISO dates.
+ * Recomputed from the current date every time it's asked for, so it never
+ * goes stale (see AIQuickAddModal, which deliberately doesn't remember a
+ * picked range between openings).
+ *
+ * @param {string} todayIso
+ * @returns {{start: string, end: string}}
+ */
+export function defaultEventRange(todayIso) {
+  return { start: addDays(todayIso, -DEFAULT_EVENT_RANGE_DAYS), end: addDays(todayIso, DEFAULT_EVENT_RANGE_DAYS) };
+}
 
 /**
  * Filters the raw workspace arrays down to what a given context `scope`

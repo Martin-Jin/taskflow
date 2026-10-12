@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAIContext, filterContextData } from '../../src/services/aiContextService';
+import { buildAIContext, filterContextData, defaultEventRange } from '../../src/services/aiContextService';
 
 const projects = [
   { id: 'p1', name: 'Work' },
@@ -121,5 +121,35 @@ describe('buildAIContext — notes section', () => {
     expect(markdown).not.toContain('Packing list');
     // "0 total" would read as "this user has no notes", a different claim.
     expect(markdown).not.toMatch(/Existing notes \(0 total\)/);
+  });
+});
+
+describe('defaultEventRange — "this week" is 7 days either side of today', () => {
+  it('spans 7 days before today to 7 days after, inclusive', () => {
+    expect(defaultEventRange('2026-10-13')).toEqual({ start: '2026-10-06', end: '2026-10-20' });
+  });
+
+  it('crosses month and year boundaries correctly', () => {
+    expect(defaultEventRange('2026-01-03')).toEqual({ start: '2025-12-27', end: '2026-01-10' });
+    expect(defaultEventRange('2026-03-02')).toEqual({ start: '2026-02-23', end: '2026-03-09' });
+  });
+
+  it('is the same size on every day (a calendar week would shrink to one day on its last day)', () => {
+    for (const day of ['2026-10-11', '2026-10-12', '2026-10-17']) {
+      const { start, end } = defaultEventRange(day);
+      expect((Date.parse(end) - Date.parse(start)) / 86400000).toBe(14);
+    }
+  });
+
+  it('keeps events inside the window and drops ones outside when used as a Custom scope', () => {
+    const { start, end } = defaultEventRange('2026-10-13');
+    const events = [
+      { id: 'in_past', date: '2026-10-06', title: 'a' },
+      { id: 'in_future', date: '2026-10-20', title: 'b' },
+      { id: 'too_old', date: '2026-10-05', title: 'c' },
+      { id: 'too_far', date: '2026-10-21', title: 'd' },
+    ];
+    const out = filterContextData({ tasks: [], projects: [], sections: [], labels: [], events }, { mode: 'custom', eventStart: start, eventEnd: end });
+    expect(out.events.map((e) => e.id)).toEqual(['in_past', 'in_future']);
   });
 });

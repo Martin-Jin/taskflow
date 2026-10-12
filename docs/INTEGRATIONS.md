@@ -205,6 +205,13 @@ project and/or narrow the calendar events sent to a date range, useful for
 keeping a request smaller/cheaper or more focused. Your last scope choice is
 remembered on that device, same as the provider/model choice.
 
+- **One-click "no context":** the **Send no context** button next to the
+  picker switches to No context, and the same button (now **Add context
+  back**) restores whichever mode you had before.
+- **Default date range:** in Custom, the events range starts as this week —
+  7 days before today to 7 days after. A range you type in is not remembered
+  between openings, so it can't go stale and quietly hide the current week.
+
 Your **notes are a separate, opt-in part of that snapshot** — off by default
 in every scope, since a note body is unbounded freeform text that can dwarf
 the rest of the request. Tick **Include my notes** if you want the AI to be

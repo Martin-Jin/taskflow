@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.0.0',
+    date: '2026-10-13',
+    title: 'AI Quick Add: one-click "no context" and a this-week default',
+    changes: [
+      'AI Quick Add has a new "Send no context" button that stops it sending any of your tasks, events or projects, so it only uses what it knows about how the app works. Press it again to bring your previous setting back.',
+      "When you restrict AI Quick Add's calendar events by date, the range now starts as this week (7 days before today to 7 days after) and resets each time you open it, instead of a fixed 30 days ahead.",
+    ],
+  },
+  {
     version: '10.9.3',
     date: '2026-10-13',
     title: 'Deleted projects, sections and tags no longer reappear in lists',

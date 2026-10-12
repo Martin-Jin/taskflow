@@ -2430,6 +2430,7 @@
      "Claude"/"Gemini" label text lines up with the plain paragraph text
      above/below this row instead of looking indented relative to it. */
   margin-left: -8px;
+  align-items: center;
 }
 
 /* Deliberately left at SelectMenu's default ghost/transparent trigger look
@@ -2440,7 +2441,7 @@
 
 /* Custom context scope's event date-range sub-filter (AIQuickAddModal) —
    plain native date inputs (this app has no reusable date-range picker
-   component to reach for instead, see aiContextService's DEFAULT_EVENT_RANGE_DAYS
+   component to reach for instead, see aiContextService's defaultEventRange
    for the default window these fall back to). Wraps on narrow widths rather
    than clipping/overflowing the modal. */
 .ai-quickadd-daterange-row {

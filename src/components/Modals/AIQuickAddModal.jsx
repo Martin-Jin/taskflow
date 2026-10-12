@@ -27,9 +27,9 @@ import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
 import Modal from '../Common/Modal';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { loadPersisted, savePersisted } from '../../utils/persistence';
-import { toISODate, addDays } from '../../utils/dateUtils';
+import { toISODate } from '../../utils/dateUtils';
 import { requestAIPlan, getStoredApiKey, ALLOWED_ATTACHMENT_TYPES } from '../../services/aiQuickAddService';
-import { buildAIContext, estimateTokens, filterContextData, DEFAULT_EVENT_RANGE_DAYS } from '../../services/aiContextService';
+import { buildAIContext, estimateTokens, filterContextData, defaultEventRange } from '../../services/aiContextService';
 import { resolvePlan } from '../../services/aiPlanService';
 import { MODEL_CATALOG, getDefaultModelId, isValidModelId } from '../../services/aiModels';
 import SelectMenu from '../Common/SelectMenu';
@@ -59,7 +59,10 @@ const CONTEXT_SCOPE_OPTIONS = [
 
 // includeNotes defaults to false in every mode, notes being the one part of
 // the snapshot that's unbounded freeform prose (see filterContextData).
-const DEFAULT_CONTEXT_SCOPE = { mode: 'full', projectId: '', eventStart: '', eventEnd: '', includeNotes: false };
+// `previousMode` is what the "No context" button puts back when toggled off.
+// The event date range is deliberately NOT part of this persisted object —
+// see eventRange below.
+const DEFAULT_CONTEXT_SCOPE = { mode: 'full', previousMode: 'full', projectId: '', includeNotes: false };
 
 export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   const scheduler = useScheduler();
@@ -109,17 +112,30 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
     });
   }
 
-  // Custom mode's event date-range sub-filter defaults to a rolling ~30 day
-  // window starting today (DEFAULT_EVENT_RANGE_DAYS) whenever the user
-  // hasn't picked their own start/end — computed fresh from `todayIso` each
-  // render rather than baked into the persisted default, so it stays
-  // "today-relative" across sessions instead of freezing to whatever day the
-  // pref was first saved. Only meaningful in 'custom' mode — 'full' sends
+  // Switches the context mode, remembering the mode being left when going to
+  // "No context" so the one-click toggle below can put it back.
+  function changeContextMode(mode) {
+    updateContextScope(
+      mode === 'none' && contextScope.mode !== 'none' ? { mode, previousMode: contextScope.mode } : { mode }
+    );
+  }
+
+  // Custom mode's event date-range sub-filter. It starts as "this week" —
+  // 7 days before today to 7 days after (see defaultEventRange) — and only
+  // holds the dates the user has typed into the two fields during THIS
+  // opening of the modal. They're deliberately not saved between openings:
+  // a remembered range goes stale (a range picked last Tuesday would
+  // silently hide this week's events), so each opening re-derives the window
+  // from the current date. Only meaningful in 'custom' mode — 'full' sends
   // every event unfiltered and 'none' sends none, so this is passed through
   // to filterContextData as-is only when scope.mode === 'custom' (see
   // effectiveScope below).
-  const defaultEventStart = todayIso;
-  const defaultEventEnd = addDays(todayIso, DEFAULT_EVENT_RANGE_DAYS);
+  const [pickedEventRange, setPickedEventRange] = useState({ start: '', end: '' });
+  const defaultRange = defaultEventRange(todayIso);
+  const defaultEventStart = defaultRange.start;
+  const defaultEventEnd = defaultRange.end;
+  const eventStart = pickedEventRange.start || defaultEventStart;
+  const eventEnd = pickedEventRange.end || defaultEventEnd;
   // A persisted projectId from a project that's since been deleted/left
   // falls back to "All projects" (no restriction) rather than filtering
   // everything out silently — same "stale pref is safely ignored" handling
@@ -130,8 +146,8 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
       ? {
           mode: 'custom',
           projectId: projectStillExists ? contextScope.projectId : undefined,
-          eventStart: contextScope.eventStart || defaultEventStart,
-          eventEnd: contextScope.eventEnd || defaultEventEnd,
+          eventStart,
+          eventEnd,
           includeNotes: contextScope.includeNotes,
         }
       : { mode: contextScope.mode, includeNotes: contextScope.includeNotes };
@@ -157,7 +173,7 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   const filteredContextData = useMemo(
     () => filterContextData({ tasks, projects, sections, labels, events, notes: notes?.notes || [] }, effectiveScope),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasks, projects, sections, labels, events, notes, contextScope]
+    [tasks, projects, sections, labels, events, notes, contextScope, pickedEventRange]
   );
 
   // Only rebuilds when the workspace or scope changes, not on every
@@ -167,7 +183,7 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
   const contextTokens = useMemo(
     () => buildAIContext({ ...filteredContextData, today: toISODate(new Date()), scope: effectiveScope }).approxTokens,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredContextData, contextScope]
+    [filteredContextData, contextScope, pickedEventRange]
   );
   const approxTotalTokens = contextTokens + estimateTokens(text);
 
@@ -376,9 +392,23 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
           <SelectMenu
             ariaLabel="Workspace context sent to the AI"
             value={contextScope.mode}
-            onChange={(mode) => updateContextScope({ mode })}
+            onChange={changeContextMode}
             options={CONTEXT_SCOPE_OPTIONS}
           />
+          {/* One click to send nothing from the workspace (the AI still knows
+              how to operate the app), and one click back to the previous mode. */}
+          <button
+            type="button"
+            className="btn"
+            aria-pressed={contextScope.mode === 'none'}
+            onClick={() =>
+              contextScope.mode === 'none'
+                ? updateContextScope({ mode: contextScope.previousMode === 'none' ? 'full' : contextScope.previousMode || 'full' })
+                : changeContextMode('none')
+            }
+          >
+            {contextScope.mode === 'none' ? 'Add context back' : 'Send no context'}
+          </button>
           {contextScope.mode === 'custom' && (
             <SelectMenu
               ariaLabel="Restrict to one project"
@@ -396,8 +426,8 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
             <input
               id="ai-quickadd-event-start"
               type="date"
-              value={contextScope.eventStart || defaultEventStart}
-              onChange={(e) => updateContextScope({ eventStart: e.target.value })}
+              value={eventStart}
+              onChange={(e) => setPickedEventRange((prev) => ({ ...prev, start: e.target.value }))}
             />
             <label className="form-hint" htmlFor="ai-quickadd-event-end">
               to
@@ -405,8 +435,8 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
             <input
               id="ai-quickadd-event-end"
               type="date"
-              value={contextScope.eventEnd || defaultEventEnd}
-              onChange={(e) => updateContextScope({ eventEnd: e.target.value })}
+              value={eventEnd}
+              onChange={(e) => setPickedEventRange((prev) => ({ ...prev, end: e.target.value }))}
             />
           </div>
         )}
@@ -433,7 +463,7 @@ export default function AIQuickAddModal({ onClose, onProjectCreated }) {
           {contextScope.mode === 'none' &&
             "Sends none of your existing workspace — the AI can still create new tasks/events/projects, it just can't reference anything existing."}
           {contextScope.mode === 'custom' &&
-            'Restrict what the AI can see: pick one project and/or narrow the calendar events sent, leaving either at its default to not restrict it.'}
+            'Restrict what the AI can see: pick one project and/or narrow the calendar events sent. Events default to this week (7 days before today to 7 days after).'}
           {contextScope.mode !== 'none' &&
             (contextScope.includeNotes
               ? ' Your notes are included, so the AI can read and edit them — untick to keep them out.'
