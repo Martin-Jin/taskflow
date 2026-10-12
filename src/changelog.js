@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.9.3',
+    date: '2026-10-13',
+    title: 'Deleted projects, sections and tags no longer reappear in lists',
+    changes: [
+      'A project, board section or tag you delete on one device no longer flashes back into pickers and dropdowns on your other devices while they catch up.',
+    ],
+  },
+  {
     version: '10.9.2',
     date: '2026-10-13',
     title: 'Weekly review counts finished tasks on the right day',
