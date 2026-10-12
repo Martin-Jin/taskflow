@@ -776,19 +776,10 @@ export function SchedulerProvider({ children }) {
   // `!s.deletedAt` here is a no-op for a shared row — it simply never has
   // the field set.
   //
-  // KNOWN FOLLOW-UP, NOT YET DONE: introducing these three views does not,
-  // by itself, make every existing consumer tombstone-aware — most of this
-  // app's ~30 project/section/label consumers (navbar dropdown, sidebar,
-  // Board/Gantt/Calendar views, task/section pickers, the AI quick-add
-  // context builder, several `.length`-based empty states, etc.) still read
-  // the raw `projects`/`sections`/`labels` off this context value today, and
-  // swapping each of them onto `visibleProjects`/`visibleSections`/
-  // `visibleLabels` is deliberately being done as its own follow-up change,
-  // not bundled into this one — see CLAUDE.md's "Known, deferred issues".
-  // Until that follow-up lands, a project/section/label a user just deleted
-  // on ANOTHER device may still appear in pickers/dropdowns on THIS one for
-  // a moment (or vice versa) even though the sync/merge layer already
-  // correctly treats it as deleted — a UI staleness gap, not a data-loss one.
+  // These are what the context EXPOSES as `sections`/`projects`/`labels`, so
+  // every consumer of useScheduler() gets the tombstone-free view and a
+  // just-deleted row can't linger in a picker, dropdown or empty-state count.
+  // Code inside this file keeps using the raw bindings.
   //
   // CRITICAL: same rule as visibleTasks/visibleEvents — this filtering must
   // NEVER reach `cloudSyncState.sections`/`.projects`/`.labels`, `stateRef`,
@@ -4524,20 +4515,12 @@ export function SchedulerProvider({ children }) {
       // Same tombstone-filtered treatment — see visibleEvents' own comment.
       events: visibleEvents,
       rules,
-      // Deliberately still the RAW arrays, not visibleSections/
-      // visibleProjects/visibleLabels — see those views' own comment (just
-      // above visibleTasks/visibleEvents) for why: most of this app's
-      // consumers haven't been swapped onto the tombstone-filtered view yet,
-      // so switching this binding now would be an incomplete, silent
-      // behavior change rather than a real fix. The filtered views are
-      // exposed below under their own names so follow-up work can adopt
-      // them consumer-by-consumer without another context change.
-      sections,
-      projects,
-      labels,
-      visibleSections,
-      visibleProjects,
-      visibleLabels,
+      // Tombstone-filtered, same as tasks/events above — see the comment on
+      // visibleSections/visibleProjects/visibleLabels. A deleted row stays in
+      // the raw arrays (for sync) but no picker, dropdown or list sees it.
+      sections: visibleSections,
+      projects: visibleProjects,
+      labels: visibleLabels,
       sharedProjectIds,
       searchQuery,
       isLoading,
@@ -4664,9 +4647,6 @@ export function SchedulerProvider({ children }) {
       routines,
       visibleEvents,
       rules,
-      sections,
-      projects,
-      labels,
       visibleSections,
       visibleProjects,
       visibleLabels,

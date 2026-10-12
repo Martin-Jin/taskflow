@@ -11,7 +11,7 @@
 // Work > Personal > Writing — see that file if these tests start failing for
 // data reasons rather than code reasons.
 import { test, expect } from '@playwright/test';
-import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors } from './helpers';
+import { gotoApp, gotoTab, openAddTask, trackConsoleErrors, expectNoErrors } from './helpers';
 
 // Confirms the Tasks page landed on `name` as its active project, by reading
 // the page's own title heading directly (TaskListPanel's .taskpage-project-title) —
@@ -280,6 +280,42 @@ test.describe('Projects page — mobile viewport', () => {
     await myProjectsColumn.locator('.projects-page-row', { hasText: 'Personal' }).click();
     await page.waitForTimeout(400);
     await expectActiveProject(page, 'Personal');
+
+    expectNoErrors(errors);
+  });
+});
+
+// A project/section/label deleted on another device arrives here as a
+// tombstone (a row kept in the data with `deletedAt` set, so sync can see the
+// deletion). Nothing in the UI may list one — before the context exposed the
+// tombstone-free view, pickers and the project rail could briefly show it.
+test.describe('Deleted projects stay out of the UI', () => {
+  test('a tombstoned project is absent from the project rail and the Add task project picker', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await page.evaluate(() => {
+      const key = 'taskflow:v1:projects';
+      const projects = JSON.parse(localStorage.getItem(key));
+      const now = new Date().toISOString();
+      projects.push({ ...projects[0], id: 'ghost_project', name: 'Ghostly Project', pinned: true, order: 99, updatedAt: now, deletedAt: now });
+      localStorage.setItem(key, JSON.stringify(projects));
+    });
+    await page.reload();
+    await page.waitForTimeout(700);
+
+    await gotoTab(page, 'Tasks');
+    const rail = page.locator('.task-project-rail, .task-project-drawer');
+    if (!(await rail.first().isVisible().catch(() => false))) {
+      await page.getByLabel('Show all projects').click();
+    }
+    await expect(rail.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
+    await expect(rail.getByText('Ghostly Project')).toHaveCount(0);
+
+    await openAddTask(page);
+    await page.getByRole('button', { name: 'Project', exact: true }).click();
+    const picker = page.getByRole('listbox', { name: 'Project' });
+    await expect(picker.getByRole('option', { name: 'Work', exact: true })).toBeVisible();
+    await expect(picker.getByRole('option', { name: 'Ghostly Project' })).toHaveCount(0);
 
     expectNoErrors(errors);
   });

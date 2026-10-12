@@ -197,10 +197,7 @@ function AppShell() {
     settingsSectionRequest,
     actionToasts,
     dismissActionToast,
-    // Tombstone-filtered view: a deleted personal project stays in the raw
-    // array (stamped `deletedAt`) so sync can see the deletion, but must not
-    // be listed anywhere in the UI.
-    visibleProjects: projects,
+    projects,
     addProject,
     renameProject,
     togglePinProject,
