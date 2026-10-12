@@ -37,5 +37,8 @@
     "protobufjs@7.6.6": true,
     "firebase@12.19.0": true,
     "@firebase/util@1.15.3": true
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.6"
   }
 }
