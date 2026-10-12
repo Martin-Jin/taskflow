@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '10.9.2',
+    date: '2026-10-13',
+    title: 'Weekly review counts finished tasks on the right day',
+    changes: [
+      'The weekly review could leave out a task you finished in the morning, or list it under the wrong day, if your time zone is ahead of UTC (for example New Zealand). Finished tasks are now counted by your own local calendar day.',
+    ],
+  },
+  {
     version: '10.9.1',
     date: '2026-10-10',
     title: 'Deleted projects disappear from the Projects page',

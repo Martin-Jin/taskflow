@@ -24,7 +24,14 @@ const TODAY = '2026-08-22'; // a Saturday
 const WEEK_AFTER_START = ['2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20', '2026-08-21', '2026-08-22'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const done = (over) => ({ id: 'd', title: 'done', isCompleted: true, completedAt: `${TODAY}T10:00:00.000Z`, ...over });
+// A completion time on the given LOCAL calendar day. Built from local date
+// parts (not a 'Z' string) because the review buckets by the user's local day,
+// so these tests must give the same answer in every timezone.
+const at = (iso, h = 10, m = 0) => {
+  const [y, mo, d] = iso.split('-').map(Number);
+  return new Date(y, mo - 1, d, h, m).toISOString();
+};
+const done = (over) => ({ id: 'd', title: 'done', isCompleted: true, completedAt: at(TODAY), ...over });
 const open = (over) => ({ id: 'o', title: 'open', isCompleted: false, remainingHours: 1, ...over });
 
 describe('computeWeeklyReview — the window', () => {
@@ -86,9 +93,9 @@ describe('computeWeeklyReview — the window', () => {
   it('counts a task completed on either boundary day', () => {
     const r = computeWeeklyReview({
       tasks: [
-        done({ id: 'first', completedAt: '2026-08-16T23:59:00.000Z' }),
-        done({ id: 'last', completedAt: '2026-08-22T00:01:00.000Z' }),
-        done({ id: 'tooOld', completedAt: '2026-08-15T23:59:00.000Z' }),
+        done({ id: 'first', completedAt: at('2026-08-16', 23, 59) }),
+        done({ id: 'last', completedAt: at('2026-08-22', 0, 1) }),
+        done({ id: 'tooOld', completedAt: at('2026-08-15', 23, 59) }),
       ],
       todayIso: TODAY,
     });
@@ -98,7 +105,7 @@ describe('computeWeeklyReview — the window', () => {
   it('compares the completion DATE, not the raw timestamp', () => {
     // A same-day completion whose timestamp sorts after 'YYYY-MM-DD' would be
     // dropped by a naive string compare against the window end.
-    const r = computeWeeklyReview({ tasks: [done({ completedAt: `${TODAY}T23:59:59.999Z` })], todayIso: TODAY });
+    const r = computeWeeklyReview({ tasks: [done({ completedAt: at(TODAY, 23, 59) })], todayIso: TODAY });
     expect(r.finished).toHaveLength(1);
   });
 
