@@ -58,8 +58,8 @@
  *                                              parseRecurrenceRule, recomputed via deriveRecurrenceRule whenever
  *                                              `recurrenceString` is set/changed/cleared — see every call site that
  *                                              touches it: SchedulerContext's addTask/updateTask, todoistService,
- *                                              migrateSubtasksToTasks, mockData). Purely internal/derived — never
- *                                              shown or edited directly in the UI. Used by rebalanceEngine.js's
+ *                                              mockData). Purely internal/derived — never shown or edited
+ *                                              directly in the UI. Used by rebalanceEngine.js's
  *                                              generateTaskOccurrences to expand a recurring task into every day (or
  *                                              specific weekday) it actually repeats on, instead of only its single
  *                                              current `dueDate`. Null/undefined for non-recurring tasks (or a
@@ -101,8 +101,7 @@
  * @property {Record<string, number>} [completionHistoryArchive] - Frozen baseline of `completionHistory` captured at
  *                                              migration time, plus anything compacted since. Holds counts whose raw
  *                                              dates no longer exist, so it can't be recomputed — keeping it is what
- *                                              stops adopting this model from destroying long-term history. See
- *                                              migrations/migrateRecurrenceState.js.
+ *                                              stops adopting this model from destroying long-term history.
  * @property {Object<string,{date?: string, deleted?: boolean}>} [overrides] - Per-occurrence override map keyed by
  *                                              the occurrence's ORIGINAL (recurrence-rule-generated) ISO date, even
  *                                              if that occurrence was later moved — mirrors CalendarEvent.overrides

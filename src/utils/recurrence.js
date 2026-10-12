@@ -779,11 +779,9 @@ export function buildRecurrenceString(count, unit, days) {
  * grand-sub-task): if any task in a parent/descendant chain is recurring,
  * every task in that chain should be too.
  *
- * Shared by SchedulerContext's addTask/updateTask (enforced going forward,
- * one small chain at a time) and migrateRecurrenceConsistency.js (the
- * one-time backfill over every existing task at once) — both just need "here
- * are the tasks, tell me what to change", so the walk itself lives here
- * rather than being duplicated in both call sites.
+ * Used by SchedulerContext's addTask/updateTask (enforced one small chain at
+ * a time). It takes "here are the tasks, tell me what to change", so the walk
+ * itself lives here rather than being duplicated in both call sites.
  *
  * Which `recurrenceString` wins when propagating: the nearest recurring
  * relative going UP the chain first (parent's cadence describes the overall
@@ -875,10 +873,9 @@ export function computeRecurrenceSyncUpdates(tasks) {
     // occurrence, not resuming one already in progress — reset a stale
     // remainingHours left over from its previous non-recurring life (most
     // commonly 0 from a task that was `isCompleted: true` before it/its
-    // parent became recurring, e.g. migrateSubtasksToTasks.js's embedded
-    // `sub.isCompleted` → `remainingHours: 0`; that reset never happens
-    // because this path isn't completeTask's occurrence-advance, it's a
-    // one-time recurring/non-recurring conversion). Also clears the
+    // parent became recurring; that reset never happens because this path
+    // isn't completeTask's occurrence-advance, it's a one-time
+    // recurring/non-recurring conversion). Also clears the
     // `isCompleted` flag a plain (non-recurring) task may still be
     // carrying — a recurring task tracks "done for now" via
     // `completedDates` instead (see isCompletedForCurrentOccurrence), never
