@@ -421,9 +421,14 @@ test.describe('Weekly review', () => {
         dependsOn: [], minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
+      // The slipped task is due YESTERDAY, not a fixed number of days back: it
+      // is then inside the reviewed week on every weekday (on the week's first
+      // day the review rolls back and yesterday is the previous week's last
+      // day). A fixed -3 fell before the week start on days 2-3 of the week
+      // and was counted as "carried over", failing the test mid-week.
       localStorage.setItem('taskflow:v1:tasks', JSON.stringify([
-        { ...base, id: 'wr_done', title: 'WR finished thing', isCompleted: true, completedAt: new Date(Date.now() - 2 * 86400000).toISOString(), actualHours: 3 },
-        { ...base, id: 'wr_slip', title: 'WR slipped thing', dueDate: iso(-3) },
+        { ...base, id: 'wr_done', title: 'WR finished thing', isCompleted: true, completedAt: new Date(Date.now() - 86400000).toISOString(), actualHours: 3 },
+        { ...base, id: 'wr_slip', title: 'WR slipped thing', dueDate: iso(-1) },
         { ...base, id: 'wr_old', title: 'WR ancient debt', dueDate: iso(-40), postponeCount: 4 },
         { ...base, id: 'wr_next', title: 'WR due next week', dueDate: iso(3), remainingHours: 6 },
       ]));

@@ -45,7 +45,7 @@
  * ============================================================================
  */
 
-import { addDays, diffDays, dayOfWeek, startOfWeek } from './dateUtils';
+import { addDays, diffDays, dayOfWeek, startOfWeek, toISODate } from './dateUtils';
 import { computeEstimateAccuracy } from './estimateAccuracy';
 
 /** Days in the window. Not configurable — a "weekly" review with a tunable period is just a report. */
@@ -81,12 +81,16 @@ export function computeWeeklyReview({ tasks, todayIso, weekStartsOn = 0 }) {
 
   const all = (tasks || []).filter((t) => t && !t.deletedAt);
 
-  // A completedAt is an ISO DATETIME, so it's sliced to its date before
-  // comparing against ISO dates — comparing the full timestamp against
-  // 'YYYY-MM-DD' would sort every same-day completion after the boundary.
+  // A completedAt is a UTC ISO DATETIME, so it's converted to the user's LOCAL
+  // calendar day before comparing against the window's ISO dates. Two ways to
+  // get this wrong: comparing the full timestamp against 'YYYY-MM-DD' sorts
+  // every same-day completion after the boundary, and slicing off the UTC date
+  // puts a morning completion in the previous day for anyone ahead of UTC
+  // (NZ, UTC+12/13), which is how a task finished "yesterday" fell out of the
+  // window. The rest of the app (TodayAgenda, calendarGrouping) does the same.
   const finished = all.filter((t) => {
     if (!t.isCompleted || !t.completedAt) return false;
-    const day = String(t.completedAt).slice(0, 10);
+    const day = toISODate(new Date(t.completedAt));
     return day >= windowStart && day <= windowEnd;
   });
 
