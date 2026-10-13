@@ -522,6 +522,7 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   const startingSoonCheckbox = page.locator('#notifStartingSoon');
   const overdueCheckbox = page.locator('#notifOverdue');
   const dueTodayCheckbox = page.locator('#notifDueToday');
+  const mentionsCheckbox = page.locator('#notifMentions');
 
   // #notifEmail is permanently disabled for every account except the one
   // fixed uid the self-hosted notify-worker sends to (see SettingsPanel.jsx's
@@ -533,12 +534,15 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   const initialStartingSoon = await startingSoonCheckbox.isChecked();
   const initialOverdue = await overdueCheckbox.isChecked();
   const initialDueToday = await dueTodayCheckbox.isChecked();
+  // Mentions default to on (a settings object with no `mentions` key counts as on).
+  expect(await mentionsCheckbox.isChecked()).toBe(true);
 
   // Flip every toggle.
   await inAppCheckbox.setChecked(!initialInApp);
   await startingSoonCheckbox.setChecked(!initialStartingSoon);
   await overdueCheckbox.setChecked(!initialOverdue);
   await dueTodayCheckbox.setChecked(!initialDueToday);
+  await mentionsCheckbox.setChecked(false);
   await page.waitForTimeout(300);
 
   await page.reload();
@@ -549,6 +553,7 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   await expect(page.locator('#notifStartingSoon')).toHaveJSProperty('checked', !initialStartingSoon);
   await expect(page.locator('#notifOverdue')).toHaveJSProperty('checked', !initialOverdue);
   await expect(page.locator('#notifDueToday')).toHaveJSProperty('checked', !initialDueToday);
+  await expect(page.locator('#notifMentions')).toHaveJSProperty('checked', false);
 
   // Restore original settings so this test is idempotent across reruns and
   // doesn't leave other specs with unexpected notification state.
@@ -556,6 +561,7 @@ test('Notification settings: toggles persist after reload', async ({ page }) => 
   await page.locator('#notifStartingSoon').setChecked(initialStartingSoon);
   await page.locator('#notifOverdue').setChecked(initialOverdue);
   await page.locator('#notifDueToday').setChecked(initialDueToday);
+  await page.locator('#notifMentions').setChecked(true);
   await page.waitForTimeout(200);
 
   expectNoErrors(errors);

@@ -582,6 +582,85 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ========================================================================
+    // MENTION NOTIFICATIONS (collaboration — Phase 4)
+    // ========================================================================
+    // `notifications/{recipientUid}/items/{id}` is the in-app inbox. It is the
+    // app's SECOND cross-user write path (the first is joining a project), so
+    // this rule has to carry the whole safety argument:
+    //
+    //   - The commenter's browser writes the recipient's notification
+    //     directly, so a stranger must not be able to push junk (or links to
+    //     projects) into anyone's inbox. A create is allowed only when the
+    //     SENDER and the RECIPIENT are both real members of the shared project
+    //     the notification points at. Membership is read from the project
+    //     document with get(), the same source of truth every other rule uses.
+    //   - `senderUid` must equal the caller, so nobody can impersonate someone
+    //     else in a notification.
+    //   - The field list is fixed and each field is type- and size-limited, so
+    //     a notification can never become a free storage blob.
+    //   - Only the recipient can read, list, mark read, or delete. The sender
+    //     cannot read it back, edit it, or delete it once written.
+    //   - Anonymous guests are never valid recipients (the client already
+    //     leaves them out of mention suggestions; the rule makes it a rule).
+    //
+    // Not enforceable here: that the named task or comment really exists (the
+    // comment travels in a task document written a moment later, so it cannot
+    // be checked at this instant), and how MANY notifications a member sends
+    // to a fellow member. Both are limited to what a member of the same
+    // project could already do by commenting; the recipient's inbox is also
+    // pruned and capped (see utils/mentionNotifications.js).
+    match /notifications/{recipientUid}/items/{notifId} {
+      function projectDoc(pid) {
+        return get(/databases/$(database)/documents/sharedProjects/$(pid)).data;
+      }
+      function memberOf(pid, uid) {
+        return projectDoc(pid).ownerId == uid
+          || (projectDoc(pid).collaborators is map && uid in projectDoc(pid).collaborators);
+      }
+      // Collaborators carry `isAnonymous`; the owner is never anonymous.
+      function recipientIsRealAccount(pid) {
+        return projectDoc(pid).ownerId == recipientUid
+          || projectDoc(pid).collaborators[recipientUid].isAnonymous != true;
+      }
+      function newDoc() {
+        return request.resource.data;
+      }
+      function createWellFormed() {
+        return newDoc().keys().hasOnly(['type', 'senderUid', 'senderName', 'projectId', 'taskId', 'commentId', 'taskTitle', 'snippet', 'read', 'createdAt'])
+          && newDoc().keys().hasAll(['type', 'senderUid', 'senderName', 'projectId', 'taskId', 'commentId', 'taskTitle', 'snippet', 'read', 'createdAt'])
+          && newDoc().type == 'mention'
+          && newDoc().senderUid == request.auth.uid
+          && newDoc().senderName is string && newDoc().senderName.size() > 0 && newDoc().senderName.size() <= 120
+          && newDoc().projectId is string && newDoc().projectId.size() > 0 && newDoc().projectId.size() <= 128
+          && newDoc().taskId is string && newDoc().taskId.size() > 0 && newDoc().taskId.size() <= 128
+          && newDoc().commentId is string && newDoc().commentId.size() > 0 && newDoc().commentId.size() <= 128
+          && newDoc().commentId == notifId
+          && newDoc().taskTitle is string && newDoc().taskTitle.size() <= 200
+          && newDoc().snippet is string && newDoc().snippet.size() <= 200
+          && newDoc().read == false
+          && newDoc().createdAt == request.time;
+      }
+
+      allow get, list: if request.auth != null && request.auth.uid == recipientUid;
+
+      allow create: if request.auth != null
+        && recipientUid != request.auth.uid
+        && createWellFormed()
+        && exists(/databases/$(database)/documents/sharedProjects/$(newDoc().projectId))
+        && memberOf(newDoc().projectId, request.auth.uid)
+        && memberOf(newDoc().projectId, recipientUid)
+        && recipientIsRealAccount(newDoc().projectId);
+
+      // The recipient may flip `read` and nothing else.
+      allow update: if request.auth != null
+        && request.auth.uid == recipientUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+        && request.resource.data.read is bool;
+
+      allow delete: if request.auth != null && request.auth.uid == recipientUid;
+    }
+
     // Display names chosen by anonymous link visitors. A visitor owns exactly
     // their own doc, keyed by their anonymous auth uid. Readable by any signed
     // in user because collaborator avatars/names have to render for everyone

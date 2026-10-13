@@ -9,6 +9,7 @@ under the hood, see [Cross-device sync](DEVELOPMENT.md#cross-device-sync).
 - [Account & cross-device sync](#account--cross-device-sync)
 - [Backups](#backups)
 - [Sharing a project](#sharing-a-project)
+  - [Mention notifications](#mention-notifications-the-bell-inbox)
 
 ## Account & cross-device sync
 
@@ -236,3 +237,90 @@ Share links need the Cloudflare Worker deployed (see
 are secrets that no browser is ever allowed to read, so generating and
 redeeming them happens server-side.
 
+### Mention notifications (the bell inbox)
+
+When someone writes `@Name` in a shared task's comment, the mentioned person
+gets an entry in a bell inbox in TaskFlow. This is in-app only: there is no
+email for mentions. Only signed-in accounts have an inbox, because guests
+cannot be mentioned in the first place.
+
+#### Why it exists
+
+A comment that mentions you is only useful if you find out about it. Without
+the inbox you would have to open every shared task to see whether anyone had
+written to you.
+
+#### What it does
+
+1. You type `@` in a shared task's comment and pick a collaborator. The
+   comment records who was mentioned (the existing `Comment.mentions` list,
+   checked against the project's real members when the comment is posted).
+2. Right after the comment is saved, your browser writes one small
+   notification per mentioned person into their inbox. Mentioning yourself
+   does nothing.
+3. The bell (next to your account button: sidebar on desktop, top bar and
+   Tasks header on mobile) shows a live unread count. Opening it lists who
+   mentioned you, the task, a short snippet, and the time.
+4. Clicking an entry marks it read and opens the task. **Mark all read**
+   clears the count.
+5. **Settings → Notifications → "Someone mentions me in a shared task"**
+   hides the inbox and count on that device. It is on by default, including
+   for settings saved before the option existed.
+
+#### Why this approach
+
+- **The sender's browser writes the notification**, rather than a server job.
+  That needs no new server code and works the moment the comment is posted.
+  The cost is that the security rules do all the protecting, so they are
+  tight and tested (see below). A server route was the fallback if the rules
+  could not be made strict enough.
+- **The recipient's settings are applied on the recipient's device.** The
+  sender cannot read another person's settings, so turning mentions off hides
+  the inbox rather than stopping delivery.
+- **No mention emails.** The existing email channel is a single-recipient
+  reminder script; reusing it for mentions would mean emailing the wrong
+  person. A mention-email option can be added later next to the existing
+  toggle.
+
+#### How it works in code
+
+Notifications live at `notifications/{recipientUid}/items/{commentId}`. The
+rule in `firestore.rules` allows a create only when all of these hold:
+
+```
+caller is signed in, and is not the recipient
+senderUid == the caller
+the project exists, and BOTH caller and recipient are its members
+the recipient is not an anonymous guest
+fixed field list, size-limited strings, read == false, createdAt == server time
+document id == commentId
+```
+
+Only the recipient can read, list, delete, or change the `read` flag (and
+nothing else). The decisions are in `src/utils/mentionNotifications.js`
+(`buildMentionNotifications`, `planInboxPrune`), the Firestore calls in
+`src/services/mentionInboxService.js`, the live list in
+`src/hooks/useMentionInbox.js`, and the UI in
+`src/components/Nav/NotificationBell.jsx`. The rules are tested in
+`tests/rules/notifications.rules.test.js`.
+
+#### Retention
+
+Notifications do not pile up forever. When your inbox loads, your browser
+deletes read notifications older than 30 days, unread ones older than 90
+days, and anything beyond the newest 100.
+
+#### Limitations
+
+- A member can send a fellow member notifications for a comment or task that
+  does not exist; the rules cannot check the comment because it is saved a
+  moment later. The reach is limited to people in the same project, and the
+  recipient's inbox is capped.
+- If the sender's browser closes or goes offline right after posting, that
+  notification is not retried.
+- A mention in a comment that is later deleted still leaves its notification
+  until it expires; opening it says the task is unavailable only if the task
+  itself is gone.
+- The Firestore rules and indexes must be deployed
+  (`firebase deploy --only firestore:rules,firestore:indexes`) before
+  notifications work; until then, sending and reading are refused.

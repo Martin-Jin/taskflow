@@ -24,7 +24,7 @@ you through the main views on first load (replay it anytime from
 | **Sync & backups** | Optional Google sign-in syncs everything live across devices, with automatic daily cloud snapshots plus file export/import. |
 | **Integrations** | One-click import from Todoist; two-way Google Calendar event sync. |
 | **Notes** | Folder-organized markdown notes with a WYSIWYG editor, checklists, and Markdown export. |
-| **Notifications** | In-app alerts for tasks starting soon, overdue, or due today, plus an optional self-hosted email channel. |
+| **Notifications** | In-app alerts for tasks starting soon, overdue, or due today, a bell inbox for @mentions in shared-task comments, plus an optional self-hosted email channel. |
 
 Undo/redo, a `Ctrl+K` command palette, typo-tolerant search, bulk select,
 rebindable keyboard shortcuts, and light/dark themes throughout. Fully

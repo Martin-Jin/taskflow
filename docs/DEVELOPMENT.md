@@ -864,6 +864,7 @@ src/
 │   ├── sharedTaskSync.js     # Pure decision logic for shared-task Firestore sync: which fields merge vs. last-write-wins, presence staleness, in-flight write race guards (Phase 1)
 │   ├── sharedProjectAccess.js # Pure access/role decisions for share links and collaborator joins — mirrors firestore.rules' own token logic; server-side/join-path only (Phase 0). Also `getAssignableCollaborators`, the candidate list for a task's "Assign to" — deliberately INCLUDES anonymous collaborators, unlike commentMentions.js's getMentionCandidates below, since an assignment is read live off current project state rather than stored as a permanent denormalized artifact
 │   ├── commentMentions.js    # Parses/renders `@[Name](uid)` mentions in a shared task's comment thread (Phase 3) — mention candidates exclude anonymous collaborators (no durable identity for Phase 4's future notification fan-out to reach)
+│   ├── mentionNotifications.js # Pure logic for the mention bell inbox: which notification docs a comment produces and which stored ones to prune (retention). See SYNC-AND-SHARING.md's Mention notifications
 │   ├── joinFlow.js           # Pure sequencing decisions behind useJoinFlow.js (token caching, per-link display-name storage) (Phase 2)
 │   └── avatarDisplay.js      # Shared avatar helpers (safe photoURL check, initials fallback) used by PresenceAvatars/SharedProjectBadge/ShareProjectModal
 ├── types/

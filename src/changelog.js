@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '11.3.0',
+    date: '2026-10-13',
+    title: 'A bell inbox for @mentions',
+    changes: [
+      'When someone @mentions you in a comment on a shared task, a bell next to your account button now shows an unread count. Open it to see who mentioned you, on which task, and a snippet, then click an entry to jump to the task.',
+      'Mark a single mention read by opening it, or clear them all with "Mark all read".',
+      'You can switch mention notifications off in Settings → Notifications. Old mentions clear themselves after a while (read ones after 30 days, unread after 90).',
+    ],
+  },
+  {
     version: '11.2.0',
     date: '2026-10-13',
     title: 'Assign shared tasks to anyone by name',

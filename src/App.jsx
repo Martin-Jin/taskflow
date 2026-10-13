@@ -30,6 +30,7 @@ import CompleteTaskConfirmModal from './components/Common/CompleteTaskConfirmMod
 import ConfirmModal from './components/Common/ConfirmModal';
 import BlockingProgressOverlay from './components/Common/BlockingProgressOverlay';
 import AccountButton from './components/Nav/AccountButton';
+import NotificationBell from './components/Nav/NotificationBell';
 import Sidebar from './components/Nav/Sidebar';
 import CalendarPage from './components/Calendar/CalendarPage';
 import TaskListPanel from './components/TaskListPanel';
@@ -465,7 +466,12 @@ function AppShell() {
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', padding: '0 10px' }}>
                 Dynamic task auto-scheduler
               </div>
-              <AccountButton menuAlign="up" onOpenAccountSettings={() => setTab('settings')} />
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <AccountButton menuAlign="up" onOpenAccountSettings={() => setTab('settings')} />
+                </div>
+                <NotificationBell menuAlign="up" />
+              </div>
             </>
           }
         />
@@ -478,6 +484,7 @@ function AppShell() {
             <span className="brand-name">TaskFlow</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <NotificationBell menuAlign="down" />
             <AccountButton compact menuAlign="down" onOpenAccountSettings={() => setTab('settings')} />
           </div>
         </header>

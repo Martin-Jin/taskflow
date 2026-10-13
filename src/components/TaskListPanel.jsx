@@ -88,6 +88,7 @@ import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
 import Badge from './Common/Badge';
 import AccountButton from './Nav/AccountButton';
+import NotificationBell from './Nav/NotificationBell';
 import BulkActionBar from './Common/BulkActionBar';
 import TaskProjectRail from './TaskProjectRail';
 import { useAuth } from '../context/AuthContext';
@@ -796,6 +797,7 @@ export default function TaskListPanel({
             {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
                 doubles as this page's one-tap way to reach account/settings —
                 mirrors the old mobile topbar's AccountButton. */}
+            {isMobile && <NotificationBell menuAlign="down" />}
             {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={onOpenSettings} />}
             {/* Who else is in this shared project right now. Renders nothing
                 for a personal project, so it costs no space in the common
