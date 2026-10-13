@@ -214,6 +214,16 @@ A few deliberate limits worth knowing:
   task — an unassigned task, or one assigned to someone else, still stays out
   of it. Typing "assign to Alex" or "for Alex" into a shared task's title
   smart-parses the assignment too, same as `#project` or `after <task>`.
+- **Placeholder assignees.** A shared task can also be assigned to a name
+  that isn't a project member — someone without a TaskFlow account, say.
+  Type the name into the "⋯" menu's Assign-to search and pick
+  "Assign to "<name>" (placeholder)", or type "assign to <name>" in the
+  title. It's only a label everyone in the project sees ("for Sam" on the
+  task row, "Assigned to Sam (placeholder)" in the task): it notifies no one
+  and never makes the task schedulable for anyone. A task has one assignee,
+  so picking a member replaces a placeholder and vice versa. The bare
+  "for <name>" shorthand never creates a placeholder, since "for" appears in
+  ordinary titles ("buy cake for the party").
 - **If two people edit the same task at once, the last write wins** — there's no
   field-by-field merge. Editing different tasks never conflicts. The one
   exception is recurring-task completion, which merges properly rather than

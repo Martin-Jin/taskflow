@@ -232,6 +232,34 @@ describe('parseTaskText — "assign to"/"for" (assignTo)', () => {
     expect(result.cleanedTitle).toBe('Design homepage');
   });
 
+  it('offers an unmatched "assign to <name>" as a placeholder assignee name', () => {
+    const result = parseTaskText('Design homepage assign to  Sam  Lee', { collaborators });
+    expect(result.detected.assignTo.collaborator).toBeNull();
+    expect(result.detected.assignTo.placeholderName).toBe('Sam Lee');
+  });
+
+  it('gives no placeholder when "assign to" matched a real member', () => {
+    const result = parseTaskText('Design homepage assign to Alex', { collaborators });
+    expect(result.detected.assignTo.placeholderName).toBeNull();
+  });
+
+  it('gives no placeholder for a fragment too long to be a name, keeping the "no match" detection', () => {
+    const result = parseTaskText('Plan assign to someone who can handle the whole launch checklist', { collaborators });
+    expect(result.detected.assignTo.collaborator).toBeNull();
+    expect(result.detected.assignTo.placeholderName).toBeNull();
+  });
+
+  it('pulls a date out before taking the placeholder name, so "tomorrow" is not part of it', () => {
+    const result = parseTaskText('Design homepage assign to Sam tomorrow', { collaborators });
+    expect(result.detected.assignTo.placeholderName).toBe('Sam');
+    expect(result.detected.dueDate).toBeDefined();
+  });
+
+  it('never makes a placeholder from the bare "for" trigger', () => {
+    const result = parseTaskText('Buy cake for Sam', { collaborators });
+    expect(result.detected.assignTo).toBeUndefined();
+  });
+
   it('leaves a trailing "#project"/"@label" mention alone for an "assign to" fragment bounded at the trigger', () => {
     const result = parseTaskText('Ship release assign to Alex #Writing', {
       collaborators,

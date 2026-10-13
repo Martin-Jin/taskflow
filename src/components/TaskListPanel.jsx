@@ -111,7 +111,7 @@ import {
   filterTasksByProject,
   filterTasksByStatus,
 } from '../utils/projectConstants';
-import { computeEffectiveRole } from '../utils/sharedProjectAccess';
+import { computeEffectiveRole, resolveAssigneeLabel } from '../utils/sharedProjectAccess';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
@@ -637,6 +637,9 @@ export default function TaskListPanel({
         // resolveCurrentOccurrenceDueDate's doc comment on the taskGroups
         // memo above.
         displayDueDate={resolveCurrentOccurrenceDueDate(task)}
+        // A plain string so the memoized row doesn't re-render on every
+        // shared-project snapshot. Real member or placeholder name alike.
+        assigneeName={task.sharedProjectId ? resolveAssigneeLabel(task, sharedProjects[task.sharedProjectId])?.name || null : null}
         effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : getEffectiveRemainingHoursForOccurrence(task)}
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
@@ -1014,6 +1017,7 @@ const TaskRow = React.memo(function TaskRow({
   dependenciesMet,
   isCheckedForDisplay,
   displayDueDate,
+  assigneeName,
   effectiveRemainingHours,
   effectiveEstimatedHours,
   onToggleCollapse,
@@ -1271,6 +1275,7 @@ const TaskRow = React.memo(function TaskRow({
                 the status rail next to the title instead. */}
             {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ''}
             {task.sectionName ? ` · ${task.sectionName}` : ''}
+            {assigneeName ? ` · for ${assigneeName}` : ''}
           </span>
         </div>
         <div className="task-row-badges">

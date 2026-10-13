@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.2.0',
+    date: '2026-10-13',
+    title: 'Assign shared tasks to anyone by name',
+    changes: [
+      "In a shared project you can now assign a task to someone who isn't a member — type their name in the ⋯ menu's Assign to search and pick \"(placeholder)\", or write \"assign to Sam\" in the title. It's just a name label: it doesn't notify anyone or schedule the task for them.",
+      'Who a shared task is assigned to now shows on its row in the task list and at the top of the task window.',
+    ],
+  },
+  {
     version: '11.1.1',
     date: '2026-10-13',
     title: 'See when a task is excluded from auto-schedule',

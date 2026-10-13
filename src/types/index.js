@@ -325,6 +325,11 @@
  *                                              since shared-task content is already entirely out of scope for
  *                                              personal backups/live cloud sync (see backupService.js's BACKUP_FIELDS
  *                                              doc comment on shared-project content).
+ * @property {string|null} [assigneeName]    - A free-text "placeholder" assignee on a SHARED task: a name for someone
+ *                                              who isn't a project member. Display-only — it notifies nobody and never
+ *                                              makes the task schedulable. Never set alongside `assignedTo` (a task has
+ *                                              one assignee; see utils/sharedProjectAccess.js's buildAssignmentUpdates).
+ *                                              Syncs and stays out of personal backups exactly like `assignedTo`.
  */
 
 /**

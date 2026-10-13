@@ -37,7 +37,7 @@ import { useTaskBulkEditActions } from '../../../hooks/useTaskBulkEditActions';
 import { toISODate } from '../../../utils/dateUtils';
 import { buildRecurrenceString } from '../../../utils/recurrence';
 import { isCompletedForCurrentOccurrence, isAtMaxSubtaskDepth } from '../../../utils/taskHierarchy';
-import { computeEffectiveRole, resolveOwnerProfile, getAssignableCollaborators } from '../../../utils/sharedProjectAccess';
+import { computeEffectiveRole, resolveOwnerProfile, getAssignableCollaborators, buildAssignmentUpdates } from '../../../utils/sharedProjectAccess';
 import HelpTooltip from '../../Common/HelpTooltip';
 import SmartTitleInput from '../../Common/SmartTitleInput';
 import SmartChips from '../../Common/SmartChips';
@@ -141,6 +141,8 @@ export default function SubtaskList({ task, setActiveTaskId }) {
   const [subtaskEnforceDueDate, setSubtaskEnforceDueDate] = useState(false);
   const [subtaskDependsOn, setSubtaskDependsOn] = useState([]);
   const [subtaskAssignedTo, setSubtaskAssignedTo] = useState(null);
+  // Free-text placeholder assignee, for an "assign to <name>" matching no member.
+  const [subtaskAssigneeName, setSubtaskAssigneeName] = useState(null);
 
   function handleSubtaskProjectChange(newProjectId) {
     setSubtaskProjectId(newProjectId);
@@ -226,9 +228,17 @@ export default function SubtaskList({ task, setActiveTaskId }) {
       assignTo: {
         isUntouched: () => true,
         apply: (match) => {
-          if (match.collaborator) setSubtaskAssignedTo(match.collaborator.uid);
+          if (!match.collaborator && !match.placeholderName) return;
+          const updates = buildAssignmentUpdates(
+            match.collaborator ? { uid: match.collaborator.uid } : { placeholderName: match.placeholderName }
+          );
+          setSubtaskAssignedTo(updates.assignedTo);
+          setSubtaskAssigneeName(updates.assigneeName);
         },
-        revert: () => setSubtaskAssignedTo(null),
+        revert: () => {
+          setSubtaskAssignedTo(null);
+          setSubtaskAssigneeName(null);
+        },
       },
       dependency: {
         isUntouched: () => true,
@@ -284,6 +294,7 @@ export default function SubtaskList({ task, setActiveTaskId }) {
     setSubtaskEnforceDueDate(false);
     setSubtaskDependsOn([]);
     setSubtaskAssignedTo(null);
+    setSubtaskAssigneeName(null);
     resetSubtaskSmartState();
   }
 
@@ -332,6 +343,7 @@ export default function SubtaskList({ task, setActiveTaskId }) {
       // entirely rather than set to null on a personal task (see
       // types/index.js's Task.assignedTo doc comment).
       ...(isSharedTask && !subtaskHasEditedProject && subtaskAssignedTo ? { assignedTo: subtaskAssignedTo } : {}),
+      ...(isSharedTask && !subtaskHasEditedProject && subtaskAssigneeName ? { assigneeName: subtaskAssigneeName } : {}),
     });
     resetSubtaskDraft();
   }
