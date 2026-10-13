@@ -165,6 +165,77 @@ to match TaskFlow"), it's sent as a real all-day event.
 event in TaskFlow) are kept, and sent to Google at the next sync after you
 reconnect, rather than being overwritten by Google's older copy.
 
+### One Google account per TaskFlow account
+
+TaskFlow keeps a single Google login for your whole TaskFlow account, shared by
+all your devices. The only way to change which Google account is connected is
+**Disconnect**, then **Connect** again — and Disconnect is a clean break on
+every device.
+
+**Why it exists**
+- The Google login is stored once per TaskFlow account (see above), not once per
+  device. If it were replaced by a different Google account while the old
+  account's events were still in TaskFlow, the next sync would either drop those
+  events as "deleted on Google" or copy them into the new account's calendar.
+
+**What it does**
+1. **Disconnect** (Settings → Integrations) revokes the stored Google login and
+   disconnects this device.
+2. Events that came from Google Calendar are removed from TaskFlow on **all**
+   your devices. They stay in Google Calendar itself. Events you created only
+   in TaskFlow (never sent to Google) are kept.
+3. Your other devices notice and disconnect themselves, with a toast offering
+   **Reconnect**.
+4. If a device ever finds itself talking to a different Google account than it
+   last synced with, it does the same thing automatically and tells you which
+   account it is now signed in as.
+5. Disconnect is greyed out while a pull, push or "Rewrite Google Calendar"
+   is running, and refuses to run if the server can't be reached.
+6. When the app opens, Google sync waits (briefly, with a "Checking sync
+   status…" toast if needed) until TaskFlow has checked whether another device
+   disconnected in the meantime. The rest of the app works normally meanwhile.
+
+**Why this approach**
+- Signing out of TaskFlow on every device was rejected: it doesn't touch the
+  Google login, would sign people out unexpectedly, and can't work offline.
+- Stamping every event with its Google account was rejected as much more work
+  for the same safety — wiping on disconnect needs no new event field.
+
+**How it works in code**
+- A disconnect writes a small marker, `googleDisconnect: { id, deviceId, at }`,
+  onto the synced `users/{uid}` document (`pushGoogleDisconnectMarker` in
+  `firestoreSync.js`). It is overwritten in place by the next disconnect, so
+  nothing accumulates.
+- Each device remembers the last marker id it dealt with and reacts only to a
+  new one written by a different device:
+
+  ```js
+  // utils/googleAccountGuard.js — decideRemoteGoogleDisconnect
+  if (seenMarkerId == null) return record(remoteId);            // first run: just note it
+  if (!remoteId || remoteId === seenMarkerId) return none;      // nothing new
+  if (remoteMarker.deviceId === localDeviceId) return record;   // our own echo
+  return disconnect;                                            // someone else disconnected
+  ```
+- `planGoogleDisconnectEvents` tombstones Google-sourced events (a kept row
+  stamped `deletedAt`, so the deletion syncs rather than being undone by a
+  device that never saw it) **and clears their `googleEventId`**. Without that,
+  reconnecting the same account would match the new pull against the tombstone
+  and queue the real event for deletion on Google.
+- `useGoogleCalendarSync.js` holds the wiring (`performGoogleDisconnect`,
+  `observeRemoteGoogleDisconnect`, and the account check inside
+  `fetchGoogleEventsTracked`); `useCloudSync.js` feeds it the marker each time
+  the synced document is read.
+
+**Limitations**
+- A device that is offline when another disconnects only finds out when it next
+  reconnects; until then it keeps its old Google state.
+- Events you created in TaskFlow *and* sent to Google are stored as
+  Google-sourced, so they are removed from TaskFlow by a disconnect too (they
+  remain in Google Calendar).
+- A device in the middle of "Rewrite Google Calendar" can't be stopped by a
+  disconnect made on a different device; the rewrite just fails once the login
+  is revoked.
+
 **Subscribed calendars not showing up?** Check that you reconnected *after*
 subscribing (TaskFlow lists your subscribed calendars at connect-time),
 that the calendar isn't unchecked in Google Calendar's own sidebar

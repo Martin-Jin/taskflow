@@ -37,6 +37,13 @@ import { RETENTION_DAYS_CALENDAR_EVENTS, CLOUD_SYNC_DEBOUNCE_MS } from '../servi
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from '../utils/recurrenceExpansion';
 import { isBlockTaskCompleted } from '../utils/missedTasks';
 import { computePushSingleFlightDecision } from './useCloudSync';
+import { getDeviceId } from '../utils/deviceIdentity';
+import {
+  isRealGoogleAccountId,
+  isGoogleAccountChange,
+  decideRemoteGoogleDisconnect,
+  planGoogleDisconnectEvents,
+} from '../utils/googleAccountGuard';
 import {
   fetchEvents as fetchGoogleEvents,
   pushEventToCalendar,
@@ -46,6 +53,7 @@ import {
   initGoogleCalendar,
   requestAccessToken,
   disconnectGoogleCalendar as disconnectGoogleCalendarService,
+  forgetGoogleAccessToken,
   shouldTreatAsReconnectNeeded,
   isConfirmedGoogleAuthFailure,
   computeCalendarRewritePlan,
@@ -493,6 +501,11 @@ async function runBatchesWithRetry(items, runBatch, keyOf, onBatchDone) {
  * @param {Function} deps.setNotification - Toast notification setter
  * @param {boolean} deps.authLoading - True while Firebase is still restoring auth state
  * @param {Function} deps.onEventsChanged - Called when a pull changed something schedule-relevant
+ * @param {{ current: (null|{ required: boolean, known: boolean, remoteMarkerId: (string|undefined), announce: (null|((markerId: string) => Promise<void>)) }) }} [deps.googleDisconnectBridgeRef] -
+ *   Shared with useCloudSync (created in SchedulerContext). useCloudSync fills in
+ *   whether the synced doc has been read yet (`known`) and how to announce a
+ *   disconnect to other devices (`announce`); this hook reads them. See
+ *   utils/googleAccountGuard.js for the whole "one Google account" design.
  * @returns {Object} Google Calendar state and callbacks
  */
 export function useGoogleCalendarSync({
@@ -503,6 +516,7 @@ export function useGoogleCalendarSync({
   setNotification,
   authLoading,
   onEventsChanged,
+  googleDisconnectBridgeRef,
 }) {
   const [googleConnected, setGoogleConnected] = usePersistedState('googleConnected', false);
   const [googleNeedsReconnect, setGoogleNeedsReconnect] = useState(false);
@@ -672,15 +686,78 @@ export function useGoogleCalendarSync({
   // the same default isUnsyncedPushableEvent always had.
   const primaryCalendarIdRef = useRef('primary');
 
+  // ---- One Google account per TaskFlow account (utils/googleAccountGuard.js) ----
+  // The Google login is stored once per TaskFlow account, so changing Google
+  // account has to be a clean break everywhere. Two device-local pieces of
+  // state back that (deliberately NOT in BACKUP_FIELDS — each describes what
+  // THIS browser last saw, and restoring either from a backup onto another
+  // device would make it misjudge a change):
+  //   - googleAccountId: the Google account (primary-calendar id, i.e. the
+  //     email) this device last synced with. A fetch that comes back with a
+  //     different one forces a disconnect.
+  //   - googleDisconnectSeenId: the last synced "disconnect marker" this device
+  //     has dealt with, so it only reacts to a disconnect it hasn't seen yet.
+  const [googleAccountId, setGoogleAccountId] = usePersistedState('googleAccountId', null);
+  const googleAccountIdRef = useRef(googleAccountId);
+  const [googleDisconnectSeenId, setGoogleDisconnectSeenId] = usePersistedState('googleDisconnectSeenId', null);
+  const googleDisconnectSeenIdRef = useRef(googleDisconnectSeenId);
+  const rememberGoogleAccountId = useCallback(
+    (id) => {
+      googleAccountIdRef.current = id;
+      setGoogleAccountId(id);
+    },
+    [setGoogleAccountId]
+  );
+  const rememberSeenDisconnectId = useCallback(
+    (id) => {
+      googleDisconnectSeenIdRef.current = id;
+      setGoogleDisconnectSeenId(id);
+    },
+    [setGoogleDisconnectSeenId]
+  );
+
+  // Always-current mirror of googleConnected, so a fetch that was already in
+  // flight when the user disconnected can tell it should drop its result.
+  const googleConnectedRef = useRef(googleConnected);
+  googleConnectedRef.current = googleConnected;
+
+  // Filled in below once performGoogleDisconnect exists — the fetch wrapper
+  // needs it, and it is defined further down (same ref-indirection as
+  // connectGoogleCalendarRef above).
+  const performGoogleDisconnectRef = useRef(null);
+
   // Thin wrapper around fetchGoogleEvents used at every call site in this
   // file, so primaryCalendarIdRef always reflects the most recent fetch
   // without each of the 7 call sites needing to remember to update it
   // themselves — same shape/return as fetchGoogleEvents itself.
+  //
+  // It is also where a Google account change is caught: the first fetch after
+  // connecting records the account, and a later fetch that reports a DIFFERENT
+  // one disconnects (clearing the old account's events) and throws an error
+  // marked `isGoogleAccountChanged`, so no call site merges the new account's
+  // events on top of the old account's. Call sites just stop quietly on it —
+  // the disconnect has already told the user what happened.
   const fetchGoogleEventsTracked = useCallback(async (startIso, endIso) => {
     const result = await fetchGoogleEvents(startIso, endIso);
     if (result.primaryCalendarId) primaryCalendarIdRef.current = result.primaryCalendarId;
+    if (isRealGoogleAccountId(result.primaryCalendarId)) {
+      const storedAccountId = googleAccountIdRef.current;
+      if (isGoogleAccountChange(storedAccountId, result.primaryCalendarId)) {
+        await performGoogleDisconnectRef.current?.({
+          force: true,
+          previousAccountId: storedAccountId,
+          newAccountId: result.primaryCalendarId,
+        });
+        const err = new Error('The connected Google account changed.');
+        err.isGoogleAccountChanged = true;
+        throw err;
+      }
+      // Only remember it while still connected — a fetch finishing after the
+      // user disconnected must not re-record the account they just removed.
+      if (!storedAccountId && googleConnectedRef.current) rememberGoogleAccountId(result.primaryCalendarId);
+    }
     return result;
-  }, []);
+  }, [rememberGoogleAccountId]);
 
   // googleEventIds this app instance has actually seen live on Google since
   // load — every id a pull returned, plus every id one of our own pushes was
@@ -776,6 +853,139 @@ export function useGoogleCalendarSync({
     googleSyncedRangeBoundsRef.current = googleSyncedRangeBounds;
   }, [googleSyncedRangeBounds]);
 
+  // ---- Clean-break disconnect + cross-device disconnect (googleAccountGuard.js) ----
+  //
+  // Whether the synced user doc has been read yet. Until it has, this device
+  // can't know whether another device already disconnected Google Calendar, so
+  // background pulls/pushes wait (see the gate checks at the silent re-auth,
+  // poll and on-demand fetch). Always open when cloud sync isn't in play (not
+  // signed in, or sync switched off) — there is nobody to ask.
+  const isSyncGateOpen = useCallback(() => {
+    const bridge = googleDisconnectBridgeRef?.current;
+    return !bridge || !bridge.required || bridge.known;
+  }, [googleDisconnectBridgeRef]);
+
+  // Waits (at most ~20s, so a dead connection can't hang the app) for the
+  // synced doc's first read. Returns whether the gate is now open.
+  const waitForSyncGate = useCallback(async () => {
+    for (let i = 0; i < 80 && !isSyncGateOpen(); i += 1) await sleep(250);
+    return isSyncGateOpen();
+  }, [isSyncGateOpen]);
+
+  // Everything that has to be undone locally when Google Calendar goes away:
+  // events from the Google account are tombstoned (see
+  // planGoogleDisconnectEvents for why), the record of which account/ids/
+  // ranges were synced is reset, and the connection flags are cleared. Used by
+  // the user's own disconnect, a forced disconnect, and a disconnect made on
+  // another device. Idempotent — running it twice changes nothing the second
+  // time, and `events` is only written when something actually changed.
+  const clearGoogleLinkedState = useCallback(() => {
+    const nowIso = new Date().toISOString();
+    const before = eventsRef.current || [];
+    const after = planGoogleDisconnectEvents(before, nowIso);
+    if (after.some((e, i) => e !== before[i])) {
+      eventsRef.current = after;
+      setEvents((prev) => planGoogleDisconnectEvents(prev, nowIso));
+    }
+    confirmedGoogleEventIdsRef.current = new Set();
+    hasCompletedFullWindowPullRef.current = false;
+    googleSyncedRangeBoundsRef.current = null;
+    setGoogleSyncedRangeBounds(null);
+    primaryCalendarIdRef.current = 'primary';
+    rememberGoogleAccountId(null);
+    googleConnectedRef.current = false;
+    setGoogleConnected(false);
+    setGoogleNeedsReconnect(false);
+    setGoogleSyncStale(false);
+    staleSinceRef.current = null;
+  }, [setEvents, setGoogleSyncedRangeBounds, rememberGoogleAccountId, setGoogleConnected]);
+
+  // Disconnects Google Calendar for the whole TaskFlow account: revokes the
+  // stored Google login, clears this device's Google state, and leaves a marker
+  // on the synced doc so every other device does the same.
+  //
+  // A user-initiated disconnect (`force` false) is abandoned, with nothing
+  // changed, if the server can't be reached — otherwise the stored login would
+  // survive (and silently reconnect later) while this device believed it was
+  // gone. A forced one (the Google account changed under us) goes ahead
+  // regardless: there is no one to retry it, and clearing local state is the
+  // safe direction.
+  //
+  // The marker write is not awaited: Firestore queues it and retries until it
+  // lands, even if the connection drops right now.
+  const performGoogleDisconnect = useCallback(
+    async ({ force = false, previousAccountId = null, newAccountId = null } = {}) => {
+      try {
+        await disconnectGoogleCalendarService();
+      } catch (err) {
+        console.error(err);
+        if (!force) {
+          setNotification({
+            type: 'error',
+            message: "Couldn't reach TaskFlow's server to disconnect Google Calendar — check your connection and try again.",
+          });
+          return false;
+        }
+      }
+      clearGoogleLinkedState();
+      const markerId =
+        typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      rememberSeenDisconnectId(markerId);
+      const bridge = googleDisconnectBridgeRef?.current;
+      if (bridge) {
+        bridge.remoteMarkerId = markerId;
+        bridge.announce?.(markerId)?.catch((err) => console.warn('[useGoogleCalendarSync] Failed to announce Google disconnect to other devices', err));
+      }
+      if (force) {
+        setNotification({
+          type: 'warning',
+          message: `Google Calendar is now signed in as ${newAccountId}, not ${previousAccountId}. TaskFlow disconnected it and cleared the old account's events on all your devices — reconnect to sync with the new account.`,
+          actionLabel: 'Reconnect',
+          onAction: () => connectGoogleCalendarRef.current(),
+        });
+      } else {
+        setNotification({
+          type: 'success',
+          message: "Disconnected Google Calendar. Its events were removed from TaskFlow on all your devices — they're still in Google Calendar.",
+        });
+      }
+      return true;
+    },
+    [clearGoogleLinkedState, rememberSeenDisconnectId, googleDisconnectBridgeRef, setNotification]
+  );
+  performGoogleDisconnectRef.current = performGoogleDisconnect;
+
+  // Called by useCloudSync with the synced doc's disconnect marker (or null)
+  // every time the doc is read. See decideRemoteGoogleDisconnect for the rules.
+  // No server call here: whoever disconnected has already revoked the stored
+  // login, so this only drops this device's own token and state.
+  const observeRemoteGoogleDisconnect = useCallback(
+    (remoteMarker) => {
+      const bridge = googleDisconnectBridgeRef?.current;
+      if (bridge) bridge.remoteMarkerId = remoteMarker?.id || '';
+      const decision = decideRemoteGoogleDisconnect({
+        remoteMarker,
+        seenMarkerId: googleDisconnectSeenIdRef.current,
+        localDeviceId: getDeviceId(),
+      });
+      if (decision.action === 'none') return;
+      rememberSeenDisconnectId(decision.seenMarkerId);
+      if (decision.action !== 'disconnect') return;
+      const wasConnected = googleConnectedRef.current;
+      forgetGoogleAccessToken();
+      clearGoogleLinkedState();
+      if (wasConnected) {
+        setNotification({
+          type: 'warning',
+          message: 'Google Calendar was disconnected on another of your devices, so it has been disconnected here too. Reconnect when you are ready.',
+          actionLabel: 'Reconnect',
+          onAction: () => connectGoogleCalendarRef.current(),
+        });
+      }
+    },
+    [googleDisconnectBridgeRef, rememberSeenDisconnectId, clearGoogleLinkedState, setNotification]
+  );
+
   // Shared by every fetch call site below (initial silent re-auth, periodic
   // poll, connect, manual pull) — applies the one-time hard reset instead of
   // the normal incremental merge for exactly the first pull after this fix
@@ -805,6 +1015,10 @@ export function useGoogleCalendarSync({
   // demotes an event also pushes it.
   const applyPulledEvents = useCallback(
     (fetchedEvents, rangeStartIso, rangeEndIso, { isFullWindowPull = false, failedCalendars = [] } = {}) => {
+      // A pull that was already on the wire when Google Calendar got
+      // disconnected must not land afterwards: it would put the old account's
+      // events straight back after the disconnect cleared them.
+      if (!googleConnectedRef.current) return { didHardReset: false, events: eventsRef.current || [] };
       const didHardReset = !googleEventsHardResetDoneRef.current;
       // Union this fetch's own range into everything synced so far BEFORE
       // merging, so the purge check below uses the union's outer edge
@@ -1027,6 +1241,17 @@ export function useGoogleCalendarSync({
       // or another.
       let shownLoadingToast = false;
       try {
+        // Before anything else, make sure another device hasn't already
+        // disconnected Google Calendar (see utils/googleAccountGuard.js). The
+        // synced doc is normally read within a moment; this only shows a toast
+        // if it isn't ready yet.
+        if (!isSyncGateOpen()) {
+          setNotification({ type: 'loading', message: 'Checking sync status…' });
+          await waitForSyncGate();
+          if (cancelled) return;
+          // Another device's disconnect may have been applied while waiting.
+          if (!googleConnectedRef.current) return;
+        }
         for (let attempt = 0; attempt < SILENT_REAUTH_MAX_ATTEMPTS; attempt += 1) {
           const delay = getSilentReauthRetryDelay(attempt);
           if (delay) await sleep(delay);
@@ -1068,6 +1293,9 @@ export function useGoogleCalendarSync({
             return;
           } catch (err) {
             if (cancelled) return;
+            // The Google account changed — already disconnected and explained
+            // by fetchGoogleEventsTracked; nothing more to do or retry.
+            if (err?.isGoogleAccountChanged) return;
             // Confirmed revoked/not-connected — retrying can't help, so bail
             // out of the ladder now rather than after the remaining attempts.
             if (shouldTreatAsReconnectNeeded(err)) {
@@ -1111,6 +1339,9 @@ export function useGoogleCalendarSync({
     // both attempts (see its doc comment) so nothing else can interleave.
     const poll = async () => {
       if (googleFetchInFlightRef.current || pollPausedRef.current) return;
+      // Not until the synced doc has been read (see isSyncGateOpen), and not
+      // if a disconnect landed since this tick was scheduled.
+      if (!isSyncGateOpen() || !googleConnectedRef.current) return;
       googleFetchInFlightRef.current = true;
       lastGooglePollAtRef.current = Date.now();
       const MAX_ATTEMPTS = 2;
@@ -1175,6 +1406,7 @@ export function useGoogleCalendarSync({
             }
             return;
           } catch (err) {
+            if (err?.isGoogleAccountChanged) return; // see fetchGoogleEventsTracked
             // Confirmed auth failure — fail fast, no retry benefit, and its
             // own disconnected/reconnect messaging replaces the stale flag.
             // Covers both a live gapi 401 (isGoogleAuthError) and a confirmed
@@ -1311,8 +1543,14 @@ export function useGoogleCalendarSync({
         return;
       }
       await requestAccessToken(false);
+      googleConnectedRef.current = true;
       setGoogleConnected(true);
       setGoogleNeedsReconnect(false);
+      // Any disconnect already recorded on the synced doc happened before this
+      // device connected, so it must not disconnect us again. If the doc
+      // hasn't been read yet, the first marker seen is just recorded instead.
+      const gateBridge = googleDisconnectBridgeRef?.current;
+      rememberSeenDisconnectId(gateBridge?.known ? gateBridge.remoteMarkerId ?? '' : null);
       // See googleFetchInFlightRef's doc comment — guard this fetch too so it
       // can't overlap a poll/pull/rebuild that happens to land at the same
       // moment (unlikely right after connecting, but not impossible).
@@ -1338,15 +1576,20 @@ export function useGoogleCalendarSync({
         googleFetchInFlightRef.current = false;
       }
     } catch (err) {
+      if (err?.isGoogleAccountChanged) return; // see fetchGoogleEventsTracked
       console.error(err);
       const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
       setNotification({ type: 'error', message: `Google Calendar connection failed: ${reason}` });
     }
-  }, [setGoogleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded]);
+  }, [setGoogleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded, googleDisconnectBridgeRef, rememberSeenDisconnectId]);
 
   // ---- Pull from Google Calendar (manual) ----------------------------------
   const pullFromGoogleCalendar = useCallback(async () => {
     if (!googleConnected) return;
+    if (!isSyncGateOpen()) {
+      setNotification({ type: 'info', message: 'Still checking sync status across your devices — try again in a moment.' });
+      return;
+    }
     // A user-clicked action shouldn't silently no-op if it happens to
     // overlap a background poll — surface why nothing happened instead of
     // leaving the button looking like it did nothing (see
@@ -1371,6 +1614,7 @@ export function useGoogleCalendarSync({
         setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
       }
     } catch (err) {
+      if (err?.isGoogleAccountChanged) return; // see fetchGoogleEventsTracked
       console.error(err);
       const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
       setNotification({ type: 'error', message: `Pull from Google Calendar failed: ${reason}` });
@@ -1378,7 +1622,7 @@ export function useGoogleCalendarSync({
       setIsPullingGoogleEvents(false);
       googleFetchInFlightRef.current = false;
     }
-  }, [googleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded]);
+  }, [googleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded, isSyncGateOpen]);
 
   // ---- Force a full rebuild from Google Calendar (manual, repeatable) ------
   // Unlike the one-time hardResetEventsFromGoogle pass above (which only
@@ -1401,6 +1645,10 @@ export function useGoogleCalendarSync({
   // scroll outside it will simply re-fetch on demand again.
   const rebuildEventsFromGoogle = useCallback(async () => {
     if (!googleConnected) return;
+    if (!isSyncGateOpen()) {
+      setNotification({ type: 'info', message: 'Still checking sync status across your devices — try again in a moment.' });
+      return;
+    }
     // See googleFetchInFlightRef's doc comment / pullFromGoogleCalendar's
     // identical guard above.
     if (googleFetchInFlightRef.current) {
@@ -1430,6 +1678,7 @@ export function useGoogleCalendarSync({
         setNotification({ type: 'success', message: 'Rebuilt your calendar events from Google Calendar.' });
       }
     } catch (err) {
+      if (err?.isGoogleAccountChanged) return; // see fetchGoogleEventsTracked
       console.error(err);
       const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
       setNotification({ type: 'error', message: `Rebuild from Google Calendar failed: ${reason}` });
@@ -1437,7 +1686,7 @@ export function useGoogleCalendarSync({
       setIsPullingGoogleEvents(false);
       googleFetchInFlightRef.current = false;
     }
-  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, markGoogleSyncSucceeded]);
+  }, [googleConnected, setEvents, setNotification, setGoogleEventsHardResetDone, setGoogleSyncedRangeBounds, markGoogleSyncSucceeded, isSyncGateOpen]);
 
   // ---- On-demand fetch for calendar-view navigation -------------------------
   // Called by CalendarPage (debounced) whenever the viewed date range
@@ -1450,6 +1699,7 @@ export function useGoogleCalendarSync({
     async (viewStartIso, viewEndIso) => {
       if (!googleConnected) return;
       if (googleFetchInFlightRef.current) return;
+      if (!isSyncGateOpen()) return; // see isSyncGateOpen
       // Never bother on-demand-fetching further back than the retention ceiling —
       // anything from further back than that would just get purged again on the
       // very next routine poll anyway, so fetching it at all would be wasted API
@@ -1485,6 +1735,7 @@ export function useGoogleCalendarSync({
             markGoogleSyncSucceeded();
             return;
           } catch (err) {
+            if (err?.isGoogleAccountChanged) return; // see fetchGoogleEventsTracked
             if (isConfirmedGoogleAuthFailure(err)) {
               console.warn('[useGoogleCalendarSync] Auth expired during on-demand range fetch, disconnecting.', err);
               notifyGoogleCalendarDisconnected();
@@ -1502,7 +1753,7 @@ export function useGoogleCalendarSync({
         googleFetchInFlightRef.current = false;
       }
     },
-    [googleConnected, applyPulledEvents, setGoogleConnected, setNotification, markGoogleSyncSucceeded]
+    [googleConnected, applyPulledEvents, setGoogleConnected, setNotification, markGoogleSyncSucceeded, isSyncGateOpen]
   );
 
   // ---- Push events to Google Calendar --------------------------------------
@@ -2175,23 +2426,31 @@ export function useGoogleCalendarSync({
   }, [events, setEvents, setNotification, notifyGoogleCalendarDisconnected]);
 
   // ---- Disconnect Google Calendar (user-initiated) -------------------------
+  // Refuses to run while any Google work is in flight. Disconnecting revokes
+  // the login mid-flight, which is worst during "Rewrite Google Calendar to
+  // match TaskFlow": that deletes every event in range and then re-inserts
+  // them, and a revoke between the two phases leaves the calendar emptied
+  // while local events still point at ids that no longer exist. A pull
+  // finishing afterwards, or a push that created some events but not others,
+  // are milder versions of the same problem. The Settings button is also
+  // disabled while these flags are set; this is the backstop for any other
+  // caller. See performGoogleDisconnect for what disconnecting does.
   const disconnectGoogleCalendar = useCallback(async () => {
-    try {
-      await disconnectGoogleCalendarService();
-    } catch (err) {
-      console.error(err);
-      // Still treat the app as disconnected even if revoking server-side
-      // failed (e.g. Worker unreachable) — see disconnectGoogleCalendar's own
-      // finally-block for why the local token state is cleared regardless.
-    } finally {
-      setGoogleConnected(false);
-      setGoogleNeedsReconnect(false);
-      // Deliberately disconnected — a leftover "hasn't synced recently"
-      // warning about a connection the user just removed would be nonsense.
-      setGoogleSyncStale(false);
-      setNotification({ type: 'success', message: 'Disconnected Google Calendar.' });
+    if (
+      googleFetchInFlightRef.current ||
+      pollPausedRef.current ||
+      blockPushInFlightRef.current ||
+      isPullingGoogleEvents ||
+      isRewritingCalendar
+    ) {
+      setNotification({
+        type: 'info',
+        message: 'Google Calendar is busy syncing — wait for it to finish, then disconnect.',
+      });
+      return;
     }
-  }, [setGoogleConnected, setNotification]);
+    await performGoogleDisconnect();
+  }, [performGoogleDisconnect, setNotification, isPullingGoogleEvents, isRewritingCalendar]);
 
   return {
     googleConnected,
@@ -2214,5 +2473,6 @@ export function useGoogleCalendarSync({
     rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
     seedConfirmedGoogleEventIds,
+    observeRemoteGoogleDisconnect,
   };
 }

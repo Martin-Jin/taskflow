@@ -1054,7 +1054,11 @@ dashboard widget visibility, calendar zoom level, the Tasks page's
 per-view status filter (`taskflow_tasks_filter_by_view_v1`), the
 Calendar's filter menu (`taskflow_calendar_filter_v1`), and the Google
 Calendar synced-range bounds (`googleSyncedRangeBounds` — how far out THIS
-device has fetched). Use a versioned key
+device has fetched), and the two Google-account guard keys (`googleAccountId` —
+the Google account this device last synced with, and `googleDisconnectSeenId` —
+the last synced disconnect marker it handled; restoring either from a backup
+onto another device would make it misjudge an account change — see
+[Google account](INTEGRATIONS.md#one-google-account-per-taskflow-account)). Use a versioned key
 for these so a shape change can't strand users on a stale persisted value,
 and merge the loaded value over the defaults defensively rather than
 trusting it.

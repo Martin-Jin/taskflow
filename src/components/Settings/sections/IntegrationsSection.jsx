@@ -16,6 +16,7 @@ export default function IntegrationsSection({ sectionRef }) {
   const {
     isSyncing,
     isPullingGoogleEvents,
+    isRewritingCalendar,
     googleConnected,
     googleNeedsReconnect,
     googleSyncStale,
@@ -151,11 +152,16 @@ export default function IntegrationsSection({ sectionRef }) {
           </button>
           <button
             className="btn settings-danger"
+            // Disconnecting mid-sync can strand a half-finished Google Calendar
+            // rewrite — see disconnectGoogleCalendar's own comment.
+            disabled={isPullingGoogleEvents || isRewritingCalendar}
+            title={isPullingGoogleEvents || isRewritingCalendar ? 'Wait for the current Google Calendar sync to finish' : undefined}
             onClick={async () => {
               if (
-                await confirm('Disconnect Google Calendar? Synced events stay in TaskFlow, but reconnecting will need a fresh Google sign-in.', {
-                  confirmLabel: 'Disconnect',
-                })
+                await confirm(
+                  "Disconnect Google Calendar? This disconnects it on all your devices and removes the events that came from Google Calendar from TaskFlow everywhere — they stay in Google Calendar itself. Events you created only in TaskFlow are kept. This is also how you switch to a different Google account: reconnecting asks for a fresh Google sign-in.",
+                  { confirmLabel: 'Disconnect' }
+                )
               ) {
                 disconnectGoogleCalendar();
               }

@@ -21,6 +21,17 @@
 
 export const CHANGELOG = [
   {
+    version: '11.1.0',
+    date: '2026-10-13',
+    title: 'Disconnecting Google Calendar now cleans up every device',
+    changes: [
+      'Disconnecting Google Calendar now disconnects it on all your devices and removes the events that came from Google from TaskFlow everywhere (they stay in Google Calendar). Events you created only in TaskFlow are kept. This stops old and new Google accounts getting mixed up when you switch.',
+      'If TaskFlow ever finds itself connected to a different Google account than before, it disconnects and tells you instead of mixing the two calendars.',
+      'The Disconnect button is now greyed out while Google Calendar is syncing or being rewritten, so it can no longer leave a rewrite half-finished.',
+      'When the app opens, Google Calendar sync briefly waits to check whether another device disconnected.',
+    ],
+  },
+  {
     version: '11.0.0',
     date: '2026-10-13',
     title: 'AI Quick Add: one-click "no context" and a this-week default',

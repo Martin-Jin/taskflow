@@ -164,6 +164,19 @@ function invalidateAccessToken() {
   window.gapi.client.setToken(null);
 }
 
+/**
+ * Drop this device's cached Google access token WITHOUT telling the Worker to
+ * revoke the stored login — for a device reacting to a disconnect another
+ * device already performed (the stored login is already gone).
+ */
+export function forgetGoogleAccessToken() {
+  if (window.gapi?.client) invalidateAccessToken();
+  else {
+    accessToken = null;
+    clearCachedAccessToken();
+  }
+}
+
 /** Invalidate the token and throw a marked error callers can recognize (see `err.isGoogleAuthError`) and react to by disconnecting, instead of retrying with the same now-cleared token. */
 function throwAuthExpired() {
   invalidateAccessToken();
@@ -306,11 +319,15 @@ export async function disconnectGoogleCalendar() {
   try {
     if (workerUrl) {
       const idToken = await getFirebaseIdToken();
-      await fetch(`${workerUrl}/calendar/disconnect`, {
+      const res = await fetch(`${workerUrl}/calendar/disconnect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken }),
       });
+      // The Worker always succeeds even with nothing stored, so a failure here
+      // means the stored login was NOT removed — callers need to know (see
+      // useGoogleCalendarSync's performGoogleDisconnect).
+      if (!res.ok) throw new Error(`Calendar auth worker disconnect failed (HTTP ${res.status}).`);
     }
   } finally {
     invalidateAccessToken();

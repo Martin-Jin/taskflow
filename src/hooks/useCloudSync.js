@@ -28,6 +28,7 @@ import {
   deleteBackup,
   deleteBackups,
   pushGoogleCalendarStatus,
+  pushGoogleDisconnectMarker,
   pushRestoreLock,
   heartbeatRestoreLock,
   clearRestoreLock,
@@ -1053,6 +1054,14 @@ export function didFieldStampsMergeChangeAnything(plan) {
  *   manual pull, called to self-heal THIS device when the cross-device
  *   status-mismatch check (below) finds another device reporting a working
  *   connection while this one is disconnected/stale.
+ * @param {{ current: (null|object) }} [deps.googleDisconnectBridgeRef] - Shared
+ *   with useGoogleCalendarSync (see utils/googleAccountGuard.js). This hook
+ *   tells it whether the synced doc has been read yet (`known`), whether sync is
+ *   even in play (`required`), and how to announce a disconnect to other
+ *   devices (`announce`).
+ * @param {Function} [deps.observeRemoteGoogleDisconnect] - useGoogleCalendarSync's
+ *   handler for the synced doc's disconnect marker; called every time the doc
+ *   is read so a disconnect made on another device is applied here too.
  * @param {Function} deps.runRebalance - Triggers SchedulerContext's local
  *   rebalance/reschedule engine. Called by applyRemoteData after a per-task
  *   merge (see planRemoteDataMerge's `tasks` handling, mergeTasksByUpdatedAt)
@@ -1129,6 +1138,8 @@ export function useCloudSync({
   googleSyncStale,
   pullFromGoogleCalendar,
   seedConfirmedGoogleEventIds,
+  googleDisconnectBridgeRef,
+  observeRemoteGoogleDisconnect,
   runRebalance,
 }) {
   // ANONYMOUS VISITORS ARE DELIBERATELY NOT A SYNC ACCOUNT.
@@ -1193,6 +1204,31 @@ export function useCloudSync({
   // apart from "a different device's write" in the live listener below.
   const deviceIdRef = useRef(null);
   if (deviceIdRef.current === null) deviceIdRef.current = getDeviceId();
+
+  // ---- Google disconnect bridge (see utils/googleAccountGuard.js) ----------
+  // Assigned in the render body (not an effect) on purpose: useGoogleCalendarSync's
+  // mount-time effect runs BEFORE any effect in this hook, and it has to see
+  // `required` already set to know it must wait for the synced doc.
+  //   - required: sync is actually in play (signed-in non-guest, sync on), so
+  //     other devices may have disconnected Google Calendar without this one
+  //     knowing yet.
+  //   - announce: how a disconnect on THIS device reaches the others.
+  // `known` is flipped by the first read of the synced doc below, and put back
+  // to false whenever the subscription restarts (e.g. a different user).
+  const googleBridge = googleDisconnectBridgeRef?.current;
+  if (googleBridge) {
+    googleBridge.required = Boolean(user && cloudSynced);
+    googleBridge.announce =
+      user && cloudSynced ? (markerId) => pushGoogleDisconnectMarker(user.uid, deviceIdRef.current, markerId) : null;
+  }
+  const observeRemoteGoogleDisconnectRef = useRef(observeRemoteGoogleDisconnect);
+  observeRemoteGoogleDisconnectRef.current = observeRemoteGoogleDisconnect;
+  // One place for "the synced doc was just read": opens the gate and hands the
+  // disconnect marker (or null, for a doc that has none / doesn't exist yet) on.
+  const noteSyncedDocRead = (remoteData) => {
+    if (googleDisconnectBridgeRef?.current) googleDisconnectBridgeRef.current.known = true;
+    observeRemoteGoogleDisconnectRef.current?.(remoteData?.googleDisconnect ?? null);
+  };
 
   // ---- Restore lock (see firestoreSync.js's RestoreLock typedef) -----------
   // Full lifecycle: acquireAndRunRestoreLock (this device restoring) below;
@@ -1865,8 +1901,13 @@ export function useCloudSync({
     const actionIdAtSubscribe = currentActionIdRef.current;
     const nonUndoEditIdAtSubscribe = localNonUndoEditIdRef.current;
     let receivedFirstSnapshot = false;
+    if (googleDisconnectBridgeRef?.current) googleDisconnectBridgeRef.current.known = false;
     const unsubscribe = subscribeUserData(user.uid, (remoteData) => {
       if (!remoteData) return;
+
+      // Before anything else — including the restore-lock early return below —
+      // so another device's Google disconnect is never missed.
+      noteSyncedDocRead(remoteData);
 
       // Record the highest server-confirmed `lastWriteAt` this device has
       // seen, unconditionally and before any of the checks below — this is
@@ -2056,6 +2097,9 @@ export function useCloudSync({
       setIsPullingCloud(true);
       try {
         const remoteData = await pullUserData(user.uid);
+        // Read even when the user has no doc yet (remoteData null): that still
+        // answers "has anyone disconnected Google Calendar?" with "no".
+        if (!isCancelled()) noteSyncedDocRead(remoteData);
         if (!isCancelled() && remoteData) {
           // Record the server-confirmed `lastWriteAt` this pull observed —
           // same bookkeeping as the live listener, done BEFORE the staleness

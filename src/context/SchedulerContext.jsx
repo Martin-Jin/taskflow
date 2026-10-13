@@ -1050,6 +1050,12 @@ export function SchedulerProvider({ children }) {
   }, []);
 
   // ---- Google Calendar sync -------------------------------------------------
+  // Shared by useGoogleCalendarSync and useCloudSync so a Google disconnect
+  // reaches every device and Google sync waits for the synced doc's first read
+  // (see utils/googleAccountGuard.js). useCloudSync owns the fields; a plain
+  // ref because nothing renders off them.
+  const googleDisconnectBridgeRef = useRef({ required: false, known: false, remoteMarkerId: undefined, announce: null });
+
   // Connection state, silent re-auth, periodic polling, visibility-refresh,
   // and connect/pull/push actions all live in this hook now — see its own
   // doc comment (src/hooks/useGoogleCalendarSync.js).
@@ -1073,7 +1079,9 @@ export function SchedulerProvider({ children }) {
     rewriteProgress,
     rewriteGoogleCalendarFromTaskflow,
     seedConfirmedGoogleEventIds,
+    observeRemoteGoogleDisconnect,
   } = useGoogleCalendarSync({
+    googleDisconnectBridgeRef,
     events,
     // RAW/untracked, matching every setXRaw passed into useCloudSync (see
     // that hook's own setEvents/setEventsLive comment). Every write this hook
@@ -1459,6 +1467,8 @@ export function SchedulerProvider({ children }) {
     googleSyncStale,
     pullFromGoogleCalendar,
     seedConfirmedGoogleEventIds,
+    googleDisconnectBridgeRef,
+    observeRemoteGoogleDisconnect,
     runRebalance: triggerRebalanceFromMerge,
   });
 

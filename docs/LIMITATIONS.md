@@ -61,6 +61,12 @@ to be filled.
   Calendar](INTEGRATIONS.md#google-calendar)) means an ordinary page refresh or
   closed tab never triggers it. When a revoke does happen, Settings
   surfaces a distinct "reconnect" prompt rather than failing silently.
+- One TaskFlow account syncs with one Google account, on every device.
+  Switching Google account means Disconnect, then Connect — and Disconnect
+  removes the events that came from Google Calendar from TaskFlow on all your
+  devices (they stay in Google itself). See [Google
+  account](INTEGRATIONS.md#one-google-account-per-taskflow-account). A device
+  that is offline at the time only catches up when it next goes online.
 - Undo/Redo (`useHistoryState`) only covers `tasks` and `blocks`. Calendar
   events get the same Undo-toast affordance through a parallel mechanism
   (editing, dragging, or resizing one — including reverting the matching
