@@ -1285,6 +1285,10 @@ test.describe('Smart parse', () => {
     await searchAndOpen(page, title);
     await expect(page.getByRole('dialog')).toBeVisible();
 
+    // The exclusion is shown in the detail window itself, not only in the menu.
+    const exclusionNotice = page.getByRole('dialog').getByText(/Excluded from auto-schedule/i);
+    await expect(exclusionNotice).toBeVisible();
+
     // Toggle back off via the "..." menu, mirroring the Lock/Unlock toggle.
     await page.getByRole('button', { name: 'More actions' }).click();
     await page.waitForTimeout(200);
@@ -1297,6 +1301,7 @@ test.describe('Smart parse', () => {
     await page.getByRole('button', { name: 'More actions' }).click();
     await page.waitForTimeout(200);
     await expect(page.getByRole('menuitem', { name: /auto-schedule/i })).toHaveText(/Exclude from auto-schedule/i);
+    await expect(exclusionNotice).toHaveCount(0);
 
     await closeAnyModal(page);
     expectNoErrors(errors);

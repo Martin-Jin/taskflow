@@ -336,7 +336,11 @@ TaskFlow is open, as your browser's native notification popup where that's
 permitted, falling back to an in-app toast where it isn't. Ticking the toggle
 is what triggers the browser's permission prompt, so it never appears out of
 nowhere on some later page load. These are transient alerts, not a persisted
-inbox — nothing accumulates in a list to be read later.
+inbox — nothing accumulates in a list to be read later. (Mentions in
+shared-task comments are the one exception: they land in a persisted bell
+inbox, with their own toggle here, in-app only. See
+[Mention notifications](SYNC-AND-SHARING.md#mention-notifications-the-bell-inbox).
+The email channel below never carries mentions.)
 
 **Email notifications** are a separate, self-hosted piece: a plain Node script
 (`notify-worker/`) run on a schedule by GitHub Actions, sending through

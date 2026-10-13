@@ -15,6 +15,10 @@ import {
   generateShareToken,
   resolveOwnerProfile,
   getAssignableCollaborators,
+  normalizePlaceholderAssigneeName,
+  buildAssignmentUpdates,
+  resolveAssigneeLabel,
+  MAX_PLACEHOLDER_ASSIGNEE_LENGTH,
   planSelfRename,
   planGuestMigration,
   isGuestUser,
@@ -961,5 +965,30 @@ describe('findOwnGuestName', () => {
       'proj-b': { collaborators: { [uid]: { displayName: 'Real Name' } } },
     };
     expect(findOwnGuestName(uid, sharedProjects)).toBe('Real Name');
+  });
+});
+
+describe('placeholder assignees', () => {
+  it('normalizePlaceholderAssigneeName trims and collapses spaces, rejecting empty or over-long names', () => {
+    expect(normalizePlaceholderAssigneeName('  Sam   Lee ')).toBe('Sam Lee');
+    expect(normalizePlaceholderAssigneeName('   ')).toBeNull();
+    expect(normalizePlaceholderAssigneeName(null)).toBeNull();
+    expect(normalizePlaceholderAssigneeName('x'.repeat(MAX_PLACEHOLDER_ASSIGNEE_LENGTH))).toHaveLength(MAX_PLACEHOLDER_ASSIGNEE_LENGTH);
+    expect(normalizePlaceholderAssigneeName('x'.repeat(MAX_PLACEHOLDER_ASSIGNEE_LENGTH + 1))).toBeNull();
+  });
+
+  it('buildAssignmentUpdates keeps a member and a placeholder mutually exclusive', () => {
+    expect(buildAssignmentUpdates({ uid: 'u1' })).toEqual({ assignedTo: 'u1', assigneeName: null });
+    expect(buildAssignmentUpdates({ placeholderName: ' Sam ' })).toEqual({ assignedTo: null, assigneeName: 'Sam' });
+    expect(buildAssignmentUpdates(null)).toEqual({ assignedTo: null, assigneeName: null });
+  });
+
+  it('resolveAssigneeLabel resolves members live, falls back for departed ones, and shows placeholders as typed', () => {
+    const project = { ownerId: 'o1', ownerDisplayName: 'Olive', collaborators: { u1: { displayName: 'Alex' } } };
+    expect(resolveAssigneeLabel({ assignedTo: 'o1' }, project)).toEqual({ name: 'Olive', isPlaceholder: false });
+    expect(resolveAssigneeLabel({ assignedTo: 'u1' }, project)).toEqual({ name: 'Alex', isPlaceholder: false });
+    expect(resolveAssigneeLabel({ assignedTo: 'gone' }, project)).toEqual({ name: 'Someone', isPlaceholder: false });
+    expect(resolveAssigneeLabel({ assigneeName: 'Sam' }, project)).toEqual({ name: 'Sam', isPlaceholder: true });
+    expect(resolveAssigneeLabel({}, project)).toBeNull();
   });
 });

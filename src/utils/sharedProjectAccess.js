@@ -691,6 +691,66 @@ export function getAssignableCollaborators({ ownerId, collaborators, ownerDispla
 }
 
 /**
+ * Longest placeholder assignee name accepted. A placeholder is a short label
+ * for a person, so anything longer is almost certainly a smart-parse
+ * "assign to …" capture that swallowed the rest of the title.
+ */
+export const MAX_PLACEHOLDER_ASSIGNEE_LENGTH = 40;
+
+/**
+ * Trim a typed placeholder assignee name, or return null if it's empty or
+ * too long to be a name (see MAX_PLACEHOLDER_ASSIGNEE_LENGTH).
+ *
+ * A "placeholder assignee" is a free-text name on a SHARED task (stored as
+ * `Task.assigneeName`) for someone who isn't a member of the project — e.g.
+ * "Sam" when Sam has no TaskFlow account. It's only a label: it doesn't
+ * notify anyone or make the task schedulable for anyone.
+ * @param {string|null|undefined} name
+ * @returns {string|null}
+ */
+export function normalizePlaceholderAssigneeName(name) {
+  const trimmed = (name || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed || trimmed.length > MAX_PLACEHOLDER_ASSIGNEE_LENGTH) return null;
+  return trimmed;
+}
+
+/**
+ * The task fields to write for a new assignment. A task holds at most one
+ * assignee, so a real member (`assignedTo`, a uid) and a placeholder name
+ * (`assigneeName`) always clear each other.
+ * @param {{uid?: string, placeholderName?: string}|null} target - null means "Unassigned"
+ * @returns {{assignedTo: string|null, assigneeName: string|null}}
+ */
+export function buildAssignmentUpdates(target) {
+  if (target?.uid) return { assignedTo: target.uid, assigneeName: null };
+  const name = normalizePlaceholderAssigneeName(target?.placeholderName);
+  return { assignedTo: null, assigneeName: name };
+}
+
+/**
+ * Who a shared task is assigned to, as a display name, or null if nobody.
+ *
+ * - A real member (`assignedTo`) is looked up live in the project, so a
+ *   rename shows up straight away; a uid no longer in the project reads as
+ *   "Someone".
+ * - Otherwise a placeholder name (`assigneeName`) is shown as typed.
+ * @param {{assignedTo?: string|null, assigneeName?: string|null}} task
+ * @param {{ownerId?: string, ownerDisplayName?: string, collaborators?: Record<string, {displayName?: string}>}|null} sharedProject
+ * @returns {{name: string, isPlaceholder: boolean}|null}
+ */
+export function resolveAssigneeLabel(task, sharedProject) {
+  if (task?.assignedTo) {
+    const uid = task.assignedTo;
+    if (sharedProject?.ownerId === uid) {
+      return { name: sharedProject.ownerDisplayName || 'Project owner', isPlaceholder: false };
+    }
+    return { name: sharedProject?.collaborators?.[uid]?.displayName || 'Someone', isPlaceholder: false };
+  }
+  const placeholder = normalizePlaceholderAssigneeName(task?.assigneeName);
+  return placeholder ? { name: placeholder, isPlaceholder: true } : null;
+}
+
+/**
  * Plan which shared projects need a self-rename write, given a user renaming
  * themselves from Settings (see SettingsPanel's account section). Pure so the
  * "which of my several memberships actually need touching" logic is testable

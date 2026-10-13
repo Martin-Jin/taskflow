@@ -70,7 +70,7 @@ const SECTIONS = [
     title: 'Assign to',
     examples: ['assign to Alex', 'for Alex'],
     description:
-      'On a shared task, assigns it to a collaborator by name (including guests) — only available while the task is in a shared project.',
+      "On a shared task, assigns it to a collaborator by name (including guests) — only available while the task is in a shared project. \"assign to\" with a name that isn't a member sets it as a placeholder name instead.",
   },
   {
     title: 'Project',

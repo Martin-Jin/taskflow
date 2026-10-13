@@ -423,7 +423,8 @@ schedulable date (`"not before Friday"`, `"don't start until tomorrow"`,
 from Re-balance schedule, a plain URL, a dependency, a `sub of`/`subtask of`
 mention that makes the task a sub-task of another, an `assign to <name>` /
 `for <name>` mention that assigns a shared task to a collaborator (including
-guests), a `#project` mention, a standalone `%section` shorthand, and one or
+guests; `assign to <name>` with a name that isn't a member sets a placeholder
+assignee instead), a `#project` mention, a standalone `%section` shorthand, and one or
 more `@label` mentions,
 surfacing each as a dismissible chip rather than applying anything
 silently. Cancelling a detection (the chip's x, or Backspace with the cursor

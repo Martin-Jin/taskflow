@@ -113,6 +113,19 @@ export default function NotificationsSection({ sectionRef }) {
         />
         <label htmlFor="notifDueToday">A task is due today</label>
       </div>
+      {/* Mentions arrive in the bell inbox (signed-in accounts only), not as
+          popups, so this toggle doesn't ask for browser notification
+          permission. A settings object saved before this existed has no key,
+          which counts as on. */}
+      <div className="form-row settings-toggle-row">
+        <input
+          type="checkbox"
+          id="notifMentions"
+          checked={notificationSettings.mentions !== false}
+          onChange={(e) => setNotificationSettings({ ...notificationSettings, mentions: e.target.checked })}
+        />
+        <label htmlFor="notifMentions">Someone mentions me in a shared task (bell inbox)</label>
+      </div>
     </div>
   );
 }

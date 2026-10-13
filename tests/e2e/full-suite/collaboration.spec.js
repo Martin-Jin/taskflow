@@ -217,3 +217,29 @@ test.describe('Share link landing (?join=) — reachable-without-Firebase slice'
     expectNoErrors(errors);
   });
 });
+
+// The mention inbox (Phase 4) needs a real signed-in account and live
+// Firestore, neither of which this suite has — its fan-out payload and
+// retention are unit tested (tests/unit/mentionNotifications.test.js) and its
+// authorization is covered by tests/rules/notifications.rules.test.js. What is
+// reachable here: nobody signed in means no bell and no errors, on desktop and
+// on mobile, on every tab that renders an account button.
+test.describe('Mention inbox bell — signed out', () => {
+  test('desktop: no bell is rendered and nothing errors', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+    await expect(page.getByTestId('notification-bell')).toHaveCount(0);
+    expectNoErrors(errors);
+  });
+
+  test('mobile: no bell on the dashboard topbar or the tasks header', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.setViewportSize(MOBILE_VIEWPORT);
+    await gotoApp(page);
+    await expect(page.getByTestId('notification-bell')).toHaveCount(0);
+    await gotoTab(page, 'Tasks');
+    await expect(page.getByTestId('notification-bell')).toHaveCount(0);
+    expectNoErrors(errors);
+  });
+});

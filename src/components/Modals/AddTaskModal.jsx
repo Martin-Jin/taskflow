@@ -60,7 +60,7 @@ import { parseDurationHours, formatDisplayDate, toISODate } from '../../utils/da
 import { linkLabel } from '../../utils/linkify';
 import { RECURRENCE_UNITS, buildRecurrenceString, WEEKDAY_LABELS, MAX_RECURRENCE_COUNT, computeFirstMatchingDueDate } from '../../utils/recurrence';
 import { PRIORITY_LABELS } from '../../utils/priorityColor';
-import { computeEffectiveRole, getAssignableCollaborators, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
+import { buildAssignmentUpdates, computeEffectiveRole, getAssignableCollaborators, resolveOwnerProfile } from '../../utils/sharedProjectAccess';
 import { NO_SCHEDULE_PROJECT_ID, NO_SCHEDULE_PROJECT_LABEL } from '../../utils/projectConstants';
 import { isAtMaxSubtaskDepth } from '../../utils/taskHierarchy';
 import { useAnimatedUnmount } from '../../hooks/useAnimatedUnmount';
@@ -129,6 +129,9 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
   // parentTaskId above, there's no manual widget for this in AddTaskModal, so
   // null just means "not set" rather than needing a separate hasEdited flag.
   const [assignedTo, setAssignedTo] = useState(null);
+  // Same, for an "assign to <name>" that matched no member — a free-text
+  // placeholder name (see sharedProjectAccess.js's buildAssignmentUpdates).
+  const [assigneeName, setAssigneeName] = useState(null);
   const [isPassive, setIsPassive] = useState(false);
   const [preferredTimeOfDay, setPreferredTimeOfDay] = useState('');
   const [hasEditedPreferredTimeOfDay, setHasEditedPreferredTimeOfDay] = useState(false);
@@ -219,6 +222,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
     // manual "Assign to" widget in this modal to re-set it from, unlike
     // TaskDetailModal, so this is the only place it needs clearing.
     if (assignedTo) setAssignedTo(null);
+    if (assigneeName) setAssigneeName(null);
   }
 
   const {
@@ -346,11 +350,19 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
         revert: () => setParentTaskId(null),
       },
       assignTo: {
-        isUntouched: () => assignedTo === null,
+        isUntouched: () => assignedTo === null && assigneeName === null,
         apply: (match) => {
-          if (match.collaborator) setAssignedTo(match.collaborator.uid);
+          if (!match.collaborator && !match.placeholderName) return;
+          const updates = buildAssignmentUpdates(
+            match.collaborator ? { uid: match.collaborator.uid } : { placeholderName: match.placeholderName }
+          );
+          setAssignedTo(updates.assignedTo);
+          setAssigneeName(updates.assigneeName);
         },
-        revert: () => setAssignedTo(null),
+        revert: () => {
+          setAssignedTo(null);
+          setAssigneeName(null);
+        },
       },
       project: {
         isUntouched: () => !hasEditedProject,
@@ -480,6 +492,7 @@ export default function AddTaskModal({ onClose, initialProjectId = '', initialSe
       // types/index.js's Task.assignedTo doc comment on why it stays absent
       // on a personal (non-shared) task.
       ...(assignedTo ? { assignedTo } : {}),
+      ...(assigneeName ? { assigneeName } : {}),
     });
     requestClose();
   }

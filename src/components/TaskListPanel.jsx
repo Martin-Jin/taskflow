@@ -88,6 +88,7 @@ import ViewFilterMenu from './Common/ViewFilterMenu';
 import MarqueeText from './Common/MarqueeText';
 import Badge from './Common/Badge';
 import AccountButton from './Nav/AccountButton';
+import NotificationBell from './Nav/NotificationBell';
 import BulkActionBar from './Common/BulkActionBar';
 import TaskProjectRail from './TaskProjectRail';
 import { useAuth } from '../context/AuthContext';
@@ -111,7 +112,7 @@ import {
   filterTasksByProject,
   filterTasksByStatus,
 } from '../utils/projectConstants';
-import { computeEffectiveRole } from '../utils/sharedProjectAccess';
+import { computeEffectiveRole, resolveAssigneeLabel } from '../utils/sharedProjectAccess';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
@@ -637,6 +638,9 @@ export default function TaskListPanel({
         // resolveCurrentOccurrenceDueDate's doc comment on the taskGroups
         // memo above.
         displayDueDate={resolveCurrentOccurrenceDueDate(task)}
+        // A plain string so the memoized row doesn't re-render on every
+        // shared-project snapshot. Real member or placeholder name alike.
+        assigneeName={task.sharedProjectId ? resolveAssigneeLabel(task, sharedProjects[task.sharedProjectId])?.name || null : null}
         effectiveRemainingHours={hasChildren ? getEffectiveRemainingHours(task, tasks) : getEffectiveRemainingHoursForOccurrence(task)}
         effectiveEstimatedHours={hasChildren ? getEffectiveEstimatedHours(task, tasks) : task.estimatedHours}
         onToggleCollapse={toggleCollapsed}
@@ -793,6 +797,7 @@ export default function TaskListPanel({
             {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
                 doubles as this page's one-tap way to reach account/settings —
                 mirrors the old mobile topbar's AccountButton. */}
+            {isMobile && <NotificationBell menuAlign="down" />}
             {isMobile && <AccountButton compact menuAlign="down" onOpenAccountSettings={onOpenSettings} />}
             {/* Who else is in this shared project right now. Renders nothing
                 for a personal project, so it costs no space in the common
@@ -1014,6 +1019,7 @@ const TaskRow = React.memo(function TaskRow({
   dependenciesMet,
   isCheckedForDisplay,
   displayDueDate,
+  assigneeName,
   effectiveRemainingHours,
   effectiveEstimatedHours,
   onToggleCollapse,
@@ -1271,6 +1277,7 @@ const TaskRow = React.memo(function TaskRow({
                 the status rail next to the title instead. */}
             {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ''}
             {task.sectionName ? ` · ${task.sectionName}` : ''}
+            {assigneeName ? ` · for ${assigneeName}` : ''}
           </span>
         </div>
         <div className="task-row-badges">

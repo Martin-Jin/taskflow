@@ -139,6 +139,8 @@ import { dedupeEventsByOccurrence } from '../utils/eventUtils';
 import { applyEventScopeUpdate, splitSeriesAtOccurrence } from '../utils/eventScopeUpdate';
 import { nextLabelColor } from '../utils/labelColor';
 import { ensureProtectedSleepRoutine } from '../utils/protectedSleepRoutine';
+import { buildMentionNotifications } from '../utils/mentionNotifications';
+import { sendMentionNotifications } from '../services/mentionInboxService';
 
 const SchedulerContext = createContext(null);
 
@@ -178,6 +180,10 @@ function getDefaultNotificationSettings() {
     taskStartingSoon: true,
     taskOverdue: true,
     taskDueToday: true,
+    // Someone @-mentions you in a shared task's comment. Governs the in-app
+    // mention inbox only; a settings object saved before this existed has no
+    // key and counts as on (see areMentionNotificationsEnabled).
+    mentions: true,
     startingSoonMinutes: 10,
     timezone: getBrowserTimeZone(),
   };
@@ -2272,6 +2278,21 @@ export function SchedulerProvider({ children }) {
         t.id === taskId ? { ...t, comments: [...(t.comments || []), newComment], updatedAt: new Date().toISOString() } : t
       );
       commit({ tasks: newTasks, blocks: stateRef.current.blocks }, 'Added comment');
+      // Deliver in-app mention notifications. Fire-and-forget: a failed
+      // delivery must never fail or delay the comment itself. `mentions` was
+      // already validated against project membership above, and
+      // firestore.rules re-checks it, so a bad uid is simply refused.
+      if (newComment.mentions?.length) {
+        const notifications = buildMentionNotifications({
+          comment: newComment,
+          senderUid: user.uid,
+          senderName: newComment.authorDisplayName,
+          projectId: task.sharedProjectId,
+          taskId,
+          taskTitle: task.title,
+        });
+        sendMentionNotifications(notifications).catch((err) => console.warn('Mention notifications failed', err));
+      }
     },
     [commit, user, sharedProjects]
   );

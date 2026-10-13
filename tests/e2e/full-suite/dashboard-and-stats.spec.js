@@ -642,7 +642,20 @@ test('Stats: a "must be done on due date" task is not flagged as missing its buf
    unmarkBlockDone. Hoisted to module scope (not just "Marking a scheduled
    block done"'s own describe) so the auto-complete tests further down can
    reuse the same two-block fixture. */
+/* Pins the page's clock to midday today. The block fixtures in this file
+   place blocks up to an hour before and three hours after "now" on today's
+   date, so a run late in the evening or just after midnight pushed a block
+   across midnight: its time wrapped to the other end of the same date, so an
+   "upcoming" block read as missed (or vice versa) and the tests failed for
+   reasons unrelated to the app. Only Date is frozen; timers keep running. */
+async function pinClockToMidday(page) {
+  const midday = new Date();
+  midday.setHours(12, 0, 0, 0);
+  await page.clock.setFixedTime(midday);
+}
+
 async function seedTaskWithTwoBlocksToday(page, { idPrefix = 'e2e_block_done' } = {}) {
+  await pinClockToMidday(page);
   await page.evaluate(([prefix]) => {
     const pad = (n) => String(n).padStart(2, '0');
     const now = new Date();
@@ -898,6 +911,7 @@ test.describe('Auto-completing a task when its scheduled work is fully accounted
      alone rather than paired with a still-upcoming one) — marking it done
      should reduce remaining hours straight to 0 and trigger auto-complete. */
   async function seedTaskWithOneBlockToday(page, { idPrefix = 'e2e_auto_complete', estimatedHours = 1 } = {}) {
+    await pinClockToMidday(page);
     await page.evaluate(([prefix, hours]) => {
       const pad = (n) => String(n).padStart(2, '0');
       const now = new Date();
@@ -1020,6 +1034,7 @@ test.describe('Auto-completing a task when its scheduled work is fully accounted
   test('a task whose two blocks cover its FULL estimate auto-completes only once the second block is marked done', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
+    await pinClockToMidday(page);
     await page.evaluate(() => {
       const pad = (n) => String(n).padStart(2, '0');
       const now = new Date();
@@ -1140,6 +1155,7 @@ test.describe('Locking "Time left" and scheduled blocks behind an incomplete dep
      false while `dep` is incomplete, which should disable both "Time left"
      and the block's own checkbox on every surface that offers one. */
   async function seedDependencyBlockedTask(page, { idPrefix = 'e2e_dep_lock', depCompleted = false } = {}) {
+    await pinClockToMidday(page);
     await page.evaluate(([prefix, completed]) => {
       const pad = (n) => String(n).padStart(2, '0');
       const now = new Date();

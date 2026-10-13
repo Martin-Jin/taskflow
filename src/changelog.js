@@ -21,6 +21,33 @@
 
 export const CHANGELOG = [
   {
+    version: '11.3.0',
+    date: '2026-10-13',
+    title: 'A bell inbox for @mentions',
+    changes: [
+      'When someone @mentions you in a comment on a shared task, a bell next to your account button now shows an unread count. Open it to see who mentioned you, on which task, and a snippet, then click an entry to jump to the task.',
+      'Mark a single mention read by opening it, or clear them all with "Mark all read".',
+      'You can switch mention notifications off in Settings → Notifications. Old mentions clear themselves after a while (read ones after 30 days, unread after 90).',
+    ],
+  },
+  {
+    version: '11.2.0',
+    date: '2026-10-13',
+    title: 'Assign shared tasks to anyone by name',
+    changes: [
+      "In a shared project you can now assign a task to someone who isn't a member — type their name in the ⋯ menu's Assign to search and pick \"(placeholder)\", or write \"assign to Sam\" in the title. It's just a name label: it doesn't notify anyone or schedule the task for them.",
+      'Who a shared task is assigned to now shows on its row in the task list and at the top of the task window.',
+    ],
+  },
+  {
+    version: '11.1.1',
+    date: '2026-10-13',
+    title: 'See when a task is excluded from auto-schedule',
+    changes: [
+      "A task you've excluded from auto-schedule now says so in its detail window, so it's clear why Re-balance schedule isn't placing it.",
+    ],
+  },
+  {
     version: '11.1.0',
     date: '2026-10-13',
     title: 'Disconnecting Google Calendar now cleans up every device',

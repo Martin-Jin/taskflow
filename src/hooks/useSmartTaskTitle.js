@@ -277,7 +277,9 @@ export function buildSmartChips(smartDetected) {
     smartDetected.assignTo &&
       (smartDetected.assignTo.collaborator
         ? { type: 'assignTo', icon: UserPlus, label: `Assign to: ${smartDetected.assignTo.collaborator.displayName}` }
-        : { type: 'assignTo', icon: HelpCircle, label: `No match for "${smartDetected.assignTo.fragment}"` }),
+        : smartDetected.assignTo.placeholderName
+          ? { type: 'assignTo', icon: UserPlus, label: `Assign to: ${smartDetected.assignTo.placeholderName} (placeholder)` }
+          : { type: 'assignTo', icon: HelpCircle, label: `No match for "${smartDetected.assignTo.fragment}"` }),
     smartDetected.project &&
       (smartDetected.project.project
         ? {

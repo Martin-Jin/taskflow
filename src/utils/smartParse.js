@@ -60,6 +60,7 @@ import { findDuePhrase, findFixedTimePhrase } from './dateParse';
 import { findRecurrencePhrase, WEEKDAY_LABELS } from './recurrence';
 import { findDurationPhrase } from './durationParser';
 import { URL_PATTERN_SOURCE, needsScheme } from './linkify';
+import { normalizePlaceholderAssigneeName } from './sharedProjectAccess';
 
 const PRIORITY_LEVELS = { 1: 'urgent', 2: 'high', 3: 'medium', 4: 'low' };
 
@@ -312,6 +313,14 @@ function findUnsubtaskPhrase(text) {
  * surfacing "no match" there would mean every ordinary title ending in "for
  * <anything>" pops a "no match" chip, exactly the noise this stricter branch
  * exists to avoid.
+ *
+ * PLACEHOLDER NAMES: an explicit "assign to <name>" that matches no member
+ * also returns `placeholderName` — the typed name, for assigning the task to
+ * someone who isn't in the project (see sharedProjectAccess.js's
+ * normalizePlaceholderAssigneeName). It's null when the fragment is too long
+ * to be a name, which keeps the old "no match" chip for that case. The bare
+ * "for" trigger never produces a placeholder, for the same false-positive
+ * reason as above.
  */
 function findAssignToPhrase(text, collaborators) {
   if (!collaborators || collaborators.length === 0) return null;
@@ -320,7 +329,8 @@ function findAssignToPhrase(text, collaborators) {
   if (explicit && explicit[1].trim()) {
     const fragment = explicit[1].trim();
     const collaborator = matchFragmentAgainstCandidates(fragment, collaborators, (c) => c.displayName);
-    return { collaborator, fragment, matchedText: explicit[0], index: explicit.index };
+    const placeholderName = collaborator ? null : normalizePlaceholderAssigneeName(fragment);
+    return { collaborator, placeholderName, fragment, matchedText: explicit[0], index: explicit.index };
   }
 
   const forMatch = text.match(/\bfor\s+([^@#]+?)(?=\s*[@#]|$)/i);
@@ -329,7 +339,7 @@ function findAssignToPhrase(text, collaborators) {
     const f = fragment.toLowerCase();
     const exactMatches = collaborators.filter((c) => (c.displayName || '').trim().toLowerCase() === f);
     if (exactMatches.length === 1) {
-      return { collaborator: exactMatches[0], fragment, matchedText: forMatch[0], index: forMatch.index };
+      return { collaborator: exactMatches[0], placeholderName: null, fragment, matchedText: forMatch[0], index: forMatch.index };
     }
   }
 
@@ -544,7 +554,7 @@ function findLabelPhrases(text) {
  *     preferredTimeOfDay?: {period: 'morning'|'afternoon'|'evening', matchedText: string},
  *     dependency?: {task: object|null, fragment: string, matchedText: string},
  *     subOf?: {task: object|null, fragment: string, matchedText: string},
- *     assignTo?: {collaborator: {uid: string, displayName: string}|null, fragment: string, matchedText: string},
+ *     assignTo?: {collaborator: {uid: string, displayName: string}|null, placeholderName: string|null, fragment: string, matchedText: string},
  *     project?: {project: object|null, section: object|null, fragment: string, sectionFragment: string|undefined, matchedText: string},
  *     sectionShorthand?: {project: object|null, section: object|null, fragment: string, matchedText: string, candidates: Array<{project: object|null, section: object}>},
  *     labels?: Array<{name: string, matchedText: string}>,
