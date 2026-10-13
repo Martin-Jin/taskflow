@@ -113,6 +113,28 @@ export async function pushGoogleCalendarStatus(uid, deviceId, connected, stale) 
 }
 
 /**
+ * Merge-writes a "Google Calendar was disconnected" marker onto the user's
+ * doc so every OTHER signed-in device can notice and disconnect itself too
+ * (see utils/googleAccountGuard.js for why a disconnect must be a clean break
+ * everywhere).
+ *
+ * Retention: one small map (`{ id, deviceId, at }`) overwritten in place by
+ * the next disconnect — nothing accumulates, so nothing needs sweeping. Like
+ * `googleCalendarStatus` above it is an isolated field the tasks/blocks/
+ * settings merge never looks at.
+ * @param {string} uid
+ * @param {string} deviceId - the disconnecting device (so it can ignore its own echo)
+ * @param {string} markerId - a fresh unique id for this disconnect
+ */
+export async function pushGoogleDisconnectMarker(uid, deviceId, markerId) {
+  await setDoc(
+    doc(db, 'users', uid),
+    { googleDisconnect: { id: markerId, deviceId, at: serverTimestamp() } },
+    { merge: true }
+  );
+}
+
+/**
  * ============================================================================
  * RESTORE LOCK — "I'm restoring a backup, hold off" flag for other devices
  * ============================================================================
