@@ -2498,6 +2498,14 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                 </p>
               )}
 
+              {/* Otherwise the exclusion is only visible as the "⋯" menu item's wording,
+                  so a task Re-balance silently skips would give no hint why. */}
+              {task.excludeFromAutoSchedule && (
+                <p className="form-hint">
+                  Excluded from auto-schedule — Re-balance schedule won't place this task. Change this from the ⋯ menu.
+                </p>
+              )}
+
               <SubtaskList task={task} setActiveTaskId={setActiveTaskId} />
 
               <CommentThread task={task} />

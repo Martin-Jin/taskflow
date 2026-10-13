@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.1.1',
+    date: '2026-10-13',
+    title: 'See when a task is excluded from auto-schedule',
+    changes: [
+      "A task you've excluded from auto-schedule now says so in its detail window, so it's clear why Re-balance schedule isn't placing it.",
+    ],
+  },
+  {
     version: '11.1.0',
     date: '2026-10-13',
     title: 'Disconnecting Google Calendar now cleans up every device',
