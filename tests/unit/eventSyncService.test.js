@@ -26,6 +26,8 @@ import {
   resolvePulledEventConflict,
   RECENTLY_DELETED_TTL_MS,
 } from '../../src/services/eventSyncService.js';
+import { planGoogleDisconnectEvents } from '../../src/utils/googleAccountGuard.js';
+import { mergeEventsByUpdatedAt } from '../../src/utils/eventMerge.js';
 
 function googleEvent(overrides = {}) {
   return {
@@ -1176,5 +1178,48 @@ describe('hardResetEventsFromGoogle — legacy mirror suppression', () => {
     const real = googleEvent({ googleEventId: 'g_real', title: 'Dentist' });
     const mirrorRow = googleEvent({ googleEventId: 'g_mirror', taskflowBlockId: 'blk_1' });
     expect(hardResetEventsFromGoogle([real, mirrorRow]).map((e) => e.googleEventId)).toEqual(['g_real']);
+  });
+});
+
+// Reconnecting Google Calendar re-pulls events whose TaskFlow ids are fixed by
+// their Google ids, so each lands on the id of its own disconnect tombstone.
+describe('mergePulledGoogleEvents — reconnect after a Google disconnect', () => {
+  const rangeStart = '2026-08-01';
+  const rangeEnd = '2026-08-31';
+  const nowMs = Date.parse('2026-08-10T12:00:00Z');
+  const pulled = googleEvent({ id: 'gcal_me@example.com_g1', googleEventId: 'g1', date: '2026-08-05', googleUpdatedAt: '2026-08-01T00:00:00Z' });
+  const tombstone = planGoogleDisconnectEvents([pulled], '2026-08-09T00:00:00Z')[0];
+  const merge = (existing, opts = {}) =>
+    mergePulledGoogleEvents(existing, [pulled], rangeStart, rangeEnd, new Map(), new Map(), nowMs, rangeStart, opts.confirmed ?? new Set(), opts.fullWindow ?? true);
+
+  it('replaces the tombstone with the pulled row, leaving one row per id', () => {
+    for (const fullWindow of [true, false]) {
+      const result = merge([tombstone], { fullWindow });
+      expect(result).toHaveLength(1);
+      expect(result[0].deletedAt).toBeUndefined();
+      expect(result[0].googleEventId).toBe('g1');
+    }
+  });
+
+  it('stamps the re-pulled row so it beats the tombstone on a device that only has the tombstone', () => {
+    const [live] = merge([tombstone]);
+    expect(live.localUpdatedAt).toBe(new Date(nowMs).toISOString());
+    const otherDevice = mergeEventsByUpdatedAt([tombstone], [live]);
+    expect(otherDevice).toHaveLength(1);
+    expect(otherDevice[0].deletedAt).toBeUndefined();
+  });
+
+  it('keeps a tombstone that still has its Google id (a real local delete waiting to reach Google)', () => {
+    const realDelete = { ...pulled, deletedAt: '2026-08-09T00:00:00Z', localUpdatedAt: '2026-08-09T00:00:00Z' };
+    const result = merge([realDelete]);
+    expect(result).toHaveLength(1);
+    expect(result[0].deletedAt).toBe('2026-08-09T00:00:00Z');
+  });
+
+  it('leaves an inert tombstone alone when no pulled row uses its id', () => {
+    const other = { ...tombstone, id: 'evt_manual_x', title: 'Something else' };
+    const result = merge([other]);
+    expect(result).toHaveLength(2);
+    expect(result.find((e) => e.id === 'evt_manual_x').deletedAt).toBe(other.deletedAt);
   });
 });

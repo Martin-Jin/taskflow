@@ -257,6 +257,12 @@ every device.
   device that never saw it) **and clears their `googleEventId`**. Without that,
   reconnecting the same account would match the new pull against the tombstone
   and queue the real event for deletion on Google.
+- On reconnect, a pulled Google event gets the same TaskFlow id its tombstone
+  has (the id is built from the Google id). `mergePulledGoogleEvents`
+  (`eventSyncService.js`, `isInertTombstoneReplacedByPull`) lets the pulled
+  row replace that id-less tombstone and stamps it as just edited. Otherwise
+  the tombstone, which carries a timestamp the pulled row lacks, would win the
+  cross-device merge and hide the event on your other devices.
 - `useGoogleCalendarSync.js` holds the wiring (`performGoogleDisconnect`,
   `observeRemoteGoogleDisconnect`, and the account check inside
   `fetchGoogleEventsTracked`); `useCloudSync.js` feeds it the marker each time
