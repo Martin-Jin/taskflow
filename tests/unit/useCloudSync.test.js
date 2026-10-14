@@ -60,6 +60,7 @@ import {
   isStaleOwnEcho,
   isRemoteWriteStale,
   isRestoreLockActive,
+  planRestoreLockAction,
   addInFlightFingerprint,
   retireInFlightFingerprint,
   planRemoteDataMerge,
@@ -536,6 +537,43 @@ describe('isRestoreLockActive', () => {
   it('a missing/malformed heartbeatAt is treated as stale (never active) rather than wedging on bad data', () => {
     const lock = { deviceId: 'device-a', state: 'restoring' }; // no heartbeatAt at all
     expect(isRestoreLockActive(lock, 'device-b', 100000, STALE_MS)).toBe(false);
+  });
+});
+
+// A device that was closed or asleep during another device's restore only
+// sees the RELEASED lock afterwards. It must replace its data wholesale
+// ('converge'), never merge — a merge keeps its stale rows and pushes them back.
+describe('planRestoreLockAction', () => {
+  const ts = (ms) => ({ toMillis: () => ms });
+  const STALE_MS = 30000;
+  const released = (generation, deviceId = 'device-a') => ({ deviceId, state: 'released', generation, heartbeatAt: ts(1000) });
+
+  it("'blocked' while another device is actively restoring", () => {
+    const lock = { deviceId: 'device-a', state: 'restoring', generation: 3, heartbeatAt: ts(99000) };
+    expect(planRestoreLockAction(lock, 'device-b', 2, 100000, STALE_MS)).toBe('blocked');
+  });
+
+  it("'converge' for a released restore this device has not applied yet (e.g. it was closed during it)", () => {
+    expect(planRestoreLockAction(released(3), 'device-b', 2, 100000, STALE_MS)).toBe('converge');
+  });
+
+  it("'converge' on a device that has never recorded a generation", () => {
+    expect(planRestoreLockAction(released(1), 'device-b', 0, 100000, STALE_MS)).toBe('converge');
+    expect(planRestoreLockAction(released(1), 'device-b', undefined, 100000, STALE_MS)).toBe('converge');
+  });
+
+  it("'none' once this device has applied that generation, so a reload does not re-apply it", () => {
+    expect(planRestoreLockAction(released(3), 'device-b', 3, 100000, STALE_MS)).toBe('none');
+  });
+
+  it("'none' for the device that ran the restore itself", () => {
+    expect(planRestoreLockAction(released(3, 'device-b'), 'device-b', 0, 100000, STALE_MS)).toBe('none');
+  });
+
+  it("'none' with no lock, or a stale lock from a device that crashed mid-restore", () => {
+    expect(planRestoreLockAction(null, 'device-b', 0, 100000, STALE_MS)).toBe('none');
+    const stale = { deviceId: 'device-a', state: 'restoring', generation: 3, heartbeatAt: ts(50000) };
+    expect(planRestoreLockAction(stale, 'device-b', 0, 100000, STALE_MS)).toBe('none');
   });
 });
 

@@ -1246,8 +1246,20 @@ after the restore and win purely by writing last. So a restoring device takes a
 
 - **Crash safety:** a stale heartbeat (`RESTORE_LOCK_STALE_MS`) frees everyone
   if the restoring device dies.
-- **Not closed:** a push already on the wire when the lock arrives, and a
-  device offline for the whole restore (it competes by timestamp on return).
+- **A device that missed the lock** (closed, asleep, or backgrounded the whole
+  time) only ever sees it released. Both the live listener and the one-shot
+  pull (on open and on returning to the tab) ask `planRestoreLockAction`
+  first, and apply a not-yet-applied release wholesale (`convergeOnRestore`)
+  instead of merging. The last applied `generation` is kept in localStorage
+  (`appliedRestoreGeneration`), so a reload neither re-applies an old restore
+  nor forgets a new one.
+  - **Why:** an ordinary merge keeps the union of both sides, so a late device
+    kept every stale row the backup didn't have and pushed it back to everyone
+    — duplicated events "a while after" a restore. Before the fix the applied
+    generation lived only in memory, and the one-shot pull ignored the lock.
+  - **Limitation:** that device's own offline edits are discarded, the same as
+    a device blocked during the restore.
+- **Not closed:** a push already on the wire when the lock arrives.
 - **Firestore only:** the lock doesn't pause Google traffic — see the Google
   gap below.
 
