@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePlan } from '../../src/services/aiPlanService';
+import { resolvePlan, applyPlan } from '../../src/services/aiPlanService';
 
 const emptyContext = { projects: [], sections: [], labels: [], tasks: [], events: [] };
 
@@ -147,5 +147,42 @@ describe('resolvePlan — note operations', () => {
     // invent an id for a note it was never shown.
     const plan = resolvePlan([{ op: 'update_note', noteId: 'n1', title: 'x' }], emptyContext);
     expect(entryFor(plan, 0).valid).toBe(false);
+  });
+});
+
+describe('repeating events from the AI assistant', () => {
+  const evt = { op: 'create_event', localId: 'new:1', title: 'Class', date: '2026-08-10', startTime: '09:00', endTime: '10:00' };
+
+  it('accepts a valid recurrenceRule and rejects a made-up one', () => {
+    expect(entryFor(resolvePlan([{ ...evt, recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO,WE' }], emptyContext), 0).valid).toBe(true);
+    const bad = entryFor(resolvePlan([{ ...evt, recurrenceRule: 'weekly' }], emptyContext), 0);
+    expect(bad.valid).toBe(false);
+    expect(bad.errors.join(' ')).toMatch(/recurrenceRule/);
+  });
+
+  it('passes recurrenceRule through to addManualEvent on create', () => {
+    const plan = resolvePlan([{ ...evt, recurrenceRule: 'FREQ=WEEKLY' }], emptyContext);
+    let received;
+    applyPlan(plan, new Set([0]), { addManualEvent: (f) => ((received = f), { id: 'e1' }) });
+    expect(received.recurrenceRule).toBe('FREQ=WEEKLY');
+  });
+
+  it('update_event makes the whole series repeat, and "" stops it', () => {
+    const context = { ...emptyContext, events: [{ id: 'e1', title: 'Class' }] };
+    const calls = [];
+    const mutators = { updateEvent: (id, fields, scope) => calls.push({ id, fields, scope }) };
+    for (const rule of ['FREQ=WEEKLY', '']) {
+      const plan = resolvePlan([{ op: 'update_event', eventId: 'e1', recurrenceRule: rule }], context);
+      applyPlan(plan, new Set([0]), mutators);
+    }
+    expect(calls[0]).toMatchObject({ id: 'e1', scope: 'all', fields: { recurrenceRule: 'FREQ=WEEKLY', isRecurring: true, seriesId: 'e1' } });
+    expect(calls[1].fields).toMatchObject({ recurrenceRule: null, isRecurring: false, seriesId: null });
+  });
+
+  it('a task given only recurrenceString is still marked recurring', () => {
+    const plan = resolvePlan([{ op: 'create_task', localId: 'new:1', title: 'Water plants', recurrenceString: 'every week' }], emptyContext);
+    let received;
+    applyPlan(plan, new Set([0]), { addTask: (f) => ((received = f), { id: 't1' }) });
+    expect(received.isRecurring).toBe(true);
   });
 });

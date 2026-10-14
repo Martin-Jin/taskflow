@@ -18,6 +18,8 @@
  * ============================================================================
  */
 
+import { parseRRule } from '../utils/recurrenceExpansion';
+
 // ---------------------------------------------------------------------------
 // Per-operation shape: which entity kind it creates (if any), which field
 // holds the id of the existing entity it targets (for update/delete), and
@@ -95,6 +97,10 @@ function validateFieldFormats(operation) {
     if (value === undefined || value === '') continue;
     const error = validate(value);
     if (error) errors.push(error);
+  }
+  // '' on update_event means "stop repeating", so only a non-empty rule is checked.
+  if (operation.recurrenceRule && !parseRRule(operation.recurrenceRule)) {
+    errors.push(`recurrenceRule "${operation.recurrenceRule}" is not a supported repeat rule (use e.g. FREQ=WEEKLY or FREQ=WEEKLY;BYDAY=MO,WE).`);
   }
   if (
     operation.op === 'create_event' &&
@@ -409,9 +415,9 @@ function describeOperation(op, context, nameFor) {
     case 'delete_task':
       return `Delete task "${nameFor('task', op.taskId)}"`;
     case 'create_event':
-      return `Create event "${op.title}" on ${op.date} ${op.startTime}–${op.endTime}`;
+      return `Create event "${op.title}" on ${op.date} ${op.startTime}–${op.endTime}${op.recurrenceRule ? ` (repeats: ${op.recurrenceRule})` : ''}`;
     case 'update_event':
-      return `Update event "${nameFor('event', op.eventId)}"`;
+      return `Update event "${nameFor('event', op.eventId)}"${op.recurrenceRule ? ` (repeats: ${op.recurrenceRule})` : op.recurrenceRule === '' ? ' (stops repeating)' : ''}`;
     case 'delete_event':
       return `Delete event "${nameFor('event', op.eventId)}"`;
     case 'create_project':
@@ -465,7 +471,12 @@ const DEFAULT_ESTIMATED_HOURS = 5 / 60;
 // field" (see the update_task/update_event tool descriptions in
 // cloudflare-worker/src/index.js) — normalized to `null` to match this app's
 // own null-means-unset convention, rather than leaving a stray empty string.
-const NULLABLE_ON_EMPTY = new Set(['projectId', 'sectionId', 'parentId', 'dueDate', 'earliestDate', 'fixedTime', 'recurrenceString']);
+const NULLABLE_ON_EMPTY = new Set(['projectId', 'sectionId', 'parentId', 'dueDate', 'earliestDate', 'fixedTime', 'recurrenceString', 'recurrenceRule']);
+
+/** A recurrenceString with no isRecurring does nothing in the app, so a model that sets only the text still gets a repeating task. */
+function impliedRecurrence(fields) {
+  if (fields.recurrenceString && fields.isRecurring === undefined) fields.isRecurring = true;
+}
 
 /** Replaces every new:<n> reference in `op`'s fields with its resolved real id, via `idMap`. Throws if a referenced local id was never resolved (should not happen given a correct applyOrder). */
 function resolveRefs(op, idMap) {
@@ -540,14 +551,18 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
         case 'create_task': {
           const fields = contentFields(resolved, new Set(['op', 'localId']));
           if (fields.estimatedHours === undefined) fields.estimatedHours = DEFAULT_ESTIMATED_HOURS;
+          impliedRecurrence(fields);
           const created = mutators.addTask(fields);
           idMap.set(resolved.localId, created.id);
           createdId = created.id;
           break;
         }
-        case 'update_task':
-          mutators.updateTask(resolved.taskId, contentFields(resolved, new Set(['op', 'taskId'])));
+        case 'update_task': {
+          const fields = contentFields(resolved, new Set(['op', 'taskId']));
+          impliedRecurrence(fields);
+          mutators.updateTask(resolved.taskId, fields);
           break;
+        }
         case 'delete_task':
           mutators.deleteTask(resolved.taskId);
           break;
@@ -557,9 +572,19 @@ export function applyPlan({ entries, applyOrder }, checkedIndices, mutators) {
           createdId = created.id;
           break;
         }
-        case 'update_event':
-          mutators.updateEvent(resolved.eventId, contentFields(resolved, new Set(['op', 'eventId'])));
+        case 'update_event': {
+          const fields = contentFields(resolved, new Set(['op', 'eventId']));
+          // A repeat change goes to the whole series ('all'), and mirrors what
+          // EventDetailModal stamps alongside recurrenceRule: isRecurring plus
+          // the event's own id as seriesId (null again when it stops repeating).
+          const changesRepeat = 'recurrenceRule' in fields;
+          if (changesRepeat) {
+            fields.isRecurring = !!fields.recurrenceRule;
+            fields.seriesId = fields.recurrenceRule ? resolved.eventId : null;
+          }
+          mutators.updateEvent(resolved.eventId, fields, changesRepeat ? 'all' : undefined);
           break;
+        }
         case 'delete_event':
           mutators.deleteEvent(resolved.eventId);
           break;
