@@ -65,6 +65,8 @@ import {
   TASKFLOW_BLOCK_PROPERTY_KEY,
   priorityToColorId,
   buildCalendarEventResource,
+  taskflowGoogleEventId,
+  isAlreadyExistsError,
 } from '../../src/services/googleCalendarService.js';
 
 describe('parseExdateToLocalIsoDate', () => {
@@ -567,5 +569,43 @@ describe('buildCalendarEventResource — all-day events', () => {
   it('carries Free marking through transparency (all-day only)', () => {
     expect(buildCalendarEventResource({ ...timed, isAllDay: true, isFreeTime: true }).transparency).toBe('transparent');
     expect(buildCalendarEventResource({ ...timed, isFreeTime: true }).transparency).toBeUndefined();
+  });
+});
+
+// Two devices pushing the same not-yet-synced event must ask Google for the
+// same id, so Google refuses the second insert instead of making a duplicate.
+describe('taskflowGoogleEventId', () => {
+  it('is the same for the same TaskFlow id on every call (every device)', () => {
+    expect(taskflowGoogleEventId('evt_manual_abc123')).toBe(taskflowGoogleEventId('evt_manual_abc123'));
+  });
+
+  it('differs for different TaskFlow ids', () => {
+    expect(taskflowGoogleEventId('evt_manual_a')).not.toBe(taskflowGoogleEventId('evt_manual_b'));
+  });
+
+  it('only uses characters Google accepts (0-9, a-v) and meets the 5-char minimum', () => {
+    for (const localId of ['a', 'evt_manual_XYZ-09', 'gcal_me@example.com_abc', 'événement']) {
+      const id = taskflowGoogleEventId(localId);
+      expect(id).toMatch(/^[0-9a-v]{5,1024}$/);
+    }
+  });
+
+  it('returns null (let Google pick) when the id would be too long or there is no TaskFlow id', () => {
+    expect(taskflowGoogleEventId('x'.repeat(600))).toBeNull();
+    expect(taskflowGoogleEventId(null)).toBeNull();
+    expect(taskflowGoogleEventId('')).toBeNull();
+  });
+});
+
+describe('isAlreadyExistsError', () => {
+  it('recognises a 409 in either gapi error shape', () => {
+    expect(isAlreadyExistsError({ status: 409 })).toBe(true);
+    expect(isAlreadyExistsError({ result: { error: { code: 409 } } })).toBe(true);
+  });
+
+  it('does not treat other failures as "already exists"', () => {
+    expect(isAlreadyExistsError({ status: 404 })).toBe(false);
+    expect(isAlreadyExistsError({ status: 429 })).toBe(false);
+    expect(isAlreadyExistsError(null)).toBe(false);
   });
 });

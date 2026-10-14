@@ -165,6 +165,42 @@ to match TaskFlow"), it's sent as a real all-day event.
 event in TaskFlow) are kept, and sent to Google at the next sync after you
 reconnect, rather than being overwritten by Google's older copy.
 
+### One Google copy per event, however many devices push it
+
+**Why it exists.** A new TaskFlow event reaches your other devices through
+cloud sync before it reaches Google. If two connected devices both sent it to
+Google at about the same time — most often right after reconnecting Google
+Calendar on both — Google made two copies, and the second copy came back on the
+next pull as a duplicate row in TaskFlow too.
+
+**What it does.**
+1. When TaskFlow first creates an event on Google, it chooses the Google id
+   itself, worked out from the event's TaskFlow id. Every device chooses the
+   same id for the same event.
+2. If Google says that id is already taken, another device got there first:
+   TaskFlow updates that existing Google event instead of making a new one, and
+   keeps its id.
+3. If the id is taken by an event that was deleted on Google, TaskFlow creates
+   a new copy with a Google-chosen id, as it always did — so re-sending a
+   restored backup still works.
+
+**Why this approach.** Telling devices apart with a lock or "who pushes" rule
+would need another synced record and still fail when a device is offline.
+Letting Google refuse the second copy needs no coordination at all.
+
+**How it works in code.** `googleCalendarService.js`, `taskflowGoogleEventId`
+and `insertEventOnce`:
+
+```js
+id = 'taskf' + hex(utf8(event.id))             // same on every device
+insert({ ...resource, id })                     // 409 → already exists:
+existing.status === 'cancelled' ? insert(resource) : update(id, resource)
+```
+
+**Limitations.** An event first pushed by an older build has a Google-chosen
+id, so this only protects events created on Google from now on. A TaskFlow id
+too long for Google's 1024-character limit falls back to a Google-chosen id.
+
 ### One Google account per TaskFlow account
 
 TaskFlow keeps a single Google login for your whole TaskFlow account, shared by
@@ -221,6 +257,12 @@ every device.
   device that never saw it) **and clears their `googleEventId`**. Without that,
   reconnecting the same account would match the new pull against the tombstone
   and queue the real event for deletion on Google.
+- On reconnect, a pulled Google event gets the same TaskFlow id its tombstone
+  has (the id is built from the Google id). `mergePulledGoogleEvents`
+  (`eventSyncService.js`, `isInertTombstoneReplacedByPull`) lets the pulled
+  row replace that id-less tombstone and stamps it as just edited. Otherwise
+  the tombstone, which carries a timestamp the pulled row lacks, would win the
+  cross-device merge and hide the event on your other devices.
 - `useGoogleCalendarSync.js` holds the wiring (`performGoogleDisconnect`,
   `observeRemoteGoogleDisconnect`, and the account check inside
   `fetchGoogleEventsTracked`); `useCloudSync.js` feeds it the marker each time

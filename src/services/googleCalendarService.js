@@ -1002,13 +1002,79 @@ export function buildBlockEventResource(block, task) {
   };
 }
 
+/** Longest event id Google Calendar accepts on insert. */
+const MAX_GOOGLE_EVENT_ID_LENGTH = 1024;
+
+/**
+ * The Google event id TaskFlow asks for when it first creates one of its
+ * events on Google, worked out from the event's own TaskFlow id.
+ *
+ * **Why it exists.** Two signed-in devices both see the same not-yet-pushed
+ * event (it reaches the second one through cloud sync) and both push it.
+ * When Google picked a fresh random id for each insert, that made two copies
+ * on Google, and the losing copy then came back on the next pull as a second
+ * row in TaskFlow. Reconnecting Google Calendar on several devices at once is
+ * the common trigger, since every device runs its push sweep straight away.
+ *
+ * **What it does.** Every device now asks for the SAME id for the same
+ * event, so Google itself refuses the second insert (HTTP 409) — see
+ * pushEventToCalendar for what happens then.
+ *
+ * Google only allows the characters 0-9 and a-v, 5 to 1024 long, so the id
+ * is "taskf" (which also meets the 5-character minimum on its own) plus the
+ * TaskFlow id's bytes in lowercase hex. Returns null if that
+ * would be too long; the caller then lets Google pick an id, as before.
+ * @param {string} localId
+ * @returns {string|null}
+ */
+export function taskflowGoogleEventId(localId) {
+  if (!localId) return null;
+  let id = 'taskf';
+  for (const byte of new TextEncoder().encode(String(localId))) id += byte.toString(16).padStart(2, '0');
+  return id.length <= MAX_GOOGLE_EVENT_ID_LENGTH ? id : null;
+}
+
+/** True if a gapi error means "an event with that id already exists" (HTTP 409). */
+export function isAlreadyExistsError(err) {
+  const code = err?.status ?? err?.result?.error?.code;
+  return code === 409;
+}
+
+/**
+ * Creates `event` on Google under its taskflowGoogleEventId, without ever
+ * making a second copy of it.
+ *
+ * If Google says that id is already taken (409), one of two things happened:
+ *   - **Another device (or an earlier push from this one) already created
+ *     it.** The existing event is updated with this content and its id
+ *     adopted, so both devices end up pointing at the one Google event.
+ *   - **It was created once and later deleted on Google.** Google keeps a
+ *     deleted event's id reserved (status "cancelled"), so it is created
+ *     afresh under a Google-picked id — the same result an insert gave
+ *     before ids were chosen by TaskFlow (e.g. re-pushing a restored backup).
+ */
+async function insertEventOnce(calendarId, event, resource) {
+  const eventId = taskflowGoogleEventId(event.id);
+  if (!eventId) return window.gapi.client.calendar.events.insert({ calendarId, resource });
+  try {
+    return await window.gapi.client.calendar.events.insert({ calendarId, resource: { ...resource, id: eventId } });
+  } catch (err) {
+    if (!isAlreadyExistsError(err)) throw err;
+    const existing = await window.gapi.client.calendar.events.get({ calendarId, eventId });
+    if (existing.result?.status === 'cancelled') {
+      return window.gapi.client.calendar.events.insert({ calendarId, resource });
+    }
+    return window.gapi.client.calendar.events.update({ calendarId, eventId, resource });
+  }
+}
+
 /**
  * Push a single CalendarEvent (manual or a locally-edited Google-sourced
- * one) to Google Calendar — creates it if it has no googleEventId yet,
- * otherwise updates the existing one. Returns { id, updated } (Google's
- * event id and its fresh `updated` timestamp) so the caller can stamp
- * googleEventId/googleUpdatedAt back onto the local record, or null if
- * not authorized (mock/offline mode).
+ * one) to Google Calendar — creates it if it has no googleEventId yet
+ * (see insertEventOnce), otherwise updates the existing one. Returns
+ * { id, updated } (Google's event id and its fresh `updated` timestamp) so
+ * the caller can stamp googleEventId/googleUpdatedAt back onto the local
+ * record, or null if not authorized (mock/offline mode).
  */
 export async function pushEventToCalendar(event) {
   if (!gapiInited || !accessToken) {
@@ -1021,7 +1087,7 @@ export async function pushEventToCalendar(event) {
 
   const resp = event.googleEventId
     ? await window.gapi.client.calendar.events.update({ calendarId, eventId: event.googleEventId, resource })
-    : await window.gapi.client.calendar.events.insert({ calendarId, resource });
+    : await insertEventOnce(calendarId, event, resource);
 
   // `updated` must never come back as `undefined` — Firestore's addDoc/setDoc
   // reject any field holding it outright, and this return value gets spread

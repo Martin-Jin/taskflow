@@ -276,6 +276,35 @@ function preserveIgnoredFlag(localEvent, pulledEvent) {
   return result;
 }
 
+/**
+ * True if `event` is an inert Google tombstone (a deleted row with its
+ * `googleEventId` already stripped) whose id a pulled event is about to use.
+ *
+ * **Why it exists.** A pulled event's TaskFlow id is fixed by its Google id
+ * (`gcal_<calendarId>_<googleEventId>`, see googleCalendarService's
+ * fetchEvents). Disconnecting Google Calendar turns those rows into
+ * tombstones and strips their Google ids (googleAccountGuard.js's
+ * planGoogleDisconnectEvents). After reconnecting, the pull matches rows by
+ * Google id, so it could not see the tombstone and added a live row with the
+ * SAME id beside it. Then:
+ *   - the cross-device merge (entityMerge.js) keys rows by id, so one of the
+ *     two silently dropped out;
+ *   - the tombstone carried a `localUpdatedAt` and the pulled row didn't, so
+ *     on another device the tombstone won and the event vanished until that
+ *     device's own pull added it back.
+ *
+ * **What the caller does with it.** The tombstone is dropped and the pulled
+ * row is stamped `localUpdatedAt` = now, so it also beats the tombstone on
+ * every other device.
+ *
+ * **Limitations.** A row deleted in TaskFlow while it had no Google id (its
+ * delete never reached Google) is inert too; if Google still returns that
+ * event it comes back, matching what Google actually holds.
+ */
+function isInertTombstoneReplacedByPull(event, pulledRowIds) {
+  return event.source === 'google' && !!event.deletedAt && !event.googleEventId && pulledRowIds.has(event.id);
+}
+
 /** Epoch millis for a timestamp string, or null if missing/unparseable — same convention as eventMerge.js's localUpdatedAtMillis. */
 function timestampMillis(iso) {
   if (!iso) return null;
@@ -571,6 +600,9 @@ function findReplacementMatches(demoteCandidates, newPulledCandidates) {
  *     edge of the fetch window, i.e. it's aged out of the retention window
  *     entirely), which is actively purged rather than left indefinitely —
  *     see isTooOldToRetain.
+ *   - A pulled event that reuses the id of an inert tombstone (one left by a
+ *     Google disconnect, its googleEventId stripped) replaces it and is
+ *     stamped `localUpdatedAt` — see isInertTombstoneReplacedByPull.
  *   - Any pulled event with no matching local googleEventId is a brand-new
  *     Google event and is simply added — UNLESS that googleEventId is
  *     already claimed by an existing manual (source:'manual') event, i.e.
@@ -702,6 +734,15 @@ export function mergePulledGoogleEvents(
   const pulledByGoogleEventId = new Map(freshPulledAfterConflicts.map((e) => [e.googleEventId, e]));
   const freshPulledByGoogleEventId = new Map(freshPulled.map((e) => [e.googleEventId, e]));
 
+  // Inert tombstones that a pulled event takes over — see
+  // isInertTombstoneReplacedByPull. The tombstone is dropped and the pulled
+  // row stamped (in patchedFreshPulled below).
+  const pulledRowIds = new Set(freshPulledAfterConflicts.map((e) => e.id));
+  const replacedTombstoneIds = new Set(
+    existingEvents.filter((e) => isInertTombstoneReplacedByPull(e, pulledRowIds)).map((e) => e.id)
+  );
+  const replacedStampIso = new Date(nowMs).toISOString();
+
   // Candidates for the replacement-detection pass below (see
   // findReplacementMatches/isPlausibleReplacement's own doc comments): every
   // local Google-sourced event that WOULD be demoted-and-repushed (in scope,
@@ -717,6 +758,7 @@ export function mergePulledGoogleEvents(
     (e) =>
       e.source === 'google' &&
       !isBlockSourcedEvent(e) &&
+      !replacedTombstoneIds.has(e.id) &&
       !pulledByGoogleEventId.has(e.googleEventId) &&
       !isTooOldToRetain(e, purgeBoundaryIso) &&
       isInScopeForPull(e, rangeStartIso, rangeEndIso) &&
@@ -734,6 +776,7 @@ export function mergePulledGoogleEvents(
   const matchedPulledGoogleEventIds = new Set(replacementMatches.values());
 
   const patchedFreshPulled = freshPulledAfterConflicts.map((e) => {
+    if (replacedTombstoneIds.has(e.id)) return { ...e, localUpdatedAt: replacedStampIso };
     if (!matchedPulledGoogleEventIds.has(e.googleEventId)) return e;
     const matchedLocal = demoteCandidates.find((c) => replacementMatches.get(c.id) === e.googleEventId);
     return matchedLocal ? preserveIgnoredFlag(matchedLocal, e) : e;
@@ -751,6 +794,10 @@ export function mergePulledGoogleEvents(
     // behind is what let it later be re-pushed as a duplicate. See the doc note
     // above.
     if (isBlockSourcedEvent(e)) continue;
+
+    // Taken over by the pulled row with the same id — see
+    // isInertTombstoneReplacedByPull.
+    if (replacedTombstoneIds.has(e.id)) continue;
 
     if (pulledByGoogleEventId.has(e.googleEventId)) continue; // superseded below by the pulled version
 

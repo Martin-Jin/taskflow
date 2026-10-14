@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.3.1',
+    date: '2026-10-14',
+    title: 'Steadier Google Calendar sync across devices',
+    changes: [
+      'Fixed events being duplicated — in TaskFlow and in Google Calendar — when two of your devices sent the same new event to Google at about the same time, most often right after reconnecting Google Calendar. Each event now only ever gets one copy on Google, however many devices send it.',
+      'Fixed Google events briefly disappearing on one device, then coming back, after you disconnected and reconnected Google Calendar.',
+    ],
+  },
+  {
     version: '11.3.0',
     date: '2026-10-13',
     title: 'A bell inbox for @mentions',
