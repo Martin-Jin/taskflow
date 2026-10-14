@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.3.2',
+    date: '2026-10-14',
+    title: 'Restoring a backup now reaches devices that were closed',
+    changes: [
+      "Fixed events (and other items) coming back as duplicates some time after restoring a backup. A device that was closed or asleep during the restore didn't show the \"please wait\" screen, and when it next opened it mixed its old data back in with the restored copy. It now spots the restore it missed and switches to the restored copy too.",
+    ],
+  },
+  {
     version: '11.3.1',
     date: '2026-10-14',
     title: 'Steadier Google Calendar sync across devices',

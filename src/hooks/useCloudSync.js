@@ -50,6 +50,11 @@ import {
   RESTORE_LOCK_STALE_MS,
 } from '../services/dataRetention';
 
+// localStorage key for the last restore generation this device has applied
+// (see planRestoreLockAction). Device-local on purpose — it records what THIS
+// browser has done, so it is never synced or included in a backup.
+const APPLIED_RESTORE_GENERATION_KEY = 'appliedRestoreGeneration';
+
 /**
  * Pure retention decision, shared by both backup pools — automatic and
  * manual each have their own independent retention count but the same
@@ -444,6 +449,50 @@ export function isRestoreLockActive(restoreLock, localDeviceId, nowMs, staleMs =
   if (!restoreLock || restoreLock.state !== 'restoring') return false;
   if (restoreLock.deviceId === localDeviceId) return false;
   return nowMs - toMillis(restoreLock.heartbeatAt) < staleMs;
+}
+
+/**
+ * Pure decision: what THIS device must do about the `restoreLock` on a synced
+ * doc it has just read, from either the live listener or a one-shot pull.
+ *
+ * **Why it exists.** A device that was closed, asleep or backgrounded during
+ * another device's restore never sees the lock while it is held. When it next
+ * reads the doc the lock is already released, and an ordinary merge would
+ * keep every row of its own that the backup didn't contain (the merge takes
+ * the union of both sides), then push that union back up — bringing deleted
+ * or replaced events back next to the restored ones, on every device.
+ *
+ * Returns:
+ *   - `'blocked'` — another device is restoring right now (isRestoreLockActive):
+ *     don't push and don't merge.
+ *   - `'converge'` — another device FINISHED a restore this device hasn't
+ *     applied yet (a released lock with a higher `generation` than
+ *     `appliedGeneration`): replace local data with the doc wholesale
+ *     (planRemoteDataMerge's `authoritative` mode), never merge it.
+ *   - `'none'` — nothing restore-related to do; merge as usual.
+ *
+ * `appliedGeneration` is the last restore generation this device converged on
+ * (or ran itself). It is kept in localStorage, not memory, so a reload neither
+ * forgets a restore it hasn't applied nor re-applies one it already has.
+ *
+ * @param {import('../services/firestoreSync').RestoreLock|null|undefined} restoreLock
+ * @param {string} localDeviceId
+ * @param {number} appliedGeneration
+ * @param {number} nowMs
+ * @param {number} [staleMs]
+ * @returns {'blocked'|'converge'|'none'}
+ */
+export function planRestoreLockAction(restoreLock, localDeviceId, appliedGeneration, nowMs, staleMs = RESTORE_LOCK_STALE_MS) {
+  if (isRestoreLockActive(restoreLock, localDeviceId, nowMs, staleMs)) return 'blocked';
+  if (
+    restoreLock &&
+    restoreLock.state === 'released' &&
+    restoreLock.deviceId !== localDeviceId &&
+    (restoreLock.generation || 0) > (appliedGeneration || 0)
+  ) {
+    return 'converge';
+  }
+  return 'none';
 }
 
 /**
@@ -1240,11 +1289,22 @@ export function useCloudSync({
   // callback (the staleness re-check) that must always see the CURRENT
   // value, not whatever was closed over when the interval was first set up.
   const restoreLockRef = useRef(null);
-  // The generation this device has already converged on (wholesale-applied,
-  // see the release-handling branch below) — starts 0 so the very first
-  // release this device ever sees (generation >= 1, since acquire always
-  // bumps by at least 1) is treated as new.
-  const lastAppliedRestoreLockGenerationRef = useRef(0);
+  // The restore generation this device has already converged on (wholesale-
+  // applied, see convergeOnRestore below) or ran itself. Persisted per user in
+  // localStorage, because a memory-only value started at 0 on every load:
+  // each reload re-applied the last restore wholesale, and nothing stopped
+  // the mount-time pull from merging (and pushing) stale local rows first.
+  // Nothing stored counts as 0, so the first release ever seen is new.
+  const readAppliedRestoreGeneration = useCallback(() => {
+    const stored = loadPersisted(APPLIED_RESTORE_GENERATION_KEY, null);
+    return stored && user && stored.uid === user.uid ? stored.generation || 0 : 0;
+  }, [user]);
+  const markRestoreGenerationApplied = useCallback(
+    (generation) => {
+      if (user) savePersisted(APPLIED_RESTORE_GENERATION_KEY, { uid: user.uid, generation });
+    },
+    [user]
+  );
   // Cheap boolean another device's lock being active reduces to, read
   // synchronously by runPushNow/schedulePush on every call — recomputed
   // whenever restoreLockRef changes or the staleness timer ticks, rather
@@ -1727,6 +1787,32 @@ export function useCloudSync({
     setEventsLive,
   ]);
 
+  // ---- Converge on a restore another device finished ------------------------
+  // Shared by the live listener and the one-shot pull (see
+  // planRestoreLockAction for when each calls it). Applies the restored doc
+  // WHOLESALE so this device ends up identical to the restoring one, including
+  // dropping anything local the backup didn't contain — see
+  // planRemoteDataMerge's `authoritative` mode for why a merge can't do that.
+  const convergeOnRestore = useCallback(
+    (remoteData, lock) => {
+      applyRemoteData(remoteData, { authoritative: true });
+      runRebalanceTriggerRef.current();
+      // Only when the restoring device's release says a Google rewrite ran as
+      // PART of this restore (see firestoreSync.js's RestoreLock typedef) —
+      // the googleEventIds in remoteData.events were just confirmed live
+      // against Google by that rewrite's own batch insert, a real completed
+      // round-trip, not merely a claim carried forward from whenever the
+      // backup was taken. Seeding them stops THIS device's next poll from
+      // treating their absence (it hasn't pulled yet) as "Google deleted
+      // these" and re-pushing duplicates — see seedConfirmedGoogleEventIds'
+      // own doc comment (useGoogleCalendarSync.js).
+      if (lock.rewroteGoogleCalendar) {
+        seedConfirmedGoogleEventIds?.((remoteData.events || []).map((e) => e.googleEventId).filter(Boolean));
+      }
+    },
+    [applyRemoteData, seedConfirmedGoogleEventIds]
+  );
+
   // ---- Applies a full backup payload (local file or cloud backup) ----------
   // Same field set as applyRemoteData, but tasks/blocks go through commit()
   // (undoable, matching clearAllData's precedent) and this also restores
@@ -1928,7 +2014,8 @@ export function useCloudSync({
       // would otherwise be skipped entirely, and this device would never
       // learn the restore started (or finished).
       restoreLockRef.current = remoteData.restoreLock || null;
-      const lockActiveNow = isRestoreLockActive(restoreLockRef.current, deviceIdRef.current, Date.now());
+      const restoreAction = planRestoreLockAction(restoreLockRef.current, deviceIdRef.current, readAppliedRestoreGeneration(), Date.now());
+      const lockActiveNow = restoreAction === 'blocked';
       isBlockedByOtherRestoreRef.current = lockActiveNow;
       setIsBlockedByRestore(lockActiveNow);
       if (lockActiveNow) {
@@ -1944,51 +2031,20 @@ export function useCloudSync({
           clearTimeout(pushTimerRef.current);
           pushTimerRef.current = null;
         }
-      } else {
-        // Lock absent, released, or gone stale. If it's a RELEASE this
-        // device hasn't converged on yet (a higher generation than the last
-        // one it wholesale-applied), pull the finished restore and apply it
-        // AUTHORITATIVELY — not merge it — so this device ends up byte-
-        // identical to what the restoring device just finished, including
-        // removing anything local the backup didn't contain. See
-        // planRemoteDataMerge's own doc comment on why only a wholesale
-        // apply can do that.
+      } else if (restoreAction === 'converge') {
+        // A restore finished that this device hasn't applied yet. Pull the
+        // finished result fresh (this snapshot may predate the restoring
+        // device's final push) and apply it wholesale — see convergeOnRestore.
         const lock = restoreLockRef.current;
-        const isUnconvergedRelease =
-          lock &&
-          lock.state === 'released' &&
-          lock.deviceId !== deviceIdRef.current &&
-          (lock.generation || 0) > lastAppliedRestoreLockGenerationRef.current;
-        if (isUnconvergedRelease) {
-          lastAppliedRestoreLockGenerationRef.current = lock.generation;
-          pullUserData(user.uid)
-            .then((freshRemoteData) => {
-              if (!freshRemoteData) return;
-              recordObservedWriteAt(freshRemoteData.lastWriteAt);
-              applyRemoteData(freshRemoteData, { authoritative: true });
-              runRebalanceTriggerRef.current();
-              // Only when the restoring device's release says a Google
-              // rewrite ran as PART of this restore (see firestoreSync.js's
-              // RestoreLock typedef) — the googleEventIds in
-              // freshRemoteData.events were just confirmed live against
-              // Google by that rewrite's own batch insert, a real completed
-              // round-trip, not merely a claim carried forward from whenever
-              // the backup was taken. Seeding them here is what stops THIS
-              // device's own next poll from treating their absence (it
-              // hasn't pulled yet) as "Google deleted these" and re-pushing
-              // duplicates — see seedConfirmedGoogleEventIds' own doc
-              // comment (useGoogleCalendarSync.js) for why this is the ONE
-              // situation where seeding from Firestore rather than a live
-              // pull of this device's own is actually safe.
-              if (lock.rewroteGoogleCalendar) {
-                seedConfirmedGoogleEventIds?.(
-                  (freshRemoteData.events || []).map((e) => e.googleEventId).filter(Boolean)
-                );
-              }
-            })
-            .catch((err) => console.warn('[useCloudSync] Failed to pull restore-lock release', err));
-          return; // handled via the authoritative pull above, not the ordinary merge path below
-        }
+        markRestoreGenerationApplied(lock.generation);
+        pullUserData(user.uid)
+          .then((freshRemoteData) => {
+            if (!freshRemoteData) return;
+            recordObservedWriteAt(freshRemoteData.lastWriteAt);
+            convergeOnRestore(freshRemoteData, lock);
+          })
+          .catch((err) => console.warn('[useCloudSync] Failed to pull restore-lock release', err));
+        return; // handled via the authoritative pull above, not the ordinary merge path below
       }
 
       // Cross-device Google Calendar status check — deliberately BEFORE the
@@ -2106,6 +2162,18 @@ export function useCloudSync({
           // check inside isRemoteWriteStale (called via applyRemoteData's
           // skipAll below) so this pull's own timestamp never gates itself.
           recordObservedWriteAt(remoteData.lastWriteAt);
+          // A restore this device missed (it was closed or asleep while the
+          // lock was held) must be applied wholesale, never merged — see
+          // planRestoreLockAction. A restore still running is left to the
+          // live listener, which blocks this device's pushes until it ends.
+          const restoreLock = remoteData.restoreLock || null;
+          const restoreAction = planRestoreLockAction(restoreLock, deviceIdRef.current, readAppliedRestoreGeneration(), Date.now());
+          if (restoreAction === 'blocked') return;
+          if (restoreAction === 'converge') {
+            markRestoreGenerationApplied(restoreLock.generation);
+            convergeOnRestore(remoteData, restoreLock);
+            return;
+          }
           const localEditLandedDuringPull = hasAnyLocalEditRaced(
             { actionId: actionIdAtStart, nonUndoEditId: nonUndoEditIdAtStart },
             { actionId: currentActionIdRef.current, nonUndoEditId: localNonUndoEditIdRef.current }
@@ -2118,7 +2186,7 @@ export function useCloudSync({
         if (!isCancelled()) setIsPullingCloud(false);
       }
     },
-    [user, recordObservedWriteAt, currentActionIdRef, localNonUndoEditIdRef, applyRemoteData]
+    [user, recordObservedWriteAt, currentActionIdRef, localNonUndoEditIdRef, applyRemoteData, readAppliedRestoreGeneration, markRestoreGenerationApplied, convergeOnRestore]
   );
 
   // ---- Initial pull on mount (when user is available) ----------------------
@@ -2412,7 +2480,7 @@ export function useCloudSync({
       }
       // pushRestoreLock reads the server's own current generation itself
       // (see its own doc comment for why) — this device's local
-      // lastAppliedRestoreLockGenerationRef is not consulted here at all,
+      // applied generation (readAppliedRestoreGeneration) is not consulted here at all,
       // only updated below once the new generation comes back.
       const generation = await pushRestoreLock(user.uid, deviceIdRef.current);
       // This device holds the lock now — it must never block on its own
@@ -2420,7 +2488,7 @@ export function useCloudSync({
       // deviceId), but it DOES need to remember it has already converged on
       // this generation, so the release it writes at the end of this same
       // sequence doesn't make its OWN listener re-pull what it just applied.
-      lastAppliedRestoreLockGenerationRef.current = generation;
+      markRestoreGenerationApplied(generation);
       const heartbeatHandle = setInterval(() => {
         heartbeatRestoreLock(user.uid).catch((err) => console.warn('[useCloudSync] Restore-lock heartbeat failed', err));
       }, RESTORE_LOCK_HEARTBEAT_MS);

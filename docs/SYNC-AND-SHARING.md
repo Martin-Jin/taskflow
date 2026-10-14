@@ -126,8 +126,11 @@ applies to all of them: while it runs, your other devices show a "please wait"
 screen and ignore anything you do on them, and when it finishes they end up
 exactly matching the backup — including losing anything the backup didn't
 have. Changes made on another device during that moment are discarded. A
-device that's switched off or offline for the whole restore doesn't see it,
-and is simply reconciled by most-recent-change when it comes back. Already-completed one-off tasks
+device that's closed, asleep or offline during the restore doesn't see the
+"please wait" screen, but the next time it opens or reconnects it notices the
+restore it missed and replaces its data with the restored copy too, rather
+than mixing its old data back in. Anything it changed while offline is lost
+the same way. Already-completed one-off tasks
 aren't included in any backup (there's nothing to restore them to);
 recurring tasks always are, since completing one occurrence doesn't mark
 the task itself as done.
