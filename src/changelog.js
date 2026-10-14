@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.3.3',
+    date: '2026-10-14',
+    title: 'AI Assistant can now make events repeat',
+    changes: [
+      'Fixed the AI Assistant ignoring requests like "make this event repeat weekly" — it had no way to set an event to repeat. It can now create repeating events (weekly, every 2 weeks, certain weekdays, ending after a date or count) and make an existing event repeat or stop repeating.',
+      'The assistant is also clearer about when to use a repeating task versus a repeating event, and a task it marks as repeating is now always saved as repeating.',
+    ],
+  },
+  {
     version: '11.3.2',
     date: '2026-10-14',
     title: 'Restoring a backup now reaches devices that were closed',

@@ -187,11 +187,16 @@ const TASK_CONTENT_FIELDS = [
     description:
       'ISO date (YYYY-MM-DD) before which the task cannot be worked on/scheduled at all — set this when the request or context clearly states the task genuinely is not available/doable until a specific day (e.g. "assignment unlocks on the 10th", "can\'t start until the materials arrive Monday", a course page saying a task opens on a given date), OR when the user directly asks to lock/pin the task to not start before a day (e.g. "lock this to the 10th", "lock to a day", "don\'t start before the 10th", "don\'t schedule it before Monday"). Do not set this just because a task has a due date or a generally preferred day to work on it with no explicit "not before"/"lock" wording — it is for an explicit constraint, not an ordinary scheduling preference.',
   },
-  { name: 'isRecurring', type: 'boolean', description: 'True only if the task explicitly repeats (e.g. "every day", "weekly").' },
+  {
+    name: 'isRecurring',
+    type: 'boolean',
+    description: 'Set to true whenever the TASK repeats ("every day", "weekly", "every Monday", "each month"). Always set recurrenceString together with it — either one alone does nothing.',
+  },
   {
     name: 'recurrenceString',
     type: 'string',
-    description: 'The recurrence phrased in natural language exactly as implied, e.g. "every day", "every 2 weeks". Only set when isRecurring is true.',
+    description:
+      'How the task repeats, in short plain English: "every day", "every week", "every 2 weeks", "every month", "every monday", "every monday and wednesday". Required whenever isRecurring is true. Do not put a date or time in it (those go in dueDate/fixedTime). A task repeats on its dueDate — set dueDate to the first occurrence. For a repeating EVENT use create_event\'s recurrenceRule instead, not this.',
   },
   {
     name: 'fixedTime',
@@ -234,6 +239,12 @@ const EVENT_CONTENT_FIELDS = [
   { name: 'endTime', type: 'string', description: '"HH:MM" 24-hour end time. If no duration is given, default to 1 hour after startTime.' },
   { name: 'description', type: 'string', description: 'Optional extra detail.' },
   { name: 'location', type: 'string', description: 'Optional location, if mentioned.' },
+  {
+    name: 'recurrenceRule',
+    type: 'string',
+    description:
+      'Set this whenever the EVENT repeats ("every week", "weekly", "every Monday", "every weekday", "daily", "monthly"). Leave it out for a one-off event. `date` is the FIRST occurrence (the next matching day on or after the reference date). Exactly this format, uppercase, parts joined by ";": FREQ=DAILY | FREQ=WEEKLY | FREQ=MONTHLY (required), optional INTERVAL=n (every n units, default 1), optional BYDAY=MO,TU,WE,TH,FR,SA,SU (WEEKLY only — only needed for several days a week; a plain weekly event repeats on the weekday of `date` by itself), optional COUNT=n (stop after n occurrences) OR UNTIL=YYYYMMDD (stop after that date) — never both; omit both to repeat forever. Examples: weekly -> "FREQ=WEEKLY"; every 2 weeks -> "FREQ=WEEKLY;INTERVAL=2"; every weekday -> "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"; Mon and Wed -> "FREQ=WEEKLY;BYDAY=MO,WE"; daily for 10 days -> "FREQ=DAILY;COUNT=10"; monthly -> "FREQ=MONTHLY". On update_event, pass "" to make a repeating event stop repeating.',
+  },
 ];
 
 function withRequired(fields, names) {
@@ -273,7 +284,7 @@ const OPERATIONS = [
     name: 'create_event',
     apply: 'create',
     description:
-      'Create a calendar event — NOT the default, use this only for something that must happen at that exact real-world date/time regardless of anyone\'s workload, i.e. an actual appointment/meeting/flight/class the user (or someone else) is expected to physically or virtually attend at that moment (e.g. "dentist at 2pm Tuesday", "team standup every weekday 9am", "flight to Auckland Friday 6am"). Do NOT use this to plan/block out time to WORK ON something — that is what create_task\'s dueDate/fixedTime/estimatedHours are for, since the app\'s own scheduler (not this tool) decides when task work actually gets slotted in. If in doubt whether something is a task or an event, prefer create_task.',
+      'Create a calendar event — NOT the default, use this only for something that must happen at that exact real-world date/time regardless of anyone\'s workload, i.e. an actual appointment/meeting/flight/class the user (or someone else) is expected to physically or virtually attend at that moment (e.g. "dentist at 2pm Tuesday", "team standup every weekday 9am", "flight to Auckland Friday 6am"). Do NOT use this to plan/block out time to WORK ON something — that is what create_task\'s dueDate/fixedTime/estimatedHours are for, since the app\'s own scheduler (not this tool) decides when task work actually gets slotted in. If in doubt whether something is a task or an event, prefer create_task. A repeating event is still ONE create_event call: set recurrenceRule (e.g. "FREQ=WEEKLY") and put the first occurrence in date.',
     fields: [LOCAL_ID_FIELD, ...withRequired(EVENT_CONTENT_FIELDS, ['title', 'date', 'startTime', 'endTime'])],
   },
   {
@@ -423,6 +434,7 @@ function buildSystemPrompt(contextMarkdown) {
     'Call as many tools as the request genuinely needs — a single request may reasonably produce many operations (e.g. "plan out this project" creating a parent task, several subtasks with dependencies, and moving them into a project/section).',
     'Only call a tool when the user\'s request actually implies that action — do not reorganize or touch anything the user did not ask about.',
     'Tasks vs events — this app has a scheduler that decides WHEN task work actually happens (via dueDate/fixedTime/priority/estimatedHours on create_task/update_task); it is not this tool\'s job to plan or block out working time. Default to create_task for anything the user describes needing to be done, even if it has a deadline or a preferred day. Only use create_event/update_event when the request is unmistakably about a fixed real-world occurrence that must happen at that exact time regardless of workload (an appointment, meeting, flight, class, etc.) or explicitly asks to add/schedule a calendar event — never as a way to "schedule" or "block time for" a task.',
+    'Repeating things — both tasks and events can repeat, but through DIFFERENT fields, so pick by what is repeating. A repeating task ("water plants every Sunday", "gym 3 times a week"): create_task with isRecurring true AND recurrenceString (e.g. "every week"), and dueDate on the first occurrence. A repeating event ("class every Tuesday 10am", "weekly team meeting", "standup every weekday 9am", "add this event to repeat weekly"): create_event with recurrenceRule (e.g. "FREQ=WEEKLY"), and `date` on the first occurrence — ONE create_event call, never one call per week. Do not create many copies of an item to imitate repeating. When the user asks to make an EXISTING event or task repeat, use update_event with recurrenceRule / update_task with isRecurring + recurrenceString on that item\'s id — do not create a new copy and do not delete the old one.',
     'Always set estimatedHours and priority on every create_task/update_task, making a reasonable assumption when the user did not state one explicitly — do not leave them unset just because the request was vague. Base the assumption on the task\'s title/notes and typical real-world effort (e.g. "essay" implies a few hours, "read chapter 3" implies under an hour), and default priority to "medium" unless something about the task implies otherwise.',
     'This ONLY applies to an actual exam/test/lab SESSION being scheduled — a specific sit-down occurrence that happens once, at a fixed time, on one day (e.g. "Midterm exam on the 12th", "Lab session Tuesday 2pm"). It does NOT apply merely because a task\'s title/project/section mentions "lab" or "test" — a lab report, lab write-up, or any other deliverable that can be worked on across multiple days is a normal due-dated task, not this case. For an actual exam/test/lab session: set dueDate to that day AND enforceDueDate to true (not just dueDate alone). If no specific time was stated, assume a fixedTime/estimatedHours block of 9am–12pm (fixedTime "09:00", estimatedHours 3) as a reasonable default; use the stated time/duration instead when one is given.',
     'Set earliestDate whenever the request clearly means "do not schedule/work on this before day X" — this covers both a hard availability constraint (e.g. an assignment that "unlocks"/"opens"/"is released" on a given date, or something blocked on materials/access arriving) AND direct phrasing like "lock this to the 10th", "lock to a day", "don\'t start before the 10th", or "don\'t let it be worked on before the 10th". Do not set earliestDate merely because a task has a due date or a generally preferred day to start with no explicit "not before"/"lock" framing — it is for an explicit constraint, not an ordinary scheduling preference.',

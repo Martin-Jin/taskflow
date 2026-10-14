@@ -108,7 +108,13 @@ Critical rules — follow these exactly, mistakes here are not auto-corrected:
    done" shape is a task. A note's \`body\` is Markdown (headings, lists,
    \`- [ ]\` checkboxes, links, code fences all render), so use it. Only
    propose notes when the user actually asked for something note-shaped.
-10. **Don't touch what wasn't asked.** Only propose operations that serve the
+10. **Repeating things use different fields for tasks and events.** A
+   repeating task needs \`isRecurring: true\` plus \`recurrenceString\` (e.g.
+   "every week"). A repeating event needs \`recurrenceRule\` (e.g.
+   \`FREQ=WEEKLY\`, \`FREQ=WEEKLY;BYDAY=MO,WE\`). Either way it is ONE operation
+   dated on the first occurrence — never several copies. To make an existing
+   event or task repeat, update it by id instead of creating a new one.
+11. **Don't touch what wasn't asked.** Only propose operations that serve the
    user's actual request — do not "clean up" or reorganize unrelated tasks
    the user didn't mention, even if you notice something that looks messy.
 `;
