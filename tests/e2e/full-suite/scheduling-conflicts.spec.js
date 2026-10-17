@@ -213,34 +213,54 @@ test.describe('Scheduling conflict details', () => {
     expectNoErrors(errors);
   });
 
-  test('Changing a scheduled task\'s due date auto-triggers a rebalance', async ({ page }) => {
+  test('Changing a scheduled task\'s due date auto-triggers a quiet rebalance', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await gotoApp(page);
 
     const title = `E2E Due Date Autobalance ${RUN_ID}`;
-    const today = todayIso();
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const nextWeekIso = `${nextWeek.getFullYear()}-${String(nextWeek.getMonth() + 1).padStart(2, '0')}-${String(nextWeek.getDate()).padStart(2, '0')}`;
+    const tomorrow = tomorrowIso();
 
-    // Task due today with an estimate, so the manual rebalance below actually
-    // places a block for it.
+    // Due next week with 20h of work: more than two days can hold, so its
+    // blocks are bound to spill past tomorrow until the due date moves in.
     await openAddTask(page);
     await page.getByPlaceholder('Task name').fill(title);
     const pills = page.locator('.addtask-pill');
     await pills.nth(0).click();
-    await page.locator('.addtask-pill-panel input[type="date"]').fill(today);
+    await page.locator('.addtask-pill-panel input[type="date"]').fill(nextWeekIso);
     await pills.nth(0).click();
+    await pills.nth(3).click(); // More options
+    await page.locator('.smart-duration-input').fill('20h');
+    await page.locator('.smart-duration-input').blur();
     await submitAddTask(page);
 
-    // Manually rebalance once so the task gets an actual scheduled block —
-    // otherwise there'd be nothing stale for the due-date edit to invalidate.
+    // Manually rebalance once so the task gets real scheduled blocks — a
+    // manual rebalance always announces itself.
     await gotoTab(page, 'Calendar');
     // exact: true — see the note on the other "Re-balance schedule" click above.
     await page.getByRole('button', { name: 'Re-balance schedule', exact: true }).click();
     await page.waitForTimeout(500);
-    await expect(page.locator('.toast')).toBeVisible();
-    // Dismiss the toast so the next one (from the auto-rebalance) is unambiguous.
+    await expect(page.locator('.toast')).toContainText(/rebalanced|couldn't be fully scheduled/i);
+    // Let the toast clear, so any toast seen later came from the auto-rebalance.
     await page.waitForTimeout(3000);
 
-    // Now push the due date out a week via the task's detail modal — this
+    // The latest date this task has a block on, read from saved state.
+    const lastBlockDate = () =>
+      page.evaluate((taskTitle) => {
+        const read = (suffix) => {
+          const key = Object.keys(localStorage).find((k) => k.endsWith(suffix));
+          return JSON.parse(localStorage.getItem(key) || '[]');
+        };
+        const task = read(':tasks').find((t) => t.title === taskTitle);
+        const dates = read(':blocks').filter((b) => b.taskId === task?.id).map((b) => b.date).sort();
+        return dates[dates.length - 1] || '';
+      }, title);
+    const lastBefore = await lastBlockDate();
+    expect(lastBefore > tomorrow).toBe(true);
+
+    // Now pull the due date in to tomorrow via the task's detail modal — this
     // should auto-queue a rebalance (SchedulerContext.updateTask) without any
     // manual "Re-balance schedule" click.
     await gotoTab(page, 'Tasks');
@@ -251,16 +271,20 @@ test.describe('Scheduling conflict details', () => {
     await page.waitForTimeout(300);
 
     const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
-    const nextWeek = new Date();
-    nextWeek.setDate(nextWeek.getDate() + 7);
-    const nextWeekIso = `${nextWeek.getFullYear()}-${String(nextWeek.getMonth() + 1).padStart(2, '0')}-${String(nextWeek.getDate()).padStart(2, '0')}`;
-    await dueDateInput.fill(nextWeekIso);
+    await dueDateInput.fill(tomorrow);
+    // Blur and wait for the modal's debounced save before closing it. Closing
+    // straight after fill() never saved the date, and an older version of this
+    // test still passed, matching a leftover toast instead of a real rebalance.
+    await dueDateInput.blur();
+    await page.waitForTimeout(1000);
     await page.keyboard.press('Escape');
 
-    // The debounced auto-rebalance (300ms) should fire and surface its own
-    // "Schedule rebalanced"/conflict toast without any further user action.
-    await expect(page.locator('.toast')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('.toast')).toContainText(/rebalanced|couldn't be fully scheduled/i);
+    // The debounced auto-rebalance (300ms) pulls the blocks earlier (not all
+    // the way to tomorrow: without "Enforce due date" the overflow may still
+    // spill past it) — and does it quietly: "Schedule rebalanced" is only
+    // announced for a manual rebalance.
+    await expect.poll(async () => (await lastBlockDate()) < lastBefore, { timeout: 3000 }).toBe(true);
+    await expect(page.locator('.toast', { hasText: /rebalanced/i })).toHaveCount(0);
 
     expectNoErrors(errors);
   });

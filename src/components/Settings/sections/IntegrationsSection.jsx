@@ -115,7 +115,7 @@ export default function IntegrationsSection({ sectionRef }) {
           )}
         </button>
         {googleConnected && (
-          <button className="btn settings-inline" onClick={pullFromGoogleCalendar} disabled={isPullingGoogleEvents}>
+          <button className="btn settings-inline" onClick={() => pullFromGoogleCalendar()} disabled={isPullingGoogleEvents}>
             <RefreshCw size={13} />
             {isPullingGoogleEvents ? 'Pulling…' : 'Pull from Google Calendar'}
           </button>
@@ -132,7 +132,7 @@ export default function IntegrationsSection({ sectionRef }) {
       </div>
       {googleConnected && (
         <div className="google-calendar-actions settings-actions">
-          <button className="btn btn-primary" onClick={pushToGoogleCalendar} disabled={isSyncing}>
+          <button className="btn btn-primary" onClick={() => pushToGoogleCalendar()} disabled={isSyncing}>
             {isSyncing ? 'Syncing…' : 'Push'}
           </button>
           <button

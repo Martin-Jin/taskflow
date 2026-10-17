@@ -1584,11 +1584,14 @@ export function useGoogleCalendarSync({
   }, [setGoogleConnected, setNotification, applyPulledEvents, markGoogleSyncSucceeded, googleDisconnectBridgeRef, rememberSeenDisconnectId]);
 
   // ---- Pull from Google Calendar (manual) ----------------------------------
-  const pullFromGoogleCalendar = useCallback(async () => {
-    if (!googleConnected) return;
+  // `quiet` skips the success toast, for a caller that reports one combined
+  // result (SchedulerContext's syncNow); errors and warnings are always shown.
+  // Returns whether the pull ran and fully succeeded.
+  const pullFromGoogleCalendar = useCallback(async ({ quiet = false } = {}) => {
+    if (!googleConnected) return false;
     if (!isSyncGateOpen()) {
       setNotification({ type: 'info', message: 'Still checking sync status across your devices — try again in a moment.' });
-      return;
+      return false;
     }
     // A user-clicked action shouldn't silently no-op if it happens to
     // overlap a background poll — surface why nothing happened instead of
@@ -1596,7 +1599,7 @@ export function useGoogleCalendarSync({
     // googleFetchInFlightRef's doc comment for the race this prevents).
     if (googleFetchInFlightRef.current) {
       setNotification({ type: 'info', message: 'Already syncing with Google Calendar — try again in a moment.' });
-      return;
+      return false;
     }
     googleFetchInFlightRef.current = true;
     setIsPullingGoogleEvents(true);
@@ -1610,14 +1613,16 @@ export function useGoogleCalendarSync({
           type: 'warning',
           message: `Pulled, but couldn't load events from: ${failedCalendars.join(', ')}.`,
         });
-      } else {
-        setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
+        return false;
       }
+      if (!quiet) setNotification({ type: 'success', message: 'Pulled latest events from Google Calendar.' });
+      return true;
     } catch (err) {
-      if (err?.isGoogleAccountChanged) return; // see fetchGoogleEventsTracked
+      if (err?.isGoogleAccountChanged) return false; // see fetchGoogleEventsTracked
       console.error(err);
       const reason = err?.message || (typeof err === 'string' ? err : JSON.stringify(err));
       setNotification({ type: 'error', message: `Pull from Google Calendar failed: ${reason}` });
+      return false;
     } finally {
       setIsPullingGoogleEvents(false);
       googleFetchInFlightRef.current = false;
@@ -1899,20 +1904,25 @@ export function useGoogleCalendarSync({
   }, [setEvents, markGoogleEventDeleted, unmarkGoogleEventDeleted]);
   pushUnsyncedItemsRef.current = pushUnsyncedItemsToCalendar;
 
-  const pushToGoogleCalendar = useCallback(async () => {
+  // `quiet` and the returned success flag work as in pullFromGoogleCalendar.
+  const pushToGoogleCalendar = useCallback(async ({ quiet = false } = {}) => {
     setIsPullingGoogleEvents(true);
     try {
       const { events: pushedEvents } = await pushUnsyncedItemsToCalendar();
-      setNotification({
-        type: 'success',
-        message:
-          pushedEvents > 0
-            ? `Synced ${pushedEvents} event(s) to Google Calendar.`
-            : 'Everything is already synced to Google Calendar.',
-      });
+      if (!quiet) {
+        setNotification({
+          type: 'success',
+          message:
+            pushedEvents > 0
+              ? `Synced ${pushedEvents} event(s) to Google Calendar.`
+              : 'Everything is already synced to Google Calendar.',
+        });
+      }
+      return true;
     } catch (err) {
       console.error(err);
       setNotification({ type: 'error', message: `Push to Google Calendar failed: ${err.message || err}` });
+      return false;
     } finally {
       setIsPullingGoogleEvents(false);
     }

@@ -187,12 +187,10 @@ export default function AccountSection({ sectionRef }) {
             </button>
           </div>
           <p className="settings-hint">
-            Tasks, boards, and settings sync automatically in the background — usually within a few seconds — to
-            every device signed in with this account, no reload needed. Calendar events aren't part of that live
-            sync; your connected Google Calendar account is what carries those across devices, and events are only
-            otherwise captured in backups (see below) as a point-in-time safety net, not a way to deliver them to a
-            new device. "Sync now" is a manual fallback for the live sync, and also refreshes Google Calendar
-            events on demand.
+            Tasks, events, boards, and settings sync automatically in the background — usually within a few
+            seconds — to every device signed in with this account, no reload needed. "Sync now" does a full sync
+            on demand: it pulls the latest from your other devices, sends this device's changes up, and does the
+            same with Google Calendar if it's connected.
           </p>
         </>
       ) : (

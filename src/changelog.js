@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.5.0',
+    date: '2026-10-18',
+    title: 'Sync now syncs both ways, and quieter rescheduling',
+    changes: [
+      '"Sync now" now does a full sync: it fetches the latest from your other devices, sends this device\'s changes up, and does the same with Google Calendar if it\'s connected. Before, it only fetched.',
+      'The "Schedule rebalanced" message now only appears when you press Re-balance schedule yourself. Rescheduling that happens on its own — after a sync, a calendar change or a due-date edit — happens quietly, and only warns you if a task newly can\'t fit.',
+    ],
+  },
+  {
     version: '11.4.1',
     date: '2026-10-18',
     title: 'Calendar fixes: duplicates, sample events and all-day delete',

@@ -32,10 +32,20 @@ cross-device sync on top of local storage, backed by
   fire a write per keystroke).
 - Sync is **live** while signed in: a background Firestore listener picks up
   a change pushed from another signed-in device and applies it here too,
-  usually within a few seconds — no reload needed. **Settings → Account &
-  sync → Sync now** is still there as a manual fallback (and it's what
-  refreshes Google Calendar events, which don't push live — see [Google
-  Calendar](INTEGRATIONS.md#google-calendar)).
+  usually within a few seconds — no reload needed.
+- **Sync now** (Settings → Account & sync, or the Calendar toolbar) is a
+  full two-way sync on demand, for when you suspect the automatic sync
+  missed something:
+  1. Pulls the latest from the cloud and merges it in.
+  2. Pushes this device's merged copy back up, so its own changes reach the
+     cloud even if an automatic push was missed (e.g. while offline).
+  3. If Google Calendar is connected, pulls from Google, then sends Google
+     any events it doesn't have yet. Google events don't push live — see
+     [Google Calendar](INTEGRATIONS.md#google-calendar).
+
+  It pulls before it pushes, so the push carries the merged result and
+  never overwrites another device's newer changes with this device's
+  older copy.
 - Signing out just signs out of the account — no local data is deleted.
 
 **Setup, for anyone running their own copy of this app** (not needed if

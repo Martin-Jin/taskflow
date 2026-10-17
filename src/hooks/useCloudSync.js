@@ -2348,8 +2348,11 @@ export function useCloudSync({
   }, [user, cloudSynced, setCloudSynced, setNotification, applyRemoteData]);
 
   // ---- Manual pull from cloud ----------------------------------------------
-  const pullFromCloud = useCallback(async () => {
-    if (!user) return;
+  // `quiet` skips the success toast, for a caller that reports one combined
+  // result (SchedulerContext's syncNow). Errors are always shown. Returns
+  // whether the pull succeeded.
+  const pullFromCloud = useCallback(async ({ quiet = false } = {}) => {
+    if (!user) return false;
     setIsPullingCloud(true);
     try {
       const remoteData = await pullUserData(user.uid);
@@ -2357,13 +2360,15 @@ export function useCloudSync({
         // Same deliberate no-gate/record-only treatment as toggleCloudSync above.
         recordObservedWriteAt(remoteData.lastWriteAt);
         applyRemoteData(remoteData);
-        setNotification({ type: 'success', message: 'Pulled latest data from cloud.' });
-      } else {
+        if (!quiet) setNotification({ type: 'success', message: 'Pulled latest data from cloud.' });
+      } else if (!quiet) {
         setNotification({ type: 'info', message: 'No cloud data found.' });
       }
+      return true;
     } catch (err) {
       console.error(err);
       setNotification({ type: 'error', message: 'Pull from cloud failed.' });
+      return false;
     } finally {
       setIsPullingCloud(false);
     }
@@ -2386,8 +2391,9 @@ export function useCloudSync({
   // reporting "Pushed data to cloud" for a write that never happened would be
   // a lie. So instead of dropping the call, it waits for the wire to clear and
   // then performs its own write against freshly-read state.
-  const pushToCloud = useCallback(async () => {
-    if (!user) return;
+  // `quiet` and the returned success flag work as in pullFromCloud above.
+  const pushToCloud = useCallback(async ({ quiet = false } = {}) => {
+    if (!user) return false;
     setIsPushingCloud(true);
     try {
       await waitForPushWireToClear();
@@ -2412,11 +2418,13 @@ export function useCloudSync({
       // runPushNow's debounced push, so this manual push also survives a
       // tab kill/reload as a known-good baseline.
       savePersisted('lastPushedFingerprint', fingerprint);
-      setNotification({ type: 'success', message: 'Pushed data to cloud.' });
+      if (!quiet) setNotification({ type: 'success', message: 'Pushed data to cloud.' });
+      return true;
     } catch (err) {
       console.error(err);
       inFlightPushFingerprintsRef.current = retireInFlightFingerprint(inFlightPushFingerprintsRef.current, fingerprint);
       setNotification({ type: 'error', message: 'Push to cloud failed.' });
+      return false;
     } finally {
       setIsPushingCloud(false);
       // Release the wire and honour anything that queued behind this write,

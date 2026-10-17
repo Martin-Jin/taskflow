@@ -231,6 +231,13 @@ unlocked-future (cleared and re-planned); recomputes each task's
 refinement above, over just the unlocked remainder; merges everything back
 together. Locked blocks are never destroyed by a rebalance.
 
+The same rebalance also runs automatically, after a cross-device sync, a
+Google Calendar change, or a due-date edit. Those runs are **quiet**
+(`SchedulerContext.runRebalance({ quiet: true })`): no "Schedule rebalanced"
+toast, and the "couldn't be fully scheduled" warning only appears when the
+set of tasks that don't fit has changed. Only the button announces every
+run.
+
 ### Sub-tasks and containers
 
 A sub-task (`parentId` set) is a normal, independently-schedulable Task in

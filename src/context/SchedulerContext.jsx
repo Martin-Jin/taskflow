@@ -351,7 +351,7 @@ export function SchedulerProvider({ children }) {
   // below), since that ref is already kept current via its own effect and
   // read from async/deferred callers exactly like this one.
   const runRebalanceRef = useRef(() => {});
-  const triggerRebalanceFromMerge = useCallback(() => runRebalanceRef.current(), []);
+  const triggerRebalanceFromMerge = useCallback(() => runRebalanceRef.current({ quiet: true }), []);
   // Owned live by ThemeContext (which wraps this provider — see App.jsx) —
   // only read/written here so the backup payload (exportBackup/
   // createCloudBackup, both in useCloudSync) can capture it and a restore
@@ -1435,6 +1435,7 @@ export function SchedulerProvider({ children }) {
     cloudBackups,
     lastAutoBackupAt,
     pullFromCloud,
+    pushToCloud,
     exportBackup,
     importBackup,
     createCloudBackup,
@@ -1515,25 +1516,34 @@ export function SchedulerProvider({ children }) {
   });
 
   /**
-   * Manual re-sync for Settings' "Sync now" button — covers the gap this
-   * app's sync model deliberately leaves open (no live listener would ever
-   * fire for a device that's just idly sitting open): if another device
-   * pushed changes while this tab was already open and signed in, those
-   * changes only arrive on next sign-in/reload/manual sync. Covers both
-   * Firestore (useCloudSync's pullFromCloud) and Google Calendar
-   * (useGoogleCalendarSync's pullFromGoogleCalendar) in one click; each pops
-   * its own success/error toast, so this doesn't layer on a third.
+   * The "Sync now" button (Settings and the Calendar toolbar): a full
+   * two-way sync in one click, for when the automatic sync is suspected of
+   * missing something.
+   *
+   * Steps, in order:
+   *   1. Pull from the cloud and merge it in, so this device has the other
+   *      devices' changes.
+   *   2. Push this device's merged copy back up, so its own changes reach
+   *      the cloud even if an automatic push was missed (e.g. it was offline).
+   *   3. With Google Calendar connected, pull from Google, then send any
+   *      events Google doesn't have yet (and pending edits/deletes) to it.
+   *
+   * Pull comes before push so the push carries the merged result, never
+   * this device's older copy over another device's newer changes. Each step
+   * still shows its own errors; on success this shows one combined toast.
    */
   const syncNow = useCallback(async () => {
     if (!user) return;
     setIsSyncing(true);
     try {
-      await pullFromCloud();
-      if (googleConnected) await pullFromGoogleCalendar();
+      const quiet = { quiet: true };
+      let ok = (await pullFromCloud(quiet)) && (await pushToCloud(quiet));
+      if (googleConnected) ok = (await pullFromGoogleCalendar(quiet)) && (await pushToGoogleCalendar(quiet)) && ok;
+      if (ok) setNotification({ type: 'success', message: googleConnected ? 'Synced with the cloud and Google Calendar.' : 'Synced with the cloud.' });
     } finally {
       setIsSyncing(false);
     }
-  }, [user, pullFromCloud, googleConnected, pullFromGoogleCalendar]);
+  }, [user, pullFromCloud, pushToCloud, googleConnected, pullFromGoogleCalendar, pushToGoogleCalendar, setNotification]);
 
   /** Settings' "Back up now" button — wraps useCloudSync's createCloudBackup with a busy flag that hook doesn't track itself. */
   const backupToCloud = useCallback(async () => {
@@ -1659,8 +1669,16 @@ export function SchedulerProvider({ children }) {
   // defined below). Declared up here so runRebalance can cancel a pending
   // queued run — see the cancel at the top of runRebalance for why.
   const dueDateRebalanceTimeoutRef = useRef(null);
+  // Which tasks the last rebalance couldn't fit, as a comparable key — lets a
+  // quiet rebalance (below) warn only when that list actually changes.
+  const lastOverflowKeyRef = useRef('');
 
-  const runRebalance = useCallback(() => {
+  // `quiet` is for rebalances nobody asked for (after a sync, a Google
+  // Calendar change, a due-date edit): the "Schedule rebalanced" toast is
+  // skipped, and the "couldn't be fully scheduled" warning only shows if the
+  // set of tasks that don't fit has changed. A manual "Re-balance schedule"
+  // calls this with no options (or a click event), so it always reports.
+  const runRebalance = useCallback(({ quiet = false } = {}) => {
     // Any rebalance now in the debounce queue is about to be made redundant:
     // this run reads the freshest tasks/blocks/events itself, so a queued run
     // firing moments later would only recompute the same thing — except
@@ -1718,6 +1736,10 @@ export function SchedulerProvider({ children }) {
     // details" modal alongside overflow, since the user should still know
     // their fixedTime request wasn't honored exactly.
     const allConflicts = [...result.overflow, ...result.timeShifted];
+    const overflowKey = result.overflow.map((o) => o.taskId).sort().join(',');
+    const overflowChanged = overflowKey !== lastOverflowKeyRef.current;
+    lastOverflowKeyRef.current = overflowKey;
+    if (quiet && !(result.overflow.length > 0 && overflowChanged)) return result;
     if (result.overflow.length > 0) {
       setNotification({
         type: 'warning',
@@ -1761,7 +1783,7 @@ export function SchedulerProvider({ children }) {
     if (dueDateRebalanceTimeoutRef.current) clearTimeout(dueDateRebalanceTimeoutRef.current);
     dueDateRebalanceTimeoutRef.current = setTimeout(() => {
       dueDateRebalanceTimeoutRef.current = null;
-      runRebalanceRef.current();
+      runRebalanceRef.current({ quiet: true });
     }, 300);
   }, []);
   useEffect(() => {
