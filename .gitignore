@@ -95,7 +95,9 @@ temp/
 # ==========================
 # Claude
 # ==========================
-# .claude/settings.json and CLAUDE.md are tracked (shared team config/docs).
-# There is no settings.local.json — everything (including bypassPermissions
-# mode) lives in the one tracked settings.json now.
+# Claude Code config and working notes are local-only — never commit them.
+CLAUDE.md
 CLAUDE.local.md
+CLAUDE.template.md
+deleted/CLAUDE.template.md
+.claude/
