@@ -345,7 +345,8 @@ One page of cards, each covering one area:
   restored. Tasks and scheduled blocks use undo (`Ctrl+Z`) instead.
 - **Backups** — export, import, and cloud snapshots. See
   [Backups](SYNC-AND-SHARING.md#backups).
-- **Appearance** — the light/dark theme switch, plus an accent color: pick
+- **Appearance** — the Light / Dark / System theme switch (System follows
+  your device's setting and changes live when it does), plus an accent color: pick
   one of 6 presets or a custom color. The app derives the lighter/darker
   shades it needs from your pick automatically (in both light and dark mode)
   and keeps them readable, so any color you choose stays legible. Syncs

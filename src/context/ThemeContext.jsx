@@ -8,6 +8,13 @@
  * section. `theme` defaults to 'dark' since that's the app's original/only
  * look; sets data-theme on <html> so CSS in global.css can key off it.
  *
+ * `theme` may also be 'system', meaning "follow the operating system's
+ * light/dark setting". The stored value stays 'system' (so it syncs and backs
+ * up as a plain string like the others), while `resolvedTheme` is the concrete
+ * 'light' | 'dark' actually applied. Everything that paints (data-theme, the
+ * status-bar color, the accent ramp, the favicon) reads `resolvedTheme`, so it
+ * flips live when the OS setting changes — no reload needed.
+ *
  * `accentSeed` defaults to `null`, meaning "use global.css's shipped teal
  * ramp as-is" — deliberately NOT the literal teal hex, so a future change to
  * the shipped default doesn't get silently pinned to today's teal for every
@@ -26,6 +33,14 @@ import { buildAccentRamp, buildSecondaryAccentRamp, isValidHexColor } from '../u
 import { generateFaviconDataUri, applyFaviconDataUri } from '../utils/generateFaviconDataUri';
 
 const ThemeContext = createContext(null);
+
+const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
+
+// Whether the operating system currently prefers dark. Falls back to dark (the
+// app's original look) where matchMedia isn't available.
+function systemPrefersDark() {
+  return typeof window.matchMedia === 'function' ? window.matchMedia(SYSTEM_DARK_QUERY).matches : true;
+}
 
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = usePersistedState('theme', 'dark');
@@ -53,24 +68,37 @@ export function ThemeProvider({ children }) {
   // SchedulerContext's `initialPullDoneRef`, see its comment there.
   const [initialPullDone, setInitialPullDone] = useState(false);
 
+  // Tracks the OS setting only while 'system' is selected, so a fixed
+  // light/dark choice never re-renders on an OS change.
+  const [systemDark, setSystemDark] = useState(systemPrefersDark);
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    if (theme !== 'system' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia(SYSTEM_DARK_QUERY);
+    const onChange = () => setSystemDark(query.matches);
+    onChange(); // the OS may have changed while another mode was selected
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, [theme]);
+  const resolvedTheme = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', resolvedTheme);
     // Keep the mobile status-bar/home-indicator color (index.html's
     // <meta name="theme-color">) in sync with --color-bg-page — otherwise
     // it stays pinned to whichever value was in the static HTML and clashes
     // with the theme the user actually has active.
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (themeColorMeta) {
-      themeColorMeta.setAttribute('content', theme === 'dark' ? '#1c1b17' : '#fafaf9');
+      themeColorMeta.setAttribute('content', resolvedTheme === 'dark' ? '#1c1b17' : '#fafaf9');
     }
-  }, [theme]);
+  }, [resolvedTheme]);
 
   // Applies (or clears) the custom accent ramp as inline custom properties on
   // <html>. Inline style wins over a stylesheet rule at equal specificity, so
   // this overrides global.css's shipped :root/:root[data-theme='dark'] accent
   // values without editing global.css itself — the mechanism that keeps this
   // an extension of the token system rather than a second one. Keyed on
-  // [accentSeed, theme] so switching light/dark while a custom accent is
+  // [accentSeed, resolvedTheme] so switching light/dark while a custom accent is
   // active re-applies the ramp half that matches the new mode.
   useEffect(() => {
     const el = document.documentElement;
@@ -91,7 +119,7 @@ export function ThemeProvider({ children }) {
       '--color-accent-soft',
       '--color-accent-secondary',
     ];
-    const mode = theme === 'dark' ? 'dark' : 'light';
+    const mode = resolvedTheme === 'dark' ? 'dark' : 'light';
     if (!accentSeed || !isValidHexColor(accentSeed)) {
       // null/invalid means "use the shipped default" — remove any inline
       // override so global.css's own :root values show through again.
@@ -105,7 +133,7 @@ export function ThemeProvider({ children }) {
     const ramp = { ...buildAccentRamp(accentSeed)[mode], ...buildSecondaryAccentRamp(accentSeed)[mode] };
     Object.entries(ramp).forEach(([prop, value]) => el.style.setProperty(prop, value));
     applyFaviconDataUri(generateFaviconDataUri(ramp['--color-accent-solid-bg']));
-  }, [accentSeed, theme]);
+  }, [accentSeed, resolvedTheme]);
 
   useEffect(() => {
     if (!user) return;
@@ -161,7 +189,7 @@ export function ThemeProvider({ children }) {
   }, [user, theme, accentSeed, initialPullDone]);
 
   function toggleTheme() {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   }
 
   // Validates before ever storing/applying a seed — rejects a malformed hex
@@ -174,7 +202,7 @@ export function ThemeProvider({ children }) {
   }
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme, accentSeed, setAccentSeed }}>{children}</ThemeContext.Provider>
+    <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme, toggleTheme, accentSeed, setAccentSeed }}>{children}</ThemeContext.Provider>
   );
 }
 

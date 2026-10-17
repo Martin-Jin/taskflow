@@ -866,6 +866,19 @@ test('Appearance: the sound toggle is not flush against the theme switch', async
   expectNoErrors(errors);
 });
 
+test('Appearance: System theme follows the OS light/dark setting live', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: 'System' }).click();
+  const attr = () => page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  await expect.poll(attr).toBe('light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(attr).toBe('dark');
+
+  expectNoErrors(errors);
+});
+
 test.describe('Recently deleted (trash/restore)', () => {
   const trash = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:trash') || '[]'));
 

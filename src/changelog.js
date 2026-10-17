@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.4.0',
+    date: '2026-10-17',
+    title: 'Theme can follow your device',
+    changes: [
+      'Settings → Appearance now has a "System" option next to Light and Dark. It switches the app between light and dark automatically to match your device, including when your device changes at sunset.',
+    ],
+  },
+  {
     version: '11.3.3',
     date: '2026-10-14',
     title: 'AI Assistant can now make events repeat',

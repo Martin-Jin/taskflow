@@ -1,11 +1,11 @@
 /**
- * Settings → Appearance — light/dark theme, accent color (theme presets +
+ * Settings → Appearance — light/dark/system theme, accent color (theme presets +
  * custom seed color), sound effects + volume, and the interface-animations
  * toggle (see useMotionEnabled for where the latter is actually read).
  */
 
 import React, { useEffect, useState } from 'react';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, Monitor } from 'lucide-react';
 import { useScheduler } from '../../../context/SchedulerContext';
 import { useTheme } from '../../../context/ThemeContext';
 import { useSound } from '../../../context/SoundContext';
@@ -55,7 +55,7 @@ export default function AppearanceSection({ sectionRef }) {
   return (
     <div className="card settings-card" data-tour="appearance-card" ref={sectionRef}>
       <h3>Appearance</h3>
-      <p className="settings-hint">Switch between a warm off-white and a warm charcoal theme. Your choice is saved on this device.</p>
+      <p className="settings-hint">Switch between a warm off-white and a warm charcoal theme, or follow your device's light/dark setting.</p>
       <div className="theme-toggle" role="group" aria-label="Color theme" data-tour="appearance-toggle">
         <button
           type="button"
@@ -74,6 +74,15 @@ export default function AppearanceSection({ sectionRef }) {
         >
           <Moon size={14} />
           Dark
+        </button>
+        <button
+          type="button"
+          className={`theme-toggle-option ${theme === 'system' ? 'active' : ''}`}
+          aria-pressed={theme === 'system'}
+          onClick={() => setTheme('system')}
+        >
+          <Monitor size={14} />
+          System
         </button>
       </div>
 
