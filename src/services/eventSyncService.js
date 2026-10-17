@@ -305,6 +305,78 @@ function isInertTombstoneReplacedByPull(event, pulledRowIds) {
   return event.source === 'google' && !!event.deletedAt && !event.googleEventId && pulledRowIds.has(event.id);
 }
 
+/**
+ * Collapses live local rows that share one `googleEventId` down to a single
+ * row, turning the extras into tombstones (rows marked deleted rather than
+ * removed, see eventTombstones.js).
+ *
+ * **Why it exists.** One Google event could end up as two TaskFlow rows with
+ * different row ids:
+ *   - an event created in TaskFlow keeps its own id after it is pushed, but a
+ *     device that pulled it from Google first stored it under the pulled id
+ *     (`gcal_<calendarId>_<googleEventId>`);
+ *   - cross-device sync merges rows by row id, so both rows then spread to
+ *     every device.
+ * Once both existed, a pull could not clean them up: the merge looks rows up
+ * by Google id, so it compared Google's copy against only one of them, and
+ * when that one had a newer local stamp ("local wins") both rows were kept.
+ * TaskFlow showed the event twice while Google showed it once.
+ *
+ * **What it does.**
+ *   1. Groups live rows (not tombstones) by `googleEventId`.
+ *   2. In a group of two or more, keeps the row with the smallest id, filled
+ *      with the content of the most recently edited row in the group.
+ *   3. Tombstones every other row in the group, with its Google id removed.
+ *
+ * **Why this approach.**
+ *   - Smallest id is a choice every device makes the same way without talking
+ *     to each other, so two devices never keep different rows (and end up
+ *     deleting both).
+ *   - A tombstone, not a removal: cross-device sync keeps a row that is only
+ *     missing on one side, so a removed duplicate came straight back from the
+ *     other device. A freshly stamped tombstone wins there instead.
+ *   - The Google id is stripped from each tombstone so deleting the duplicate
+ *     never deletes the real event on Google (see flagForGooglePushBack and
+ *     the push sweep, which delete on Google for any tombstone that still
+ *     carries one).
+ *
+ * ```js
+ * keep = group sorted by id [0], content from max(localUpdatedAt)
+ * others -> { ...row, deletedAt: now, localUpdatedAt: now, googleEventId: null }
+ * ```
+ *
+ * **Limitations.** Only catches duplicates that share a Google id. Two rows
+ * with different Google ids are two real events on Google, and are left
+ * alone — delete one on Google and the next pull removes it here too.
+ */
+export function collapseRowsSharingGoogleEventId(events, nowIso) {
+  const groups = new Map();
+  for (const e of events) {
+    if (!e.googleEventId || e.deletedAt) continue;
+    if (!groups.has(e.googleEventId)) groups.set(e.googleEventId, []);
+    groups.get(e.googleEventId).push(e);
+  }
+
+  const replacements = new Map();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const keepId = group.map((e) => e.id).sort()[0];
+    const newest = group.reduce((best, e) =>
+      (timestampMillis(e.localUpdatedAt) ?? -Infinity) > (timestampMillis(best.localUpdatedAt) ?? -Infinity) ? e : best
+    );
+    for (const e of group) {
+      replacements.set(
+        e.id,
+        e.id === keepId
+          ? { ...newest, id: keepId }
+          : { ...e, description: null, location: null, googleEventId: null, deletedAt: nowIso, localUpdatedAt: nowIso }
+      );
+    }
+  }
+
+  return replacements.size === 0 ? events : events.map((e) => replacements.get(e.id) || e);
+}
+
 /** Epoch millis for a timestamp string, or null if missing/unparseable — same convention as eventMerge.js's localUpdatedAtMillis. */
 function timestampMillis(iso) {
   if (!iso) return null;
@@ -577,8 +649,12 @@ function findReplacementMatches(demoteCandidates, newPulledCandidates) {
  *   - Every non-Google (source:'manual') local event is kept untouched —
  *     fixes a prior bug where a Google pull replaced the ENTIRE events
  *     array, silently deleting all manual events.
+ *   - Before anything else, live rows sharing one googleEventId are collapsed
+ *     to one — see collapseRowsSharingGoogleEventId.
  *   - Every local Google-sourced event whose googleEventId appears in the
- *     freshly pulled set is normally REPLACED by the pulled version — UNLESS
+ *     freshly pulled set is normally REPLACED by the pulled version (keeping
+ *     the local row's id, so the row never changes id under another
+ *     device) — UNLESS
  *     resolvePulledEventConflict says the local copy's own `localUpdatedAt`
  *     is newer than this pull's `googleUpdatedAt` for that event, in which
  *     case the local copy is kept unchanged and the pulled version is
@@ -683,6 +759,10 @@ export function mergePulledGoogleEvents(
   confirmedGoogleEventIds = null,
   hasCompletedFullWindowPull = true
 ) {
+  // Two rows for one Google event — see collapseRowsSharingGoogleEventId.
+  // Done first, so everything below sees at most one live row per Google id.
+  existingEvents = collapseRowsSharingGoogleEventId(existingEvents, new Date(nowMs).toISOString());
+
   const manualOwnedGoogleEventIds = new Set(
     existingEvents.filter((e) => e.source === 'manual' && e.googleEventId).map((e) => e.googleEventId)
   );
@@ -704,7 +784,13 @@ export function mergePulledGoogleEvents(
     .map((e) => applyRecentInstanceDeletes(e, recentlyDeletedGoogleEventInstances, nowMs))
     .map((e) => {
       const local = existingByGoogleEventId.get(e.googleEventId);
-      return local ? preserveIgnoredFlag(local, e) : e;
+      if (!local) return e;
+      // The pulled copy takes over a live local row's id rather than its own
+      // `gcal_...` one. Swapping ids dropped the old row without a tombstone,
+      // so cross-device sync brought it back beside the new one: a duplicate.
+      // (A tombstone's id is not reused: the pulled row has no local stamp,
+      // so on other devices the stamped tombstone would win and hide it.)
+      return preserveIgnoredFlag(local, local.deletedAt ? e : { ...e, id: local.id });
     });
 
   // CONFLICT POLICY (see module doc / resolvePulledEventConflict): a pulled
@@ -759,6 +845,7 @@ export function mergePulledGoogleEvents(
       e.source === 'google' &&
       !isBlockSourcedEvent(e) &&
       !replacedTombstoneIds.has(e.id) &&
+      !(e.deletedAt && !e.googleEventId) &&
       !pulledByGoogleEventId.has(e.googleEventId) &&
       !isTooOldToRetain(e, purgeBoundaryIso) &&
       isInScopeForPull(e, rangeStartIso, rangeEndIso) &&
@@ -798,6 +885,14 @@ export function mergePulledGoogleEvents(
     // Taken over by the pulled row with the same id — see
     // isInertTombstoneReplacedByPull.
     if (replacedTombstoneIds.has(e.id)) continue;
+
+    // Any other tombstone with no Google id (a collapsed duplicate, or one
+    // left by a disconnect) says nothing about Google, so the pull leaves it
+    // alone; it has to stay to keep the delete winning on other devices.
+    if (e.deletedAt && !e.googleEventId) {
+      survivingLocal.push(e);
+      continue;
+    }
 
     if (pulledByGoogleEventId.has(e.googleEventId)) continue; // superseded below by the pulled version
 

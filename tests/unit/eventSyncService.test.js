@@ -24,6 +24,7 @@ import {
   computeOnDemandFetchRange,
   computeEffectivePurgeBoundary,
   resolvePulledEventConflict,
+  collapseRowsSharingGoogleEventId,
   RECENTLY_DELETED_TTL_MS,
 } from '../../src/services/eventSyncService.js';
 import { planGoogleDisconnectEvents } from '../../src/utils/googleAccountGuard.js';
@@ -54,7 +55,7 @@ describe('mergePulledGoogleEvents — base merge policy (no suppression)', () =>
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title' });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 
   it('drops a local google event that is in-range but absent from the pull (Google-side delete)', () => {
@@ -79,7 +80,7 @@ describe('mergePulledGoogleEvents — base merge policy (no suppression)', () =>
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', date: '2026-01-01', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO' });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2026-01-01', recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO', title: 'Updated' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 
   it('adds a brand-new pulled event with no local match', () => {
@@ -143,7 +144,7 @@ describe('mergePulledGoogleEvents — restored/unconfirmed events are re-pushed,
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old' });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd, new Map(), new Map(), Date.now(), rangeStart, new Set(['g1']));
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 
   it('falls back to the original trust-the-pull policy when no confirmation set is supplied at all', () => {
@@ -564,14 +565,14 @@ describe('mergePulledGoogleEvents — preserving the local-only "ignore from sch
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title', isFreeTime: true });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([{ ...pulled, isFreeTime: true }]);
+    expect(result).toEqual([{ ...pulled, id: 'local1', isFreeTime: true }]);
   });
 
   it('does not add isFreeTime when the local event was never marked ignored', () => {
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title' });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 
   it('carries forward a per-occurrence overrides[date].isFreeTime on a recurring master, alongside the pull\'s own overrides', () => {
@@ -815,7 +816,7 @@ describe('mergePulledGoogleEvents — purgeBoundaryIso (on-demand-fetched-old-ev
     const oldMaster = googleEvent({ id: 'local1', googleEventId: 'g1', date: '2020-01-01', recurrenceRule: 'FREQ=WEEKLY' });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', date: '2020-01-01', recurrenceRule: 'FREQ=WEEKLY', title: 'Updated' });
     const result = mergePulledGoogleEvents([oldMaster], [pulled], routineRangeStart, routineRangeEnd, new Map(), new Map(), Date.now(), '2026-08-01');
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 });
 
@@ -1117,7 +1118,7 @@ describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () 
       googleUpdatedAt: '2026-08-10T12:00:00.000Z',
     });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 
   it('takes the pulled version for an event that was never locally edited, even though Google has no newer timestamp advantage to speak of', () => {
@@ -1125,7 +1126,7 @@ describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () 
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title', localUpdatedAt: null });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title', googleUpdatedAt: '2020-01-01T00:00:00.000Z' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([pulled]);
+    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
   });
 
   it('a local deletion (tombstone) newer than the Google pull stays deleted rather than being resurrected', () => {
@@ -1221,5 +1222,61 @@ describe('mergePulledGoogleEvents — reconnect after a Google disconnect', () =
     const result = merge([other]);
     expect(result).toHaveLength(2);
     expect(result.find((e) => e.id === 'evt_manual_x').deletedAt).toBe(other.deletedAt);
+  });
+});
+
+describe('mergePulledGoogleEvents — one Google event never becomes two rows', () => {
+  const rangeStart = '2026-10-01';
+  const rangeEnd = '2026-10-31';
+  const pulled = { id: 'gcal_me@x.com_g1', googleEventId: 'g1', source: 'google', title: 'FSAE', date: '2026-10-18', startTime: '19:00', endTime: '21:00', googleUpdatedAt: '2026-10-10T00:00:00.000Z' };
+
+  it("keeps a pushed row's own id when its Google copy is pulled back", () => {
+    const pushed = { ...pulled, id: 'evt_abc', title: 'Before Google edit', localUpdatedAt: '2026-10-01T00:00:00.000Z' };
+    const result = mergePulledGoogleEvents([pushed], [pulled], rangeStart, rangeEnd);
+    expect(result).toEqual([{ ...pulled, id: 'evt_abc' }]);
+  });
+
+  it('collapses two rows sharing a Google id even when local wins the conflict', () => {
+    // The pushed row's stamp is newer than Google's `updated`, so local wins —
+    // which used to keep BOTH rows.
+    const pushed = { ...pulled, id: 'evt_abc', localUpdatedAt: '2026-10-12T00:00:00.000Z' };
+    const result = mergePulledGoogleEvents([pushed, pulled], [pulled], rangeStart, rangeEnd, new Map(), new Map(), Date.parse('2026-10-18T00:00:00.000Z'));
+    const live = result.filter((e) => !e.deletedAt);
+    expect(live).toHaveLength(1);
+    expect(live[0].id).toBe('evt_abc');
+    const tomb = result.find((e) => e.id === 'gcal_me@x.com_g1');
+    expect(tomb.deletedAt).toBe('2026-10-18T00:00:00.000Z');
+    expect(tomb.localUpdatedAt).toBe('2026-10-18T00:00:00.000Z');
+    // Stripped, so deleting the duplicate never deletes the real Google event.
+    expect(tomb.googleEventId).toBeNull();
+  });
+
+  it("a stamped duplicate tombstone beats the other device's live copy", () => {
+    const pushed = { ...pulled, id: 'evt_abc', localUpdatedAt: '2026-10-12T00:00:00.000Z' };
+    const collapsed = collapseRowsSharingGoogleEventId([pushed, pulled], '2026-10-18T00:00:00.000Z');
+    const merged = mergeEventsByUpdatedAt(collapsed, [pushed, pulled]);
+    expect(merged.filter((e) => !e.deletedAt)).toHaveLength(1);
+  });
+
+  it('every device keeps the same row, whatever order it holds them in', () => {
+    const a = { ...pulled, id: 'evt_abc' };
+    const one = collapseRowsSharingGoogleEventId([a, pulled], 'now').filter((e) => !e.deletedAt);
+    const two = collapseRowsSharingGoogleEventId([pulled, a], 'now').filter((e) => !e.deletedAt);
+    expect(one.map((e) => e.id)).toEqual(['evt_abc']);
+    expect(two.map((e) => e.id)).toEqual(['evt_abc']);
+  });
+
+  it('keeps the most recently edited content on the kept row', () => {
+    const older = { ...pulled, id: 'evt_abc', title: 'Old', localUpdatedAt: '2026-10-01T00:00:00.000Z' };
+    const newer = { ...pulled, title: 'New', localUpdatedAt: '2026-10-05T00:00:00.000Z' };
+    const kept = collapseRowsSharingGoogleEventId([older, newer], 'now').find((e) => !e.deletedAt);
+    expect(kept).toMatchObject({ id: 'evt_abc', title: 'New' });
+  });
+
+  it('leaves rows with different Google ids, and tombstones, alone', () => {
+    const other = { ...pulled, id: 'x', googleEventId: 'g2' };
+    const tomb = { ...pulled, id: 'y', deletedAt: '2026-10-01T00:00:00.000Z' };
+    const input = [pulled, other, tomb];
+    expect(collapseRowsSharingGoogleEventId(input, 'now')).toBe(input);
   });
 });

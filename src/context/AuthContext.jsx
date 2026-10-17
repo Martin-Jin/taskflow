@@ -264,16 +264,13 @@ export function AuthProvider({ children }) {
       // a fresh batch of demo clutter.
       savePersisted('tasks', []);
       savePersisted('blocks', []);
-      // Same fallback-avoidance as tasks/blocks above, for a different
-      // reason: `events` isn't part of the live cross-device merge path (see
-      // CLAUDE.md/useCloudSync.js's BACKUP_FIELDS notes — Google Calendar is
-      // the authoritative live source, not Firestore), so there's no
-      // duplicate-demo-row merge risk to worry about here. But WITHOUT this,
-      // the post-signout reload would still hit `getMockEvents()` (same
-      // fallback SchedulerContext gives `events` on a genuine first-ever
-      // visit) and show 4 fake calendar events until Google Calendar
-      // reconnects and overwrites them — or indefinitely, for an account
-      // that never connects Google Calendar at all.
+      // Same fallback-avoidance as tasks/blocks above, for the same reason:
+      // `events` live-syncs across devices too, so sample events seeded by
+      // `getMockEvents()` on the post-signout reload would be merged into
+      // the next account that signs in (and pushed to its Google Calendar).
+      // A sample row that slips through anyway — e.g. a brand-new browser,
+      // which never ran this — is cleaned up after sign-in; see
+      // demoDataCleanup.js.
       savePersisted('events', []);
       window.location.reload();
     } catch (err) {

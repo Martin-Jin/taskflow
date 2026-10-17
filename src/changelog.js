@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '11.4.1',
+    date: '2026-10-18',
+    title: 'Calendar fixes: duplicates, sample events and all-day delete',
+    changes: [
+      'Fixed events showing twice in TaskFlow while Google Calendar showed them once, most often after one device had been offline or disconnected from Google. Existing duplicates are cleaned up at the next sync with Google, and the real event on Google is never touched.',
+      'Fixed sample events (like "Design Conference") and sample tasks appearing in your account after signing in on a new device or browser — and being copied onto your Google Calendar. They are now removed automatically, from Google Calendar too.',
+      'Fixed Delete doing nothing on an event that spans several days, like an all-day conference.',
+    ],
+  },
+  {
     version: '11.4.0',
     date: '2026-10-17',
     title: 'Theme can follow your device',

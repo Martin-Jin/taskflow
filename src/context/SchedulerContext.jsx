@@ -88,6 +88,7 @@ import {
 import { tombstoneTasks, isStaleTombstone } from '../utils/taskTombstones';
 import { tombstoneEntities, isStaleEntityTombstone } from '../utils/collectionTombstones';
 import { tombstoneEvents, isStaleEventTombstone } from '../utils/eventTombstones';
+import { findDemoEventIds, findDemoTaskIds } from '../services/demoDataCleanup';
 import { planSelfRename, isGuestUser, computeEffectiveRole, isLikelySharedProjectOwner } from '../utils/sharedProjectAccess';
 import { setGuestDisplayName } from '../utils/guestIdentity';
 import {
@@ -991,6 +992,41 @@ export function SchedulerProvider({ children }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ---- Sample data cleanup for a signed-in account ------------------------
+  // A browser with no saved data starts with sample events/tasks before it
+  // knows anyone is signed in; left alone, sync merges them into the real
+  // account and the Google push copies the events onto the user's calendar.
+  // See demoDataCleanup.js. Re-checked whenever events/tasks change, because
+  // sample rows can also arrive later from another device's sync.
+  //
+  // A sample event already on Google is flagged `pendingGooglePush`, so the
+  // Google push sweep deletes it there too (it only exists there because
+  // TaskFlow put it there).
+  const demoEventIds = useMemo(() => (user ? findDemoEventIds(events) : []), [user, events]);
+  const demoTaskIds = useMemo(() => (user ? findDemoTaskIds(tasks) : []), [user, tasks]);
+  useEffect(() => {
+    if (demoEventIds.length === 0) return;
+    const ids = new Set(demoEventIds);
+    setEvents((prev) =>
+      tombstoneEvents(prev, ids, new Date().toISOString()).map((e) =>
+        ids.has(e.id) && e.googleEventId ? { ...e, pendingGooglePush: true } : e
+      )
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoEventIds.join(',')]);
+  useEffect(() => {
+    if (demoTaskIds.length === 0) return;
+    const ids = new Set(demoTaskIds);
+    commit(
+      (current) => ({
+        tasks: tombstoneTasks(current.tasks, ids, new Date().toISOString()),
+        blocks: current.blocks.filter((b) => !ids.has(b.taskId)),
+      }),
+      'Removed sample tasks'
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoTaskIds.join(',')]);
 
   // ---- Deleted section/project/label (tombstone) retention sweep ----------
   // Same shape and reasoning as the deleted-task/event sweeps above, for the
@@ -4157,8 +4193,14 @@ export function SchedulerProvider({ children }) {
       // for its own Undo — restoring this verbatim always reverts local
       // state regardless of which scope branch ran.
       const prevEventsSnapshot = events;
+      // A virtual id is not always a repeat: each day of a multi-day event
+      // (an all-day conference) gets one too, see expandMultiDayEvent. That
+      // event has only one occurrence, so any scope deletes the whole row —
+      // the 'this' branch below would only mark a day as skipped, which a
+      // non-repeating event ignores, so Delete did nothing.
+      const isRepeatOccurrence = isVirtual && !!events.find((e) => e.id === masterId)?.recurrenceRule;
 
-      if (!isVirtual || scope === 'all') {
+      if (!isRepeatOccurrence || scope === 'all') {
         // For a virtual per-occurrence id (a true-RRULE series, scope 'all'
         // only — see below), the real row to delete is the MASTER, not the
         // virtual id itself: `events` never contains a row keyed by the

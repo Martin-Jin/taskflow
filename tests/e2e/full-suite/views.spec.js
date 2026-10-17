@@ -1334,7 +1334,13 @@ test('Calendar: an all-day event renders in the all-day row, not as a block in t
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('All day', { exact: false }).first()).toBeVisible();
   await expect(dialog.locator('input[type=time]')).toHaveCount(0);
-  await closeAnyModal(page);
+
+  // Delete removes the whole span. Each day's chip has a per-day id, which
+  // used to be treated as one skipped day of a repeat — on an event that
+  // doesn't repeat, that did nothing at all.
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.waitForTimeout(400);
+  await expect(chip).toHaveCount(0);
 
   expectNoErrors(errors);
 });

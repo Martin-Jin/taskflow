@@ -201,6 +201,71 @@ existing.status === 'cancelled' ? insert(resource) : update(id, resource)
 id, so this only protects events created on Google from now on. A TaskFlow id
 too long for Google's 1024-character limit falls back to a Google-chosen id.
 
+### One TaskFlow row per Google event
+
+**Why it exists.** Even with one copy on Google, TaskFlow itself could show an
+event twice while Google showed it once. Every event has a TaskFlow row id, and
+cross-device sync matches rows by that id:
+- An event made in TaskFlow keeps its own id after it is sent to Google.
+- A pull from Google used to give the same event a different id
+  (`gcal_<calendar>_<Google id>`) and drop the old row without marking it
+  deleted.
+- Your other device still had the old row, so sync brought it back beside the
+  new one. Seen most when one device was offline or not connected to Google
+  while the other pulled.
+
+Once two rows shared a Google id, a pull could not clean them up: it compared
+Google's copy with only one of them.
+
+**What it does.**
+1. A pull keeps the existing row's id when it updates an event, so the id
+   never changes underneath another device.
+2. Before each pull is merged, rows sharing one Google id are collapsed: the
+   row with the smallest id is kept (with the most recently edited content),
+   and the others are marked deleted.
+3. Those deleted duplicates have their Google id removed first, so getting
+   rid of a duplicate never deletes the real event on Google.
+
+**Why this approach.** Removing a duplicate outright doesn't stick, because
+sync keeps a row that only one device has. Marking it deleted with a fresh
+time does stick on every device. Picking the smallest id means every device
+keeps the same row without having to agree with each other first.
+
+**How it works in code.** `eventSyncService.js`,
+`collapseRowsSharingGoogleEventId`, run at the start of
+`mergePulledGoogleEvents`:
+
+```js
+keep   = rows sharing a Google id, sorted by id [0]   // content from newest edit
+others → { ...row, googleEventId: null, deletedAt: now, localUpdatedAt: now }
+```
+
+**Limitations.** Only rows sharing a Google id are merged. Two rows with
+different Google ids are two real events on Google; delete one there and the
+next pull removes it here. The cleanup runs on a device connected to Google;
+other devices pick it up through sync.
+
+### Sample data never reaches a signed-in account
+
+**Why it exists.** A browser with no saved TaskFlow data (a new device or
+browser, or cleared site data) starts with sample events and tasks, before it
+knows whether you are signed in. After signing in, sync merged them into your
+account, and the Google push copied the sample events ("Design Conference",
+"Dentist Appointment", ...) onto your real calendar.
+
+**What it does.** While you are signed in, any sample event or task whose id
+and title both still match the sample is deleted the ordinary way, on every
+device. A sample event already on Google is deleted there too, at the next
+sync.
+
+**Why this approach.** The sample data is loaded before sign-in is known, so
+it can't simply be skipped. Cleaning up afterwards also repairs accounts it
+already reached.
+
+**Limitations.** A sample item you renamed is treated as yours and kept.
+Sample projects and sections are never removed, since real tasks may have
+been filed in them.
+
 ### One Google account per TaskFlow account
 
 TaskFlow keeps a single Google login for your whole TaskFlow account, shared by
