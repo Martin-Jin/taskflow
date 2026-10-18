@@ -1788,6 +1788,40 @@ test.describe('Preferred time of day', () => {
     expectNoErrors(errors);
   });
 
+  test('a sidebar edit made just before closing still saves, exactly once', async ({ page }) => {
+    /* Sidebar fields save on a 500ms debounce. Closing inside that wait (pick a
+       date, press Escape) used to unmount the modal, cancel the timer and lose
+       the edit without a word. */
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await gotoTab(page, 'Tasks');
+
+    await page.locator('.task-row').first().click();
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      window.__taskWrites = 0;
+      const orig = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (k, v) => {
+        if (k.endsWith(':tasks')) window.__taskWrites += 1;
+        return orig(k, v);
+      };
+    });
+
+    await page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]').fill('2031-07-15');
+    await page.keyboard.press('Escape'); // no wait — inside the debounce
+    await expect(page.getByRole('dialog', { name: 'Task details' })).toHaveCount(0);
+
+    await page.waitForTimeout(1500);
+    const saved = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('taskflow:v1:tasks') || '[]').filter((t) => t.dueDate === '2031-07-15')
+    );
+    expect(saved.length).toBe(1);
+    // One save for one edit, and nothing more once closed.
+    expect(await page.evaluate(() => window.__taskWrites)).toBe(1);
+
+    expectNoErrors(errors);
+  });
+
 test.describe('Postponement counter', () => {
   /**
    * The exclusions are what this guards, not the happy path. The counter is

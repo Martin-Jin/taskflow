@@ -245,6 +245,32 @@ different Google ids are two real events on Google; delete one there and the
 next pull removes it here. The cleanup runs on a device connected to Google;
 other devices pick it up through sync.
 
+### A Google edit wins on devices not connected to Google
+
+**Why it exists.** When a pull brought in Google's newer version of an event,
+that copy carried no TaskFlow edit time. A device not connected to Google,
+still holding an older edit of the same event (which did carry one), won the
+cross-device sync, and the stale version spread back. A device never
+connected to Google kept it for good.
+
+**What it does.** A pulled event whose content changed is stamped with
+Google's own edit time. An event whose content didn't change keeps its
+existing stamp, so routine pulls cause no extra sync writes.
+
+**Why this approach.** Stamping with "now" would also beat a genuinely newer
+edit made on the other device after the Google change. Google's edit time
+lets that newer edit still win; it then reaches the Google-connected device
+and the next pull sends it on to Google.
+
+**How it works in code.** `eventSyncService.js`, `pulledEditStamp`:
+
+```js
+stamp = contentChanged ? pulled.googleUpdatedAt : local.localUpdatedAt
+```
+
+**Limitations.** Assumes Google's and your devices' clocks roughly agree, as
+every timestamp merge here does.
+
 ### Sample data never reaches a signed-in account
 
 **Why it exists.** A browser with no saved TaskFlow data (a new device or

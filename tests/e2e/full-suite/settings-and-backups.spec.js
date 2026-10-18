@@ -880,7 +880,10 @@ test('Appearance: System theme follows the OS light/dark setting live', async ({
 });
 
 test.describe('Recently deleted (trash/restore)', () => {
-  const trash = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:trash') || '[]'));
+  // Live entries only — a removed entry stays behind as a `removedAt`
+  // tombstone so the removal syncs (see SchedulerContext's trash state).
+  const allTrash = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:trash') || '[]'));
+  const trash = async (page) => (await allTrash(page)).filter((e) => !e.removedAt);
 
   async function openTrashCard(page) {
     await gotoTab(page, 'Settings');
@@ -1043,6 +1046,8 @@ test.describe('Recently deleted (trash/restore)', () => {
     await page.waitForTimeout(900);
 
     expect((await trash(page)).map((e) => e.id)).toEqual(['new']);
+    // The expired one is now a removal tombstone, cleared for good 30 days on.
+    expect((await allTrash(page)).find((e) => e.id === 'old')?.removedAt).toBeTruthy();
 
     const card = await openTrashCard(page);
     await expect(card.locator('.trash-row-name')).toHaveText(['Recent']);

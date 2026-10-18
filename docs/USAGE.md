@@ -343,6 +343,9 @@ One page of cards, each covering one area:
   lost the tag), so restoring reconnects the ones you haven't since moved or
   deleted yourself, and says how many it left alone. Shared projects can't be
   restored. Tasks and scheduled blocks use undo (`Ctrl+Z`) instead.
+  - It also catches **edits that clashed**: if two of your devices changed the
+    same task or event before syncing, the newer change is kept and the other
+    lands here, so you can put it back.
 - **Backups** — export, import, and cloud snapshots. See
   [Backups](SYNC-AND-SHARING.md#backups).
 - **Appearance** — the Light / Dark / System theme switch (System follows

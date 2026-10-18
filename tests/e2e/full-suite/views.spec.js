@@ -1335,12 +1335,24 @@ test('Calendar: an all-day event renders in the all-day row, not as a block in t
   await expect(dialog.getByText('All day', { exact: false }).first()).toBeVisible();
   await expect(dialog.locator('input[type=time]')).toHaveCount(0);
 
+  // Saving an edit from one day's chip renames the whole event, keeping its
+  // span — the per-day id used to turn it into a per-day override that a
+  // non-repeating event ignores, so the edit vanished.
+  await dialog.locator('.detail-field', { hasText: 'Title' }).locator('input').fill('Design Summit');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForTimeout(400);
+  const renamed = page.locator('.week-allday-chip', { hasText: 'Design Summit' });
+  expect(await renamed.count()).toBe(2);
+
+  await renamed.first().click();
+  await page.waitForTimeout(400);
+
   // Delete removes the whole span. Each day's chip has a per-day id, which
   // used to be treated as one skipped day of a repeat — on an event that
   // doesn't repeat, that did nothing at all.
   await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
   await page.waitForTimeout(400);
-  await expect(chip).toHaveCount(0);
+  await expect(page.locator('.week-allday-chip', { hasText: 'Design Summit' })).toHaveCount(0);
 
   expectNoErrors(errors);
 });

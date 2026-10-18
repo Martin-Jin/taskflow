@@ -24,9 +24,14 @@ cross-device sync on top of local storage, backed by
   device's current local data is uploaded to become the cloud copy.
 - On every subsequent sign-in (e.g. opening TaskFlow on a second device and
   signing in with the same Google account), the cloud copy is pulled down
-  and **overwrites** whatever was local on that device — this is what makes
-  a phone and a computer converge onto the same data instead of keeping two
-  separate copies.
+  and **merged** with what's on that device, item by item: for each task,
+  event, project, saved view and so on, the more recently changed version
+  wins. This is what makes a phone and a computer converge onto the same
+  data instead of keeping two separate copies.
+- **If two devices change the same item before syncing** (say, both were
+  offline), the newer change is kept and the other is saved in **Settings →
+  Recently deleted**, where you can put it back. Covers tasks and calendar
+  events.
 - From then on, local changes are pushed to the cloud automatically a
   moment after you make them (a short debounce so a burst of edits doesn't
   fire a write per keystroke).

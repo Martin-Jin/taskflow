@@ -1118,7 +1118,7 @@ describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () 
       googleUpdatedAt: '2026-08-10T12:00:00.000Z',
     });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
+    expect(result).toEqual([{ ...pulled, id: 'local1', localUpdatedAt: pulled.googleUpdatedAt }]);
   });
 
   it('takes the pulled version for an event that was never locally edited, even though Google has no newer timestamp advantage to speak of', () => {
@@ -1126,7 +1126,7 @@ describe('mergePulledGoogleEvents — local edit beats a stale Google pull', () 
     const local = googleEvent({ id: 'local1', googleEventId: 'g1', title: 'Old title', localUpdatedAt: null });
     const pulled = googleEvent({ id: 'g1', googleEventId: 'g1', title: 'New title', googleUpdatedAt: '2020-01-01T00:00:00.000Z' });
     const result = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([{ ...pulled, id: 'local1' }]);
+    expect(result).toEqual([{ ...pulled, id: 'local1', localUpdatedAt: pulled.googleUpdatedAt }]);
   });
 
   it('a local deletion (tombstone) newer than the Google pull stays deleted rather than being resurrected', () => {
@@ -1233,7 +1233,7 @@ describe('mergePulledGoogleEvents — one Google event never becomes two rows', 
   it("keeps a pushed row's own id when its Google copy is pulled back", () => {
     const pushed = { ...pulled, id: 'evt_abc', title: 'Before Google edit', localUpdatedAt: '2026-10-01T00:00:00.000Z' };
     const result = mergePulledGoogleEvents([pushed], [pulled], rangeStart, rangeEnd);
-    expect(result).toEqual([{ ...pulled, id: 'evt_abc' }]);
+    expect(result).toEqual([{ ...pulled, id: 'evt_abc', localUpdatedAt: pulled.googleUpdatedAt }]);
   });
 
   it('collapses two rows sharing a Google id even when local wins the conflict', () => {
@@ -1278,5 +1278,45 @@ describe('mergePulledGoogleEvents — one Google event never becomes two rows', 
     const tomb = { ...pulled, id: 'y', deletedAt: '2026-10-01T00:00:00.000Z' };
     const input = [pulled, other, tomb];
     expect(collapseRowsSharingGoogleEventId(input, 'now')).toBe(input);
+  });
+});
+
+describe('mergePulledGoogleEvents — a Google edit wins on devices not connected to Google', () => {
+  const rangeStart = '2026-10-01';
+  const rangeEnd = '2026-10-31';
+  const base = { id: 'evt_1', googleEventId: 'g1', source: 'google', date: '2026-10-18', startTime: '19:00', endTime: '21:00' };
+
+  it("stamps a changed pulled event with Google's edit time, so it beats an older edit elsewhere", () => {
+    const local = { ...base, title: 'Old', localUpdatedAt: '2026-10-05T00:00:00.000Z' };
+    const pulled = { ...base, id: 'gcal_x_g1', title: 'Edited on Google', googleUpdatedAt: '2026-10-10T00:00:00.000Z' };
+    const [merged] = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(merged.localUpdatedAt).toBe('2026-10-10T00:00:00.000Z');
+
+    // The other device still holds the older edit, and isn't connected to Google.
+    const otherDevice = { ...local, title: 'Older offline edit', localUpdatedAt: '2026-10-07T00:00:00.000Z' };
+    const [winner] = mergeEventsByUpdatedAt([otherDevice], [merged]);
+    expect(winner.title).toBe('Edited on Google');
+  });
+
+  it('a newer edit on the other device still beats the Google edit', () => {
+    const local = { ...base, title: 'Old', localUpdatedAt: '2026-10-05T00:00:00.000Z' };
+    const pulled = { ...base, title: 'Edited on Google', googleUpdatedAt: '2026-10-10T00:00:00.000Z' };
+    const [merged] = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    const newer = { ...local, title: 'Edited after Google', localUpdatedAt: '2026-10-12T00:00:00.000Z' };
+    const [winner] = mergeEventsByUpdatedAt([newer], [merged]);
+    expect(winner.title).toBe('Edited after Google');
+  });
+
+  it('an unchanged pull keeps the row exactly as it was, so routine pulls cause no sync writes', () => {
+    const local = { ...base, title: 'Same', localUpdatedAt: '2026-10-05T00:00:00.000Z', googleUpdatedAt: '2026-10-04T00:00:00.000Z' };
+    const pulled = { ...base, title: 'Same', googleUpdatedAt: '2026-10-09T00:00:00.000Z' };
+    expect(mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd)).toEqual([local]);
+  });
+
+  it('a second pull of the same Google edit changes nothing', () => {
+    const local = { ...base, title: 'Old', localUpdatedAt: '2026-10-05T00:00:00.000Z' };
+    const pulled = { ...base, title: 'Edited on Google', googleUpdatedAt: '2026-10-10T00:00:00.000Z' };
+    const once = mergePulledGoogleEvents([local], [pulled], rangeStart, rangeEnd);
+    expect(mergePulledGoogleEvents(once, [pulled], rangeStart, rangeEnd)).toEqual(once);
   });
 });

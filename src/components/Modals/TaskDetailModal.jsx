@@ -1791,6 +1791,21 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     labelIds,
   ]);
 
+  // Save on close what the auto-save above would have saved. Closing within
+  // its 500ms wait (pick a date, press Escape) unmounted the modal, which
+  // cleared the timer, and the edit was silently lost. Runs on unmount so it
+  // covers every way of closing (Escape, ×, clicking outside). Same
+  // conditions as the auto-save, so unsaved title/notes still need an
+  // explicit Save. Skipped after Delete, so it never edits a deleted task.
+  const deletedOnCloseRef = useRef(false);
+  const flushPendingAutoSaveRef = useRef(() => {});
+  flushPendingAutoSaveRef.current = () => {
+    if (!task || task.deletedAt || deletedOnCloseRef.current || isReadOnlyViewer) return;
+    if (mainDirty || !sidebarDirty || fixedTimeError || dueDateError || dueDateRequiredError) return;
+    commitChanges();
+  };
+  useEffect(() => () => flushPendingAutoSaveRef.current(), []);
+
   function handleCancel() {
     const snap = initialSnapshotRef.current;
     setTitle(snap.title);
@@ -1824,6 +1839,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
 
   function handleDelete() {
     if (isReadOnlyViewer) return; // Defense in depth — menu item is already disabled for viewers.
+    deletedOnCloseRef.current = true;
     deleteTask(task.id);
     requestCloseRef.current();
   }

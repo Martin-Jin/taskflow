@@ -858,7 +858,8 @@ src/
 │   ├── taskFacets.js         # Derived task facets (blocked/overdue/etc.)
 │   ├── taskTemplates.js      # Reusable shapes of work: capture a task subtree (buildTemplateFromTasks) with due dates flattened to day OFFSETS from the subtree's earliest date, then rebuild it around a new anchor (planTemplateInstantiation). Offsets are DERIVED from real dates at save time, so there's no offset-authoring UI and no chained-offset model; parent/dependency links become template-local ids and are remapped to the new tasks. Instantiation goes through SchedulerContext's instantiateTemplate so all the tasks land in one commit
 │   ├── weeklyReview.js       # The weekly review's bucketing (finished / slipped / carriedOver — non-overlapping by construction) over a ROLLING 7 days, deliberately not a calendar week (no week-start setting exists, and a calendar week has a dead zone on Mondays). planMoveToNextWeek keeps the weekday and always lands in the next window, so a task weeks overdue can't be moved into the past. Capacity comes from the caller — see hooks/useWeeklyReview.js on why its denominator passes `blocks: []`
-│   ├── trash.js              # Recoverable deletes of projects/sections/labels: an entry stores the deleted ROW plus the IDS of the tasks it detached (never task copies — a copy would overwrite whatever the user did since). planTrashRestore's rule is "re-attach only if the task still exists AND is still detached", so a restore never resurrects a deleted task or yanks one out of where it's since been filed. Shared projects/sections are never captured (their tasks live in Firestore and the document is gone). Pruned on load and on every delete — TRASH_RETENTION_DAYS + MAX_TRASH_ENTRIES
+│   ├── editConflicts.js      # Two-device edit conflicts: compares local and remote against the per-device "sync base" (the edit time last agreed with the cloud) so only an item BOTH devices changed counts; the losing version is filed in Trash as an `edit` entry. See "Two-device edit conflicts"
+│   ├── trash.js              # Recoverable deletes of projects/sections/labels, plus `edit` entries (the losing side of a two-device edit, restored by putting the saved version back): an entry stores the deleted ROW plus the IDS of the tasks it detached (never task copies — a copy would overwrite whatever the user did since). planTrashRestore's rule is "re-attach only if the task still exists AND is still detached", so a restore never resurrects a deleted task or yanks one out of where it's since been filed. Shared projects/sections are never captured (their tasks live in Firestore and the document is gone). Pruned on load and on every delete — TRASH_RETENTION_DAYS + MAX_TRASH_ENTRIES
 │   ├── rescheduleHistory.js  # The narrow "did the user push this deadline later?" rule behind Task.postponeCount + the "pushed N×" badge threshold — exclusions (resubmitted same value, pulled earlier, first date, recurring) are the design
 │   ├── linkify.js            # Turns http(s)/www URLs in free text into clickable segments
 │   ├── stripMarkdown.js      # Renders a markdown string as plain text for previews (note tiles, note search)
@@ -1174,8 +1175,48 @@ every field that can conflict carries one:
   `notificationSettings`, `notes`, `shortcutBindings`, `sharedProjectIds`),
   stamped automatically by `useFieldStampedState` and compared with
   `pickNewerScalar`. No mutation call site stamps anything by hand.
-- **`savedViews`, `taskTemplates`, `trash`, `blocks`** are still whole-array
-  (blocks have no stable ids; the others are never soft-deleted).
+- **`savedViews`, `taskTemplates` and `trash`** merge per row too. Their
+  setters (`useEntityStampedState` with a `tombstoneField`) turn a removed row
+  into a tombstone automatically (`deletedAt`, or `removedAt` for trash, whose
+  `deletedAt` already means something else), so callers keep writing plain
+  `prev.filter(...)`. `SchedulerContext` hands out tombstone-free lists and
+  sweeps old tombstones on load.
+- **`blocks`** stay whole-array: they have no stable ids, and are regenerated
+  from the merged tasks.
+
+### Two-device edit conflicts
+
+**Why it exists.** Newest-wins settles a task or event edited on two devices
+that were out of touch, but the older edit used to disappear with no way back.
+
+**What it does.**
+1. Each device keeps a **sync base** per task and event: the edit time it and
+   the cloud last agreed on (`useCloudSync.js`'s `syncBaseRef`, persisted in
+   localStorage as `syncBase`). A confirmed push sets it for every pushed row;
+   a pull advances it for rows that took the cloud's version.
+2. When a pull merges a row whose local AND remote versions both changed
+   since the base, and their content differs, it's a real conflict.
+3. The losing version (unless it's a delete) becomes a Trash entry of kind
+   `edit`. Restoring it puts that version back, freshly stamped so it wins
+   everywhere; an event still on Google is re-sent there.
+
+**Why this approach.** Comparing the two versions alone can't tell a conflict
+from an ordinary pull carrying the version you edited from — that would fill
+Trash with false alarms. The base is what tells them apart. It lives per
+device, not on synced rows, because it describes what *this* device last
+agreed with the cloud, and stamping it onto rows would cause extra writes.
+
+**How it works in code.** `utils/editConflicts.js`'s `findOverwrittenEdits`,
+called from `planRemoteDataMerge`:
+
+```js
+conflict = base[id] && local.ts !== base[id] && remote.ts !== base[id]
+           && content(local) !== content(remote)   // ignoring edit-time fields
+```
+
+**Limitations.** No base yet (first sync on a device) means no conflict is
+detected. Both devices can occasionally file the same conflict. Only tasks and
+events are covered.
 
 ### Per-task merge and deletion tombstones
 

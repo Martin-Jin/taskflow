@@ -238,7 +238,7 @@ export function stampAndSet(setFieldStamps, fieldName, trackedSetValue, next) {
  * @returns {[Array<object>, Function, Function]} the same shape as the input
  *   triple, with the tracked setter replaced by a stamping version.
  */
-export function useEntityStampedState([value, trackedSetValue, rawSetValue]) {
+export function useEntityStampedState([value, trackedSetValue, rawSetValue], { tombstoneField = null } = {}) {
   // Mirrors the current array so the stamping setter can diff against
   // "what was there a moment ago" even when called with a functional update
   // (`setSections(prev => ...)`) — the diff needs the PRE-update array,
@@ -249,7 +249,7 @@ export function useEntityStampedState([value, trackedSetValue, rawSetValue]) {
   }, [value]);
 
   const stampedSetValue = useCallback(
-    (next) => stampChangedEntitiesAndSet(currentValueRef, trackedSetValue, next),
+    (next) => stampChangedEntitiesAndSet(currentValueRef, trackedSetValue, next, { tombstoneField }),
     // currentValueRef/trackedSetValue are both stable (a ref's identity never
     // changes; trackedSetValue is itself already memoized with an empty dep
     // array by useLocalEditTrackedState) — empty deps is correct, keeping
@@ -274,11 +274,22 @@ export function useEntityStampedState([value, trackedSetValue, rawSetValue]) {
  * of-remove) is simply gone from the result — nothing to stamp, since
  * there's no row left to stamp it on.
  *
+ * WITH `tombstoneField` (savedViews, taskTemplates, trash), a removed row is
+ * kept as a tombstone instead — `{ ...row, [tombstoneField]: now, updatedAt:
+ * now }` — so the deletion syncs: the cross-device merge keeps any row only
+ * one side has, so a plain removal came straight back from another device.
+ * Callers keep writing plain `prev.filter(...)`; they never see tombstones
+ * (SchedulerContext hands out the filtered list). A row that was ALREADY a
+ * tombstone and is absent again (e.g. the caller rebuilt the list from the
+ * filtered view) is carried forward unchanged, not re-stamped. Old
+ * tombstones are dropped by a retention sweep through the raw setter.
+ *
  * @param {{current: Array<{id: string}>}} currentValueRef
  * @param {Function} trackedSetValue
  * @param {Array<object>|((prev: Array<object>) => Array<object>)} next
+ * @param {{tombstoneField?: string|null}} [options]
  */
-export function stampChangedEntitiesAndSet(currentValueRef, trackedSetValue, next) {
+export function stampChangedEntitiesAndSet(currentValueRef, trackedSetValue, next, { tombstoneField = null } = {}) {
   const prevRows = currentValueRef.current || [];
   const nextRows = typeof next === 'function' ? next(prevRows) : next;
   if (!Array.isArray(nextRows)) {
@@ -300,5 +311,12 @@ export function stampChangedEntitiesAndSet(currentValueRef, trackedSetValue, nex
     if (prevRow && canonicalStringify(prevRow) === canonicalStringify(row)) return row;
     return { ...row, updatedAt: nowIso };
   });
+  if (tombstoneField) {
+    const nextIds = new Set(nextRows.map((row) => row.id));
+    for (const prevRow of prevRows) {
+      if (nextIds.has(prevRow.id)) continue;
+      stamped.push(prevRow[tombstoneField] ? prevRow : { ...prevRow, [tombstoneField]: nowIso, updatedAt: nowIso });
+    }
+  }
   trackedSetValue(stamped);
 }

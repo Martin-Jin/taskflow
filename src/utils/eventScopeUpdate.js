@@ -11,8 +11,49 @@
  * ============================================================================
  */
 
-import { addDays } from './dateUtils';
+import { addDays, diffDays } from './dateUtils';
 import { resolveEventId, truncateRuleUntil, rebaseRuleForSplit } from './recurrenceExpansion';
+
+/**
+ * Turns an action aimed at ONE DAY of a multi-day event into an action on
+ * the whole stored row, or returns the input unchanged for anything else.
+ *
+ * **Why it exists.** A multi-day event (an all-day conference) is one stored
+ * row shown as one chip per day, and each chip gets a virtual
+ * `${id}::${date}` id (see recurrenceExpansion.js's expandMultiDayEvent) —
+ * the same shape a repeating event's occurrences use. Code that saw a
+ * virtual id assumed "one occurrence of a repeat" and wrote a per-day
+ * override, which a non-repeating event ignores: Delete, Save and Ignore
+ * all silently did nothing.
+ *
+ * **What it does.**
+ *   1. Not a virtual id, or the row repeats: returned unchanged.
+ *   2. Otherwise the id becomes the stored row's own id.
+ *   3. A `date` in `updates` that still equals the clicked day is dropped
+ *      (the modal always sends one; keeping it would move the event's start
+ *      to the clicked day and shrink the span).
+ *   4. A `date` that differs moves the whole span by the same number of
+ *      days, keeping its length.
+ *
+ * @param {Array} events
+ * @param {string} eventId
+ * @param {object} [updates]
+ * @returns {{ eventId: string, updates: object, isSpanDay: boolean }}
+ */
+export function resolveMultiDayTarget(events, eventId, updates = {}) {
+  const { masterId, occurrenceDate, isVirtual } = resolveEventId(eventId);
+  const row = isVirtual ? events.find((e) => e.id === masterId) : null;
+  if (!row || row.recurrenceRule) return { eventId, updates, isSpanDay: false };
+
+  const { date, ...rest } = updates;
+  if (date === undefined || date === occurrenceDate) return { eventId: masterId, updates: rest, isSpanDay: true };
+  const shift = diffDays(occurrenceDate, date);
+  return {
+    eventId: masterId,
+    updates: { ...rest, date: addDays(row.date, shift), ...(row.endDate ? { endDate: addDays(row.endDate, shift) } : {}) },
+    isSpanDay: true,
+  };
+}
 
 /**
  * Splits a true-RRULE master event's series in two at `occurrenceDate`,

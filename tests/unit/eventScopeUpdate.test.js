@@ -18,7 +18,7 @@
  * that happens to carry a newer top-level stamp.
  */
 import { describe, it, expect } from 'vitest';
-import { applyEventScopeUpdate, splitSeriesAtOccurrence } from '../../src/utils/eventScopeUpdate.js';
+import { applyEventScopeUpdate, splitSeriesAtOccurrence, resolveMultiDayTarget } from '../../src/utils/eventScopeUpdate.js';
 import { mergeEventsByUpdatedAt } from '../../src/utils/eventMerge.js';
 
 const trueRruleMaster = (overrides = {}) => ({
@@ -166,5 +166,33 @@ describe('splitSeriesAtOccurrence', () => {
     expect(newMaster.seriesId).toBe('new-id');
     expect(newMaster.overrides['2026-07-15']).toBeUndefined();
     expect(newMaster.overrides['2026-08-15']).toEqual({ title: 'After split' });
+  });
+});
+
+describe('resolveMultiDayTarget — one day of a multi-day event means the whole event', () => {
+  const conference = { id: 'evt_conf', title: 'Conference', date: '2026-10-19', endDate: '2026-10-21', isAllDay: true };
+  const weekly = { id: 'evt_weekly', title: 'Weekly', date: '2026-10-05', recurrenceRule: 'FREQ=WEEKLY' };
+  const events = [conference, weekly];
+
+  it('maps a day id to the stored row and drops an unchanged date, keeping the span', () => {
+    const result = resolveMultiDayTarget(events, 'evt_conf::2026-10-20', { title: 'Renamed', date: '2026-10-20' });
+    expect(result).toEqual({ eventId: 'evt_conf', updates: { title: 'Renamed' }, isSpanDay: true });
+  });
+
+  it('a changed date moves the whole span by the same number of days', () => {
+    const result = resolveMultiDayTarget(events, 'evt_conf::2026-10-20', { date: '2026-10-23' });
+    expect(result.updates).toEqual({ date: '2026-10-22', endDate: '2026-10-24' });
+  });
+
+  it('leaves a repeating event\'s occurrence id and a plain id alone', () => {
+    const occurrence = resolveMultiDayTarget(events, 'evt_weekly::2026-10-12', { date: '2026-10-13' });
+    expect(occurrence).toEqual({ eventId: 'evt_weekly::2026-10-12', updates: { date: '2026-10-13' }, isSpanDay: false });
+    expect(resolveMultiDayTarget(events, 'evt_conf', { title: 'x' }).isSpanDay).toBe(false);
+  });
+
+  it('with the resolved target, a "this event" edit actually changes the stored row', () => {
+    const { eventId, updates } = resolveMultiDayTarget(events, 'evt_conf::2026-10-20', { title: 'Renamed', date: '2026-10-20' });
+    const { events: next } = applyEventScopeUpdate(events, eventId, updates, 'this', 'split');
+    expect(next.find((e) => e.id === 'evt_conf')).toMatchObject({ title: 'Renamed', date: '2026-10-19', endDate: '2026-10-21' });
   });
 });

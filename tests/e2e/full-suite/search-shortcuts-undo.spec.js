@@ -700,7 +700,14 @@ test('saved views: save a search, apply it, and delete it', async ({ page }) => 
 
   await page.locator('.saved-view-delete').first().click();
   await page.waitForTimeout(400);
-  expect(await readStored()).toEqual([]);
+  // Kept as a tombstone (deletedAt set) so the delete syncs to other devices,
+  // but gone from the menu and from every live list.
+  const stored = await readStored();
+  expect(stored.filter((v) => !v.deletedAt)).toEqual([]);
+  expect(stored.every((v) => v.deletedAt)).toBe(true);
+  await openMenu();
+  await expect(page.locator('.saved-view-delete')).toHaveCount(0);
+  await page.keyboard.press('Escape');
 
   await search.fill('');
   expectNoErrors(errors);

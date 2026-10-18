@@ -502,6 +502,37 @@ export function resolvePulledEventConflict(local, pulled) {
 }
 
 /**
+ * The `localUpdatedAt` a pulled event should carry when it replaces an
+ * existing local row — the time cross-device sync compares to pick a winner.
+ *
+ * **Why it exists.** A pulled replacement used to carry no stamp at all. On
+ * another device that isn't connected to Google, the same row still held
+ * an older local edit WITH a stamp, and sync keeps the side that has one —
+ * so the stale edit won, spread back to this device, and undid Google's
+ * change until the next Google pull here. A device never connected to
+ * Google kept the stale version for good.
+ *
+ * **What it does.**
+ *   - Content changed on Google: stamp it with Google's own edit time
+ *     (`googleUpdatedAt`), so it beats older local edits everywhere.
+ *   - Content unchanged: keep the local row's stamp, so routine pulls
+ *     change nothing and cause no extra sync writes.
+ *
+ * **Why Google's edit time, not "now".** "Now" would also beat a genuinely
+ * NEWER local edit made on the other device after Google's change but
+ * before this pull. With Google's time, that newer edit still wins, reaches
+ * this device by sync, and the next pull sends it on to Google (see
+ * flagForGooglePushBack).
+ *
+ * **Limitations.** Relies on Google's and the devices' clocks being roughly
+ * in step, the same assumption every timestamp merge here already makes.
+ */
+function pulledEditStamp(local, pulled) {
+  const changed = canonicalStringify(comparableEventContent(local)) !== canonicalStringify(comparableEventContent(pulled));
+  return (changed ? pulled.googleUpdatedAt : null) ?? local.localUpdatedAt ?? null;
+}
+
+/**
  * Marks a local Google-sourced event that just WON a conflict against a pull
  * (see resolvePulledEventConflict) as "Google is behind" by setting
  * `pendingGooglePush`, so the push sweep (useGoogleCalendarSync.js's
@@ -790,7 +821,9 @@ export function mergePulledGoogleEvents(
       // so cross-device sync brought it back beside the new one: a duplicate.
       // (A tombstone's id is not reused: the pulled row has no local stamp,
       // so on other devices the stamped tombstone would win and hide it.)
-      return preserveIgnoredFlag(local, local.deletedAt ? e : { ...e, id: local.id });
+      if (local.deletedAt) return preserveIgnoredFlag(local, e);
+      const stamp = pulledEditStamp(local, e);
+      return preserveIgnoredFlag(local, stamp ? { ...e, id: local.id, localUpdatedAt: stamp } : { ...e, id: local.id });
     });
 
   // CONFLICT POLICY (see module doc / resolvePulledEventConflict): a pulled

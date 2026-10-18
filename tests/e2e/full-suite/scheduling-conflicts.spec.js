@@ -271,12 +271,10 @@ test.describe('Scheduling conflict details', () => {
     await page.waitForTimeout(300);
 
     const dueDateInput = page.locator('.detail-field', { hasText: 'Due date' }).locator('input[type="date"]');
+    // Closed straight away: the modal saves a pending sidebar edit on close.
+    // (Before it did, this edit was lost, and an older version of this test
+    // still passed by matching a leftover toast instead of a real rebalance.)
     await dueDateInput.fill(tomorrow);
-    // Blur and wait for the modal's debounced save before closing it. Closing
-    // straight after fill() never saved the date, and an older version of this
-    // test still passed, matching a leftover toast instead of a real rebalance.
-    await dueDateInput.blur();
-    await page.waitForTimeout(1000);
     await page.keyboard.press('Escape');
 
     // The debounced auto-rebalance (300ms) pulls the blocks earlier (not all

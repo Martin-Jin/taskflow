@@ -72,6 +72,10 @@ export default function TrashSection({ sectionRef }) {
         or deleted yourself. Shared projects can't be restored: their tasks live on the server, and deleting one gives
         up access to it.
       </p>
+      <p className="settings-hint">
+        If two of your devices change the same task or event before they've synced, the newer change is kept and the
+        other one is saved here, so you can put it back instead.
+      </p>
       {entries.length === 0 ? (
         <p className="settings-hint" style={{ marginTop: 0 }}>
           Nothing deleted recently.

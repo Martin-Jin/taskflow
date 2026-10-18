@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '11.6.0',
+    date: '2026-10-18',
+    title: 'Clashing edits are kept, and steadier sync',
+    changes: [
+      'If two of your devices change the same task or event before they sync — say, both were offline — the newer change is kept as before, and the other is now saved in Settings → Recently deleted so you can put it back. It used to be lost.',
+      'Saved views, templates and Recently deleted entries now sync item by item. Adding a template on two devices before they synced could lose one of them; now both are kept, and deleting one sticks on every device.',
+      'Fixed an edit made in Google Calendar being undone by another of your devices that wasn\'t connected to Google.',
+      'Fixed a change in a task\'s side panel (like a new due date) being lost if you closed the task within half a second of making it.',
+      'Fixed editing, or marking as ignored, an event that spans several days: the change used to be silently dropped. Moving its date now moves the whole event.',
+    ],
+  },
+  {
     version: '11.5.0',
     date: '2026-10-18',
     title: 'Sync now syncs both ways, and quieter rescheduling',

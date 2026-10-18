@@ -38,6 +38,8 @@ import { mergeTasksByUpdatedAt } from '../utils/taskMerge';
 import { mergeEventsByUpdatedAt } from '../utils/eventMerge';
 import { pickNewerScalar, mergeEntitiesByTimestamp } from '../utils/entityMerge';
 import { canonicalStringify } from '../utils/canonicalStringify';
+import { findOverwrittenEdits, syncBaseFromRows, advanceSyncBaseAfterMerge } from '../utils/editConflicts';
+import { buildOverwrittenEditTrashEntry, pruneTrash } from '../utils/trash';
 import { getBrowserTimeZone } from '../utils/dateUtils';
 import { loadPersisted, savePersisted } from '../utils/persistence.js';
 import { getDeviceId } from '../utils/deviceIdentity.js';
@@ -698,7 +700,7 @@ export function computePushSingleFlightDecision(pushInFlight) {
  * the ordinary path, so an old/partial payload doesn't wipe a field it
  * simply never mentions.
  */
-export function planRemoteDataMerge(remoteData, localState, { skipAll = false, authoritative = false } = {}) {
+export function planRemoteDataMerge(remoteData, localState, { skipAll = false, authoritative = false, syncBase = null } = {}) {
   if (skipAll) return { stampFingerprint: false };
 
   if (authoritative) {
@@ -785,6 +787,17 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false, a
       tasks: tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks,
       blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
     };
+    // The losing side of any task both devices edited — see editConflicts.js.
+    if (tasksMerged) {
+      const losers = findOverwrittenEdits({
+        localRows: localState.tasks,
+        remoteRows: validRemoteTasks,
+        mergedRows: plan.tasksBlocks.tasks,
+        base: syncBase?.tasks,
+        timestampField: 'updatedAt',
+      });
+      if (losers.length > 0) plan.overwrittenEdits = losers.map((row) => ({ entity: 'task', row }));
+    }
     // Whether a real per-task merge ran (remote tasks were shape-valid), as
     // opposed to falling back to local wholesale — applyRemoteData needs
     // this to decide whether the merged result can safely be fingerprinted
@@ -874,14 +887,16 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false, a
       localState.shortcutBindings
     );
   }
-  if ('savedViews' in remoteData) {
-    plan.savedViews = pickValid('savedViews', remoteData.savedViews, localState.savedViews);
-  }
-  if ('taskTemplates' in remoteData) {
-    plan.taskTemplates = pickValid('taskTemplates', remoteData.taskTemplates, localState.taskTemplates);
-  }
-  if ('trash' in remoteData) {
-    plan.trash = pickValid('trash', remoteData.trash, localState.trash);
+  // savedViews/taskTemplates/trash: per-item merge, same as sections above.
+  // These used to be "remote wins if shape-valid", so a view, template or
+  // trash entry added on one device before it had pulled another device's
+  // addition was dropped by that pull. Removals are tombstones (see
+  // useEntityStampedState's `tombstoneField`), so they merge like edits.
+  for (const field of ['savedViews', 'taskTemplates', 'trash']) {
+    if (!(field in remoteData)) continue;
+    const validRemote = pickValid(field, remoteData[field], null);
+    plan[`${field}Merged`] = validRemote !== null;
+    plan[field] = validRemote !== null ? mergeEntitiesByTimestamp(localState[field] || [], validRemote) : localState[field];
   }
   if ('sharedProjectIds' in remoteData) {
     plan.sharedProjectIds = pickScalarField(
@@ -901,6 +916,16 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false, a
     const validRemoteEvents = pickValid('events', remoteData.events, null);
     const eventsMerged = validRemoteEvents !== null;
     plan.events = eventsMerged ? mergeEventsByUpdatedAt(localState.events, validRemoteEvents) : localState.events;
+    if (eventsMerged) {
+      const losers = findOverwrittenEdits({
+        localRows: localState.events,
+        remoteRows: validRemoteEvents,
+        mergedRows: plan.events,
+        base: syncBase?.events,
+        timestampField: 'localUpdatedAt',
+      });
+      if (losers.length > 0) plan.overwrittenEdits = [...(plan.overwrittenEdits || []), ...losers.map((row) => ({ entity: 'event', row }))];
+    }
     // Whether a real per-event merge ran, as opposed to falling back to local
     // wholesale — applyRemoteData needs this for the same reason
     // plan.tasksMerged exists: to decide whether the merged result can
@@ -1450,6 +1475,24 @@ export function useCloudSync({
   // The fingerprint stamp/rollback decision itself lives in the pure,
   // exported computePushStampPlan — this just performs the actual write and
   // ref mutation around it.
+  // Per task/event, the edit time this device and the cloud last agreed on —
+  // what tells a genuine two-device edit conflict apart from ordinary sync
+  // (see utils/editConflicts.js). Device-local by design, so not synced.
+  const syncBaseRef = useRef(loadPersisted('syncBase', null) || { tasks: {}, events: {} });
+  const saveSyncBase = useCallback((next) => {
+    syncBaseRef.current = next;
+    savePersisted('syncBase', next);
+  }, []);
+  // After a confirmed push every pushed row matches the cloud.
+  const recordPushedSyncBase = useCallback(
+    (pushedState) =>
+      saveSyncBase({
+        tasks: syncBaseFromRows(pushedState.tasks, 'updatedAt'),
+        events: syncBaseFromRows(pushedState.events, 'localUpdatedAt'),
+      }),
+    [saveSyncBase]
+  );
+
   const runPushNow = useCallback(async () => {
     if (!user) return;
     // Another device is actively restoring a backup — this device's own
@@ -1491,6 +1534,7 @@ export function useCloudSync({
       // isn't enough.
       inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, plan.fingerprint);
       await pushUserData(user.uid, currentState);
+      recordPushedSyncBase(currentState);
       // Only persist to localStorage once Firestore has actually confirmed
       // this write (i.e. after the await, never before) — this is the
       // durable record that survives a tab kill/reload, unlike the in-memory
@@ -1532,7 +1576,7 @@ export function useCloudSync({
         runPushNowRef.current?.();
       }
     }
-  }, [user, stateRef, setNotification]);
+  }, [user, stateRef, setNotification, recordPushedSyncBase]);
   runPushNowRef.current = runPushNow;
 
   // Push completions straight away instead of waiting out the debounce — see
@@ -1674,7 +1718,27 @@ export function useCloudSync({
     const localSectionsBefore = stateRef.current.sections;
     const localProjectsBefore = stateRef.current.projects;
     const localLabelsBefore = stateRef.current.labels;
-    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll, authoritative });
+    const localListsBefore = {
+      savedViews: stateRef.current.savedViews,
+      taskTemplates: stateRef.current.taskTemplates,
+      trash: stateRef.current.trash,
+    };
+    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll, authoritative, syncBase: syncBaseRef.current });
+    // The losing side of a two-device edit goes to Trash rather than
+    // vanishing (see utils/editConflicts.js). Folded into the plan's own
+    // trash list, not set separately: the stamping setter would diff against
+    // the pre-merge list and drop entries the merge just brought in. Marked
+    // as a merge change below, so the new entries get pushed.
+    if (plan.overwrittenEdits?.length) {
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const entries = plan.overwrittenEdits.map(({ entity, row }, i) => ({
+        ...buildOverwrittenEditTrashEntry({ entity, row, nowMs, makeId: () => `trash_conflict_${nowMs}_${i}_${row.id}` }),
+        updatedAt: nowIso,
+      }));
+      plan.trash = pruneTrash([...entries, ...('trash' in plan ? plan.trash : stateRef.current.trash || [])], nowMs);
+      plan.trashMerged = true;
+    }
     if (plan.tasksBlocks) overwritePresent(plan.tasksBlocks);
     if ('sections' in plan) setSections(plan.sections);
     if ('projects' in plan) setProjects(plan.projects);
@@ -1700,6 +1764,23 @@ export function useCloudSync({
     if ('events' in plan) setEventsLive(plan.events);
     if ('fieldUpdatedAt' in plan) setFieldUpdatedAt(plan.fieldUpdatedAt);
 
+    // Rows this pull settled on the cloud's version now match the cloud.
+    if (!skipAll) {
+      const base = syncBaseRef.current;
+      const nextBase = { ...base };
+      if (plan.tasksBlocks && (authoritative || plan.tasksMerged)) {
+        nextBase.tasks = authoritative
+          ? syncBaseFromRows(plan.tasksBlocks.tasks, 'updatedAt')
+          : advanceSyncBaseAfterMerge(base.tasks, remoteData.tasks, plan.tasksBlocks.tasks, 'updatedAt');
+      }
+      if ('events' in plan && (authoritative || plan.eventsMerged)) {
+        nextBase.events = authoritative
+          ? syncBaseFromRows(plan.events, 'localUpdatedAt')
+          : advanceSyncBaseAfterMerge(base.events, remoteData.events, plan.events, 'localUpdatedAt');
+      }
+      saveSyncBase(nextBase);
+    }
+
     // Did the per-task merge actually produce a task set different from what
     // was local a moment ago? See didTaskMergeChangeAnything's own doc
     // comment — this one answer gates both the rebalance trigger and the
@@ -1718,6 +1799,9 @@ export function useCloudSync({
     const mergeChangedSections = didEntityMergeChangeAnything(plan, 'sections', 'sectionsMerged', localSectionsBefore);
     const mergeChangedProjects = didEntityMergeChangeAnything(plan, 'projects', 'projectsMerged', localProjectsBefore);
     const mergeChangedLabels = didEntityMergeChangeAnything(plan, 'labels', 'labelsMerged', localLabelsBefore);
+    const mergeChangedLists = ['savedViews', 'taskTemplates', 'trash'].some((field) =>
+      didEntityMergeChangeAnything(plan, field, `${field}Merged`, localListsBefore[field])
+    );
 
     // A real per-task merge that changed anything produced a combined result
     // that generally matches NEITHER side's raw array exactly — blocks are
@@ -1753,7 +1837,8 @@ export function useCloudSync({
       !mergeChangedFieldStamps &&
       !mergeChangedSections &&
       !mergeChangedProjects &&
-      !mergeChangedLabels
+      !mergeChangedLabels &&
+      !mergeChangedLists
     ) {
       const remoteFingerprint = computeFingerprint(remoteData);
       lastPushedFingerprintRef.current = remoteFingerprint;
@@ -1785,6 +1870,7 @@ export function useCloudSync({
     setTrash,
     setSharedProjectIds,
     setEventsLive,
+    saveSyncBase,
   ]);
 
   // ---- Converge on a restore another device finished ------------------------
@@ -2411,8 +2497,10 @@ export function useCloudSync({
     // the state actually being written rather than a pre-wait snapshot.
     const fingerprint = computeFingerprint(stateRef.current);
     inFlightPushFingerprintsRef.current = addInFlightFingerprint(inFlightPushFingerprintsRef.current, fingerprint);
+    const pushedState = stateRef.current;
     try {
-      await pushUserData(user.uid, stateRef.current);
+      await pushUserData(user.uid, pushedState);
+      recordPushedSyncBase(pushedState);
       lastPushedFingerprintRef.current = fingerprint;
       // Confirmed by the server (after the await) — persist it, same as
       // runPushNow's debounced push, so this manual push also survives a
@@ -2437,7 +2525,7 @@ export function useCloudSync({
         runPushNowRef.current?.();
       }
     }
-  }, [user, stateRef, setNotification, computeFingerprint, waitForPushWireToClear]);
+  }, [user, stateRef, setNotification, computeFingerprint, waitForPushWireToClear, recordPushedSyncBase]);
 
   // ---- Restore lock: the writer-side sequence ------------------------------
   // Wraps applyBackupPayload with the full "make this restore authoritative

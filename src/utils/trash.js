@@ -2,6 +2,12 @@
  * ============================================================================
  * TRASH — restore a deleted project, section or label
  * ============================================================================
+ * Also holds a second, newer kind of entry, `edit`: the losing version of a
+ * task or event two devices edited at once (see utils/editConflicts.js and
+ * buildOverwrittenEditTrashEntry). Everything below about detaching and
+ * re-attaching applies to the deletes only; an `edit` restores by putting
+ * its saved version back.
+ *
  * Undo covers tasks and blocks only (see docs/LIMITATIONS.md), so deleting a
  * project, a board section or a tag was permanent: the one place in the app
  * where a single misclick destroyed something with no way back, which sat
@@ -57,8 +63,13 @@ export const MAX_TRASH_ENTRIES = 50;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** Entry kinds. `project` carries its sections too; `sharedProject` exists only so the UI can explain why it can't be restored. */
-export const TRASH_KINDS = ['project', 'section', 'label'];
+/**
+ * Entry kinds. `project` carries its sections too. `edit` is different from
+ * the rest: nothing was deleted — it's the losing version of a task or event
+ * two devices edited at once (see utils/editConflicts.js), kept so it can be
+ * put back.
+ */
+export const TRASH_KINDS = ['project', 'section', 'label', 'edit'];
 
 /**
  * Captures a project delete. `sections` are the project's own sections (also
@@ -99,6 +110,17 @@ export function buildSectionTrashEntry({ section, tasks, nowMs, makeId }) {
   };
 }
 
+/**
+ * Captures the losing version of a task or event that two devices edited at
+ * once (see utils/editConflicts.js). Stores the whole row: restoring puts
+ * exactly that version back.
+ * @param {{entity: 'task'|'event', row: object, nowMs: number, makeId: Function}} args
+ */
+export function buildOverwrittenEditTrashEntry({ entity, row, nowMs, makeId }) {
+  if (!row) return null;
+  return { id: makeId(), kind: 'edit', entity, name: row.title || 'Untitled', deletedAt: nowMs, row };
+}
+
 /** Captures a tag delete, with the tasks it was stripped from. */
 export function buildLabelTrashEntry({ label, tasks, nowMs, makeId }) {
   if (!label) return null;
@@ -126,10 +148,24 @@ export function buildLabelTrashEntry({ label, tasks, nowMs, makeId }) {
  */
 export function pruneTrash(entries, nowMs) {
   const cutoff = nowMs - TRASH_RETENTION_DAYS * MS_PER_DAY;
-  return [...(entries || [])]
-    .filter((e) => e && typeof e.deletedAt === 'number' && e.deletedAt > cutoff)
+  // Removed entries (`removedAt`, kept so the removal syncs — see
+  // SchedulerContext's trash state) are passed through untouched: they
+  // don't count against the cap, and dropTrashTombstones clears them.
+  const removed = (entries || []).filter((e) => e?.removedAt);
+  const live = [...(entries || [])]
+    .filter((e) => e && !e.removedAt && typeof e.deletedAt === 'number' && e.deletedAt > cutoff)
     .sort((a, b) => b.deletedAt - a.deletedAt)
     .slice(0, MAX_TRASH_ENTRIES);
+  return [...live, ...removed];
+}
+
+/**
+ * Drops removed-entry tombstones older than TRASH_RETENTION_DAYS — long
+ * enough for every device to have seen the removal. Run on load.
+ */
+export function dropTrashTombstones(entries, nowMs) {
+  const cutoff = nowMs - TRASH_RETENTION_DAYS * MS_PER_DAY;
+  return (entries || []).filter((e) => !e?.removedAt || new Date(e.removedAt).getTime() > cutoff);
 }
 
 /**
@@ -146,7 +182,7 @@ export function planTrashRestore(entry, state) {
   if (!entry) return { ok: false, error: 'Nothing to restore.' };
   const tasks = state?.tasks || [];
   const taskById = new Map(tasks.map((t) => [t.id, t]));
-  const plan = { ok: true, projects: [], sections: [], labels: [], taskUpdates: [], reattached: 0, skipped: 0 };
+  const plan = { ok: true, projects: [], sections: [], labels: [], taskUpdates: [], taskReplacements: [], eventReplacements: [], reattached: 0, skipped: 0 };
 
   // A row whose id is already back (restored twice, or re-created by hand with
   // the same id via a backup restore) is left alone rather than duplicated.
@@ -216,11 +252,24 @@ export function planTrashRestore(entry, state) {
     return plan;
   }
 
+  if (entry.kind === 'edit') {
+    // Puts the overwritten version back over whatever is there now — the
+    // user chose this version over the newer one. A row that has since been
+    // deleted comes back too: restoring an edit is restoring the item.
+    if (entry.entity === 'task') plan.taskReplacements.push(entry.row);
+    else if (entry.entity === 'event') plan.eventReplacements.push(entry.row);
+    else return { ok: false, error: 'This kind of item can’t be restored.' };
+    return plan;
+  }
+
   return { ok: false, error: 'This kind of item can’t be restored.' };
 }
 
 /** What the row says: what it was, and how much comes back with it. */
 export function describeTrashEntry(entry) {
+  if (entry?.kind === 'edit') {
+    return `${entry.entity === 'event' ? 'Event' : 'Task'} · an edit replaced by a newer one from another device`;
+  }
   const kindLabel = { project: 'Project', section: 'Section', label: 'Tag' }[entry?.kind] || 'Item';
   const count = (entry?.detached || []).length;
   if (entry?.kind === 'project') {

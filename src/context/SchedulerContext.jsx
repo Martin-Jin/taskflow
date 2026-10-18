@@ -120,6 +120,7 @@ import {
   buildSectionTrashEntry,
   buildLabelTrashEntry,
   pruneTrash,
+  dropTrashTombstones,
   planTrashRestore,
 } from '../utils/trash';
 import {
@@ -137,7 +138,7 @@ import { getDefaultRoutines, getDefaultRules, getMockTasks, getMockSections, get
 import { toISODate, addDays, timeToMinutes, minutesToTime, getBrowserTimeZone } from '../utils/dateUtils';
 import { resolveEventId, truncateRuleUntil } from '../utils/recurrenceExpansion';
 import { dedupeEventsByOccurrence } from '../utils/eventUtils';
-import { applyEventScopeUpdate, splitSeriesAtOccurrence } from '../utils/eventScopeUpdate';
+import { applyEventScopeUpdate, splitSeriesAtOccurrence, resolveMultiDayTarget } from '../utils/eventScopeUpdate';
 import { nextLabelColor } from '../utils/labelColor';
 import { ensureProtectedSleepRoutine } from '../utils/protectedSleepRoutine';
 import { buildMentionNotifications } from '../utils/mentionNotifications';
@@ -602,10 +603,17 @@ export function SchedulerProvider({ children }) {
      one-off filter choice is transient UI state, but a view the user bothered
      to name is data they'd be annoyed to lose and would expect to find on
      their phone. Per CLAUDE.md's Backups rule that makes it a BACKUP_FIELDS
-     entry with a matching path in every sync function. */
-  const [savedViews, setSavedViews, setSavedViewsRaw] = useLocalEditTrackedState(
-    usePersistedState('savedViews', []),
-    localNonUndoEditIdRef
+     entry with a matching path in every sync function.
+
+     savedViews, taskTemplates and trash merge ROW BY ROW across devices (see
+     useCloudSync's planRemoteDataMerge), so a removed row has to stay behind
+     as a tombstone for the removal to sync — useEntityStampedState's
+     `tombstoneField` does that inside the setter, so callers keep writing
+     plain `prev.filter(...)`. The raw arrays (`*Rows`) go to sync; everything
+     else gets the tombstone-free lists below. */
+  const [savedViewRows, setSavedViews, setSavedViewsRaw] = useEntityStampedState(
+    useLocalEditTrackedState(usePersistedState('savedViews', []), localNonUndoEditIdRef),
+    { tombstoneField: 'deletedAt' }
   );
 
   /* Reusable shapes of work (see utils/taskTemplates.js). Synced for the same
@@ -614,9 +622,9 @@ export function SchedulerProvider({ children }) {
      sync function. Bounded at both levels (MAX_TEMPLATES, and
      MAX_TEMPLATE_TASKS per template) rather than time-pruned: a named template
      is meant to be kept until deleted. */
-  const [taskTemplates, setTaskTemplates, setTaskTemplatesRaw] = useLocalEditTrackedState(
-    usePersistedState('taskTemplates', []),
-    localNonUndoEditIdRef
+  const [taskTemplateRows, setTaskTemplates, setTaskTemplatesRaw] = useEntityStampedState(
+    useLocalEditTrackedState(usePersistedState('taskTemplates', []), localNonUndoEditIdRef),
+    { tombstoneField: 'deletedAt' }
   );
 
   /* Recoverable deletes of projects/sections/labels (see utils/trash.js).
@@ -624,11 +632,16 @@ export function SchedulerProvider({ children }) {
      safety net. Synced like the collections above — the misclick and the
      recovery needn't happen on the same device — and genuinely PRUNED rather
      than merely capped, since unlike a saved view or a template a trash entry
-     has a natural shelf life (TRASH_RETENTION_DAYS). */
-  const [trash, setTrash, setTrashRaw] = useLocalEditTrackedState(
-    usePersistedState('trash', []),
-    localNonUndoEditIdRef
+     has a natural shelf life (TRASH_RETENTION_DAYS). Its tombstone field is
+     `removedAt`, because an entry's own `deletedAt` already means "when the
+     project/section/tag was deleted". */
+  const [trashRows, setTrash, setTrashRaw] = useEntityStampedState(
+    useLocalEditTrackedState(usePersistedState('trash', []), localNonUndoEditIdRef),
+    { tombstoneField: 'removedAt' }
   );
+  const savedViews = useMemo(() => savedViewRows.filter((v) => !v.deletedAt), [savedViewRows]);
+  const taskTemplates = useMemo(() => taskTemplateRows.filter((t) => !t.deletedAt), [taskTemplateRows]);
+  const trash = useMemo(() => trashRows.filter((e) => !e.removedAt), [trashRows]);
 
   // When the last one-time Todoist import ran, and how many tasks it
   // touched — shown as a status line in Settings so a re-import isn't a
@@ -1083,6 +1096,24 @@ export function SchedulerProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Removal tombstones in savedViews/taskTemplates/trash (see their state
+  // declarations) are dropped once they're old enough for every device to
+  // have seen them. Through the RAW setters: the stamping setter would keep
+  // a removed tombstone, by design.
+  useEffect(() => {
+    const dropStale = (prev) => {
+      const kept = prev.filter((row) => !isStaleEntityTombstone(row, RETENTION_DAYS_DELETED_ENTITIES));
+      return kept.length === prev.length ? prev : kept;
+    };
+    setSavedViewsRaw(dropStale);
+    setTaskTemplatesRaw(dropStale);
+    setTrashRaw((prev) => {
+      const kept = dropTrashTombstones(prev, Date.now());
+      return kept.length === (prev || []).length ? prev : kept;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---- Initial data load ---------------------------------------------------
   // Google Calendar's own silent re-auth/pull now runs inside
   // useGoogleCalendarSync (below), so there's nothing left to block on here —
@@ -1306,9 +1337,9 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
-      savedViews,
-      taskTemplates,
-      trash,
+      savedViews: savedViewRows,
+      taskTemplates: taskTemplateRows,
+      trash: trashRows,
       sharedProjectIds,
       // CalendarEvents have no shared-project equivalent (they're always
       // personal), so unlike tasks/sections above there's no partition step —
@@ -1333,9 +1364,9 @@ export function SchedulerProvider({ children }) {
       notificationSettings,
       notes,
       shortcutBindings,
-      savedViews,
-      taskTemplates,
-      trash,
+      savedViewRows,
+      taskTemplateRows,
+      trashRows,
       sharedProjectIds,
       events,
       fieldUpdatedAt,
@@ -2929,10 +2960,45 @@ export function SchedulerProvider({ children }) {
         );
       }
 
+      // An overwritten edit (see utils/editConflicts.js): the saved version
+      // replaces the current one, or comes back if the item was deleted
+      // since. Freshly stamped, so it wins on every device.
+      if (plan.taskReplacements.length > 0) {
+        const nowIso = new Date().toISOString();
+        const byId = new Map(
+          plan.taskReplacements.map(({ deletedAt, ...row }) => [row.id, { ...row, updatedAt: nowIso }])
+        );
+        commit(
+          (current) => ({
+            tasks: [...current.tasks.filter((t) => !byId.has(t.id)), ...byId.values()],
+            blocks: current.blocks,
+          }),
+          `Restored "${entry.name}"`
+        );
+        triggerDueDateRebalance();
+      }
+      if (plan.eventReplacements.length > 0) {
+        const nowIso = new Date().toISOString();
+        setEvents((prev) => {
+          const liveById = new Map(prev.filter((e) => !e.deletedAt).map((e) => [e.id, e]));
+          const restored = plan.eventReplacements.map((row) => {
+            const { deletedAt, pendingGooglePush, ...rest } = row;
+            const current = liveById.get(row.id);
+            // Still on Google: send this version there. Gone (deleted since):
+            // clear the old Google id so the push sweep creates it afresh.
+            return current?.googleEventId
+              ? { ...rest, googleEventId: current.googleEventId, localUpdatedAt: nowIso, pendingGooglePush: true }
+              : { ...rest, googleEventId: null, localUpdatedAt: nowIso };
+          });
+          const ids = new Set(restored.map((e) => e.id));
+          return [...prev.filter((e) => !ids.has(e.id)), ...restored];
+        });
+      }
+
       discardTrashEntry(entryId);
       return { ok: true, reattached: plan.reattached, skipped: plan.skipped };
     },
-    [trash, tasks, projects, sections, labels, setProjects, setSections, setLabels, commit, discardTrashEntry]
+    [trash, tasks, projects, sections, labels, setProjects, setSections, setLabels, setEvents, commit, discardTrashEntry, triggerDueDateRebalance]
   );
 
   /** Rename a Label — purely local (labels have no Todoist equivalent). Every task referencing it by id picks up the new name automatically since nothing denormalizes a label's name onto the task itself. */
@@ -4037,7 +4103,10 @@ export function SchedulerProvider({ children }) {
    * @param {'this'|'following'|'all'} scope
    */
   const updateEvent = useCallback(
-    (eventId, updates, scope = 'this') => {
+    (rawEventId, rawUpdates, scope = 'this') => {
+      // One day of a multi-day event is an edit of the whole event — see
+      // resolveMultiDayTarget.
+      const { eventId, updates } = resolveMultiDayTarget(events, rawEventId, rawUpdates);
       const stamped = { ...updates, localUpdatedAt: new Date().toISOString() };
       // Generated once up front (rather than inside applyEventScopeUpdate)
       // so BOTH calls below — the actual state write and the separate
@@ -4216,11 +4285,10 @@ export function SchedulerProvider({ children }) {
       // state regardless of which scope branch ran.
       const prevEventsSnapshot = events;
       // A virtual id is not always a repeat: each day of a multi-day event
-      // (an all-day conference) gets one too, see expandMultiDayEvent. That
-      // event has only one occurrence, so any scope deletes the whole row —
-      // the 'this' branch below would only mark a day as skipped, which a
-      // non-repeating event ignores, so Delete did nothing.
-      const isRepeatOccurrence = isVirtual && !!events.find((e) => e.id === masterId)?.recurrenceRule;
+      // (an all-day conference) gets one too. That event has only one
+      // occurrence, so any scope deletes the whole row — see
+      // resolveMultiDayTarget.
+      const isRepeatOccurrence = isVirtual && !resolveMultiDayTarget(events, eventId).isSpanDay;
 
       if (!isRepeatOccurrence || scope === 'all') {
         // For a virtual per-occurrence id (a true-RRULE series, scope 'all'
@@ -4519,7 +4587,11 @@ export function SchedulerProvider({ children }) {
    * @param {boolean} ignored
    * @param {'this'|'following'|'all'} scope
    */
-  const setEventIgnored = useCallback((event, ignored, scope = 'this') => {
+  const setEventIgnored = useCallback((rawEvent, ignored, scope = 'this') => {
+    // One day of a multi-day event stands for the whole event — see
+    // resolveMultiDayTarget.
+    const target = resolveMultiDayTarget(events, rawEvent.id);
+    const event = target.isSpanDay ? { ...rawEvent, id: target.eventId } : rawEvent;
     const { masterId, occurrenceDate, isVirtual } = resolveEventId(event.id);
     // One timestamp for this whole call, reused across every branch/event it
     // touches — same "compute once, reuse" convention updateEvent's `stamped`
@@ -4580,7 +4652,7 @@ export function SchedulerProvider({ children }) {
           : e
       )
     );
-  }, []);
+  }, [events]);
 
   const clearNotification = useCallback(() => setNotification(null), []);
 
