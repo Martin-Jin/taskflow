@@ -18,7 +18,7 @@
     "@tiptap/extension-task-list": "^3.32.0",
     "@tiptap/react": "^3.32.0",
     "@tiptap/starter-kit": "^3.32.0",
-    "firebase": "^12.18.0",
+    "firebase": "^13.0.0",
     "framer-motion": "^14.3.0",
     "lucide-react": "^1.57.0",
     "react": "^19.2.8",
