@@ -8,10 +8,10 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "jose": "^6.2.10"
+    "jose": "^6.2.13"
   },
   "devDependencies": {
-    "wrangler": "^4.151.0"
+    "wrangler": "^4.151.3"
   },
   "overrides": {
     "undici": "^7.30.0",
