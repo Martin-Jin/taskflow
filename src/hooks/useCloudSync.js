@@ -37,6 +37,8 @@ import { migrateLinksToNotes } from '../components/Dashboard/notesModel';
 import { mergeTasksByUpdatedAt } from '../utils/taskMerge';
 import { mergeEventsByUpdatedAt } from '../utils/eventMerge';
 import { pickNewerScalar, mergeEntitiesByTimestamp } from '../utils/entityMerge';
+import { computeEnforceDueDateSyncUpdates } from '../utils/recurrence';
+import { reanchorRecurringEnforceDueDateUpdates } from '../utils/recurrenceState';
 import { canonicalStringify } from '../utils/canonicalStringify';
 import { findOverwrittenEdits, syncBaseFromRows, advanceSyncBaseAfterMerge } from '../utils/editConflicts';
 import { buildOverwrittenEditTrashEntry, pruneTrash } from '../utils/trash';
@@ -698,9 +700,16 @@ export function computePushSingleFlightDecision(pushInFlight) {
  * than crashing — but there is no merge/timestamp comparison of any kind. A
  * field ABSENT from `remoteData` is left out of the plan entirely, same as
  * the ordinary path, so an old/partial payload doesn't wipe a field it
- * simply never mentions.
+ * simply never mentions. For ordinary task merges, `cascadeUpdatedAt` stamps
+ * any inherited due dates repaired from the merged parent/child rows;
+ * authoritative restores deliberately skip that repair to preserve the
+ * restored task array exactly.
  */
-export function planRemoteDataMerge(remoteData, localState, { skipAll = false, authoritative = false, syncBase = null } = {}) {
+export function planRemoteDataMerge(
+  remoteData,
+  localState,
+  { skipAll = false, authoritative = false, syncBase = null, cascadeUpdatedAt = null } = {}
+) {
   if (skipAll) return { stampFingerprint: false };
 
   if (authoritative) {
@@ -783,8 +792,9 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false, a
     // merged tasks, superseding whatever's picked here as a throwaway value.
     const validRemoteTasks = pickValid('tasks', remoteData.tasks, null);
     const tasksMerged = validRemoteTasks !== null;
+    const mergedTasks = tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks;
     plan.tasksBlocks = {
-      tasks: tasksMerged ? mergeTasksByUpdatedAt(localState.tasks, validRemoteTasks) : localState.tasks,
+      tasks: mergedTasks,
       blocks: pickValid('blocks', remoteData.blocks, localState.blocks),
     };
     // The losing side of any task both devices edited — see editConflicts.js.
@@ -792,11 +802,30 @@ export function planRemoteDataMerge(remoteData, localState, { skipAll = false, a
       const losers = findOverwrittenEdits({
         localRows: localState.tasks,
         remoteRows: validRemoteTasks,
-        mergedRows: plan.tasksBlocks.tasks,
+        mergedRows: mergedTasks,
         base: syncBase?.tasks,
         timestampField: 'updatedAt',
       });
       if (losers.length > 0) plan.overwrittenEdits = losers.map((row) => ({ entity: 'task', row }));
+
+      // The per-task timestamp merge can select a new parent deadline while
+      // keeping an older inherited sub-task deadline. Reapply the existing
+      // parent-to-subtask invariant to the merged rows, then stamp derived
+      // changes so this device pushes them and they can win future merges.
+      // Conflicts are detected above against the actual device edits, before
+      // this derived repair is applied.
+      if (cascadeUpdatedAt) {
+        const dueDateUpdates = reanchorRecurringEnforceDueDateUpdates(
+          mergedTasks,
+          computeEnforceDueDateSyncUpdates(mergedTasks)
+        );
+        if (dueDateUpdates.size > 0) {
+          plan.tasksBlocks.tasks = mergedTasks.map((task) => {
+            const update = dueDateUpdates.get(task.id);
+            return update ? { ...task, ...update, updatedAt: cascadeUpdatedAt } : task;
+          });
+        }
+      }
     }
     // Whether a real per-task merge ran (remote tasks were shape-valid), as
     // opposed to falling back to local wholesale — applyRemoteData needs
@@ -1723,7 +1752,12 @@ export function useCloudSync({
       taskTemplates: stateRef.current.taskTemplates,
       trash: stateRef.current.trash,
     };
-    const plan = planRemoteDataMerge(remoteData, stateRef.current, { skipAll, authoritative, syncBase: syncBaseRef.current });
+    const plan = planRemoteDataMerge(remoteData, stateRef.current, {
+      skipAll,
+      authoritative,
+      syncBase: syncBaseRef.current,
+      cascadeUpdatedAt: new Date().toISOString(),
+    });
     // The losing side of a two-device edit goes to Trash rather than
     // vanishing (see utils/editConflicts.js). Folded into the plan's own
     // trash list, not set separately: the stamping setter would diff against

@@ -801,6 +801,60 @@ describe('planRemoteDataMerge — tasks per-task merge wiring', () => {
     expect(byId.get('shared').title).toBe('remote version (newer)');
   });
 
+  it('resyncs inherited sub-task deadlines after merging a newer parent deadline', () => {
+    const cascadeUpdatedAt = '2026-10-21T00:00:00.000Z';
+    const localState = {
+      tasks: [
+        {
+          id: 'parent',
+          enforceDueDate: true,
+          dueDate: '2026-10-10',
+          updatedAt: '2026-10-10T00:00:00.000Z',
+        },
+        {
+          id: 'inherited-child',
+          parentId: 'parent',
+          enforceDueDate: true,
+          dueDate: '2026-10-10',
+          dueDateInherited: true,
+          updatedAt: '2026-10-20T00:00:00.000Z',
+        },
+        {
+          id: 'independent-child',
+          parentId: 'parent',
+          enforceDueDate: true,
+          dueDate: '2026-10-08',
+          dueDateInherited: false,
+          updatedAt: '2026-10-20T00:00:00.000Z',
+        },
+      ],
+      blocks: [],
+    };
+    const remoteData = {
+      tasks: [
+        {
+          ...localState.tasks[0],
+          dueDate: '2026-10-21',
+          updatedAt: '2026-10-21T00:00:00.000Z',
+        },
+        localState.tasks[1],
+        localState.tasks[2],
+      ],
+      blocks: [],
+    };
+
+    const plan = planRemoteDataMerge(remoteData, localState, { cascadeUpdatedAt });
+    const byId = new Map(plan.tasksBlocks.tasks.map((task) => [task.id, task]));
+
+    expect(byId.get('parent').dueDate).toBe('2026-10-21');
+    expect(byId.get('inherited-child')).toMatchObject({
+      dueDate: '2026-10-21',
+      dueDateInherited: true,
+      updatedAt: cascadeUpdatedAt,
+    });
+    expect(byId.get('independent-child').dueDate).toBe('2026-10-08');
+  });
+
   it('blocks keep their old shape-validation-only behavior (still picked wholesale, unmerged)', () => {
     const plan = planRemoteDataMerge(remoteData, localState, { skipAll: false });
     expect(plan.tasksBlocks.blocks).toEqual(remoteData.blocks);
@@ -952,6 +1006,29 @@ describe('planRemoteDataMerge — authoritative (restore-lock release) mode', ()
     expect(plan.tasksMerged).toBe(false); // no merge ran — this is the wholesale-replace path
     expect(plan.projects).toEqual(remoteData.projects);
     expect(plan.projects.some((p) => p.id === 'local-only-project')).toBe(false);
+  });
+
+  it('does not alter restored sub-task dates with the ordinary sync cascade', () => {
+    const remoteData = {
+      tasks: [
+        { id: 'parent', enforceDueDate: true, dueDate: '2026-10-21', updatedAt: '2026-10-21T00:00:00.000Z' },
+        {
+          id: 'child',
+          parentId: 'parent',
+          enforceDueDate: true,
+          dueDate: '2026-10-10',
+          dueDateInherited: true,
+          updatedAt: '2026-10-10T00:00:00.000Z',
+        },
+      ],
+      blocks: [],
+    };
+    const plan = planRemoteDataMerge(remoteData, localState, {
+      authoritative: true,
+      cascadeUpdatedAt: '2026-10-21T00:00:00.000Z',
+    });
+
+    expect(plan.tasksBlocks.tasks).toEqual(remoteData.tasks);
   });
 
   it("still keeps THIS device's own timezone even in authoritative mode", () => {

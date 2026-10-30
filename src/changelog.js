@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.0',
+    date: '2026-10-30',
+    title: 'Sub-task deadlines stay in sync',
+    changes: [
+      'Fixed a sync issue that could leave a sub-task showing an old due date after its parent deadline changed. Sub-tasks that inherit the parent deadline now update along with it on every device.',
+    ],
+  },
+  {
     version: '11.6.0',
     date: '2026-10-18',
     title: 'Clashing edits are kept, and steadier sync',
