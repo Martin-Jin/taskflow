@@ -80,6 +80,10 @@ const TOUCH_DRAG_CLICK_WINDOW_MS = 350;
 
 // Opacity of the ghost that follows the pointer while a row/card is dragged.
 const DRAG_GHOST_OPACITY = 0.75;
+// How long the temporary copy stays in the page. The browser only takes its
+// picture once the dragstart handler has returned, so removing the copy
+// straight away (a 0ms timer) can leave it with nothing to draw.
+const GHOST_CLEANUP_MS = 100;
 
 /**
  * Replaces the browser's automatic drag picture with a clean, semi-transparent
@@ -90,11 +94,16 @@ const DRAG_GHOST_OPACITY = 0.75;
  * panel behind it — and it came out as a blurry grey smear instead of
  * something that looks like the row. A hand-made copy is predictable.
  *
- * How: clone the element, park the clone off-screen next to the original (same
+ * How: clone the element and park the clone next to the original (same
  * parent, so the stylesheet rules that target rows inside that parent still
- * apply to it), hand it to setDragImage, then remove it. The browser takes its
- * picture synchronously inside setDragImage, so removing it on the next tick
- * is safe.
+ * apply to it), hand it to setDragImage, then remove it a moment later.
+ *
+ * Why the clone sits behind the page instead of far off-screen: a first
+ * version parked it at top: -10000px and removed it on a 0ms timer, and the
+ * drag then showed nothing at all — browsers can skip drawing an element that
+ * far outside the window, and the picture is taken after this handler
+ * returns. Tucking it at the top-left under the page (z-index: -1) keeps it
+ * drawable but never visible.
  */
 function setGhostDragImage(e) {
   const source = e.currentTarget;
@@ -106,8 +115,9 @@ function setGhostDragImage(e) {
   ghost.querySelector('.task-row-swipe-panel')?.remove();
   Object.assign(ghost.style, {
     position: 'fixed',
-    top: '-10000px',
+    top: '0',
     left: '0',
+    zIndex: '-1',
     width: `${rect.width}px`,
     margin: '0',
     transform: 'none',
@@ -116,7 +126,7 @@ function setGhostDragImage(e) {
   });
   source.parentNode.appendChild(ghost);
   e.dataTransfer.setDragImage(ghost, e.clientX - rect.left, e.clientY - rect.top);
-  setTimeout(() => ghost.remove(), 0);
+  setTimeout(() => ghost.remove(), GHOST_CLEANUP_MS);
 }
 
 function isClearlyInside(rect, clientY) {

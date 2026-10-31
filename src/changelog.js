@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.6',
+    date: '2026-11-01',
+    title: 'Drag picture fixed',
+    changes: [
+      'Fixed dragging a task row or Board card showing nothing under the pointer. It now shows a semi-transparent copy of the task.',
+    ],
+  },
+  {
     version: '11.7.5',
     date: '2026-11-01',
     title: 'Calmer "Due today" rows',
