@@ -279,10 +279,10 @@ test.describe('Scheduling conflict details', () => {
 
     // The debounced auto-rebalance (300ms) pulls the blocks earlier (not all
     // the way to tomorrow: without "Enforce due date" the overflow may still
-    // spill past it) — and does it quietly: "Schedule rebalanced" is only
-    // announced for a manual rebalance.
+    // spill past it) — and does it quietly: no toast of any kind (neither
+    // "rebalanced" nor "couldn't be fully scheduled") is shown for it.
     await expect.poll(async () => (await lastBlockDate()) < lastBefore, { timeout: 3000 }).toBe(true);
-    await expect(page.locator('.toast', { hasText: /rebalanced/i })).toHaveCount(0);
+    await expect(page.locator('.toast')).toHaveCount(0);
 
     expectNoErrors(errors);
   });

@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.3',
+    date: '2026-11-01',
+    title: 'Quieter, tidier notifications',
+    changes: [
+      'On mobile, a notification is now capped at two lines — a longer message scrolls up line by line so you can read the rest. The Undo button in notifications no longer has a border.',
+      'Notifications on mobile no longer look two lines tall when the message is one line, and the close button is now centered next to the message.',
+      'Rescheduling that happens on its own (after a sync, a calendar change or a due-date edit) no longer shows any message, including the "couldn\'t be fully scheduled" warning. Messages now only appear when you press Re-balance schedule yourself.',
+    ],
+  },
+  {
     version: '11.7.2',
     date: '2026-11-01',
     title: 'Tidier task rows and swipe panel',

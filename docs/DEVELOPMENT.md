@@ -233,10 +233,9 @@ together. Locked blocks are never destroyed by a rebalance.
 
 The same rebalance also runs automatically, after a cross-device sync, a
 Google Calendar change, or a due-date edit. Those runs are **quiet**
-(`SchedulerContext.runRebalance({ quiet: true })`): no "Schedule rebalanced"
-toast, and the "couldn't be fully scheduled" warning only appears when the
-set of tasks that don't fit has changed. Only the button announces every
-run.
+(`SchedulerContext.runRebalance({ quiet: true })`): no toast at all, neither
+"Schedule rebalanced" nor the "couldn't be fully scheduled" warning. Only the
+manual button announces anything.
 
 ### Sub-tasks and containers
 

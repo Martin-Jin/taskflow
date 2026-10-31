@@ -3122,7 +3122,9 @@ input[type='checkbox']:checked::after {
   max-width: 360px;
   font-size: 13px;
   display: flex;
-  align-items: flex-start;
+  /* Centered, so the icon and close button sit mid-height of the message —
+     also when it wraps onto several lines — instead of hugging the top. */
+  align-items: center;
   gap: 10px;
   animation: toast-in var(--duration-base) var(--ease-decelerate);
 }
@@ -3165,6 +3167,47 @@ input[type='checkbox']:checked::after {
   .toast {
     max-width: none;
   }
+
+  /* The close button keeps its full 36px touch target (see .btn-icon above),
+     but the negative margin stops that height from stretching a one-line
+     toast into what looks like two lines. */
+  .toast .btn-icon {
+    margin-block: -8px;
+  }
+
+  /* A message is capped at two lines. Anything longer scrolls up one line at
+     a time (after a short pause) so the rest is still readable; with
+     animations off it becomes a normal scrollable area instead. Toast.jsx
+     measures how many lines are hidden and passes the count in. */
+  .toast-message {
+    line-height: 1.4;
+    max-height: 2.8em;
+    overflow: hidden;
+  }
+
+  .toast-message.is-scrollable {
+    overflow-y: auto;
+  }
+
+  .toast-message.is-scrolling .toast-message-text {
+    animation: toast-message-scroll calc(var(--toast-hidden-lines) * var(--toast-scroll-ms))
+      steps(var(--toast-hidden-lines), jump-end) var(--toast-scroll-ms) forwards;
+  }
+}
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-message-text {
+  display: block;
+}
+
+@keyframes toast-message-scroll {
+  to {
+    transform: translateY(calc(var(--toast-hidden-lines) * -1.4em));
+  }
 }
 
 .action-toast {
@@ -3193,6 +3236,9 @@ input[type='checkbox']:checked::after {
   white-space: nowrap;
   color: var(--color-accent);
   font-weight: 600;
+  /* Borderless: the accent-coloured label is what marks it as tappable. */
+  border: none;
+  background: none;
 }
 
 @media (max-width: 639px) {

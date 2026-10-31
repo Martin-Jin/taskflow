@@ -1700,15 +1700,14 @@ export function SchedulerProvider({ children }) {
   // defined below). Declared up here so runRebalance can cancel a pending
   // queued run — see the cancel at the top of runRebalance for why.
   const dueDateRebalanceTimeoutRef = useRef(null);
-  // Which tasks the last rebalance couldn't fit, as a comparable key — lets a
-  // quiet rebalance (below) warn only when that list actually changes.
-  const lastOverflowKeyRef = useRef('');
 
   // `quiet` is for rebalances nobody asked for (after a sync, a Google
-  // Calendar change, a due-date edit): the "Schedule rebalanced" toast is
-  // skipped, and the "couldn't be fully scheduled" warning only shows if the
-  // set of tasks that don't fit has changed. A manual "Re-balance schedule"
-  // calls this with no options (or a click event), so it always reports.
+  // Calendar change, a due-date edit): every toast is skipped, including the
+  // "couldn't be fully scheduled" warning, since a background run popping up
+  // messages on its own (often on a phone, right after a sync) is just noise.
+  // The unscheduled tasks are still recorded via setLastOverflow. A manual
+  // "Re-balance schedule" calls this with no options (or a click event), so it
+  // always reports.
   const runRebalance = useCallback(({ quiet = false } = {}) => {
     // Any rebalance now in the debounce queue is about to be made redundant:
     // this run reads the freshest tasks/blocks/events itself, so a queued run
@@ -1767,10 +1766,7 @@ export function SchedulerProvider({ children }) {
     // details" modal alongside overflow, since the user should still know
     // their fixedTime request wasn't honored exactly.
     const allConflicts = [...result.overflow, ...result.timeShifted];
-    const overflowKey = result.overflow.map((o) => o.taskId).sort().join(',');
-    const overflowChanged = overflowKey !== lastOverflowKeyRef.current;
-    lastOverflowKeyRef.current = overflowKey;
-    if (quiet && !(result.overflow.length > 0 && overflowChanged)) return result;
+    if (quiet) return result;
     if (result.overflow.length > 0) {
       setNotification({
         type: 'warning',
