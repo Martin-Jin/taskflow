@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.4',
+    date: '2026-11-01',
+    title: 'Dragging a task shows the task',
+    changes: [
+      'Dragging a task row or Board card now shows a clean, semi-transparent copy of it under your pointer, instead of a blurry grey smear.',
+    ],
+  },
+  {
     version: '11.7.3',
     date: '2026-11-01',
     title: 'Quieter, tidier notifications',

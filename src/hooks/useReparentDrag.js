@@ -78,6 +78,47 @@ const EDGE_DEAD_ZONE_PX = 6;
 // this only has to cover one frame's worth of slack.
 const TOUCH_DRAG_CLICK_WINDOW_MS = 350;
 
+// Opacity of the ghost that follows the pointer while a row/card is dragged.
+const DRAG_GHOST_OPACITY = 0.75;
+
+/**
+ * Replaces the browser's automatic drag picture with a clean, semi-transparent
+ * copy of the row/card.
+ *
+ * Why: the automatic picture is a snapshot of the element as it is mid-drag —
+ * with its fade, shadow and (on list rows) the hidden swipe-to-reschedule
+ * panel behind it — and it came out as a blurry grey smear instead of
+ * something that looks like the row. A hand-made copy is predictable.
+ *
+ * How: clone the element, park the clone off-screen next to the original (same
+ * parent, so the stylesheet rules that target rows inside that parent still
+ * apply to it), hand it to setDragImage, then remove it. The browser takes its
+ * picture synchronously inside setDragImage, so removing it on the next tick
+ * is safe.
+ */
+function setGhostDragImage(e) {
+  const source = e.currentTarget;
+  if (!source?.parentNode || !e.dataTransfer?.setDragImage) return;
+  const rect = source.getBoundingClientRect();
+  const ghost = source.cloneNode(true);
+  ghost.classList.remove('is-dragging', 'is-reparent-target', 'is-selected');
+  ghost.removeAttribute('data-task-id');
+  ghost.querySelector('.task-row-swipe-panel')?.remove();
+  Object.assign(ghost.style, {
+    position: 'fixed',
+    top: '-10000px',
+    left: '0',
+    width: `${rect.width}px`,
+    margin: '0',
+    transform: 'none',
+    opacity: String(DRAG_GHOST_OPACITY),
+    pointerEvents: 'none',
+  });
+  source.parentNode.appendChild(ghost);
+  e.dataTransfer.setDragImage(ghost, e.clientX - rect.left, e.clientY - rect.top);
+  setTimeout(() => ghost.remove(), 0);
+}
+
 function isClearlyInside(rect, clientY) {
   const inset = Math.min(EDGE_DEAD_ZONE_PX, rect.height / 4);
   return clientY >= rect.top + inset && clientY <= rect.bottom - inset;
@@ -175,6 +216,7 @@ export function useReparentDrag({ tasks, updateTask, disabled = false, isTaskLoc
     // handler reads the task id back out of it.
     e.dataTransfer.setData('text/plain', taskId);
     e.dataTransfer.effectAllowed = 'move';
+    setGhostDragImage(e);
     beginDrag(taskId);
   }, [disabled, isLocked, beginDrag]);
 
