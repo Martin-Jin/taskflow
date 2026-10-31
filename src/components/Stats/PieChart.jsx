@@ -45,7 +45,7 @@ export default function PieChart({ data, emptyMessage = 'No data yet.' }) {
 
   return (
     <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ flexShrink: 0 }}>
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ flexShrink: 0, margin: '0 auto' }}>
         {slices.map((s) => (
           <path
             key={s.label}

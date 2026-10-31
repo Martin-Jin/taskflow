@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.1',
+    date: '2026-11-01',
+    title: 'Stats chart centered on mobile',
+    changes: [
+      'Fixed the hours-by-category ring on the Stats page sitting off to the left on phones. It is now centered above its legend.',
+    ],
+  },
+  {
     version: '11.7.0',
     date: '2026-10-30',
     title: 'Sub-task deadlines stay in sync',
