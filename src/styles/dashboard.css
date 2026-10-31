@@ -357,6 +357,8 @@
   padding: 10px 12px;
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
+  /* One even 1px outline on every side, for every state (current, missed,
+     due today) — no thicker bar on the left edge. */
   border: 1px solid transparent;
   /* Rest state sits on the page background rather than
      --color-bg-surface-hover — that token doubled as both this row's
@@ -365,7 +367,6 @@
      hover/focus gives a clear, theme-consistent step between them,
      matching how .task-row/.board-card do it elsewhere. */
   background: var(--color-bg-page);
-  border-left: 3px solid transparent;
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard),
     transform var(--duration-fast) var(--ease-standard);
 }
@@ -407,14 +408,12 @@
   background: var(--color-accent-soft);
   color: var(--color-text-primary);
   border-color: var(--color-accent-border);
-  border-left-color: var(--color-accent-solid-bg);
   font-weight: 600;
 }
 
 .today-agenda-item.is-missed {
   background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-surface-hover));
   border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
-  border-left-color: var(--color-danger);
 }
 
 /* Without this, the generic .is-openable:hover rule above (same
@@ -443,16 +442,16 @@
 
 /* Distinct from is-missed (red, "the deadline already passed") — a task due
    today is still on track, so it gets a warning-orange accent instead of
-   danger-red, matching the same left-border + label pattern. */
+   danger-red. Kept subtle: a plain white row with a thin orange outline and
+   the orange "Due today" label, rather than a tinted fill. */
 .today-agenda-item.is-due-today {
-  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-bg-surface-hover));
-  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
-  border-left-color: var(--color-warning);
+  background: var(--color-bg-surface-raised);
+  border-color: color-mix(in srgb, var(--color-warning) 60%, transparent);
 }
 
 .today-agenda-item.is-due-today.is-openable:hover,
 .today-agenda-item.is-due-today.is-openable:focus-visible {
-  background: color-mix(in srgb, var(--color-warning) 16%, var(--color-bg-surface-hover));
+  background: color-mix(in srgb, var(--color-warning) 6%, var(--color-bg-surface-raised));
 }
 
 .today-agenda-due-label {
@@ -463,6 +462,19 @@
   color: var(--color-warning);
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+/* A finished item reads as done, whatever else it was: white row with a thin
+   green outline, overriding the due-today (orange) and missed (red) looks.
+   Must stay AFTER those rules — same specificity, so source order decides. */
+.today-agenda-item.is-completed {
+  background: var(--color-bg-surface-raised);
+  border-color: color-mix(in srgb, var(--color-success) 60%, transparent);
+}
+
+.today-agenda-item.is-completed.is-openable:hover,
+.today-agenda-item.is-completed.is-openable:focus-visible {
+  background: color-mix(in srgb, var(--color-success) 6%, var(--color-bg-surface-raised));
 }
 
 /* A completed item is no longer "on track" or "missed" — it's just done —

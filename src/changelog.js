@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.5',
+    date: '2026-11-01',
+    title: 'Calmer "Due today" rows',
+    changes: [
+      'Tasks due today in the Today agenda now show as plain white rows with a thin orange outline and orange label, instead of a tinted fill with a thick orange bar. Finished items get a thin green outline and green label, even if they were due today.',
+    ],
+  },
+  {
     version: '11.7.4',
     date: '2026-11-01',
     title: 'Dragging a task shows the task',
