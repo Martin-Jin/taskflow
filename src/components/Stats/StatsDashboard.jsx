@@ -10,11 +10,9 @@
  */
 
 import React, { useMemo } from 'react';
-import { AlertTriangle } from 'lucide-react';
 import { useScheduler } from '../../context/SchedulerContext';
 import { computeEstimateAccuracy, computeAccuracyByProject, describeAccuracy, accuracyHeadline, MIN_RELIABLE_SAMPLE } from '../../utils/estimateAccuracy';
 import { computeHorizonCapacity } from '../../algorithms/capacityEngine';
-import { getEffectiveDeadline } from '../../algorithms/allocator';
 import { getWeekRange, toISODate, dateRange, formatDisplayDate } from '../../utils/dateUtils';
 import { getMissedTaskItems, isBlockTaskCompleted } from '../../utils/missedTasks';
 import { getOverdueTasks } from '../../utils/overdueTasks';
@@ -83,19 +81,6 @@ export default function StatsDashboard() {
     const totalWeekCapacity = [...capacityMap.values()].reduce((sum, c) => sum + c.totalAvailableHours, 0);
     const freeCapacityThisWeek = Math.max(0, totalWeekCapacity - scheduledThisWeek);
 
-    // Uses the scheduler's own getEffectiveDeadline rather than re-deriving
-    // it: a task marked "must be done on due date" (enforceDueDate) has no
-    // buffer to miss — its deadline IS its due date — so subtracting
-    // bufferDays here flagged it as permanently at-risk while the scheduler
-    // considered it perfectly on time. It also resolves an undated sub-task's
-    // inherited due date, which the old inline version couldn't see at all.
-    // A Map, not a plain object — findAncestorDueDate calls .get() on it.
-    const taskByIdForDeadlines = new Map(tasks.map((t) => [t.id, t]));
-    const overdueRiskTasks = activeTasks.filter((t) => {
-      const effectiveDeadline = getEffectiveDeadline(t, rules.bufferDays, taskByIdForDeadlines);
-      return !!effectiveDeadline && effectiveDeadline < today && t.remainingHours > 0;
-    });
-
     // ---- Task-count stats (mirrors DashboardStats' own definitions, so the
     // numbers agree wherever the same concept shows up) --------------------
     const activeTaskCount = activeTasks.length;
@@ -111,7 +96,6 @@ export default function StatsDashboard() {
       scheduledToday,
       scheduledThisWeek,
       freeCapacityThisWeek,
-      overdueRiskTasks,
       activeTaskCount,
       dueTodayCount,
       overdueAndMissedCount,
@@ -192,22 +176,6 @@ export default function StatsDashboard() {
         />
         <StatCard label="Total completed" value={stats.totalCompletedCount} sublabel="all-time" />
       </div>
-
-      {stats.overdueRiskTasks.length > 0 && (
-        <div className="card" style={{ borderLeft: '3px solid var(--color-danger)', marginBottom: 16 }}>
-          <strong style={{ color: 'var(--color-danger)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <AlertTriangle size={15} />
-            {stats.overdueRiskTasks.length} task(s) at risk of missing their buffer deadline
-          </strong>
-          <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-            {stats.overdueRiskTasks.map((t) => (
-              <li key={t.id}>
-                {t.title} — {t.remainingHours.toFixed(1)}h left, due {t.dueDate}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       <h3 className="stats-section-title">Estimate accuracy</h3>
       <div className="card stats-accuracy-card">

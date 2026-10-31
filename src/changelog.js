@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.7',
+    date: '2026-11-01',
+    title: 'Simpler Stats page',
+    changes: [
+      'Removed the "tasks at risk of missing their buffer deadline" box from Stats.',
+    ],
+  },
+  {
     version: '11.7.6',
     date: '2026-11-01',
     title: 'Drag picture fixed',
