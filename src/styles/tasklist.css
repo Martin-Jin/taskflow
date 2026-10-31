@@ -623,7 +623,8 @@
    this size. Kept visible once its own menu is open (aria-expanded) so it
    doesn't vanish out from under an open popover if the pointer drifts off
    the row while choosing an option. */
-.task-row-reschedule {
+.task-row-reschedule,
+.task-row-log-time {
   flex-shrink: 0;
   align-self: flex-start;
   width: 20px;
@@ -637,6 +638,7 @@
 }
 
 .task-row:focus-within .task-row-reschedule,
+.task-row:focus-within .task-row-log-time,
 .task-row-reschedule[aria-expanded='true'] {
   opacity: 1;
 }
@@ -650,11 +652,13 @@
    in the "keep the desktop list layout" width range could still have a
    coarse pointer with no real hover — this keeps that case correct too. */
 @media (hover: hover) {
-  .task-row:hover .task-row-reschedule {
+  .task-row:hover .task-row-reschedule,
+  .task-row:hover .task-row-log-time {
     opacity: 1;
   }
 
-  .task-row-reschedule:hover:not(:disabled) {
+  .task-row-reschedule:hover:not(:disabled),
+  .task-row-log-time:hover:not(:disabled) {
     background: var(--color-bg-surface-hover);
     border-color: transparent;
   }
@@ -870,4 +874,55 @@
   .saved-view-delete {
     opacity: 1;
   }
+}
+
+/* "Log time" clock button: hover-revealed on desktop like the reschedule
+   button above, but always visible on mobile, where there is no hover and the
+   swipe gesture only covers rescheduling. The title and meta line scroll
+   sideways on mobile (MarqueeText) so a long title never runs under the icon:
+   .task-row-main clips them, and the row's own gap plus its right padding
+   keep clear space on both sides of the icon. */
+@media (max-width: 639px) {
+  .task-row-log-time {
+    opacity: 1;
+    width: 32px;
+    height: 32px;
+    margin: -6px -4px -6px 0;
+    align-self: center;
+  }
+
+  .task-row-main {
+    overflow: hidden;
+  }
+
+  .task-row-title-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .task-row-title-line .marquee-text {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .task-row-main .marquee-text {
+    display: block;
+  }
+}
+
+/* LogTimeModal's one-line "[x] hours [y] minutes of this task" sentence. */
+.log-time-sentence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  white-space: nowrap;
+}
+
+.log-time-sentence input {
+  width: 56px;
+  flex: 0 0 auto;
+  text-align: center;
 }

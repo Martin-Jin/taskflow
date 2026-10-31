@@ -113,6 +113,7 @@ import {
   computeFirstMatchingDueDate,
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
+import { getTaskScheduledBlocks } from '../../utils/taskScheduledBlocks';
 import Modal from '../Common/Modal';
 import { TIME_OF_DAY_OPTIONS, TIME_OF_DAY_LABELS } from '../../utils/timeOfDay';
 import NumberField from '../Common/NumberField';
@@ -982,28 +983,8 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
     [sections, projectId]
   );
 
-  // Scheduled blocks for this task, oldest first — a task's hours can be
-  // split across multiple days, so this can have more than one entry. For a
-  // recurring task, every future occurrence gets its own block too (see
-  // SchedulerContext.completeTask's recurring branch), so this is narrowed
-  // to just the current occurrence's date instead of listing every occurrence
-  // out to the scheduling horizon. That's normally the earliest block's date
-  // (`sorted[0]`), EXCEPT when the current occurrence was moved off-pattern
-  // (see resolveCurrentOccurrenceDueDate) — its block is placed on the
-  // moved-to date, which can sort after an older, not-yet-rebalanced block
-  // for a prior occurrence still sitting in `blocks`. Preferring the resolved
-  // due date (falling back to the earliest block, e.g. before any rebalance
-  // has run yet) keeps this in agreement with the due-date field above rather
-  // than trusting sort order alone.
-  const taskScheduledBlocks = useMemo(() => {
-    const sorted = blocks
-      .filter((b) => b.taskId === task.id)
-      .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
-    if (!task.isRecurring || sorted.length === 0) return sorted;
-    const currentOccurrenceDate = resolveCurrentOccurrenceDueDate(task);
-    const targetDate = sorted.some((b) => b.date === currentOccurrenceDate) ? currentOccurrenceDate : sorted[0].date;
-    return sorted.filter((b) => b.date === targetDate);
-  }, [blocks, task.id, task.isRecurring, task.dueDate, task.overrides]);
+  // Scheduled blocks for this task, oldest first (see getTaskScheduledBlocks).
+  const taskScheduledBlocks = useMemo(() => getTaskScheduledBlocks(task, blocks), [blocks, task.id, task.isRecurring, task.dueDate, task.overrides]);
 
   function handleProjectChange(newProjectId) {
     setProjectId(newProjectId);

@@ -64,6 +64,7 @@ import {
   PanelLeftOpen,
   History,
   CalendarClock,
+  Clock,
 } from 'lucide-react';
 import { useScheduler } from '../context/SchedulerContext';
 import { useCompleteTask } from '../context/CompleteTaskContext';
@@ -82,6 +83,7 @@ import AddTaskFabGroup from './Common/AddTaskFabGroup';
 import ReparentDropHint from './Common/ReparentDropHint';
 import ProjectActionsMenu from './Common/ProjectActionsMenu';
 import RescheduleMenu from './Common/RescheduleMenu';
+import LogTimeModal from './Modals/LogTimeModal';
 import PresenceAvatars from './Common/PresenceAvatars';
 import SharedProjectBadge from './Common/SharedProjectBadge';
 import ViewFilterMenu from './Common/ViewFilterMenu';
@@ -104,6 +106,7 @@ import { formatHours } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { getEffectiveEstimatedHours, getEffectiveRemainingHours, getEffectiveRemainingHoursForOccurrence, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { resolveCurrentOccurrenceDueDate } from '../utils/recurrence';
+import { getTaskScheduledBlocks } from '../utils/taskScheduledBlocks';
 import {
   ALL_TASKS_PROJECT_ID,
   ALL_TASKS_PROJECT_LABEL,
@@ -197,7 +200,7 @@ export default function TaskListPanel({
   onProjectCreated,
   onSelectEvent,
 }) {
-  const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, setSearchQuery, savedViews, setSavedViews, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects } = useScheduler();
+  const { tasks, blocks, labels, projects, updateTask, uncompleteTask, searchQuery, setSearchQuery, savedViews, setSavedViews, renameProject, togglePinProject, deleteProject, viewersByProject, sharedProjects, setRemainingHoursWithBlockInference } = useScheduler();
   const { requestComplete } = useCompleteTask();
   const { playUncomplete } = useSound();
   const { user } = useAuth();
@@ -411,6 +414,17 @@ export default function TaskListPanel({
       return next;
     });
   }, []);
+  // Logging time lowers "Time left" through the same path as editing it in
+  // the detail modal, so the blocks that much work covers get ticked off.
+  const handleLogTime = useCallback(
+    (task, loggedHours) =>
+      setRemainingHoursWithBlockInference(
+        task,
+        getEffectiveRemainingHoursForOccurrence(task) - loggedHours,
+        getTaskScheduledBlocks(task, blocks)
+      ),
+    [setRemainingHoursWithBlockInference, blocks]
+  );
   const handleUncomplete = useCallback(
     (taskId) => {
       uncompleteTask(taskId);
@@ -656,6 +670,7 @@ export default function TaskListPanel({
         isSelected={select.isSelected(task.id)}
         onToggleSelect={select.toggle}
         onReschedule={(taskId, date) => updateTask(taskId, { dueDate: date })}
+        onLogTime={handleLogTime}
         isMobile={isMobile}
       />
     );
@@ -1035,9 +1050,11 @@ const TaskRow = React.memo(function TaskRow({
   isSelected,
   onToggleSelect,
   onReschedule,
+  onLogTime,
   isMobile,
 }) {
   const [rescheduleMenuOpen, setRescheduleMenuOpen] = useState(false);
+  const [logTimeOpen, setLogTimeOpen] = useState(false);
   const rescheduleButtonRef = useRef(null);
   // Swipe-to-reschedule (mobile only — see SWIPE TO RESCHEDULE below). A
   // framer-motion MotionValue rather than useState: onDrag fires on every
@@ -1051,6 +1068,20 @@ const TaskRow = React.memo(function TaskRow({
   const swipePanelOpacity = useTransform(swipeX, (x) => Math.min(1, Math.abs(x) / SWIPE_OPEN_THRESHOLD_PX));
   const [isSwipeOpen, setIsSwipeOpen] = useState(false);
   const swipeRowRef = useRef(null);
+  // A container (has sub-tasks) shows its rolled-up hours here rather than its own
+  // frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task.
+  // No due date is the common/default case, not something worth calling out on
+  // every undated row — see direction rule 3 ("never render the absence of
+  // information"). The blocked icon that used to render its own text label
+  // here moved into the status rail next to the title instead.
+  const metaText =
+    `${formatHours(effectiveRemainingHours)} remaining of ${formatHours(effectiveEstimatedHours)}` +
+    (displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : '') +
+    (assigneeName ? ` · for ${assigneeName}` : '');
+  // A container's hours are a read-only rollup of its sub-tasks, and a task
+  // waiting on an unfinished dependency can't have time logged (same rule as
+  // editing "Time left" in the detail modal).
+  const canLogTime = !selectionMode && !isReadOnlyViewer && !isCheckedForDisplay && !hasChildren && dependenciesMet;
 
   return (
     <motion.div
@@ -1217,7 +1248,10 @@ const TaskRow = React.memo(function TaskRow({
         </button>
       )}
       <div className="task-row-main">
-        <div style={{ fontWeight: 600, textDecoration: isCheckedForDisplay ? 'line-through' : 'none', opacity: isCheckedForDisplay ? 0.5 : 1 }}>
+        <div
+          className={isMobile ? 'task-row-title-line' : undefined}
+          style={{ fontWeight: 600, textDecoration: isCheckedForDisplay ? 'line-through' : 'none', opacity: isCheckedForDisplay ? 0.5 : 1 }}
+        >
           {task.link ? (
             <a
               href={task.link}
@@ -1227,9 +1261,11 @@ const TaskRow = React.memo(function TaskRow({
               onClick={(e) => e.stopPropagation()}
               title={`Open link: ${task.link}`}
             >
-              {task.title}
+              {isMobile ? <MarqueeText text={task.title} /> : task.title}
               <ExternalLink size={11} aria-hidden="true" />
             </a>
+          ) : isMobile ? (
+            <MarqueeText text={task.title} />
           ) : (
             task.title
           )}
@@ -1266,18 +1302,7 @@ const TaskRow = React.memo(function TaskRow({
             gap: 3,
           }}
         >
-          <span>
-            {/* A container (has sub-tasks) shows its rolled-up hours here rather than its own
-                frozen/independent number — see utils/taskHierarchy.js. Cheap no-op for a leaf task. */}
-            {formatHours(effectiveRemainingHours)} remaining of {formatHours(effectiveEstimatedHours)}
-            {/* No due date is the common/default case, not something worth
-                calling out on every undated row — see direction rule 3
-                ("never render the absence of information"). The blocked
-                icon that used to render its own text label here moved into
-                the status rail next to the title instead. */}
-            {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ''}
-            {assigneeName ? ` · for ${assigneeName}` : ''}
-          </span>
+          {isMobile ? <MarqueeText text={metaText} /> : <span>{metaText}</span>}
         </div>
         <div className="task-row-badges">
           {/* Only past the threshold, and never as "pushed 0×" — the absence
@@ -1328,6 +1353,21 @@ const TaskRow = React.memo(function TaskRow({
           aria-label={`Restore ${task.title}`}
         >
           <RotateCcw size={14} />
+        </button>
+      )}
+      {canLogTime && (
+        <button
+          type="button"
+          className="btn btn-icon task-row-log-time"
+          onClick={(e) => {
+            e.stopPropagation();
+            setLogTimeOpen(true);
+          }}
+          aria-label={`Log time on ${task.title}`}
+          aria-haspopup="dialog"
+          title="Log time"
+        >
+          <Clock size={14} />
         </button>
       )}
       {!isMobile && !selectionMode && !isReadOnlyViewer && !isCheckedForDisplay && (
@@ -1381,6 +1421,7 @@ const TaskRow = React.memo(function TaskRow({
         onReschedule={(date) => onReschedule(task.id, date)}
         forceCentered={isMobile}
       />
+      {logTimeOpen && <LogTimeModal taskTitle={task.title} onSave={(hours) => onLogTime(task, hours)} onClose={() => setLogTimeOpen(false)} />}
     </motion.div>
   );
 });

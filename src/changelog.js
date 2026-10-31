@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.8.0',
+    date: '2026-11-01',
+    title: 'Log time from the task list',
+    changes: [
+      'Each task row now has a small clock button. Click it, type the hours and minutes you have done, and the time left on that task goes down to match.',
+      'On mobile, long task titles and the line under them now scroll sideways so they never run under the new button.',
+    ],
+  },
+  {
     version: '11.7.7',
     date: '2026-11-01',
     title: 'Simpler Stats page',

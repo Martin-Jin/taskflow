@@ -2249,3 +2249,44 @@ test.describe('Task templates', () => {
     expectNoErrors(errors);
   });
 });
+
+test('Tasks: the clock button logs time and lowers the hours remaining', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await page.evaluate(() => {
+    const now = new Date().toISOString();
+    const due = new Date();
+    due.setDate(due.getDate() + 5);
+    const dueDate = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`;
+    localStorage.setItem('taskflow:v1:tasks', JSON.stringify([{
+      id: 'lt1', title: 'LOGTIME task', isCompleted: false, isLocked: false, estimatedHours: 3, remainingHours: 3,
+      priority: 'medium', dependsOn: [], minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
+      dueDate, createdAt: now, updatedAt: now,
+    }]));
+    localStorage.setItem('taskflow:v1:blocks', JSON.stringify([]));
+  });
+  await page.reload();
+  await gotoTab(page, 'Tasks');
+  await page.waitForTimeout(500);
+
+  const row = page.locator('.task-row', { hasText: 'LOGTIME task' });
+  await expect(row).toContainText('3h remaining of 3h');
+  await row.hover();
+  await row.getByRole('button', { name: /log time on/i }).click();
+
+  // Hours is focused; letters are dropped, Enter moves on to minutes.
+  const hours = page.getByRole('textbox', { name: 'Hours' });
+  await expect(hours).toBeFocused();
+  await hours.pressSequentially('1a');
+  await expect(hours).toHaveValue('1');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('textbox', { name: 'Minutes' })).toBeFocused();
+  await page.keyboard.type('30');
+  await page.keyboard.press('Enter');
+
+  // 3h - 1h30m = 1.5h left (the saved value, not just a closed dialog).
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(row).toContainText('1.5h remaining of 3h');
+
+  expectNoErrors(errors);
+});
