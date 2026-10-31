@@ -21,6 +21,15 @@
 
 export const CHANGELOG = [
   {
+    version: '11.7.2',
+    date: '2026-11-01',
+    title: 'Tidier task rows and swipe panel',
+    changes: [
+      'Task rows no longer repeat the section name (like "Periodic tasks") or a priority tag. Priority still shows in the checkbox colour, and rows without labels are now thinner.',
+      'Fixed the Reschedule icon and label sitting off-center when you swipe a task on mobile. They are now centered in the highlighted panel.',
+    ],
+  },
+  {
     version: '11.7.1',
     date: '2026-11-01',
     title: 'Stats chart centered on mobile',

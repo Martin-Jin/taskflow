@@ -688,17 +688,21 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  /* flex-end (not center) is the cross-axis here (column layout, so this is
-     horizontal) — keeps the icon/label tucked toward the row's trailing
-     edge rather than centered in the middle of the whole reveal band. */
-  align-items: flex-end;
+  /* Centers the icon and label both ways inside the 96px accent band (the
+     cross-axis is horizontal here, since this is a column layout). The band
+     itself is pushed to the row's trailing edge by margin-left: auto. */
+  align-items: center;
   justify-content: center;
   gap: 2px;
   width: 96px;
   margin-left: auto;
-  padding-right: 16px;
+  text-align: center;
   background: var(--color-accent-soft);
+  /* Rounded only on the trailing side, matching the row's own corners; the
+     leading side is square because it's the edge the row slides away from. */
   border-radius: inherit;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
   color: var(--color-accent);
   font-size: 10px;
   font-weight: 600;
@@ -742,9 +746,15 @@
   color: var(--color-text-secondary);
 }
 
-/* Priority/label pills sit under the "remaining/due" line, left-aligned —
+/* Postpone/label pills sit under the "remaining/due" line, left-aligned —
    previously a right-aligned column with its own delete "X"; the row now
-   opens TaskDetailModal (with its own Delete button) for that instead. */
+   opens TaskDetailModal (with its own Delete button) for that instead.
+   A row with no pills hides this wrapper entirely, so its top margin doesn't
+   leave an empty strip and the row stays as thin as its text. */
+.task-row-badges:empty {
+  display: none;
+}
+
 .task-row-badges {
   display: flex;
   align-items: center;

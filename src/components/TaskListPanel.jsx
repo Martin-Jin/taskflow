@@ -1276,16 +1276,10 @@ const TaskRow = React.memo(function TaskRow({
                 icon that used to render its own text label here moved into
                 the status rail next to the title instead. */}
             {displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : ''}
-            {task.sectionName ? ` · ${task.sectionName}` : ''}
             {assigneeName ? ` · for ${assigneeName}` : ''}
           </span>
         </div>
         <div className="task-row-badges">
-          {/* "low" is the default priority new tasks get — flagging it on
-              every such row is noise, not information (direction rule 3).
-              Medium/high/urgent still render since those are a deliberate
-              upward choice worth surfacing. */}
-          {task.priority !== 'low' && <Badge variant={task.priority}>{task.priority}</Badge>}
           {/* Only past the threshold, and never as "pushed 0×" — the absence
               of this badge is the signal that nothing is stuck (direction
               rule 3). The title carries the date, since the count alone
