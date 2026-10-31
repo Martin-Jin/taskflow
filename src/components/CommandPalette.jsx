@@ -8,10 +8,10 @@
  *
  * Views/Projects/Actions all rank via nameSearch.js's shared rankByNameSearch
  * (the same typo-tolerant matcher used everywhere else names are searched).
- * Tasks keeps its own local `fuzzyScore`/`fuzzyFilterTasks` below — task
+ * Tasks use utils/fuzzyTaskSearch.js's `fuzzyFilterTasks` — task
  * titles are long free text, not short names, and that scorer's streak-
  * weighted subsequence ranking suits them better than the shared matcher
- * would (see `fuzzyScore`'s doc comment for why).
+ * would (see that file's doc comment for why).
  *
  * Tasks and Events only search once a query is typed (an unfiltered dump of
  * every task/event isn't a useful "recent/quick" list the way
@@ -30,49 +30,9 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import { ALL_TASKS_PROJECT_ID, ALL_TASKS_PROJECT_LABEL, INBOX_PROJECT_ID, INBOX_PROJECT_LABEL } from '../utils/projectConstants';
 import { rankByNameSearch } from '../utils/nameSearch';
+import { fuzzyFilterTasks } from '../utils/fuzzyTaskSearch';
 import { eventMatchesQuery } from './Common/SearchBar';
 import EmptyState from './Common/EmptyState';
-
-/**
- * Small local fuzzy-match scorer, kept only for the Tasks group — task
- * titles are long, multi-word free text, and this scorer's streak-weighted
- * subsequence scoring (a tighter/denser subsequence match ranks above a
- * scattered one) is tuned for that; nameSearch.js's rankByNameSearch is
- * tuned instead for short names (projects/views/actions) with per-word
- * typo-tolerant fuzzy matching, which doesn't rank long titles as well and
- * would degrade Tasks results. Views/Projects/Actions all use the shared
- * matcher below instead, so this is intentionally the one place two
- * matchers coexist — see this file's `groups` for how each group picks.
- * An exact substring match always outranks a scattered one, and among
- * substring matches, an earlier/tighter one wins. Non-matching subsequences
- * return -Infinity so callers can filter them out.
- */
-function fuzzyScore(text, query) {
-  const t = text.toLowerCase();
-  const q = query.toLowerCase();
-  const idx = t.indexOf(q);
-  if (idx !== -1) return 1000 - idx;
-  let ti = 0;
-  let score = 0;
-  let streak = 0;
-  for (let qi = 0; qi < q.length; qi++) {
-    const found = t.indexOf(q[qi], ti);
-    if (found === -1) return -Infinity;
-    streak = found === ti ? streak + 1 : 0;
-    score += streak * 2 - (found - ti);
-    ti = found + 1;
-  }
-  return score;
-}
-
-function fuzzyFilterTasks(items, query, toText) {
-  if (!query) return items;
-  return items
-    .map((item) => ({ item, score: fuzzyScore(toText(item), query) }))
-    .filter((r) => r.score > -Infinity)
-    .sort((a, b) => b.score - a.score)
-    .map((r) => r.item);
-}
 
 /**
  * @param {{

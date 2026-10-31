@@ -38,12 +38,13 @@ import Modal from '../Common/Modal';
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea';
 import { timeToMinutes } from '../../utils/dateUtils';
 import { buildRRuleString, parseRRule, MAX_OCCURRENCES } from '../../utils/recurrenceExpansion';
-import { findRecurrencePhrase, WEEKDAY_LABELS, expandTaskOccurrences, deriveRecurrenceRule } from '../../utils/recurrence';
+import { findRecurrencePhrase, WEEKDAY_LABELS } from '../../utils/recurrence';
 import { stripMatchedText } from '../../utils/smartParse';
 import DetailField from '../Common/DetailField';
 import HelpTooltip from '../Common/HelpTooltip';
 import NumberField from '../Common/NumberField';
 import SmartRecurrenceInput from '../Common/SmartRecurrenceInput';
+import TaskSearchField from '../Common/TaskSearchField';
 
 const SCOPE_OPTIONS = [
   { value: 'this', label: 'This event' },
@@ -131,25 +132,14 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
   // entry point — see this file's module doc comment.
   const [createMode, setCreateMode] = useState('event'); // 'event' | 'task'
   const [selectedTaskId, setSelectedTaskId] = useState('');
-  // Tasks due on the exact day this create form was opened for — computed
-  // via real occurrence expansion (not a raw dueDate compare) so a recurring
-  // task whose pattern lands on this day shows up even though its stored
-  // `dueDate` is some earlier anchor date. Incomplete tasks only; the day
-  // itself never changes while this modal is open, so this only needs to be
-  // recomputed if the task list or the seeded day changes.
-  const tasksDueToday = isCreate
-    ? tasks.filter((t) => {
-        if (t.isCompleted || !date) return false;
-        // Mirrors rebalanceEngine.js's own resolveTaskRecurrenceRule: prefer
-        // the cached `recurrenceRule`, falling back to deriving it from
-        // `recurrenceString` if a task hasn't had it cached yet.
-        const rule = t.isRecurring && t.dueDate ? t.recurrenceRule || deriveRecurrenceRule(t.recurrenceString) : null;
-        if (rule) {
-          const recurringTask = t.recurrenceRule ? t : { ...t, recurrenceRule: rule };
-          return expandTaskOccurrences(recurringTask, date, date).length > 0;
-        }
-        return t.dueDate === date;
-      })
+  // Every unfinished task can be searched and scheduled here, not just ones
+  // due on the chosen day. A task with sub-tasks is left out: its hours are a
+  // rollup of its sub-tasks and it has no scheduled time of its own.
+  const schedulableTasks = isCreate
+    ? (() => {
+        const parentIds = new Set(tasks.map((t) => t.parentId).filter(Boolean));
+        return tasks.filter((t) => !t.isCompleted && !parentIds.has(t.id));
+      })()
     : [];
 
   // A "true-RRULE" series (one master row carrying `recurrenceRule`, whose
@@ -579,20 +569,11 @@ export default function EventDetailModal({ event, initial, onClose, onDeleted })
             )}
             {isCreate && createMode === 'task' && (
               <DetailField icon={CheckSquare} label="Task">
-                {tasksDueToday.length > 0 ? (
-                  <select value={selectedTaskId} onChange={(e) => setSelectedTaskId(e.target.value)}>
-                    <option value="" disabled>
-                      Choose a task…
-                    </option>
-                    {tasksDueToday.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title}
-                      </option>
-                    ))}
-                  </select>
+                {schedulableTasks.length > 0 ? (
+                  <TaskSearchField tasks={schedulableTasks} selectedTaskId={selectedTaskId} onSelect={setSelectedTaskId} />
                 ) : (
                   <p className="form-hint" style={{ margin: 0 }}>
-                    No tasks due today.
+                    No tasks to schedule.
                   </p>
                 )}
               </DetailField>

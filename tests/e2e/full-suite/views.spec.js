@@ -1392,3 +1392,49 @@ test('Sidebar lists pinned projects only, and says how to fill it when empty', a
 
   expectNoErrors(errors);
 });
+
+test('Calendar: the Schedule task picker searches after 2 letters and locks the block it creates', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await page.evaluate(() => {
+    const now = new Date().toISOString();
+    const due = new Date();
+    due.setDate(due.getDate() + 5);
+    const dueDate = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`;
+    const base = {
+      isCompleted: false, isLocked: false, estimatedHours: 1, remainingHours: 1, priority: 'medium', dependsOn: [],
+      minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null, dueDate, createdAt: now, updatedAt: now,
+    };
+    localStorage.setItem('taskflow:v1:tasks', JSON.stringify([
+      { ...base, id: 'sp1', title: 'ZEBRAPICK later task' },
+    ]));
+    localStorage.setItem('taskflow:v1:blocks', JSON.stringify([]));
+  });
+  await page.reload();
+  await gotoTab(page, 'Calendar');
+  await page.waitForTimeout(500);
+
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  await page.getByRole('button', { name: 'New event', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('tab', { name: 'Task' }).click();
+
+  const search = dialog.getByRole('combobox', { name: 'Task' });
+  await search.fill('z');
+  await expect(dialog.getByRole('option')).toHaveCount(0); // under 2 characters: nothing suggested
+  await search.fill('ze');
+  await dialog.getByRole('option', { name: 'ZEBRAPICK later task' }).click();
+  await dialog.locator('input[type="time"]').first().fill('10:00');
+  await dialog.locator('input[type="time"]').nth(1).fill('11:00');
+  await dialog.getByRole('button', { name: /^schedule task$/i }).click();
+  await page.waitForTimeout(800);
+
+  // The saved block exists, at the chosen time, and is locked.
+  const blocks = await page.evaluate(() => JSON.parse(localStorage.getItem('taskflow:v1:blocks') || '[]'));
+  const mine = blocks.filter((b) => b.taskId === 'sp1');
+  expect(mine).toHaveLength(1);
+  expect(mine[0].startTime).toBe('10:00');
+  expect(mine[0].isLocked).toBe(true);
+
+  expectNoErrors(errors);
+});

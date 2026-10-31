@@ -3113,3 +3113,39 @@
     margin-top: 0;
   }
 }
+
+/* TaskSearchField's suggestion list (EventDetailModal's "Schedule task").
+   In flow, not floating, so the modal's scroll container can't clip it. */
+.task-search-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-surface);
+}
+
+.task-search-option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-search-option.highlighted {
+  background: var(--color-bg-surface-hover);
+}
+
+.task-search-empty {
+  padding: 8px 10px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}

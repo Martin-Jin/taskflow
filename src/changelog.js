@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '11.9.0',
+    date: '2026-11-01',
+    title: 'Search when scheduling a task',
+    changes: [
+      'The "Schedule task" box on the calendar is now a search field: type at least 2 letters and pick from the matching tasks. Any unfinished task can be scheduled, not just ones due that day.',
+      'A task scheduled this way is locked at the time you chose, and other tasks are planned around it.',
+      "What's new now shows only the latest 5 updates; use its search box to find older ones.",
+    ],
+  },
+  {
     version: '11.8.0',
     date: '2026-11-01',
     title: 'Log time from the task list',

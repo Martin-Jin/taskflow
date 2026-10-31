@@ -1422,6 +1422,10 @@ this section covers how the pieces talk to each other.
 
 ### Versioning and the changelog
 
+The What's New modal lists only the newest 5 entries (`RECENT_ENTRY_COUNT` in
+`ChangelogModal.jsx`); its search box covers the whole file, so old entries
+stay reachable and nothing needs trimming from `changelog.js`.
+
 Every push shipping a user-visible change adds an entry (newest-first) to
 `src/changelog.js` and bumps the version. There is **one** version number
 in three places that must always agree: the first `CHANGELOG` entry's

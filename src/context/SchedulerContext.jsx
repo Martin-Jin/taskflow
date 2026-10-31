@@ -3915,11 +3915,12 @@ export function SchedulerProvider({ children }) {
   // "manual scheduling" entry point in the app (every other block comes from
   // the auto-scheduler in allocator.js/rebalanceEngine.js; see
   // EventDetailModal's Task-mode create flow, the only current caller). If
-  // the task already has a ScheduledBlock, it's moved (same
-  // `isAutoScheduled: false` convention WeekView's own drag-reschedule uses,
-  // so a later Re-balance won't fight this placement); otherwise a fresh
-  // block is created, mirroring the shape allocator.js itself stamps onto a
-  // new block. Silently replaces any prior schedule for this task — no
+  // the task already has an unfinished ScheduledBlock, it's moved; otherwise
+  // a fresh block is created, mirroring the shape allocator.js itself stamps
+  // onto a new block. Either way the block is LOCKED, because the user chose
+  // this exact time: a later Re-balance must not move it, and a rebalance is
+  // queued right away so every other task's work is re-planned around it
+  // (a task marked passive/simultaneous still overlaps, as before). No
   // confirmation, no dedupe beyond "at most one block per call".
   const scheduleTaskAt = useCallback(
     (taskId, date, startTime, endTime) => {
@@ -3927,13 +3928,15 @@ export function SchedulerProvider({ children }) {
         setNotification({ type: 'error', message: 'Invalid time range.' });
         return;
       }
-      const existing = blocks.filter((b) => b.taskId === taskId);
+      // A block already ticked off as done is history, not something to move.
+      const existing = blocks.filter((b) => b.taskId === taskId && b.status !== 'done');
       if (existing.length > 0) {
         const existingId = existing[0].id;
         const newBlocks = blocks.map((b) =>
-          b.id === existingId ? { ...b, date, startTime, endTime, isAutoScheduled: false } : b
+          b.id === existingId ? { ...b, date, startTime, endTime, durationHours: (timeToMinutes(endTime) - timeToMinutes(startTime)) / 60, isLocked: true, isAutoScheduled: false } : b
         );
         commit({ tasks, blocks: newBlocks }, `Scheduled task`);
+        if (rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
         return;
       }
       const task = tasks.find((t) => t.id === taskId);
@@ -3944,15 +3947,16 @@ export function SchedulerProvider({ children }) {
         startTime,
         endTime,
         durationHours: (timeToMinutes(endTime) - timeToMinutes(startTime)) / 60,
-        isLocked: false,
+        isLocked: true,
         isAutoScheduled: false,
         status: 'scheduled',
         googleEventId: null,
         isPassive: !!task?.isPassive,
       };
       commit({ tasks, blocks: [...blocks, newBlock] }, `Scheduled task`);
+      if (rules.autoRescheduleEnabled !== false) queueDueDateRebalance();
     },
-    [tasks, blocks, commit, setNotification]
+    [tasks, blocks, commit, setNotification, queueDueDateRebalance, rules.autoRescheduleEnabled]
   );
 
   // ---- Manual blocked-time CRUD --------------------------------------------

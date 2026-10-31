@@ -99,7 +99,13 @@ TaskFlow via the floating **+** button) support drag-to-move and
 drag-edge-to-resize, on desktop with the mouse and on mobile via
 long-press-then-drag/resize by touch — any event you create counts as
 busy time the scheduler avoids, there's no separate "blocked time" concept
-anymore. Every event/block gets its own proportionally-sized column on the
+anymore. In the **+** popup, the **Task** tab places an existing task at a
+time you pick: type at least 2 letters of its name (nothing is suggested
+before that) and pick from the fuzzy-matched list — any unfinished task can be
+chosen, not only ones due that day. The block is **locked** at that exact
+time, so Re-balance won't move it, and everything else is re-planned around
+it (a task marked as able to run alongside others can still overlap it).
+Every event/block gets its own proportionally-sized column on the
 continuous time axis by default — overlapping items render side-by-side,
 each sized to its true duration (no artificial minimum height), matching
 how Google Calendar's own web UI lays out a busy day. Only once a group of
@@ -367,8 +373,9 @@ One page of cards, each covering one area:
   across signed-in devices like the light/dark choice does.
 - **Keyboard shortcuts** — view and rebind every shortcut.
 - **Install app** — the PWA install steps for your platform.
-- **Versions** — a searchable **What's new** changelog, also auto-shown once
-  whenever a new version ships.
+- **Versions** — a **What's new** changelog, also auto-shown once whenever a
+  new version ships. It lists only the 5 newest updates; type in its search
+  box to find anything older.
 - **Help** — replay the guided tour.
 - **Danger zone** — clear the sample data, or reset TaskFlow's local cache
   entirely. Neither touches your actual Todoist or Google Calendar account.

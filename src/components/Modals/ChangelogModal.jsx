@@ -13,9 +13,9 @@
  * into a "N patch fixes" dropdown underneath it. A query match inside a
  * collapsed patch auto-expands that group so search still finds it.
  *
- * Only the 2 newest major.minor groups are shown by default, with a
- * "See N more versions" button to reveal the rest — searching bypasses
- * this cap so older matches are never hidden.
+ * Only the newest RECENT_ENTRY_COUNT entries are listed by default, so the
+ * panel stays short. Older ones aren't hidden for good: typing in the search
+ * box searches the whole history.
  */
 
 import React, { useMemo, useState } from 'react';
@@ -23,6 +23,8 @@ import { Search, Sparkles, ChevronDown } from 'lucide-react';
 import Modal from '../Common/Modal';
 import EmptyState from '../Common/EmptyState';
 import { CHANGELOG } from '../../changelog';
+
+const RECENT_ENTRY_COUNT = 5;
 
 function majorMinor(version) {
   return version.split('.').slice(0, 2).join('.');
@@ -58,14 +60,14 @@ function groupChangelog(entries) {
 export default function ChangelogModal({ onClose }) {
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
-  const [showAllVersions, setShowAllVersions] = useState(false);
 
-  const groups = useMemo(() => groupChangelog(CHANGELOG), []);
+  const allGroups = useMemo(() => groupChangelog(CHANGELOG), []);
+  const recentGroups = useMemo(() => groupChangelog(CHANGELOG.slice(0, RECENT_ENTRY_COUNT)), []);
 
   const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return groups;
-    return groups
+    if (!q) return recentGroups;
+    return allGroups
       .map((group) => {
         const baseMatches = entryMatches(group.base, q);
         const matchingFixes = group.fixes.filter((fix) => entryMatches(fix, q));
@@ -73,11 +75,8 @@ export default function ChangelogModal({ onClose }) {
         return { ...group, fixes: baseMatches ? group.fixes : matchingFixes, forceExpand: matchingFixes.length > 0 };
       })
       .filter(Boolean);
-  }, [groups, query]);
+  }, [allGroups, recentGroups, query]);
 
-  const isSearching = query.trim().length > 0;
-  const displayedGroups = !isSearching && !showAllVersions ? filteredGroups.slice(0, 2) : filteredGroups;
-  const hiddenCount = filteredGroups.length - displayedGroups.length;
 
   function toggleExpanded(key) {
     setExpanded((prev) => {
@@ -106,7 +105,7 @@ export default function ChangelogModal({ onClose }) {
         <EmptyState>No updates match "{query}".</EmptyState>
       ) : (
         <ul className="missed-tasks-list stat-list-modal-list changelog-list">
-          {displayedGroups.map((group) => {
+          {filteredGroups.map((group) => {
             const isOpen = group.forceExpand || expanded.has(group.key);
             return (
               <li key={group.key} className="changelog-entry">
@@ -159,12 +158,6 @@ export default function ChangelogModal({ onClose }) {
         </ul>
       )}
 
-      {!isSearching && hiddenCount > 0 && (
-        <button type="button" className="changelog-fixes-toggle changelog-see-more" onClick={() => setShowAllVersions(true)}>
-          <ChevronDown size={13} />
-          See {hiddenCount} more version{hiddenCount === 1 ? '' : 's'}
-        </button>
-      )}
     </Modal>
   );
 }
