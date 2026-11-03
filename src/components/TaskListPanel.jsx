@@ -102,7 +102,7 @@ import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useTaskBulkEditActions } from '../hooks/useTaskBulkEditActions';
 import { formatDisplayDate, toISODate } from '../utils/dateUtils';
 import { shouldShowPostponeBadge, describePostponeCount } from '../utils/rescheduleHistory';
-import { formatHours } from '../utils/formatHours';
+import { formatTimeLeft } from '../utils/formatHours';
 import { areDependenciesMet } from '../utils/dependencyUtils';
 import { getEffectiveEstimatedHours, getEffectiveRemainingHours, getEffectiveRemainingHoursForOccurrence, isCheckedForListDisplay, isCompletedForCurrentOccurrence } from '../utils/taskHierarchy';
 import { resolveCurrentOccurrenceDueDate } from '../utils/recurrence';
@@ -1076,7 +1076,7 @@ const TaskRow = React.memo(function TaskRow({
   // information"). The blocked icon that used to render its own text label
   // here moved into the status rail next to the title instead.
   const metaText =
-    `${formatHours(effectiveRemainingHours)} remaining of ${formatHours(effectiveEstimatedHours)}` +
+    formatTimeLeft(effectiveRemainingHours, effectiveEstimatedHours) +
     (displayDueDate ? ` · due ${formatDisplayDate(displayDueDate)}` : '') +
     (assigneeName ? ` · for ${assigneeName}` : '');
   // A container's hours are a read-only rollup of its sub-tasks, and a task

@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.4',
+    date: '2026-11-04',
+    title: 'Shorter time left on tasks',
+    changes: [
+      'Task rows now show time as "30min / 4h" (time left / total) instead of "remaining of", switching between minutes and hours automatically.',
+    ],
+  },
+  {
     version: '12.0.3',
     date: '2026-11-04',
     title: 'Softer shadows',

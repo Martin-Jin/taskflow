@@ -22,6 +22,21 @@ export function formatHours(hours) {
 }
 
 /**
+ * formatTimeLeft — the task row's short "time left / total estimate" line,
+ * e.g. "30min / 4h", "1.5h / 3h", "1min / 5min". Same unit rule as
+ * formatHours (under an hour reads in minutes, otherwise hours) but with the
+ * unit spelled "min", which reads more clearly than a bare "m" next to a "/".
+ *
+ * @param {number} remainingHours
+ * @param {number} estimatedHours
+ * @returns {string}
+ */
+export function formatTimeLeft(remainingHours, estimatedHours) {
+  const short = (hours) => formatHours(hours).replace(/m$/, 'min');
+  return `${short(remainingHours)} / ${short(estimatedHours)}`;
+}
+
+/**
  * formatHoursLong — same idea as formatHours, but spelled out ("1 hour 30
  * minutes", "20 minutes") instead of abbreviated, for places showing a raw
  * estimatedHours decimal (e.g. 0.0833) would otherwise be unreadable.

@@ -2270,7 +2270,7 @@ test('Tasks: the clock button logs time and lowers the hours remaining', async (
   await page.waitForTimeout(500);
 
   const row = page.locator('.task-row', { hasText: 'LOGTIME task' });
-  await expect(row).toContainText('3h remaining of 3h');
+  await expect(row).toContainText('3h / 3h');
   await row.hover();
   await row.getByRole('button', { name: /log time on/i }).click();
 
@@ -2286,7 +2286,7 @@ test('Tasks: the clock button logs time and lowers the hours remaining', async (
 
   // 3h - 1h30m = 1.5h left (the saved value, not just a closed dialog).
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(row).toContainText('1.5h remaining of 3h');
+  await expect(row).toContainText('1.5h / 3h');
 
   expectNoErrors(errors);
 });
