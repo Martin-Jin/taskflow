@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.0',
+    date: '2026-11-04',
+    title: 'Full-screen windows on mobile',
+    changes: [
+      'On phones, large windows such as Add task, task and event details, notes and lists now fill the whole screen. Close them with the X in the top right.',
+    ],
+  },
+  {
     version: '11.9.2',
     date: '2026-11-04',
     title: 'Simpler Log time popup',

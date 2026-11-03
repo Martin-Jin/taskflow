@@ -20,7 +20,7 @@
  */
 
 import React from 'react';
-import { CheckCircle2, Clock, AlertTriangle, CalendarClock, ArrowRight, Trash2, Check } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, CalendarClock, ArrowRight, Trash2, Check, X } from 'lucide-react';
 import Modal from '../Common/Modal';
 import { formatHours } from '../../utils/formatHours';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -79,14 +79,19 @@ export default function WeeklyReviewModal({
       onClose={onClose}
       ariaLabel="Weekly review"
       size="lg"
-      header={
-        <div>
-          <h3 style={{ margin: 0 }}>Weekly review</h3>
-          <p className="form-hint" style={{ margin: '2px 0 0' }}>
-            {formatDisplayDate(review.windowStart)} – {formatDisplayDate(review.windowEnd)}
-          </p>
+      header={({ requestClose }) => (
+        <div className="stat-list-modal-header" style={{ alignItems: 'flex-start' }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Weekly review</h3>
+            <p className="form-hint" style={{ margin: '2px 0 0' }}>
+              {formatDisplayDate(review.windowStart)} – {formatDisplayDate(review.windowEnd)}
+            </p>
+          </div>
+          <button type="button" className="btn btn-icon menu-trigger" onClick={requestClose} aria-label="Close">
+            <X size={16} />
+          </button>
         </div>
-      }
+      )}
     >
       {({ requestClose }) => (
         <>

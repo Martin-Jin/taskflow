@@ -2839,6 +2839,26 @@ h4 + .settings-hint {
     overflow-x: hidden;
   }
 
+  /* Large dialogs (task/event/project editors, lists, notes) fill the whole
+     screen on a phone instead of floating as a card; the X in their header
+     is how you leave. Small confirm/prompt dialogs (modal-size-sm and the
+     plain md default) stay as cards. Pinned with position: fixed so the
+     overlay's own padding doesn't leave a gap around it. */
+  .modal.modal-detail,
+  .modal.modal-stat-list,
+  .modal.modal-note-editor,
+  .modal.modal-size-lg,
+  .modal.modal-size-xl {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+    padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0));
+  }
+
   .form-row-split {
     flex-direction: column;
     gap: 0;
