@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.1',
+    date: '2026-11-04',
+    title: 'Plain Projects background',
+    changes: [
+      'Removed the decorative connected-dots background from the Projects page, so it now has a plain background.',
+    ],
+  },
+  {
     version: '12.0.0',
     date: '2026-11-04',
     title: 'Full-screen windows on mobile',
