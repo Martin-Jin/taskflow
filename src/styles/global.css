@@ -302,6 +302,8 @@ body {
 button {
   font-family: inherit;
   cursor: pointer;
+  /* Taps respond immediately: no double-tap-to-zoom wait on buttons. */
+  touch-action: manipulation;
 }
 
 /* The <select> element itself is styled per call site (board filter,
@@ -2241,9 +2243,9 @@ input.search-bar-input {
   animation: modal-in var(--duration-base) var(--ease-decelerate);
   scrollbar-width: none; /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
   -ms-overflow-style: none;
-  /* Own compositor layer so the modal's entry/exit animation and internal
-     scrolling don't force a full-page repaint on every frame. */
-  will-change: transform;
+  /* No permanent will-change: the browser gives the modal its own layer while
+     its transform animation runs, and a full-screen modal on a phone
+     shouldn't keep a large layer allocated afterwards. */
 }
 
 .modal::-webkit-scrollbar {

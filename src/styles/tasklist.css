@@ -229,6 +229,16 @@
   pointer-events: none;
 }
 
+/* Re-blurring whatever scrolls underneath is costly on phones, so the header
+   gets a near-solid wash instead of a blur there. */
+@media (max-width: 639px) {
+  .taskpage-sticky-header-backdrop {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: color-mix(in srgb, var(--color-bg-page) 98%, transparent);
+  }
+}
+
 /* The Tasks page's header: project switcher + title on the left,
    view/filter + "⋯" project actions on the right, all one line (no wrap —
    see .taskpage-project-header's max-width truncation below for how a long

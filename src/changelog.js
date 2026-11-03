@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.2',
+    date: '2026-11-04',
+    title: 'Smoother scrolling on mobile',
+    changes: [
+      'Scrolling the task list and tapping around the app should feel smoother on phones.',
+    ],
+  },
+  {
     version: '12.0.1',
     date: '2026-11-04',
     title: 'Plain Projects background',

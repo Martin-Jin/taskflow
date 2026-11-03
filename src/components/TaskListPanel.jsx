@@ -264,7 +264,11 @@ export default function TaskListPanel({
   // its resting position it ends up once locked — there's no sticky-only
   // way to make "docked" measurably closer to the top than "resting".
   const stickyHeaderRef = useRef(null);
-  const [headerScrollFraction, setHeaderScrollFraction] = useState(0);
+  // How much closer to the top the header sits once fully docked, on top of
+  // its resting distance (pulled up via `margin-top` in tasklist.css).
+  const HEADER_DOCK_PULL_PX = 16;
+  // Written straight onto the element (not through React state) so scrolling
+  // never re-renders the whole task list just to nudge the header.
   useEffect(() => {
     const node = stickyHeaderRef.current;
     if (!node) return undefined;
@@ -272,16 +276,14 @@ export default function TaskListPanel({
     if (!scrollContainer) return undefined;
     const fadeRange = 32; // px of scroll the fade/dock-in plays out over
     function handleScroll() {
-      setHeaderScrollFraction(Math.min(1, Math.max(0, scrollContainer.scrollTop / fadeRange)));
+      const fraction = Math.min(1, Math.max(0, scrollContainer.scrollTop / fadeRange));
+      node.style.setProperty('--header-blur-opacity', String(fraction));
+      node.style.transform = `translateY(-${fraction * HEADER_DOCK_PULL_PX}px)`;
     }
     handleScroll();
     scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
     return () => scrollContainer.removeEventListener('scroll', handleScroll);
   }, [view]);
-  // How much closer to the top the header sits once fully docked, on top of
-  // its resting distance (pulled up via `margin-top` in tasklist.css).
-  const HEADER_DOCK_PULL_PX = 16;
-  const headerDockOffsetPx = headerScrollFraction * HEADER_DOCK_PULL_PX;
   const [editingTaskId, setEditingTaskId] = useState(null);
   // Board view owns its own separate editingTaskId/TaskDetailModal (its cards
   // open it directly too), but the search bar that can trigger it now
@@ -696,7 +698,6 @@ export default function TaskListPanel({
       <div
         className="taskpage-sticky-header"
         ref={stickyHeaderRef}
-        style={{ '--header-blur-opacity': headerScrollFraction, transform: `translateY(-${headerDockOffsetPx}px)` }}
       >
         <div className="taskpage-sticky-header-backdrop" aria-hidden="true" />
         <div className="taskpage-header-row">
