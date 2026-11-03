@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.3',
+    date: '2026-11-04',
+    title: 'Softer shadows',
+    changes: [
+      'Shadows around menus, cards and popups are now about 30% lighter.',
+    ],
+  },
+  {
     version: '12.0.2',
     date: '2026-11-04',
     title: 'Smoother scrolling on mobile',

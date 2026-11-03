@@ -33,10 +33,10 @@
      portaled popover's upper edges cast nothing, so the menu bled into
      similarly-toned content behind it. */
   --shadow-elevated:
-    0 0 10px rgba(0, 0, 0, 0.13),
-    0 8px 24px rgba(0, 0, 0, 0.32);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-card: 0 3px 10px rgba(0, 0, 0, 0.4);
+    0 0 10px rgba(0, 0, 0, 0.091),
+    0 8px 24px rgba(0, 0, 0, 0.224);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.175);
+  --shadow-card: 0 3px 10px rgba(0, 0, 0, 0.28);
 
   --text-xs: 11px;
   --text-sm: 12.5px;
@@ -179,8 +179,8 @@
      needs a deeper cast than light mode to separate a popover from whatever
      is behind it. Same two-layer structure as the light token above. */
   --shadow-elevated:
-    0 0 12px rgba(0, 0, 0, 0.32),
-    0 8px 24px rgba(0, 0, 0, 0.5);
+    0 0 12px rgba(0, 0, 0, 0.224),
+    0 8px 24px rgba(0, 0, 0, 0.35);
 
   --color-text-primary: #f2f0ea;
   --color-text-secondary: #b5b2a7;
