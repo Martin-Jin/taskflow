@@ -169,16 +169,15 @@ usual. Setting a date this way counts toward "Pushed N×" the same as editing
 it from the task's own detail view (see below) — it's a shortcut to the same
 edit, not a separate one.
 
-**Log time** — record work you've already done without opening the task. A
-small clock button sits on each row (hover to reveal it on desktop, always
-visible on mobile; hidden for tasks with sub-tasks, since their hours are a
-total of the sub-tasks'). It opens a one-line popup, "I completed [x] hours
-[y] minutes of this task", with numeric-only fields and the numeric keyboard
-on phones. Enter moves from hours to minutes, and Enter again saves. This
-lowers the task's time left exactly as editing "Time left" in the task does,
-so scheduled blocks that much work covers are ticked off. On mobile the title
-and the line under it scroll sideways when too long, so they never run under
-the clock button.
+**Log time** — record work you've already done. On desktop a small clock
+button appears on each row when you hover it; on any device (including mobile,
+where the row stays uncluttered) the same clock button sits at the top of the
+task's detail window, next to the timer. It's hidden for tasks with sub-tasks,
+since their hours are a total of the sub-tasks'. It opens a one-line popup,
+"I completed [x] hours [y] minutes of this task", with numeric-only fields and
+the numeric keyboard on phones. Enter moves from hours to minutes, and Enter
+again saves. This lowers the task's time left exactly as editing "Time left"
+in the task does, so scheduled blocks that much work covers are ticked off.
 
 **Templates** — a task with sub-tasks can be saved as a reusable *shape of
 work* from its "⋯" menu ("Save as template"): the sub-tasks, their estimates,

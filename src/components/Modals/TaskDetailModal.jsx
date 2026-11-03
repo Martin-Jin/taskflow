@@ -114,6 +114,7 @@ import {
 } from '../../utils/recurrence';
 import { getIneligibleDependencyIds, areDependenciesMet } from '../../utils/dependencyUtils';
 import { getTaskScheduledBlocks } from '../../utils/taskScheduledBlocks';
+import LogTimeModal from './LogTimeModal';
 import Modal from '../Common/Modal';
 import { TIME_OF_DAY_OPTIONS, TIME_OF_DAY_LABELS } from '../../utils/timeOfDay';
 import NumberField from '../Common/NumberField';
@@ -348,6 +349,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
   // own outside-click/Escape handling well before a real navigation click
   // (the hierarchy label / sub-task row) would land elsewhere in the modal.
   const [timerPopoverOpen, setTimerPopoverOpen] = useState(false);
+  const [logTimeOpen, setLogTimeOpen] = useState(false);
   // Inline "log this as progress?" prompt shown in the timer popover right
   // after a pause — null when not showing, or { suggestedHours } pre-filled
   // with the just-elapsed time. Lives alongside timerPopoverOpen (reset
@@ -1862,7 +1864,7 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
               <button
                 type="button"
                 ref={moveToTriggerRef}
-                className="btn btn-icon detail-move-to-trigger"
+                className="btn btn-icon menu-trigger detail-move-to-trigger"
                 onClick={() => setMoveToOpen((v) => !v)}
                 aria-haspopup="true"
                 aria-expanded={moveToOpen}
@@ -1923,6 +1925,19 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
                   document.body
                 )}
             </div>
+
+            {!isContainer && !isReadOnlyViewer && incompleteDependencies.length === 0 && !task.isCompleted && (
+              <button
+                type="button"
+                className="btn btn-icon menu-trigger"
+                onClick={() => setLogTimeOpen(true)}
+                aria-haspopup="dialog"
+                aria-label="Log time"
+                title="Log time"
+              >
+                <Clock size={16} />
+              </button>
+            )}
 
             {!isContainer && (
               <div className="detail-timer-trigger-wrap">
@@ -2615,6 +2630,13 @@ export default function TaskDetailModal({ task: openedTask, onClose }) {
       </Modal>
 
       {showSmartParseGuide && <SmartParseGuideModal onClose={() => setShowSmartParseGuide(false)} />}
+      {logTimeOpen && (
+        <LogTimeModal
+          taskTitle={task.title}
+          onSave={(hours) => handleRemainingHoursChange(Math.max(0, effectiveRemainingHours - hours))}
+          onClose={() => setLogTimeOpen(false)}
+        />
+      )}
       {showSaveTemplate && (
         <SaveTemplateModal
           rootTask={task}

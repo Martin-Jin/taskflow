@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.9.1',
+    date: '2026-11-04',
+    title: 'Log time moved into the task window',
+    changes: [
+      'The clock button is gone from task rows on mobile, so the list stays tidy. Log time now also sits at the top of the task window, next to the timer, on desktop and mobile.',
+    ],
+  },
+  {
     version: '11.9.0',
     date: '2026-11-01',
     title: 'Search when scheduling a task',

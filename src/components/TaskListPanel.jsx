@@ -1355,7 +1355,7 @@ const TaskRow = React.memo(function TaskRow({
           <RotateCcw size={14} />
         </button>
       )}
-      {canLogTime && (
+      {canLogTime && !isMobile && (
         <button
           type="button"
           className="btn btn-icon task-row-log-time"

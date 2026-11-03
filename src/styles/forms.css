@@ -2105,23 +2105,10 @@
   min-width: 0;
 }
 
-/* .btn's own 1px border exists because its background is normally too
-   close in tone to the page/card behind it to read as a button on its own
-   (see global.css's comment on .btn) — but these two sit directly against
-   the comment box, where a border read as a stray outline rather than a
-   clean control. Swapping the border for --color-border-interactive as a
-   solid fill instead keeps the same WCAG 1.4.11 (3:1) boundary contrast
-   without drawing a line around the button. */
-.comment-attach-btn,
-.comment-send-btn {
-  border: none;
-  background: var(--color-border-interactive);
-}
-
-.comment-attach-btn:hover:not(:disabled),
-.comment-send-btn:hover:not(:disabled) {
-  background: var(--color-text-secondary);
-}
+/* The attach and send buttons use the plain .btn look (light fill + 1px
+   border, which keeps the WCAG 1.4.11 boundary contrast). An earlier version
+   filled them solid with --color-border-interactive, which read as a heavy
+   dark block on the light theme. */
 
 .attachment-lightbox {
   position: fixed;

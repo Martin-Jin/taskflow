@@ -876,21 +876,11 @@
   }
 }
 
-/* "Log time" clock button: hover-revealed on desktop like the reschedule
-   button above, but always visible on mobile, where there is no hover and the
-   swipe gesture only covers rescheduling. The title and meta line scroll
-   sideways on mobile (MarqueeText) so a long title never runs under the icon:
-   .task-row-main clips them, and the row's own gap plus its right padding
-   keep clear space on both sides of the icon. */
+/* The row's "Log time" clock button is desktop-only (hover-revealed like the
+   reschedule button above); on mobile it lives in the task detail modal's
+   header instead, to keep the row uncluttered. The title and meta line scroll
+   sideways on mobile (MarqueeText); .task-row-main clips them. */
 @media (max-width: 639px) {
-  .task-row-log-time {
-    opacity: 1;
-    width: 32px;
-    height: 32px;
-    margin: -6px -4px -6px 0;
-    align-self: center;
-  }
-
   .task-row-main {
     overflow: hidden;
   }
