@@ -175,8 +175,9 @@ where the row stays uncluttered) the same clock button sits at the top of the
 task's detail window, next to the timer. It's hidden for tasks with sub-tasks,
 since their hours are a total of the sub-tasks'. It opens a one-line popup,
 "I completed [x] hours [y] minutes of this task", with numeric-only fields and
-the numeric keyboard on phones. Enter moves from hours to minutes, and Enter
-again saves. This lowers the task's time left exactly as editing "Time left"
+the numeric keyboard on phones. There are no buttons: Enter saves (from hours
+it moves on to minutes first, unless minutes is already filled), and clicking
+outside the popup or the X in its corner cancels. This lowers the task's time left exactly as editing "Time left"
 in the task does, so scheduled blocks that much work covers are ticked off.
 
 **Templates** — a task with sub-tasks can be saved as a reusable *shape of

@@ -6,10 +6,13 @@
  * SchedulerContext's setRemainingHoursWithBlockInference).
  *
  * Both fields take digits only and ask for the numeric keyboard on phones.
- * Enter in the hours field moves on to minutes; Enter in minutes saves.
+ * There are no Save/Cancel buttons: click outside or the X to cancel. Enter in
+ * the hours field saves if minutes is already filled, otherwise moves on to
+ * minutes; Enter in minutes saves.
  */
 
 import React, { useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import Modal from '../Common/Modal';
 
 const digitsOnly = (raw) => raw.replace(/\D/g, '');
@@ -35,14 +38,19 @@ export default function LogTimeModal({ taskTitle, onSave, onClose }) {
       onClose={onClose}
       ariaLabel={`Log time on ${taskTitle}`}
       size="sm"
-      header={
-        <div style={{ marginBottom: 12 }}>
-          <h3 style={{ margin: 0 }}>Log time</h3>
-          <p className="form-hint" style={{ margin: '2px 0 0' }}>
-            I completed…
-          </p>
+      header={({ requestClose }) => (
+        <div className="stat-list-modal-header" style={{ alignItems: 'flex-start' }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Log time</h3>
+            <p className="form-hint" style={{ margin: '2px 0 0' }}>
+              I completed…
+            </p>
+          </div>
+          <button type="button" className="btn btn-icon menu-trigger" onClick={requestClose} aria-label="Close">
+            <X size={16} />
+          </button>
         </div>
-      }
+      )}
     >
       {({ requestClose }) => (
         <>
@@ -60,7 +68,8 @@ export default function LogTimeModal({ taskTitle, onSave, onClose }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  minutesRef.current?.focus();
+                  if (minutes !== '' && totalHours > 0) handleSubmit(e, { requestClose });
+                  else minutesRef.current?.focus();
                 }
               }}
             />
@@ -75,16 +84,14 @@ export default function LogTimeModal({ taskTitle, onSave, onClose }) {
               placeholder="0"
               aria-label="Minutes"
               onChange={(e) => setMinutes(digitsOnly(e.target.value))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSubmit(e, { requestClose });
+                }
+              }}
             />
             <span>minutes of this task</span>
-          </div>
-          <div className="settings-actions" style={{ justifyContent: 'flex-end' }}>
-            <button type="button" className="btn" onClick={requestClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={totalHours <= 0}>
-              Log time
-            </button>
           </div>
         </>
       )}

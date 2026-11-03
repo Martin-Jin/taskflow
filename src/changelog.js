@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '11.9.2',
+    date: '2026-11-04',
+    title: 'Simpler Log time popup',
+    changes: [
+      'The Log time popup no longer has Cancel and Log time buttons. Press Enter to save, or click outside it or the new X to cancel.',
+    ],
+  },
+  {
     version: '11.9.1',
     date: '2026-11-04',
     title: 'Log time moved into the task window',
