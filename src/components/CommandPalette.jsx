@@ -1,5 +1,5 @@
 /**
- * CommandPalette — global "jump to anything" (Ctrl+K / Cmd+K, see
+ * CommandPalette — global "jump to anything" (Alt+O by default, see
  * useKeyboardShortcuts' `commandPalette` entry), Linear/Todoist-style.
  * Fuzzy-searches across five groups — Views (the top-level tabs), Projects,
  * Tasks, Calendar Events, and quick Actions (assembled by App.jsx from

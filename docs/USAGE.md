@@ -187,7 +187,7 @@ their dependencies and their relative spacing. Due dates are stored as
 well in September — you pick a start date each time you use one, the earliest
 task lands on it, and everything else keeps its original spacing. Reach a saved
 template from **Settings → Templates**, or with "New from template" in the
-command palette (`Ctrl+K`) — both open the same picker, which is also where you
+command palette (`Alt+O`) — both open the same picker, which is also where you
 delete ones you no longer want.
 
 Not captured: the project (you choose one per use, so a template works across
@@ -294,7 +294,7 @@ nothing there changes your estimates or your schedule.
 
 One screen answering "how did last week go, and does next week fit?". It opens
 from a Dashboard prompt when a review is due, or any time from the command
-palette (`Ctrl+K` → "Weekly review").
+palette (`Alt+O` → "Weekly review").
 
 Four sections, over a real week — Sunday- or Monday-started, per **Settings →
 Scheduling rules → First day of the week**. On the first day of your week it
@@ -353,7 +353,7 @@ One page of cards, each covering one area:
   See [Notifications](INTEGRATIONS.md#notifications).
 - **Tags** — every tag in use across all tasks, with how many tasks carry each.
 - **Templates** — every saved template, with what each one contains. Use or
-  delete one from here, or reach the same picker with `Ctrl+K` → "New from
+  delete one from here, or reach the same picker with `Alt+O` → "New from
   template".
 - **Recently deleted** — put back a project, board section or tag deleted in
   the last 30 days. Their tasks were never deleted (they moved to Inbox, or
@@ -392,7 +392,7 @@ With a dropdown, a picker or an autocomplete open inside a window, the first
 Escape closes just that and leaves your draft alone; a second closes the
 window. In the calendar filter it clears the project/tag search first.
 
-**Command palette** — `Ctrl+K` (rebindable from Settings) opens a Linear/
+**Command palette** — `Alt+O` (rebindable from Settings) opens a Linear/
 Todoist-style "jump to anything" search across Views, Projects, Tasks,
 Calendar events, and quick actions (Add task, Add note, Quick Add with AI,
 Re-balance schedule, Toggle light/dark theme, Manage projects); Arrow keys

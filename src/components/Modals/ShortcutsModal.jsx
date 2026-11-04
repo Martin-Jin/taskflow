@@ -2,8 +2,7 @@
  * ShortcutsModal — Settings → Keyboard shortcuts. Lists every global
  * shortcut (see useKeyboardShortcuts) plus non-editable ones handled
  * elsewhere in the app (Escape-to-close), with a search bar to filter and a
- * lightweight per-row editor: click "Edit" to either record a real keypress
- * or pick one of a few common presets from a dropdown, then Save.
+ * lightweight per-row editor: click "Edit" then press the new key combo.
  *
  * Bindings are written straight to localStorage (see useKeyboardShortcuts —
  * setShortcutBinding/resetShortcutBinding), which is still exactly what the
@@ -22,7 +21,6 @@ import EmptyState from '../Common/EmptyState';
 import { useScheduler } from '../../context/SchedulerContext';
 import {
   SHORTCUT_DEFS,
-  PRESET_COMBOS,
   comboFromEvent,
   comboFor,
   getShortcutBindings,
@@ -81,6 +79,10 @@ export default function ShortcutsModal({ onClose }) {
     // Use the ✕ button instead to cancel just this row's edit.
     if (e.key === 'Escape') return;
     e.preventDefault();
+    // Stop the keypress here. Once the new combo is saved this input is removed,
+    // and the app-wide shortcut listener (on document) would otherwise see the
+    // same keypress with nothing focused and fire the shortcut just assigned.
+    e.stopPropagation();
     // A bare modifier key press (still holding it down, nothing else yet)
     // isn't a usable combo on its own — wait for the following key.
     if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
@@ -147,19 +149,6 @@ export default function ShortcutsModal({ onClose }) {
                       style={{ width: 130, textAlign: 'center', cursor: 'pointer' }}
                       aria-label={`Record new key combo for ${d.label}`}
                     />
-                    <select
-                      value=""
-                      onChange={(e) => e.target.value && applyCombo(d.id, e.target.value)}
-                      aria-label={`Pick a preset combo for ${d.label}`}
-                      style={{ fontSize: 12 }}
-                    >
-                      <option value="">Or pick a preset…</option>
-                      {PRESET_COMBOS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
                     <button className="btn btn-icon" onClick={cancelEditing} aria-label="Cancel" title="Cancel">
                       <X size={13} />
                     </button>

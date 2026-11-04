@@ -28,24 +28,8 @@ export const SHORTCUT_DEFS = [
   { id: 'undo', label: 'Undo', description: 'Undo the last change', defaultCombo: 'Ctrl+Z', editable: true },
   { id: 'redo', label: 'Redo', description: 'Redo the last undone change', defaultCombo: 'Ctrl+Shift+Z', editable: true },
   { id: 'newTask', label: 'New task', description: 'Open the "Add task" dialog', defaultCombo: 'Alt+N', editable: true },
-  { id: 'commandPalette', label: 'Command palette', description: 'Jump to a view, project, task, or action', defaultCombo: 'Ctrl+K', editable: true },
+  { id: 'commandPalette', label: 'Command palette', description: 'Jump to a view, project, task, or action', defaultCombo: 'Alt+O', editable: true },
   { id: 'closeDialog', label: 'Close dialog', description: 'Close the open modal or popup menu', defaultCombo: 'Esc', editable: false },
-];
-
-// Offered in the "pick a combo" dropdown when editing a binding — a lighter
-// alternative to pressing the actual keys (helps mobile/accessibility).
-// Ctrl+N, Ctrl+Shift+N, Ctrl+T, Ctrl+W, Ctrl+S and similar are reserved by
-// every major browser (new window/incognito/tab/close/save) — the browser
-// acts on them regardless of e.preventDefault(), so they're deliberately
-// left out here even though they'd look like natural picks.
-export const PRESET_COMBOS = [
-  'Ctrl+Z',
-  'Ctrl+Shift+Z',
-  'Ctrl+Y',
-  'Ctrl+K',
-  'Ctrl+/',
-  'Alt+N',
-  'Alt+Z',
 ];
 
 /** Turns a keydown event into the same canonical string used for storage/display, e.g. "Ctrl+Shift+Z". */

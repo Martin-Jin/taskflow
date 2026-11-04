@@ -466,6 +466,22 @@ test('Shortcuts modal: lists shortcuts and closes', async ({ page }) => {
   expectNoErrors(errors);
 });
 
+test('Shortcuts modal: rebinding the command palette saves it without opening the palette', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoTab(page, 'Settings');
+  await page.getByRole('button', { name: 'View shortcuts' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await dialog.getByRole('button', { name: 'Edit Command palette shortcut' }).click();
+  // No preset dropdown any more — keys are recorded by pressing them.
+  await expect(dialog.getByLabel('Pick a preset combo for Command palette')).toHaveCount(0);
+  await page.getByLabel('Record new key combo for Command palette').press('Alt+P');
+
+  await expect(dialog.locator('.shortcut-kbd', { hasText: 'Alt+P' })).toBeVisible();
+  // The keypress that assigned the combo must not also fire it.
+  await expect(page.getByRole('dialog', { name: 'Command palette' })).toHaveCount(0);
+  expectNoErrors(errors);
+});
+
 test('Changelog modal (Versions): shows entries from changelog.js and closes', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   const { CURRENT_VERSION, CHANGELOG } = await import('../../../src/changelog.js');

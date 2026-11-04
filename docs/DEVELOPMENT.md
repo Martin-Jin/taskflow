@@ -796,7 +796,7 @@ src/
 │   ├── Tutorial/               # GuidedTour + its step content (guidedTourSteps.js)
 │   ├── Common/                 # SearchBar (also searches/switches projects and jumps to matching Calendar events), ProjectActionsMenu, Linkified (renders URLs in notes as links), Toast, SmartChips, SmartTitleInput, SmartDurationInput, SmartRecurrenceInput, DependencyPicker, LabelPicker, DetailField, NumberField (min/max-enforcing number input — plain `<input type=number>` min/max only constrains the spinner), FieldRejectionHint (transient "that input wasn't accepted" message, paired with useFieldRejection), CompleteTaskConfirmModal (log actual time spent on completion), PresenceAvatars (who else is viewing a shared project), SharedProjectBadge (personal/"shared by me"/"shared with me" indicator), BulkActionBar (shared docked bottom bar for bulk multi-select edit/delete — List/Board/Calendar/TaskDetailModal's sub-task list)
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
-│   ├── CommandPalette.jsx      # Ctrl+K "jump to anything" — fuzzy-searches Views/Projects/Tasks/Calendar Events/quick Actions
+│   ├── CommandPalette.jsx      # Alt+O "jump to anything" — fuzzy-searches Views/Projects/Tasks/Calendar Events/quick Actions
 │   ├── TaskListPanel.jsx
 │   ├── TaskProjectRail.jsx     # Tasks page's collapsible all-projects panel — an inline column on desktop, an overlay drawer on mobile, from one piece of state
 │   └── SettingsPanel.jsx

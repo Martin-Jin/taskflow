@@ -133,7 +133,7 @@ export const GUIDED_TOUR_STEPS = [
     selector: '[data-tour="templates-card"]',
     placement: 'top',
     title: 'Repeat a whole process',
-    body: 'Save any task with sub-tasks as a reusable template from its "⋯" menu — sub-tasks, estimates, dependencies, and the spacing between their due dates. Because the dates are stored as spacing rather than fixed dates, you pick a start date each time and the rest keeps its gaps. Reuse one from here, or press Ctrl+K for the command palette (jump to any task, project or event, and run actions) and pick "New from template".',
+    body: 'Save any task with sub-tasks as a reusable template from its "⋯" menu — sub-tasks, estimates, dependencies, and the spacing between their due dates. Because the dates are stored as spacing rather than fixed dates, you pick a start date each time and the rest keeps its gaps. Reuse one from here, or press Alt+O for the command palette (jump to any task, project or event, and run actions) and pick "New from template".',
   },
   {
     tab: 'settings',

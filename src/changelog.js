@@ -21,6 +21,16 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.6',
+    date: '2026-11-05',
+    title: 'Command palette is now Alt+O, and shortcut editing is safer',
+    changes: [
+      'The command palette now opens with Alt+O by default (it was Ctrl+K). If you already picked your own combo, it stays as you set it.',
+      'Changing a shortcut no longer triggers it at the same moment you assign the keys.',
+      'Editing a shortcut now just asks you to press the new keys — the "pick a preset" dropdown is gone.',
+    ],
+  },
+  {
     version: '12.0.5',
     date: '2026-11-05',
     title: 'Repeating task shows the right scheduled time',

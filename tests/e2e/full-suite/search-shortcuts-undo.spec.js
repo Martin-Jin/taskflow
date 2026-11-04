@@ -141,11 +141,11 @@ test('completed tasks are hidden from search except on the Completed filter', as
   expectNoErrors(errors);
 });
 
-test('command palette (Ctrl+K) opens, navigates to a view, and closes', async ({ page }) => {
+test('command palette (Alt+O) opens, navigates to a view, and closes', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Tasks');
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();
 
@@ -170,7 +170,7 @@ test('command palette can jump straight to a matching task', async ({ page }) =>
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Dashboard');
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible();
   await page.getByLabel('Command palette search').fill('Refactor auth');
   await page.waitForTimeout(300);
@@ -212,7 +212,7 @@ test('command palette can jump straight to a matching Calendar event', async ({ 
   await page.reload();
   await gotoTab(page, 'Dashboard');
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();
   await page.getByLabel('Command palette search').fill('dentist');
@@ -241,7 +241,7 @@ test('command palette can launch "Quick Add with AI" when configured', async ({ 
     window.localStorage.setItem('taskflow:v1:aiGeminiApiKey', JSON.stringify('e2e-fake-test-key'));
   });
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();
 
@@ -273,7 +273,7 @@ test('command palette "Add task" does not reopen when revisiting the Tasks tab',
   // because the signal was already bumped earlier in the session.
   await gotoTab(page, 'Dashboard');
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();
   await page.getByLabel('Command palette search').fill('Add task');
@@ -314,11 +314,11 @@ test('keyboard shortcut: Alt+N opens the "Add task" dialog', async ({ page }) =>
   expectNoErrors(errors);
 });
 
-test('keyboard shortcut: Ctrl+K opens the command palette from any tab', async ({ page }) => {
+test('keyboard shortcut: Alt+O opens the command palette from any tab', async ({ page }) => {
   const errors = trackConsoleErrors(page);
   await gotoTab(page, 'Stats');
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Command palette' })).not.toBeVisible();
@@ -581,7 +581,7 @@ test('command palette: "Add note" opens the note editor even when the Dashboard 
   // can be switched off entirely.
   await gotoTab(page, 'Calendar');
 
-  await page.keyboard.press('Control+K');
+  await page.keyboard.press('Alt+O');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await page.getByLabel('Command palette search').fill('Add note');
   await palette.getByRole('option', { name: 'Add note' }).first().click();

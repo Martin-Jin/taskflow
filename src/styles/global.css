@@ -2104,7 +2104,7 @@ input.search-bar-input {
 }
 
 /* -------------------------------------------------------------------- */
-/* CommandPalette (Ctrl+K) — reuses .modal-stat-list's shell and the     */
+/* CommandPalette (Alt+O) — reuses .modal-stat-list's shell and the     */
 /* .search-bar-dropdown-* row styles above, just without the absolute-   */
 /* positioned dropdown wrapper since it IS the modal body here.          */
 /* -------------------------------------------------------------------- */

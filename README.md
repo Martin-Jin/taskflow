@@ -26,7 +26,7 @@ you through the main views on first load (replay it anytime from
 | **Notes** | Folder-organized markdown notes with a WYSIWYG editor, checklists, and Markdown export. |
 | **Notifications** | In-app alerts for tasks starting soon, overdue, or due today, a bell inbox for @mentions in shared-task comments, plus an optional self-hosted email channel. |
 
-Undo/redo, a `Ctrl+K` command palette, typo-tolerant search, bulk select,
+Undo/redo, a `Alt+O` command palette, typo-tolerant search, bulk select,
 rebindable keyboard shortcuts, and light/dark themes throughout. Fully
 responsive down to phone width, and installable as a PWA.
 
