@@ -8,8 +8,15 @@
  * block's date, EXCEPT when the current occurrence was moved off-pattern (see
  * resolveCurrentOccurrenceDueDate): its block sits on the moved-to date, which
  * can sort after an older, not-yet-rebalanced block from a prior occurrence.
- * Preferring the resolved due date (falling back to the earliest block, e.g.
- * before any rebalance has run) keeps this in step with the due-date field.
+ * Preferring the resolved due date keeps this in step with the due-date field.
+ *
+ * When the current occurrence has no block of its own (typically an overdue
+ * one: its day has passed, so the scheduler never re-placed it), the list falls
+ * forward to the next block on or after that date. It must NOT fall back to the
+ * earliest block overall: finished occurrences keep their blocks as a record, so
+ * that is an old, crossed-out block from days ago, which made a daily task look
+ * as if it had never been rescheduled. With nothing on or after the date the
+ * list is empty, since any block before it belongs to a closed-out occurrence.
  *
  * Shared by TaskDetailModal and the task list's "Log time" button so both
  * hand the same block list to setRemainingHoursWithBlockInference.
@@ -22,6 +29,7 @@ export function getTaskScheduledBlocks(task, blocks) {
     .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
   if (!task.isRecurring || sorted.length === 0) return sorted;
   const currentOccurrenceDate = resolveCurrentOccurrenceDueDate(task);
-  const targetDate = sorted.some((b) => b.date === currentOccurrenceDate) ? currentOccurrenceDate : sorted[0].date;
-  return sorted.filter((b) => b.date === targetDate);
+  if (!currentOccurrenceDate) return sorted.filter((b) => b.date === sorted[0].date);
+  const targetDate = sorted.find((b) => b.date >= currentOccurrenceDate)?.date;
+  return targetDate ? sorted.filter((b) => b.date === targetDate) : [];
 }

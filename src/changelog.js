@@ -21,6 +21,14 @@
 
 export const CHANGELOG = [
   {
+    version: '12.0.5',
+    date: '2026-11-05',
+    title: 'Repeating task shows the right scheduled time',
+    changes: [
+      'The "Scheduled" list of an overdue repeating task now shows its next planned time, instead of a crossed-out slot from days ago that made it look unscheduled.',
+    ],
+  },
+  {
     version: '12.0.4',
     date: '2026-11-04',
     title: 'Shorter time left on tasks',
