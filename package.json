@@ -12,15 +12,15 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tiptap/extension-link": "^3.32.0",
-    "@tiptap/extension-placeholder": "^3.32.0",
-    "@tiptap/extension-task-item": "^3.32.0",
-    "@tiptap/extension-task-list": "^3.32.0",
-    "@tiptap/react": "^3.32.0",
-    "@tiptap/starter-kit": "^3.32.0",
-    "firebase": "^13.0.0",
-    "framer-motion": "^14.7.1",
-    "lucide-react": "^1.63.0",
+    "@tiptap/extension-link": "^3.32.2",
+    "@tiptap/extension-placeholder": "^3.32.2",
+    "@tiptap/extension-task-item": "^3.32.2",
+    "@tiptap/extension-task-list": "^3.32.2",
+    "@tiptap/react": "^3.32.2",
+    "@tiptap/starter-kit": "^3.32.2",
+    "firebase": "^13.2.0",
+    "framer-motion": "^14.9.1",
+    "lucide-react": "^1.68.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tiptap-markdown": "^0.9.0"
@@ -28,9 +28,9 @@
   "devDependencies": {
     "@firebase/rules-unit-testing": "^6.0.0",
     "@playwright/test": "^1.64.1",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-react": "^6.2.1",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   },
   "allowScripts": {
     "esbuild@0.21.5": true,
