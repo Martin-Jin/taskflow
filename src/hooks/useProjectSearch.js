@@ -1,16 +1,16 @@
 /**
  * useProjectSearch — the "type to filter/rank projects, arrow through the
  * results, Enter to pick one" behavior shared by every project-only search
- * box in the app (ManageProjectsModal and the other project pickers).
- * Extracted out of ManageProjectsModal so a third call site didn't mean a
- * third copy of the same query state + sortProjectsForSidebar +
- * rankByNameSearch + useListKeyboardNav wiring.
+ * box in the app (today just ManageProjectsModal). Kept as its own hook so
+ * another project-only search can reuse the same query state +
+ * sortProjectsForSidebar + rankByNameSearch + useListKeyboardNav wiring
+ * instead of copying it.
  *
  * Fuzzy by design, not just substring — rankByNameSearch's tiers (prefix,
  * substring, subsequence, then typo-tolerant edit-distance) are what every
  * project search in this app already runs on, so a project named "Personal
  * Errands" still turns up for "prsnl" or a minor typo, same as it would in
- * the Sidebar or ManageProjectsModal.
+ * ManageProjectsModal.
  */
 
 import { useState } from 'react';

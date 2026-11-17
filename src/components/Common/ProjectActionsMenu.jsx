@@ -12,17 +12,14 @@
 
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderKanban, MoreHorizontal, Pencil, Pin, PinOff, Trash2, Users } from 'lucide-react';
+import { MoreHorizontal, Pencil, Pin, PinOff, Trash2, Users } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
-import MarqueeText from './MarqueeText';
 
-// The Rename/Pin/Delete/manage-projects buttons themselves, split out so
-// ViewFilterMenu can fold them into its own combined mobile popover (see
-// that file's `projectActions` prop) without duplicating this markup.
-// Rename/Pin/Delete are gated on their handlers being present (like `onShare`
-// already was) so this same list can be reused for a project-less trigger
-// (e.g. ProjectsPage's "⋯" menu) that only offers `onOpenManageProjects`.
-export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, onOpenManageProjects, runAndClose }) {
+// The Rename/Share/Pin/Delete buttons themselves, split out so ViewFilterMenu
+// can fold them into its own combined mobile popover (see that file's
+// `projectActions` prop) without duplicating this markup. Each is gated on its
+// handler being present.
+export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, runAndClose }) {
   return (
     <>
       {onRename && (
@@ -61,25 +58,11 @@ export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin,
           Delete
         </button>
       )}
-      {/* Not project-specific (managing the project list isn't scoped to one
-          project), so this has no isPinned/isShared-style gate of its own —
-          just presence of the handler, same as the others above. */}
-      {onOpenManageProjects && (
-        <button
-          type="button"
-          role="menuitem"
-          className="project-actions-item"
-          onClick={() => runAndClose(onOpenManageProjects)}
-        >
-          <FolderKanban size={13} />
-          <MarqueeText text="Manage projects" className="project-actions-item-label" />
-        </button>
-      )}
     </>
   );
 }
 
-export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, onOpenManageProjects, ariaLabel = 'Project actions' }) {
+export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTogglePin, onDelete, onShare, ariaLabel = 'Project actions' }) {
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef(null);
 
@@ -151,7 +134,6 @@ export default function ProjectActionsMenu({ isPinned, isShared, onRename, onTog
                 onTogglePin={onTogglePin}
                 onDelete={onDelete}
                 onShare={onShare}
-                onOpenManageProjects={onOpenManageProjects}
                 runAndClose={runAndClose}
               />
             </div>

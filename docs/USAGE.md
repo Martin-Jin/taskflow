@@ -22,6 +22,8 @@ hidden, only reorganized.
 
 The page's side margins grow with the window: 32px up to 1023px wide, 56px from
 1024px, and 80px from 1280px. Phones use a tight margin so content gets the room.
+The round Add task / New event buttons float in the page's bottom-right corner,
+lined up with the content's right edge, in the same spot on every page.
 
 ### Sidebar modes
 
@@ -157,7 +159,7 @@ scoped to one project at a time (or "All Tasks", or "Inbox" for tasks with
 no project assigned). Switch projects from the Projects page,
 the search bar, or the "Manage projects" icon in the toolbar beside the Select
 icon (on a phone it's in the view menu); pin, rename, or delete
-a project from its "⋯" menu (the page header, or the Projects page) — pinned
+a project from its "⋯" menu (the page header) or the Manage projects dialog — pinned
 projects sort first, unpinned ones by most recently visited. Like "All
 Tasks", Inbox is a permanent, undeletable pseudo-project, not a real
 project you create.
