@@ -227,6 +227,7 @@
    someone who turns interface animations on wants them in this app
    specifically, regardless of an OS-wide reduced-motion preference. */
 @media (prefers-reduced-motion: reduce) {
+
   :root:not([data-animations='on']) *,
   :root:not([data-animations='on']) *::before,
   :root:not([data-animations='on']) *::after {
@@ -394,20 +395,25 @@ select:focus-visible,
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-strong) transparent;
 }
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
   border-radius: 0;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-secondary);
 }
+
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
@@ -494,11 +500,9 @@ select:focus-visible,
      picks a readable-strength stop) without hardcoding an rgba. Cards/
      modals paint their own opaque --color-bg-surface(-raised) on top, so
      this never affects text contrast. */
-  background-image: radial-gradient(
-    ellipse 900px 480px at 50% -80px,
-    color-mix(in srgb, var(--color-accent-200) 10%, transparent),
-    transparent 70%
-  );
+  background-image: radial-gradient(ellipse 900px 480px at 50% -80px,
+      color-mix(in srgb, var(--color-accent-200) 10%, transparent),
+      transparent 70%);
   background-repeat: no-repeat;
 }
 
@@ -573,10 +577,7 @@ select:focus-visible,
 
   .app-shell.is-mobile .main-content {
     padding: var(--space-3);
-    padding-bottom: calc(
-      var(--bottom-bar-height) + var(--space-3) + var(--install-banner-height, 0px) +
-        env(safe-area-inset-bottom, 0)
-    );
+    padding-bottom: calc(var(--bottom-bar-height) + var(--space-3) + var(--install-banner-height, 0px) + env(safe-area-inset-bottom, 0));
   }
 
   .app-shell.is-mobile.no-topbar .main-content {
@@ -1202,7 +1203,7 @@ select:focus-visible,
   white-space: nowrap;
 }
 
-.project-actions-item > svg {
+.project-actions-item>svg {
   flex-shrink: 0;
 }
 
@@ -1318,7 +1319,7 @@ select:focus-visible,
   flex: 0 0 auto;
 }
 
-.presence-avatar + .presence-avatar {
+.presence-avatar+.presence-avatar {
   margin-left: -7px;
 }
 
@@ -1341,7 +1342,7 @@ select:focus-visible,
     font-size: 9px;
   }
 
-  .presence-avatar + .presence-avatar {
+  .presence-avatar+.presence-avatar {
     margin-left: -8px;
   }
 }
@@ -1455,14 +1456,17 @@ select:focus-visible,
 }
 
 @keyframes marquee-scroll {
+
   0%,
   15% {
     transform: translateX(0);
   }
+
   45%,
   60% {
     transform: translateX(calc(-1 * var(--marquee-overflow, 0px)));
   }
+
   85%,
   100% {
     transform: translateX(0);
@@ -1621,6 +1625,7 @@ select:focus-visible,
 }
 
 @media (max-width: 639px) {
+
   /* Every .btn (icon-only or text) gets the same minimum height so a plain
      text button (e.g. Calendar's "Today") never looks shorter than an
      icon-only sibling (prev/next arrows) sitting in the same row. */
@@ -1799,15 +1804,19 @@ select:focus-visible,
   border-radius: 50%;
   flex-shrink: 0;
 }
+
 .priority-dot.urgent {
   background: var(--color-priority-urgent);
 }
+
 .priority-dot.high {
   background: var(--color-priority-high);
 }
+
 .priority-dot.medium {
   background: var(--color-priority-medium);
 }
+
 .priority-dot.low {
   background: var(--color-priority-low);
 }
@@ -1827,18 +1836,22 @@ select:focus-visible,
   background: color-mix(in srgb, var(--color-priority-urgent) 15%, transparent);
   color: var(--color-priority-urgent);
 }
+
 .badge.high {
   background: color-mix(in srgb, var(--color-priority-high) 15%, transparent);
   color: var(--color-priority-high);
 }
+
 .badge.medium {
   background: color-mix(in srgb, var(--color-priority-medium) 15%, transparent);
   color: var(--color-priority-medium);
 }
+
 .badge.low {
   background: color-mix(in srgb, var(--color-priority-low) 15%, transparent);
   color: var(--color-priority-low);
 }
+
 /* Connection-status pill (IntegrationsSection: Todoist import status,
    Anthropic/Gemini key presence) — was 3x copy-pasted inline style with a
    hardcoded, theme-invariant green literal; token-based now so it actually
@@ -1847,10 +1860,12 @@ select:focus-visible,
   background: color-mix(in srgb, var(--color-success) 15%, transparent);
   color: var(--color-success);
 }
+
 .badge.neutral {
   background: var(--color-bg-surface-hover);
   color: var(--color-text-secondary);
 }
+
 .badge.warning {
   background: color-mix(in srgb, var(--color-warning) 15%, transparent);
   color: var(--color-warning);
@@ -2081,7 +2096,7 @@ input.search-bar-input {
   overflow-y: auto;
 }
 
-.search-bar-dropdown-group + .search-bar-dropdown-group {
+.search-bar-dropdown-group+.search-bar-dropdown-group {
   margin-top: var(--space-3);
 }
 
@@ -2279,7 +2294,8 @@ input.search-bar-input {
   overflow-y: auto;
   padding: 24px;
   animation: modal-in var(--duration-base) var(--ease-decelerate);
-  scrollbar-width: none; /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
+  scrollbar-width: none;
+  /* Firefox — the scrollbar's own rectangular track squared off the rounded corner */
   -ms-overflow-style: none;
   /* No permanent will-change: the browser gives the modal its own layer while
      its transform animation runs, and a full-screen modal on a phone
@@ -2467,7 +2483,8 @@ input.search-bar-input {
 }
 
 .form-row textarea {
-  overflow: auto; /* textareas need scroll/resize, so only clip via border-radius elsewhere */
+  overflow: auto;
+  /* textareas need scroll/resize, so only clip via border-radius elsewhere */
 }
 
 .form-row input:focus,
@@ -2603,10 +2620,10 @@ input.search-bar-input {
    pair matches that one-level-nested case too, so Integrations' heading
    gets this SAME explicit value rather than doubling up with its old
    accidental UA-default margin. */
-.settings-card > h3:first-child,
-.settings-card > h4:first-child,
-.settings-card > *:first-child > h3:first-child,
-.settings-card > *:first-child > h4:first-child {
+.settings-card>h3:first-child,
+.settings-card>h4:first-child,
+.settings-card>*:first-child>h3:first-child,
+.settings-card>*:first-child>h4:first-child {
   margin-top: var(--space-4);
 }
 
@@ -2624,8 +2641,8 @@ input.search-bar-input {
 
 /* Tightens a hint sitting directly beneath its own heading, replacing the
    negative-marginTop trick the inline styles used to pull it up. */
-h3 + .settings-hint,
-h4 + .settings-hint {
+h3+.settings-hint,
+h4+.settings-hint {
   margin-top: calc(var(--space-1) * -1);
 }
 
@@ -2660,38 +2677,38 @@ h4 + .settings-hint {
   gap: var(--space-2);
 }
 
-.settings-toggle-row > label {
+.settings-toggle-row>label {
   margin: 0;
 }
 
 /* Vertical rhythm between consecutive toggle rows, replacing the assorted
    inline marginTop values (10px/12px) those rows carried individually. */
-.settings-toggle-row + .settings-toggle-row,
+.settings-toggle-row+.settings-toggle-row,
 /* ...and after the theme toggle, which is a control group rather than a
    toggle row, so it matched none of the pairings below and left "Sound
    effects" sitting flush against the Light/Dark pills. */
-.theme-toggle + .settings-toggle-row,
+.theme-toggle+.settings-toggle-row,
 /* ...and after the accent swatch/custom-picker row, same reason — it isn't
    a toggle row either, so "Sound effects" ran flush against the hex input
    above it. */
-.accent-swatch-row + .settings-toggle-row,
+.accent-swatch-row+.settings-toggle-row,
 /* Text sitting BELOW a control never had a gap: .settings-hint/.form-hint
    only carry a bottom margin, so a hint following a button row, a toggle, or
    a bare inline button ran flush into it. Every "control, then explanation"
    pairing in Settings goes through one of these selectors. */
-.settings-actions + .settings-hint,
-.settings-actions + .form-hint,
-.settings-actions + p,
-.settings-toggle-row + .settings-hint,
-.settings-inline + .settings-hint,
-.settings-inline + .form-hint,
+.settings-actions+.settings-hint,
+.settings-actions+.form-hint,
+.settings-actions+p,
+.settings-toggle-row+.settings-hint,
+.settings-inline+.settings-hint,
+.settings-inline+.form-hint,
 /* The theme toggle is a control group like settings-actions above, not a
    toggle row — without this, "Accent color..." ran flush against the
    Light/Dark pills the same way "Sound effects" did before the pairing
    above existed. */
-.theme-toggle + .settings-hint,
+.theme-toggle+.settings-hint,
 /* The sidebar-mode hint follows the accent swatch row the same way. */
-.accent-swatch-row + .settings-hint {
+.accent-swatch-row+.settings-hint {
   margin-top: var(--space-3);
 }
 
@@ -2758,7 +2775,7 @@ h4 + .settings-hint {
    button row (the AI-key and Todoist blocks in Integrations do this) — also
    had no gap of their own, so the badge sat directly on top of the buttons.
    Tighter than the text gap above: these belong to each other. */
-.settings-actions + .settings-actions {
+.settings-actions+.settings-actions {
   margin-top: var(--space-2);
 }
 
@@ -2770,14 +2787,14 @@ h4 + .settings-hint {
    aligns both kinds. A button's label is inset from its box for the same
    reason and reads as aligned regardless. */
 
-.settings-hint + .settings-toggle-row {
+.settings-hint+.settings-toggle-row {
   margin-top: var(--space-3);
 }
 
 /* A toggle row whose controls are disabled-looking because the feature it
    configures is switched off — replaces inline
    `opacity: <state> ? 1 : 0.5` on the row's individual children. */
-.settings-toggle-row.is-muted > *:not(input) {
+.settings-toggle-row.is-muted>*:not(input) {
   opacity: 0.5;
 }
 
@@ -2815,6 +2832,7 @@ h4 + .settings-hint {
 }
 
 @media (max-width: 1023px) {
+
   /* Rail needs horizontal room to stay readable; below desktop the panel
      falls back to the original single scrolling column, where the existing
      .settings-search-bar is already the way to jump between sections. */
@@ -2828,6 +2846,7 @@ h4 + .settings-hint {
 }
 
 @media (max-width: 639px) {
+
   /* Anchored near the top (not a bottom sheet) so the title field always
      lands above where an on-screen keyboard covers the viewport — a bottom
      sheet's first field sits right where the keyboard appears, requiring
@@ -2910,7 +2929,8 @@ h4 + .settings-hint {
    sits flush with the field instead.
    ---------------------------------------------------------------------- */
 input[type='number'] {
-  -moz-appearance: textfield; /* Firefox: drop the native spinner entirely */
+  -moz-appearance: textfield;
+  /* Firefox: drop the native spinner entirely */
 }
 
 input[type='number']::-webkit-outer-spin-button,
@@ -2925,7 +2945,8 @@ input[type='number']::-webkit-inner-spin-button {
 .form-row input[type='number'],
 .form-row input[type='time'],
 .form-row input[type='date'] {
-  overflow: hidden; /* clips the native picker-indicator/spinner chrome to
+  overflow: hidden;
+  /* clips the native picker-indicator/spinner chrome to
                         the field's rounded corners — without this Chromium
                         squares off whichever side that chrome sits on */
 }
@@ -3001,8 +3022,8 @@ input[type='checkbox']:checked::after {
    "mark complete" action, replacing the old split dot + icon-button.
    ---------------------------------------------------------------------- */
 .task-checkbox {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: 2px solid var(--color-priority-medium);
   background: transparent;
@@ -3019,12 +3040,15 @@ input[type='checkbox']:checked::after {
 .task-checkbox.urgent {
   border-color: var(--color-priority-urgent);
 }
+
 .task-checkbox.high {
   border-color: var(--color-priority-high);
 }
+
 .task-checkbox.medium {
   border-color: var(--color-priority-medium);
 }
+
 .task-checkbox.low {
   border-color: var(--color-priority-low);
 }
@@ -3037,12 +3061,15 @@ input[type='checkbox']:checked::after {
 .task-checkbox.urgent.checked {
   background: var(--color-priority-urgent);
 }
+
 .task-checkbox.high.checked {
   background: var(--color-priority-high);
 }
+
 .task-checkbox.medium.checked {
   background: var(--color-priority-medium);
 }
+
 .task-checkbox.low.checked {
   background: var(--color-priority-low);
 }
@@ -3059,9 +3086,11 @@ input[type='checkbox']:checked::after {
   0% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.2);
   }
+
   100% {
     transform: scale(1);
   }
@@ -3080,11 +3109,13 @@ input[type='checkbox']:checked::after {
 }
 
 @keyframes empty-state-float {
+
   0%,
   100% {
     transform: translateY(0);
     opacity: 0.6;
   }
+
   50% {
     transform: translateY(-4px);
     opacity: 0.9;
@@ -3100,19 +3131,24 @@ input[type='checkbox']:checked::after {
 }
 
 @keyframes shake-error {
+
   0%,
   100% {
     transform: translateX(0);
   }
+
   20% {
     transform: translateX(-4px);
   }
+
   40% {
     transform: translateX(3px);
   }
+
   60% {
     transform: translateX(-2px);
   }
+
   80% {
     transform: translateX(1px);
   }
@@ -3130,7 +3166,8 @@ input[type='checkbox']:checked::after {
   position: fixed;
   bottom: 20px;
   right: 20px;
-  z-index: 1100; /* above .guided-tour-overlay (1000, see tutorial.css) */
+  z-index: 1100;
+  /* above .guided-tour-overlay (1000, see tutorial.css) */
   display: flex;
   flex-direction: column-reverse;
   align-items: flex-end;
@@ -3138,7 +3175,7 @@ input[type='checkbox']:checked::after {
   pointer-events: none;
 }
 
-.floating-notifications > * {
+.floating-notifications>* {
   pointer-events: auto;
 }
 
@@ -3187,15 +3224,19 @@ input[type='checkbox']:checked::after {
 .toast.success {
   border-left: 3px solid var(--color-success);
 }
+
 .toast.warning {
   border-left: 3px solid var(--color-warning);
 }
+
 .toast.error {
   border-left: 3px solid var(--color-danger);
 }
+
 .toast.info {
   border-left: 3px solid var(--color-accent-border);
 }
+
 .toast.loading {
   border-left: 3px solid var(--color-accent-border);
 }
@@ -3227,8 +3268,7 @@ input[type='checkbox']:checked::after {
   }
 
   .toast-message.is-scrolling .toast-message-text {
-    animation: toast-message-scroll calc(var(--toast-hidden-lines) * var(--toast-scroll-ms))
-      steps(var(--toast-hidden-lines), jump-end) var(--toast-scroll-ms) forwards;
+    animation: toast-message-scroll calc(var(--toast-hidden-lines) * var(--toast-scroll-ms)) steps(var(--toast-hidden-lines), jump-end) var(--toast-scroll-ms) forwards;
   }
 }
 
@@ -3324,7 +3364,7 @@ input[type='checkbox']:checked::after {
   gap: 8px;
 }
 
-.share-link-row + .share-link-row {
+.share-link-row+.share-link-row {
   margin-top: 10px;
 }
 
@@ -3514,6 +3554,7 @@ input[type='checkbox']:checked::after {
     flex-basis: 100%;
   }
 }
+
 /* ---------------------------------------------------------------------------
    Join-by-share-link modal (Collaborative Projects, Phase 2)
    Deliberately narrow and centered: every state it shows is a single short
@@ -3733,8 +3774,7 @@ input[type='checkbox']:checked::after {
   z-index: 155;
   background: var(--color-bg-surface);
   box-shadow: var(--shadow-elevated);
-  padding: 8px calc(var(--space-4) + env(safe-area-inset-right, 0)) calc(8px + env(safe-area-inset-bottom, 0))
-    calc(var(--space-4) + env(safe-area-inset-left, 0));
+  padding: 8px calc(var(--space-4) + env(safe-area-inset-right, 0)) calc(8px + env(safe-area-inset-bottom, 0)) calc(var(--space-4) + env(safe-area-inset-left, 0));
   animation: modal-overlay-in var(--duration-base) var(--ease-standard);
 }
 
@@ -3866,12 +3906,10 @@ input[type='checkbox']:checked::after {
 /* Gated on the app's motion preference by the component, not by a media query
    here, so it honours the in-app Animations toggle as well as the OS setting. */
 .skeleton-block.is-animated {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--color-text-primary) 7%, transparent) 25%,
-    color-mix(in srgb, var(--color-text-primary) 14%, transparent) 50%,
-    color-mix(in srgb, var(--color-text-primary) 7%, transparent) 75%
-  );
+  background: linear-gradient(90deg,
+      color-mix(in srgb, var(--color-text-primary) 7%, transparent) 25%,
+      color-mix(in srgb, var(--color-text-primary) 14%, transparent) 50%,
+      color-mix(in srgb, var(--color-text-primary) 7%, transparent) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.4s ease-in-out infinite;
 }
@@ -3880,6 +3918,7 @@ input[type='checkbox']:checked::after {
   from {
     background-position: 200% 0;
   }
+
   to {
     background-position: -200% 0;
   }

@@ -274,7 +274,7 @@
   animation: fab-mini-in var(--duration-base) var(--ease-decelerate);
 }
 
-.fab-mini + .fab-mini {
+.fab-mini+.fab-mini {
   animation-delay: 40ms;
 }
 
@@ -440,7 +440,7 @@
 }
 
 .task-row .task-checkbox {
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
 /* Sub-task rows (task.parentId set, rendered nested under their parent by
@@ -536,6 +536,7 @@
    in the "keep the desktop list layout" width range could still have a
    coarse pointer with no real hover — this keeps that case correct too. */
 @media (hover: hover) {
+
   .task-row:hover .task-row-reschedule,
   .task-row:hover .task-row-log-time {
     opacity: 1;
@@ -665,7 +666,7 @@
 }
 
 @media (max-width: 639px) {
-  .tasklist-toolbar > * {
+  .tasklist-toolbar>* {
     flex: 1 1 100%;
   }
 
