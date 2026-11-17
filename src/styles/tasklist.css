@@ -20,8 +20,8 @@
   min-width: 0;
 }
 
-/* Holds TaskProjectRail alongside whichever List/Board/Gantt content is
-   active — a plain flex row, `flex: 1`/`min-height: 0` so Board's own
+/* Wraps whichever List/Board/Gantt content is active — a plain flex row,
+   `flex: 1`/`min-height: 0` so Board's own
    flex:1 stretch chain (see .tab-panel-fill .taskpage above) still reaches
    .board-page through these two extra levels of nesting; harmless no-ops
    for List/Gantt, which never had a height constraint to inherit anyway. */
@@ -39,135 +39,6 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-}
-
-/* TaskProjectRail's desktop inline column — see that component's own doc
-   comment. Plain/transparent like .settings-rail (no card background of its
-   own — rule 1: borders/containers only where they carry real meaning).
-   The mobile drawer variant (built on the shared Modal) is styled further
-   below. */
-.task-project-rail {
-  flex-shrink: 0;
-  width: 200px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-height: 0;
-}
-
-/* Mobile drawer: Modal's default centered-card overlay, repositioned to a
-   full-height panel flush against the left edge instead, sliding in from
-   there rather than fading in place. `.modal`'s own overflow-y:auto and
-   Escape/backdrop-click-to-close (useModalA11y, via Modal's `dismissible`
-   default) are inherited unchanged — only position/size/motion differ. */
-.task-project-drawer-overlay {
-  justify-content: flex-start;
-  align-items: stretch;
-}
-
-.task-project-drawer {
-  width: 280px;
-  max-width: 85vw;
-  height: 100%;
-  max-height: 100%;
-  border-radius: 0;
-  padding: var(--space-4) var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  animation: task-project-drawer-in var(--duration-base) var(--ease-decelerate);
-}
-
-.modal-overlay.is-closing .task-project-drawer {
-  animation: task-project-drawer-out var(--duration-fast) var(--ease-accelerate) forwards;
-}
-
-@keyframes task-project-drawer-in {
-  from {
-    transform: translateX(-100%);
-  }
-}
-
-@keyframes task-project-drawer-out {
-  to {
-    transform: translateX(-100%);
-  }
-}
-
-.task-project-rail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 0 2px;
-}
-
-.task-project-rail-title {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary);
-}
-
-.task-project-rail-search {
-  margin: 0 0 4px;
-}
-
-.task-project-rail-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.task-project-rail-link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  text-align: left;
-  padding: 7px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-}
-
-.task-project-rail-link:hover,
-.task-project-rail-link.is-kbd-active {
-  background: var(--color-bg-surface-hover);
-  color: var(--color-text-primary);
-}
-
-.task-project-rail-link.is-current {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-weight: 600;
-}
-
-.task-project-rail-link-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-project-rail-pin-icon {
-  flex-shrink: 0;
-  color: var(--color-text-secondary);
-}
-
-.task-project-rail-empty {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  padding: 8px 10px;
 }
 
 /* Wraps the page title row and (List view only) the search toolbar into one
@@ -208,7 +79,7 @@
    padding-top on every breakpoint, whatever `top`'s sticky offset is, so
    there's never a gap of unblurred content peeking above the header —
    .main-content's own overflow:auto clips the excess), sideways by
-   .main-content's own 20px padding (so it spans edge to edge, clipped there
+   .main-content's own side padding (--page-gutter, so it spans edge to edge, clipped there
    rather than bleeding into the sidebar since that's a separate grid area),
    and down by an extra 18px past the search bar. Needs its own background,
    not just backdrop-filter alone — a bare blur with nothing behind it to
@@ -218,8 +89,8 @@
 .taskpage-sticky-header-backdrop {
   position: absolute;
   top: -200px;
-  left: -20px;
-  right: -20px;
+  left: calc(var(--page-gutter) * -1);
+  right: calc(var(--page-gutter) * -1);
   bottom: -18px;
   z-index: -1;
   background: color-mix(in srgb, var(--color-bg-page) 94%, transparent);
@@ -356,8 +227,8 @@
    adds it back in. */
 .add-task-fab-group {
   position: fixed;
-  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
-  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  right: calc(var(--fab-right, var(--space-4)) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--fab-bottom, var(--space-4)) + env(safe-area-inset-bottom, 0));
   z-index: 120;
   display: flex;
   flex-direction: column;
@@ -366,17 +237,20 @@
 }
 
 .add-task-btn {
-  width: 56px;
-  height: 56px;
+  width: 50px;
+  height: 50px;
   padding: 0;
-  border-radius: var(--radius-lg);
+  /* A circle, like the mini-FABs above it (which stay smaller, so the main
+     action still reads as the biggest). !important for the same reason as
+     .fab-round: .btn sets border-radius and loads later at equal specificity. */
+  border-radius: 50% !important;
   justify-content: center;
   box-shadow: var(--shadow-elevated);
 }
 
 .add-task-btn svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 
 .add-task-btn-label {
@@ -384,9 +258,9 @@
 }
 
 /* AI Quick Add / Add task mini-FABs, shown above the main button only while
-   the group is expanded (see AddTaskFabGroup) — smaller and round rather
-   than the main button's square-block shape, so the hierarchy between "the"
-   action and its alternatives stays visually clear. Each pops in on mount
+   the group is expanded (see AddTaskFabGroup) — a little smaller than the
+   main button, so the hierarchy between "the" action and its alternatives
+   stays visually clear. Each pops in on mount
    (React only renders these while `expanded`, so mount timing = expand
    timing) with the second one slightly delayed, so they read as unfurling
    from the main button rather than snapping into place. */

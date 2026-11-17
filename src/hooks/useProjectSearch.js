@@ -1,7 +1,7 @@
 /**
  * useProjectSearch — the "type to filter/rank projects, arrow through the
  * results, Enter to pick one" behavior shared by every project-only search
- * box in the app (Sidebar, ManageProjectsModal, and TaskProjectRail).
+ * box in the app (ManageProjectsModal and the other project pickers).
  * Extracted out of ManageProjectsModal so a third call site didn't mean a
  * third copy of the same query state + sortProjectsForSidebar +
  * rankByNameSearch + useListKeyboardNav wiring.

@@ -1,13 +1,10 @@
 /**
- * ManageProjectsModal — mobile-friendly "see all projects" popup, since
- * mobile has no Sidebar (see Sidebar.jsx's own doc comment) to browse/manage
- * projects from. Mirrors Sidebar's search + list + Rename/Pin/Delete
- * (ProjectActionsMenu), just inside a modal shell instead of a persistent
- * rail. Its own "Add project" button opens the shared dedicated
+ * ManageProjectsModal — "see all projects" popup: a search box and a list with
+ * Rename/Pin/Delete (ProjectActionsMenu) in a modal shell. Its own "Add project" button opens the shared dedicated
  * AddProjectModal (see App.jsx) rather than an inline form, so there's one
  * "add project" UI across the app instead of two. Reachable two ways: the
  * mobile topbar's "⋯" menu and the Tasks page's project SelectMenu footer
- * ("See / manage all projects").
+ * ("Manage projects").
  */
 
 import React, { useRef, useState } from 'react';
@@ -36,7 +33,7 @@ export default function ManageProjectsModal({
   // Read from context rather than adding props: `projects` is passed in (this
   // modal is also driven with a filtered list), but the shared-project docs
   // and current uid are the same for every caller, so threading them through
-  // would be noise — same approach as Sidebar's own badge wiring.
+  // would be noise.
   const { sharedProjects } = useScheduler();
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -64,8 +61,7 @@ export default function ManageProjectsModal({
   const { query, setQuery, visibleProjects, isSearching, activeIndex, setActiveIndex, listRef, handleKeyDown } =
     useProjectSearch(projects, pickProject);
 
-  // Unlike CalendarFilterMenu/Sidebar (a portal popover and a persistent nav
-  // rail, neither of which is a modal), Escape here can't be intercepted to
+  // Unlike CalendarFilterMenu (a portal popover, not a modal), Escape here can't be intercepted to
   // "just clear the query" first — useModalA11y's Escape handler listens on
   // `document` in the CAPTURE phase, so it always closes the modal before a
   // React onKeyDown (bubble phase, and scoped to this input besides) even

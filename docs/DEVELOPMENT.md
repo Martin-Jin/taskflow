@@ -798,11 +798,11 @@ src/
 │   ├── Settings/                # RoutineTimeline — drag-to-edit 24h fixed-routines timeline
 │   ├── CommandPalette.jsx      # Alt+O "jump to anything" — fuzzy-searches Views/Projects/Tasks/Calendar Events/quick Actions
 │   ├── TaskListPanel.jsx
-│   ├── TaskProjectRail.jsx     # Tasks page's collapsible all-projects panel — an inline column on desktop, an overlay drawer on mobile, from one piece of state
 │   └── SettingsPanel.jsx
 ├── context/
 │   ├── SchedulerContext.jsx  # Global state: tasks/blocks/routines/rules/sections + actions (+ cloud sync, see AuthContext)
 │   ├── ThemeContext.jsx      # Light/dark theme (+ cloud sync)
+│   ├── SidebarPrefsContext.jsx # Desktop sidebar mode (always / button / hover) + collapsed flag — device-local, deliberately not synced or backed up
 │   ├── CompleteTaskContext.jsx # Intercepts task completion to stop/log a running Pomodoro timer (see TimerContext) before delegating to SchedulerContext.completeTask
 │   └── AuthContext.jsx       # Firebase Auth (Google sign-in) — see "Account & cross-device sync" in the README
 ├── firebase.js                # Firebase app/Auth/Firestore init — see "Account & cross-device sync" in the README
@@ -844,6 +844,7 @@ src/
 │   └── dataRetention.js          # Centralized retention-duration constants/helpers — see "Data retention policies"
 ├── utils/
 │   ├── dateUtils.js          # ISO date / "HH:MM" arithmetic
+│   ├── sidebarMode.js        # Sidebar display-mode rules (which modes exist, when the layout reserves only the icon strip)
 │   ├── intervalUtils.js      # Interval merge/subtract math
 │   ├── durationParser.js     # Free-text duration extraction
 │   ├── dateParse.js          # Free-text due-date phrase detection
@@ -901,8 +902,9 @@ calendar event is stored once with its RRULE recurrence rule, not as one
 record per occurrence — occurrences are expanded for display only.
 
 Some state is deliberately device-local and stays out of both backups and
-cross-device sync — view/filter selections, dashboard widget visibility, and
-Board's drag-chosen column order (`src/utils/boardColumnOrder.js`). The
+cross-device sync — view/filter selections, dashboard widget visibility, the
+sidebar mode (`SidebarPrefsContext`; a narrow laptop and a wide monitor want
+different layouts), and Board's drag-chosen column order (`src/utils/boardColumnOrder.js`). The
 column order is a per-project list of section ids layered over the synced
 `Section.order` at render time rather than written back onto the Sections
 themselves: sections come from Todoist, so persisting a local arrangement

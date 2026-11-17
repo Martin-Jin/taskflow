@@ -17,8 +17,28 @@
 
 On phone-width screens (<640px) the sidebar is replaced by a fixed bottom
 tab bar (Dashboard / Calendar / Tasks / Projects / Stats / Settings). Tablet widths
-keep the full sidebar. Every view is fully usable at any width — nothing is
+keep the sidebar. Every view is fully usable at any width — nothing is
 hidden, only reorganized.
+
+The page's side margins grow with the window: 32px up to 1023px wide, 56px from
+1024px, and 80px from 1280px. Phones use a tight margin so content gets the room.
+
+### Sidebar modes
+
+On larger screens, **Settings → Appearance → Sidebar** picks how the sidebar
+behaves. It is saved per device, so a laptop and a desktop monitor can differ.
+
+- **Button** (default) — click the sidebar's right edge to collapse it to a
+  narrow strip of icons, and click the edge again to open it. Hovering the edge
+  tints it and shows a small arrow nudging the way it will move. Your last
+  choice is remembered.
+- **Always shown** — the full sidebar, always, with no collapse control.
+- **On hover** — the sidebar rests as the icon strip and opens over the page
+  while your pointer is on it (or keyboard focus is inside it). The page
+  doesn't move when it opens.
+
+In the strip, the logo replaces the "TaskFlow" name, each tab shows its icon,
+and your account and mentions stay at the bottom. Hover over an icon to see its name.
 
 TaskFlow is installable as a PWA — adding it to your phone's home screen
 (iOS: Safari's Share sheet → "Add to Home Screen"; Android: Chrome's
@@ -134,11 +154,10 @@ schedule** re-runs the engine while preserving locked blocks.
 
 One page, three views via its own List/Board/Gantt switch, all
 scoped to one project at a time (or "All Tasks", or "Inbox" for tasks with
-no project assigned). Switch projects from the sidebar, the Projects page,
-the search bar, or the collapsible "all projects" panel toggled from the
-icon next to the page title (a persistent column on desktop, an overlay
-drawer that closes itself after you pick on mobile); pin, rename, or delete
-a project from its "⋯" menu (sidebar row or the page header) — pinned
+no project assigned). Switch projects from the Projects page,
+the search bar, or the "Manage projects" icon in the toolbar beside the Select
+icon (on a phone it's in the view menu); pin, rename, or delete
+a project from its "⋯" menu (the page header, or the Projects page) — pinned
 projects sort first, unpinned ones by most recently visited. Like "All
 Tasks", Inbox is a permanent, undeletable pseudo-project, not a real
 project you create.
@@ -253,11 +272,8 @@ A directory of every project: a fuzzy search box, and
 Recent / Shared / My Projects columns (the last sortable by size, total
 estimated hours, or creation date).
 
-**This page is where you browse; the sidebar is where you keep shortcuts.** The
-sidebar lists only the projects you've pinned (from any project's "⋯" menu), in
-alphabetical order, so a project you rely on stays put instead of sliding out of
-view as you work on other things. Nothing pinned means an empty list — it tells
-you how to fill it — and everything else is one click away here.
+**This page is where you browse.** Everything is one click away here, and pinned
+projects sort first.
 
 ## Bulk select
 
@@ -370,7 +386,9 @@ One page of cards, each covering one area:
   one of 6 presets or a custom color. The app derives the lighter/darker
   shades it needs from your pick automatically (in both light and dark mode)
   and keeps them readable, so any color you choose stays legible. Syncs
-  across signed-in devices like the light/dark choice does.
+  across signed-in devices like the light/dark choice does. It also holds the
+  [Sidebar mode](#sidebar-modes) choice (always shown / button / on hover),
+  which stays on the device you set it on.
 - **Keyboard shortcuts** — view and rebind every shortcut.
 - **Install app** — the PWA install steps for your platform.
 - **Versions** — a **What's new** changelog, also auto-shown once whenever a

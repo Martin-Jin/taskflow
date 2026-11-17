@@ -3,199 +3,134 @@
  * Sidebar
  * ============================================================================
  * Desktop-only nav rail: the Workspace tab switch (Dashboard/Calendar/Tasks/
- * Projects/Stats/Settings) plus a "Pinned projects" group underneath — the
- * "All Tasks" and "Inbox" pseudo-projects, then whichever real projects the
- * user has explicitly pinned, each with a "⋯" menu (Rename/Unpin/Delete via
- * ProjectActionsMenu).
+ * Projects/Stats/Settings) and a footer slot for the account button and
+ * mentions bell.
  *
- * PINNED, not recent — a deliberate split of responsibilities with the
- * Projects page rather than an incidental cap. Both surfaces used to answer
- * "find and switch project", which meant neither owned it: the sidebar showed
- * the 5 most-recently-visited, so it churned under you and you could never
- * count on a given project being there. It's now a shortcut strip the user
- * curates, and BROWSING belongs entirely to the Projects page (search, Recent/
- * Shared/My Projects columns) — one click away via the Workspace group above,
- * so no second link out from here.
+ * There used to be a "Pinned projects" group under the tabs (All Tasks, Inbox,
+ * and any pinned projects). It was removed: switching project is covered by the
+ * Projects page, the Tasks page's "Manage projects" icon and the search bar,
+ * so the sidebar's copy only added clutter.
  *
- * The cost of the split is that pinning becomes the way to get a project into
- * the rail, which nobody discovers by accident — hence the empty state below
- * says so explicitly instead of rendering a blank group. No count cap: pinning
- * is explicit and self-limiting, so a cap would silently hide a project the
- * user deliberately put there. .sidebar-project-list already scrolls within
- * the rail (flex + overflow-y), so a long pin list costs nothing.
+ * COLLAPSING — three modes, chosen in Settings → Appearance (state in
+ * SidebarPrefsContext, rules in utils/sidebarMode.js):
+ *   - 'always' — the full sidebar, always.
+ *   - 'toggle' (default) — clicking the sidebar's right edge
+ *     (`.sidebar-edge-handle`) collapses it to a "rail" (a narrow icon-only
+ *     strip: the logo alone replaces the name, each tab shrinks to its icon)
+ *     and opens it again. Hovering the edge shows an arrow pointing the way
+ *     it will move.
+ *   - 'hover'  — resting state is the rail; the full sidebar opens OVER the
+ *     page while the pointer is on it (or keyboard focus is inside it), so the
+ *     page never shifts. A short delay on opening stops a pointer merely
+ *     crossing the left edge from flashing it open.
+ * The same markup serves every look. Text that disappears in the rail sits in
+ * a `.sidebar-label` span, and CSS (nav.css, "Sidebar rail") hides it, so
+ * nothing re-mounts when the look changes. Rail buttons get a title and
+ * aria-label, since their visible text is gone.
  *
- * "Manage projects" (ManageProjectsModal, which also has its own "Add project"
- * button opening AddProjectModal) lives on the Projects page itself and — for
- * the Tasks page specifically — TaskProjectRail, rather than duplicated here.
- *
- * Extracted out of App.jsx once the Projects group made the inline JSX too
- * large to keep readable there. Only rendered on desktop — mobile has no
- * sidebar, so project switching happens via the in-page selector added to
- * TaskListPanel/BoardView instead.
+ * Only rendered on desktop — mobile has no sidebar and uses BottomTabBar.
  * ============================================================================
  */
 
-import React, { useState } from 'react';
-import { Inbox, Layers } from 'lucide-react';
-import ProjectActionsMenu from '../Common/ProjectActionsMenu';
-import SharedProjectBadge from '../Common/SharedProjectBadge';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import BrandMark from '../Common/BrandMark';
-import { useScheduler } from '../../context/SchedulerContext';
-import { useAuth } from '../../context/AuthContext';
-import { useConfirm } from '../../context/ConfirmContext';
-import {
-  ALL_TASKS_PROJECT_ID,
-  ALL_TASKS_PROJECT_LABEL,
-  INBOX_PROJECT_ID,
-  INBOX_PROJECT_LABEL,
-} from '../../utils/projectConstants';
+import { useSidebarPrefs } from '../../context/SidebarPrefsContext';
 
+export default function Sidebar({ tabs, activeTab, onSelectTab, footer }) {
+  const { sidebarMode, sidebarCollapsed, toggleSidebarCollapsed } = useSidebarPrefs();
+  const isHoverMode = sidebarMode === 'hover';
 
-export default function Sidebar({
-  tabs,
-  activeTab,
-  onSelectTab,
-  projects,
-  activeProjectId,
-  onSelectProject,
-  onRenameProject,
-  onTogglePinProject,
-  onShareProject,
-  onDeleteProject,
-  footer,
-}) {
-  const { sharedProjects } = useScheduler();
-  const { user } = useAuth();
-  const confirm = useConfirm();
-  const [renamingId, setRenamingId] = useState(null);
-  const [renameValue, setRenameValue] = useState('');
-
-  /* Pinned only, sorted by name. Name order rather than pin-recency or
-     last-visited on purpose: the whole point of a curated strip is that a
-     project stays where the user last saw it, and a list that rearranges
-     itself is one you have to re-read every time. */
-  const pinnedProjects = [...projects]
-    .filter((p) => p.isPinned)
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  function startRename(project) {
-    setRenamingId(project.id);
-    setRenameValue(project.name);
-  }
-
-  function commitRename() {
-    if (renamingId && renameValue.trim()) onRenameProject(renamingId, renameValue);
-    setRenamingId(null);
-    setRenameValue('');
-  }
-
-  async function handleDelete(project) {
-    if (await confirm(`Delete "${project.name}"? Its tasks will move to Inbox.`, { confirmLabel: 'Delete' })) {
-      onDeleteProject(project.id);
+  /* Hover mode: open while the pointer is on the sidebar, or while keyboard
+     focus is inside it. Only KEYBOARD focus counts (:focus-visible) — a mouse
+     click on a tab leaves focus behind on that button, and counting it would
+     keep the sidebar stuck open after the pointer left. Both changes are
+     delayed slightly: opening, so a pointer crossing the edge doesn't flash
+     it; closing, so a brief slip off the edge doesn't snap it shut. */
+  const [pointerInside, setPointerInside] = useState(false);
+  const [keyboardInside, setKeyboardInside] = useState(false);
+  const hoverTimer = useRef(null);
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+  useEffect(() => {
+    if (!isHoverMode) {
+      setPointerInside(false);
+      setKeyboardInside(false);
     }
+  }, [isHoverMode]);
+
+  function setPointerSoon(inside) {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setPointerInside(inside), inside ? 120 : 200);
   }
+
+  const hoverOpen = isHoverMode && (pointerInside || keyboardInside);
+  // The rail look: collapsed by the user (toggle mode), or resting (hover mode).
+  const isRail = isHoverMode ? !hoverOpen : sidebarMode === 'toggle' && sidebarCollapsed;
+  // Rail buttons have no visible text, so name them for tooltips and screen readers.
+  const railLabel = (label) => (isRail ? { title: label, 'aria-label': label } : {});
 
   return (
-    <aside className="sidebar">
-      <div className="brand" data-tour="brand">
-        <BrandMark className="brand-mark" />
-        TaskFlow
-      </div>
-
-      <div className="nav-group">
-        <div className="nav-group-label">Workspace</div>
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={`nav-item ${activeTab === t.id ? 'active' : ''}`}
-            onClick={() => onSelectTab(t.id)}
-            data-tour={`nav-${t.id}`}
-            aria-current={activeTab === t.id ? 'page' : undefined}
-          >
-            <t.icon size={16} strokeWidth={2} />
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="nav-group sidebar-projects-group">
-        <div className="nav-group-label">Pinned projects</div>
-
-        <button
-          className={`nav-item sidebar-project-row ${activeProjectId === ALL_TASKS_PROJECT_ID ? 'active' : ''}`}
-          onClick={() => onSelectProject(ALL_TASKS_PROJECT_ID)}
-          aria-current={activeProjectId === ALL_TASKS_PROJECT_ID ? 'page' : undefined}
-        >
-          <Layers size={14} aria-hidden="true" />
-          <span className="sidebar-project-name">{ALL_TASKS_PROJECT_LABEL}</span>
-        </button>
-
-        <button
-          className={`nav-item sidebar-project-row ${activeProjectId === INBOX_PROJECT_ID ? 'active' : ''}`}
-          onClick={() => onSelectProject(INBOX_PROJECT_ID)}
-          aria-current={activeProjectId === INBOX_PROJECT_ID ? 'page' : undefined}
-        >
-          <Inbox size={14} aria-hidden="true" />
-          <span className="sidebar-project-name">{INBOX_PROJECT_LABEL}</span>
-        </button>
-
-        <div className="sidebar-project-list">
-          {pinnedProjects.map((p) => (
-            <div key={p.id} className={`sidebar-project-row-wrap ${activeProjectId === p.id ? 'active' : ''}`}>
-              {renamingId === p.id ? (
-                <input
-                  autoFocus
-                  className="sidebar-project-rename-input"
-                  aria-label={`Rename project "${p.name}"`}
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      commitRename();
-                    }
-                    if (e.key === 'Escape') {
-                      setRenamingId(null);
-                      setRenameValue('');
-                    }
-                  }}
-                />
-              ) : (
-                <button
-                  className="nav-item sidebar-project-row"
-                  onClick={() => onSelectProject(p.id)}
-                  aria-current={activeProjectId === p.id ? 'page' : undefined}
-                >
-                  <span className="sidebar-project-name">{p.name}</span>
-                  <SharedProjectBadge project={p} sharedProject={sharedProjects[p.sharedProjectId]} uid={user?.uid} />
-                </button>
-              )}
-              {renamingId !== p.id && (
-                <ProjectActionsMenu
-                  isPinned={!!p.isPinned}
-                  isShared={!!p.sharedProjectId}
-                  ariaLabel={`Actions for ${p.name}`}
-                  onRename={() => startRename(p)}
-                  onTogglePin={() => onTogglePinProject(p.id)}
-                  onDelete={() => handleDelete(p)}
-                  onShare={onShareProject ? () => onShareProject(p.id) : undefined}
-                />
-              )}
-            </div>
-          ))}
-          {pinnedProjects.length === 0 && (
-            /* Says how to fill it, not just that it's empty: pinning is the
-               only route into this rail now, and it isn't discoverable on its
-               own. */
-            <div className="sidebar-project-empty">
-              Pin a project from its <span aria-hidden="true">⋯</span> menu to keep it here.
-            </div>
-          )}
+    <div className={`sidebar-slot ${isHoverMode ? 'is-overlay' : ''}`}>
+      <aside
+        className={`sidebar ${isRail ? 'is-rail' : ''} ${hoverOpen ? 'is-open' : ''}`}
+        onMouseEnter={isHoverMode ? () => setPointerSoon(true) : undefined}
+        onMouseLeave={isHoverMode ? () => setPointerSoon(false) : undefined}
+        onFocus={
+          isHoverMode
+            ? (e) => {
+                if (e.target.matches(':focus-visible')) setKeyboardInside(true);
+              }
+            : undefined
+        }
+        onBlur={
+          isHoverMode
+            ? (e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setKeyboardInside(false);
+              }
+            : undefined
+        }
+      >
+        <div className="sidebar-brand-row">
+          <div className="brand" data-tour="brand">
+            <BrandMark className="brand-mark" />
+            <span className="sidebar-label">TaskFlow</span>
+          </div>
         </div>
-      </div>
 
-      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>{footer}</div>
-    </aside>
+        <div className="nav-group">
+          <div className="nav-group-label">Workspace</div>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className={`nav-item ${activeTab === t.id ? 'active' : ''}`}
+              onClick={() => onSelectTab(t.id)}
+              data-tour={`nav-${t.id}`}
+              aria-current={activeTab === t.id ? 'page' : undefined}
+              {...railLabel(t.label)}
+            >
+              <t.icon size={16} strokeWidth={2} />
+              <span className="sidebar-label">{t.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="sidebar-footer">{footer}</div>
+      </aside>
+      {/* Toggle mode: the sidebar's right edge opens and closes it. There is
+          deliberately no button inside the sidebar itself. Hovering the edge
+          tints it and nudges an arrow in the direction it will move. */}
+      {sidebarMode === 'toggle' && (
+        <button
+          type="button"
+          className={`sidebar-edge-handle ${sidebarCollapsed ? 'is-collapsed' : 'is-expanded'}`}
+          onClick={toggleSidebarCollapsed}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {sidebarCollapsed ? <ChevronRight size={16} aria-hidden="true" /> : <ChevronLeft size={16} aria-hidden="true" />}
+        </button>
+      )}
+    </div>
   );
 }

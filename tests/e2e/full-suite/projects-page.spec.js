@@ -303,13 +303,9 @@ test.describe('Deleted projects stay out of the UI', () => {
     await page.reload();
     await page.waitForTimeout(700);
 
-    await gotoTab(page, 'Tasks');
-    const rail = page.locator('.task-project-rail, .task-project-drawer');
-    if (!(await rail.first().isVisible().catch(() => false))) {
-      await page.getByLabel('Show all projects').click();
-    }
-    await expect(rail.getByRole('button', { name: 'Work', exact: true })).toBeVisible();
-    await expect(rail.getByText('Ghostly Project')).toHaveCount(0);
+    await gotoTab(page, 'Projects');
+    await expect(page.locator('.projects-page-row-name', { hasText: /^Work$/ }).first()).toBeVisible();
+    await expect(page.getByText('Ghostly Project')).toHaveCount(0);
 
     await openAddTask(page);
     await page.getByRole('button', { name: 'Project', exact: true }).click();

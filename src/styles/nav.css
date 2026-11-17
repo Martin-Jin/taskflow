@@ -396,3 +396,231 @@
     min-height: 44px;
   }
 }
+
+/* ----------------------------------------------------------------------
+   Sidebar rail — the collapsed, icon-only look of the desktop sidebar
+   (components/Nav/Sidebar.jsx; modes in utils/sidebarMode.js).
+
+   Why CSS-only: the markup is identical in every look. Text that vanishes in
+   the rail sits in `.sidebar-label` (or another hidden class below), so
+   switching looks never re-mounts anything and keeps menus/focus intact.
+
+   Layout: `.sidebar-slot` always fills the shell's sidebar column. In
+   "toggle" mode the column itself narrows (`.app-shell.sidebar-rail`). In
+   "hover" mode the column stays narrow and the sidebar is positioned OVER the
+   page, widening on `.is-open`, so the page never shifts or re-lays-out when
+   the pointer touches the edge. Width changes are instant on purpose — the
+   calendar's pixel maths shouldn't see an animating width.
+   ---------------------------------------------------------------------- */
+.sidebar-slot {
+  grid-area: sidebar;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-slot > .sidebar {
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-slot.is-overlay > .sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1;
+}
+
+/* Open: must clear the Tasks/Settings sticky headers (z-index 120) that
+   scroll underneath it. The resting strip overlaps nothing, so it doesn't
+   need to. */
+.sidebar-slot.is-overlay > .sidebar.is-open {
+  z-index: 130;
+  width: 240px;
+  box-shadow: var(--shadow-elevated);
+}
+
+.app-shell.sidebar-rail {
+  --sidebar-width: 64px;
+}
+
+.sidebar-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-bottom: 24px;
+}
+
+.sidebar-brand-row .brand {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+/* Toggle mode: a thin full-height strip straddling the sidebar's right edge
+   that collapses or reopens it. Invisible until hovered (or keyboard-focused),
+   then only a thin accent line on the border appears, plus a chevron nudging
+   on a loop in the direction the sidebar will move (left to collapse, right
+   to open). The wide hit area itself is never tinted. The nudge uses only
+   transform/opacity, and the global reduced-motion / "Interface animations
+   off" rules already stop it (see the top of global.css). */
+.sidebar-edge-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* The hit area starts 6px inside the sidebar (so the border itself is
+     easy to hit) and reaches 28px past it, which is where the arrow sits. */
+  right: -28px;
+  width: 34px;
+  /* Above the Tasks/Settings sticky headers (z-index 120), whose blur strips
+     reach the page edge and would otherwise paint over half of this. */
+  z-index: 125;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+/* The accent line marks the border itself, 6px in from the strip's left edge. */
+.sidebar-edge-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+/* The arrow rests just right of the border line, so its nudge (about 5px
+   either way) never crosses it. */
+.sidebar-edge-handle svg {
+  margin-left: 12px;
+  opacity: 0;
+}
+
+.sidebar-edge-handle:hover::before,
+.sidebar-edge-handle:focus-visible::before {
+  opacity: 1;
+}
+
+.sidebar-edge-handle:hover svg,
+.sidebar-edge-handle:focus-visible svg {
+  opacity: 1;
+  animation: sidebar-edge-nudge 1s var(--ease-standard) infinite;
+}
+
+/* Collapse arrow: same nudge, pointing the other way. */
+.sidebar-edge-handle.is-expanded:hover svg,
+.sidebar-edge-handle.is-expanded:focus-visible svg {
+  animation-name: sidebar-edge-nudge-left;
+}
+
+@keyframes sidebar-edge-nudge-left {
+  0%,
+  100% {
+    transform: translateX(2px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateX(-3px);
+    opacity: 1;
+  }
+}
+
+@keyframes sidebar-edge-nudge {
+  0%,
+  100% {
+    transform: translateX(-2px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateX(3px);
+    opacity: 1;
+  }
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-tagline {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  padding: 0 10px;
+}
+
+.sidebar-footer-row {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-footer-account {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar.is-rail {
+  padding: 20px 12px;
+}
+
+.sidebar.is-rail .sidebar-brand-row {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar.is-rail .brand {
+  padding: 0;
+}
+
+/* Everything that is only text goes; icons and avatars stay. */
+.sidebar.is-rail .sidebar-label,
+.sidebar.is-rail .nav-group-label,
+.sidebar.is-rail .sidebar-tagline,
+.sidebar.is-rail .account-name {
+  display: none;
+}
+
+.sidebar.is-rail .nav-item {
+  justify-content: center;
+  gap: 0;
+  padding: 10px 0;
+}
+
+.sidebar.is-rail .nav-item svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar.is-rail .sidebar-footer-row {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar.is-rail .sidebar-footer-account {
+  flex: none;
+  width: 100%;
+}
+
+.sidebar.is-rail .account-avatar-btn {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+/* The accent line and arrow are the focus indicator here; the browser's own
+   ring would box in the whole wide hit area. */
+.sidebar-edge-handle:focus-visible {
+  outline: none;
+}

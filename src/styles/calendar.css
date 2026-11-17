@@ -331,10 +331,11 @@
    already needs the toolbar space back on all widths since the old button
    is gone). */
 .calendar-fab {
-  width: 56px;
-  height: 56px;
+  width: 50px;
+  height: 50px;
   padding: 0;
-  border-radius: var(--radius-lg);
+  /* Circle, matching .add-task-btn (see the !important note there). */
+  border-radius: 50% !important;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -351,8 +352,8 @@
    mini-FABs, then main button — top-to-bottom the way they should read). */
 .calendar-fab-group {
   position: fixed;
-  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
-  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  right: calc(var(--fab-right, var(--space-4)) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--fab-bottom, var(--space-4)) + env(safe-area-inset-bottom, 0));
   z-index: 120;
   display: flex;
   flex-direction: column;

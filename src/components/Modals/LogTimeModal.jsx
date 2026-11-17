@@ -11,7 +11,7 @@
  * minutes; Enter in minutes saves.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import Modal from '../Common/Modal';
 
@@ -20,7 +20,16 @@ const digitsOnly = (raw) => raw.replace(/\D/g, '');
 export default function LogTimeModal({ taskTitle, onSave, onClose }) {
   const [hours, setHours] = useState('');
   const [minutes, setMinutes] = useState('');
+  const hoursRef = useRef(null);
   const minutesRef = useRef(null);
+
+  // Focus Hours once the popup is open. The `autoFocus` attribute alone isn't
+  // enough: Modal then moves focus to its first focusable element, which is the
+  // X in the header, so typing would have gone nowhere. This effect runs after
+  // Modal's own (child effects run first), so Hours wins.
+  useEffect(() => {
+    hoursRef.current?.focus();
+  }, []);
 
   const totalHours = (Number(hours) || 0) + (Number(minutes) || 0) / 60;
 
@@ -60,7 +69,7 @@ export default function LogTimeModal({ taskTitle, onSave, onClose }) {
               inputMode="numeric"
               pattern="[0-9]*"
               maxLength={3}
-              autoFocus
+              ref={hoursRef}
               value={hours}
               placeholder="0"
               aria-label="Hours"

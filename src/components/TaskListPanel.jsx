@@ -46,6 +46,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, animate, motion, useMotionValue, useTransform } from 'framer-motion';
 import {
   Repeat,
@@ -59,9 +60,8 @@ import {
   Inbox,
   ListChecks,
   CheckSquare,
+  FolderKanban,
   CornerUpLeft,
-  PanelLeftClose,
-  PanelLeftOpen,
   History,
   CalendarClock,
   Clock,
@@ -92,7 +92,6 @@ import Badge from './Common/Badge';
 import AccountButton from './Nav/AccountButton';
 import NotificationBell from './Nav/NotificationBell';
 import BulkActionBar from './Common/BulkActionBar';
-import TaskProjectRail from './TaskProjectRail';
 import { useAuth } from '../context/AuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useMotionEnabled } from '../hooks/useMotionEnabled';
@@ -310,23 +309,6 @@ export default function TaskListPanel({
   const filter = filterByView[view] ?? DEFAULT_FILTER_BY_VIEW[view]; // active | completed | all | noDueDate
   function setFilter(key) {
     setFilterByView((prev) => ({ ...prev, [view]: key }));
-  }
-  // TaskProjectRail's open/closed state — replaces the old project SelectMenu
-  // dropdown in the header (see that button below). Desktop's "collapsed"
-  // preference persists (device-local, same reasoning as filterByView above);
-  // mobile's drawer is always closed on a fresh visit instead — an overlay
-  // that silently reopened over the whole page on every reload would be a
-  // much worse surprise than a persistent column defaulting back open.
-  const [desktopRailCollapsed, setDesktopRailCollapsed] = usePersistedState('taskProjectRailCollapsed', false);
-  const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const isProjectRailOpen = isMobile ? mobileRailOpen : !desktopRailCollapsed;
-  function toggleProjectRail() {
-    if (isMobile) setMobileRailOpen((v) => !v);
-    else setDesktopRailCollapsed((v) => !v);
-  }
-  function closeProjectRail() {
-    if (isMobile) setMobileRailOpen(false);
-    else setDesktopRailCollapsed(true);
   }
   // Ids of parent tasks whose children are currently hidden — collapsed is
   // opt-in per row, so anything not in this set renders expanded (the
@@ -702,19 +684,6 @@ export default function TaskListPanel({
         <div className="taskpage-sticky-header-backdrop" aria-hidden="true" />
         <div className="taskpage-header-row">
           <div className="taskpage-project-header">
-            {/* Opens/closes TaskProjectRail — replaces the old project
-                SelectMenu dropdown that used to live here; switching projects
-                now happens through that rail instead. */}
-            <button
-              type="button"
-              className="btn btn-icon menu-trigger taskpage-project-rail-trigger"
-              onClick={toggleProjectRail}
-              aria-label={isProjectRailOpen ? 'Hide all projects' : 'Show all projects'}
-              aria-expanded={isProjectRailOpen}
-              title="All projects"
-            >
-              {isProjectRailOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-            </button>
             {isRenamingProject ? (
               <input
                 autoFocus
@@ -810,6 +779,20 @@ export default function TaskListPanel({
                 <CheckSquare size={14} />
               </button>
             )}
+            {/* Desktop's one-click way to browse and manage every project. On
+                mobile the same action lives in ViewFilterMenu's popover. */}
+            {!isMobile && onOpenManageProjects && (
+              <button
+                type="button"
+                className="btn btn-icon menu-trigger"
+                onClick={onOpenManageProjects}
+                data-tour="manage-projects"
+                aria-label="Manage projects"
+                title="Manage projects"
+              >
+                <FolderKanban size={14} />
+              </button>
+            )}
             {/* Mobile has no top bar (see App.jsx) other than on Dashboard, so this
                 doubles as this page's one-tap way to reach account/settings —
                 mirrors the old mobile topbar's AccountButton. */}
@@ -831,16 +814,7 @@ export default function TaskListPanel({
                 onTogglePin={() => togglePinProject(activeProject.id)}
                 onDelete={handleDeleteProject}
                 onShare={() => onShareProject(activeProject.id)}
-                onOpenManageProjects={onOpenManageProjects}
               />
-            )}
-            {/* "All Tasks" has no activeProject, so the menu above never
-                renders — but manage-projects isn't project-specific, so it
-                still needs a trigger here. Reuses the same component with
-                only onOpenManageProjects set (Rename/Pin/Delete/Share all
-                gate on their own handler being present, see ProjectActionsItems). */}
-            {!isMobile && !activeProject && onOpenManageProjects && (
-              <ProjectActionsMenu ariaLabel="Manage projects" onOpenManageProjects={onOpenManageProjects} />
             )}
           </div>
         </div>
@@ -857,20 +831,7 @@ export default function TaskListPanel({
         )}
       </div>
 
-      {/* "Jump to any project" rail, styled after SettingsPanel's own section
-          rail on desktop; an overlay drawer on mobile instead, since there's
-          no room for a permanent column there — see TaskProjectRail's own
-          doc comment for the full split. */}
       <div className="taskpage-body-row">
-        <TaskProjectRail
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onSelectProject={onChangeActiveProject}
-          isMobile={isMobile}
-          isOpen={isProjectRailOpen}
-          onRequestClose={closeProjectRail}
-        />
-
         <div className="taskpage-main-column">
           {/* Rendered as a sibling of .taskpage-sticky-header, not inside it —
               that element carries an inline `transform` (the scroll-driven dock
@@ -1422,7 +1383,16 @@ const TaskRow = React.memo(function TaskRow({
         onReschedule={(date) => onReschedule(task.id, date)}
         forceCentered={isMobile}
       />
-      {logTimeOpen && <LogTimeModal taskTitle={task.title} onSave={(hours) => onLogTime(task, hours)} onClose={() => setLogTimeOpen(false)} />}
+      {/* Portaled out of the row: this row is a framer-motion element, and an
+          animated transform on an ancestor turns a `position: fixed` overlay
+          into one sized to the row. The backdrop then shrank away the moment
+          the pointer went down on it, so clicking outside never dismissed the
+          popup (the click landed on the page behind it, which opens the task). */}
+      {logTimeOpen &&
+        createPortal(
+          <LogTimeModal taskTitle={task.title} onSave={(hours) => onLogTime(task, hours)} onClose={() => setLogTimeOpen(false)} />,
+          document.body
+        )}
     </motion.div>
   );
 });

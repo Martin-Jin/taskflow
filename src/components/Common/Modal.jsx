@@ -113,7 +113,17 @@ export default function Modal({
   const wrapperProps = as === 'form' ? { onSubmit: (e) => onSubmit?.(e, ctx) } : {};
 
   return (
-    <div className={`modal-overlay ${overlayClassName} ${isClosing ? 'is-closing' : ''}`} onClick={dismissible ? requestClose : undefined}>
+    <div
+      className={`modal-overlay ${overlayClassName} ${isClosing ? 'is-closing' : ''}`}
+      // The click is always swallowed here, dismissible or not. React bubbles
+      // events up the component tree even through a portal, so a modal opened
+      // from inside a clickable parent (a task row's "Log time") would
+      // otherwise hand its backdrop click to that parent, which opens the task.
+      onClick={(e) => {
+        e.stopPropagation();
+        if (dismissible) requestClose();
+      }}
+    >
       <div
         className={`modal modal-size-${size} ${variantClassName}`}
         onClick={(e) => e.stopPropagation()}

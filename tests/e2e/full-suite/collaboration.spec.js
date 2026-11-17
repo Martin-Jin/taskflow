@@ -54,22 +54,6 @@ import { gotoApp, gotoTab, trackConsoleErrors, expectNoErrors, switchToProject, 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 test.describe('Sharing a project — reachability', () => {
-  test('desktop: the sidebar project menu offers "Share project"', async ({ page }) => {
-    const errors = trackConsoleErrors(page);
-    await gotoApp(page);
-    await gotoTab(page, 'Tasks');
-    // Sidebar's project list is recency-based (see Sidebar.jsx) — a project
-    // only gets an "Actions for X" trigger once it's actually been visited,
-    // same as the other tests below.
-    await switchToProject(page, 'Work');
-
-    await page.getByRole('button', { name: /^Actions for / }).first().click();
-    await expect(page.getByRole('menuitem', { name: 'Share project' })).toBeVisible();
-
-    await page.keyboard.press('Escape');
-    expectNoErrors(errors);
-  });
-
   test('desktop: the List view project header offers it too', async ({ page }) => {
     await gotoApp(page);
     await gotoTab(page, 'Tasks');

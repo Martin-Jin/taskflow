@@ -23,7 +23,7 @@
  * query. Saving is offered only while a query is active, because there is
  * nothing to name otherwise.
  *
- * `onOpenManageProjects` (optional) adds a "See / manage all projects" item
+ * `onOpenManageProjects` (optional) adds a "Manage projects" item
  * to that same Project group — mobile-only (desktop instead gets the same
  * item folded into ProjectActionsMenu's own dropdown, see TaskListPanel).
  * Unlike `projectActions`, it isn't gated on there being an active project
@@ -39,6 +39,7 @@ import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { TASK_STATUS_FILTERS } from '../../utils/projectConstants';
 import { sortSavedViews } from '../../utils/savedViews';
 import { ProjectActionsItems } from './ProjectActionsMenu';
+import MarqueeText from './MarqueeText';
 
 export default function ViewFilterMenu({
   view,
@@ -240,7 +241,7 @@ export default function ViewFilterMenu({
                       onClick={() => runAndClose(onOpenManageProjects)}
                     >
                       <FolderKanban size={13} />
-                      See / manage all projects
+                      <MarqueeText text="Manage projects" className="project-actions-item-label" />
                     </button>
                   )}
                 </>

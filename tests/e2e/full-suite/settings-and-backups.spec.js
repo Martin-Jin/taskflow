@@ -70,7 +70,7 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
   const projectName = `E2E Project ${Date.now()}`;
   const renamedProjectName = `${projectName} Renamed`;
 
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog).toBeVisible();
@@ -124,7 +124,7 @@ test('Manage Projects modal: create, rename, appears in Add Task picker, delete 
 
   // Delete the project — its task(s) should move to Inbox per the
   // confirm-dialog copy in ManageProjectsModal ("Its tasks will move to Inbox").
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog2 = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog2).toBeVisible();
@@ -150,7 +150,7 @@ test('Manage Projects modal search is typo-tolerant (same ranker as the Sidebar 
   const runId = Date.now();
   const projectName = `E2eTypoSearch${runId}`;
 
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(dialog).toBeVisible();
@@ -186,7 +186,7 @@ test('Manage Projects modal search: Arrow keys move the highlighted row and Ente
   const runId = Date.now();
   const projectName = `E2eManageKbd${runId}`;
 
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -221,7 +221,7 @@ test('Manage Projects modal search: Arrow keys move the highlighted row and Ente
   // — useModalA11y's capture-phase Escape handler always wins over this
   // input's own bubble-phase handler, same as this modal's existing
   // rename-input Escape (see ManageProjectsModal's own comment on this).
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog3 = page.getByRole('dialog', { name: 'Manage projects' });
   const searchInput2 = dialog3.getByPlaceholder('Search projects…');
@@ -245,7 +245,7 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
   // "⋯" menu instead (mobile has no Sidebar, and folds "See / manage all
   // projects" into that popover rather than the desktop's inline button next
   // to the project title — see ViewFilterMenu).
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const dialog = page.getByRole('dialog', { name: 'Manage projects' });
   await dialog.getByRole('button', { name: /^add project$/i }).click();
@@ -259,7 +259,7 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'View, filter, and project actions' }).click();
-  await page.getByText('See / manage all projects').click();
+  await page.getByText('Manage projects').click();
   const mobileDialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(mobileDialog).toBeVisible();
 
@@ -281,37 +281,27 @@ test('Manage Projects modal search works at a mobile viewport (tap-to-select, no
   expectNoErrors(errors);
 });
 
-test('Tasks page header "See / manage all projects" button opens Manage Projects on desktop, for both All Tasks and a named project', async ({ page }) => {
+test('Tasks page toolbar "Manage projects" icon opens Manage Projects on desktop, for both All Tasks and a named project', async ({ page }) => {
   const errors = trackConsoleErrors(page);
 
   await gotoTab(page, 'Tasks');
-  // "All Tasks" (no active project) still gets the button — managing
-  // projects isn't specific to any one project. "See / manage all projects"
-  // is a menuitem (role="menuitem" overrides its implicit button role, see
-  // ProjectActionsItems) inside the "Manage projects"-labeled
-  // ProjectActionsMenu trigger, not a directly-clickable header button.
+  // "All Tasks" (no active project) still gets the icon — managing projects
+  // isn't specific to any one project. It sits in the toolbar beside the
+  // Select icon rather than inside the project's "⋯" menu.
   await expect(page.locator('.taskpage-project-title', { hasText: 'All Tasks' })).toBeVisible();
   await page.getByRole('button', { name: 'Manage projects' }).click();
-  await page.getByRole('menuitem', { name: 'See / manage all projects' }).click();
   await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
   await closeAnyModal(page);
   await page.waitForTimeout(200);
 
-  // Switch to a real project — the trigger's accessible name becomes
-  // project-specific ("Actions for <name>", see TaskListPanel.jsx) instead
-  // of the generic "Manage projects" used for "All Tasks"/"Inbox", but the
-  // menu it opens still offers this same menuitem regardless. Row 0 is
-  // "All Tasks", row 1 is the "Inbox" pseudo-project, so the first real
-  // project is row 2.
-  const projectLink = page.locator('.task-project-rail-link').nth(2);
-  const projectName = await projectLink.textContent();
-  await projectLink.click();
-  await page.waitForTimeout(300);
-  // Scoped to main — this same label also exists in the sidebar's own copy
-  // of the project row, which would otherwise make this a strict-mode
-  // violation (see CLAUDE.md's "Actions for <project> is ambiguous" note).
+  // Switch to a real project: the icon is still there, and the project's own
+  // "⋯" menu no longer carries a Manage projects item.
+  const projectName = 'Work';
+  await switchToProject(page, projectName);
   await page.getByRole('main').getByRole('button', { name: `Actions for ${projectName}` }).click();
-  await page.getByRole('menuitem', { name: 'See / manage all projects' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Manage projects' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Manage projects' }).click();
   await expect(page.getByRole('dialog', { name: 'Manage projects' })).toBeVisible();
   await closeAnyModal(page);
 
@@ -323,7 +313,7 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   const projectName = `E2E Active Filter Project ${Date.now()}`;
 
   // Create a throwaway project and select it as the active Tasks view.
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const manageDialog = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(manageDialog).toBeVisible();
@@ -341,7 +331,7 @@ test('Deleting the project currently selected as the Tasks view falls back to Al
   await expect(page.locator('.taskpage-project-title')).toContainText(projectName);
 
   // Delete it via Manage Projects while it's still the active view.
-  await gotoTab(page, 'Projects');
+  await gotoTab(page, 'Tasks');
   await page.getByRole('button', { name: 'Manage projects' }).click();
   const manageDialog2 = page.getByRole('dialog', { name: 'Manage projects' });
   await expect(manageDialog2).toBeVisible();
@@ -895,6 +885,86 @@ test('Appearance: System theme follows the OS light/dark setting live', async ({
   expectNoErrors(errors);
 });
 
+test.describe('Sidebar modes (Settings → Appearance)', () => {
+  const sidebar = (page) => page.locator('aside.sidebar');
+  const setMode = async (page, name) => {
+    await gotoTab(page, 'Settings');
+    await page.getByTestId('sidebar-mode-toggle').getByRole('button', { name }).click();
+  };
+  const sidebarWidth = async (page) => Math.round((await sidebar(page).boundingBox()).width);
+
+  test('defaults to button mode: full width, labels visible, with a collapse control on its edge', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    expect(await sidebarWidth(page)).toBe(240);
+    await expect(sidebar(page).getByText('Dashboard')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
+    expectNoErrors(errors);
+  });
+
+  test('always-shown mode: no collapse button, stays full width', async ({ page }) => {
+    await gotoApp(page);
+    await setMode(page, 'Always shown');
+    await expect(page.getByRole('button', { name: /collapse sidebar/i })).toHaveCount(0);
+    expect(await sidebarWidth(page)).toBe(240);
+  });
+
+  test('button mode: collapses to an icon strip, the right edge reopens it, and the choice survives a reload', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+
+    // Rail: narrow, no visible tab text, but the tab is still reachable by name.
+    await expect.poll(() => sidebarWidth(page)).toBeLessThan(100);
+    await expect(sidebar(page).getByText('Dashboard')).toBeHidden();
+    // No button inside the sidebar — the control is its right edge, outside the <aside>.
+    await expect(sidebar(page).getByRole('button', { name: /sidebar/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Expand sidebar' })).toHaveCount(1);
+    await sidebar(page).getByRole('button', { name: 'Calendar', exact: true }).click();
+    await expect(sidebar(page).getByRole('button', { name: 'Calendar', exact: true })).toHaveAttribute('aria-current', 'page');
+
+    await page.reload();
+    await expect.poll(() => sidebarWidth(page)).toBeLessThan(100);
+    await page.locator('.sidebar-edge-handle').click();
+    await expect.poll(() => sidebarWidth(page)).toBe(240);
+    await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
+    await expect(sidebar(page).getByText('Dashboard')).toBeVisible();
+    expectNoErrors(errors);
+  });
+
+  test('hover mode: rests as a strip, opens over the page without moving it, closes on leave', async ({ page }) => {
+    const errors = trackConsoleErrors(page);
+    await gotoApp(page);
+    await setMode(page, 'On hover');
+    await page.mouse.move(700, 400);
+
+    await expect.poll(() => sidebarWidth(page)).toBeLessThan(100);
+    const mainLeft = async () => Math.round((await page.locator('.main-content').boundingBox()).x);
+    const before = await mainLeft();
+
+    await sidebar(page).hover();
+    await expect.poll(() => sidebarWidth(page)).toBe(240);
+    await expect(sidebar(page).getByText('Dashboard')).toBeVisible();
+    expect(await mainLeft()).toBe(before); // overlays the page, doesn't push it
+
+    await page.mouse.move(700, 400);
+    await expect.poll(() => sidebarWidth(page)).toBeLessThan(100);
+    expectNoErrors(errors);
+  });
+
+  test('main content side margins widen with the window', async ({ page }) => {
+    await gotoApp(page);
+    const padLeft = () =>
+      page.locator('.main-content').evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
+    await page.setViewportSize({ width: 1400, height: 900 });
+    expect(await padLeft()).toBe(80);
+    await page.setViewportSize({ width: 1100, height: 900 });
+    expect(await padLeft()).toBe(56);
+    await page.setViewportSize({ width: 800, height: 900 });
+    expect(await padLeft()).toBe(32);
+  });
+});
+
 test.describe('Recently deleted (trash/restore)', () => {
   // Live entries only — a removed entry stays behind as a `removedAt`
   // tombstone so the removal syncs (see SchedulerContext's trash state).
@@ -912,7 +982,7 @@ test.describe('Recently deleted (trash/restore)', () => {
   test('deleting a project files it in the trash, and restoring brings back its sections and tasks', async ({ page }) => {
     const errors = trackConsoleErrors(page);
 
-    await gotoTab(page, 'Projects');
+    await gotoTab(page, 'Tasks');
     await page.getByRole('button', { name: 'Manage projects' }).click();
     const dialog = page.getByRole('dialog', { name: 'Manage projects' });
     await dialog.locator('.sidebar-project-row-wrap', { hasText: 'Work' }).getByRole('button', { name: 'Actions for Work' }).click();
@@ -955,7 +1025,7 @@ test.describe('Recently deleted (trash/restore)', () => {
        deliberate move, and would look like a successful restore. */
     const errors = trackConsoleErrors(page);
 
-    await gotoTab(page, 'Projects');
+    await gotoTab(page, 'Tasks');
     await page.getByRole('button', { name: 'Manage projects' }).click();
     const dialog = page.getByRole('dialog', { name: 'Manage projects' });
     await dialog.locator('.sidebar-project-row-wrap', { hasText: 'Writing' }).getByRole('button', { name: 'Actions for Writing' }).click();

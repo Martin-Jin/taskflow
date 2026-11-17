@@ -103,19 +103,18 @@ export async function gotoTab(page, tabName) {
   await page.waitForTimeout(300);
 }
 
-// Switches the Tasks page's active project via TaskProjectRail — replaces
-// the old "Switch project" SelectMenu dropdown that used to live in the page
-// header. Opens the rail first if it isn't already visible (a fresh
-// gotoApp() defaults it open on desktop, but a mobile-viewport test always
-// starts with the drawer closed, and a prior step in the same test may have
-// collapsed/closed it already).
+// Switches the active project by picking it on the Projects page, which
+// selects it and lands on the Tasks tab. (The Tasks page used to have its own
+// all-projects side panel for this; it was removed.) A project can be listed
+// in more than one of the page's columns, so the first match is used.
 export async function switchToProject(page, name) {
-  const rail = page.locator('.task-project-rail, .task-project-drawer');
-  if (!(await rail.first().isVisible().catch(() => false))) {
-    await page.getByLabel('Show all projects').click();
-    await page.waitForTimeout(200);
-  }
-  await rail.getByRole('button', { name, exact: true }).click();
+  await gotoTab(page, 'Projects');
+  await page
+    .locator('.projects-page-row', {
+      has: page.locator('.projects-page-row-name', { hasText: new RegExp(`^${name}$`) }),
+    })
+    .first()
+    .click();
   await page.waitForTimeout(300);
 }
 

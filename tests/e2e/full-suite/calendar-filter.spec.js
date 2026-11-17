@@ -297,10 +297,10 @@ test.describe('Calendar filter menu — Projects search', () => {
   // own tag test), a "#Project" mention only ever resolves against EXISTING
   // projects — so these have to be created for real via the dedicated
   // AddProjectModal (reached from the "Manage projects" modal's own "Add
-  // project" button, from the Projects tab).
+  // project" button, from the Tasks tab's toolbar).
   async function seedExtraProjects(page, runId) {
     const names = [`E2eSearchAlpha${runId}`, `E2eSearchBeta${runId}`];
-    await gotoTab(page, 'Projects');
+    await gotoTab(page, 'Tasks');
     await page.getByRole('button', { name: 'Manage projects', exact: true }).click();
     await page.waitForTimeout(300);
     // Scoped to the "Manage projects" dialog: the Projects page's own FAB

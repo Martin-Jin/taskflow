@@ -88,11 +88,14 @@ export const GUIDED_TOUR_STEPS = [
     body: 'A directory of everything: search for any project, or browse Recent, Shared, and My Projects — sortable by size, duration, or when you created them.',
   },
   {
-    tab: 'projects',
+    tab: 'tasks',
     selector: '[data-tour="manage-projects"]',
-    placement: 'left',
-    title: 'Creating projects',
-    body: 'Create as many projects as you like to separate work, personal life, or any other area — pin your favorites, rename or delete any of them, and switch between them from here, the Tasks page (including its own collapsible "all projects" panel), or the search bar. Each project\'s "⋯" menu also lets you share it via a link, so others can view or edit it with you.',
+    placement: 'bottom',
+    // The toolbar icon is desktop-only; phones reach the same action through
+    // the view menu, which has nothing to point at here.
+    desktopOnly: true,
+    title: 'Managing projects',
+    body: 'Create as many projects as you like to separate work, personal life, or any other area. This button opens them all — create, pin, rename or delete. Each project\'s "⋯" menu also lets you share it via a link, so others can view or edit it with you.',
   },
   {
     tab: 'stats',

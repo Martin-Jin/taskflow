@@ -19,6 +19,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SchedulerProvider, useScheduler } from './context/SchedulerContext';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
+import { SidebarPrefsProvider, useSidebarPrefs } from './context/SidebarPrefsContext';
 import { SoundProvider } from './context/SoundContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { TimerProvider } from './context/TimerContext';
@@ -98,6 +99,7 @@ const TABS = [
 
 function AppShell() {
   const { user, authError, clearAuthError } = useAuth();
+  const { sidebarIsRail } = useSidebarPrefs();
   const [tab, setTab] = useState('dashboard');
   // Device-local UI state (which project/view is selected) — not user data,
   // so deliberately left out of BACKUP_FIELDS.
@@ -221,9 +223,9 @@ function AppShell() {
     isBlockedByRestore,
   } = useScheduler();
 
-  // Shared by the sidebar, List view, and Board view — selecting a project
+  // Shared by the Projects page, List view, and Board view — selecting a project
   // always jumps to the Tasks tab and stamps it as "recently visited" so the
-  // sidebar's unpinned-project ordering (sortProjectsForSidebar) stays fresh.
+  // unpinned-project ordering (sortProjectsForSidebar) stays fresh.
   // Neither pseudo-project (All Tasks/Inbox) is a real project record, so
   // there's nothing for touchProjectVisited to stamp for either.
   function selectProject(projectId) {
@@ -448,26 +450,21 @@ function AppShell() {
   }, [settingsSectionRequest?.requestId]);
 
   return (
-    <div className={`app-shell ${isMobile ? 'is-mobile' : ''} ${isMobile && tab !== 'dashboard' ? 'no-topbar' : ''}`}>
+    <div
+      className={`app-shell ${isMobile ? 'is-mobile' : ''} ${isMobile && tab !== 'dashboard' ? 'no-topbar' : ''} ${
+        !isMobile && sidebarIsRail ? 'sidebar-rail' : ''
+      }`}
+    >
       {!isMobile && (
         <Sidebar
           tabs={TABS}
           activeTab={tab}
           onSelectTab={setTab}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onSelectProject={selectProject}
-          onRenameProject={renameProject}
-          onTogglePinProject={togglePinProject}
-          onShareProject={handleShareProject}
-          onDeleteProject={handleDeleteProject}
           footer={
             <>
-              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', padding: '0 10px' }}>
-                Dynamic task auto-scheduler
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="sidebar-tagline">Dynamic task auto-scheduler</div>
+              <div className="sidebar-footer-row">
+                <div className="sidebar-footer-account">
                   <AccountButton menuAlign="up" onOpenAccountSettings={() => setTab('settings')} />
                 </div>
                 <NotificationBell menuAlign="up" />
@@ -538,7 +535,6 @@ function AppShell() {
               sharedProjects={sharedProjects}
               uid={user?.uid}
               onSelectProject={selectProject}
-              onOpenManageProjects={openManageProjects}
               onAddProject={openAddProject}
             />
           )}
@@ -756,7 +752,9 @@ export default function App() {
             <SoundProvider>
               <TimerProvider>
                 <CompleteTaskProvider>
-                  <AppShell />
+                  <SidebarPrefsProvider>
+                    <AppShell />
+                  </SidebarPrefsProvider>
                 </CompleteTaskProvider>
               </TimerProvider>
             </SoundProvider>

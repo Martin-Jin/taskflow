@@ -413,8 +413,26 @@ select:focus-visible,
 }
 
 .app-shell {
+  --sidebar-width: 240px;
+  /* Side padding of the page, as a variable (here, not on .main-content, so
+     the floating buttons outside it can read it too). It steps up with the
+     window width so wide screens get generous margins without squeezing
+     narrow ones — see the breakpoints below. Phones set their own value in
+     the max-width: 639px block, so this is desktop/tablet only. Also used by
+     the full-bleed strips behind the Tasks/Settings sticky headers, which
+     reach out by exactly this much to touch the page edges. */
+  --page-gutter: 32px;
+  /* Where the floating action buttons sit on desktop/tablet: their right edge
+     lines up with the page content's (gutter + the 8px scrollbar strip), and
+     they sit as far up from the bottom as the content's own padding. Left
+     unset on phones, where the buttons fall back to --space-4 and clear the
+     bottom tab bar instead. */
+  --fab-right: calc(var(--page-gutter) + 8px);
+  --fab-bottom: 20px;
   display: grid;
-  grid-template-columns: 240px 1fr;
+  /* Sidebar column: the full width, or the narrow icon strip while the sidebar
+     is collapsed (see .sidebar.is-rail in nav.css). */
+  grid-template-columns: var(--sidebar-width, 240px) 1fr;
   /* Desktop has no topbar row (see .topbar below, mobile-only) — the main
      content area gets a top margin instead of a dedicated header row. */
   grid-template-rows: 1fr;
@@ -455,7 +473,11 @@ select:focus-visible,
   grid-area: main;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px;
+  padding: 20px var(--page-gutter);
+  /* Always reserve the scrollbar's strip (8px, see ::-webkit-scrollbar), so
+     the content's right edge sits in the same place whether or not a page is
+     tall enough to scroll — the floating action buttons line up with it. */
+  scrollbar-gutter: stable;
   /* Replaces the old desktop topbar row — page content just starts a bit
      lower instead of a dedicated header housing Undo/Redo. Mobile
      overrides this below since it still has the brand topbar row. */
@@ -478,6 +500,20 @@ select:focus-visible,
     transparent 70%
   );
   background-repeat: no-repeat;
+}
+
+/* Wider windows get wider side margins: 32px up to 1023px, 56px from
+   1024px, 80px from 1280px. Phones (<640px) are handled separately below. */
+@media (min-width: 1024px) {
+  .app-shell {
+    --page-gutter: 56px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .app-shell {
+    --page-gutter: 80px;
+  }
 }
 
 .tab-panel {
@@ -529,6 +565,12 @@ select:focus-visible,
      with no way to scroll it clear. Transient toasts deliberately do NOT get
      the same treatment: they're momentary, and reserving space for one would
      make the whole page jump every time a notification fired. */
+  .app-shell.is-mobile {
+    --page-gutter: var(--space-3);
+    --fab-right: var(--space-4);
+    --fab-bottom: var(--space-4);
+  }
+
   .app-shell.is-mobile .main-content {
     padding: var(--space-3);
     padding-bottom: calc(
@@ -562,9 +604,8 @@ select:focus-visible,
   }
 }
 
-/* Circular FAB shape shared by the mobile search/command-palette button —
-   distinct from the square-ish --radius-lg used by .add-task-btn/.calendar-fab
-   so it reads as a different (secondary) action from the page's main FAB. */
+/* Circular FAB shape, used by the mobile search/command-palette button. The
+   main Add task / New event FABs are circles of the same size now. */
 /* !important needed since this loads before .btn in the cascade, which also
    sets border-radius at equal specificity and would otherwise win by source
    order. */
@@ -572,7 +613,7 @@ select:focus-visible,
   border-radius: 50% !important;
 }
 
-/* Mobile search/command-palette button (see App.jsx) — same 56px size and
+/* Mobile search/command-palette button (see App.jsx) — same 50px size and
    elevation as AddTaskFabGroup's .add-task-btn/.calendar-fab. On tabs that
    already render one of those FAB groups (Tasks list/Board, Calendar), this
    renders *inside* that group as its top-most flex child instead (see
@@ -582,8 +623,8 @@ select:focus-visible,
    below (tabs with no FAB group: Dashboard/Stats/Settings/Gantt) needs its
    own fixed positioning. */
 .mobile-search-fab {
-  width: 56px;
-  height: 56px;
+  width: 50px;
+  height: 50px;
   padding: 0;
   justify-content: center;
   box-shadow: var(--shadow-elevated);
@@ -604,8 +645,8 @@ select:focus-visible,
    media query below (BottomTabBar is mobile-only). */
 .ai-quickadd-standalone-fab {
   position: fixed;
-  right: calc(var(--space-4) + env(safe-area-inset-right, 0));
-  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0));
+  right: calc(var(--fab-right, var(--space-4)) + env(safe-area-inset-right, 0));
+  bottom: calc(var(--fab-bottom, var(--space-4)) + env(safe-area-inset-bottom, 0));
   z-index: 120;
 }
 
@@ -693,14 +734,11 @@ select:focus-visible,
 }
 
 /* ----------------------------------------------------------------------
-   Sidebar "Projects" group (src/components/Nav/Sidebar.jsx)
+   Project list rows and search box. The class names still say "sidebar-"
+   from when the desktop sidebar had a projects group; that group is gone, and
+   these are now used by ManageProjectsModal, ChangelogModal
+   and ShortcutsModal.
    ---------------------------------------------------------------------- */
-.sidebar-projects-group {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 
 .sidebar-project-search {
   position: relative;
@@ -806,18 +844,6 @@ select:focus-visible,
   gap: var(--space-6);
   max-width: 1100px;
   margin: 0 auto;
-}
-
-.projects-page-toolbar {
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* Plain text+icon button (reuses .nav-item's ghost look — no fill/border)
-   rather than a filled/bordered .btn, since it sits above the centered hero
-   and shouldn't compete visually with it. */
-.projects-page-manage-btn {
-  font-size: 13px;
 }
 
 .projects-page-hero {
@@ -1171,6 +1197,18 @@ select:focus-visible,
   color: var(--color-text-primary);
   font-size: 13px;
   text-align: left;
+  /* One line always: a label longer than the menu scrolls via MarqueeText
+     (see .project-actions-item-label) instead of wrapping. */
+  white-space: nowrap;
+}
+
+.project-actions-item > svg {
+  flex-shrink: 0;
+}
+
+.project-actions-item-label {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .project-actions-item:hover {
@@ -1966,8 +2004,8 @@ input.search-bar-input {
    up by a fixed 200px (comfortably past .main-content's own padding-top on
    every breakpoint, so there's never a gap of unblurred content peeking
    above the header — .main-content's own overflow:auto clips the excess),
-   sideways by .main-content's own 20px padding (edge to edge, matching the
-   Tasks page), and 18px past the search bar's own bottom edge — so the
+   sideways by .main-content's own side padding (--page-gutter; edge to edge,
+   matching the Tasks page), and 18px past the search bar's own bottom edge — so the
    blur reads as one continuous wash over the whole top of the page instead
    of a card floating over a visibly-unblurred strip. Needs its own
    background, not just backdrop-filter alone — a bare blur with nothing
@@ -1976,8 +2014,8 @@ input.search-bar-input {
 .settings-search-bar-backdrop {
   position: absolute;
   top: -200px;
-  left: -20px;
-  right: -20px;
+  left: calc(var(--page-gutter) * -1);
+  right: calc(var(--page-gutter) * -1);
   bottom: -18px;
   z-index: -1;
   background: color-mix(in srgb, var(--color-bg-page) 75%, transparent);
@@ -2651,7 +2689,9 @@ h4 + .settings-hint {
    toggle row — without this, "Accent color..." ran flush against the
    Light/Dark pills the same way "Sound effects" did before the pairing
    above existed. */
-.theme-toggle + .settings-hint {
+.theme-toggle + .settings-hint,
+/* The sidebar-mode hint follows the accent swatch row the same way. */
+.accent-swatch-row + .settings-hint {
   margin-top: var(--space-3);
 }
 

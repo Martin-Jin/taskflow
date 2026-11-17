@@ -1316,7 +1316,7 @@ test.describe('Smart parse', () => {
     // "Work Trip", not the shorter "Work" with "Trip" left dangling in the title.
     const projectA = `Work Trip ${RUN_ID}`;
     const projectB = `Work Notes ${RUN_ID}`;
-    await gotoTab(page, 'Projects');
+    await gotoTab(page, 'Tasks');
     await page.getByRole('button', { name: 'Manage projects' }).click();
     const projectsDialog = page.getByRole('dialog', { name: 'Manage projects' });
     await expect(projectsDialog).toBeVisible();
@@ -2287,6 +2287,41 @@ test('Tasks: the clock button logs time and lowers the hours remaining', async (
   // 3h - 1h30m = 1.5h left (the saved value, not just a closed dialog).
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(row).toContainText('1.5h / 3h');
+
+  expectNoErrors(errors);
+});
+
+test('Tasks: clicking outside the Log time popup only dismisses it — it does not open the task', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await gotoApp(page);
+  await page.evaluate(() => {
+    const now = new Date().toISOString();
+    const due = new Date();
+    due.setDate(due.getDate() + 5);
+    const dueDate = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`;
+    localStorage.setItem('taskflow:v1:tasks', JSON.stringify([{
+      id: 'lt2', title: 'OUTSIDE CLICK task', isCompleted: false, isLocked: false, estimatedHours: 3, remainingHours: 3,
+      priority: 'medium', dependsOn: [], minChunkHours: 0.5, maxChunkHours: 4, source: 'manual', projectId: null,
+      dueDate, createdAt: now, updatedAt: now,
+    }]));
+    localStorage.setItem('taskflow:v1:blocks', JSON.stringify([]));
+  });
+  await page.reload();
+  await gotoTab(page, 'Tasks');
+  await page.waitForTimeout(500);
+
+  const row = page.locator('.task-row', { hasText: 'OUTSIDE CLICK task' });
+  await row.hover();
+  await row.getByRole('button', { name: /log time on/i }).click();
+  const popup = page.getByRole('dialog', { name: /log time on/i });
+  await expect(popup).toBeVisible();
+
+  // Click the dimmed backdrop, well away from the popup itself. React passes a
+  // portal's clicks up to the row that rendered it, which used to open the task.
+  await page.mouse.click(5, 5);
+
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(row).toContainText('3h / 3h'); // nothing was logged
 
   expectNoErrors(errors);
 });

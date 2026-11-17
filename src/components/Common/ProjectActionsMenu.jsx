@@ -14,6 +14,7 @@ import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderKanban, MoreHorizontal, Pencil, Pin, PinOff, Trash2, Users } from 'lucide-react';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
+import MarqueeText from './MarqueeText';
 
 // The Rename/Pin/Delete/manage-projects buttons themselves, split out so
 // ViewFilterMenu can fold them into its own combined mobile popover (see
@@ -71,7 +72,7 @@ export function ProjectActionsItems({ isPinned, isShared, onRename, onTogglePin,
           onClick={() => runAndClose(onOpenManageProjects)}
         >
           <FolderKanban size={13} />
-          See / manage all projects
+          <MarqueeText text="Manage projects" className="project-actions-item-label" />
         </button>
       )}
     </>

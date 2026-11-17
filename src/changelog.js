@@ -21,6 +21,18 @@
 
 export const CHANGELOG = [
   {
+    version: '12.1.0',
+    date: '2026-11-17',
+    title: 'Collapsible sidebar, simpler project switching, roomier margins',
+    changes: [
+      'The sidebar can now shrink to a slim strip of icons, with just the TaskFlow logo in place of the name. Click its right edge to collapse it and click the edge again to open it — an arrow on the edge shows which way it will move. In Settings → Appearance → Sidebar you can instead keep it always shown, or have it open when you hover over it.',
+      'Pages now have wider side margins on large screens (up to 80px), scaling down on smaller windows and staying tight on phones.',
+      'The "Pinned projects" list is gone from the sidebar, and so is the all-projects side panel on the Tasks page. Switch projects from the Projects page or the search bar, and use the new Manage projects icon in the Tasks toolbar (next to Select) to create, pin, rename or delete them. The extra button on the Projects page is gone.',
+      'The Add task, New event and AI Quick Add buttons are now round, a little smaller, and line up with the right edge of the page content on large screens.',
+      'Fixed: clicking outside the Log time popup on a task row opened the task instead of closing the popup, and the Hours box was not ready to type in.',
+    ],
+  },
+  {
     version: '12.0.6',
     date: '2026-11-05',
     title: 'Command palette is now Alt+O, and shortcut editing is safer',

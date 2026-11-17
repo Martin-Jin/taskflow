@@ -1,20 +1,32 @@
 /**
  * Settings → Appearance — light/dark/system theme, accent color (theme presets +
  * custom seed color), sound effects + volume, and the interface-animations
- * toggle (see useMotionEnabled for where the latter is actually read).
+ * toggle (see useMotionEnabled for where the latter is actually read), and how
+ * the desktop sidebar behaves (click-the-edge toggle / always shown / open on hover —
+ * device-local, see SidebarPrefsContext).
  */
 
 import React, { useEffect, useState } from 'react';
-import { Sun, Moon, Monitor } from 'lucide-react';
+import { Sun, Moon, Monitor, PanelLeft, PanelLeftClose, PanelLeftDashed } from 'lucide-react';
 import { useScheduler } from '../../../context/SchedulerContext';
 import { useTheme } from '../../../context/ThemeContext';
+import { useSidebarPrefs } from '../../../context/SidebarPrefsContext';
 import { useSound } from '../../../context/SoundContext';
 import { THEME_PRESETS, isValidHexColor } from '../../../utils/themePresets';
+
+// Labels are kept short so the three options sit in one row at phone width
+// (this card is also visible on mobile, where the setting has no effect).
+const SIDEBAR_MODE_OPTIONS = [
+  { mode: 'toggle', label: 'Button', Icon: PanelLeftClose },
+  { mode: 'always', label: 'Always shown', Icon: PanelLeft },
+  { mode: 'hover', label: 'On hover', Icon: PanelLeftDashed },
+];
 
 export default function AppearanceSection({ sectionRef }) {
   const { animationsEnabled, setAnimationsEnabled } = useScheduler();
   const { theme, setTheme, accentSeed, setAccentSeed } = useTheme();
   const { soundEnabled, setSoundEnabled, soundVolume, setSoundVolume, playComplete } = useSound();
+  const { sidebarMode, setSidebarMode } = useSidebarPrefs();
 
   // Local draft for the custom-hex text field, so an in-progress/invalid
   // keystroke (e.g. "#1d9e7" mid-type) doesn't get force-corrected back to
@@ -118,6 +130,25 @@ export default function AppearanceSection({ sectionRef }) {
           maxLength={7}
           aria-label="Custom accent color hex value"
         />
+      </div>
+
+      <p className="settings-hint">
+        Sidebar on larger screens: collapse and reopen it by clicking its right edge, keep it always shown, or keep it collapsed until you hover over it.
+        Saved on this device only.
+      </p>
+      <div className="theme-toggle" role="group" aria-label="Sidebar behavior" data-testid="sidebar-mode-toggle">
+        {SIDEBAR_MODE_OPTIONS.map(({ mode, label, Icon }) => (
+          <button
+            key={mode}
+            type="button"
+            className={`theme-toggle-option ${sidebarMode === mode ? 'active' : ''}`}
+            aria-pressed={sidebarMode === mode}
+            onClick={() => setSidebarMode(mode)}
+          >
+            <Icon size={14} />
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="form-row settings-toggle-row">

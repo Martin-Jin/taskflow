@@ -16,7 +16,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Folder, FolderPlus, Inbox, SlidersHorizontal, Check, ChevronDown, FolderKanban } from 'lucide-react';
+import { Search, Folder, FolderPlus, Inbox, SlidersHorizontal, Check, ChevronDown } from 'lucide-react';
 import { useListKeyboardNav } from '../../hooks/useListKeyboardNav';
 import { useMenuPosition } from '../../hooks/useMenuPosition';
 import { rankByNameSearch } from '../../utils/nameSearch';
@@ -212,7 +212,7 @@ function ProjectSortMenu({ sortKey, ascending, onChange }) {
   );
 }
 
-export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onSelectProject, onOpenManageProjects, onAddProject }) {
+export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onSelectProject, onAddProject }) {
   // Picked once per mount, not re-randomized on re-render/re-typing.
   const [greeting] = useState(() => {
     const pool = GREETINGS_BY_PERIOD[periodForHour(new Date().getHours())];
@@ -296,25 +296,6 @@ export default function ProjectsPage({ projects, tasks, sharedProjects, uid, onS
   return (
     <div className="projects-page-wrap">
       <div className="projects-page">
-      {/* Sits above the centered hero rather than inside it, so it can align
-          to the far right regardless of the hero's own centered text. This is
-          now the app's one entry point to ManageProjectsModal (the sidebar's
-          old "Manage projects" button was removed as a redundant duplicate) —
-          a plain text+icon button, not a "⋯" menu, since it's the only
-          project-less action this page offers. */}
-      {onOpenManageProjects && (
-        <div className="projects-page-toolbar">
-          <button
-            type="button"
-            className="nav-item projects-page-manage-btn"
-            data-tour="manage-projects"
-            onClick={() => onOpenManageProjects()}
-          >
-            <FolderKanban size={14} />
-            Manage projects
-          </button>
-        </div>
-      )}
       <div className="projects-page-hero">
         <h1>Projects</h1>
         <p>{greeting}</p>
