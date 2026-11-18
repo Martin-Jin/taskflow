@@ -251,6 +251,19 @@ function timeOfDayCost(task, taskBlocks) {
   return (outsideMins / 60) * TIME_OF_DAY_PENALTY_PER_HOUR * mult;
 }
 
+export const SPLIT_RUN_PENALTY = 1; // keep < FRAG_DAY_PENALTY
+
+// extra separate runs within a day (touching chunks count as one run)
+function splitCost(task, taskBlocks) {
+  const sorted = [...taskBlocks].sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+  let extraRuns = 0, prev = null;
+  for (const b of sorted) {
+    if (prev && prev.date === b.date && prev.endTime !== b.startTime) extraRuns++;
+    prev = b;
+  }
+  return extraRuns * SPLIT_RUN_PENALTY * priorityMultiplier(task);
+}
+
 /**
  * Earliness cost for one task: a small negative cost (reward) per hour each
  * block starts before midnight, summed across all of the task's blocks and
@@ -261,13 +274,12 @@ function timeOfDayCost(task, taskBlocks) {
  */
 function earlinessCost(task, taskBlocks) {
   if (taskBlocks.length === 0) return 0;
-  const mult = priorityMultiplier(task);
-  let reward = 0;
+  let weighted = 0, total = 0;
   for (const b of taskBlocks) {
-    const hoursUntilMidnight = (MINUTES_IN_DAY - timeToMinutes(b.startTime)) / 60;
-    reward += hoursUntilMidnight * EARLINESS_REWARD_PER_HOUR * mult;
+    weighted += ((MINUTES_IN_DAY - timeToMinutes(b.startTime)) / 60) * b.durationHours;
+    total += b.durationHours;
   }
-  return -reward;
+  return total > 0 ? -(weighted / total) * EARLINESS_REWARD_PER_HOUR * priorityMultiplier(task) : 0;
 }
 
 /**
@@ -349,6 +361,7 @@ export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn, taskWindo
   let total = 0;
   for (const task of tasks) {
     const taskBlocks = blocksByTask.get(task.id) || [];
+    const split = splitCost(task, taskBlocks);
     const { days, lastDate } = summarizeTaskBlocks(taskBlocks);
     const fragmentation = fragmentationCost(task, taskBlocks, days);
     const dueDate = resolveDueDateFn ? resolveDueDateFn(task) : task.dueDate || null;
@@ -356,8 +369,8 @@ export function evaluatePlacementCost(blocks, tasks, resolveDueDateFn, taskWindo
     const timeOfDay = timeOfDayCost(task, taskBlocks);
     const earliness = earlinessCost(task, taskBlocks);
     const backload = backloadCost(task, taskBlocks, dueDate, taskWindowById.get(task.id));
-    const taskTotal = fragmentation + due + timeOfDay + earliness + backload;
-    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, earliness, backload, total: taskTotal });
+    const taskTotal = fragmentation + due + timeOfDay + earliness + backload + split;
+    byTask.set(task.id, { fragmentation, dueDate: due, timeOfDay, earliness, backload, total: taskTotal, split });
     total += taskTotal;
   }
 

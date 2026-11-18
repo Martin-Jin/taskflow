@@ -72,7 +72,7 @@ const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
 // zoom out, levels above it zoom in further for finer control over densely
 // packed days. Defaults to the top of the range (max zoom-in).
 // export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
-export const ZOOM_LEVELS_PX_PER_MIN = [1.0, 1.25];
+export const ZOOM_LEVELS_PX_PER_MIN = [1.0, 1.0, 1.0, 1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
 // Both two-line height thresholds (the normal-type one and the smaller

@@ -131,15 +131,9 @@ function buildFreeMap(capacityMap, occupyingBlocks) {
  * real neighbor to keep a gap from), but never unsafe — it can only turn
  * down a handful of valid edge-of-day slots, never accept an invalid one.
  */
-function fitsWithGap(start, end, dayFreeIntervals, gapMins) {
-  for (const iv of dayFreeIntervals) {
-    const paddedStart = iv.start + gapMins;
-    const paddedEnd = iv.end - gapMins;
-    if (start >= paddedStart && end <= paddedEnd) return true;
-  }
-  return false;
+function fitsWithGap(start, end, dayFree, gapMins, flush = new Set()) {
+  return dayFree.some((iv) => { const { lo, hi } = slotBounds(iv, gapMins, flush); return start >= lo && end <= hi; });
 }
-
 /**
  * Remaining minute-budget for `date` after accounting for every OTHER
  * movable block already placed there (not `excludeBlock`), capped at
@@ -167,19 +161,25 @@ function remainingDailyBudgetMins(date, allMovableBlocks, excludeBlockId, maxDai
 const SLOT_STEP_MINS = 15;
 const MAX_CANDIDATE_SLOTS_PER_DAY = 8;
 
-function candidateSlotsForDay(dayFreeIntervals, durationMins, gapMins, budgetMins) {
-  const slots = [];
-  for (const iv of dayFreeIntervals) {
-    const paddedStart = iv.start + gapMins;
-    const paddedEnd = iv.end - gapMins;
-    const latestStart = paddedEnd - durationMins;
-    if (latestStart < paddedStart) continue;
-    for (let start = paddedStart; start <= latestStart && slots.length < MAX_CANDIDATE_SLOTS_PER_DAY; start += SLOT_STEP_MINS) {
-      slots.push(start);
-    }
-    if (slots.length >= MAX_CANDIDATE_SLOTS_PER_DAY) break;
-  }
+function slotBounds(iv, gapMins, flush) {
+  return {
+    lo: iv.start + (flush.has(iv.start) ? 0 : gapMins),
+    hi: iv.end - (flush.has(iv.end) ? 0 : gapMins)
+  };
+}
+
+function candidateSlotsForDay(dayFree, durationMins, gapMins, budgetMins, flush = new Set()) {
   if (budgetMins < durationMins) return [];
+  const slots = [];
+  for (const iv of dayFree) {
+    const { lo, hi } = slotBounds(iv, gapMins, flush);
+    const latest = hi - durationMins;
+    if (latest < lo) continue;
+    if (flush.has(iv.start)) slots.push(lo);                    // flush after sibling
+    if (flush.has(iv.end) && latest !== lo) slots.push(latest); // flush before sibling
+    for (let s = lo; s <= latest && slots.length < MAX_CANDIDATE_SLOTS_PER_DAY; s += SLOT_STEP_MINS)
+      if (!slots.includes(s)) slots.push(s);
+  }
   return slots;
 }
 
@@ -440,6 +440,10 @@ export function runLocalSearch({ movableBlocks, immovableBlocks, tasks, taskById
     // Build "everyone else's" occupancy (movable minus this block, plus all immovable) to find what's actually
     // free on the target day for this proposed move.
     const others = [...current.slice(0, blockIdx), ...current.slice(blockIdx + 1), ...immovableBlocks];
+    const flush = new Set();
+    for (const o of others) if (o.taskId === block.taskId && o.date === targetDate) {
+      flush.add(timeToMinutes(o.startTime)); flush.add(timeToMinutes(o.endTime));
+    }
     const freeMap = buildFreeMap(capacityMap, others);
     const dayFree = freeMap.get(targetDate);
     if (!dayFree) continue;
@@ -447,13 +451,13 @@ export function runLocalSearch({ movableBlocks, immovableBlocks, tasks, taskById
     const durationMins = Math.round(block.durationHours * 60);
     const gapMins = rules.minGapBetweenBlocksMins ?? 0;
     const budgetMins = remainingDailyBudgetMins(targetDate, current, block.id, rules.maxDailyDeepWorkHours);
-    const slots = candidateSlotsForDay(dayFree, durationMins, gapMins, budgetMins);
+    const slots = candidateSlotsForDay(dayFree, durationMins, gapMins, budgetMins, flush);
     if (slots.length === 0) continue;
     const targetStart = slots[Math.floor(rng() * slots.length)];
     const targetEnd = targetStart + durationMins;
 
     // HARD CONSTRAINT CHECKS -- reject the move outright (never merely penalize) if any of these fail.
-    if (!fitsWithGap(targetStart, targetEnd, dayFree, gapMins)) continue;
+    if (!fitsWithGap(targetStart, targetEnd, dayFree, gapMins, flush)) continue;
 
     // Chunk-count cap (maxChunksFor) needs no separate check here: a relocate
     // move is a 1:1 swap of one existing chunk's (date, time), never a
