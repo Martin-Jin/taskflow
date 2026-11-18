@@ -853,7 +853,7 @@ select:focus-visible,
   align-items: center;
   text-align: center;
   gap: 4px;
-  padding-top: var(--space-3);
+  padding-top: var(--space-6);
 }
 
 .projects-page-hero h1 {
